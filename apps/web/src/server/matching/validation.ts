@@ -12,14 +12,16 @@ function integer(value:unknown,min:number,max:number,label:string){if(typeof val
 
 export function parseMatchingQuery(url:string){
   const params=new URL(url).searchParams;
-  for(const key of params.keys())if(!["view","market","q","offset","limit"].includes(key))throw new InputError("不支持此查询参数。");
+  for(const key of params.keys())if(!["view","market","q","offset","limit","dataset"].includes(key))throw new InputError("不支持此查询参数。");
+  if([...params.keys()].some(key=>params.getAll(key).length!==1))throw new InputError("查询参数不能重复。");
+  const dataset=member(params.get("dataset")||"demo",["demo","italy"] as const,"数据集");
   const view=member(params.get("view")||"stats",["stats","products","creators"] as const,"查询类型");
   const rawMarket=params.get("market");
   const market=rawMarket&&rawMarket!=="all"?member(rawMarket,["mx","br","it"] as const,"市场"):undefined;
   const q=params.get("q")||"";if(q.length>120)throw new InputError("搜索关键词过长。");
   const offset=integer(Number(params.get("offset")??0),0,1000000,"分页位置");
   const limit=integer(Number(params.get("limit")??20),1,50,"每页条数");
-  return {view,options:{market:market as MatchMarket|undefined,q,offset,limit}};
+  return {view,dataset,options:{market:market as MatchMarket|undefined,q,offset,limit}};
 }
 
 export function parseMatchingCommand(value:unknown):{requestId:string;command:MatchingCommand}{

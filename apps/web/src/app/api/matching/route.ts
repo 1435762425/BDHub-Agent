@@ -15,7 +15,7 @@ function failure(error:unknown){
 export async function GET(request:Request){
   if(!isLocalRequest(request,false))return reject();
   try {
-    const {view,options}=parseMatchingQuery(request.url),store=getMatchingStore();
+    const {view,options,dataset}=parseMatchingQuery(request.url),store=getMatchingStore(dataset);
     return Response.json(view==="stats"?store.stats():view==="products"?store.listProducts(options):store.listCreators(options),{headers});
   }catch(error){return failure(error);}
 }
@@ -28,7 +28,8 @@ export async function POST(request:Request){
     try {for(;;){const {done,value}=await reader.read();if(done)break;length+=value.byteLength;if(length>8192){await reader.cancel();throw new InputError("请求内容过长。");}chunks.push(value);}}finally{reader.releaseLock();}
     const buffer=new Uint8Array(length);let offset=0;for(const c of chunks){buffer.set(c,offset);offset+=c.byteLength;}
     let body:unknown;try{body=JSON.parse(new TextDecoder("utf-8",{fatal:true}).decode(buffer));}catch{throw new InputError("请求不是有效 JSON。");}
-    const {command:c,requestId}=parseMatchingCommand(body),store=getMatchingStore();
+    const {dataset}=parseMatchingQuery(request.url);
+    const {command:c,requestId}=parseMatchingCommand(body),store=getMatchingStore(dataset);
     if(c.type==="recall")return Response.json({kind:"run",run:store.recall(c.query)},{headers});
     if(c.type==="prepare_review")return Response.json({kind:"packet",packet:store.prepareReview(c.runId,c.creatorId)},{headers});
     return Response.json({kind:"change",...store.demoChange(c.productId,c.expectedRevision,c.change,requestId)},{headers});

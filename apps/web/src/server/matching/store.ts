@@ -2,10 +2,10 @@ import { DatabaseSync, type StatementSync, type SQLInputValue } from "node:sqlit
 import { createHash, randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import type { MatchingBatch, MatchMarket, FactSource, MatchProduct, MatchCreator, MatchOffer, ProductInput, CreatorInput, OfferInput, ProductEvidence, CreatorDemand, ImportResult, MatchPage, RecallQuery, MatchRun, MatchCandidate, CandidateSource, ReviewPacket, MatchingStats } from "../../features/matching/contracts.ts";
+import type { MatchingBatch, MatchingDataset, MatchMarket, FactSource, MatchProduct, MatchCreator, MatchOffer, ProductInput, CreatorInput, OfferInput, ProductEvidence, CreatorDemand, ImportResult, MatchPage, RecallQuery, MatchRun, MatchCandidate, CandidateSource, ReviewPacket, MatchingStats } from "../../features/matching/contracts.ts";
 import { makeMatchingFixture } from "./fixtures.ts";
 
-const VERSION="structured-recall-v1",ROUTE_LIMIT=200,FINAL_LIMIT=50,PACKET_LIMIT=6000;
+const VERSION="structured-recall-v2",ROUTE_LIMIT=200,FINAL_LIMIT=50,PACKET_LIMIT=6000;
 const currencies={mx:"MXN",br:"BRL",it:"EUR"} as const;
 type Row={data:string;semantic_hash?:string;commercial_hash?:string;relation_hash?:string};
 type Route={source:CandidateSource;sql:string;args:SQLInputValue[]};
@@ -22,13 +22,41 @@ function integer(value:unknown,label:string,nullable=false,max=Number.MAX_SAFE_I
 function bool(value:unknown,label:string,nullable=false):boolean|null{if(nullable&&value===null)return null;if(typeof value!=="boolean")bad(`${label} 必须是布尔值${nullable?"或明确的 null":""}。`);return value;}
 function choice<T extends string>(value:unknown,allowed:readonly T[],label:string):T{if(typeof value!=="string"||!allowed.includes(value as T))bad(`${label} 不在允许范围。`);return value as T;}
 function strings(value:unknown,label:string,max=16):string[]{if(!Array.isArray(value)||value.length>max)bad(`${label} 必须为最多 ${max} 项的数组。`);return [...new Set(value.map(v=>text(v,label,100)))].sort();}
-function fact(value:unknown):FactSource{if(!value||typeof value!=="object"||Array.isArray(value))bad("source 缺失。");const v=value as FactSource;const result={ref:text(v.ref,"source.ref",300),observedAt:integer(v.observedAt,"source.observedAt")!,windowStart:integer(v.windowStart,"source.windowStart",true),windowEnd:integer(v.windowEnd,"source.windowEnd",true)};if(result.windowStart!==null&&result.windowEnd!==null&&result.windowStart>result.windowEnd)bad("证据窗口起点晚于终点。");return result;}
+function fact(value:unknown):FactSource {
+  if(!value||typeof value!=="object"||Array.isArray(value))bad("source 缺失。");
+  const v=value as FactSource;
+  const result:FactSource={ref:text(v.ref,"source.ref",300),observedAt:integer(v.observedAt,"source.observedAt")!,windowStart:integer(v.windowStart,"source.windowStart",true),windowEnd:integer(v.windowEnd,"source.windowEnd",true)};
+  if(result.windowStart!==null&&result.windowEnd!==null&&result.windowStart>result.windowEnd)bad("证据窗口起点晚于终点。");
+  if(v.windowBasis!==undefined) {
+    result.windowBasis=choice(v.windowBasis,["calendar_date_unknown_timezone"] as const,"source.windowBasis");
+    if(result.windowStart===null||result.windowEnd===null)bad("日历日期窗口必须保留起止日期；时区未知不得解释为精确 UTC 时刻。");
+  }
+  return result;
+}
 function identity(value:unknown,label:string):string{const v=text(value,label,100);if(!/^\d+$/.test(v))bad(`${label} 必须为保留精度的数字字符串。`);return v;}
 function marketCurrency(market:MatchMarket,currency:unknown){if(currencies[market]!==currency)bad(`${market} 的币种必须是 ${currencies[market]}。`);return currencies[market];}
 function stable(v:unknown):string{if(Array.isArray(v))return `[${v.map(stable).join(",")}]`;if(v&&typeof v==="object")return `{${Object.entries(v).sort(([a],[b])=>a.localeCompare(b)).map(([k,x])=>`${JSON.stringify(k)}:${stable(x)}`).join(",")}}`;return JSON.stringify(v);}
 function hash(v:unknown):string{return createHash("sha256").update(stable(v)).digest("hex");}
 function productInput(value:ProductInput):ProductInput{const v=value,m=choice(v.market,["mx","br","it"],"market");return {id:text(v.id,"product.id",100),market:m,pid:identity(v.pid,"pid"),title:text(v.title,"title",300),image:optionalText(v.image,"image",500),categories:strings(v.categories,"categories"),formats:strings(v.formats,"formats",2).map(f=>choice(f,["video","live"],"format")),description:optionalText(v.description,"description"),priceMinor:integer(v.priceMinor,"priceMinor",true),currency:marketCurrency(m,v.currency),source:fact(v.source)};}
-function creatorInput(value:CreatorInput):CreatorInput{const v=value,m=choice(v.market,["mx","br","it"],"market"),min=integer(v.priceMinMinor,"priceMinMinor",true),max=integer(v.priceMaxMinor,"priceMaxMinor",true);if(min!==null&&max!==null&&min>max)bad("达人价格带起点大于终点。");return {id:text(v.id,"creator.id",100),market:m,oecId:identity(v.oecId,"oecId"),name:text(v.name,"name",200),avatar:optionalText(v.avatar,"avatar",500),categories:strings(v.categories,"categories"),formats:strings(v.formats,"formats",2).map(f=>choice(f,["video","live"],"format")),bio:optionalText(v.bio,"bio"),priceMinMinor:min,priceMaxMinor:max,currency:marketCurrency(m,v.currency),control:choice(v.control,["auto","human","paused"],"control"),marketingStopped:bool(v.marketingStopped,"marketingStopped")!,source:fact(v.source)};}
+function creatorInput(value:CreatorInput):CreatorInput{
+  const v=value,m=choice(v.market,["mx","br","it"],"market"),min=integer(v.priceMinMinor,"priceMinMinor",true),max=integer(v.priceMaxMinor,"priceMaxMinor",true);
+  if(min!==null&&max!==null&&min>max)bad("达人价格带起点大于终点。");
+  const oecId=v.oecId===null?null:identity(v.oecId,"oecId");
+  let externalIdentity:CreatorInput["externalIdentity"];
+  if(v.externalIdentity!==undefined){
+    if(!v.externalIdentity||typeof v.externalIdentity!=="object"||Array.isArray(v.externalIdentity))bad("externalIdentity 必须包含来源命名空间与原始 ID。");
+    externalIdentity={namespace:choice(v.externalIdentity.namespace,["kalodata"],"externalIdentity.namespace"),id:identity(v.externalIdentity.id,"externalIdentity.id")};
+  }
+  if(oecId===null&&!externalIdentity)bad("OEC 未知时必须提供独立的外部身份，不可用外部 ID 代填 OEC。");
+  return {id:text(v.id,"creator.id",100),market:m,oecId,...(externalIdentity?{externalIdentity}:{}),name:text(v.name,"name",200),avatar:optionalText(v.avatar,"avatar",500),categories:strings(v.categories,"categories"),formats:strings(v.formats,"formats",2).map(f=>choice(f,["video","live"],"format")),bio:optionalText(v.bio,"bio"),priceMinMinor:min,priceMaxMinor:max,currency:marketCurrency(m,v.currency),control:choice(v.control,["auto","human","paused","unknown"],"control"),marketingStopped:bool(v.marketingStopped,"marketingStopped",true),source:fact(v.source)};
+}
+function datasetInput(value:MatchingDataset):MatchingDataset{
+  if(!value||typeof value!=="object"||Array.isArray(value))bad("dataset 必须是明确的数据集描述。");
+  const list=(items:unknown,label:string,limit:number,max:number)=>{if(!Array.isArray(items)||items.length>limit)bad(`${label} 数量无效。`);return [...new Set(items.map(item=>text(item,label,max)))];};
+  const dataset={id:text(value.id,"dataset.id",100),mode:choice(value.mode,["synthetic-local","imported-offline"],"dataset.mode"),label:text(value.label,"dataset.label",200),importedAt:integer(value.importedAt,"dataset.importedAt",true),sourceRefs:list(value.sourceRefs,"dataset.sourceRefs",100,300).sort(),warnings:list(value.warnings,"dataset.warnings",32,1000)};
+  if(dataset.mode==="imported-offline"&&(dataset.importedAt===null||!dataset.sourceRefs.length))bad("离线导入必须保留导入时间与来源引用。");
+  return dataset;
+}
 function offerInput(v:OfferInput):OfferInput{const result={id:text(v.id,"offer.id",100),productId:text(v.productId,"productId",100),campaignId:text(v.campaignId,"campaignId",100),accountRef:text(v.accountRef,"accountRef",100),publicCommissionBps:integer(v.publicCommissionBps,"publicCommissionBps",true,10000),totalCommissionBps:integer(v.totalCommissionBps,"totalCommissionBps",true,10000),creatorCommissionBps:integer(v.creatorCommissionBps,"creatorCommissionBps",true,10000),agencyCommissionBps:integer(v.agencyCommissionBps,"agencyCommissionBps",true,10000),stock:integer(v.stock,"stock",true),sampleAvailable:bool(v.sampleAvailable,"sampleAvailable",true),sampleQuota:integer(v.sampleQuota,"sampleQuota",true),startsAt:integer(v.startsAt,"startsAt")!,endsAt:integer(v.endsAt,"endsAt")!,cardStatus:choice(v.cardStatus,["verified","needs_preparation","unknown"],"cardStatus"),source:fact(v.source)};if(result.startsAt>=result.endsAt)bad("Offer 结束时间必须晚于开始时间。");if(result.creatorCommissionBps!==null&&result.agencyCommissionBps!==null&&result.creatorCommissionBps+result.agencyCommissionBps!==result.totalCommissionBps)bad("同一 Offer 的达人佣金与机构佣金之和必须等于总佣金。");return result;}
 function evidenceInput(v:ProductEvidence):ProductEvidence{return {id:text(v.id,"evidence.id",100),creatorId:text(v.creatorId,"creatorId",100),market:choice(v.market,["mx","br","it"],"market"),pid:identity(v.pid,"pid"),units:integer(v.units,"units")!,format:v.format===null?null:choice(v.format,["video","live"] as const,"format"),source:fact(v.source)};}
 function demandInput(v:CreatorDemand):CreatorDemand{return {id:text(v.id,"demand.id",100),creatorId:text(v.creatorId,"creatorId",100),productId:v.productId===null?null:text(v.productId,"productId",100),categories:strings(v.categories,"categories"),active:bool(v.active,"active")!,source:fact(v.source)};}
@@ -38,11 +66,13 @@ function creatorSemantic(c:CreatorInput){return {categories:c.categories,formats
 function creatorRelation(c:CreatorInput){return {control:c.control,marketingStopped:c.marketingStopped};}
 
 export class MatchingStore {
-  private db:DatabaseSync;private now:()=>number;private statements=new Map<string,StatementSync>();
-  constructor(dbPath:string,options:{now?:()=>number;seed?:boolean}={}) {
+  private db:DatabaseSync;private now:()=>number;private statements=new Map<string,StatementSync>();private dataset:MatchingDataset;
+  constructor(dbPath:string,options:{now?:()=>number;seed?:boolean;dataset?:MatchingDataset}={}) {
     if(dbPath!==":memory:")mkdirSync(dirname(dbPath),{recursive:true});this.now=options.now??Date.now;this.db=new DatabaseSync(dbPath);
+    try {
     this.db.exec(`PRAGMA busy_timeout=5000; PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;
       CREATE TABLE IF NOT EXISTS matching_meta(key TEXT PRIMARY KEY,value INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS matching_dataset(singleton INTEGER PRIMARY KEY CHECK(singleton=1),data TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS products(id TEXT PRIMARY KEY,market TEXT NOT NULL,pid TEXT NOT NULL,price_minor INTEGER,title TEXT NOT NULL,semantic_hash TEXT NOT NULL,commercial_hash TEXT NOT NULL,data TEXT NOT NULL,UNIQUE(market,pid));
       CREATE INDEX IF NOT EXISTS products_market_price ON products(market,price_minor,id);
       CREATE TABLE IF NOT EXISTS creators(id TEXT PRIMARY KEY,market TEXT NOT NULL,oec_id TEXT NOT NULL,price_min INTEGER,price_max INTEGER,name TEXT NOT NULL,semantic_hash TEXT NOT NULL,relation_hash TEXT NOT NULL,data TEXT NOT NULL,UNIQUE(market,oec_id));
@@ -70,8 +100,33 @@ export class MatchingStore {
       CREATE TABLE IF NOT EXISTS matching_requests(id TEXT PRIMARY KEY,request_hash TEXT NOT NULL,data TEXT NOT NULL);
       INSERT OR IGNORE INTO matching_meta VALUES('schema_version',1),('semantic_builds',0);
     `);
-    if((this.stmt("SELECT value FROM matching_meta WHERE key='schema_version'").get() as {value:number}).value!==1)throw new MatchingError(409,"schema_version","匹配数据库版本不兼容。");
-    if(options.seed!==false&&this.count("products")===0&&this.count("creators")===0)this.upsert(makeMatchingFixture({now:this.now()}));
+    this.migrateIdentitySchema();
+    this.dataset=this.transaction(()=>{
+      const saved=this.stmt("SELECT data FROM matching_dataset WHERE singleton=1").get() as Row|undefined;
+      const provided=options.dataset?datasetInput(options.dataset):null;
+      if(saved){const dataset=datasetInput(JSON.parse(saved.data));if(provided&&stable(provided)!==stable(dataset))throw new MatchingError(409,"dataset_conflict","数据库已绑定数据集；请使用独立文件，不可变更现有来源或模式。");return dataset;}
+      if(provided?.mode==="imported-offline"&&(this.count("products")||this.count("creators")))throw new MatchingError(409,"dataset_conflict","已有事实的旧库不能重标为真实离线数据；请使用独立数据库。");
+      const dataset=provided??{id:"synthetic-default",mode:"synthetic-local" as const,label:"合成匹配数据",importedAt:null,sourceRefs:["synthetic:fixture"],warnings:[]};
+      this.stmt("INSERT INTO matching_dataset VALUES(1,?)").run(JSON.stringify(dataset));return dataset;
+    });
+    if(this.dataset.mode==="synthetic-local"&&options.seed!==false&&this.count("products")===0&&this.count("creators")===0)this.upsert(makeMatchingFixture({now:this.now()}));
+    }catch(error){this.db.close();throw error;}
+  }
+  private migrateIdentitySchema(){
+    const version=(this.stmt("SELECT value FROM matching_meta WHERE key='schema_version'").get() as {value:number}).value;
+    if(version===2)return;
+    if(version!==1)throw new MatchingError(409,"schema_version","匹配数据库版本不兼容。");
+    // Rebuild the parent table without renaming the old parent: existing FK targets stay creators.
+    this.db.exec("PRAGMA foreign_keys=OFF");
+    try{this.transaction(()=>{
+      this.db.exec(`CREATE TABLE creators_v2(id TEXT PRIMARY KEY,market TEXT NOT NULL,oec_id TEXT,price_min INTEGER,price_max INTEGER,name TEXT NOT NULL,semantic_hash TEXT NOT NULL,relation_hash TEXT NOT NULL,data TEXT NOT NULL,external_namespace TEXT,external_id TEXT,UNIQUE(market,oec_id),UNIQUE(market,external_namespace,external_id),CHECK(oec_id IS NOT NULL OR (external_namespace IS NOT NULL AND external_id IS NOT NULL)));
+        INSERT INTO creators_v2 SELECT id,market,oec_id,price_min,price_max,name,semantic_hash,relation_hash,data,NULL,NULL FROM creators;
+        DROP TABLE creators;
+        ALTER TABLE creators_v2 RENAME TO creators;
+        CREATE INDEX creators_market_price ON creators(market,price_min,price_max,id);
+        UPDATE matching_meta SET value=2 WHERE key='schema_version';`);
+      if(this.db.prepare("PRAGMA foreign_key_check").all().length)throw new MatchingError(409,"schema_integrity","身份迁移的引用检查未通过。");
+    });}finally{this.db.exec("PRAGMA foreign_keys=ON");this.statements.clear();}
   }
   close(){this.db.close();}
   private stmt(sql:string){let statement=this.statements.get(sql);if(!statement){statement=this.db.prepare(sql);this.statements.set(sql,statement);}return statement;}
@@ -86,7 +141,7 @@ export class MatchingStore {
   private productPartitions(p:MatchProduct){this.bump(`product:${p.id}`);this.bump(`products:${p.market}`);this.bump(`pid:${p.market}:${p.pid}`);for(const cat of p.categories.length?p.categories:["__missing__"])this.bump(`pc:${p.market}:${cat}`);}
   private creatorPartitions(c:MatchCreator){this.bump(`creator:${c.id}`);this.bump(`creators:${c.market}`);for(const cat of c.categories.length?c.categories:["__missing__"])this.bump(`cc:${c.market}:${cat}`);const edges=this.stmt("SELECT DISTINCT pid FROM evidence WHERE creator_id=?").all(c.id) as {pid:string}[];for(const e of edges)this.bump(`ep:${c.market}:${e.pid}`);for(const d of this.demandsFor(c.id))this.demandPartitions(d,c.market);}
   private demandPartitions(d:CreatorDemand,m:MatchMarket){this.bump(`dc:${d.creatorId}`);if(d.productId)this.bump(`dp:${d.productId}`);for(const cat of d.categories)this.bump(`dcat:${m}:${cat}`);}
-  stats():MatchingStats{return {mode:"synthetic-local",products:this.count("products"),creators:this.count("creators"),offers:this.count("offers"),evidence:this.count("evidence"),demands:this.count("demands"),runs:this.count("recall_runs"),packets:this.count("review_packets"),semanticBuilds:(this.stmt("SELECT value FROM matching_meta WHERE key='semantic_builds'").get() as {value:number}).value,llmCalls:0,billedTokens:0,matchingVersion:VERSION};}
+  stats():MatchingStats{return {mode:this.dataset.mode,dataset:structuredClone(this.dataset),products:this.count("products"),creators:this.count("creators"),offers:this.count("offers"),evidence:this.count("evidence"),demands:this.count("demands"),runs:this.count("recall_runs"),packets:this.count("review_packets"),semanticBuilds:(this.stmt("SELECT value FROM matching_meta WHERE key='semantic_builds'").get() as {value:number}).value,llmCalls:0,billedTokens:0,matchingVersion:VERSION};}
   upsert(batch:MatchingBatch):ImportResult{return this.transaction(()=>this.importBatch(batch));}
   private importBatch(batch:MatchingBatch):ImportResult {
     if(!batch||typeof batch!=="object"||Array.isArray(batch))bad("导入必须为结构化事实对象。");
@@ -109,13 +164,14 @@ export class MatchingStore {
     }
     for(const input of batch.creators??[]) {
       const c=creatorInput(input),row=this.raw("creators",c.id),old=row?JSON.parse(row.data) as MatchCreator:null;
-      if(old&&(old.market!==c.market||old.oecId!==c.oecId))throw new MatchingError(409,"identity_conflict","达人稳定 ID 不能更换市场或 OEC。");
+      if(this.dataset.mode==="imported-offline"&&c.avatar)bad("离线导入不加载达人远端头像，avatar 必须留空。");
+      if(old&&(old.market!==c.market||old.oecId!==c.oecId||stable(old.externalIdentity??null)!==stable(c.externalIdentity??null)))throw new MatchingError(409,"identity_conflict","达人稳定 ID 不能更换市场、OEC 或外部身份；身份核验需独立处理。");
       this.rejectOlder(old,c);
       const semantic=hash(creatorSemantic(c)),relation=hash(creatorRelation(c));
       const next:MatchCreator={...c,semanticRevision:(old?.semanticRevision??0)+(row?.semantic_hash!==semantic?1:0),relationRevision:(old?.relationRevision??0)+(row?.relation_hash!==relation?1:0)};
       if(old&&stable(old)===stable(next)){result.unchanged++;continue;}
       if(row?.semantic_hash!==semantic)result.semanticChanges++;if(row?.relation_hash!==relation)result.relationChanges++;
-      this.stmt("INSERT INTO creators VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET price_min=excluded.price_min,price_max=excluded.price_max,name=excluded.name,semantic_hash=excluded.semantic_hash,relation_hash=excluded.relation_hash,data=excluded.data").run(c.id,c.market,c.oecId,c.priceMinMinor,c.priceMaxMinor,c.name,semantic,relation,JSON.stringify(next));
+      this.stmt("INSERT INTO creators VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET price_min=excluded.price_min,price_max=excluded.price_max,name=excluded.name,semantic_hash=excluded.semantic_hash,relation_hash=excluded.relation_hash,data=excluded.data").run(c.id,c.market,c.oecId,c.priceMinMinor,c.priceMaxMinor,c.name,semantic,relation,JSON.stringify(next),c.externalIdentity?.namespace??null,c.externalIdentity?.id??null);
       this.stmt("DELETE FROM creator_categories WHERE entity_id=?").run(c.id);
       for(const category of c.categories.length?c.categories:["__missing__"])this.stmt("INSERT INTO creator_categories VALUES(?,?,?,?,?)").run(c.market,category,c.id,c.priceMinMinor,c.priceMaxMinor);
       if(old)this.creatorPartitions(old);this.creatorPartitions(next);record(old);
@@ -148,7 +204,18 @@ export class MatchingStore {
     }
     this.stmt("UPDATE matching_meta SET value=value+? WHERE key='semantic_builds'").run(result.semanticChanges);return result;
   }
-  private page<T>(table:"products"|"creators",query:{market?:MatchMarket;q?:string;offset?:number;limit?:number}):MatchPage<T>{const offset=integer(query.offset??0,"offset")!,limit=integer(query.limit??24,"limit",false,100)!;if(limit<1)bad("limit 至少为 1。");const args:SQLInputValue[]=[],where:string[]=[];if(query.market){where.push("market=?");args.push(choice(query.market,["mx","br","it"],"market"));}if(query.q){const q=text(query.q,"q",200).replace(/[\\%_]/g,"\\$&");where.push(`(${table==="products"?"title":"name"} LIKE ? ESCAPE '\\' OR ${table==="products"?"pid":"oec_id"} LIKE ? ESCAPE '\\')`);args.push(`%${q}%`,`%${q}%`);}const clause=where.length?` WHERE ${where.join(" AND ")}`:"";return {items:(this.stmt(`SELECT data FROM ${table}${clause} ORDER BY id LIMIT ? OFFSET ?`).all(...args,limit,offset) as Row[]).map(r=>JSON.parse(r.data) as T),total:(this.stmt(`SELECT COUNT(*) n FROM ${table}${clause}`).get(...args) as {n:number}).n,offset,limit};}
+  private page<T>(table:"products"|"creators",query:{market?:MatchMarket;q?:string;offset?:number;limit?:number}):MatchPage<T>{
+    const offset=integer(query.offset??0,"offset")!,limit=integer(query.limit??24,"limit",false,100)!;
+    if(limit<1)bad("limit 至少为 1。");
+    const args:SQLInputValue[]=[],where:string[]=[];
+    if(query.market){where.push("market=?");args.push(choice(query.market,["mx","br","it"],"market"));}
+    if(query.q){
+      const q=text(query.q,"q",200).replace(/[\\%_]/g,"\\$&"),columns=table==="products"?["title","pid"]:["name","oec_id","external_id"];
+      where.push(`(${columns.map(column=>`${column} LIKE ? ESCAPE '\\'`).join(" OR ")})`);args.push(...columns.map(()=>`%${q}%`));
+    }
+    const clause=where.length?` WHERE ${where.join(" AND ")}`:"";
+    return {items:(this.stmt(`SELECT data FROM ${table}${clause} ORDER BY id LIMIT ? OFFSET ?`).all(...args,limit,offset) as Row[]).map(r=>JSON.parse(r.data) as T),total:(this.stmt(`SELECT COUNT(*) n FROM ${table}${clause}`).get(...args) as {n:number}).n,offset,limit};
+  }
   listProducts(query:{market?:MatchMarket;q?:string;offset?:number;limit?:number}={}):MatchPage<MatchProduct>{return this.page("products",query);}
   listCreators(query:{market?:MatchMarket;q?:string;offset?:number;limit?:number}={}):MatchPage<MatchCreator>{return this.page("creators",query);}
   private offersFor(productId:string):MatchOffer[]{return (this.stmt("SELECT data FROM offers WHERE product_id=? ORDER BY CASE WHEN starts_at<=? AND ends_at>? AND stock>0 AND json_extract(data,'$.cardStatus')='verified' AND json_extract(data,'$.creatorCommissionBps') IS NOT NULL AND json_extract(data,'$.agencyCommissionBps') IS NOT NULL THEN 0 ELSE 1 END,id LIMIT 20").all(productId,this.now(),this.now()) as Row[]).map(r=>JSON.parse(r.data));}
@@ -168,7 +235,7 @@ export class MatchingStore {
     }
     return [...keys].sort();
   }
-  private fingerprint(q:RecallQuery,dependencies:string[]){return hash({query:q,version:VERSION,partitions:dependencies.map(key=>[key,(this.stmt("SELECT version FROM partition_versions WHERE key=?").get(key) as {version:number}|undefined)?.version??0])});}
+  private fingerprint(q:RecallQuery,dependencies:string[]){return hash({query:q,version:VERSION,dataset:this.dataset,partitions:dependencies.map(key=>[key,(this.stmt("SELECT version FROM partition_versions WHERE key=?").get(key) as {version:number}|undefined)?.version??0])});}
   private routes(q:RecallQuery,s:MatchProduct|MatchCreator):Route[] {
     const routes:Route[]=[],m=s.market;const add=(source:CandidateSource,sql:string,args:SQLInputValue[])=>routes.push({source,sql:`${sql} LIMIT ${ROUTE_LIMIT}`,args});
     if(q.direction==="product") {
@@ -211,6 +278,10 @@ export class MatchingStore {
     const priceOverlap=p.priceMinor===null||c.priceMinMinor===null||c.priceMaxMinor===null?null:p.priceMinor>=c.priceMinMinor&&p.priceMinor<=c.priceMaxMinor;
     const formatOverlap=!p.formats.length||!c.formats.length?null:p.formats.some(f=>c.formats.includes(f));
     const offers=this.offersFor(p.id),now=this.now(),gaps:string[]=[],reasons:string[]=[];
+    if(this.dataset.mode==="imported-offline")gaps.push("离线历史快照：身份、关系控制与商业条件均未核验为当前可执行事实");
+    if(c.oecId===null)gaps.push("OEC 身份未知；外部 Kalodata ID 不能作为发送身份");
+    if(c.control==="unknown")gaps.push("人工接管／暂停状态未知，不能推定 Agent 有执行权");
+    if(c.marketingStopped===null)gaps.push("拒联状态未知，不能将没有记录当作允许营销联系");
     if(demands.length)reasons.push("有当前明确需求及来源引用");
     if(evidence.length)reasons.push(`同市场精确 PID 有正销量证据；显示 ${evidence[0].source.ref} 单一观测 ${evidence[0].units} 件，窗口不相加；不证明当前持有样品或接受新条件`);
     if(evidence.some(e=>e.source.windowStart===null||e.source.windowEnd===null))gaps.push("部分销量证据的统计窗口未知");
@@ -227,9 +298,11 @@ export class MatchingStore {
       if(offer.creatorCommissionBps===null||offer.agencyCommissionBps===null)gaps.push(prefix+"达人／机构分佣报价未完整，不能承诺总佣金");
       if(offer.sampleAvailable===null||offer.sampleQuota===null)gaps.push(prefix+"样品条件未知");
     }
-    if(c.marketingStopped)gaps.push("已明确拒绝营销联系");if(c.control!=="auto")gaps.push(c.control==="human"?"关系由人工接管":"关系已暂停");
+    if(c.marketingStopped)gaps.push("已明确拒绝营销联系");if(c.control==="human"||c.control==="paused")gaps.push(c.control==="human"?"关系由人工接管":"关系已暂停");
     const usable=offers.some(o=>o.startsAt<=now&&o.endsAt>now&&o.stock!==null&&o.stock>0&&o.cardStatus==="verified"&&o.creatorCommissionBps!==null&&o.agencyCommissionBps!==null);
-    return {creator:c,product:p,offers,sources:[...sources].sort(),reasons,gaps,evidenceRefs:[...new Set([p.source.ref,c.source.ref,...evidence.map(e=>e.source.ref),...demands.map(d=>d.source.ref)])],readiness:c.marketingStopped||c.control!=="auto"?"suppressed":!usable||priceOverlap!==true||formatOverlap!==true||!categoryOverlap?"needs_facts":"reviewable",features:{categoryOverlap,priceOverlap,formatOverlap,exactUnits:evidence.length?Math.max(...evidence.map(e=>e.units)):null}};
+    const unknown=c.oecId===null||c.control==="unknown"||c.marketingStopped===null;
+    const suppressed=c.marketingStopped===true||c.control==="human"||c.control==="paused"||(this.dataset.mode==="synthetic-local"&&unknown);
+    return {creator:c,product:p,offers,sources:[...sources].sort(),reasons,gaps,evidenceRefs:[...new Set([p.source.ref,c.source.ref,...evidence.map(e=>e.source.ref),...demands.map(d=>d.source.ref)])],readiness:suppressed?"suppressed":this.dataset.mode==="imported-offline"||!usable||priceOverlap!==true||formatOverlap!==true||!categoryOverlap?"needs_facts":"reviewable",features:{categoryOverlap,priceOverlap,formatOverlap,exactUnits:evidence.length?Math.max(...evidence.map(e=>e.units)):null}};
   }
   recall(input:RecallQuery):MatchRun {return this.transaction(()=>{
     const started=performance.now(),q=this.query(input),s=this.subject(q),dependencies=this.dependencies(q,s);let fingerprint=this.fingerprint(q,dependencies);const cached=this.stmt("SELECT data FROM recall_runs WHERE fingerprint=?").get(fingerprint) as Row|undefined;
@@ -244,7 +317,7 @@ export class MatchingStore {
     const priority=(c:MatchCandidate)=>[c.sources.includes("explicit_demand")?1:0,c.sources.includes("exact_pid")?1:0,c.features.priceOverlap===true?1:0,c.features.formatOverlap===true?1:0,c.features.categoryOverlap];
     candidates.sort((a,b)=>{const aa=priority(a),bb=priority(b);for(let i=0;i<aa.length;i++)if(aa[i]!==bb[i])return bb[i]-aa[i];return `${a.creator.id}:${a.product.id}`.localeCompare(`${b.creator.id}:${b.product.id}`);});
     if(candidates.length>q.limit)truncated=true;
-    const result:MatchRun={id:`match-run-${randomUUID()}`,query:q,market:s.market,createdAt:this.now(),matchingVersion:VERSION,fingerprint,cacheHit:false,stale:false,subject:s,candidates:candidates.slice(0,q.limit),diagnostics:{rowsFetched,perRouteLimit:ROUTE_LIMIT,candidateLimit:FINAL_LIMIT,truncated,durationMs:Math.round((performance.now()-started)*100)/100,fullCartesianEvaluated:false,llmCalls:0,billedTokens:0},warnings:["全部为合成事实；结构召回覆盖与排序质量仍需真实样本评估。","每路有界返回不能证明真实适配质量；销量窗口可能重叠，因此不累计为总销量。",...(truncated?["召回或结果达到数量边界；部分候选未展示。"]:[])]};
+    const result:MatchRun={id:`match-run-${randomUUID()}`,query:q,market:s.market,createdAt:this.now(),matchingVersion:VERSION,fingerprint,cacheHit:false,stale:false,subject:s,candidates:candidates.slice(0,q.limit),diagnostics:{rowsFetched,perRouteLimit:ROUTE_LIMIT,candidateLimit:FINAL_LIMIT,truncated,durationMs:Math.round((performance.now()-started)*100)/100,fullCartesianEvaluated:false,llmCalls:0,billedTokens:0},warnings:[...(this.dataset.mode==="imported-offline"?["真实来源的离线历史数据，仅验证召回与证据组织；不可执行发送，已知边的回放不证明新候选适配质量。",...this.dataset.warnings]:["全部为合成事实；结构召回覆盖与排序质量仍需真实样本评估。"]),"每路有界返回不能证明真实适配质量；销量窗口可能重叠，因此不累计为总销量。",...(truncated?["召回或结果达到数量边界；部分候选未展示。"]:[])]};
     const boundaries=candidates.flatMap(c=>c.offers.flatMap(o=>[o.startsAt,o.endsAt])).filter(at=>at>this.now());
     const stored:StoredRun={run:result,dependencies,expiresAt:boundaries.length?Math.min(...boundaries):null};
     this.stmt("INSERT INTO recall_runs VALUES(?,?,?)").run(result.id,fingerprint,JSON.stringify(stored));return result;
@@ -252,20 +325,21 @@ export class MatchingStore {
   private currentRun(runId:string):MatchRun {const row=this.raw("recall_runs",text(runId,"runId",100));if(!row)throw new MatchingError(404,"run_missing","召回记录不存在或已过期，请重新召回。");const stored=JSON.parse(row.data) as StoredRun,run=stored.run;const current=this.fingerprint(run.query,this.dependencies(run.query,this.subject(run.query)));if(current!==run.fingerprint||stored.expiresAt!==null&&stored.expiresAt<=this.now())throw new MatchingError(409,"stale_run","商品、关系或候选索引已经变化，请重新召回后再准备上下文。");return run;}
   prepareReview(runId:string,creatorId:string):ReviewPacket {return this.transaction(()=>{
     const run=this.currentRun(runId);text(creatorId,"creatorId",100);const matching=run.candidates.filter(c=>c.creator.id===creatorId);if(!matching.length)throw new MatchingError(404,"candidate_missing","该达人不在当前候选中。");if(matching.some(c=>c.readiness==="suppressed"))throw new MatchingError(409,"relationship_suppressed","该关系已拒联、暂停或由人工接管，不能准备 Agent 决策。");
-    const fingerprint=hash({run:run.fingerprint,creatorId,packetVersion:1}),cached=this.stmt("SELECT data FROM review_packets WHERE fingerprint=?").get(fingerprint) as Row|undefined;if(cached)return JSON.parse(cached.data) as ReviewPacket;
+    const fingerprint=hash({run:run.fingerprint,creatorId,packetVersion:2}),cached=this.stmt("SELECT data FROM review_packets WHERE fingerprint=?").get(fingerprint) as Row|undefined;if(cached)return JSON.parse(cached.data) as ReviewPacket;
     const creator=matching[0].creator;
-    const payload:Record<string,unknown>={schema:"bdhub.relationship-review.v1",mode:"synthetic-local",purpose:"供一个关系 Agent 判断少量候选；尚未调用模型，不构成发送授权",creator:{id:creator.id,market:creator.market,currency:creator.currency,categories:creator.categories,formats:creator.formats,priceBand:[creator.priceMinMinor,creator.priceMaxMinor],control:creator.control,marketingStopped:creator.marketingStopped,semanticRevision:creator.semanticRevision,relationRevision:creator.relationRevision,source:creator.source},candidates:[]};
+    const payload:Record<string,unknown>={schema:"bdhub.relationship-review.v1",mode:this.dataset.mode,datasetId:this.dataset.id,datasetImportedAt:this.dataset.importedAt,datasetWarnings:this.dataset.warnings.slice(0,2),omittedDatasetWarnings:Math.max(0,this.dataset.warnings.length-2),executionBlocked:true,purpose:this.dataset.mode==="imported-offline"?"离线历史证据评审；只整理缺口，不产生商业承诺、发送身份或执行授权":"供一个关系 Agent 判断少量候选；尚未调用模型，不构成发送授权",creator:{id:creator.id,oecId:creator.oecId,externalIdentity:creator.externalIdentity??null,market:creator.market,currency:creator.currency,categories:creator.categories,formats:creator.formats,priceBand:[creator.priceMinMinor,creator.priceMaxMinor],control:creator.control,marketingStopped:creator.marketingStopped,semanticRevision:creator.semanticRevision,relationRevision:creator.relationRevision,source:creator.source},candidates:[]};
     const selected:unknown[]=[];
     for(const c of matching.slice(0,5)) {
-      const item={product:{id:c.product.id,pid:c.product.pid,title:c.product.title.slice(0,100),categories:c.product.categories,priceMinor:c.product.priceMinor,currency:c.product.currency,semanticRevision:c.product.semanticRevision,commercialRevision:c.product.commercialRevision,source:c.product.source},offers:c.offers.slice(0,2).map(o=>({id:o.id,campaignId:o.campaignId,accountRef:o.accountRef,version:o.version,creatorCommissionBps:o.creatorCommissionBps,agencyCommissionBps:o.agencyCommissionBps,totalCommissionBps:o.totalCommissionBps,stock:o.stock,sampleAvailable:o.sampleAvailable,sampleQuota:o.sampleQuota,startsAt:o.startsAt,endsAt:o.endsAt,cardStatus:o.cardStatus,sourceRef:o.source.ref})),sources:c.sources,features:c.features,exactObservation:(this.stmt("SELECT data FROM evidence INDEXED BY evidence_creator WHERE creator_id=? AND market=? AND pid=? AND units>0 ORDER BY units DESC LIMIT 1").all(c.creator.id,c.product.market,c.product.pid) as Row[]).map(r=>{const e=JSON.parse(r.data) as ProductEvidence;return {units:e.units,source:e.source};})[0]??null,evidenceRefs:c.evidenceRefs.slice(0,5),gaps:c.gaps.slice(0,5)};
+      const item={product:{id:c.product.id,pid:c.product.pid,title:c.product.title.slice(0,100),categories:c.product.categories,priceMinor:c.product.priceMinor,currency:c.product.currency,semanticRevision:c.product.semanticRevision,commercialRevision:c.product.commercialRevision,source:c.product.source},offers:c.offers.slice(0,2).map(o=>({id:o.id,campaignId:o.campaignId,accountRef:o.accountRef,version:o.version,creatorCommissionBps:o.creatorCommissionBps,agencyCommissionBps:o.agencyCommissionBps,totalCommissionBps:o.totalCommissionBps,stock:o.stock,sampleAvailable:o.sampleAvailable,sampleQuota:o.sampleQuota,startsAt:o.startsAt,endsAt:o.endsAt,cardStatus:o.cardStatus,sourceRef:o.source.ref})),sources:c.sources,features:c.features,exactObservation:(this.stmt("SELECT data FROM evidence INDEXED BY evidence_creator WHERE creator_id=? AND market=? AND pid=? AND units>0 ORDER BY units DESC LIMIT 1").all(c.creator.id,c.product.market,c.product.pid) as Row[]).map(r=>{const e=JSON.parse(r.data) as ProductEvidence;return {units:e.units,source:e.source};})[0]??null,evidenceRefs:c.evidenceRefs.slice(0,5),gaps:c.gaps.slice(0,8),omittedGaps:Math.max(0,c.gaps.length-8)};
       payload.candidates=[...selected,item];if(JSON.stringify(payload).length>PACKET_LIMIT){payload.candidates=selected;break;}selected.push(item);
     }
     if(!selected.length)throw new MatchingError(422,"context_too_large","单个候选必要上下文超过字符预算，须缩小证据引用后再准备。");
     payload.omittedCandidates=matching.length-selected.length;payload.offerLimitPerCandidate=2;
     const characters=JSON.stringify(payload).length;if(characters>PACKET_LIMIT)throw new MatchingError(422,"context_too_large","必要上下文超过字符预算。");
-    const packet:ReviewPacket={id:`review-packet-${randomUUID()}`,creatorId,createdAt:this.now(),fingerprint,runId,candidates:selected.length,characters,estimatedTokens:null,modelStatus:"not_called",executable:false,payload};this.stmt("INSERT INTO review_packets VALUES(?,?,?)").run(packet.id,fingerprint,JSON.stringify(packet));return packet;
+    const packet:ReviewPacket={id:`review-packet-${randomUUID()}`,creatorId,createdAt:this.now(),fingerprint,runId,candidates:selected.length,characters,estimatedTokens:null,modelStatus:"not_called",executable:false,executionBlocked:true,payload};this.stmt("INSERT INTO review_packets VALUES(?,?,?)").run(packet.id,fingerprint,JSON.stringify(packet));return packet;
   });}
   demoChange(productId:string,expectedRevision:number,change:"raise_price"|"lower_price"|"offer_unavailable"|"offer_available",requestId?:string):{result:ImportResult;product:MatchProduct;message:string} {return this.transaction(()=>{
+    if(this.dataset.mode!=="synthetic-local")throw new MatchingError(403,"synthetic_only","离线真实数据不能使用合成事实修改功能。");
     text(productId,"productId",100);integer(expectedRevision,"expectedRevision");choice(change,["raise_price","lower_price","offer_unavailable","offer_available"],"change");const requestHash=hash({productId,expectedRevision,change});
     if(requestId){text(requestId,"requestId",150);const cached=this.stmt("SELECT request_hash,data FROM matching_requests WHERE id=?").get(requestId) as {request_hash:string;data:string}|undefined;if(cached){if(cached.request_hash!==requestHash)throw new MatchingError(409,"request_conflict","同一个请求 ID 不能用于不同修改。");const original=JSON.parse(cached.data) as {result:ImportResult;product:MatchProduct;message:string};const current=this.entity<MatchProduct>("products",productId);return {...original,product:current,message:current.commercialRevision!==original.product.commercialRevision||current.semanticRevision!==original.product.semanticRevision?"原请求已经处理；显示当前商品条件，没有重复修改。":original.message};}}
     const p=this.entity<MatchProduct>("products",productId);if(!p.id.startsWith("synthetic-product-")||!p.source.ref.startsWith("synthetic:"))throw new MatchingError(403,"synthetic_only","演示修改仅能应用于生成的合成事实。");if(p.commercialRevision!==expectedRevision)throw new MatchingError(409,"revision_conflict","商品条件已变化，请刷新后重试。");

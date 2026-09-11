@@ -29,7 +29,7 @@ npm run typecheck
 npm test
 ```
 
-`npm test` 运行76项检查（新增25项匹配存储与3项匹配接口检查，原48项保留）；`npm run test:runtime` 只运行后两组。覆盖进程恢复、关系接管、版本/租约、重复入站、上下文隔离与逐组件结果核验。它不验证真实平台或模型效果。浏览器与视觉验收记录见仓库根目录 `design-qa.md`。
+`npm test` 运行92项检查；`npm run test:matching`运行44项匹配/导入/迁移检查，`npm run test:runtime`只运行本地运行底座相关检查。覆盖进程恢复、关系接管、版本/租约、重复入站、上下文隔离、意大利字段适配与逐组件结果核验。它不验证真实平台或模型效果。浏览器与视觉验收记录见仓库根目录 `design-qa.md`。
 
 ## 七个页面
 
@@ -50,6 +50,8 @@ npm test
 侧栏“机会与货盘”进入新匹配入口。支持商品/达人双向分页检索，显式选择一发/二发来源，查看事实、完整Offer及缺项，准备单关系少量候选评审包；不调用模型或发送。数据保存在 `var/matching.sqlite`，可通过 `BDHUB_AGENT_MATCHING_DB` 设置独立验证库。
 
 `npm run test:matching` 运行匹配检查，`npm run benchmark:matching -- --large` 使用临时合成库验证1k/10k与10k/50k规模，不读旧库。详细口径见 [结构匹配实现](../../docs/implementation/structured-matching-v1.md)。
+
+意大利真实离线入口：`/opportunities?mode=matching&dataset=italy`。首次运行`npm run import:italy`，固定读取旧项目意大利研究快照、写入新项目`var/matching-italy.sqlite`并运行已知证据回放。脚本不接受自选旧数据库写入路径，不调用旧业务服务/模型/发送器；缺资料库时API报错，不生成示例冒充。默认`dataset=demo`保留原合成数据和待恢复请求。[结果与字段边界](../../docs/implementation/italy-offline-matching.md)。
 
 ## 本地运行体验
 

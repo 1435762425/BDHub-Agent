@@ -11,7 +11,8 @@
     "test:runtime": "node --experimental-strip-types --test tests/runtime-*.test.mjs",
     "runtime:worker": "node --experimental-strip-types scripts/runtime-worker.ts",
     "test:matching": "node --experimental-strip-types --test tests/matching-*.test.mjs",
-    "benchmark:matching": "node --experimental-strip-types scripts/matching-benchmark.ts"
+    "benchmark:matching": "node --experimental-strip-types scripts/matching-benchmark.ts",
+    "import:italy": "node --experimental-strip-types scripts/import-italy-matching.ts"
   },
   "dependencies": {
     "apexcharts": "4.7.0",

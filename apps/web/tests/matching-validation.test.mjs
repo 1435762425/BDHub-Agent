@@ -7,6 +7,11 @@ test("matching query limits remain bounded and market-scoped",()=>{
   assert.equal(q.options.market,"mx");assert.equal(q.options.limit,20);
   for(const query of ["market=unknown","limit=5000","limit=-1","offset=-1","q="+"a".repeat(121),"path=/tmp/secret"]){assert.throws(()=>parseMatchingQuery("http://local/?"+query));}
 });
+test("dataset selection is an allowlist and cannot name files or repeat selectors",()=>{
+  assert.equal(parseMatchingQuery("http://local/api/matching").dataset,"demo");
+  assert.equal(parseMatchingQuery("http://local/api/matching?dataset=italy").dataset,"italy");
+  for(const query of ["dataset=../../old.sqlite","dataset=it","dataset=italy&dataset=demo","view=stats&view=creators"])assert.throws(()=>parseMatchingQuery("http://local/?"+query));
+});
 test("recall cannot request unbounded pairs, arbitrary paths or actions",()=>{
   const command={type:"recall",query:{direction:"product",subjectId:"product-mx-001",source:"second",limit:20}};
   assert.equal(parseMatchingCommand({requestId:"r1",command}).command.query.source,"second");

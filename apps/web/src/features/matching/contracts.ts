@@ -1,7 +1,7 @@
 export type MatchMarket = "mx" | "br" | "it";
 export type MatchCurrency = "MXN" | "BRL" | "EUR";
 export type ContentFormat = "video" | "live";
-export interface FactSource {ref:string; observedAt:number; windowStart:number|null; windowEnd:number|null;}
+export interface FactSource {ref:string; observedAt:number; windowStart:number|null; windowEnd:number|null; windowBasis?:"calendar_date_unknown_timezone";}
 export interface MatchProduct {
   id:string; market:MatchMarket; pid:string; title:string; image:string;
   categories:string[]; formats:ContentFormat[]; description:string;
@@ -17,10 +17,11 @@ export interface MatchOffer {
   source:FactSource; version:number;
 }
 export interface MatchCreator {
-  id:string; market:MatchMarket; oecId:string; name:string; avatar:string;
+  id:string; market:MatchMarket; oecId:string|null; name:string; avatar:string;
+  externalIdentity?:{namespace:"kalodata";id:string};
   categories:string[]; formats:ContentFormat[]; bio:string;
   priceMinMinor:number|null; priceMaxMinor:number|null; currency:MatchCurrency;
-  control:"auto"|"human"|"paused"; marketingStopped:boolean;
+  control:"auto"|"human"|"paused"|"unknown"; marketingStopped:boolean|null;
   source:FactSource; semanticRevision:number; relationRevision:number;
 }
 export interface ProductEvidence {
@@ -36,8 +37,12 @@ export type CreatorInput = Omit<MatchCreator,"semanticRevision"|"relationRevisio
 export type OfferInput = Omit<MatchOffer,"version">;
 export interface MatchingBatch {products?:ProductInput[]; creators?:CreatorInput[]; offers?:OfferInput[]; evidence?:ProductEvidence[]; demands?:CreatorDemand[];}
 export interface ImportResult {inserted:number; updated:number; unchanged:number; semanticChanges:number; commercialChanges:number; relationChanges:number;}
+export interface MatchingDataset {
+  id:string; mode:"synthetic-local"|"imported-offline"; label:string;
+  importedAt:number|null; sourceRefs:string[]; warnings:string[];
+}
 export interface MatchingStats {
-  mode:"synthetic-local"; products:number; creators:number; offers:number; evidence:number;
+  mode:MatchingDataset["mode"]; dataset:MatchingDataset; products:number; creators:number; offers:number; evidence:number;
   demands:number; runs:number; packets:number; semanticBuilds:number;
   llmCalls:0; billedTokens:0; matchingVersion:string;
 }
@@ -63,7 +68,7 @@ export interface MatchRun {
 export interface ReviewPacket {
   id:string; creatorId:string; createdAt:number; fingerprint:string; runId:string;
   candidates:number; characters:number; estimatedTokens:null;
-  modelStatus:"not_called"; executable:false; payload:Record<string,unknown>;
+  modelStatus:"not_called"; executable:false; executionBlocked:true; payload:Record<string,unknown>;
 }
 export type MatchingCommand =
   | {type:"recall"; query:RecallQuery}

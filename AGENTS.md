@@ -13,6 +13,8 @@
 
 匹配实现与基准见 `docs/implementation/structured-matching-v1.md`。
 
+意大利已有数据的离线测试已获授权并完成首轮，见 `docs/implementation/italy-offline-matching.md`。`dataset=italy` 使用独立 `var/matching-italy.sqlite`：5商品/48达人/50同品边，无可执行Offer。OEC与关系控制/拒联未知，不从Kalodata ID或历史handle交集补成已验证身份；只组织离线证据，不发送、不调用模型。真实数据测试与合成库的万级容量基准是不同验收。
+
 本地运行入口：`http://127.0.0.1:5198/workspace?mode=local`；原界面演示：`/overview`。运行和验证命令见 `apps/web/README.md`，底座边界见 `docs/implementation/local-runtime-v1.md`。数据库在新项目 `var/runtime.sqlite`，不进入 Git。Web 与 Worker 必须指向同一文件；不通过删除库或重发解决未知结果。SQLite 是单机验证适配，不锁定正式框架/部署；本地模拟回执不作为生产验收证据。
 
 入口：`README.md`。研究证据保存在 `docs/research/`，不会自动成为生效商业规则。
