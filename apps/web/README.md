@@ -1,6 +1,6 @@
 # BDHub-Agent 前端原型
 
-访问 **[本地运行](http://127.0.0.1:5198/workspace?mode=local)** 或[界面演示](http://127.0.0.1:5198/overview)。这是基于 TailAdmin Next.js 免费 MIT 版的可操作界面原型，用于验证经营流程、信息组织和状态表达。
+访问 **[匹配工作台](http://127.0.0.1:5198/opportunities?mode=matching)**、**[本地运行](http://127.0.0.1:5198/workspace?mode=local)** 或[界面演示](http://127.0.0.1:5198/overview)。这是基于 TailAdmin Next.js 免费 MIT 版的可操作界面原型，用于验证经营流程、信息组织和状态表达。
 
 所有业务数据均为示例，不调用真实模型或 TikTok/WhatsApp，不读取或修改旧 BDHub。原七页演示仍使用 localStorage；新增本地运行工作台使用独立 SQLite 和 Worker，保存事件、计划、控制、任务、组件尝试与回执。没有生产认证、真实连接器或生产 Agent 框架。
 
@@ -29,7 +29,7 @@ npm run typecheck
 npm test
 ```
 
-`npm test` 运行 19 项原型状态测试、24 项 SQLite 运行核心集成测试和 5 项接口边界测试；`npm run test:runtime` 只运行后两组。覆盖进程恢复、关系接管、版本/租约、重复入站、上下文隔离与逐组件结果核验。它不验证真实平台或模型效果。浏览器与视觉验收记录见仓库根目录 `design-qa.md`。
+`npm test` 运行76项检查（新增25项匹配存储与3项匹配接口检查，原48项保留）；`npm run test:runtime` 只运行后两组。覆盖进程恢复、关系接管、版本/租约、重复入站、上下文隔离与逐组件结果核验。它不验证真实平台或模型效果。浏览器与视觉验收记录见仓库根目录 `design-qa.md`。
 
 ## 七个页面
 
@@ -44,6 +44,12 @@ npm test
 | `/settings` | 系统设置 | 资源设置表单与校验、市场/渠道接入状态和运行原则 |
 
 全局提供搜索（`⌘/Ctrl K`）、市场选择、最近动态、明暗主题、导航折叠和体验导览。表单、抽屉、弹层及页面共享同一份模拟关系状态。
+
+## 新匹配工作台
+
+侧栏“机会与货盘”进入新匹配入口。支持商品/达人双向分页检索，显式选择一发/二发来源，查看事实、完整Offer及缺项，准备单关系少量候选评审包；不调用模型或发送。数据保存在 `var/matching.sqlite`，可通过 `BDHUB_AGENT_MATCHING_DB` 设置独立验证库。
+
+`npm run test:matching` 运行匹配检查，`npm run benchmark:matching -- --large` 使用临时合成库验证1k/10k与10k/50k规模，不读旧库。详细口径见 [结构匹配实现](../../docs/implementation/structured-matching-v1.md)。
 
 ## 本地运行体验
 

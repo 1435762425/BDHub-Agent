@@ -2,7 +2,9 @@
 
 独立的 Agent 驱动达人经营系统。目标是以 1–2 人运营墨西哥、巴西和意大利的一发、二发及合作服务，逐步迁入必要能力与历史数据，最终可替代旧 BDHub。
 
-打开 **[本地合作工作台](http://127.0.0.1:5198/workspace?mode=local)**，或浏览[原界面演示](http://127.0.0.1:5198/overview)。
+打开 **[新匹配工作台](http://127.0.0.1:5198/opportunities?mode=matching)**，或进入[本地合作工作台](http://127.0.0.1:5198/workspace?mode=local)、[界面演示](http://127.0.0.1:5198/overview)。
+
+结构化匹配已经可运行：商品找达人、达人找商品、精确同款证据、可解释候选与最多5商品的关系评审包。默认72商品/360达人均为合成事实；1万商品/5万达人的三市场分层离线基准P95约32ms，本轮模型调用和计费token为0。[实现与验收](docs/implementation/structured-matching-v1.md)。
 
 新增本地持久运行切片：示例消息、关系控制、任务、上下文和逐组件回执进入独立 SQLite，Worker 在页面关闭后仍可处理，重新启动进程后从原记录继续。当前采用确定性判断和本地模拟平台，未调用真实模型或 TikTok。[运行范围与恢复验证](docs/implementation/local-runtime-v1.md)。
 
@@ -29,6 +31,7 @@ npm run start
 | 产品需求与完成标准 | [详细 PRD](docs/PRD.md) |
 | 已确认条件、待决策问题 | [决策登记](docs/DECISIONS.md) |
 | 架构取舍与落地顺序 | [架构方案](docs/architecture/system-design.md) |
+| 匹配实现与规模验证 | [结构召回实现](docs/implementation/structured-matching-v1.md) |
 | 新匹配体系与 token 预算 | [匹配设计与测算](docs/architecture/matching-and-token-budget.md) |
 | 单 Agent、按需协作、上下文与 Skills | [Agent 运行合同](docs/architecture/agent-runtime.md) |
 | Mac 与服务器承载判断 | [部署与容量](docs/architecture/deployment-capacity.md) |
@@ -48,7 +51,7 @@ npm run start
 - 当前 Mac：持续开机运行。服务器迁移不预设为必要条件，按实际平台会话与负载验证决定。
 - 已确认架构基线：关系 Agent＋程序调度与执行＋按需专家；长期业务数据自控，模型只取当前必要上下文。
 - 已选 UI：T03 TailAdmin Next.js 免费 MIT 版，缺页自建；来源和版本已固定，无 Pro 购买依赖。
-- 匹配设计：按1k–10k商品、上万达人重新设计，结构/精确PID召回＋关系级模型决策＋增量特征复用；已完成预算工具，尚未实现生产匹配器或选择模型。
+- 匹配设计：按1k–10k商品、上万达人重新设计，结构/精确PID召回＋关系级模型决策＋增量特征复用；已完成预算工具、结构召回与本地评审包；真实数据质量、生产匹配器与模型选择仍待验证。
 - 未决：具体 Agent 运行框架、日预算与部署切换条件；不得用前端模拟或研究建议冒充生产能力。
 - 指定资料与 Skills 清理已完成，保留可恢复归档。业务执行器、账号、商业规则和模型费用范围须在试点启用时明确。
 
