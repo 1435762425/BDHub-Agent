@@ -6,7 +6,7 @@
 
 新增本地持久运行切片：示例消息、关系控制、任务、上下文和逐组件回执进入独立 SQLite，Worker 在页面关闭后仍可处理，重新启动进程后从原记录继续。当前采用确定性判断和本地模拟平台，未调用真实模型或 TikTok。[运行范围与恢复验证](docs/implementation/local-runtime-v1.md)。
 
-原型基于真实 **TailAdmin Next.js Free 2.3.0（MIT）**，缺少的业务页面自行实现。七个入口贯通经营目标、二发/一发机会、合作会话、人工决定、MX 历史接续、话术策略与结果查看。所有人物、商品和消息均为示例；原七页演示保留浏览器状态，本地运行入口使用独立持久服务。尚未接入真实模型、生产业务数据库或平台执行。旧系统保持只读，此前两套生成 UI 均未采用。
+原型基于真实 **TailAdmin Next.js Free 2.3.0（MIT）**，缺少的业务页面自行实现。七个入口贯通经营目标、二发/一发机会、合作会话、人工决定、MX 历史接续、话术策略与结果查看。所有人物、商品和消息均为示例；原七页演示保留浏览器状态，本地运行入口使用独立持久服务。尚未接入真实模型、生产业务数据库或平台执行。旧系统业务和运行保持只读；本轮仅清理已授权资料/Skills，此前两套生成 UI 均未采用。
 
 ## 启动与体验
 
@@ -29,6 +29,7 @@ npm run start
 | 产品需求与完成标准 | [详细 PRD](docs/PRD.md) |
 | 已确认条件、待决策问题 | [决策登记](docs/DECISIONS.md) |
 | 架构取舍与落地顺序 | [架构方案](docs/architecture/system-design.md) |
+| 新匹配体系与 token 预算 | [匹配设计与测算](docs/architecture/matching-and-token-budget.md) |
 | 单 Agent、按需协作、上下文与 Skills | [Agent 运行合同](docs/architecture/agent-runtime.md) |
 | Mac 与服务器承载判断 | [部署与容量](docs/architecture/deployment-capacity.md) |
 | 必要旧接口与事实来源 | [接口迁入清单](docs/contracts/legacy-interface-inventory.md) |
@@ -38,7 +39,7 @@ npm run start
 | 已选 TailAdmin 的设计推进 | [设计执行稿](design/tailadmin-design-brief.md) · [14视图映射](design/tailadmin-page-map.md) · [许可核对与历史研究](docs/research/tailadmin-license-review.md) |
 | UI 模板研究归档 | [图文选择目录](design/template-catalog.html) · [模板研究](docs/research/ui-template-options.md) |
 | 公开 Agent 案例与反证 | [案例复核](docs/research/agent-cases-review.md) |
-| 旧文件和自定义 Skills 整理 | [清理登记](docs/research/cleanup-register.md) |
+| 旧文件和自定义 Skills 整理 | [清理结果与恢复清单](docs/research/cleanup-register.md) |
 
 ## 项目状态
 
@@ -47,8 +48,9 @@ npm run start
 - 当前 Mac：持续开机运行。服务器迁移不预设为必要条件，按实际平台会话与负载验证决定。
 - 已确认架构基线：关系 Agent＋程序调度与执行＋按需专家；长期业务数据自控，模型只取当前必要上下文。
 - 已选 UI：T03 TailAdmin Next.js 免费 MIT 版，缺页自建；来源和版本已固定，无 Pro 购买依赖。
-- 未决：具体 Agent 运行框架及部署切换条件；不得用前端模拟或研究建议冒充生产能力。
-- 清理候选尚未删除。业务执行器、账号、商业规则和模型费用范围须在试点启用时明确。
+- 匹配设计：按1k–10k商品、上万达人重新设计，结构/精确PID召回＋关系级模型决策＋增量特征复用；已完成预算工具，尚未实现生产匹配器或选择模型。
+- 未决：具体 Agent 运行框架、日预算与部署切换条件；不得用前端模拟或研究建议冒充生产能力。
+- 指定资料与 Skills 清理已完成，保留可恢复归档。业务执行器、账号、商业规则和模型费用范围须在试点启用时明确。
 
 文档区只保存筛选后的需求、契约和证据索引，应用代码集中在 `apps/web`。旧项目的长篇交接、历史设计图、检查转储和原始业务数据不整包复制。默认先读当前需求与相关决策，再按任务读取一份架构或接口文件。
 
