@@ -2,9 +2,11 @@
 
 独立的 Agent 驱动达人经营系统。目标是以 1–2 人运营墨西哥、巴西和意大利的一发、二发及合作服务，逐步迁入必要能力与历史数据，最终可替代旧 BDHub。
 
-打开可操作的前端原型：**[BDHub-Agent 今日经营](http://127.0.0.1:5198/overview)**。
+打开 **[本地合作工作台](http://127.0.0.1:5198/workspace?mode=local)**，或浏览[原界面演示](http://127.0.0.1:5198/overview)。
 
-原型基于真实 **TailAdmin Next.js Free 2.3.0（MIT）**，缺少的业务页面自行实现。七个入口贯通经营目标、二发/一发机会、合作会话、人工决定、MX 历史接续、话术策略与结果查看。所有人物、商品和消息均为示例，操作只保存到当前浏览器；尚未接入真实模型、业务数据库或平台执行。旧系统保持只读，此前两套生成 UI 均未采用。
+新增本地持久运行切片：示例消息、关系控制、任务、上下文和逐组件回执进入独立 SQLite，Worker 在页面关闭后仍可处理，重新启动进程后从原记录继续。当前采用确定性判断和本地模拟平台，未调用真实模型或 TikTok。[运行范围与恢复验证](docs/implementation/local-runtime-v1.md)。
+
+原型基于真实 **TailAdmin Next.js Free 2.3.0（MIT）**，缺少的业务页面自行实现。七个入口贯通经营目标、二发/一发机会、合作会话、人工决定、MX 历史接续、话术策略与结果查看。所有人物、商品和消息均为示例；原七页演示保留浏览器状态，本地运行入口使用独立持久服务。尚未接入真实模型、生产业务数据库或平台执行。旧系统保持只读，此前两套生成 UI 均未采用。
 
 ## 启动与体验
 
@@ -15,6 +17,8 @@ npm ci
 npm run build
 npm run start
 ```
+
+本地运行还需在另一个终端、同一目录执行 `npm run runtime:worker`。数据库位于新项目 `var/runtime.sqlite`，不清除历史记录。
 
 开发时使用 `npm run dev`；开发和生产预览共用 `127.0.0.1:5198`，同一时间只启动一种。完整命令与演示流程见 [前端说明](apps/web/README.md)。建议先点击页面中的“体验流程”，依次体验 Sofía 的二发合作、Luca 的人工决定和 Camila 的历史接续。“重置演示”可恢复初始示例。
 
@@ -28,7 +32,8 @@ npm run start
 | 单 Agent、按需协作、上下文与 Skills | [Agent 运行合同](docs/architecture/agent-runtime.md) |
 | Mac 与服务器承载判断 | [部署与容量](docs/architecture/deployment-capacity.md) |
 | 必要旧接口与事实来源 | [接口迁入清单](docs/contracts/legacy-interface-inventory.md) |
-| 视觉与交互验收 | [验收报告](design-qa.md) |
+| 本地持久运行 | [范围、命令与恢复验证](docs/implementation/local-runtime-v1.md) |
+| 视觉与交互验收 | [验收报告及当前点验限制](design-qa.md) |
 | 前端原型与来源 | [运行/路由/演示流程](apps/web/README.md) · [源码清单](apps/web/TAILADMIN-SOURCE.json) · [第三方许可](apps/web/THIRD_PARTY_NOTICES.md) |
 | 已选 TailAdmin 的设计推进 | [设计执行稿](design/tailadmin-design-brief.md) · [14视图映射](design/tailadmin-page-map.md) · [许可核对与历史研究](docs/research/tailadmin-license-review.md) |
 | UI 模板研究归档 | [图文选择目录](design/template-catalog.html) · [模板研究](docs/research/ui-template-options.md) |
@@ -38,7 +43,7 @@ npm run start
 ## 项目状态
 
 - 已确认：独立目录与 Git 仓库；旧 BDHub 不修改；三市场、TikTok IM 首发、后续 WhatsApp；范围内自主经营；1–2 人；无固定业务日触达上限。
-- 已完成：旧资料与 Skills 只读审计、必要接口盘点、真实模板及官方 Agent 案例研究、PRD/架构设计、七路由前端原型。
+- 已完成：旧资料与 Skills 只读审计、必要接口盘点、真实模板及官方 Agent 案例研究、PRD/架构设计、七路由前端原型、单关系本地持久运行切片。
 - 当前 Mac：持续开机运行。服务器迁移不预设为必要条件，按实际平台会话与负载验证决定。
 - 已确认架构基线：关系 Agent＋程序调度与执行＋按需专家；长期业务数据自控，模型只取当前必要上下文。
 - 已选 UI：T03 TailAdmin Next.js 免费 MIT 版，缺页自建；来源和版本已固定，无 Pro 购买依赖。

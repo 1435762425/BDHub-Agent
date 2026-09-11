@@ -275,7 +275,7 @@ export default function WorkspacePage({ initialCaseId }: { initialCaseId?: strin
   }
 
   return <>
-    <PageHeading title="合作工作台" description="每段对话，都连着一个清楚的下一步。" action={<Button variant="outline" onClick={() => openEvents()}><Icon name="bolt" className="size-4" />演示事件</Button>} />
+    <PageHeading title="合作工作台" description="每段对话，都连着一个清楚的下一步。" action={<div className="flex flex-wrap gap-3"><Button onClick={() => go("workspace", {mode:"local"})}><Icon name="agent" className="size-4" />进入本地运行</Button><Button variant="outline" onClick={() => openEvents()}><Icon name="bolt" className="size-4" />演示事件</Button></div>} />
 
     <div className="mb-4 flex flex-wrap items-center gap-x-5 gap-y-2 text-xs text-gray-500">
       <span className="flex items-center gap-2"><span className="size-1.5 rounded-full bg-brand-500" />{marketCases.filter((item) => item.status !== "closed").length} 项正在合作</span>

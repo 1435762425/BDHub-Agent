@@ -7,7 +7,9 @@
     "build": "NEXT_TELEMETRY_DISABLED=1 next build --webpack",
     "start": "NEXT_TELEMETRY_DISABLED=1 next start --hostname 127.0.0.1 --port 5198",
     "typecheck": "tsc --noEmit",
-    "test": "node --experimental-strip-types --test tests/model.test.mjs"
+    "test": "node --experimental-strip-types --test tests/*.test.mjs",
+    "test:runtime": "node --experimental-strip-types --test tests/runtime-*.test.mjs",
+    "runtime:worker": "node --experimental-strip-types scripts/runtime-worker.ts"
   },
   "dependencies": {
     "apexcharts": "4.7.0",
@@ -18,11 +20,14 @@
   "devDependencies": {
     "@svgr/webpack": "8.1.0",
     "@tailwindcss/postcss": "4.1.17",
-    "@types/node": "20.19.25",
+    "@types/node": "22.20.2",
     "@types/react": "19.2.1",
     "@types/react-dom": "19.2.2",
     "postcss": "8.5.23",
     "tailwindcss": "4.1.17",
     "typescript": "5.9.3"
+  },
+  "engines": {
+    "node": ">=22.18.0"
   }
 }

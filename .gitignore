@@ -4,7 +4,8 @@
 !.env.example
 secrets/
 credentials/
-runtime/
+/runtime/
+/var/
 private-data/
 *.log
 __pycache__/

@@ -1,6 +1,6 @@
 # BDHub-Agent
 
-本仓库用于建设独立运行、最终可替代旧 BDHub 的 Agent 驱动达人经营系统。已完成 PRD、架构设计和 `apps/web` 可运行前端原型；UI 已选择 T03 TailAdmin Next.js 免费 MIT 版，缺少的业务页面自行实现。原型仅使用示例数据和浏览器本地状态，未连接业务后端、真实模型或平台执行。
+本仓库用于建设独立运行、最终可替代旧 BDHub 的 Agent 驱动达人经营系统。已完成 PRD、架构设计和 `apps/web` 可运行前端原型；UI 已选择 T03 TailAdmin Next.js 免费 MIT 版，缺少的业务页面自行实现。原七页演示保留浏览器状态；`/workspace?mode=local` 已接入新项目独立 SQLite 与持久 Worker，使用确定性 Planner/模拟平台。尚未连接真实模型或真实平台。
 
 - 当前需求以 `docs/PRD.md` 为准，已确认与未决选择见 `docs/DECISIONS.md`。只读取本次任务需要的资料，不把全部研究报告默认装入上下文。
 - 墨西哥、巴西、意大利，先 TikTok IM，后 WhatsApp；一发、二发、回复到合作结果；1–2 人运营。日触达不设固定业务硬上限，真实平台和资源约束仍有效。
@@ -11,6 +11,6 @@
 - 开发 Skills 与产品 Agent 的业务 Skills 分开。只创建有明确场景、输入输出和评估价值的能力，不批量安装或复制通用规则包。
 - 测试与变更相称；研究文件检查引用、口径和契约，业务实现覆盖真实状态与恢复条件。UI 遵循已固定 TailAdmin Free 2.3.0 的视觉与基础组件；不沿用已否定生成图。源码来源、改动与许可见 `apps/web/TAILADMIN-SOURCE.json`、`LICENSE` 和 `THIRD_PARTY_NOTICES.md`，不引入 Pro 源码。
 
-前端入口：`http://127.0.0.1:5198/overview`；运行和验证命令见 `apps/web/README.md`。界面中的发送、核验、历史接续和策略运行均为模拟状态转换，不能当作生产验收证据。
+本地运行入口：`http://127.0.0.1:5198/workspace?mode=local`；原界面演示：`/overview`。运行和验证命令见 `apps/web/README.md`，底座边界见 `docs/implementation/local-runtime-v1.md`。数据库在新项目 `var/runtime.sqlite`，不进入 Git。Web 与 Worker 必须指向同一文件；不通过删除库或重发解决未知结果。SQLite 是单机验证适配，不锁定正式框架/部署；本地模拟回执不作为生产验收证据。
 
 入口：`README.md`。研究证据保存在 `docs/research/`，不会自动成为生效商业规则。
