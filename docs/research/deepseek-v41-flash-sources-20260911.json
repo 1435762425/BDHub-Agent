@@ -1,0 +1,20 @@
+{
+  "sources": [
+    {
+      "url": "https://api-docs.deepseek.com/zh-cn/quick_start/pricing",
+      "checked_on": "2026-09-11",
+      "sha256": "a1602748f50a9baacd416f4b831438896ba1351160f1f9afe89a9423c4b76cf3"
+    },
+    {
+      "url": "https://api-docs.deepseek.com/zh-cn/guides/thinking_mode",
+      "checked_on": "2026-09-11",
+      "sha256": "74648d1f52d0ec6e09fdee7b56c78b44c6ecc8033d18bc39e0bf8b668b313b92"
+    },
+    {
+      "url": "https://api-docs.deepseek.com/zh-cn/guides/kv_cache",
+      "checked_on": "2026-09-11",
+      "sha256": "757813294d61d9addad3eded361f2765d0bd58ad05fa256fa494d45f5ff0f3af"
+    }
+  ],
+  "note": "Public official pages retrieved with certificate-verifying system curl. Raw HTML not retained in project context."
+}

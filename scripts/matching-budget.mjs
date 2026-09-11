@@ -39,11 +39,46 @@ export function estimateMatchingBudget(overrides={}) {
   };
 }
 
+export const deepseekFlashPricing = Object.freeze({
+  checkedOn:"2026-09-11", model:"DeepSeek-V4.1-Flash", apiModel:"deepseek-flash", currency:"CNY",
+  source:"https://api-docs.deepseek.com/zh-cn/quick_start/pricing",
+  offPeak:{inputMiss:1,inputHit:0.02,output:4},
+  peak:{inputMiss:2,inputHit:0.04,output:8},
+  peakHours:"北京时间周一至周五09:00–12:00、14:00–18:00；其余为空闲时段",
+});
+
+export function estimateDeepSeekFlashBudget(overrides={}, {inputCacheHitRatio=0,extraReasoningTokensPerDecision=0}={}) {
+  if(!Number.isFinite(inputCacheHitRatio)||inputCacheHitRatio<0||inputCacheHitRatio>1)throw new Error("Cache ratio must be in [0,1]");
+  if(!Number.isSafeInteger(extraReasoningTokensPerDecision)||extraReasoningTokensPerDecision<0)throw new Error("Extra reasoning tokens must be a nonnegative integer");
+  const base=estimateMatchingBudget(overrides),p=base.parameters;
+  const input=base.daily.inputTokens;
+  const hit=Math.round(input*inputCacheHitRatio),miss=input-hit;
+  const output=base.daily.outputTokens+base.decisions*extraReasoningTokensPerDecision;
+  const price=tier=>(miss*tier.inputMiss+hit*tier.inputHit+output*tier.output)/1e6;
+  const initialInput=base.initial.extractions*p.extractionInput;
+  const initialOutput=base.initial.extractions*p.extractionOutput;
+  return {pricing:deepseekFlashPricing,products:p.products,creators:p.creators,dailyDecisions:p.dailyDecisions,
+    paidDecisionCalls:base.decisions,featureExtractionCalls:base.extractions,
+    inputTokens:input,cacheHitTokens:hit,cacheMissTokens:miss,outputTokens:output,
+    extraReasoningTokensPerDecision,
+    dailyCny:{offPeak:price(deepseekFlashPricing.offPeak),peak:price(deepseekFlashPricing.peak)},
+    monthly30DaysCny:{offPeak:price(deepseekFlashPricing.offPeak)*30,weekdaysPeak:price(deepseekFlashPricing.peak)*22+price(deepseekFlashPricing.offPeak)*8},
+    monthAssumption:"30天=22个工作日+8个周末；上端仅工作日按高峰，周末按空闲",
+    initialFeatureExtractionCny:{offPeak:(initialInput+initialOutput*4)/1e6,peak:(initialInput*2+initialOutput*8)/1e6},
+    excluded:{dailyEmbeddingTokens:base.daily.embeddingTokens,initialEmbeddingTokens:base.initial.embeddingTokens},
+    scope:"仅匹配/首轮话术与增量特征提取；不含向量、后续多轮服务、图片/视频模型、采集或主机。无真实API调用。",
+  };
+}
+
 if(process.argv[1]&&import.meta.url===pathToFileURL(process.argv[1]).href) {
   const scenarios=[
     {label:"较小",products:1000,creators:10000,dailyDecisions:500},
     {label:"常用测算",products:5000,creators:20000,dailyDecisions:2000},
     {label:"压力假设",products:10000,creators:50000,dailyDecisions:5000},
   ];
-  console.log(JSON.stringify({notice:"所有单价、变化率和用量均为规划占位参数，不是当前模型报价或平台发送能力。只计匹配和首轮话术，不含后续多轮对话/采集/主机费用。",scenarios:scenarios.map(({label,...p})=>({label,...estimateMatchingBudget(p)}))},null,2));
+  const args=process.argv.slice(2);
+  if(args.length && !(args.length===2&&args[0]==="--model"&&args[1]==="deepseek-flash"))throw new Error("Usage: node scripts/matching-budget.mjs [--model deepseek-flash]");
+  console.log(JSON.stringify(args.length
+    ? {notice:"DeepSeek官方人民币报价；用量为原规划假设，按无缓存、200计费输出测算，不代表默认思考模式的实际用量。",scenarios:scenarios.map(({label,...p})=>({label,...estimateDeepSeekFlashBudget(p)}))}
+    : {notice:"所有单价、变化率和用量均为规划占位参数，不是当前模型报价或平台发送能力。只计匹配和首轮话术，不含后续多轮对话/采集/主机费用。",scenarios:scenarios.map(({label,...p})=>({label,...estimateMatchingBudget(p)}))},null,2));
 }
