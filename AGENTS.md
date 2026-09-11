@@ -21,4 +21,6 @@
 
 本地运行入口：`http://127.0.0.1:5198/workspace?mode=local`；原界面演示：`/overview`。运行和验证命令见 `apps/web/README.md`，底座边界见 `docs/implementation/local-runtime-v1.md`。数据库在新项目 `var/runtime.sqlite`，不进入 Git。Web 与 Worker 必须指向同一文件；不通过删除库或重发解决未知结果。SQLite 是单机验证适配，不锁定正式框架/部署；本地模拟回执不作为生产验收证据。
 
+意大利二发新切片：`/workspace?mode=second`、`/results?mode=second`，使用独立`var/second-italy.sqlite`。48位来源达人/50同品边→48条有来源的意语程序稿→冻结→本地模拟传输；真实发送0。27个历史handle映射仅提示，0个已核验收件OEC；历史Offer与卡不当当前承诺。真实实测范围尚待使用者明确，不能把“实测”默认解释为批量外联。见`docs/implementation/italy-second-pilot.md`；使用同一case不能绕过完成/未知状态，暂停保持，Worker以脚本路径定位数据库。
+
 入口：`README.md`。研究证据保存在 `docs/research/`，不会自动成为生效商业规则。

@@ -8,6 +8,8 @@
 
 **[已有画像自动分析](http://127.0.0.1:5198/opportunities?mode=matching&dataset=italy-profiles)** 已补齐3,978人的多类目与经营数据，自动分析1,543个组合；忽略画像年龄，价格带和形式仅参考，人工反馈可选。全量查询、排序和1,377份资料包已自动验证，未调用业务模型或发送。[当前政策与测试](docs/implementation/existing-profile-auto-analysis.md)。
 
+**[意大利二发工作台](http://127.0.0.1:5198/workspace?mode=second)** 已把48位达人/50条同品关系合并成48条意语稿件，支持冻结、持久模拟队列、暂停和未知核验。[结果台](http://127.0.0.1:5198/results?mode=second)保留47条模拟接收及1条故障用例未知；真实发送0。[范围、来源与复现](docs/implementation/italy-second-pilot.md)。
+
 结构化匹配已经可运行：商品找达人、达人找商品、精确同款证据、可解释候选与最多5商品的关系评审包。默认72商品/360达人均为合成事实；1万商品/5万达人的三市场分层离线基准P95约32ms，本轮模型调用和计费token为0。[实现与验收](docs/implementation/structured-matching-v1.md)。
 
 新增本地持久运行切片：示例消息、关系控制、任务、上下文和逐组件回执进入独立 SQLite，Worker 在页面关闭后仍可处理，重新启动进程后从原记录继续。当前采用确定性判断和本地模拟平台，未调用真实模型或 TikTok。[运行范围与恢复验证](docs/implementation/local-runtime-v1.md)。

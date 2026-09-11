@@ -29,7 +29,7 @@ npm run typecheck
 npm test
 ```
 
-`npm test` 运行127项检查；`npm run test:matching`运行79项匹配/导入/迁移/自动分析/人工评审检查，`npm run test:runtime`只运行本地运行底座相关检查。覆盖进程恢复、关系接管、版本/租约、重复入站、上下文隔离、意大利字段适配与逐组件结果核验。它不验证真实平台或模型效果。浏览器与视觉验收记录见仓库根目录 `design-qa.md`。
+`npm test` 运行154项检查；`npm run test:matching`运行79项匹配/导入/迁移/自动分析/人工评审检查，`npm run test:runtime`只运行本地运行底座相关检查。覆盖进程恢复、关系接管、版本/租约、重复入站、上下文隔离、意大利字段适配与逐组件结果核验。它不验证真实平台或模型效果。浏览器与视觉验收记录见仓库根目录 `design-qa.md`。
 
 ## 七个页面
 
@@ -82,3 +82,7 @@ npm test
 ## 模板及资源
 
 使用免费仓库 `TailAdmin/free-nextjs-admin-dashboard` 的 2.3.0，固定提交 `d3526b35fb7e579a4585129fe6eaa47f54ec9a0b`。按需导入主题、基础 UI、图标及演示素材；业务页面和共享对话框自行实现。版权见 [LICENSE](LICENSE)，逐文件来源与改动见 [TAILADMIN-SOURCE.json](TAILADMIN-SOURCE.json)，字体及依赖说明见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+
+## 意大利二发预演
+
+`/workspace?mode=second`和`/results?mode=second`使用真实来源稿件与独立本地模拟器。执行`npm run pilot:italy-second -- --rehearse`导入、测试和状态化续跑，再执行`npm run second:worker`保持队列处理。前置准备调查由新项目`scripts/export-italy-second-readiness.py`只读导出；不复制凭证、不真实发送。同一轮完成/未知不重发，暂停不会误恢复。详见[二发试点](../../docs/implementation/italy-second-pilot.md)。
