@@ -1,0 +1,28 @@
+{
+  "name": "bdhub-agent-web",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "NEXT_TELEMETRY_DISABLED=1 next dev --webpack --hostname 127.0.0.1 --port 5198",
+    "build": "NEXT_TELEMETRY_DISABLED=1 next build --webpack",
+    "start": "NEXT_TELEMETRY_DISABLED=1 next start --hostname 127.0.0.1 --port 5198",
+    "typecheck": "tsc --noEmit",
+    "test": "node --experimental-strip-types --test tests/model.test.mjs"
+  },
+  "dependencies": {
+    "apexcharts": "4.7.0",
+    "next": "16.3.4",
+    "react": "19.2.0",
+    "react-dom": "19.2.0"
+  },
+  "devDependencies": {
+    "@svgr/webpack": "8.1.0",
+    "@tailwindcss/postcss": "4.1.17",
+    "@types/node": "20.19.25",
+    "@types/react": "19.2.1",
+    "@types/react-dom": "19.2.2",
+    "postcss": "8.5.23",
+    "tailwindcss": "4.1.17",
+    "typescript": "5.9.3"
+  }
+}
