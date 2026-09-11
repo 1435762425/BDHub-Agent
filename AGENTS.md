@@ -17,6 +17,8 @@
 
 `dataset=italy-profiles`的一发实验使用另一个`var/matching-italy-profiles.sqlite`，含3,978条7月30日历史OEC画像，不与Kalodata按handle合并，不导入同品销量边。分类保留`CategoryFact`来源与历史/冲突状态；Freegrin分类冲突不自动改标签。人工评审默认未评估，程序或助手不能预填成用户认可；标注不改变执行权。范围见`docs/implementation/italy-first-profile-evaluation.md`。
 
+2026-09-12用户最新分析口径：忽略画像年龄，价格带和内容形式只作参考；依据已有多类目与可比经营数据自动分析，自行完成离线测试，人工标签不是前置条件。原始快照已补齐3,978人的多类目、销量、均播、粉丝和GMV；主动分析与真实执行资格分开。详细规则与全量测试见`docs/implementation/existing-profile-auto-analysis.md`。
+
 本地运行入口：`http://127.0.0.1:5198/workspace?mode=local`；原界面演示：`/overview`。运行和验证命令见 `apps/web/README.md`，底座边界见 `docs/implementation/local-runtime-v1.md`。数据库在新项目 `var/runtime.sqlite`，不进入 Git。Web 与 Worker 必须指向同一文件；不通过删除库或重发解决未知结果。SQLite 是单机验证适配，不锁定正式框架/部署；本地模拟回执不作为生产验收证据。
 
 入口：`README.md`。研究证据保存在 `docs/research/`，不会自动成为生效商业规则。

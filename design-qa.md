@@ -4,6 +4,19 @@
 
 final result: passed
 
+## 已有画像自动分析（2026-09-12）
+
+用户已明确忽略画像年龄、价带和内容形式不作主判断，要求自主测试。本轮主流程改为自动分析及经营指标展示，人工判断作为可选折叠反馈；不以旧的过期或缺参考字段提示阻断结论。
+
+- 实际在主任务CUA打开`dataset=italy-profiles`。Freegrin分类冲突返回0候选；DeepAir生成20个自动分析候选，按可比销量排序，展示多类目、成交件数、平均播放、EUR GMV与粉丝。
+- 实际准备3,361字符单商品关系包，展开核验`analysisPolicy.profileAge=ignore_for_analysis`、`priceBand/contentFormat=context_only`、存在`profileSignals`、`executionBlocked=true`。没有写人工标签或发送消息。
+- 主卡不再将执行readiness黄灯当作分析无法完成；价带、内容形式、来源时间和执行准备放在详情。中文界面主卡使用对齐后的中文类目，原英文标签仍留在来源详情。
+- 视口976×860，DPR=1，页面单列响应；正文/文档宽961（纵向滚动条占位），无横向溢出、损坏图片0。截图实际查看，未将真实达人截图提交Git。最终console error/warn为空。未模拟全部手机尺寸和软键盘。
+- 自动验证覆盖全部3,978达人、3,983次首次与缓存查询、1,377份关系包。最大5,990字符，3款商品的包完整，省略0；全部127测试及类型/生产构建通过。
+- 子Agent没有附着到浏览器提供方，因此其视觉尝试未算通过；以上点验由主任务在已启用CUA完成，没有使用替代自动化通道。
+
+当前结果及复现见[已有画像自动分析](docs/implementation/existing-profile-auto-analysis.md)。本轮验证的是已有事实的自动分析正确性与界面，不声称真实合作转化率。
+
 ## 一发画像与人工评审（2026-09-12）
 
 入口：`/opportunities?mode=matching&dataset=italy-profiles`。桌面渲染与真实资料的只读交互通过；未向真实库写入人工标签。

@@ -2,11 +2,12 @@ import { DatabaseSync, type StatementSync, type SQLInputValue } from "node:sqlit
 import { createHash, randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import type { MatchingBatch, MatchingDataset, MatchMarket, FactSource, MatchProduct, MatchCreator, MatchOffer, ProductInput, CreatorInput, OfferInput, ProductEvidence, CreatorDemand, ImportResult, MatchPage, RecallQuery, MatchRun, MatchCandidate, CandidateSource, ReviewPacket, MatchingStats, AssessmentLabel, CandidateAssessment, AssessmentResponse } from "../../features/matching/contracts.ts";
+import type { MatchingBatch, MatchingDataset, MatchMarket, FactSource, MatchProduct, MatchCreator, MatchOffer, ProductInput, CreatorInput, OfferInput, ProductEvidence, CreatorDemand, ImportResult, MatchPage, RecallQuery, MatchRun, MatchCandidate, CandidateSource, ReviewPacket, MatchingStats, AssessmentLabel, CandidateAssessment, AssessmentResponse, ProfileSignals } from "../../features/matching/contracts.ts";
 import type {CategoryFact} from "../../features/matching/category-facts.ts";
 import { makeMatchingFixture } from "./fixtures.ts";
+import {analysisPolicy,analyzeProfile,orderProfileCandidates,profileRankScope} from "./profile-analysis.ts";
 
-const VERSION="structured-recall-v3",ROUTE_LIMIT=200,FINAL_LIMIT=50,PACKET_LIMIT=6000;
+const VERSION="structured-recall-v4",ROUTE_LIMIT=200,FINAL_LIMIT=50,PACKET_LIMIT=6000;
 const currencies={mx:"MXN",br:"BRL",it:"EUR"} as const;
 type Row={data:string;semantic_hash?:string;commercial_hash?:string;relation_hash?:string};
 type Route={source:CandidateSource;sql:string;args:SQLInputValue[]};
@@ -48,6 +49,14 @@ function categoryFact(value:CategoryFact|undefined,categories:string[]):Category
   return result;
 }
 function productInput(value:ProductInput):ProductInput{const v=value,m=choice(v.market,["mx","br","it"],"market");return {id:text(v.id,"product.id",100),market:m,pid:identity(v.pid,"pid"),title:text(v.title,"title",300),image:optionalText(v.image,"image",500),categories:strings(v.categories,"categories"),...(v.categoryFact!==undefined?{categoryFact:categoryFact(v.categoryFact,v.categories)}:{}),formats:strings(v.formats,"formats",2).map(f=>choice(f,["video","live"],"format")),description:optionalText(v.description,"description"),priceMinor:integer(v.priceMinor,"priceMinor",true),currency:marketCurrency(m,v.currency),source:fact(v.source)};}
+function profileSignals(value:ProfileSignals,market:MatchMarket):ProfileSignals {
+  if(!value||typeof value!=="object"||Array.isArray(value))bad("profileSignals 必须为带来源的对象。");
+  const average=value.avgViews;
+  if(average!==null&&(typeof average!=="number"||!Number.isFinite(average)||average<0||average>Number.MAX_SAFE_INTEGER))bad("profileSignals.avgViews 必须为非负有限数或 null。");
+  const gmv=value.gmvValue===null?null:text(value.gmvValue,"profileSignals.gmvValue",100);
+  if(gmv!==null&&!/^(0|[1-9]\d*)(\.\d+)?$/.test(gmv))bad("画像 GMV 必须保留非负十进制原值字符串。");
+  return {followers:integer(value.followers,"profileSignals.followers",true),unitsSold:integer(value.unitsSold,"profileSignals.unitsSold",true),avgViews:average,gmvValue:gmv,gmvCurrency:value.gmvCurrency===null?null:marketCurrency(market,value.gmvCurrency),periodLabel:value.periodLabel===null?null:text(value.periodLabel,"profileSignals.periodLabel",200),comparisonScope:text(value.comparisonScope,"profileSignals.comparisonScope",200),source:fact(value.source)};
+}
 function creatorInput(value:CreatorInput):CreatorInput{
   const v=value,m=choice(v.market,["mx","br","it"],"market"),min=integer(v.priceMinMinor,"priceMinMinor",true),max=integer(v.priceMaxMinor,"priceMaxMinor",true);
   if(min!==null&&max!==null&&min>max)bad("达人价格带起点大于终点。");
@@ -58,7 +67,7 @@ function creatorInput(value:CreatorInput):CreatorInput{
     externalIdentity={namespace:choice(v.externalIdentity.namespace,["kalodata"],"externalIdentity.namespace"),id:identity(v.externalIdentity.id,"externalIdentity.id")};
   }
   if(oecId===null&&!externalIdentity)bad("OEC 未知时必须提供独立的外部身份，不可用外部 ID 代填 OEC。");
-  return {id:text(v.id,"creator.id",100),market:m,oecId,...(externalIdentity?{externalIdentity}:{}),name:text(v.name,"name",200),avatar:optionalText(v.avatar,"avatar",500),categories:strings(v.categories,"categories"),...(v.categoryFact!==undefined?{categoryFact:categoryFact(v.categoryFact,v.categories)}:{}),formats:strings(v.formats,"formats",2).map(f=>choice(f,["video","live"],"format")),bio:optionalText(v.bio,"bio"),priceMinMinor:min,priceMaxMinor:max,currency:marketCurrency(m,v.currency),control:choice(v.control,["auto","human","paused","unknown"],"control"),marketingStopped:bool(v.marketingStopped,"marketingStopped",true),source:fact(v.source)};
+  return {id:text(v.id,"creator.id",100),market:m,oecId,...(externalIdentity?{externalIdentity}:{}),name:text(v.name,"name",200),avatar:optionalText(v.avatar,"avatar",500),categories:strings(v.categories,"categories"),...(v.categoryFact!==undefined?{categoryFact:categoryFact(v.categoryFact,v.categories)}:{}),...(v.profileSignals!==undefined?{profileSignals:profileSignals(v.profileSignals,m)}:{}),formats:strings(v.formats,"formats",2).map(f=>choice(f,["video","live"],"format")),bio:optionalText(v.bio,"bio"),priceMinMinor:min,priceMaxMinor:max,currency:marketCurrency(m,v.currency),control:choice(v.control,["auto","human","paused","unknown"],"control"),marketingStopped:bool(v.marketingStopped,"marketingStopped",true),source:fact(v.source)};
 }
 function datasetInput(value:MatchingDataset):MatchingDataset{
   if(!value||typeof value!=="object"||Array.isArray(value))bad("dataset 必须是明确的数据集描述。");
@@ -72,7 +81,7 @@ function evidenceInput(v:ProductEvidence):ProductEvidence{return {id:text(v.id,"
 function demandInput(v:CreatorDemand):CreatorDemand{return {id:text(v.id,"demand.id",100),creatorId:text(v.creatorId,"creatorId",100),productId:v.productId===null?null:text(v.productId,"productId",100),categories:strings(v.categories,"categories"),active:bool(v.active,"active")!,source:fact(v.source)};}
 function productSemantic(p:ProductInput){return {title:p.title,categories:p.categories,categoryFact:p.categoryFact??null,formats:p.formats,description:p.description};}
 function productCommercial(p:ProductInput){return {priceMinor:p.priceMinor,currency:p.currency};}
-function creatorSemantic(c:CreatorInput){return {categories:c.categories,categoryFact:c.categoryFact??null,formats:c.formats,bio:c.bio};}
+function creatorSemantic(c:CreatorInput){return {categories:c.categories,categoryFact:c.categoryFact??null,profileSignals:c.profileSignals??null,formats:c.formats,bio:c.bio};}
 function creatorRelation(c:CreatorInput){return {control:c.control,marketingStopped:c.marketingStopped};}
 
 export class MatchingStore {
@@ -116,6 +125,7 @@ export class MatchingStore {
       INSERT OR IGNORE INTO matching_meta VALUES('schema_version',1),('semantic_builds',0);
     `);
     this.migrateIdentitySchema();
+    this.migrateProfileRank();
     this.dataset=this.transaction(()=>{
       const saved=this.stmt("SELECT data FROM matching_dataset WHERE singleton=1").get() as Row|undefined;
       const provided=options.dataset?datasetInput(options.dataset):null;
@@ -142,6 +152,24 @@ export class MatchingStore {
         UPDATE matching_meta SET value=2 WHERE key='schema_version';`);
       if(this.db.prepare("PRAGMA foreign_key_check").all().length)throw new MatchingError(409,"schema_integrity","身份迁移的引用检查未通过。");
     });}finally{this.db.exec("PRAGMA foreign_keys=ON");this.statements.clear();}
+  }
+  private migrateProfileRank() {
+    this.transaction(()=>{
+      this.db.exec(`CREATE TABLE IF NOT EXISTS creator_profile_rank(market TEXT NOT NULL,category TEXT NOT NULL,entity_id TEXT NOT NULL REFERENCES creators(id),category_namespace TEXT NOT NULL,rank_scope TEXT NOT NULL,units_sold INTEGER,avg_views REAL,PRIMARY KEY(market,category,entity_id));
+        CREATE INDEX IF NOT EXISTS creator_profile_category_rank ON creator_profile_rank(market,category,category_namespace,rank_scope,units_sold DESC,avg_views DESC,entity_id);
+        CREATE INDEX IF NOT EXISTS creator_profile_entity ON creator_profile_rank(entity_id);`);
+      if(!this.stmt("SELECT value FROM matching_meta WHERE key='profile_rank_version'").get()) {
+        for(const row of this.stmt("SELECT data FROM creators").all() as Row[])this.indexProfile(JSON.parse(row.data) as MatchCreator);
+        this.stmt("INSERT INTO matching_meta VALUES('profile_rank_version',1)").run();
+      }
+    });
+  }
+  private indexProfile(creator:MatchCreator) {
+    this.stmt("DELETE FROM creator_profile_rank WHERE entity_id=?").run(creator.id);
+    if(creator.categoryFact?.status==="conflict")return;
+    const signals=creator.profileSignals;
+    for(const category of [...(creator.categories.length?creator.categories:["__missing__"]),"__all__"])
+      this.stmt("INSERT INTO creator_profile_rank VALUES(?,?,?,?,?,?,?)").run(creator.market,category,creator.id,creator.categoryFact?.namespace??"",profileRankScope(creator),signals?.unitsSold??null,signals?.avgViews??null);
   }
   close(){this.db.close();}
   private stmt(sql:string){let statement=this.statements.get(sql);if(!statement){statement=this.db.prepare(sql);this.statements.set(sql,statement);}return statement;}
@@ -182,6 +210,7 @@ export class MatchingStore {
       if(this.dataset.mode==="imported-offline"&&c.avatar)bad("离线导入不加载达人远端头像，avatar 必须留空。");
       if(old&&(old.market!==c.market||old.oecId!==c.oecId||stable(old.externalIdentity??null)!==stable(c.externalIdentity??null)))throw new MatchingError(409,"identity_conflict","达人稳定 ID 不能更换市场、OEC 或外部身份；身份核验需独立处理。");
       this.rejectOlder(old,c);
+      if(old?.profileSignals&&c.profileSignals)this.rejectOlder(old.profileSignals,c.profileSignals);
       const semantic=hash(creatorSemantic(c)),relation=hash(creatorRelation(c));
       const next:MatchCreator={...c,semanticRevision:(old?.semanticRevision??0)+(row?.semantic_hash!==semantic?1:0),relationRevision:(old?.relationRevision??0)+(row?.relation_hash!==relation?1:0)};
       if(old&&stable(old)===stable(next)){result.unchanged++;continue;}
@@ -189,6 +218,7 @@ export class MatchingStore {
       this.stmt("INSERT INTO creators VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET price_min=excluded.price_min,price_max=excluded.price_max,name=excluded.name,semantic_hash=excluded.semantic_hash,relation_hash=excluded.relation_hash,data=excluded.data").run(c.id,c.market,c.oecId,c.priceMinMinor,c.priceMaxMinor,c.name,semantic,relation,JSON.stringify(next),c.externalIdentity?.namespace??null,c.externalIdentity?.id??null);
       this.stmt("DELETE FROM creator_categories WHERE entity_id=?").run(c.id);
       for(const category of c.categories.length?c.categories:["__missing__"])this.stmt("INSERT INTO creator_categories VALUES(?,?,?,?,?)").run(c.market,category,c.id,c.priceMinMinor,c.priceMaxMinor);
+      this.indexProfile(next);
       if(old)this.creatorPartitions(old);this.creatorPartitions(next);record(old);
     }
     for(const input of batch.offers??[]) {
@@ -251,8 +281,19 @@ export class MatchingStore {
     return [...keys].sort();
   }
   private fingerprint(q:RecallQuery,dependencies:string[]){return hash({query:q,version:VERSION,dataset:this.dataset,partitions:dependencies.map(key=>[key,(this.stmt("SELECT version FROM partition_versions WHERE key=?").get(key) as {version:number}|undefined)?.version??0])});}
+  private profileRoute(market:MatchMarket,categories:string[],namespace:string|null):{sql:string;args:SQLInputValue[]} {
+    return {sql:`WITH scoped AS (
+      SELECT entity_id id,COUNT(*) overlap,rank_scope,MAX(units_sold) units_sold,MAX(avg_views) avg_views
+      FROM creator_profile_rank INDEXED BY creator_profile_category_rank
+      WHERE market=? AND category IN (${categories.map(()=>"?").join(",")})${namespace===null?"":" AND category_namespace=?"}
+      GROUP BY entity_id
+    ), ranked AS (
+      SELECT id,overlap,rank_scope,ROW_NUMBER() OVER (PARTITION BY overlap,rank_scope ORDER BY units_sold DESC,avg_views DESC,id) lane_position FROM scoped
+    ) SELECT id FROM ranked ORDER BY overlap DESC,lane_position,rank_scope,id`,args:[market,...categories,...(namespace===null?[]:[namespace])]};
+  }
   private routes(q:RecallQuery,s:MatchProduct|MatchCreator):Route[] {
-    const routes:Route[]=[],m=s.market;const add=(source:CandidateSource,sql:string,args:SQLInputValue[])=>routes.push({source,sql:`${sql} LIMIT ${ROUTE_LIMIT}`,args});
+    const routes:Route[]=[],m=s.market,profileFirst=this.dataset.mode==="imported-offline";const add=(source:CandidateSource,sql:string,args:SQLInputValue[])=>routes.push({source,sql:`${sql} LIMIT ${ROUTE_LIMIT}`,args});
+    const addProfile=(source:CandidateSource,categories:string[],namespace:string|null)=>{const route=this.profileRoute(m,categories,namespace);add(source,route.sql,route.args);};
     if(q.direction==="product") {
       const p=s as MatchProduct;
       if(q.source!=="first")add("exact_pid","SELECT creator_id id FROM evidence INDEXED BY evidence_exact WHERE market=? AND pid=? AND units>0 GROUP BY creator_id ORDER BY MAX(units) DESC,creator_id",[m,p.pid]);
@@ -262,10 +303,13 @@ export class MatchingStore {
         if(p.categories.length) {
           const holders=p.categories.map(()=>"?").join(",");
           add("explicit_demand",`SELECT DISTINCT creator_id id FROM demand_categories INDEXED BY demand_category_active WHERE market=? AND category IN (${holders}) AND active=1 ORDER BY creator_id`,[m,...p.categories]);
-          if(p.priceMinor!==null)add("category_price",`SELECT DISTINCT entity_id id FROM creator_categories INDEXED BY creator_category_price WHERE market=? AND category IN (${holders}) AND price_min<=? AND price_max>=? ORDER BY price_min DESC,entity_id`,[m,...p.categories,p.priceMinor,p.priceMinor]);
-          add("category",`SELECT DISTINCT entity_id id FROM creator_categories INDEXED BY creator_category_price WHERE market=? AND category IN (${holders}) ORDER BY entity_id`,[m,...p.categories]);
-          add("cold_start","SELECT DISTINCT entity_id id FROM creator_categories INDEXED BY creator_category_price WHERE market=? AND category='__missing__' ORDER BY entity_id",[m]);
-        } else add("cold_start","SELECT id FROM creators INDEXED BY creators_market_price WHERE market=? ORDER BY price_min,id",[m]);
+          if(profileFirst){addProfile("category",p.categories,p.categoryFact?.namespace??"");addProfile("cold_start",["__missing__"],null);}
+          else {
+            if(p.priceMinor!==null)add("category_price",`SELECT DISTINCT entity_id id FROM creator_categories INDEXED BY creator_category_price WHERE market=? AND category IN (${holders}) AND price_min<=? AND price_max>=? ORDER BY price_min DESC,entity_id`,[m,...p.categories,p.priceMinor,p.priceMinor]);
+            add("category",`SELECT DISTINCT entity_id id FROM creator_categories INDEXED BY creator_category_price WHERE market=? AND category IN (${holders}) ORDER BY entity_id`,[m,...p.categories]);
+            add("cold_start","SELECT DISTINCT entity_id id FROM creator_categories INDEXED BY creator_category_price WHERE market=? AND category='__missing__' ORDER BY entity_id",[m]);
+          }
+        } else if(profileFirst)addProfile("cold_start",["__all__"],null);else add("cold_start","SELECT id FROM creators INDEXED BY creators_market_price WHERE market=? ORDER BY price_min,id",[m]);
       }
     } else {
       const c=s as MatchCreator;
@@ -273,14 +317,14 @@ export class MatchingStore {
       if(q.source!=="second") {
         add("explicit_demand","SELECT DISTINCT product_id id FROM demands INDEXED BY demands_creator WHERE creator_id=? AND active=1 AND product_id IS NOT NULL ORDER BY product_id",[c.id]);
         const demandCats=[...new Set(this.demandsFor(c.id).flatMap(d=>d.categories))];
-        if(demandCats.length)add("explicit_demand",`SELECT DISTINCT entity_id id FROM product_categories INDEXED BY product_category_price WHERE market=? AND category IN (${demandCats.map(()=>"?").join(",")}) ORDER BY price_minor,entity_id`,[m,...demandCats]);
+        if(demandCats.length)add("explicit_demand",`SELECT DISTINCT entity_id id FROM product_categories INDEXED BY product_category_price WHERE market=? AND category IN (${demandCats.map(()=>"?").join(",")}) ORDER BY ${profileFirst?"entity_id":"price_minor,entity_id"}`,[m,...demandCats]);
         if(c.categoryFact?.status==="conflict")return routes;
         if(c.categories.length) {
           const holders=c.categories.map(()=>"?").join(",");
-          if(c.priceMinMinor!==null&&c.priceMaxMinor!==null)add("category_price",`SELECT DISTINCT entity_id id FROM product_categories INDEXED BY product_category_price WHERE market=? AND category IN (${holders}) AND price_minor>=? AND price_minor<=? ORDER BY price_minor,entity_id`,[m,...c.categories,c.priceMinMinor,c.priceMaxMinor]);
-          add("category",`SELECT DISTINCT entity_id id FROM product_categories INDEXED BY product_category_price WHERE market=? AND category IN (${holders}) ORDER BY entity_id`,[m,...c.categories]);
+          if(!profileFirst&&c.priceMinMinor!==null&&c.priceMaxMinor!==null)add("category_price",`SELECT DISTINCT entity_id id FROM product_categories INDEXED BY product_category_price WHERE market=? AND category IN (${holders}) AND price_minor>=? AND price_minor<=? ORDER BY price_minor,entity_id`,[m,...c.categories,c.priceMinMinor,c.priceMaxMinor]);
+          add("category",profileFirst?`SELECT pc.entity_id id FROM product_categories pc INDEXED BY product_category_price JOIN products p ON p.id=pc.entity_id WHERE pc.market=? AND pc.category IN (${holders}) AND COALESCE(json_extract(p.data,'$.categoryFact.namespace'),'')=? GROUP BY pc.entity_id ORDER BY COUNT(*) DESC,pc.entity_id`:`SELECT DISTINCT entity_id id FROM product_categories INDEXED BY product_category_price WHERE market=? AND category IN (${holders}) ORDER BY entity_id`,[m,...c.categories,...(profileFirst?[c.categoryFact?.namespace??""]:[])]);
           add("cold_start","SELECT DISTINCT entity_id id FROM product_categories INDEXED BY product_category_price WHERE market=? AND category='__missing__' ORDER BY entity_id",[m]);
-        } else add("cold_start","SELECT id FROM products INDEXED BY products_market_price WHERE market=? ORDER BY price_minor,id",[m]);
+        } else add("cold_start",`SELECT id FROM products INDEXED BY products_market_price WHERE market=? ORDER BY ${profileFirst?"id":"price_minor,id"}`,[m]);
       }
     }
     return routes;
@@ -299,10 +343,10 @@ export class MatchingStore {
     }
     const priceOverlap=p.priceMinor===null||c.priceMinMinor===null||c.priceMaxMinor===null?null:p.priceMinor>=c.priceMinMinor&&p.priceMinor<=c.priceMaxMinor;
     const formatOverlap=!p.formats.length||!c.formats.length?null:p.formats.some(f=>c.formats.includes(f));
-    const offers=this.offersFor(p.id),now=this.now(),gaps:string[]=[],reasons:string[]=[];
-    if(this.dataset.mode==="imported-offline")gaps.push("离线历史快照：身份、关系控制与商业条件均未核验为当前可执行事实");
-    if(p.categoryFact)gaps.push(`商品分类${p.categoryFact.status==="conflict"?"冲突，已停用":"来自历史标签，需复核"}：${p.categoryFact.note}`);
-    if(c.categoryFact)gaps.push(`达人主类目来自历史快照：${c.categoryFact.note}`);
+    const offers=this.offersFor(p.id),now=this.now(),gaps:string[]=[],reasons:string[]=[],profileFirst=this.dataset.mode==="imported-offline";
+    if(profileFirst)gaps.push("离线历史快照：平台执行、关系控制与商业条件未核验为当前可执行事实；不影响已有画像分析");
+    if(p.categoryFact&&(!profileFirst||p.categoryFact.status==="conflict"))gaps.push(`商品分类${p.categoryFact.status==="conflict"?"冲突，已停用":"来自历史标签，需复核"}：${p.categoryFact.note}`);
+    if(c.categoryFact&&!profileFirst)gaps.push(`达人主类目来自历史快照：${c.categoryFact.note}`);
     if(!compatibleNamespace)gaps.push("分类命名空间不一致，不能按标签相同认定类目适配");
     if(c.oecId===null)gaps.push("OEC 身份未知；外部 Kalodata ID 不能作为发送身份");
     if(c.control==="unknown")gaps.push("人工接管／暂停状态未知，不能推定 Agent 有执行权");
@@ -311,8 +355,10 @@ export class MatchingStore {
     if(evidence.length)reasons.push(`同市场精确 PID 有正销量证据；显示 ${evidence[0].source.ref} 单一观测 ${evidence[0].units} 件，窗口不相加；不证明当前持有样品或接受新条件`);
     if(evidence.some(e=>e.source.windowStart===null||e.source.windowEnd===null))gaps.push("部分销量证据的统计窗口未知");
     if(categoryOverlap)reasons.push(`${p.categoryFact||c.categoryFact?"历史顶级标签相同：":"匹配 "}${categoryOverlap} 个共同类目；需另评适配性`);else gaps.push("缺少共同类目证据，需补充适配判断");
-    if(priceOverlap===true)reasons.push("商品价格在达人同币种价格带内");else gaps.push(priceOverlap===null?"商品价格或达人价格带未知":"价格超出已知价格带，需确认新需求");
-    if(formatOverlap===true)reasons.push("视频／直播内容形式有交集");else gaps.push(formatOverlap===null?"内容形式尚缺证据":"已知内容形式没有交集");
+    if(!profileFirst) {
+      if(priceOverlap===true)reasons.push("商品价格在达人同币种价格带内");else gaps.push(priceOverlap===null?"商品价格或达人价格带未知":"价格超出已知价格带，需确认新需求");
+      if(formatOverlap===true)reasons.push("视频／直播内容形式有交集");else gaps.push(formatOverlap===null?"内容形式尚缺证据":"已知内容形式没有交集");
+    }
     if(!offers.length)gaps.push("尚无活动 Offer");
     if(offers.length===20&&(this.stmt("SELECT COUNT(*) n FROM offers WHERE product_id=?").get(p.id) as {n:number}).n>20)gaps.push("活动 Offer 超过 20 个，当前只展示优先的 20 个方案");
     for(const offer of offers) {
@@ -327,7 +373,8 @@ export class MatchingStore {
     const usable=offers.some(o=>o.startsAt<=now&&o.endsAt>now&&o.stock!==null&&o.stock>0&&o.cardStatus==="verified"&&o.creatorCommissionBps!==null&&o.agencyCommissionBps!==null);
     const unknown=c.oecId===null||c.control==="unknown"||c.marketingStopped===null;
     const suppressed=c.marketingStopped===true||c.control==="human"||c.control==="paused"||(this.dataset.mode==="synthetic-local"&&unknown);
-    return {creator:c,product:p,offers,sources:[...sources].sort(),reasons,gaps,evidenceRefs:[...new Set([p.source.ref,c.source.ref,...evidence.map(e=>e.source.ref),...demands.map(d=>d.source.ref)])],readiness:suppressed?"suppressed":this.dataset.mode==="imported-offline"||!usable||priceOverlap!==true||formatOverlap!==true||!categoryOverlap?"needs_facts":"reviewable",features:{categoryOverlap,priceOverlap,formatOverlap,exactUnits:evidence.length?Math.max(...evidence.map(e=>e.units)):null}};
+    const exactUnits=evidence.length?Math.max(...evidence.map(e=>e.units)):null,analysis=analyzeProfile(p,c,sources,categoryOverlap,exactUnits,analysisPolicy(this.dataset.mode));
+    return {analysis,creator:c,product:p,offers,sources:[...sources].sort(),reasons:profileFirst?analysis.positiveEvidence:reasons,gaps,evidenceRefs:[...new Set([p.source.ref,c.source.ref,...(c.profileSignals?[c.profileSignals.source.ref]:[]),...evidence.map(e=>e.source.ref),...demands.map(d=>d.source.ref)])],readiness:suppressed?"suppressed":this.dataset.mode==="imported-offline"||!usable||priceOverlap!==true||formatOverlap!==true||!categoryOverlap?"needs_facts":"reviewable",features:{categoryOverlap,priceOverlap,formatOverlap,exactUnits}};
   }
   recall(input:RecallQuery):MatchRun {return this.transaction(()=>{
     const started=performance.now(),q=this.query(input),s=this.subject(q),dependencies=this.dependencies(q,s);let fingerprint=this.fingerprint(q,dependencies);const cached=this.stmt("SELECT data FROM recall_runs WHERE fingerprint=?").get(fingerprint) as Row|undefined;
@@ -337,12 +384,13 @@ export class MatchingStore {
       const rows=this.stmt(route.sql).all(...route.args) as {id:string}[];rowsFetched+=rows.length;if(rows.length>=ROUTE_LIMIT)truncated=true;
       for(const row of rows){let set=pairSources.get(row.id);if(!set){set=new Set();pairSources.set(row.id,set);}set.add(route.source);}
     }
-    const candidates=[...pairSources.entries()].map(([other,sources])=>this.candidate(q.direction==="product"?s as MatchProduct:this.entity<MatchProduct>("products",other),q.direction==="creator"?s as MatchCreator:this.entity<MatchCreator>("creators",other),sources)).filter(candidate=>candidate.sources.length>0);
+    let candidates=[...pairSources.entries()].map(([other,sources])=>this.candidate(q.direction==="product"?s as MatchProduct:this.entity<MatchProduct>("products",other),q.direction==="creator"?s as MatchCreator:this.entity<MatchCreator>("creators",other),sources)).filter(candidate=>candidate.sources.length>0);
     // Lexicographic evidence priorities, not a fabricated probability or uncalibrated success score.
     const priority=(c:MatchCandidate)=>[c.sources.includes("explicit_demand")?1:0,c.sources.includes("exact_pid")?1:0,c.features.priceOverlap===true?1:0,c.features.formatOverlap===true?1:0,c.features.categoryOverlap];
-    candidates.sort((a,b)=>{const aa=priority(a),bb=priority(b);for(let i=0;i<aa.length;i++)if(aa[i]!==bb[i])return bb[i]-aa[i];return `${a.creator.id}:${a.product.id}`.localeCompare(`${b.creator.id}:${b.product.id}`);});
+    if(this.dataset.mode==="imported-offline")candidates=orderProfileCandidates(candidates);
+    else candidates.sort((a,b)=>{const aa=priority(a),bb=priority(b);for(let i=0;i<aa.length;i++)if(aa[i]!==bb[i])return bb[i]-aa[i];return `${a.creator.id}:${a.product.id}`.localeCompare(`${b.creator.id}:${b.product.id}`);});
     if(candidates.length>q.limit)truncated=true;
-    const result:MatchRun={id:`match-run-${randomUUID()}`,query:q,market:s.market,createdAt:this.now(),matchingVersion:VERSION,fingerprint,cacheHit:false,stale:false,subject:s,candidates:candidates.slice(0,q.limit),diagnostics:{rowsFetched,perRouteLimit:ROUTE_LIMIT,candidateLimit:FINAL_LIMIT,truncated,durationMs:Math.round((performance.now()-started)*100)/100,fullCartesianEvaluated:false,llmCalls:0,billedTokens:0},warnings:[...("categoryFact" in s&&s.categoryFact?.status==="conflict"?["主体商品分类存在来源冲突，已暂停类目和探索召回；保留原观察供核验。"]:[]),...(this.dataset.mode==="imported-offline"?["真实来源的离线历史数据，仅验证召回与证据组织；不可执行发送，已知边的回放不证明新候选适配质量。",...this.dataset.warnings]:["全部为合成事实；结构召回覆盖与排序质量仍需真实样本评估。"]),"每路有界返回不能证明真实适配质量；销量窗口可能重叠，因此不累计为总销量。",...(truncated?["召回或结果达到数量边界；部分候选未展示。"]:[])]};
+    const result:MatchRun={analysisPolicy:analysisPolicy(this.dataset.mode),id:`match-run-${randomUUID()}`,query:q,market:s.market,createdAt:this.now(),matchingVersion:VERSION,fingerprint,cacheHit:false,stale:false,subject:s,candidates:candidates.slice(0,q.limit),diagnostics:{rowsFetched,perRouteLimit:ROUTE_LIMIT,candidateLimit:FINAL_LIMIT,truncated,durationMs:Math.round((performance.now()-started)*100)/100,fullCartesianEvaluated:false,llmCalls:0,billedTokens:0},warnings:[...("categoryFact" in s&&s.categoryFact?.status==="conflict"?["主体商品分类存在来源冲突，已暂停类目和探索召回；保留原观察供核验。"]:[]),...(this.dataset.mode==="imported-offline"?["已自动分析已有画像；画像年龄、价格带和内容形式不阻碍本轮判断。人工标注可选，不是推进前提。","表现仅在相同来源口径和指标可用性组内辅助排序；不同组按组内名次交错，未知不当零。","分析与平台执行分开；本轮不执行发送，真实合作效果尚未验证。"]:["全部为合成事实；结构召回覆盖与排序质量仍需真实样本评估。"]),"每路有界返回不能证明真实适配质量；销量窗口可能重叠，因此不累计为总销量。",...(truncated?["召回或结果达到数量边界；部分候选未展示。"]:[])]};
     const boundaries=candidates.flatMap(c=>c.offers.flatMap(o=>[o.startsAt,o.endsAt])).filter(at=>at>this.now());
     const stored:StoredRun={run:result,dependencies,expiresAt:boundaries.length?Math.min(...boundaries):null};
     this.stmt("INSERT INTO recall_runs VALUES(?,?,?)").run(result.id,fingerprint,JSON.stringify(stored));return result;
@@ -381,12 +429,28 @@ export class MatchingStore {
   });}
   prepareReview(runId:string,creatorId:string):ReviewPacket {return this.transaction(()=>{
     const run=this.currentRun(runId);text(creatorId,"creatorId",100);const matching=run.candidates.filter(c=>c.creator.id===creatorId);if(!matching.length)throw new MatchingError(404,"candidate_missing","该达人不在当前候选中。");if(matching.some(c=>c.readiness==="suppressed"))throw new MatchingError(409,"relationship_suppressed","该关系已拒联、暂停或由人工接管，不能准备 Agent 决策。");
-    const fingerprint=hash({run:run.fingerprint,creatorId,packetVersion:3}),cached=this.stmt("SELECT data FROM review_packets WHERE fingerprint=?").get(fingerprint) as Row|undefined;if(cached)return JSON.parse(cached.data) as ReviewPacket;
+    const fingerprint=hash({run:run.fingerprint,creatorId,packetVersion:6}),cached=this.stmt("SELECT data FROM review_packets WHERE fingerprint=?").get(fingerprint) as Row|undefined;if(cached)return JSON.parse(cached.data) as ReviewPacket;
     const creator=matching[0].creator;
-    const payload:Record<string,unknown>={schema:"bdhub.relationship-review.v1",mode:this.dataset.mode,datasetId:this.dataset.id,datasetImportedAt:this.dataset.importedAt,datasetWarnings:this.dataset.warnings.slice(0,2),omittedDatasetWarnings:Math.max(0,this.dataset.warnings.length-2),executionBlocked:true,purpose:this.dataset.mode==="imported-offline"?"离线历史证据评审；只整理缺口，不产生商业承诺、发送身份或执行授权":"供一个关系 Agent 判断少量候选；尚未调用模型，不构成发送授权",creator:{id:creator.id,oecId:creator.oecId,externalIdentity:creator.externalIdentity??null,market:creator.market,currency:creator.currency,categories:creator.categories,categoryFact:creator.categoryFact??null,formats:creator.formats,priceBand:[creator.priceMinMinor,creator.priceMaxMinor],control:creator.control,marketingStopped:creator.marketingStopped,semanticRevision:creator.semanticRevision,relationRevision:creator.relationRevision,source:creator.source},candidates:[]};
+    const packetCategory=(value:CategoryFact|undefined)=>{
+      if(!value)return null;if(!creator.profileSignals)return value;
+      const {note,...provenance}=value;return {...provenance,omittedNoteCharacters:note.length};
+    };
+    const common=(get:(candidate:MatchCandidate)=>string[])=>creator.profileSignals?get(matching[0]).filter(value=>matching.every(candidate=>get(candidate).includes(value))):[];
+    const sharedExecutionGaps=common(candidate=>candidate.gaps),sharedAnalysisLimitations=common(candidate=>candidate.analysis.limitations);
+    const payload:Record<string,unknown>={schema:"bdhub.relationship-review.v2",analysisPolicy:run.analysisPolicy,mode:this.dataset.mode,datasetId:this.dataset.id,datasetImportedAt:this.dataset.importedAt,datasetWarnings:this.dataset.warnings.slice(0,2),datasetWarningsRole:"仅为来源快照备注；本轮分析遵循 analysisPolicy，旧备注中的过期、价带、形式或人工评审提示不是分析前提",omittedDatasetWarnings:Math.max(0,this.dataset.warnings.length-2),executionBlocked:true,purpose:this.dataset.mode==="imported-offline"?"依据已有画像自动分析少量候选；忽略画像年龄，价格和形式仅作背景，人工标注可选；执行资格独立判断":"供一个关系 Agent 判断少量候选；尚未调用模型，不构成发送授权",creator:{id:creator.id,oecId:creator.oecId,externalIdentity:creator.externalIdentity??null,market:creator.market,currency:creator.currency,categories:creator.categories,categoryFact:packetCategory(creator.categoryFact),profileSignals:creator.profileSignals??null,formats:creator.formats,priceBand:[creator.priceMinMinor,creator.priceMaxMinor],control:creator.control,marketingStopped:creator.marketingStopped,semanticRevision:creator.semanticRevision,relationRevision:creator.relationRevision,source:creator.source},candidates:[]};
+    if(creator.profileSignals){
+      payload.sharedExecutionGaps=sharedExecutionGaps;payload.sharedAnalysisLimitations=sharedAnalysisLimitations;
+      payload.datasetWarnings=[];payload.omittedDatasetWarnings=this.dataset.warnings.length;
+      delete payload.datasetWarningsRole;
+      payload.sourceNotesStoredLocally=true;
+    }
+    // Include the final envelope before checking each whole candidate against the character limit.
+    payload.omittedCandidates=matching.length;payload.offerLimitPerCandidate=2;
     const selected:unknown[]=[];
     for(const c of matching.slice(0,5)) {
-      const item={product:{id:c.product.id,pid:c.product.pid,title:c.product.title.slice(0,100),categories:c.product.categories,categoryFact:c.product.categoryFact??null,priceMinor:c.product.priceMinor,currency:c.product.currency,semanticRevision:c.product.semanticRevision,commercialRevision:c.product.commercialRevision,source:c.product.source},offers:c.offers.slice(0,2).map(o=>({id:o.id,campaignId:o.campaignId,accountRef:o.accountRef,version:o.version,creatorCommissionBps:o.creatorCommissionBps,agencyCommissionBps:o.agencyCommissionBps,totalCommissionBps:o.totalCommissionBps,stock:o.stock,sampleAvailable:o.sampleAvailable,sampleQuota:o.sampleQuota,startsAt:o.startsAt,endsAt:o.endsAt,cardStatus:o.cardStatus,sourceRef:o.source.ref})),sources:c.sources,features:c.features,exactObservation:(this.stmt("SELECT data FROM evidence INDEXED BY evidence_creator WHERE creator_id=? AND market=? AND pid=? AND units>0 ORDER BY units DESC LIMIT 1").all(c.creator.id,c.product.market,c.product.pid) as Row[]).map(r=>{const e=JSON.parse(r.data) as ProductEvidence;return {units:e.units,source:e.source};})[0]??null,evidenceRefs:c.evidenceRefs.slice(0,5),gaps:c.gaps.slice(0,8),omittedGaps:Math.max(0,c.gaps.length-8)};
+      const positiveEvidence=c.analysis.positiveEvidence.filter(value=>!creator.profileSignals||!value.startsWith("画像来源记录销量 ")&&!value.startsWith("来源平均观看 "));
+      const limitations=c.analysis.limitations.filter(value=>!sharedAnalysisLimitations.includes(value)),gaps=c.gaps.filter(value=>!sharedExecutionGaps.includes(value));
+      const item={analysis:{policyVersion:c.analysis.policyVersion,tier:c.analysis.tier,summary:c.analysis.summary,positiveEvidence:positiveEvidence.slice(0,3),limitations:limitations.slice(0,2),omittedPositiveEvidence:Math.max(0,positiveEvidence.length-3),omittedLimitations:Math.max(0,limitations.length-2)},executionReadiness:c.readiness,product:{id:c.product.id,pid:c.product.pid,title:c.product.title.slice(0,100),categories:c.product.categories,categoryFact:packetCategory(c.product.categoryFact),priceMinor:c.product.priceMinor,currency:c.product.currency,semanticRevision:c.product.semanticRevision,commercialRevision:c.product.commercialRevision,source:c.product.source},offers:c.offers.slice(0,2).map(o=>({id:o.id,campaignId:o.campaignId,accountRef:o.accountRef,version:o.version,creatorCommissionBps:o.creatorCommissionBps,agencyCommissionBps:o.agencyCommissionBps,totalCommissionBps:o.totalCommissionBps,stock:o.stock,sampleAvailable:o.sampleAvailable,sampleQuota:o.sampleQuota,startsAt:o.startsAt,endsAt:o.endsAt,cardStatus:o.cardStatus,sourceRef:o.source.ref})),sources:c.sources,features:c.features,exactObservation:(this.stmt("SELECT data FROM evidence INDEXED BY evidence_creator WHERE creator_id=? AND market=? AND pid=? AND units>0 ORDER BY units DESC LIMIT 1").all(c.creator.id,c.product.market,c.product.pid) as Row[]).map(r=>{const e=JSON.parse(r.data) as ProductEvidence;return {units:e.units,source:e.source};})[0]??null,evidenceRefs:c.evidenceRefs.slice(0,5),gaps:gaps.slice(0,8),omittedGaps:Math.max(0,gaps.length-8)};
       payload.candidates=[...selected,item];if(JSON.stringify(payload).length>PACKET_LIMIT){payload.candidates=selected;break;}selected.push(item);
     }
     if(!selected.length)throw new MatchingError(422,"context_too_large","单个候选必要上下文超过字符预算，须缩小证据引用后再准备。");

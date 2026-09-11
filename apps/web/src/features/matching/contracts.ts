@@ -19,6 +19,7 @@ export interface MatchOffer {
   source:FactSource; version:number;
 }
 export interface MatchCreator {
+  profileSignals?:ProfileSignals;
   categoryFact?:CategoryFact;
   id:string; market:MatchMarket; oecId:string|null; name:string; avatar:string;
   externalIdentity?:{namespace:"kalodata";id:string};
@@ -26,6 +27,21 @@ export interface MatchCreator {
   priceMinMinor:number|null; priceMaxMinor:number|null; currency:MatchCurrency;
   control:"auto"|"human"|"paused"|"unknown"; marketingStopped:boolean|null;
   source:FactSource; semanticRevision:number; relationRevision:number;
+}
+export interface ProfileSignals {
+  followers:number|null; unitsSold:number|null; avgViews:number|null;
+  gmvValue:string|null; gmvCurrency:MatchCurrency|null; periodLabel:string|null;
+  comparisonScope:string; source:FactSource;
+}
+export interface AnalysisPolicy {
+  version:string; mode:"profile-first"|"synthetic-demo"; profileAge:"ignore_for_analysis";
+  priceBand:"context_only"|"ranking_signal"; contentFormat:"context_only"|"ranking_signal";
+  ranking:string[]; modelCalls:0;
+}
+export interface CandidateAnalysis {
+  policyVersion:string; tier:"explicit_demand"|"same_product"|"category_aligned"|"exploration";
+  summary:string; positiveEvidence:string[]; limitations:string[];
+  profileSummary:{categories:string[]; signals:ProfileSignals|null; signalStatus:"observed"|"profile_only"; comparison:"same_scope_only";};
 }
 export interface ProductEvidence {
   id:string; creatorId:string; market:MatchMarket; pid:string;
@@ -56,12 +72,14 @@ export interface RecallQuery {
 }
 export type CandidateSource = "exact_pid"|"explicit_demand"|"category_price"|"category"|"cold_start";
 export interface MatchCandidate {
+  analysis:CandidateAnalysis;
   creator:MatchCreator; product:MatchProduct; offers:MatchOffer[];
   sources:CandidateSource[]; reasons:string[]; gaps:string[]; evidenceRefs:string[];
   readiness:"reviewable"|"needs_facts"|"suppressed";
   features:{categoryOverlap:number; priceOverlap:boolean|null; formatOverlap:boolean|null; exactUnits:number|null;};
 }
 export interface MatchRun {
+  analysisPolicy:AnalysisPolicy;
   id:string; query:RecallQuery; market:MatchMarket; createdAt:number;
   matchingVersion:string; fingerprint:string; cacheHit:boolean; stale:boolean;
   subject:MatchProduct|MatchCreator; candidates:MatchCandidate[];

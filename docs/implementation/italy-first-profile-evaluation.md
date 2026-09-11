@@ -1,5 +1,7 @@
 # 意大利历史画像与一发评审
 
+2026-09-12更新：用户已指定忽略画像年龄、价带与形式不作主要依据，依据已有画像自动分析并自主测试；人工标注不是推进前提。当前实现和全量结果见[已有画像自动分析](existing-profile-auto-analysis.md)。下文旧测试保留其当时范围。
+
 2026-09-12。本轮推进历史特征接入、分类冲突处理、独立一发结构验证和人工评审保存。没有连接业务模型、刷新远端画像或真实发送，旧BDHub只读。
 
 入口：[意大利画像实验](http://127.0.0.1:5198/opportunities?mode=matching&dataset=italy-profiles)。上一轮[二发回放](http://127.0.0.1:5198/opportunities?mode=matching&dataset=italy)保留在另一个数据库。

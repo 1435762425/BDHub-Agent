@@ -6,7 +6,7 @@
 
 新增 **[意大利真实数据离线测试](http://127.0.0.1:5198/opportunities?mode=matching&dataset=italy)**：独立导入5商品、48达人、50条同品出单证据，双向回放完整，已准备48份有界评审资料。没有真实发送或模型调用；一发画像与商业方案缺口明确保留。[测试结果与复现](docs/implementation/italy-offline-matching.md)。
 
-继续推进的 **[意大利一发画像实验](http://127.0.0.1:5198/opportunities?mode=matching&dataset=italy-profiles)** 已接入3,978条历史画像、四款可用商品分类和一款分类冲突，并可保存人工适配判断。独立于二发销量，当前没有人工参考标签，不输出推荐准确率。[范围与评审说明](docs/implementation/italy-first-profile-evaluation.md)。
+**[已有画像自动分析](http://127.0.0.1:5198/opportunities?mode=matching&dataset=italy-profiles)** 已补齐3,978人的多类目与经营数据，自动分析1,543个组合；忽略画像年龄，价格带和形式仅参考，人工反馈可选。全量查询、排序和1,377份资料包已自动验证，未调用业务模型或发送。[当前政策与测试](docs/implementation/existing-profile-auto-analysis.md)。
 
 结构化匹配已经可运行：商品找达人、达人找商品、精确同款证据、可解释候选与最多5商品的关系评审包。默认72商品/360达人均为合成事实；1万商品/5万达人的三市场分层离线基准P95约32ms，本轮模型调用和计费token为0。[实现与验收](docs/implementation/structured-matching-v1.md)。
 
