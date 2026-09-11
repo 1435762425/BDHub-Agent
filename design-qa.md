@@ -4,6 +4,20 @@
 
 final result: passed
 
+## 一发画像与人工评审（2026-09-12）
+
+入口：`/opportunities?mode=matching&dataset=italy-profiles`。桌面渲染与真实资料的只读交互通过；未向真实库写入人工标签。
+
+- 页面显示5商品、3,978历史画像、0同品销量边；顶部与筛选都固定IT，来源限定一发实验，历史日期及过期状态明确。
+- 实际选择Freegrin，看到原枕头标签与分类冲突提示；召回0候选。DeepAir实际返回20个界面候选，显示历史主类目及资料缺口；统计为0/20、适配通过率“尚未评估”。
+- 展开人工判断，三种判断、理由和保存控件可见；空表单保存禁用，没有替使用者填写或保存判断。数据库回读`candidate_assessments`为0行。
+- 实际准备单关系资料，2,543字符；展开摘要核验商品/达人`categoryFact.status=historical`、`exactObservation=null`、`executionBlocked=true`。
+- 审查修复未确认评审恢复后只toast、无法回看原候选的问题：保存已确认后只读回取有效run与最新标签，读取失败提供独立恢复入口，避免重复POST。保存/清除/重放/并发版本/过期底座以合成自动测试覆盖；未在真实标签上做浏览器故障注入。
+- 本轮CSS视口1654×1220、DPR=1，文档/正文宽1639；无横向溢出、损坏图片0，最终error/warn日志为空。截图在任务中查看，不将真实handle截图写入Git。移动断点本轮未重新测。
+- 全109项自动测试、TypeScript和优化构建通过。三个数据集接口分别回读为3978历史画像、48位二发达人、360位合成达人，保持隔离；旧源3份文件SHA-256未变。
+
+新实现与限制见[一发画像评审](docs/implementation/italy-first-profile-evaluation.md)。结构验证与界面可用不代表推荐准确率；真实人工标签仍为空，模型及平台执行均未启用。
+
 ## 意大利真实数据离线验收（2026-09-12）
 
 入口：`/opportunities?mode=matching&dataset=italy`。本轮延用既有TailAdmin组件，仅增加数据集选择、真实快照说明及未知事实显示；未重新设计模板。

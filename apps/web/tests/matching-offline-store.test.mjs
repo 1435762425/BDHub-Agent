@@ -139,7 +139,7 @@ test("schema v1 migration preserves synthetic facts, child references and stored
     assert.deepEqual(store.listCreators().items[0],JSON.parse(JSON.stringify(c)));
     assert.equal(store.stats().semanticBuilds,7);assert.equal(store.stats().packets,1);assert.equal(store.stats().evidence,1);
     assert.equal(store.stats().mode,"synthetic-local");
-    assert.equal(store.stats().matchingVersion,"structured-recall-v2");
+    assert.equal(store.stats().matchingVersion,"structured-recall-v3");
     assert.throws(()=>store.prepareReview("old-run",c.id),error=>error.code==="stale_run");
     store.upsert({products:[product()]});assert.equal(recall(store,product()).candidates[0].creator.oecId,c.oecId);
     // Fresh nullable external identities fit the migrated schema without changing old OEC records.

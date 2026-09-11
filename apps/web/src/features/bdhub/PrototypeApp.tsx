@@ -22,7 +22,7 @@ export default function PrototypeApp({view}:{view:View}){
  useEffect(()=>setMobile(false),[view]);
  const toggleSidebar=()=>{if(window.innerWidth<1024){setMobile(v=>!v);return;}setCollapsed(v=>{try{localStorage.setItem("bdhub-agent-sidebar",v?"expanded":"collapsed");}catch{}return !v;});};
  const matchingMode=view==="opportunities"&&query.get("mode")==="matching";
- const italyMatching=matchingMode&&query.get("dataset")==="italy";
+ const italyMatching=matchingMode&&["italy","italy-profiles"].includes(query.get("dataset")||"");
  const localMode=view==="workspace"&&query.get("mode")==="local";
  const decisions=state.cases.filter(c=>c.status==="needs_operator").length;
  const foundCreators=state.creators.filter(c=>(c.name+c.handle+c.category).toLowerCase().includes(searchText.toLowerCase())).slice(0,5);const foundGoals=state.goals.filter(g=>(g.name+g.description).includes(searchText)).slice(0,3);

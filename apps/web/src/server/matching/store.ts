@@ -2,10 +2,11 @@ import { DatabaseSync, type StatementSync, type SQLInputValue } from "node:sqlit
 import { createHash, randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import type { MatchingBatch, MatchingDataset, MatchMarket, FactSource, MatchProduct, MatchCreator, MatchOffer, ProductInput, CreatorInput, OfferInput, ProductEvidence, CreatorDemand, ImportResult, MatchPage, RecallQuery, MatchRun, MatchCandidate, CandidateSource, ReviewPacket, MatchingStats } from "../../features/matching/contracts.ts";
+import type { MatchingBatch, MatchingDataset, MatchMarket, FactSource, MatchProduct, MatchCreator, MatchOffer, ProductInput, CreatorInput, OfferInput, ProductEvidence, CreatorDemand, ImportResult, MatchPage, RecallQuery, MatchRun, MatchCandidate, CandidateSource, ReviewPacket, MatchingStats, AssessmentLabel, CandidateAssessment, AssessmentResponse } from "../../features/matching/contracts.ts";
+import type {CategoryFact} from "../../features/matching/category-facts.ts";
 import { makeMatchingFixture } from "./fixtures.ts";
 
-const VERSION="structured-recall-v2",ROUTE_LIMIT=200,FINAL_LIMIT=50,PACKET_LIMIT=6000;
+const VERSION="structured-recall-v3",ROUTE_LIMIT=200,FINAL_LIMIT=50,PACKET_LIMIT=6000;
 const currencies={mx:"MXN",br:"BRL",it:"EUR"} as const;
 type Row={data:string;semantic_hash?:string;commercial_hash?:string;relation_hash?:string};
 type Route={source:CandidateSource;sql:string;args:SQLInputValue[]};
@@ -37,7 +38,16 @@ function identity(value:unknown,label:string):string{const v=text(value,label,10
 function marketCurrency(market:MatchMarket,currency:unknown){if(currencies[market]!==currency)bad(`${market} 的币种必须是 ${currencies[market]}。`);return currencies[market];}
 function stable(v:unknown):string{if(Array.isArray(v))return `[${v.map(stable).join(",")}]`;if(v&&typeof v==="object")return `{${Object.entries(v).sort(([a],[b])=>a.localeCompare(b)).map(([k,x])=>`${JSON.stringify(k)}:${stable(x)}`).join(",")}}`;return JSON.stringify(v);}
 function hash(v:unknown):string{return createHash("sha256").update(stable(v)).digest("hex");}
-function productInput(value:ProductInput):ProductInput{const v=value,m=choice(v.market,["mx","br","it"],"market");return {id:text(v.id,"product.id",100),market:m,pid:identity(v.pid,"pid"),title:text(v.title,"title",300),image:optionalText(v.image,"image",500),categories:strings(v.categories,"categories"),formats:strings(v.formats,"formats",2).map(f=>choice(f,["video","live"],"format")),description:optionalText(v.description,"description"),priceMinor:integer(v.priceMinor,"priceMinor",true),currency:marketCurrency(m,v.currency),source:fact(v.source)};}
+function categoryFact(value:CategoryFact|undefined,categories:string[]):CategoryFact|undefined {
+  if(value===undefined)return undefined;
+  if(!value||typeof value!=="object"||Array.isArray(value))bad("分类来源必须为对象。");
+  const result:CategoryFact={status:choice(value.status,["historical","conflict","missing"],"categoryFact.status"),namespace:text(value.namespace,"categoryFact.namespace",100),sourceLabels:strings(value.sourceLabels,"categoryFact.sourceLabels"),source:fact(value.source),transformVersion:value.transformVersion===null?null:text(value.transformVersion,"categoryFact.transformVersion",100),timeBasis:choice(value.timeBasis,["field_observation","batch_completed"],"categoryFact.timeBasis"),note:optionalText(value.note,"categoryFact.note",600)};
+  // The sequence of raw category labels is a hierarchy, not a set to alphabetize.
+  result.sourceLabels=[...new Set(value.sourceLabels.map(label=>text(label,"categoryFact.sourceLabels",100)))];
+  if(result.status!=="historical"&&categories.length)bad("冲突或缺失分类不能写入可用类目索引。");
+  return result;
+}
+function productInput(value:ProductInput):ProductInput{const v=value,m=choice(v.market,["mx","br","it"],"market");return {id:text(v.id,"product.id",100),market:m,pid:identity(v.pid,"pid"),title:text(v.title,"title",300),image:optionalText(v.image,"image",500),categories:strings(v.categories,"categories"),...(v.categoryFact!==undefined?{categoryFact:categoryFact(v.categoryFact,v.categories)}:{}),formats:strings(v.formats,"formats",2).map(f=>choice(f,["video","live"],"format")),description:optionalText(v.description,"description"),priceMinor:integer(v.priceMinor,"priceMinor",true),currency:marketCurrency(m,v.currency),source:fact(v.source)};}
 function creatorInput(value:CreatorInput):CreatorInput{
   const v=value,m=choice(v.market,["mx","br","it"],"market"),min=integer(v.priceMinMinor,"priceMinMinor",true),max=integer(v.priceMaxMinor,"priceMaxMinor",true);
   if(min!==null&&max!==null&&min>max)bad("达人价格带起点大于终点。");
@@ -48,7 +58,7 @@ function creatorInput(value:CreatorInput):CreatorInput{
     externalIdentity={namespace:choice(v.externalIdentity.namespace,["kalodata"],"externalIdentity.namespace"),id:identity(v.externalIdentity.id,"externalIdentity.id")};
   }
   if(oecId===null&&!externalIdentity)bad("OEC 未知时必须提供独立的外部身份，不可用外部 ID 代填 OEC。");
-  return {id:text(v.id,"creator.id",100),market:m,oecId,...(externalIdentity?{externalIdentity}:{}),name:text(v.name,"name",200),avatar:optionalText(v.avatar,"avatar",500),categories:strings(v.categories,"categories"),formats:strings(v.formats,"formats",2).map(f=>choice(f,["video","live"],"format")),bio:optionalText(v.bio,"bio"),priceMinMinor:min,priceMaxMinor:max,currency:marketCurrency(m,v.currency),control:choice(v.control,["auto","human","paused","unknown"],"control"),marketingStopped:bool(v.marketingStopped,"marketingStopped",true),source:fact(v.source)};
+  return {id:text(v.id,"creator.id",100),market:m,oecId,...(externalIdentity?{externalIdentity}:{}),name:text(v.name,"name",200),avatar:optionalText(v.avatar,"avatar",500),categories:strings(v.categories,"categories"),...(v.categoryFact!==undefined?{categoryFact:categoryFact(v.categoryFact,v.categories)}:{}),formats:strings(v.formats,"formats",2).map(f=>choice(f,["video","live"],"format")),bio:optionalText(v.bio,"bio"),priceMinMinor:min,priceMaxMinor:max,currency:marketCurrency(m,v.currency),control:choice(v.control,["auto","human","paused","unknown"],"control"),marketingStopped:bool(v.marketingStopped,"marketingStopped",true),source:fact(v.source)};
 }
 function datasetInput(value:MatchingDataset):MatchingDataset{
   if(!value||typeof value!=="object"||Array.isArray(value))bad("dataset 必须是明确的数据集描述。");
@@ -60,9 +70,9 @@ function datasetInput(value:MatchingDataset):MatchingDataset{
 function offerInput(v:OfferInput):OfferInput{const result={id:text(v.id,"offer.id",100),productId:text(v.productId,"productId",100),campaignId:text(v.campaignId,"campaignId",100),accountRef:text(v.accountRef,"accountRef",100),publicCommissionBps:integer(v.publicCommissionBps,"publicCommissionBps",true,10000),totalCommissionBps:integer(v.totalCommissionBps,"totalCommissionBps",true,10000),creatorCommissionBps:integer(v.creatorCommissionBps,"creatorCommissionBps",true,10000),agencyCommissionBps:integer(v.agencyCommissionBps,"agencyCommissionBps",true,10000),stock:integer(v.stock,"stock",true),sampleAvailable:bool(v.sampleAvailable,"sampleAvailable",true),sampleQuota:integer(v.sampleQuota,"sampleQuota",true),startsAt:integer(v.startsAt,"startsAt")!,endsAt:integer(v.endsAt,"endsAt")!,cardStatus:choice(v.cardStatus,["verified","needs_preparation","unknown"],"cardStatus"),source:fact(v.source)};if(result.startsAt>=result.endsAt)bad("Offer 结束时间必须晚于开始时间。");if(result.creatorCommissionBps!==null&&result.agencyCommissionBps!==null&&result.creatorCommissionBps+result.agencyCommissionBps!==result.totalCommissionBps)bad("同一 Offer 的达人佣金与机构佣金之和必须等于总佣金。");return result;}
 function evidenceInput(v:ProductEvidence):ProductEvidence{return {id:text(v.id,"evidence.id",100),creatorId:text(v.creatorId,"creatorId",100),market:choice(v.market,["mx","br","it"],"market"),pid:identity(v.pid,"pid"),units:integer(v.units,"units")!,format:v.format===null?null:choice(v.format,["video","live"] as const,"format"),source:fact(v.source)};}
 function demandInput(v:CreatorDemand):CreatorDemand{return {id:text(v.id,"demand.id",100),creatorId:text(v.creatorId,"creatorId",100),productId:v.productId===null?null:text(v.productId,"productId",100),categories:strings(v.categories,"categories"),active:bool(v.active,"active")!,source:fact(v.source)};}
-function productSemantic(p:ProductInput){return {title:p.title,categories:p.categories,formats:p.formats,description:p.description};}
+function productSemantic(p:ProductInput){return {title:p.title,categories:p.categories,categoryFact:p.categoryFact??null,formats:p.formats,description:p.description};}
 function productCommercial(p:ProductInput){return {priceMinor:p.priceMinor,currency:p.currency};}
-function creatorSemantic(c:CreatorInput){return {categories:c.categories,formats:c.formats,bio:c.bio};}
+function creatorSemantic(c:CreatorInput){return {categories:c.categories,categoryFact:c.categoryFact??null,formats:c.formats,bio:c.bio};}
 function creatorRelation(c:CreatorInput){return {control:c.control,marketingStopped:c.marketingStopped};}
 
 export class MatchingStore {
@@ -98,6 +108,11 @@ export class MatchingStore {
       CREATE TABLE IF NOT EXISTS recall_runs(id TEXT PRIMARY KEY,fingerprint TEXT NOT NULL UNIQUE,data TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS review_packets(id TEXT PRIMARY KEY,fingerprint TEXT NOT NULL UNIQUE,data TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS matching_requests(id TEXT PRIMARY KEY,request_hash TEXT NOT NULL,data TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS candidate_assessments(
+        dataset_id TEXT NOT NULL,fingerprint TEXT NOT NULL,creator_id TEXT NOT NULL,product_id TEXT NOT NULL,
+        label TEXT CHECK(label IS NULL OR label IN ('suitable','unsuitable','insufficient')),note TEXT NOT NULL CHECK(length(note)<=1000),
+        revision INTEGER NOT NULL CHECK(revision>0),reviewed_at INTEGER,
+        PRIMARY KEY(dataset_id,fingerprint,creator_id,product_id));
       INSERT OR IGNORE INTO matching_meta VALUES('schema_version',1),('semantic_builds',0);
     `);
     this.migrateIdentitySchema();
@@ -243,6 +258,7 @@ export class MatchingStore {
       if(q.source!=="first")add("exact_pid","SELECT creator_id id FROM evidence INDEXED BY evidence_exact WHERE market=? AND pid=? AND units>0 GROUP BY creator_id ORDER BY MAX(units) DESC,creator_id",[m,p.pid]);
       if(q.source!=="second") {
         add("explicit_demand","SELECT DISTINCT creator_id id FROM demands INDEXED BY demands_product WHERE market=? AND product_id=? AND active=1 ORDER BY creator_id",[m,p.id]);
+        if(p.categoryFact?.status==="conflict")return routes;
         if(p.categories.length) {
           const holders=p.categories.map(()=>"?").join(",");
           add("explicit_demand",`SELECT DISTINCT creator_id id FROM demand_categories INDEXED BY demand_category_active WHERE market=? AND category IN (${holders}) AND active=1 ORDER BY creator_id`,[m,...p.categories]);
@@ -258,6 +274,7 @@ export class MatchingStore {
         add("explicit_demand","SELECT DISTINCT product_id id FROM demands INDEXED BY demands_creator WHERE creator_id=? AND active=1 AND product_id IS NOT NULL ORDER BY product_id",[c.id]);
         const demandCats=[...new Set(this.demandsFor(c.id).flatMap(d=>d.categories))];
         if(demandCats.length)add("explicit_demand",`SELECT DISTINCT entity_id id FROM product_categories INDEXED BY product_category_price WHERE market=? AND category IN (${demandCats.map(()=>"?").join(",")}) ORDER BY price_minor,entity_id`,[m,...demandCats]);
+        if(c.categoryFact?.status==="conflict")return routes;
         if(c.categories.length) {
           const holders=c.categories.map(()=>"?").join(",");
           if(c.priceMinMinor!==null&&c.priceMaxMinor!==null)add("category_price",`SELECT DISTINCT entity_id id FROM product_categories INDEXED BY product_category_price WHERE market=? AND category IN (${holders}) AND price_minor>=? AND price_minor<=? ORDER BY price_minor,entity_id`,[m,...c.categories,c.priceMinMinor,c.priceMaxMinor]);
@@ -274,18 +291,26 @@ export class MatchingStore {
     const demands=this.demandsFor(c.id).filter(d=>d.productId===p.id||d.categories.some(cat=>p.categories.includes(cat)));
     // Sources describe verified pair facts, even when another route supplied this pair first.
     if(evidence.length)sources.add("exact_pid");if(demands.length)sources.add("explicit_demand");
-    const categoryOverlap=p.categories.filter(cat=>c.categories.includes(cat)).length;
+    const compatibleNamespace=!p.categoryFact&&!c.categoryFact||Boolean(p.categoryFact&&c.categoryFact&&p.categoryFact.namespace===c.categoryFact.namespace);
+    const categoryOverlap=compatibleNamespace?p.categories.filter(cat=>c.categories.includes(cat)).length:0;
+    if(!compatibleNamespace){sources.delete("category");sources.delete("category_price");}
+    if(p.categoryFact?.status==="conflict"||c.categoryFact?.status==="conflict") {
+      sources.delete("category");sources.delete("category_price");sources.delete("cold_start");
+    }
     const priceOverlap=p.priceMinor===null||c.priceMinMinor===null||c.priceMaxMinor===null?null:p.priceMinor>=c.priceMinMinor&&p.priceMinor<=c.priceMaxMinor;
     const formatOverlap=!p.formats.length||!c.formats.length?null:p.formats.some(f=>c.formats.includes(f));
     const offers=this.offersFor(p.id),now=this.now(),gaps:string[]=[],reasons:string[]=[];
     if(this.dataset.mode==="imported-offline")gaps.push("离线历史快照：身份、关系控制与商业条件均未核验为当前可执行事实");
+    if(p.categoryFact)gaps.push(`商品分类${p.categoryFact.status==="conflict"?"冲突，已停用":"来自历史标签，需复核"}：${p.categoryFact.note}`);
+    if(c.categoryFact)gaps.push(`达人主类目来自历史快照：${c.categoryFact.note}`);
+    if(!compatibleNamespace)gaps.push("分类命名空间不一致，不能按标签相同认定类目适配");
     if(c.oecId===null)gaps.push("OEC 身份未知；外部 Kalodata ID 不能作为发送身份");
     if(c.control==="unknown")gaps.push("人工接管／暂停状态未知，不能推定 Agent 有执行权");
     if(c.marketingStopped===null)gaps.push("拒联状态未知，不能将没有记录当作允许营销联系");
     if(demands.length)reasons.push("有当前明确需求及来源引用");
     if(evidence.length)reasons.push(`同市场精确 PID 有正销量证据；显示 ${evidence[0].source.ref} 单一观测 ${evidence[0].units} 件，窗口不相加；不证明当前持有样品或接受新条件`);
     if(evidence.some(e=>e.source.windowStart===null||e.source.windowEnd===null))gaps.push("部分销量证据的统计窗口未知");
-    if(categoryOverlap)reasons.push(`匹配 ${categoryOverlap} 个共同类目`);else gaps.push("缺少共同类目证据，需补充适配判断");
+    if(categoryOverlap)reasons.push(`${p.categoryFact||c.categoryFact?"历史顶级标签相同：":"匹配 "}${categoryOverlap} 个共同类目；需另评适配性`);else gaps.push("缺少共同类目证据，需补充适配判断");
     if(priceOverlap===true)reasons.push("商品价格在达人同币种价格带内");else gaps.push(priceOverlap===null?"商品价格或达人价格带未知":"价格超出已知价格带，需确认新需求");
     if(formatOverlap===true)reasons.push("视频／直播内容形式有交集");else gaps.push(formatOverlap===null?"内容形式尚缺证据":"已知内容形式没有交集");
     if(!offers.length)gaps.push("尚无活动 Offer");
@@ -312,25 +337,56 @@ export class MatchingStore {
       const rows=this.stmt(route.sql).all(...route.args) as {id:string}[];rowsFetched+=rows.length;if(rows.length>=ROUTE_LIMIT)truncated=true;
       for(const row of rows){let set=pairSources.get(row.id);if(!set){set=new Set();pairSources.set(row.id,set);}set.add(route.source);}
     }
-    const candidates=[...pairSources.entries()].map(([other,sources])=>this.candidate(q.direction==="product"?s as MatchProduct:this.entity<MatchProduct>("products",other),q.direction==="creator"?s as MatchCreator:this.entity<MatchCreator>("creators",other),sources));
+    const candidates=[...pairSources.entries()].map(([other,sources])=>this.candidate(q.direction==="product"?s as MatchProduct:this.entity<MatchProduct>("products",other),q.direction==="creator"?s as MatchCreator:this.entity<MatchCreator>("creators",other),sources)).filter(candidate=>candidate.sources.length>0);
     // Lexicographic evidence priorities, not a fabricated probability or uncalibrated success score.
     const priority=(c:MatchCandidate)=>[c.sources.includes("explicit_demand")?1:0,c.sources.includes("exact_pid")?1:0,c.features.priceOverlap===true?1:0,c.features.formatOverlap===true?1:0,c.features.categoryOverlap];
     candidates.sort((a,b)=>{const aa=priority(a),bb=priority(b);for(let i=0;i<aa.length;i++)if(aa[i]!==bb[i])return bb[i]-aa[i];return `${a.creator.id}:${a.product.id}`.localeCompare(`${b.creator.id}:${b.product.id}`);});
     if(candidates.length>q.limit)truncated=true;
-    const result:MatchRun={id:`match-run-${randomUUID()}`,query:q,market:s.market,createdAt:this.now(),matchingVersion:VERSION,fingerprint,cacheHit:false,stale:false,subject:s,candidates:candidates.slice(0,q.limit),diagnostics:{rowsFetched,perRouteLimit:ROUTE_LIMIT,candidateLimit:FINAL_LIMIT,truncated,durationMs:Math.round((performance.now()-started)*100)/100,fullCartesianEvaluated:false,llmCalls:0,billedTokens:0},warnings:[...(this.dataset.mode==="imported-offline"?["真实来源的离线历史数据，仅验证召回与证据组织；不可执行发送，已知边的回放不证明新候选适配质量。",...this.dataset.warnings]:["全部为合成事实；结构召回覆盖与排序质量仍需真实样本评估。"]),"每路有界返回不能证明真实适配质量；销量窗口可能重叠，因此不累计为总销量。",...(truncated?["召回或结果达到数量边界；部分候选未展示。"]:[])]};
+    const result:MatchRun={id:`match-run-${randomUUID()}`,query:q,market:s.market,createdAt:this.now(),matchingVersion:VERSION,fingerprint,cacheHit:false,stale:false,subject:s,candidates:candidates.slice(0,q.limit),diagnostics:{rowsFetched,perRouteLimit:ROUTE_LIMIT,candidateLimit:FINAL_LIMIT,truncated,durationMs:Math.round((performance.now()-started)*100)/100,fullCartesianEvaluated:false,llmCalls:0,billedTokens:0},warnings:[...("categoryFact" in s&&s.categoryFact?.status==="conflict"?["主体商品分类存在来源冲突，已暂停类目和探索召回；保留原观察供核验。"]:[]),...(this.dataset.mode==="imported-offline"?["真实来源的离线历史数据，仅验证召回与证据组织；不可执行发送，已知边的回放不证明新候选适配质量。",...this.dataset.warnings]:["全部为合成事实；结构召回覆盖与排序质量仍需真实样本评估。"]),"每路有界返回不能证明真实适配质量；销量窗口可能重叠，因此不累计为总销量。",...(truncated?["召回或结果达到数量边界；部分候选未展示。"]:[])]};
     const boundaries=candidates.flatMap(c=>c.offers.flatMap(o=>[o.startsAt,o.endsAt])).filter(at=>at>this.now());
     const stored:StoredRun={run:result,dependencies,expiresAt:boundaries.length?Math.min(...boundaries):null};
     this.stmt("INSERT INTO recall_runs VALUES(?,?,?)").run(result.id,fingerprint,JSON.stringify(stored));return result;
   });}
   private currentRun(runId:string):MatchRun {const row=this.raw("recall_runs",text(runId,"runId",100));if(!row)throw new MatchingError(404,"run_missing","召回记录不存在或已过期，请重新召回。");const stored=JSON.parse(row.data) as StoredRun,run=stored.run;const current=this.fingerprint(run.query,this.dependencies(run.query,this.subject(run.query)));if(current!==run.fingerprint||stored.expiresAt!==null&&stored.expiresAt<=this.now())throw new MatchingError(409,"stale_run","商品、关系或候选索引已经变化，请重新召回后再准备上下文。");return run;}
+  private assessmentsFor(run:MatchRun):AssessmentResponse {
+    const rows=this.stmt("SELECT creator_id,product_id,label,note,revision,reviewed_at FROM candidate_assessments WHERE dataset_id=? AND fingerprint=?").all(this.dataset.id,run.fingerprint) as {creator_id:string;product_id:string;label:AssessmentLabel|null;note:string;revision:number;reviewed_at:number|null}[];
+    const saved=new Map(rows.map(row=>[JSON.stringify([row.creator_id,row.product_id]),row]));
+    const items:CandidateAssessment[]=run.candidates.map(candidate=>{
+      const row=saved.get(JSON.stringify([candidate.creator.id,candidate.product.id]));
+      return {creatorId:candidate.creator.id,productId:candidate.product.id,label:row?.label??null,note:row?.note??"",revision:row?.revision??0,reviewedAt:row?.reviewed_at??null};
+    });
+    const suitable=items.filter(item=>item.label==="suitable").length,unsuitable=items.filter(item=>item.label==="unsuitable").length,insufficient=items.filter(item=>item.label==="insufficient").length;
+    const total=items.length,decided=suitable+unsuitable,reviewed=decided+insufficient;
+    return {runId:run.id,items,summary:{total,reviewed,suitable,unsuitable,insufficient,decided,suitabilityRate:decided?suitable/decided:null,coverage:total?reviewed/total:0}};
+  }
+  getRun(runId:string):MatchRun {return this.transaction(()=>this.currentRun(runId));}
+  assessments(runId:string):AssessmentResponse {return this.transaction(()=>this.assessmentsFor(this.currentRun(runId)));}
+  assessCandidate(runId:string,creatorId:string,productId:string,label:AssessmentLabel|null,note:string,expectedRevision:number,requestId:string):AssessmentResponse {return this.transaction(()=>{
+    if(this.dataset.mode!=="synthetic-local"&&this.dataset.mode!=="imported-offline")throw new MatchingError(403,"offline_only","人工候选评审仅用于本地离线测试，不产生发送授权。");
+    text(runId,"runId",100);text(creatorId,"creatorId",100);text(productId,"productId",100);text(requestId,"requestId",150);
+    if(label!==null)choice(label,["suitable","unsuitable","insufficient"],"label");
+    optionalText(note,"note",1000);integer(expectedRevision,"expectedRevision");
+    const run=this.currentRun(runId);
+    if(!run.candidates.some(candidate=>candidate.creator.id===creatorId&&candidate.product.id===productId))throw new MatchingError(404,"candidate_missing","该达人与商品组合不在当前召回结果中。");
+    const requestHash=hash({type:"assess_candidate",datasetId:this.dataset.id,runId,fingerprint:run.fingerprint,creatorId,productId,label,note,expectedRevision});
+    const cached=this.stmt("SELECT request_hash FROM matching_requests WHERE id=?").get(requestId) as {request_hash:string}|undefined;
+    if(cached){if(cached.request_hash!==requestHash)throw new MatchingError(409,"request_conflict","同一个请求 ID 不能用于不同评审。请为新操作生成新的请求 ID。");return this.assessmentsFor(run);}
+    const previous=this.stmt("SELECT revision FROM candidate_assessments WHERE dataset_id=? AND fingerprint=? AND creator_id=? AND product_id=?").get(this.dataset.id,run.fingerprint,creatorId,productId) as {revision:number}|undefined;
+    if((previous?.revision??0)!==expectedRevision)throw new MatchingError(409,"revision_conflict","这条人工评审已变化，请刷新后再保存。");
+    this.stmt(`INSERT INTO candidate_assessments(dataset_id,fingerprint,creator_id,product_id,label,note,revision,reviewed_at) VALUES(?,?,?,?,?,?,?,?)
+      ON CONFLICT(dataset_id,fingerprint,creator_id,product_id) DO UPDATE SET label=excluded.label,note=excluded.note,revision=excluded.revision,reviewed_at=excluded.reviewed_at`).run(this.dataset.id,run.fingerprint,creatorId,productId,label,note,expectedRevision+1,label===null?null:this.now());
+    const result=this.assessmentsFor(run);
+    // The request receipt also retains every successful revision; a stale run never loses its annotations.
+    this.stmt("INSERT INTO matching_requests VALUES(?,?,?)").run(requestId,requestHash,JSON.stringify(result));return result;
+  });}
   prepareReview(runId:string,creatorId:string):ReviewPacket {return this.transaction(()=>{
     const run=this.currentRun(runId);text(creatorId,"creatorId",100);const matching=run.candidates.filter(c=>c.creator.id===creatorId);if(!matching.length)throw new MatchingError(404,"candidate_missing","该达人不在当前候选中。");if(matching.some(c=>c.readiness==="suppressed"))throw new MatchingError(409,"relationship_suppressed","该关系已拒联、暂停或由人工接管，不能准备 Agent 决策。");
-    const fingerprint=hash({run:run.fingerprint,creatorId,packetVersion:2}),cached=this.stmt("SELECT data FROM review_packets WHERE fingerprint=?").get(fingerprint) as Row|undefined;if(cached)return JSON.parse(cached.data) as ReviewPacket;
+    const fingerprint=hash({run:run.fingerprint,creatorId,packetVersion:3}),cached=this.stmt("SELECT data FROM review_packets WHERE fingerprint=?").get(fingerprint) as Row|undefined;if(cached)return JSON.parse(cached.data) as ReviewPacket;
     const creator=matching[0].creator;
-    const payload:Record<string,unknown>={schema:"bdhub.relationship-review.v1",mode:this.dataset.mode,datasetId:this.dataset.id,datasetImportedAt:this.dataset.importedAt,datasetWarnings:this.dataset.warnings.slice(0,2),omittedDatasetWarnings:Math.max(0,this.dataset.warnings.length-2),executionBlocked:true,purpose:this.dataset.mode==="imported-offline"?"离线历史证据评审；只整理缺口，不产生商业承诺、发送身份或执行授权":"供一个关系 Agent 判断少量候选；尚未调用模型，不构成发送授权",creator:{id:creator.id,oecId:creator.oecId,externalIdentity:creator.externalIdentity??null,market:creator.market,currency:creator.currency,categories:creator.categories,formats:creator.formats,priceBand:[creator.priceMinMinor,creator.priceMaxMinor],control:creator.control,marketingStopped:creator.marketingStopped,semanticRevision:creator.semanticRevision,relationRevision:creator.relationRevision,source:creator.source},candidates:[]};
+    const payload:Record<string,unknown>={schema:"bdhub.relationship-review.v1",mode:this.dataset.mode,datasetId:this.dataset.id,datasetImportedAt:this.dataset.importedAt,datasetWarnings:this.dataset.warnings.slice(0,2),omittedDatasetWarnings:Math.max(0,this.dataset.warnings.length-2),executionBlocked:true,purpose:this.dataset.mode==="imported-offline"?"离线历史证据评审；只整理缺口，不产生商业承诺、发送身份或执行授权":"供一个关系 Agent 判断少量候选；尚未调用模型，不构成发送授权",creator:{id:creator.id,oecId:creator.oecId,externalIdentity:creator.externalIdentity??null,market:creator.market,currency:creator.currency,categories:creator.categories,categoryFact:creator.categoryFact??null,formats:creator.formats,priceBand:[creator.priceMinMinor,creator.priceMaxMinor],control:creator.control,marketingStopped:creator.marketingStopped,semanticRevision:creator.semanticRevision,relationRevision:creator.relationRevision,source:creator.source},candidates:[]};
     const selected:unknown[]=[];
     for(const c of matching.slice(0,5)) {
-      const item={product:{id:c.product.id,pid:c.product.pid,title:c.product.title.slice(0,100),categories:c.product.categories,priceMinor:c.product.priceMinor,currency:c.product.currency,semanticRevision:c.product.semanticRevision,commercialRevision:c.product.commercialRevision,source:c.product.source},offers:c.offers.slice(0,2).map(o=>({id:o.id,campaignId:o.campaignId,accountRef:o.accountRef,version:o.version,creatorCommissionBps:o.creatorCommissionBps,agencyCommissionBps:o.agencyCommissionBps,totalCommissionBps:o.totalCommissionBps,stock:o.stock,sampleAvailable:o.sampleAvailable,sampleQuota:o.sampleQuota,startsAt:o.startsAt,endsAt:o.endsAt,cardStatus:o.cardStatus,sourceRef:o.source.ref})),sources:c.sources,features:c.features,exactObservation:(this.stmt("SELECT data FROM evidence INDEXED BY evidence_creator WHERE creator_id=? AND market=? AND pid=? AND units>0 ORDER BY units DESC LIMIT 1").all(c.creator.id,c.product.market,c.product.pid) as Row[]).map(r=>{const e=JSON.parse(r.data) as ProductEvidence;return {units:e.units,source:e.source};})[0]??null,evidenceRefs:c.evidenceRefs.slice(0,5),gaps:c.gaps.slice(0,8),omittedGaps:Math.max(0,c.gaps.length-8)};
+      const item={product:{id:c.product.id,pid:c.product.pid,title:c.product.title.slice(0,100),categories:c.product.categories,categoryFact:c.product.categoryFact??null,priceMinor:c.product.priceMinor,currency:c.product.currency,semanticRevision:c.product.semanticRevision,commercialRevision:c.product.commercialRevision,source:c.product.source},offers:c.offers.slice(0,2).map(o=>({id:o.id,campaignId:o.campaignId,accountRef:o.accountRef,version:o.version,creatorCommissionBps:o.creatorCommissionBps,agencyCommissionBps:o.agencyCommissionBps,totalCommissionBps:o.totalCommissionBps,stock:o.stock,sampleAvailable:o.sampleAvailable,sampleQuota:o.sampleQuota,startsAt:o.startsAt,endsAt:o.endsAt,cardStatus:o.cardStatus,sourceRef:o.source.ref})),sources:c.sources,features:c.features,exactObservation:(this.stmt("SELECT data FROM evidence INDEXED BY evidence_creator WHERE creator_id=? AND market=? AND pid=? AND units>0 ORDER BY units DESC LIMIT 1").all(c.creator.id,c.product.market,c.product.pid) as Row[]).map(r=>{const e=JSON.parse(r.data) as ProductEvidence;return {units:e.units,source:e.source};})[0]??null,evidenceRefs:c.evidenceRefs.slice(0,5),gaps:c.gaps.slice(0,8),omittedGaps:Math.max(0,c.gaps.length-8)};
       payload.candidates=[...selected,item];if(JSON.stringify(payload).length>PACKET_LIMIT){payload.candidates=selected;break;}selected.push(item);
     }
     if(!selected.length)throw new MatchingError(422,"context_too_large","单个候选必要上下文超过字符预算，须缩小证据引用后再准备。");

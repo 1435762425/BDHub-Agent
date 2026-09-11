@@ -12,16 +12,18 @@ function integer(value:unknown,min:number,max:number,label:string){if(typeof val
 
 export function parseMatchingQuery(url:string){
   const params=new URL(url).searchParams;
-  for(const key of params.keys())if(!["view","market","q","offset","limit","dataset"].includes(key))throw new InputError("不支持此查询参数。");
+  for(const key of params.keys())if(!["view","market","q","offset","limit","dataset","runId"].includes(key))throw new InputError("不支持此查询参数。");
   if([...params.keys()].some(key=>params.getAll(key).length!==1))throw new InputError("查询参数不能重复。");
-  const dataset=member(params.get("dataset")||"demo",["demo","italy"] as const,"数据集");
-  const view=member(params.get("view")||"stats",["stats","products","creators"] as const,"查询类型");
+  const dataset=member(params.get("dataset")||"demo",["demo","italy","italy-profiles"] as const,"数据集");
+  const view=member(params.get("view")||"stats",["stats","products","creators","assessments","run"] as const,"查询类型");
+  const runId=view==="assessments"||view==="run"?id(params.get("runId"),"召回编号"):undefined;
+  if(view!=="assessments"&&view!=="run"&&params.has("runId"))throw new InputError("此查询不接受召回编号。");
   const rawMarket=params.get("market");
   const market=rawMarket&&rawMarket!=="all"?member(rawMarket,["mx","br","it"] as const,"市场"):undefined;
   const q=params.get("q")||"";if(q.length>120)throw new InputError("搜索关键词过长。");
   const offset=integer(Number(params.get("offset")??0),0,1000000,"分页位置");
   const limit=integer(Number(params.get("limit")??20),1,50,"每页条数");
-  return {view,dataset,options:{market:market as MatchMarket|undefined,q,offset,limit}};
+  return {view,dataset,runId,options:{market:market as MatchMarket|undefined,q,offset,limit}};
 }
 
 export function parseMatchingCommand(value:unknown):{requestId:string;command:MatchingCommand}{
@@ -34,6 +36,12 @@ export function parseMatchingCommand(value:unknown):{requestId:string;command:Ma
   if(c.type==="prepare_review"){
     only(c,["type","runId","creatorId"]);
     return {requestId,command:{type:"prepare_review",runId:id(c.runId,"召回编号"),creatorId:id(c.creatorId,"达人编号")}};
+  }
+  if(c.type==="assess_candidate") {
+    only(c,["type","runId","creatorId","productId","label","note","expectedRevision"]);
+    const label=c.label===null?null:member(c.label,["suitable","unsuitable","insufficient"] as const,"人工判断");
+    if(typeof c.note!=="string"||c.note.length>1000)throw new InputError("评审理由应为最多 1000 字的文本。");
+    return {requestId,command:{type:"assess_candidate",runId:id(c.runId,"召回编号"),creatorId:id(c.creatorId,"达人编号"),productId:id(c.productId,"商品编号"),label,note:c.note.trim(),expectedRevision:integer(c.expectedRevision,0,Number.MAX_SAFE_INTEGER,"评审版本")}};
   }
   if(c.type==="demo_change"){
     only(c,["type","productId","expectedRevision","change"]);

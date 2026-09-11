@@ -15,8 +15,8 @@ function failure(error:unknown){
 export async function GET(request:Request){
   if(!isLocalRequest(request,false))return reject();
   try {
-    const {view,options,dataset}=parseMatchingQuery(request.url),store=getMatchingStore(dataset);
-    return Response.json(view==="stats"?store.stats():view==="products"?store.listProducts(options):store.listCreators(options),{headers});
+    const {view,options,dataset,runId}=parseMatchingQuery(request.url),store=getMatchingStore(dataset);
+    return Response.json(view==="stats"?store.stats():view==="products"?store.listProducts(options):view==="run"?store.getRun(runId!):view==="assessments"?store.assessments(runId!):store.listCreators(options),{headers});
   }catch(error){return failure(error);}
 }
 export async function POST(request:Request){
@@ -32,6 +32,7 @@ export async function POST(request:Request){
     const {command:c,requestId}=parseMatchingCommand(body),store=getMatchingStore(dataset);
     if(c.type==="recall")return Response.json({kind:"run",run:store.recall(c.query)},{headers});
     if(c.type==="prepare_review")return Response.json({kind:"packet",packet:store.prepareReview(c.runId,c.creatorId)},{headers});
+    if(c.type==="assess_candidate")return Response.json({kind:"assessment",result:store.assessCandidate(c.runId,c.creatorId,c.productId,c.label,c.note,c.expectedRevision,requestId)},{headers});
     return Response.json({kind:"change",...store.demoChange(c.productId,c.expectedRevision,c.change,requestId)},{headers});
   }catch(error){return failure(error);}
 }

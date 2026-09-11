@@ -29,7 +29,7 @@ npm run typecheck
 npm test
 ```
 
-`npm test` 运行92项检查；`npm run test:matching`运行44项匹配/导入/迁移检查，`npm run test:runtime`只运行本地运行底座相关检查。覆盖进程恢复、关系接管、版本/租约、重复入站、上下文隔离、意大利字段适配与逐组件结果核验。它不验证真实平台或模型效果。浏览器与视觉验收记录见仓库根目录 `design-qa.md`。
+`npm test` 运行109项检查；`npm run test:matching`运行61项匹配/导入/迁移/人工评审检查，`npm run test:runtime`只运行本地运行底座相关检查。覆盖进程恢复、关系接管、版本/租约、重复入站、上下文隔离、意大利字段适配与逐组件结果核验。它不验证真实平台或模型效果。浏览器与视觉验收记录见仓库根目录 `design-qa.md`。
 
 ## 七个页面
 
@@ -52,6 +52,8 @@ npm test
 `npm run test:matching` 运行匹配检查，`npm run benchmark:matching -- --large` 使用临时合成库验证1k/10k与10k/50k规模，不读旧库。详细口径见 [结构匹配实现](../../docs/implementation/structured-matching-v1.md)。
 
 意大利真实离线入口：`/opportunities?mode=matching&dataset=italy`。首次运行`npm run import:italy`，固定读取旧项目意大利研究快照、写入新项目`var/matching-italy.sqlite`并运行已知证据回放。脚本不接受自选旧数据库写入路径，不调用旧业务服务/模型/发送器；缺资料库时API报错，不生成示例冒充。默认`dataset=demo`保留原合成数据和待恢复请求。[结果与字段边界](../../docs/implementation/italy-offline-matching.md)。
+
+画像一发实验：`/opportunities?mode=matching&dataset=italy-profiles`。执行`npm run import:italy-profiles`导入固定范围的历史OEC画像与分类观察；写入独立`var/matching-italy-profiles.sqlite`，不导入销量边或合并身份。支持人工适配判断保存，当前未预填标签。[范围与复现](../../docs/implementation/italy-first-profile-evaluation.md)。
 
 ## 本地运行体验
 

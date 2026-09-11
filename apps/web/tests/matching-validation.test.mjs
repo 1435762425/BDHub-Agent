@@ -10,7 +10,17 @@ test("matching query limits remain bounded and market-scoped",()=>{
 test("dataset selection is an allowlist and cannot name files or repeat selectors",()=>{
   assert.equal(parseMatchingQuery("http://local/api/matching").dataset,"demo");
   assert.equal(parseMatchingQuery("http://local/api/matching?dataset=italy").dataset,"italy");
+  assert.equal(parseMatchingQuery("http://local/api/matching?dataset=italy-profiles").dataset,"italy-profiles");
   for(const query of ["dataset=../../old.sqlite","dataset=it","dataset=italy&dataset=demo","view=stats&view=creators"])assert.throws(()=>parseMatchingQuery("http://local/?"+query));
+});
+test("assessment API validates exact run, pair, revision, label and bounded note",()=>{
+  assert.equal(parseMatchingQuery("http://local/?view=assessments&runId=run-1").runId,"run-1");
+  assert.equal(parseMatchingQuery("http://local/?view=run&runId=run-1").runId,"run-1");
+  for(const query of ["view=assessments","view=run","view=stats&runId=x","view=assessments&runId=../x"])assert.throws(()=>parseMatchingQuery("http://local/?"+query));
+  const command={type:"assess_candidate",runId:"run-1",creatorId:"c-1",productId:"p-1",label:"insufficient",note:"缺少画像",expectedRevision:0};
+  assert.equal(parseMatchingCommand({requestId:"r",command}).command.label,"insufficient");
+  assert.equal(parseMatchingCommand({requestId:"r",command:{...command,label:null}}).command.label,null);
+  for(const change of [{expectedRevision:-1},{label:"approved_for_send"},{note:"x".repeat(1001)},{productId:"../db"},{send:true}])assert.throws(()=>parseMatchingCommand({requestId:"r",command:{...command,...change}}));
 });
 test("recall cannot request unbounded pairs, arbitrary paths or actions",()=>{
   const command={type:"recall",query:{direction:"product",subjectId:"product-mx-001",source:"second",limit:20}};

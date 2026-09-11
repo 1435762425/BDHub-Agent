@@ -1,8 +1,10 @@
+import type {CategoryFact} from "./category-facts.ts";
 export type MatchMarket = "mx" | "br" | "it";
 export type MatchCurrency = "MXN" | "BRL" | "EUR";
 export type ContentFormat = "video" | "live";
 export interface FactSource {ref:string; observedAt:number; windowStart:number|null; windowEnd:number|null; windowBasis?:"calendar_date_unknown_timezone";}
 export interface MatchProduct {
+  categoryFact?:CategoryFact;
   id:string; market:MatchMarket; pid:string; title:string; image:string;
   categories:string[]; formats:ContentFormat[]; description:string;
   priceMinor:number|null; currency:MatchCurrency; source:FactSource;
@@ -17,6 +19,7 @@ export interface MatchOffer {
   source:FactSource; version:number;
 }
 export interface MatchCreator {
+  categoryFact?:CategoryFact;
   id:string; market:MatchMarket; oecId:string|null; name:string; avatar:string;
   externalIdentity?:{namespace:"kalodata";id:string};
   categories:string[]; formats:ContentFormat[]; bio:string;
@@ -70,8 +73,24 @@ export interface ReviewPacket {
   candidates:number; characters:number; estimatedTokens:null;
   modelStatus:"not_called"; executable:false; executionBlocked:true; payload:Record<string,unknown>;
 }
+export type AssessmentLabel = "suitable"|"unsuitable"|"insufficient";
+export interface AssessmentInput {
+  runId:string; creatorId:string; productId:string; label:AssessmentLabel|null;
+  note:string; expectedRevision:number;
+}
+export interface CandidateAssessment {
+  creatorId:string; productId:string; label:AssessmentLabel|null; note:string;
+  revision:number; reviewedAt:number|null;
+}
+export interface AssessmentResponse {
+  runId:string; items:CandidateAssessment[];
+  // Fractions in [0,1]. This is the current human-reviewed sample, not model accuracy.
+  summary:{total:number; reviewed:number; suitable:number; unsuitable:number; insufficient:number;
+    decided:number; suitabilityRate:number|null; coverage:number;};
+}
 export type MatchingCommand =
   | {type:"recall"; query:RecallQuery}
   | {type:"prepare_review"; runId:string; creatorId:string}
+  | ({type:"assess_candidate"} & AssessmentInput)
   | {type:"demo_change"; productId:string; expectedRevision:number; change:"raise_price"|"lower_price"|"offer_unavailable"|"offer_available"};
-export type MatchingResponse = {kind:"run";run:MatchRun}|{kind:"packet";packet:ReviewPacket}|{kind:"change";result:ImportResult;product:MatchProduct;message:string};
+export type MatchingResponse = {kind:"run";run:MatchRun}|{kind:"packet";packet:ReviewPacket}|{kind:"assessment";result:AssessmentResponse}|{kind:"change";result:ImportResult;product:MatchProduct;message:string};
