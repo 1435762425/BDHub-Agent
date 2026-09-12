@@ -12,7 +12,7 @@
 
 画像补全已复用MX完整HTTP验证和重放流程：意大利48人实测，31人取得当前画像，26人的22项允许字段全部有值，17人无精确handle；111次业务请求、验证及重放各1次成功。数据留在新项目独立var，未覆盖matching库或真实发送。[补全测试结论与复现](docs/research/italy-profile-completion-test-20260912.md)。
 
-已补齐[稳定身份与改名处理](docs/architecture/creator-identity-and-rename.md)：新handle用于发现，已知OEC直接刷新；3人仅OEC真实请求均成功且Find为0。独立身份库保存31个达人、48条线索（17待解析），重复导入不增人，85项相关测试通过；现有匹配和二发页面尚未迁接。
+已补齐[稳定身份与改名处理](docs/architecture/creator-identity-and-rename.md)：新handle用于发现，已知OEC直接刷新；3人仅OEC真实请求均成功且Find为0。独立身份库保存31个达人、48条线索（17待解析），重复导入不增人，身份底座85项相关测试通过。[达人库页面](http://127.0.0.1:5198/creators)现已接入，匹配和二发可查看稳定档案；页面按OEC刷新已通过1人真实只读验收，原业务表未改绑。[使用与验证](docs/implementation/creator-identity-ui.md)。
 
 结构化匹配已经可运行：商品找达人、达人找商品、精确同款证据、可解释候选与最多5商品的关系评审包。默认72商品/360达人均为合成事实；1万商品/5万达人的三市场分层离线基准P95约32ms，本轮模型调用和计费token为0。[实现与验收](docs/implementation/structured-matching-v1.md)。
 

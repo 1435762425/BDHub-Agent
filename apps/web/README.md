@@ -2,7 +2,7 @@
 
 访问 **[匹配工作台](http://127.0.0.1:5198/opportunities?mode=matching)**、**[本地运行](http://127.0.0.1:5198/workspace?mode=local)** 或[界面演示](http://127.0.0.1:5198/overview)。这是基于 TailAdmin Next.js 免费 MIT 版的可操作界面原型，用于验证经营流程、信息组织和状态表达。
 
-所有业务数据均为示例，不调用真实模型或 TikTok/WhatsApp，不读取或修改旧 BDHub。原七页演示仍使用 localStorage；新增本地运行工作台使用独立 SQLite 和 Worker，保存事件、计划、控制、任务、组件尝试与回执。没有生产认证、真实连接器或生产 Agent 框架。
+原七页演示使用示例；意大利匹配、二发及达人库已使用真实来源资料。达人库可显式提交意大利画像只读刷新，复用旧账号的HTTP认证与验证实现，不修改旧业务库、不发送消息；其余平台执行仍为模拟。原七页演示仍使用 localStorage；新增本地运行工作台使用独立 SQLite 和 Worker，保存事件、计划、控制、任务、组件尝试与回执。没有生产认证、真实连接器或生产 Agent 框架。
 
 ## 运行与验证
 
@@ -29,7 +29,7 @@ npm run typecheck
 npm test
 ```
 
-`npm test` 运行154项检查；`npm run test:matching`运行79项匹配/导入/迁移/自动分析/人工评审检查，`npm run test:runtime`只运行本地运行底座相关检查。覆盖进程恢复、关系接管、版本/租约、重复入站、上下文隔离、意大利字段适配与逐组件结果核验。它不验证真实平台或模型效果。浏览器与视觉验收记录见仓库根目录 `design-qa.md`。
+`npm test` 当前运行172项检查；`npm run test:matching`运行79项匹配/导入/迁移/自动分析/人工评审检查，`npm run test:runtime`只运行本地运行底座相关检查。覆盖进程恢复、关系接管、版本/租约、重复入站、上下文隔离、意大利字段适配与逐组件结果核验。它不验证真实平台或模型效果。浏览器与视觉验收记录见仓库根目录 `design-qa.md`。
 
 ## 七个页面
 
@@ -86,3 +86,11 @@ npm test
 ## 意大利二发预演
 
 `/workspace?mode=second`和`/results?mode=second`使用真实来源稿件与独立本地模拟器。执行`npm run pilot:italy-second -- --rehearse`导入、测试和状态化续跑，再执行`npm run second:worker`保持队列处理。前置准备调查由新项目`scripts/export-italy-second-readiness.py`只读导出；不复制凭证、不真实发送。同一轮完成/未知不重发，暂停不会误恢复。详见[二发试点](../../docs/implementation/italy-second-pilot.md)。
+
+## 达人库与画像刷新
+
+进入 [达人库](http://127.0.0.1:5198/creators)，查看当前/历史名字、OECID、最新字段与另行标注的历史值。匹配与二发详情可打开稳定档案，原冻结稿和未知结果保持不变。
+
+在另一终端运行 `npm run identity:worker`，页面的“刷新画像”会按已存 OEC 提交持久任务，只读取 IT 平台画像。关闭/重载页面可继续查看结果，重复请求沿用原编号；同达人进行中的刷新归并。刷新数据库独立于匹配和二发库，不自动按旧 handle 重新认人。
+
+本轮未安装自启服务，机器或进程重启后需重新运行 Web 与画像 Worker。详见[运行及真实验收](../../docs/implementation/creator-identity-ui.md)。

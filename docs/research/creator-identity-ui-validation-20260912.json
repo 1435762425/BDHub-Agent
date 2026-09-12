@@ -1,0 +1,105 @@
+{
+  "schema": "bdhub.creator-identity-ui-validation.v1",
+  "date": "2026-09-12",
+  "routes": [
+    "/creators",
+    "/opportunities?mode=matching&dataset=italy-profiles",
+    "/workspace?mode=second",
+    "/results?mode=second"
+  ],
+  "readOnlyIdentityProjection": true,
+  "businessTablesRebound": false,
+  "liveCanary": {
+    "jobStatus": "completed",
+    "identityUpdated": true,
+    "frozenOecMatchesReturned": true,
+    "findRequests": 0,
+    "profileRequestEntries": 3,
+    "counters": {
+      "request_count": 4,
+      "challenge_count": 1,
+      "captcha_success_count": 1,
+      "captcha_replay_response_count": 1,
+      "captcha_replay_code0_count": 1,
+      "code10000_missing_header_count": 0,
+      "byStage": {
+        "find": {
+          "challenges": 0,
+          "verify_successes": 0,
+          "replay_responses": 0,
+          "replay_code0": 0
+        },
+        "profile": {
+          "challenges": 1,
+          "verify_successes": 1,
+          "replay_responses": 1,
+          "replay_code0": 1
+        }
+      }
+    },
+    "identityFileUnchanged": true,
+    "replaySameJob": true,
+    "jobCountAfterReplay": 1,
+    "foreignOriginStatus": 403,
+    "extraFieldStatus": 400,
+    "oldDatabaseWrites": 0,
+    "realSends": 0
+  },
+  "businessStores": {
+    "second-italy.sqlite": {
+      "beforeSha256": "4bf4e58dccb2746f2c131cb36c65347a0cc026809da6a57cb375fc0d2d0aa406",
+      "afterSha256": "4bf4e58dccb2746f2c131cb36c65347a0cc026809da6a57cb375fc0d2d0aa406",
+      "unchanged": true
+    },
+    "matching-italy.sqlite": {
+      "beforeSha256": "c1637c769c59e48075f3e9e082d5a09308afe6c5c4239bebb8c259b24a1fb13d",
+      "afterSha256": "c1637c769c59e48075f3e9e082d5a09308afe6c5c4239bebb8c259b24a1fb13d",
+      "unchanged": true
+    },
+    "matching-italy-profiles.sqlite": {
+      "beforeSha256": "ab72ac8e42b7031995efbf4d01c87ad1c356ba4dadc394fc1d5ee8fb88a7ef31",
+      "afterSha256": "ab72ac8e42b7031995efbf4d01c87ad1c356ba4dadc394fc1d5ee8fb88a7ef31",
+      "unchanged": true
+    }
+  },
+  "currentIdentityCounts": {
+    "verified": 31,
+    "pendingLeads": 17,
+    "resolvedLeads": 31,
+    "observations": 66
+  },
+  "checks": {
+    "nodeTests": 172,
+    "pythonTests": 105,
+    "typecheck": "passed",
+    "productionBuild": "passed",
+    "legacyHealth": "ok"
+  },
+  "browser": {
+    "creatorListAndDetail": "passed",
+    "pendingSearch": "passed",
+    "pageReloadRestoresJob": "passed",
+    "refreshCompletionAndDataUpdate": "passed",
+    "matchingCanonicalOecLink": "passed",
+    "secondPilotCurrentDiscoveryIdentity": "passed",
+    "responsive390pxNoHorizontalOverflow": "passed",
+    "viewportReset": true
+  },
+  "pilotState": {
+    "attempts": 48,
+    "simulatedReceipts": 47,
+    "resultUnknown": 1,
+    "realSends": 0
+  },
+  "worker": {
+    "profileOnly": true,
+    "explicitSubmittedTasksOnly": true,
+    "systemAutostartInstalled": false
+  },
+  "limitations": [
+    "Original matching ranking data was not overwritten by latest profile observations.",
+    "Historical external-source identity association remains unproven.",
+    "No bulk handle import UI or autonomous discovery scheduling was added.",
+    "This live canary did not observe an actual platform rename."
+  ]
+}

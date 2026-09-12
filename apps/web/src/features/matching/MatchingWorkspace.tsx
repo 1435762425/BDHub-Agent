@@ -1,7 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import Link from "next/link";
 import { useSearchParams } from "next/navigation";
+import { IdentityContext } from "../creator-identities/IdentityContext";
 import { useDemo } from "../bdhub/store";
 import {
   Avatar, Button, Card, EmptyState, Field, Icon, Input, MarketPill, Notice,
@@ -201,6 +203,7 @@ function CandidateCard({ candidate, direction, disabled, reviewing, packetReady,
   reviewing: boolean; packetReady: boolean; onPrepare: () => void; offline: boolean; assessment?: ReactNode; profileAnalysis?: boolean;
 }) {
   const subject = direction === "product" ? candidate.creator : candidate.product;
+  const [identityExpanded, setIdentityExpanded] = useState(false);
   const stopped = candidate.readiness === "suppressed";
   const shortGaps = [...new Set(candidate.gaps.map(gap => gap.replace(/^Offer [^:]+:\s*/, "商品方案：")))];
   return <article className="rounded-xl border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-white/[0.015] sm:p-5">
@@ -225,7 +228,7 @@ function CandidateCard({ candidate, direction, disabled, reviewing, packetReady,
       <p className="text-xs text-gray-400">{profileAnalysis ? "基于已有画像自动分析" : candidate.offers.length ? `${candidate.offers.length} 个${offline ? "采集" : "当前"}方案` : offline ? "暂无已核实商业方案" : "尚无当前方案"}{packetReady&&direction==="product" ? " · 资料包已准备" : ""}</p>
       {direction==="product"&&<Button size="sm" variant={packetReady ? "outline" : "primary"} onClick={onPrepare} disabled={disabled || stopped}><Icon name="agent" className="size-4" />{reviewing ? "正在准备…" : packetReady ? "查看 / 复用资料包" : profileAnalysis ? "整理关系资料包" : offline ? "准备离线证据评审包" : "准备 AI 评审包"}</Button>}
     </div>
-    <details className="mt-2 text-sm">
+    <details className="mt-2 text-sm" onToggle={event => setIdentityExpanded(event.currentTarget.open)}>
       <summary className="cursor-pointer py-2 text-gray-500 marker:text-gray-400">{profileAnalysis ? "查看参考条件、执行准备与来源" : "查看事实、方案与来源"}</summary>
       <div className="mt-2 space-y-3">
         {profileAnalysis && <p className="text-xs leading-6 text-gray-500">候选来源：{candidate.sources.map(source => sourceLabels[source]).join(" · ")}</p>}
@@ -242,6 +245,7 @@ function CandidateCard({ candidate, direction, disabled, reviewing, packetReady,
           <p className="break-all">OEC 身份：{candidate.creator.oecId || "尚未确认"}{candidate.creator.externalIdentity && ` · Kalodata ${candidate.creator.externalIdentity.id}`}</p>
         </div>
         <CategoryProvenance subject={candidate.product} detailed profileAnalysis={profileAnalysis} />
+        {offline && direction === "product" && identityExpanded && <IdentityContext market={candidate.creator.market} oecId={candidate.creator.oecId} externalId={candidate.creator.externalIdentity?.id} sourceHandle={candidate.creator.name} />}
         <CategoryProvenance subject={candidate.creator} detailed profileAnalysis={profileAnalysis} />
         {candidate.offers.map(offer => <OfferDetails key={offer.id} offer={offer} offline={offline} />)}
         {!candidate.offers.length && <p className="text-xs leading-5 text-warning-600">商品可被发现，但缺少当前可核实方案，不能据此承诺佣金或发送卡片。</p>}
@@ -502,7 +506,7 @@ function MatchingDatasetWorkspace({ dataset }: { dataset: Dataset }) {
   };
 
   return <div className="min-w-0">
-    <PageHeading title={profiles ? "画像分析" : "匹配工作台"} description={profiles ? "以已有画像中的类目与经营表现分析商品和达人，自动整理适配依据与推进顺序。" : offline ? "用意大利已有商品与达人证据，验证双向召回和有限上下文。" : "从万级资料中找到有依据的合作机会，把少量方案交给关系 Agent。"} action={<Button variant="outline" size="sm" onClick={() => go("opportunities")}><Icon name="grid" className="size-4" />回到界面演示</Button>} />
+    <PageHeading title={profiles ? "画像分析" : "匹配工作台"} description={profiles ? "以已有画像中的类目与经营表现分析商品和达人，自动整理适配依据与推进顺序。" : offline ? "用意大利已有商品与达人证据，验证双向召回和有限上下文。" : "从万级资料中找到有依据的合作机会，把少量方案交给关系 Agent。"} action={<div className="flex flex-wrap items-center gap-2"><Link href="/creators" className="inline-flex items-center gap-2 rounded-lg border border-gray-300 bg-white px-3 py-2 text-xs font-medium text-gray-700 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300"><Icon name="users" className="size-4" />达人库</Link><Button variant="outline" size="sm" onClick={() => go("opportunities")}><Icon name="grid" className="size-4" />回到界面演示</Button></div>} />
     <div className="mb-5 flex flex-wrap items-end justify-between gap-x-6 gap-y-3">
       <div className="w-full sm:w-72"><Field label="测试数据集"><Select value={dataset} disabled={commands.busy} onChange={event => { const next = new URL(window.location.href); next.searchParams.set("mode", "matching"); next.searchParams.set("dataset", event.target.value); window.location.assign(next.toString()); }}><option value="italy-profiles">意大利画像分析 · 一发</option><option value="italy">意大利真实数据 · 二发回放</option><option value="demo">合成演示数据</option></Select></Field></div>
       <p className="max-w-lg text-xs leading-5 text-gray-500">{profiles ? "以已有画像为分析基础，商品与达人双向查找；每项结论可展开查看依据。" : offline ? "仅在独立测试库中查询历史资料。真实身份、联系状态和商业条件仍需核实。" : "合成数据用于体验匹配流程与模拟条件变化。"}</p>
@@ -545,6 +549,7 @@ function MatchingDatasetWorkspace({ dataset }: { dataset: Dataset }) {
             <Button className="w-full" disabled={commands.blocked || !selected || Boolean(readError) || reading} onClick={recall}><Icon name="search" className="size-4" />{commands.busy && !reviewingId ? "正在处理…" : visibleRun?.stale ? "重新查找候选" : profiles ? "开始画像分析" : "查找候选"}</Button>
           </div>
         </Card>
+        {offline && selected && !isProduct(selected) && <IdentityContext market={selected.market} oecId={selected.oecId} externalId={selected.externalIdentity?.id} sourceHandle={selected.name} />}
         {profiles && selected && <Card title="选中资料的类目" subtitle={categoryNames(selected)}><div className="p-4 sm:p-5"><CategoryProvenance subject={selected} profileAnalysis /><details className="mt-2 text-xs text-gray-500"><summary className="cursor-pointer py-1">查看类目依据与时间</summary><div className="mt-2"><CategoryProvenance subject={selected} detailed profileAnalysis /></div></details></div></Card>}
         {!offline && selected && isProduct(selected) && <Card><details className="p-4 sm:p-5"><summary className="cursor-pointer text-sm font-medium text-gray-700 dark:text-gray-200">增量更新演示</summary><p className="mt-3 text-xs leading-6 text-gray-500">只改变本地示例商品的价格或方案库存。更新后重新召回，观察新候选和旧结果失效。</p><div className="mt-3 grid grid-cols-2 gap-2"><Button size="sm" variant="outline" disabled={commands.blocked} onClick={() => changeProduct("lower_price")}>模拟降价</Button><Button size="sm" variant="outline" disabled={commands.blocked} onClick={() => changeProduct("raise_price")}>模拟涨价</Button><Button size="sm" variant="outline" disabled={commands.blocked} onClick={() => changeProduct("offer_unavailable")}>模拟缺货</Button><Button size="sm" variant="outline" disabled={commands.blocked} onClick={() => changeProduct("offer_available")}>模拟恢复库存</Button></div><p className="mt-3 text-xs text-gray-400">商业版本 v{selected.commercialRevision} · 语义版本 v{selected.semanticRevision}</p>{changeMessage && <p role="status" className="mt-3 text-xs leading-5 text-brand-600 dark:text-brand-300">{changeMessage}</p>}</details></Card>}
       </div>
