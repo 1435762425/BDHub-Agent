@@ -64,6 +64,30 @@ def initialize_client(probe, child, identity, scratch):
     return client
 
 
+def normalize_target(target: dict) -> dict:
+    """An explicit OEC wins over a mutable handle; historical hints do not."""
+    if not isinstance(target, dict) or not isinstance(target.get("ref"), str) or not target["ref"]:
+        raise ValueError("invalid_target_ref")
+    oec = target.get("oecId")
+    if oec is not None and (not isinstance(oec, str) or not oec.isascii() or not oec.isdigit() or len(oec) > 40):
+        raise ValueError("invalid_oec_id")
+    handle = target.get("handle")
+    if handle is not None:
+        if not isinstance(handle, str):
+            raise ValueError("invalid_handle")
+        handle = handle.strip().lstrip("@").lower()
+        if not 1 <= len(handle) <= 100 or any(c not in "abcdefghijklmnopqrstuvwxyz0123456789._" for c in handle):
+            raise ValueError("invalid_handle")
+    if not oec and not handle:
+        raise ValueError("target_identity_required")
+    external = target.get("externalId", f"oec:{oec}" if oec else None)
+    if not isinstance(external, str) or not external:
+        raise ValueError("target_source_ref_required")
+    return {"ref": target["ref"], "inputKind": "known_oec" if oec else "handle_discovery",
+            "oecId": oec, "handle": None if oec else handle, "auditHandle": handle if oec else None,
+            "externalId": external, "historicalOecHint": target.get("historicalOecHint")}
+
+
 def classify_response(status: int, headers: dict, payload) -> dict:
     raw_code = payload.get("code") if isinstance(payload, dict) else None
     code = None if raw_code is None else str(raw_code)
@@ -130,10 +154,10 @@ def network_child(account_name: str, target_file: Path, output: Path) -> int:
     from bdhub.enrich.shared_backoff import snapshot as backoff_snapshot
     from bdhub.enrich.creator_profile import merge_profiles
 
-    targets = json.loads(target_file.read_text())["targets"]
+    targets = [normalize_target(t) for t in json.loads(target_file.read_text())["targets"]]
     if not 1 <= len(targets) <= 3:
         raise ValueError("bounded_target_count")
-    report = {"schema": "bdhub.italy-profile-probe.v2", "market": "it", "account": account_name,
+    report = {"schema": "bdhub.italy-profile-probe.v3", "market": "it", "account": account_name,
               "startedAt": datetime.now(timezone.utc).isoformat(), "mode": "live_readonly_profile", "requests": [], "targets": [],
               "qps": 1, "businessRetries": 2, "captchaAttempts": 3, "verificationMode": "existing_market_aware_http_pipeline",
               "oldDatabaseWrites": 0, "realSends": 0, "status": "starting"}
@@ -232,31 +256,34 @@ def network_child(account_name: str, target_file: Path, output: Path) -> int:
                         save()
 
                 for target in targets:
-                    handle = str(target["handle"]).strip().lstrip("@").lower()
-                    if not handle or any(c not in "abcdefghijklmnopqrstuvwxyz0123456789._" for c in handle):
-                        raise ValueError("invalid_handle")
-                    result = {"targetRef": target["ref"], "requestedHandle": handle, "externalId": target["externalId"], "historicalOecHint": target.get("historicalOecHint"), "profiles": []}
+                    handle, oec = target["handle"], target["oecId"]
+                    result = {"targetRef": target["ref"], "inputKind": target["inputKind"], "requestedHandle": handle,
+                              "requestedOecId": oec, "auditHandle": target["auditHandle"], "externalId": target["externalId"],
+                              "historicalOecHint": target.get("historicalOecHint"), "profiles": []}
                     report["targets"].append(result)
-                    found = request("find", {"query": handle, "pagination": {"size": 12, "page": 0}, "query_type": 1, "filter_params": {}, "algorithm": 1}, target["ref"])
-                    if found is None:
-                        break
-                    exact = probe.find_exact(found, handle)
-                    if not isinstance(exact, dict):
-                        result.update(status="unresolved", reason="no_exact_handle", currentHandleResolved=False)
-                        save()
-                        continue
-                    exact_summary = summarize_profile(exact)
-                    if exact_summary["identity"]["market"] not in (None, "it"):
-                        report.update(status="blocked", reason="find_market_mismatch")
-                        break
-                    oec = child._oec(exact)
-                    if not oec.isdigit() or child._handle(exact).lower() != handle:
-                        result.update(status="unresolved", reason="find_identity_invalid")
-                        save()
-                        continue
-                    result.update(oecId=oec, currentHandleResolved=True, historicalHintMatches=None if not target.get("historicalOecHint") else oec == target["historicalOecHint"], find=exact_summary)
-                    summaries = [exact_summary]
-                    raw_profiles = [exact]
+                    summaries, raw_profiles = [], []
+                    if handle:
+                        found = request("find", {"query": handle, "pagination": {"size": 12, "page": 0}, "query_type": 1, "filter_params": {}, "algorithm": 1}, target["ref"])
+                        if found is None:
+                            break
+                        exact = probe.find_exact(found, handle)
+                        if not isinstance(exact, dict):
+                            result.update(status="unresolved", reason="no_exact_handle", currentHandleResolved=False)
+                            save()
+                            continue
+                        exact_summary = summarize_profile(exact)
+                        if exact_summary["identity"]["market"] not in (None, "it"):
+                            report.update(status="blocked", reason="find_market_mismatch")
+                            break
+                        oec = child._oec(exact)
+                        if not oec.isascii() or not oec.isdigit() or child._handle(exact).lower() != handle:
+                            result.update(status="unresolved", reason="find_identity_invalid")
+                            save()
+                            continue
+                        result.update(currentHandleResolved=True, historicalHintMatches=None if not target.get("historicalOecHint") else oec == target["historicalOecHint"], find=exact_summary)
+                        summaries.append(exact_summary)
+                        raw_profiles.append(exact)
+                    result["oecId"] = oec
                     # Explicit controlled comparison, including [2] even if IT's minimal completeness check passed.
                     for profile_types in ([1, 2, 6], [2]):
                         payload = request("profile", {"creator_oec_id": oec, "profile_types": profile_types}, target["ref"])
@@ -276,7 +303,8 @@ def network_child(account_name: str, target_file: Path, output: Path) -> int:
                     if report["status"] in {"blocked", "bounded_timeout"}:
                         break
                     combined_raw = merge_profiles(raw_profiles)
-                    if child._missing_required_fields(combined_raw, frozenset({"followers"})) or not child._handle(combined_raw):
+                    if (child._missing_required_fields(combined_raw, frozenset({"followers"})) or not child._handle(combined_raw)
+                            or merge_profile_summaries(summaries)["identity"]["market"] is None):
                         payload = request("profile", {"creator_oec_id": oec, "profile_types": [1, 6]}, target["ref"])
                         if payload is None:
                             break
@@ -291,10 +319,14 @@ def network_child(account_name: str, target_file: Path, output: Path) -> int:
                         result["profiles"].append({"profileTypes": [1, 6], "summary": summary})
                         summaries.append(summary)
                     merged = merge_profile_summaries(summaries)
-                    if (merged["identity"]["handle"] or "").lower() != handle or merged["identity"]["market"] != "it":
+                    current_handle = merged["identity"]["handle"]
+                    if (handle and (current_handle or "").lower() != handle) or merged["identity"]["market"] != "it" or merged["identity"]["oecId"] != oec:
                         result.update(status="unresolved", reason="merged_identity_not_confirmed", merged=merged, currentHandleResolved=False)
                     else:
-                        result.update(status="completed", merged=merged, currentPlatformIdentityVerified=True, historicalCrossSourceIdentityProven=False)
+                        result.update(status="completed", merged=merged, currentPlatformIdentityVerified=True,
+                                      currentHandleResolved=bool(current_handle), historicalCrossSourceIdentityProven=False,
+                                      handleChangedFromAudit=None if not target["auditHandle"] or not current_handle else current_handle.lower() != target["auditHandle"],
+                                      handleObservation="remote_observed" if current_handle else "not_returned_keep_stored_alias")
                     save()
                 if report["status"] not in {"blocked", "bounded_timeout"}:
                     report["status"] = "completed"

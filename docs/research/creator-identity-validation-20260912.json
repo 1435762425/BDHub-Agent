@@ -1,0 +1,46 @@
+{
+  "schema": "bdhub.creator-identity-validation.v1",
+  "date": "2026-09-12",
+  "liveOecOnlyProbe": {
+    "targets": 3,
+    "exactSameOecProfiles": 3,
+    "remoteHandlesReturned": 3,
+    "findRequests": 0,
+    "profileRequests": 8,
+    "availableFieldCounts": [
+      20,
+      17,
+      5
+    ],
+    "identityFileUnchanged": true,
+    "rawReportSha256": "cb74e59d0ba20e254930721d1ae0137a25496bf2b99cc61a8591a97d6fb7baf4",
+    "realRenameObserved": false
+  },
+  "registry": {
+    "path": "var/creator-identities.sqlite",
+    "counts": {
+      "identities": 31,
+      "observations": 65,
+      "leads": 48,
+      "pendingLeads": 17,
+      "resolvedLeads": 31
+    },
+    "sameCountsAfterSecondImport": true,
+    "refreshTargetsBuiltFromExistingOec": 3,
+    "generatedTargetsUseOecNotHandle": true
+  },
+  "tests": {
+    "profile": 61,
+    "identityAndImport": 24,
+    "total": 85,
+    "renameAndHandleReuse": "offline isolated fixtures",
+    "oldSnapshotOrdering": "offline isolated fixtures",
+    "missingHandlePreservesLastVerifiedName": "offline isolated fixtures",
+    "duplicateAndConcurrentIngest": "offline isolated fixtures"
+  },
+  "legacyBusinessWrites": 0,
+  "realSends": 0,
+  "matchingAndSecondPilotDatabasesMigrated": false,
+  "webIdentityViewsIntegrated": false,
+  "scope": "Stable identity store and dual-route HTTP probe verified; no full production refresh scheduler or UI migration."
+}

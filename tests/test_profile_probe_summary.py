@@ -37,7 +37,90 @@ def report(at="2026-09-12T01:00:00+00:00"):
                          "merged": merge_profile_summaries([found, combined, split])}]}
 
 
+def known_report(current_handle="renamed_handle"):
+    value = report()
+    value["schema"] = "bdhub.italy-profile-probe.v3"
+    combined = summary(handle=current_handle, follower_cnt=12, units_sold=0)
+    split = summary(handle=current_handle, video_publish_cnt_30d=0)
+    target = value["targets"][0]
+    target.pop("find")
+    target.update(inputKind="known_oec", requestedHandle=None, requestedOecId="123456789",
+                  auditHandle="old_handle", currentHandleResolved=bool(current_handle),
+                  profiles=[{"profileTypes": [1, 2, 6], "summary": combined},
+                            {"profileTypes": [2], "summary": split}],
+                  merged=merge_profile_summaries([combined, split]))
+    value["requests"] = [{"targetRef": "test-ref", "stage": "profile", "attempts": [{}]}]
+    return value
+
+
 class ProbeSummaryTests(unittest.TestCase):
+    def test_known_oec_without_handle_is_verified_without_inventing_old_name(self):
+        public, private = M.build_documents([known_report(None)])
+        item = private["records"][0]
+        self.assertTrue(item["currentPlatformIdentityVerified"])
+        self.assertIsNone(item["currentHandle"])
+        self.assertFalse(item["currentHandleResolved"])
+        self.assertEqual(item["auditHandle"], "old_handle")
+        self.assertIsNone(item["summary"]["identity"]["handle"])
+        self.assertEqual(public["inputKindTargetAttempts"]["known_oec"], 1)
+        self.assertTrue(public["knownOecRouteDiagnostics"]["noFindInRecordedRequests"])
+        self.assertEqual(public["reducedPlanComparison"]["comparedTargets"], 0)
+
+    def test_known_oec_adopts_returned_name_without_requiring_audit_match(self):
+        public, private = M.build_documents([known_report()])
+        item = private["records"][0]
+        self.assertEqual(item["currentHandle"], "renamed_handle")
+        self.assertTrue(item["currentHandleResolved"])
+        self.assertEqual(item["requestedOecId"], item["currentOecId"])
+        self.assertEqual(item["auditHandle"], "old_handle")
+        self.assertNotIn("renamed_handle", json.dumps(public))
+
+    def test_known_oec_rejects_wrong_requested_response_or_handle_resolution(self):
+        for mutate in (
+            lambda t: t.update(requestedOecId="999999"),
+            lambda t: t.update(oecId="999999"),
+            lambda t: t.update(requestedHandle="old_handle"),
+            lambda t: t.update(currentHandleResolved=False),
+            lambda t: t["profiles"][0].update(summary=summary(creator_oecuid="999999")),
+        ):
+            item = known_report()
+            mutate(item["targets"][0])
+            with self.assertRaises(ValueError):
+                M.build_documents([item])
+        item = known_report(None)
+        item["targets"][0]["currentHandleResolved"] = True
+        with self.assertRaises(ValueError):
+            M.build_documents([item])
+
+    def test_known_route_diagnostic_uses_only_same_report_validated_target_refs(self):
+        item = known_report()
+        item["requests"] += [{"targetRef": "other-private-ref", "stage": "find", "attempts": [{}]},
+                             {"targetRef": "not-a-target", "stage": "find", "attempts": [{}]}]
+        public, _ = M.build_documents([item])
+        self.assertEqual(public["knownOecRouteDiagnostics"]["findRequestEntries"], 0)
+        item["requests"].append({"targetRef": "test-ref", "stage": "find", "attempts": [{}, {}]})
+        public, _ = M.build_documents([item])
+        diagnostics = public["knownOecRouteDiagnostics"]
+        self.assertEqual(diagnostics["findRequestEntries"], 1)
+        self.assertEqual(diagnostics["findRecordedHttpResponses"], 2)
+        self.assertFalse(diagnostics["noFindInRecordedRequests"])
+
+    def test_missing_known_route_request_log_does_not_claim_zero_find_validation(self):
+        item = known_report()
+        item.pop("requests")
+        public, _ = M.build_documents([item])
+        self.assertIsNone(public["knownOecRouteDiagnostics"]["noFindInRecordedRequests"])
+
+    def test_v3_handle_discovery_keeps_exact_handle_rule(self):
+        item = report()
+        item["schema"] = "bdhub.italy-profile-probe.v3"
+        item["targets"][0].update(inputKind="handle_discovery", requestedOecId=None)
+        public, _ = M.build_documents([item])
+        self.assertEqual(public["inputKindTargetAttempts"]["handle_discovery"], 1)
+        item["targets"][0]["requestedHandle"] = "different_handle"
+        with self.assertRaises(ValueError):
+            M.build_documents([item])
+
     def test_counts_baseline_zero_and_profile2_gain(self):
         baseline = {"schemaVersion": 1, "market": "it", "records": [
             {"oecId": "123456789", "summary": summary(follower_cnt=10, units_sold=9)}]}
