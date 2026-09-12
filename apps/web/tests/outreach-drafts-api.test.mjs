@@ -35,6 +35,13 @@ test("disabled generation does not compile context or enqueue a model job",async
   const calls=[];const api=createDraftHandlers({invoke:async(command)=>{calls.push(command);return command==="lookup_request"?null:status(false);},build:()=>{throw Error("SHOULD_NOT_COMPILE");}});
   const response=await api.POST(post());assert.equal(response.status,409);assert.equal((await response.json()).error.code,"policy_disabled");assert.deepEqual(calls,["lookup_request","status"]);
 });
+test("second outreach now rejects new model jobs while original paid request remains readable",async()=>{
+  const second={...input,packetId:PACKET.replace('review-packet','second-packet')},calls=[];
+  const api=createDraftHandlers({invoke:async command=>{calls.push(command);return command==='lookup_request'?null:status();},build:()=>{throw Error('MUST_NOT_COMPILE');}});
+  const response=await api.POST(post(second));assert.equal(response.status,409);assert.equal((await response.json()).error.code,'second_uses_templates');assert.deepEqual(calls,['lookup_request']);
+  const original={...summary(),packetId:second.packetId};const history=createDraftHandlers({invoke:async()=>original,build:()=>{throw Error('MUST_NOT_COMPILE');}});
+  assert.equal((await history.POST(post(second))).status,200);
+});
 test("replay retrieves original job before stale-context compilation or disabled-policy check",async()=>{
   let compiled=0;const calls=[],api=createDraftHandlers({invoke:async(command,value)=>{calls.push({command,value});return summary();},build:()=>{compiled++;throw Object.assign(Error("OLD_PACKET"),{code:"stale_context"});}});
   for(let i=0;i<2;i++){const response=await api.POST(post());assert.equal(response.status,200);assert.equal((await response.json()).id,DRAFT);}

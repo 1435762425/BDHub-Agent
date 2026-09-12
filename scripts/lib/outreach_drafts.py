@@ -109,6 +109,11 @@ def validate_context(context, request, skill_path=SKILL):
         binding, facts = context["binding"], context["modelFacts"]
         if binding["market"] != "it" or binding["packetId"] != request["packetId"] or binding["policyVersion"] != "it-intent-invitation@1":
             raise ValueError()
+        second = binding.get("origin") == "second_outreach"
+        if second and (not re.fullmatch(r"second-packet-[0-9a-f-]{36}", request["packetId"]) or binding.get("historicalOwnership") != "unverified" or not re.fullmatch(r"[0-9a-f]{64}", binding.get("sourceFingerprint", ""))):
+            raise ValueError()
+        if not second and request["packetId"].startswith("second-packet-"):
+            raise ValueError()
         if not isinstance(binding["oecId"], str) or not re.fullmatch(r"[0-9]{1,64}", binding["oecId"]):
             raise ValueError()
         _token(binding["registryCreatorId"])
@@ -146,9 +151,15 @@ def validate_context(context, request, skill_path=SKILL):
             if not isinstance(product["factIds"], list) or not set(product["factIds"]) <= fact_ids or not product["factIds"]:
                 raise ValueError()
             bound = [fact for fact in facts["facts"] if fact["id"] in product["factIds"]]
-            if not any(fact["kind"]=="product_name" and fact["value"]==product["nameIt"] for fact in bound) or \
-                    not any(fact["kind"]=="category_alignment" and fact["value"]==product["sharedCategories"] for fact in bound):
+            if not any(fact["kind"]=="product_name" and fact["value"]==product["nameIt"] for fact in bound):
                 raise ValueError()
+            if second:
+                # A source lead is sufficient to discuss a named product; it is
+                # not evidence of this recipient's sales or category alignment.
+                if product["sharedCategories"] or any(fact["kind"] != "product_name" for fact in bound):raise ValueError()
+            elif not any(fact["kind"]=="category_alignment" and fact["value"]==product["sharedCategories"] for fact in bound):
+                raise ValueError()
+        if second and any(fact["kind"] not in {"recipient_handle","product_name"} for fact in facts["facts"]):raise ValueError()
         return skill.decode("utf-8")
     except OutreachDraftError:
         raise

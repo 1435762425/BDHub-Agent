@@ -37,3 +37,8 @@
 
 
 2026-09-12个性化意语草稿实现见`docs/implementation/italy-outreach-drafts.md`。入口仅为`italy-profiles`的有效资料包，要求稳定意大利身份及同口径类目适配依据；无已核验Offer时只探询意向，不将表达要求变成佣金、样品、品牌或商品卡承诺。独立writer/reviewer使用冻结事实与版本化业务策略，原文、中文辅助、事实和每阶段usage留在`var/outreach-drafts.sqlite`；费用按报价估算，未知不当零，预留另列。`npm run drafts:worker`启动队列服务但不启用模型策略；当前默认关闭且尚未真实调用。页面仅查看/复制，不发送、不采用、不覆盖冻结二发稿；旧版本保留，未确认提交先按原requestId查回已有任务，模型结果未知不自动重试。`/agents`仍为演示配置，不能充当真实草稿策略。
+
+
+2026-09-13最新二发口径覆盖此前个性化实验：使用者提供的墨西哥实用模板为canonical；其他国家去掉WhatsApp/email，不固化返校季/八月/销量复苏。二发只做固定模板字段填充（31人已实际批量准备、模型0），一发保留个性化。先卡逐张确认后一次文案，样品是页面可用才申请的条件句，非二发筛选硬门槛。`docs/research/mx-second-message-reference.md`区分用户当前原文、历史TREND四分支、近期网站群发；不要用网站纯文字实验替代普通二发业务。当前实现入口`/workspace?mode=second-live`及`docs/implementation/italy-second-system.md`；新机会/模板、真实trial、原模拟库各自保留。
+
+IT已真实只读验证EU info/id/token、I18N IM host的203/608/301和Freegrin card_list+members绑定，库存1355/达人12%为2026-09-13 00:00北京时间快照，不能当作永久报价。wire Campaign 0与成员来源Campaign分开。真发需当前卡复核、固定scope/sender hash/已批准且未过期trial，不能根据鉴权通过自动发信；旧实际试点4970因用户否定v2话术而暂停、未批准、外部尝试0；不得恢复。当前v3待定稿，用已核验的商品级佣金优势作为推广理由，发卡及文字前重查事实；不得自行批准新版或把旧批准转给新正文。`scripts/italy-second-live.py`和独立卡/文字attempt负责顺序、租约、回执、unknown与partial_delivery。旧系统始终只读；新sender FIFO仅协调新系统，另只读检查旧在途/旧gate，不声称跨新旧原子调度。后续只有确认具体批次后才能执行，原MX任务不恢复。
