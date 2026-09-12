@@ -18,11 +18,13 @@
 
 新增本地持久运行切片：示例消息、关系控制、任务、上下文和逐组件回执进入独立 SQLite，Worker 在页面关闭后仍可处理，重新启动进程后从原记录继续。当前采用确定性判断和本地模拟平台，未调用真实模型或 TikTok。[运行范围与恢复验证](docs/implementation/local-runtime-v1.md)。
 
-原型基于真实 **TailAdmin Next.js Free 2.3.0（MIT）**，缺少的业务页面自行实现。七个入口贯通经营目标、二发/一发机会、合作会话、人工决定、MX 历史接续、话术策略与结果查看。原七页和本地运行仍为示例；意大利匹配数据是单独标识的历史真实快照。尚未接入真实模型、生产业务数据库或平台执行。旧系统业务和运行保持只读；已授权资料/Skills清理已经结束，此前两套生成 UI 均未采用。
+原型基于真实 **TailAdmin Next.js Free 2.3.0（MIT）**，缺少的业务页面自行实现。七个入口贯通经营目标、二发/一发机会、合作会话、人工决定、MX 历史接续、话术策略与结果查看。原七页和本地运行仍为示例；意大利画像分析同时使用历史资料与身份库增量画像。个性化草稿的模型适配和持久队列已实现，默认关闭，尚未真实调用；没有接入生产业务写入或真实消息发送。旧系统业务和运行保持只读；已授权资料/Skills清理已经结束，此前两套生成 UI 均未采用。
 
 批量扩充达人池已接入 **[达人库](http://127.0.0.1:5198/creators) → 批量添加达人**：支持 handle/@handle/主页链接，预览去重后入队，逐项显示新增、已有及未匹配，支持暂停和页面恢复。当前32位已核验达人、17条待解析线索。[批量入池与实测](docs/implementation/creator-discovery.md)。
 
 新画像现已自动接入 **[画像分析](http://127.0.0.1:5198/opportunities?mode=matching&dataset=italy-profiles)**：原21人更新、新增11人，匹配池3,989位；达人档案可直接“分析适合商品”，旧结果和资料包保留版本。[同步与实测](docs/implementation/registry-profile-matching-sync.md)。
+
+个性化意语邀约草稿已接入 **[画像分析](http://127.0.0.1:5198/opportunities?mode=matching&dataset=italy-profiles) → 整理关系资料包 → 个性化邀约草稿**。当前只支持已关联稳定身份、具有同口径类目适配依据的意大利资料包；可选择风格并填写表达要求。没有已核验 Offer 时只探询合作意向，不承诺佣金、样品或商品卡。独立生成与检查阶段使用同一份冻结事实，保留原文、中文辅助理解、版本及服务商返回的用量；费用按报价估算，未知用量不当零。模型使用默认关闭，本轮尚未真实调用；页面只能查看或复制草稿，没有发送动作。[范围、使用与验证记录](docs/implementation/italy-outreach-drafts.md)。
 
 ## 启动与体验
 
@@ -34,7 +36,7 @@ npm run build
 npm run start
 ```
 
-本地运行还需在另一个终端、同一目录执行 `npm run runtime:worker`。数据库位于新项目 `var/runtime.sqlite`，不清除历史记录。
+本地运行还需在另一个终端、同一目录执行 `npm run runtime:worker`。数据库位于新项目 `var/runtime.sqlite`，不清除历史记录。草稿队列使用另一个独立 Worker：`npm run drafts:worker`；启动 Worker 不会启用模型策略。
 
 开发时使用 `npm run dev`；开发和生产预览共用 `127.0.0.1:5198`，同一时间只启动一种。完整命令与演示流程见 [前端说明](apps/web/README.md)。建议先点击页面中的“体验流程”，依次体验 Sofía 的二发合作、Luca 的人工决定和 Camila 的历史接续。“重置演示”可恢复初始示例。
 
@@ -51,6 +53,7 @@ npm run start
 | Mac 与服务器承载判断 | [部署与容量](docs/architecture/deployment-capacity.md) |
 | 必要旧接口与事实来源 | [接口迁入清单](docs/contracts/legacy-interface-inventory.md) |
 | 本地持久运行 | [范围、命令与恢复验证](docs/implementation/local-runtime-v1.md) |
+| 个性化意语草稿 | [使用边界、版本与用量记录](docs/implementation/italy-outreach-drafts.md) |
 | 视觉与交互验收 | [验收报告及当前点验限制](design-qa.md) |
 | 前端原型与来源 | [运行/路由/演示流程](apps/web/README.md) · [源码清单](apps/web/TAILADMIN-SOURCE.json) · [第三方许可](apps/web/THIRD_PARTY_NOTICES.md) |
 | 已选 TailAdmin 的设计推进 | [设计执行稿](design/tailadmin-design-brief.md) · [14视图映射](design/tailadmin-page-map.md) · [许可核对与历史研究](docs/research/tailadmin-license-review.md) |

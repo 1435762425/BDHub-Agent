@@ -1,0 +1,89 @@
+"use client";
+import {useCallback,useEffect,useRef,useState} from "react";
+import {Button,Card,Field,Icon,Notice,Pill,Select,TextArea} from "../bdhub/ui";
+import type {DraftDetail,DraftList,DraftRequest,DraftServiceStatus,DraftState,DraftStyle,DraftSummary,DraftUsage} from "./contracts";
+import {isDraftSummary as summary,readDraftPanelData} from "./read-data";
+
+const API="/api/outreach-drafts",PENDING="bdhub-outreach-drafts-pending-v1";
+const states:Record<DraftState,string>={queued:"等待生成",running:"正在生成",drafted:"草稿已生成",needs_review:"需要检查",stale:"依据已更新",failed:"本次未完成",result_unknown:"结果尚未确认"};
+const styles:Record<DraftStyle,string>={friendly:"自然友好",direct:"简短直接",detailed:"适度详细"};
+const errorLabels:Record<string,string>={model_disabled:"等待模型配置与使用范围确认。",context_stale:"资料已更新，请用新资料包另行生成。",stage_result_unknown:"模型调用结果尚未确认，不会自动重复生成。",budget_exhausted:"本次试用额度已用完。",trial_limit_reached:"本次草稿数量已用完。",reservation_exceeded:"本次记录用量超出预留范围，需要核对费用。",usage_unavailable:"模型未提供完整用量，费用尚未确认。",provider_output_invalid:"模型正文未通过格式检查。",provider_output_truncated:"模型正文未完整返回。",provider_usage_invalid:"模型用量未完整返回，费用尚待核对。",policy_changed:"模型使用范围已变化，原结果保留。",skill_mismatch:"草稿策略已变化，请用当前资料另行生成。",policy_disabled:"等待模型配置与使用范围确认。",authorization_required:"等待模型配置与使用范围确认。",provider_not_ready:"模型服务尚未配置完成。",provider_timeout:"模型请求超时，已保留原任务。",result_unknown:"模型调用结果尚未确认，不会自动重复生成。",worker_interrupted:"上次任务中断，已保存的内容与用量保留。",stale_context:"资料已更新，请整理新资料包后生成新版。",stale_run:"资料已更新，请整理新资料包后生成新版。",invalid_model_output:"模型结果未通过结构检查。",review_failed:"草稿检查尚未完成。",review_validation_failed:"草稿检查尚未完成。",draft_validation_failed:"模型结果未通过结构检查。",budget_exceeded:"本次试用额度已用完。",draft_limit_exceeded:"本次草稿数量已用完。"};
+function request(value:unknown):value is DraftRequest{const input=value as DraftRequest|null;return Boolean(input&&typeof input.packetId==="string"&&typeof input.requestId==="string"&&Object.hasOwn(styles,input.style)&&typeof input.instructions==="string"&&input.instructions.length<=500);}
+function date(value:string){const time=Date.parse(value);return Number.isFinite(time)?new Intl.DateTimeFormat("zh-CN",{month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit",hour12:false,timeZone:"Asia/Shanghai"}).format(time):"时间未记录";}
+function money(value:string|null|undefined){return value===null||value===undefined?"尚未确认":`¥${value}`;}
+function count(value:number|null|undefined){return value===null||value===undefined?"未返回":value.toLocaleString("zh-CN");}
+function message(value:unknown,fallback:string){const error=(value as {error?:{message?:unknown}}|null)?.error;return typeof error?.message==="string"?error.message:fallback;}
+
+function useGeneration(onConfirmed:(value:DraftSummary)=>void,enabled=true){
+  const [busy,setBusy]=useState(false),[pending,setPending]=useState<DraftRequest|null>(null),[error,setError]=useState(""),[ready,setReady]=useState(false),[storageError,setStorageError]=useState(false);
+  const mounted=useRef(false),writing=useRef(false),pendingRef=useRef<DraftRequest|null>(null),callback=useRef(onConfirmed),controller=useRef<AbortController|null>(null);callback.current=onConfirmed;
+  useEffect(()=>{mounted.current=true;if(!enabled){setReady(true);return()=>{mounted.current=false;controller.current?.abort();};}try{const raw=sessionStorage.getItem(PENDING);if(raw){const original:unknown=JSON.parse(raw);if(!request(original))throw new Error();pendingRef.current=original;setPending(original);setError("上次提交结果尚未确认，请恢复原请求。");}setReady(true);}catch{setStorageError(true);setError("无法恢复请求编号，请检查浏览器会话存储后刷新。");}return()=>{mounted.current=false;controller.current?.abort();};},[enabled]);
+  const execute=useCallback(async(input:DraftRequest)=>{
+    if(!enabled||writing.current||(pendingRef.current&&pendingRef.current.requestId!==input.requestId))return;
+    try{sessionStorage.setItem(PENDING,JSON.stringify(input));}catch{setStorageError(true);setError("未能保存请求编号，本次没有提交。");return;}
+    writing.current=true;pendingRef.current=input;setPending(input);setBusy(true);setError("");const current=new AbortController();controller.current=current;const timer=window.setTimeout(()=>current.abort(),25000);
+    const clear=()=>{try{sessionStorage.removeItem(PENDING);}catch{}pendingRef.current=null;setPending(null);};
+    try{
+      const response=await fetch(API,{method:"POST",credentials:"same-origin",signal:current.signal,headers:{"Content-Type":"application/json"},body:JSON.stringify(input)});const body:unknown=await response.json();if(!mounted.current)return;
+      if(!response.ok){if([400,403,404,409,413,415,422].includes(response.status)||(response.status===429&&["budget_exhausted","trial_limit_reached"].includes(String((body as {error?:{code?:unknown}})?.error?.code))))clear();setError(message(body,"提交结果尚未确认，请恢复原请求。"));return;}
+      if(!summary(body)||body.packetId!==input.packetId||body.style!==input.style)throw new Error();clear();callback.current(body);
+    }catch{if(mounted.current)setError("提交结果尚未确认，原请求编号已保留。恢复不会创建重复草稿。");}
+    finally{window.clearTimeout(timer);writing.current=false;if(mounted.current)setBusy(false);}
+  },[enabled]);
+  return {busy,pending,error,blocked:!ready||busy||Boolean(pending)||storageError,submit:(input:DraftRequest)=>{if(enabled&&ready&&!storageError&&!pendingRef.current&&!writing.current)void execute(input);},retry:()=>{if(enabled&&pendingRef.current)void execute(pendingRef.current);}};
+}
+function Usage({value}:{value:DraftDetail}){
+  const total=(key:keyof DraftUsage)=>value.attempts.length&&value.attempts.every(item=>item.usage[key]!==null)?value.attempts.reduce((sum,item)=>sum+(item.usage[key]||0),0):null;
+  return <details className="rounded-xl border border-gray-200 px-4 py-3 text-xs dark:border-gray-700"><summary className="cursor-pointer font-medium text-gray-700 dark:text-gray-200">模型用量与报价估算</summary><div className="mt-3 flex flex-wrap gap-x-5 gap-y-2 leading-5 text-gray-500"><span>输入 {count(total("promptTokens"))}</span><span>缓存命中 {count(total("cacheHitTokens"))}</span><span>输出 {count(total("completionTokens"))}</span><span>合计 {count(total("totalTokens"))} Token</span></div><p className="mt-3 leading-5 text-gray-500">已记录用量的报价估算：{money(value.cost.estimatedCny)}{value.cost.upperBoundCny!==null&&value.cost.upperBoundCny!==value.cost.estimatedCny&&` · 上界 ${money(value.cost.upperBoundCny)}`}。{!value.cost.complete&&"部分调用费用尚未确认，不能按零计算。"}</p><p className="mt-1 leading-5 text-gray-400">按模型报价估算，实际账单以服务商记录为准；结构匹配的零 Token 不包含本次草稿。</p>{value.attempts.map((attempt,index)=><div key={`${index}-${attempt.stage}`} className="mt-3 border-t border-gray-100 pt-3 leading-5 text-gray-400 dark:border-gray-800"><p>{attempt.stage==="draft"?"正文生成":"独立检查"} · {attempt.status==="completed"?"调用完成":attempt.status==="inflight"?"调用中":attempt.status==="result_unknown"?"结果未知":"调用未完成"}</p><p>输入 {count(attempt.usage.promptTokens)} · 缓存命中 {count(attempt.usage.cacheHitTokens)} · 未命中 {count(attempt.usage.cacheMissTokens)} · 输出 {count(attempt.usage.completionTokens)} · 报价估算 {money(attempt.cost.estimatedCny)}</p></div>)}</details>;
+}
+
+export default function DraftPanel({packetId,stale,disabled=false,readOnly=false,initialDraftId=""}:{packetId:string;stale:boolean;disabled?:boolean;readOnly?:boolean;initialDraftId?:string}){
+  const [style,setStyle]=useState<DraftStyle>("friendly"),[instructions,setInstructions]=useState(""),[service,setService]=useState<DraftServiceStatus|null>(null),[list,setList]=useState<DraftList|null>(null),[selectedId,setSelectedId]=useState(initialDraftId),[detail,setDetail]=useState<DraftDetail|null>(null),[error,setError]=useState(""),[refresh,setRefresh]=useState(0),[notice,setNotice]=useState(""),[copying,setCopying]=useState(false),[copyError,setCopyError]=useState("");
+  const sequence=useRef(0),currentPacket=useRef(packetId);currentPacket.current=packetId;
+  const confirmed=useCallback((value:DraftSummary)=>{if(value.packetId===currentPacket.current){setSelectedId(value.id);setNotice("草稿任务已保存，完成后会显示正文与检查结果。");}else setNotice("上一份资料包的原请求已确认，草稿保存在其原始记录中。");setRefresh(version=>version+1);},[]);
+  const commands=useGeneration(confirmed,!readOnly);
+  const [submittedInput,setSubmittedInput]=useState("");
+  const inputKey=JSON.stringify({packetId,style,instructions:instructions.trim()});
+  useEffect(()=>{if(commands.pending?.packetId===packetId){setStyle(commands.pending.style);setInstructions(commands.pending.instructions);}},[commands.pending,packetId]);
+  useEffect(()=>{setSelectedId(initialDraftId);setList(null);setDetail(null);setCopyError("");setNotice("");setSubmittedInput("");},[packetId,initialDraftId]);
+  useEffect(()=>{
+    const controller=new AbortController(),version=++sequence.current;let reading=false;
+    const get=async(url:string)=>{const response=await fetch(url,{cache:"no-store",credentials:"same-origin",signal:controller.signal});const body=await response.json();if(!response.ok)throw new Error(message(body,"无法读取草稿状态。"));return body;};
+    const read=async()=>{if(reading||document.visibilityState!=="visible")return;reading=true;try{
+      const {service:nextService,list:nextList,detail:nextDetail,selectedId:id}=await readDraftPanelData({packetId,selectedId,readOnly},get);
+      if(controller.signal.aborted||version!==sequence.current)return;setService(nextService);setList(nextList);setDetail(nextDetail);setError("");if(!selectedId&&id)setSelectedId(id);
+    }catch(failure){if(!controller.signal.aborted&&version===sequence.current)setError(failure instanceof Error?failure.message:"无法读取草稿服务。");}finally{reading=false;}};
+    void read();const timer=window.setInterval(()=>void read(),3000),visible=()=>void read();document.addEventListener("visibilitychange",visible);return()=>{controller.abort();window.clearInterval(timer);document.removeEventListener("visibilitychange",visible);};
+  },[packetId,selectedId,refresh,readOnly]);
+  const current=detail?.draft.packetId===packetId&&detail.draft.id===selectedId?detail:null;
+  const active=Boolean(list?.drafts.some(item=>item.status==="queued"||item.status==="running"));
+  const enabled=Boolean(service?.provider.ready&&service.policy.enabled),budgetReached=Boolean(service&&(service.budget.usedDrafts>=service.policy.maxDrafts||Number(service.budget.availableCny)<=0));
+  const sameInputSubmitted=submittedInput===inputKey;
+  const generationDisabled=readOnly||disabled||stale||commands.blocked||!enabled||!list||Boolean(error)||active||budgetReached||sameInputSubmitted;
+  const outdated=stale||current?.freshness==="stale"||current?.draft.status==="stale";
+  const copy=async()=>{if(!current?.content?.textIt)return;setCopying(true);setCopyError("");try{await navigator.clipboard.writeText(current.content.textIt);setNotice("已复制意大利语草稿，没有发送消息。");}catch{setCopyError("复制未完成，可在原文区域手动选择复制。");}finally{setCopying(false);}};
+  return <Card title={readOnly?"历史邀约草稿":"个性化邀约草稿"} subtitle={readOnly?"查看保留的原文、检查结果和生成时的事实。":"用本资料包的事实生成意大利语草稿，表达要求只影响文案。"} action={<Pill tone="neutral">未发送</Pill>}><div className="space-y-5 p-4 sm:p-5">
+    {!readOnly&&<><div className="grid gap-4 sm:grid-cols-[160px_minmax(0,1fr)]"><Field label="表达风格"><Select value={style} disabled={commands.blocked} onChange={event=>setStyle(event.target.value as DraftStyle)}>{Object.entries(styles).map(([value,label])=><option key={value} value={value}>{label}</option>)}</Select></Field><Field label="补充表达要求" hint={`${instructions.length} / 500 字；例如：开场简短，不用夸张称赞。`}><TextArea value={instructions} maxLength={500} rows={3} disabled={commands.blocked} onChange={event=>setInstructions(event.target.value)} placeholder="描述希望如何表达，不填写尚未核实的佣金或寄样承诺。"/></Field></div>
+    {!service?<p className="text-xs text-gray-400">正在读取模型服务状态…</p>:!service.policy.enabled?<Notice>草稿生成等待模型配置与使用范围确认。当前不会调用模型或显示预设 AI 稿。</Notice>:!service.provider.ready?<Notice>模型服务尚未配置完成，任务生成暂不可用。</Notice>:<p className="text-xs leading-5 text-gray-500">模型 {service.provider.model} · 本次范围最多 {service.policy.maxDrafts} 份、{money(service.policy.maxCostCny)}；已占用 {service.budget.usedDrafts} 份，可用额度 {money(service.budget.availableCny)}。</p>}
+    {service?.policy.enabled&&!service.workerOnline&&<p className="text-xs text-gray-500">草稿服务暂未在线，已保存的任务会保留。</p>}
+    {stale&&<Notice tone="warning">资料包依据已更新，旧草稿仍可查看。请先重新分析并整理新资料包。</Notice>}
+    <div className="flex flex-wrap items-center justify-between gap-3"><p className="max-w-lg text-xs leading-5 text-gray-500">商业条件未核验时，正文只探询合作意向，不承诺佣金、寄样或可用商品卡。</p><Button disabled={generationDisabled} onClick={()=>{setSubmittedInput(inputKey);commands.submit({packetId,style,instructions:instructions.trim(),requestId:crypto.randomUUID()});}}><Icon name="agent" className="size-4"/>{commands.busy?"正在提交…":active?"草稿生成中":sameInputSubmitted?"本组要求已提交":"生成意大利语草稿"}</Button></div>
+    {sameInputSubmitted&&!active&&!commands.pending&&<Button size="sm" variant="ghost" onClick={()=>setSubmittedInput("")}>准备按相同要求生成另一版</Button>}
+    </>}
+    {readOnly&&service&&<p className="text-xs text-gray-500">模型 {service.provider.model} · 原文与费用按原任务记录保留。</p>}
+    {!readOnly&&commands.error&&<Notice tone="warning"><p>{commands.error}</p>{commands.pending&&<div className="mt-2"><p className="mb-2 text-xs">{commands.pending.packetId!==packetId?"原请求属于另一份资料包，恢复后仍归入原档案。":"恢复仅确认原请求，不新增另一份任务。"}</p><Button size="sm" variant="outline" disabled={commands.busy} onClick={commands.retry}>恢复原请求</Button></div>}</Notice>}
+    {error&&<div role="status" className="flex flex-wrap items-center gap-2 text-xs text-error-500"><p>{error}</p><Button size="sm" variant="ghost" onClick={()=>setRefresh(value=>value+1)}>重新读取</Button></div>}
+    {notice&&<p role="status" className="text-xs text-brand-500">{notice}</p>}
+    {list&&list.drafts.length===0&&<p className="text-xs leading-5 text-gray-400">此资料包尚无已保存的邀约草稿。</p>}
+    {list&&list.drafts.length>0&&<><Field label="草稿版本"><Select value={selectedId} onChange={event=>{setSelectedId(event.target.value);setCopyError("");}}>{list.drafts.map(item=><option key={item.id} value={item.id}>{date(item.createdAt)} · {styles[item.style]} · {states[item.status]}</option>)}</Select></Field>{current?<div className="space-y-4"><div className="flex flex-wrap items-center justify-between gap-2"><Pill tone={outdated?"neutral":current.draft.status==="needs_review"||current.draft.status==="result_unknown"?"warning":"brand"}>{outdated?"历史草稿 · 依据已更新":states[current.draft.status]}</Pill><span className="text-xs text-gray-400">{date(current.draft.createdAt)} · 北京时间</span></div>
+      {current.freshness==="unknown"&&<p className="text-xs text-gray-500">草稿依据的当前版本尚未核对，原文保留。</p>}
+      {current.draft.errorCode&&<p className="text-xs leading-5 text-gray-500">{errorLabels[current.draft.errorCode]||"本次任务需进一步核对，已有结果保留。"}</p>}
+      {current.content?<><div className="rounded-xl border border-gray-200 p-4 dark:border-gray-700"><div className="mb-3 flex items-center justify-between gap-3"><h3 className="text-sm font-medium text-gray-800 dark:text-gray-200">意大利语原文</h3><Button size="sm" variant="ghost" disabled={copying} onClick={()=>void copy()}><Icon name="copy" className="size-3.5"/>{copying?"正在复制…":"复制原文"}</Button></div><p lang="it" className="select-text whitespace-pre-wrap break-words text-sm leading-7 text-gray-800 dark:text-gray-200">{current.content.textIt}</p>{copyError&&<p className="mt-2 text-xs text-error-500">{copyError}</p>}</div><details className="rounded-xl bg-gray-50 px-4 py-3 dark:bg-gray-800/40"><summary className="cursor-pointer text-sm font-medium text-gray-700 dark:text-gray-300">中文辅助理解</summary><p lang="zh-CN" className="mt-3 whitespace-pre-wrap break-words text-sm leading-7 text-gray-600 dark:text-gray-400">{current.content.translationZh}</p></details></>:<p className="text-xs text-gray-500">{current.draft.status==="running"?current.draft.stage==="review"?"正在检查意语、中文释义与事实依据。":"正在依据资料包生成正文。":"当前没有完整的生成正文。"}</p>}
+      <div className="rounded-xl border border-gray-200 p-4 dark:border-gray-700"><p className="text-sm font-medium text-gray-700 dark:text-gray-300">机器检查{current.review?current.review.verdict==="pass"?" · 未发现阻止项":" · 有待核对项":" · 尚未完成"}</p><p className="mt-1 text-xs leading-5 text-gray-500">检查结果用于审阅草稿，不代表可发送或已获商业授权。</p>{current.review&&<><div className="mt-3 flex flex-wrap gap-3 text-xs text-gray-500"><span>意语检查：{current.review.italianValid?"通过":"待核对"}</span><span>中文释义一致性：{current.review.translationFaithful?"通过":"待核对"}</span></div>{[...current.review.issues,...current.review.unsupportedClaims].length>0&&<ul className="mt-3 list-disc space-y-1 pl-4 text-xs leading-5 text-gray-500">{[...current.review.issues,...current.review.unsupportedClaims].map((issue,index)=><li key={`${index}-${issue}`}>{issue}</li>)}</ul>}</>}</div>
+      {current.content&&<details className="text-xs text-gray-500"><summary className="cursor-pointer py-1">表达思路与事实依据</summary><p className="mt-2 leading-5 text-gray-400">以下事实随该草稿保存，资料更新后仍保留原内容。</p><p className="mt-2 leading-6">{current.content.rationaleZh}</p><p className="mt-2 break-all leading-5">商品：{current.content.selectedProductIds.map(id=>current.products.find(product=>product.id===id)?.nameIt||"未对应到已存商品").join(" · ")||"未指定"}</p><ul className="mt-2 space-y-1 leading-5">{current.content.evidenceRefs.map(ref=>{const fact=current.facts.find(item=>item.id===ref);return <li key={ref} className="break-words">{fact?`${fact.kind==="recipient_handle"?"平台名称":fact.kind==="product_name"?"商品名称":"类目交集"}：${Array.isArray(fact.value)?fact.value.join("、"):fact.value}`:"此引用未对应到已存事实"}</li>;})}</ul></details>}
+      <Usage value={current}/><details className="text-xs text-gray-400"><summary className="cursor-pointer">草稿记录</summary><p className="mt-2 break-all leading-5">{current.draft.id}</p><p className="break-all leading-5">资料包 {current.draft.packetId}</p><p className="leading-5">当前预留 {money(current.draft.reservedCostCny)} · 费用未知时保留预留额度</p></details>
+    </div>:<p className="text-xs text-gray-400">正在读取所选版本…</p>}</>}
+  </div></Card>;
+}
+
+export {states as draftStateLabels,styles as draftStyleLabels};

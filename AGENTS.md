@@ -1,6 +1,6 @@
 # BDHub-Agent
 
-本仓库用于建设独立运行、最终可替代旧 BDHub 的 Agent 驱动达人经营系统。已完成 PRD、架构设计和 `apps/web` 可运行前端原型；UI 已选择 T03 TailAdmin Next.js 免费 MIT 版，缺少的业务页面自行实现。原七页演示保留浏览器状态；`/workspace?mode=local` 已接入新项目独立 SQLite 与持久 Worker，使用确定性 Planner/模拟平台。另已实现 `/opportunities?mode=matching` 的结构化双向召回与评审包，使用独立合成事实库 `var/matching.sqlite`；未调用模型或真实平台。
+本仓库用于建设独立运行、最终可替代旧 BDHub 的 Agent 驱动达人经营系统。已完成 PRD、架构设计和 `apps/web` 可运行前端原型；UI 已选择 T03 TailAdmin Next.js 免费 MIT 版，缺少的业务页面自行实现。原七页演示保留浏览器状态；`/workspace?mode=local` 已接入新项目独立 SQLite 与持久 Worker，使用确定性 Planner/模拟平台。另已实现 `/opportunities?mode=matching` 的结构化双向召回与评审包，使用独立合成事实库 `var/matching.sqlite`；该合成切片不调用模型或真实平台。
 
 - 当前需求以 `docs/PRD.md` 为准，已确认与未决选择见 `docs/DECISIONS.md`。只读取本次任务需要的资料，不把全部研究报告默认装入上下文。
 - 墨西哥、巴西、意大利，先 TikTok IM，后 WhatsApp；一发、二发、回复到合作结果；1–2 人运营。日触达不设固定业务硬上限，真实平台和资源约束仍有效。
@@ -34,3 +34,6 @@
 2026-09-12批量handle入池见`docs/implementation/creator-discovery.md`：达人库可预览并提交最多500项IT名单，格式/重复检查不联网；共享identity Worker顺序处理OEC刷新与handle发现。当前真实小样新增1、已有1、未匹配1，重复/无效零请求，待解析不重复堆积；Find已核验但Profile失败保留OEC且标画像未完成。暂停只停止后续领取、失败不盲重跑；新输入不能按历史handle缓存跳过Find。原匹配/二发业务表仍未改绑。
 
 2026-09-12新画像已接入匹配，见`docs/implementation/registry-profile-matching-sync.md`。italy-profiles按注册表rowid增量投影，原21人更新/新增11人，总3,989；原ID/来源/控制/拒联/冲突保留。经营指标取单一最新观察，历史类别单独保留时点，不将旧指标拼进新统计窗口。相同观察时间完整Profile优先于Find，源库代际/水位和索引原子提交；后台有界重算依赖分区的最新查询，旧run/资料包/判断不改。仅该数据集自动同步，Kalodata二发库不改绑。
+
+
+2026-09-12个性化意语草稿实现见`docs/implementation/italy-outreach-drafts.md`。入口仅为`italy-profiles`的有效资料包，要求稳定意大利身份及同口径类目适配依据；无已核验Offer时只探询意向，不将表达要求变成佣金、样品、品牌或商品卡承诺。独立writer/reviewer使用冻结事实与版本化业务策略，原文、中文辅助、事实和每阶段usage留在`var/outreach-drafts.sqlite`；费用按报价估算，未知不当零，预留另列。`npm run drafts:worker`启动队列服务但不启用模型策略；当前默认关闭且尚未真实调用。页面仅查看/复制，不发送、不采用、不覆盖冻结二发稿；旧版本保留，未确认提交先按原requestId查回已有任务，模型结果未知不自动重试。`/agents`仍为演示配置，不能充当真实草稿策略。

@@ -602,6 +602,15 @@ export class MatchingStore {
     const characters=JSON.stringify(payload).length;if(characters>PACKET_LIMIT)throw new MatchingError(422,"context_too_large","必要上下文超过字符预算。");
     const packet:ReviewPacket={id:`review-packet-${randomUUID()}`,creatorId,createdAt:this.now(),fingerprint,runId,candidates:selected.length,characters,estimatedTokens:null,modelStatus:"not_called",executable:false,executionBlocked:true,payload};this.stmt("INSERT INTO review_packets VALUES(?,?,?)").run(packet.id,fingerprint,JSON.stringify(packet));return packet;
   });}
+  getCurrentReviewPacket(packetId:string):ReviewPacket {
+    const id=text(packetId,"packetId",100),row=this.stmt("SELECT data FROM review_packets WHERE id=?").get(id) as Row|undefined;
+    if(!row)throw new MatchingError(404,"packet_missing","未找到这份关系资料包。");
+    const packet=JSON.parse(row.data) as ReviewPacket,run=this.currentRun(packet.runId);
+    const candidates=run.candidates.filter(candidate=>candidate.creator.id===packet.creatorId);
+    if(!candidates.length)throw new MatchingError(409,"packet_identity_mismatch","资料包不属于当前候选达人。");
+    if(candidates.some(candidate=>candidate.readiness==="suppressed"))throw new MatchingError(409,"relationship_suppressed","此关系已暂停、拒联或由人工接管。");
+    return packet;
+  }
   demoChange(productId:string,expectedRevision:number,change:"raise_price"|"lower_price"|"offer_unavailable"|"offer_available",requestId?:string):{result:ImportResult;product:MatchProduct;message:string} {return this.transaction(()=>{
     if(this.dataset.mode!=="synthetic-local")throw new MatchingError(403,"synthetic_only","离线真实数据不能使用合成事实修改功能。");
     text(productId,"productId",100);integer(expectedRevision,"expectedRevision");choice(change,["raise_price","lower_price","offer_unavailable","offer_available"],"change");const requestHash=hash({productId,expectedRevision,change});
