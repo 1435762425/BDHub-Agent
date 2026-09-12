@@ -1,0 +1,94 @@
+{
+  "schema": "bdhub.creator-discovery-validation.v1",
+  "date": "2026-09-12",
+  "liveCanary": {
+    "batchStatus": "completed",
+    "inputCount": 5,
+    "itemCounts": {
+      "completed": 2,
+      "unresolved": 1,
+      "blocked": 0,
+      "duplicate": 1,
+      "invalid": 1
+    },
+    "outcomes": {
+      "created": 1,
+      "existing": 1,
+      "identity_only": 0
+    },
+    "businessRequests": 7,
+    "duplicateRequests": 0,
+    "invalidRequests": 0,
+    "idempotentReplaySameBatch": true,
+    "batchCountAfterReplay": 1,
+    "changedInputWithOldHashStatus": 409,
+    "allIdentityFilesUnchanged": true,
+    "allTemporaryDirectoriesRemoved": true,
+    "legacyWrites": 0,
+    "realSends": 0,
+    "findRequests": 3,
+    "profileRequestEntries": 4,
+    "challengeCount": 0,
+    "identityCounts": {
+      "identities": 32,
+      "observations": 74,
+      "leads": 50,
+      "pendingLeads": 17
+    },
+    "existingIdentityPreserved": true,
+    "sourceReportHashes": [
+      "14045cfd46dcb5ccd53feb4f36eaa70db7b0677a320e13ad71632955e14eeb14",
+      "eb5fa91ec9489522d4cb95a890c9eed89dcaf88c82a766b07b7b12b0706a02de",
+      "9915d16383f6d0a25e9d29d0ac9df1177183305ce48809f1227e2b180fd56a69"
+    ]
+  },
+  "preview": {
+    "total": 5,
+    "valid": 3,
+    "duplicate": 1,
+    "invalid": 1,
+    "platformRequests": 0,
+    "databaseCreated": false
+  },
+  "pausedWhileWorkerOnlineStartedItems": 0,
+  "businessStores": {
+    "second-italy.sqlite": {
+      "beforeSha256": "4bf4e58dccb2746f2c131cb36c65347a0cc026809da6a57cb375fc0d2d0aa406",
+      "afterSha256": "4bf4e58dccb2746f2c131cb36c65347a0cc026809da6a57cb375fc0d2d0aa406",
+      "unchanged": true
+    },
+    "matching-italy.sqlite": {
+      "beforeSha256": "c1637c769c59e48075f3e9e082d5a09308afe6c5c4239bebb8c259b24a1fb13d",
+      "afterSha256": "c1637c769c59e48075f3e9e082d5a09308afe6c5c4239bebb8c259b24a1fb13d",
+      "unchanged": true
+    },
+    "matching-italy-profiles.sqlite": {
+      "beforeSha256": "ab72ac8e42b7031995efbf4d01c87ad1c356ba4dadc394fc1d5ee8fb88a7ef31",
+      "afterSha256": "ab72ac8e42b7031995efbf4d01c87ad1c356ba4dadc394fc1d5ee8fb88a7ef31",
+      "unchanged": true
+    }
+  },
+  "tests": {
+    "node": 185,
+    "python": 125,
+    "typecheck": "passed",
+    "productionBuild": "passed"
+  },
+  "browser": {
+    "previewRowsAndCounts": true,
+    "editedInputInvalidatesPreview": true,
+    "pauseResume": true,
+    "reloadRecoversBatch": true,
+    "resultOpensCreatorAndClosesDialog": true,
+    "pendingRecheckPrefillsOneHandleOnly": true,
+    "responsive390pxNoOverflow": true,
+    "viewportRestored": true
+  },
+  "legacyHealth": "ok",
+  "worker": {
+    "oneCoordinatorForRefreshAndDiscovery": true,
+    "explicitTasksOnly": true,
+    "systemAutostartInstalled": false
+  },
+  "scope": "Three valid real Italy targets; failures/lease races/identity_only verified in isolated tests, not a 500-person throughput claim."
+}

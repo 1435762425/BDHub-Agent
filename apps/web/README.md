@@ -29,7 +29,7 @@ npm run typecheck
 npm test
 ```
 
-`npm test` 当前运行172项检查；`npm run test:matching`运行79项匹配/导入/迁移/自动分析/人工评审检查，`npm run test:runtime`只运行本地运行底座相关检查。覆盖进程恢复、关系接管、版本/租约、重复入站、上下文隔离、意大利字段适配与逐组件结果核验。它不验证真实平台或模型效果。浏览器与视觉验收记录见仓库根目录 `design-qa.md`。
+`npm test` 当前运行185项检查；`npm run test:matching`运行79项匹配/导入/迁移/自动分析/人工评审检查，`npm run test:runtime`只运行本地运行底座相关检查。覆盖进程恢复、关系接管、版本/租约、重复入站、上下文隔离、意大利字段适配与逐组件结果核验。它不验证真实平台或模型效果。浏览器与视觉验收记录见仓库根目录 `design-qa.md`。
 
 ## 七个页面
 
@@ -94,3 +94,7 @@ npm test
 在另一终端运行 `npm run identity:worker`，页面的“刷新画像”会按已存 OEC 提交持久任务，只读取 IT 平台画像。关闭/重载页面可继续查看结果，重复请求沿用原编号；同达人进行中的刷新归并。刷新数据库独立于匹配和二发库，不自动按旧 handle 重新认人。
 
 本轮未安装自启服务，机器或进程重启后需重新运行 Web 与画像 Worker。详见[运行及真实验收](../../docs/implementation/creator-identity-ui.md)。
+
+## 批量扩充达人池
+
+达人库的“批量添加达人”支持最多500项handle/@handle/主页链接，先本机预览，再提交真实只读发现。已存在的OEC归入原档案，未匹配线索复用；Find成功而Profile失败仍保留身份。`npm run identity:worker`现同时顺序处理OEC刷新和handle发现，不需要另开同账号Worker。暂停、继续未处理项及页面恢复均已实测，详见[批量入池](../../docs/implementation/creator-discovery.md)。

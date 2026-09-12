@@ -25,8 +25,10 @@
 
 入口：`README.md`。研究证据保存在 `docs/research/`，不会自动成为生效商业规则。
 
-达人身份以`docs/architecture/creator-identity-and-rename.md`为准：新handle先精确Find，已知OEC直接Profile，不因改名再按旧handle搜索。内部creatorId及关系归属不随名字变，旧handle被其他OEC复用不合并；暂缺名字保留历史核验时间，失败不删达人。新独立身份库为var/creator-identities.sqlite，当前31身份/48线索（17待解析），已在达人库及matching/second-pilot页面展示只读关联，未改绑原业务表；不得把旧库的审计名回填标成当前远端已验证名字。
+达人身份以`docs/architecture/creator-identity-and-rename.md`为准：新handle先精确Find，已知OEC直接Profile，不因改名再按旧handle搜索。内部creatorId及关系归属不随名字变，旧handle被其他OEC复用不合并；暂缺名字保留历史核验时间，失败不删达人。新独立身份库为var/creator-identities.sqlite，当前32身份/50线索（17待解析），已在达人库及matching/second-pilot页面展示只读关联，未改绑原业务表；不得把旧库的审计名回填标成当前远端已验证名字。
 
 2026-09-12画像补全测试见`docs/research/italy-profile-completion-test-20260912.md`。用户明确复用MX完整HTTP及现成验证流程后，已补齐EU signer/captcha/transport配置并调用client.post，取代早期单步探针“先人工验证”的限制。ACC6固定48人实测：31个当前同OEC画像，26人22项字段全有值，17人无精确handle；111次业务请求、1次验证和重放均成功。身份文件未改、旧库未写、真实发送0。当前画像与未匹配名单在var/italy-profile-live-completion-20260912/，未覆盖matching/second-pilot库；当前handle→OEC不证明历史Kalodata跨来源身份。Find+[2]离线重组31/31与完整结果相同，但尚未独立运行该精简流程。content_groups保留来源分组，不误称视频主题类目；价格带和形式仍只作参考。后续测试沿同账号与现有验证/重放实现，遇最终错误有界停止，不换号冲验证。
 
 2026-09-12达人库与画像刷新已接入`/creators`，见`docs/implementation/creator-identity-ui.md`。独立刷新队列var/creator-profile-refresh.sqlite和`npm run identity:worker`只消费显式IT/OEC刷新任务；同请求幂等、同达人活动任务归并、失去租约不导入、重启先结算已有报告。页面1人实测成功（Find0、Profile3，含验证重放共4业务请求），旧业务表哈希不变；新增观察不自动覆盖匹配排序数据或解锁真实发送。
+
+2026-09-12批量handle入池见`docs/implementation/creator-discovery.md`：达人库可预览并提交最多500项IT名单，格式/重复检查不联网；共享identity Worker顺序处理OEC刷新与handle发现。当前真实小样新增1、已有1、未匹配1，重复/无效零请求，待解析不重复堆积；Find已核验但Profile失败保留OEC且标画像未完成。暂停只停止后续领取、失败不盲重跑；新输入不能按历史handle缓存跳过Find。原匹配/二发业务表仍未改绑。

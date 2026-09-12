@@ -7,6 +7,7 @@ import sys
 import time
 
 from lib.profile_refresh import ProfileRefreshError, ProfileRefreshStore, ProfileRefreshWorker
+from lib.creator_discovery import CreatorDiscoveryStore, CreatorDiscoveryWorker
 
 
 def read_request(fields):
@@ -49,11 +50,14 @@ def main():
                 def stop(*_):
                     raise KeyboardInterrupt()
                 signal.signal(signal.SIGTERM, stop)
-                with ProfileRefreshWorker(store) as runner:
+                with CreatorDiscoveryStore(store.var_dir) as discovery_store, ProfileRefreshWorker(store) as runner, CreatorDiscoveryWorker(discovery_store) as discovery:
                     while True:
-                        result = runner.run_once()
-                        if result is not None or args.once:
-                            print(json.dumps(result or {"status": "idle"}), flush=True)
+                        # Both lanes use ACC6 and run sequentially. Each round
+                        # takes at most one refresh and one discovery item.
+                        refreshed = runner.run_once()
+                        discovered = discovery.run_once()
+                        if refreshed is not None or discovered is not None or args.once:
+                            print(json.dumps({"refresh": refreshed, "discovery": discovered["batch"] if discovered else None}), flush=True)
                         if args.once:
                             break
                         time.sleep(args.interval)
