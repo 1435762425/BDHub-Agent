@@ -25,4 +25,4 @@
 
 入口：`README.md`。研究证据保存在 `docs/research/`，不会自动成为生效商业规则。
 
-2026-09-12画像补全测试见`docs/research/italy-profile-completion-test-20260912.md`。新脚本复用旧MX传输做IT只读小样，ACC6首个Find携带验证要求已停止，不能把HTTP200/code0当补抓成功；身份文件未改、旧库未写。实时Profile是否能补价格/次数/GPM尚未验证。已有快照可补出内容类目3830人、代表视频数量3550人、品牌3663人，独立输出在var，未覆盖matching库。再次网络测试须先完成平台验证；不换号冲验证或把旧快照整理说成新采集。
+2026-09-12画像补全测试见`docs/research/italy-profile-completion-test-20260912.md`。用户明确复用MX完整HTTP及现成验证流程后，已补齐EU signer/captcha/transport配置并调用client.post，取代早期单步探针“先人工验证”的限制。ACC6固定48人实测：31个当前同OEC画像，26人22项字段全有值，17人无精确handle；111次业务请求、1次验证和重放均成功。身份文件未改、旧库未写、真实发送0。当前画像与未匹配名单在var/italy-profile-live-completion-20260912/，未覆盖matching/second-pilot库；当前handle→OEC不证明历史Kalodata跨来源身份。Find+[2]离线重组31/31与完整结果相同，但尚未独立运行该精简流程。content_groups保留来源分组，不误称视频主题类目；价格带和形式仍只作参考。后续测试沿同账号与现有验证/重放实现，遇最终错误有界停止，不换号冲验证。

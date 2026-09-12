@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Bounded read-only Italy Find/Profile probe using the existing MX transport.
 
-No old database writes, cookie refresh, CAPTCHA solving, browser launch or sends.
-Credentials remain in memory. Only allowlisted profile summaries enter new var/.
+Uses the existing market-aware verification/replay implementation in memory.
+No old database/identity writes, browser launch or sends. Only allowlisted
+profile summaries enter new var/; transient SDK files are removed on exit.
 """
 from __future__ import annotations
 
@@ -30,12 +31,44 @@ VAR = ROOT / "var"
 STOP_CODES = {"10000", "10001", "98000001", "98000002", "16901008"}
 
 
-class ProbeDeadline(TimeoutError):
+class ProbeDeadline(BaseException):
     pass
 
 
+def collect_counters(client) -> dict:
+    def count(value):
+        return value if type(value) is int and value >= 0 else 0
+    result = {key: count(getattr(client, key, 0)) for key in (
+        "request_count", "challenge_count", "captcha_success_count",
+        "captcha_replay_response_count", "captcha_replay_code0_count", "code10000_missing_header_count")}
+    stages = getattr(client, "captcha_by_stage", {})
+    result["byStage"] = {stage: {key: count(stages.get(stage, {}).get(key, 0)) for key in (
+        "challenges", "verify_successes", "replay_responses", "replay_code0")} for stage in ("find", "profile")}
+    return result
+
+
+def initialize_client(probe, child, identity, scratch):
+    child._configure_market_signer_runtime(probe, identity, scratch)
+    child._configure_market_captcha_runtime(probe, identity, scratch)
+    client = probe.PureHttpPartnerClient({"partner_id": identity["partner_id"], "qps": 1.0,
+        "profile_types": [1, 2, 6], "request_timeout_seconds": 15, "trust_env": True,
+        "business_retries": 2, "captcha_attempts": 3}, identity, scratch)
+    # Assign actual bounds explicitly: legacy constructors use `value or 3`.
+    client.business_retries = 2
+    client.captcha_attempts = 3
+    try:
+        child._configure_market_transport(client, identity)
+    except BaseException:
+        client.session.close()
+        raise
+    return client
+
+
 def classify_response(status: int, headers: dict, payload) -> dict:
-    code = str(payload.get("code")) if isinstance(payload, dict) else None
+    raw_code = payload.get("code") if isinstance(payload, dict) else None
+    code = None if raw_code is None else str(raw_code)
+    if code is not None and (isinstance(raw_code, bool) or not code.isascii() or not code.lstrip("-").isdigit() or len(code) > 16):
+        code = "invalid"
     verification = bool(headers.get("bdturing-verify")) or code == "10000"
     system_error = headers.get("x-tt-system-error") == "3"
     stop = verification or code in STOP_CODES or status in (401, 403, 429) or (code == "100000" and system_error)
@@ -82,7 +115,8 @@ def network_child(account_name: str, target_file: Path, output: Path) -> int:
         raise ProbeDeadline("whole_probe_deadline")
     # The child has its own bound even if the supervising process is killed.
     signal.signal(signal.SIGALRM, expired)
-    signal.setitimer(signal.ITIMER_REAL, 53)
+    signal.setitimer(signal.ITIMER_REAL, 175)
+    os.umask(0o077)
     sys.dont_write_bytecode = True
     sys.path.insert(0, str(LEGACY))
     sys.path.insert(0, str(ROOT / "scripts"))
@@ -99,9 +133,10 @@ def network_child(account_name: str, target_file: Path, output: Path) -> int:
     targets = json.loads(target_file.read_text())["targets"]
     if not 1 <= len(targets) <= 3:
         raise ValueError("bounded_target_count")
-    report = {"schema": "bdhub.italy-profile-probe.v1", "market": "it", "account": account_name,
+    report = {"schema": "bdhub.italy-profile-probe.v2", "market": "it", "account": account_name,
               "startedAt": datetime.now(timezone.utc).isoformat(), "mode": "live_readonly_profile", "requests": [], "targets": [],
-              "qps": 1, "businessRetries": 0, "captchaAttempts": 0, "oldDatabaseWrites": 0, "realSends": 0, "status": "starting"}
+              "qps": 1, "businessRetries": 2, "captchaAttempts": 3, "verificationMode": "existing_market_aware_http_pipeline",
+              "oldDatabaseWrites": 0, "realSends": 0, "status": "starting"}
     report_file = output / "report.private.json"
     save = lambda: write_json(report_file, report)
     save()
@@ -115,7 +150,7 @@ def network_child(account_name: str, target_file: Path, output: Path) -> int:
         cfg = config.load()
         prepared, unavailable = worker.prepare_collection_accounts(cfg, config.load_accounts(cfg), market="it", requested_names=[account_name])
         if not prepared:
-            report.update(status="blocked", reason=unavailable.get(account_name, "account_not_prepared"))
+            report.update(status="blocked", reason="account_not_prepared")
             return 2
         selected = prepared[0]
         identity_file = Path(selected.account.headers_json)
@@ -126,6 +161,9 @@ def network_child(account_name: str, target_file: Path, output: Path) -> int:
         save()
         with readonly_guard(selected.account):
             try:
+                if hashlib.sha256(identity_file.read_bytes()).hexdigest() != before_identity:
+                    report.update(status="blocked", reason="identity_changed_before_guard")
+                    return 2
                 if worker.scheduled_relogin_svc.maintenance_due(selected.account, initialize=False, ignore_retry_throttle=True):
                     report.update(status="blocked", reason="maintenance_due")
                     return 2
@@ -134,10 +172,8 @@ def network_child(account_name: str, target_file: Path, output: Path) -> int:
                     return 2
                 with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
                     probe = child._load_runtime(runtime)
-                    child._configure_market_signer_runtime(probe, selected.identity, scratch)
-                    client = probe.PureHttpPartnerClient({"partner_id": selected.identity["partner_id"], "qps": 1.0,
-                        "profile_types": [1, 2, 6], "request_timeout_seconds": 15, "trust_env": True}, selected.identity, scratch)
-                    child._configure_market_transport(client, selected.identity)
+                    client = initialize_client(probe, child, selected.identity, scratch)
+                report.update(businessRetries=client.business_retries, captchaAttempts=client.captcha_attempts)
 
                 def request(stage: str, body: dict, target_ref: str):
                     if worker.scheduled_relogin_svc.maintenance_due(selected.account, initialize=False, ignore_retry_throttle=True) or backoff_snapshot(selected.identity, "it")["open"]:
@@ -145,12 +181,36 @@ def network_child(account_name: str, target_file: Path, output: Path) -> int:
                         save()
                         return None
                     started = time.monotonic()
-                    entry = {"targetRef": target_ref, "stage": stage, "profileTypes": body.get("profile_types"), "status": "inflight"}
+                    entry = {"targetRef": target_ref, "stage": stage, "profileTypes": body.get("profile_types"), "status": "inflight", "attempts": [], "verificationAttempts": []}
                     report["requests"].append(entry)
                     save()
+                    original_once = client._signed_post_once
+                    original_solve = client._solve_captcha
+                    def observed_once(inner_stage, inner_body):
+                        response, payload = original_once(inner_stage, inner_body)
+                        entry["attempts"].append(classify_response(response.status_code, response.headers, payload))
+                        report["counters"] = collect_counters(client)
+                        save()
+                        return response, payload
+                    def observed_solve(verify_data, attempt):
+                        verification = {"attempt": attempt, "status": "inflight"}
+                        entry["verificationAttempts"].append(verification)
+                        save()
+                        try:
+                            result = original_solve(verify_data, attempt)
+                            verification["status"] = "returned"
+                            return result
+                        except (Exception, ProbeDeadline) as error:
+                            verification.update(status="error", errorType=type(error).__name__)
+                            raise
+                        finally:
+                            report["counters"] = collect_counters(client)
+                            save()
+                    client._signed_post_once = observed_once
+                    client._solve_captcha = observed_solve
                     try:
                         with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
-                            response, payload = client._signed_post_once(stage, body)
+                            response, payload = client.post(stage, body)
                         decision = classify_response(response.status_code, response.headers, payload)
                         entry.update({k:v for k,v in decision.items() if k != "allowed"},
                                      durationMs=round((time.monotonic()-started)*1000, 1), status="returned")
@@ -160,12 +220,15 @@ def network_child(account_name: str, target_file: Path, output: Path) -> int:
                             save()
                             return None
                         return payload
-                    except Exception as error:
+                    except (Exception, ProbeDeadline) as error:
                         entry.update(status="error", errorType=type(error).__name__, durationMs=round((time.monotonic()-started)*1000, 1), stopAccount=True)
                         report.update(status="bounded_timeout" if isinstance(error, ProbeDeadline) else "blocked", reason="whole_probe_deadline" if isinstance(error, ProbeDeadline) else "request_or_signer_error")
                         save()
                         return None
                     finally:
+                        client._signed_post_once = original_once
+                        client._solve_captcha = original_solve
+                        report["counters"] = collect_counters(client)
                         save()
 
                 for target in targets:
@@ -222,6 +285,9 @@ def network_child(account_name: str, target_file: Path, output: Path) -> int:
                             report.update(status="blocked", reason="supplement_identity_mismatch")
                             break
                         summary = summarize_profile(profile)
+                        if summary["identity"]["market"] not in (None, "it"):
+                            report.update(status="blocked", reason="supplement_market_mismatch")
+                            break
                         result["profiles"].append({"profileTypes": [1, 6], "summary": summary})
                         summaries.append(summary)
                     merged = merge_profile_summaries(summaries)
@@ -238,15 +304,20 @@ def network_child(account_name: str, target_file: Path, output: Path) -> int:
                 save()
             finally:
                 # Keep the existing guard until the entire account SDK/session lifecycle ends.
-                if client is not None:
-                    client.session.close()
+                report["identityFileUnchanged"] = hashlib.sha256(identity_file.read_bytes()).hexdigest() == before_identity
+                try:
+                    if client is not None:
+                        report["counters"] = collect_counters(client)
+                        client.session.close()
+                finally:
                     client = None
-                if probe is not None:
-                    with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
-                        probe.signer_impl.reset_signer()
-                    probe = None
-    except Exception as error:
-        report.update(status="blocked", reason="probe_initialization_or_validation_error", errorType=type(error).__name__)
+                    if probe is not None:
+                        with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+                            probe.signer_impl.reset_signer()
+                        probe = None
+    except (Exception, ProbeDeadline) as error:
+        report.update(status="bounded_timeout" if isinstance(error, ProbeDeadline) else "blocked",
+                      reason="whole_probe_deadline" if isinstance(error, ProbeDeadline) else "probe_initialization_or_validation_error", errorType=type(error).__name__)
     finally:
         if client is not None:
             client.session.close()
@@ -283,7 +354,7 @@ def main() -> int:
     previous_term = signal.signal(signal.SIGTERM, cancelled)
     try:
         try:
-            child_process.wait(timeout=55)
+            child_process.wait(timeout=180)
         except subprocess.TimeoutExpired:
             timeout = True
     finally:
@@ -309,7 +380,8 @@ def main() -> int:
         write_json(report_file, report)
     public = {"status": report.get("status"), "reason": report.get("reason"), "account": args.account,
               "completedTargets": sum(t.get("status") == "completed" for t in report.get("targets", [])),
-              "requests": [{k:v for k,v in row.items() if k not in {"payload", "body"}} for row in report.get("requests", [])],
+              "requests": [{k:v for k,v in row.items() if k in {"targetRef", "stage", "profileTypes", "status", "httpStatus", "code", "verificationRequired", "systemError3", "durationMs", "errorType", "stopAccount", "attempts", "verificationAttempts"}} for row in report.get("requests", [])],
+              "counters": report.get("counters"), "businessRetries": report.get("businessRetries"), "captchaAttempts": report.get("captchaAttempts"),
               "identityFileUnchanged": report.get("identityFileUnchanged"), "oldDatabaseWrites": 0, "realSends": 0,
               "privateReport": str(report_file)}
     write_json(output / "summary.json", public)
