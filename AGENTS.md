@@ -24,3 +24,5 @@
 意大利二发新切片：`/workspace?mode=second`、`/results?mode=second`，使用独立`var/second-italy.sqlite`。48位来源达人/50同品边→48条有来源的意语程序稿→冻结→本地模拟传输；真实发送0。27个历史handle映射仅提示，0个已核验收件OEC；历史Offer与卡不当当前承诺。真实实测范围尚待使用者明确，不能把“实测”默认解释为批量外联。见`docs/implementation/italy-second-pilot.md`；使用同一case不能绕过完成/未知状态，暂停保持，Worker以脚本路径定位数据库。
 
 入口：`README.md`。研究证据保存在 `docs/research/`，不会自动成为生效商业规则。
+
+2026-09-12画像补全测试见`docs/research/italy-profile-completion-test-20260912.md`。新脚本复用旧MX传输做IT只读小样，ACC6首个Find携带验证要求已停止，不能把HTTP200/code0当补抓成功；身份文件未改、旧库未写。实时Profile是否能补价格/次数/GPM尚未验证。已有快照可补出内容类目3830人、代表视频数量3550人、品牌3663人，独立输出在var，未覆盖matching库。再次网络测试须先完成平台验证；不换号冲验证或把旧快照整理说成新采集。

@@ -1,0 +1,262 @@
+{
+  "schema": "bdhub.italy-profile-completion-validation.v1",
+  "date": "2026-09-12",
+  "liveProbe": {
+    "status": "blocked",
+    "reason": "verification_required",
+    "account": "acc6",
+    "completedTargets": 0,
+    "requests": [
+      {
+        "targetRef": "it-probe-1",
+        "stage": "find",
+        "profileTypes": null,
+        "status": "returned",
+        "httpStatus": 200,
+        "code": "0",
+        "verificationRequired": true,
+        "systemError3": true,
+        "durationMs": 3607.0,
+        "stopAccount": true
+      }
+    ],
+    "identityFileUnchanged": true,
+    "oldDatabaseWrites": 0,
+    "realSends": 0
+  },
+  "localCompletion": {
+    "source": "existing_local_snapshot",
+    "liveProfileRefresh": false,
+    "platformRequests": 0,
+    "legacyDatabaseWrites": 0,
+    "coverage": {
+      "recordCount": 3978,
+      "fieldCount": 22,
+      "fieldStates": {
+        "handle": {
+          "absent": 0,
+          "no_value": 0,
+          "unauthorized": 0,
+          "error": 0,
+          "zero": 0,
+          "value": 3978
+        },
+        "creator_oecuid": {
+          "absent": 0,
+          "no_value": 0,
+          "unauthorized": 0,
+          "error": 0,
+          "zero": 0,
+          "value": 3978
+        },
+        "selection_region": {
+          "absent": 0,
+          "no_value": 0,
+          "unauthorized": 0,
+          "error": 0,
+          "zero": 0,
+          "value": 3978
+        },
+        "follower_cnt": {
+          "absent": 0,
+          "no_value": 0,
+          "unauthorized": 0,
+          "error": 0,
+          "zero": 0,
+          "value": 3978
+        },
+        "med_gmv_revenue": {
+          "absent": 0,
+          "no_value": 0,
+          "unauthorized": 0,
+          "error": 0,
+          "zero": 0,
+          "value": 3978
+        },
+        "video_gmv": {
+          "absent": 0,
+          "no_value": 0,
+          "unauthorized": 0,
+          "error": 0,
+          "zero": 169,
+          "value": 3809
+        },
+        "live_gmv": {
+          "absent": 0,
+          "no_value": 0,
+          "unauthorized": 0,
+          "error": 0,
+          "zero": 3698,
+          "value": 280
+        },
+        "units_sold": {
+          "absent": 0,
+          "no_value": 0,
+          "unauthorized": 0,
+          "error": 0,
+          "zero": 0,
+          "value": 3978
+        },
+        "video_avg_view_cnt": {
+          "absent": 0,
+          "no_value": 0,
+          "unauthorized": 0,
+          "error": 0,
+          "zero": 109,
+          "value": 3869
+        },
+        "industry_groups": {
+          "absent": 0,
+          "no_value": 0,
+          "unauthorized": 0,
+          "error": 0,
+          "zero": 0,
+          "value": 3978
+        },
+        "content_groups": {
+          "absent": 0,
+          "no_value": 148,
+          "unauthorized": 0,
+          "error": 0,
+          "zero": 0,
+          "value": 3830
+        },
+        "top_video_data": {
+          "absent": 0,
+          "no_value": 421,
+          "unauthorized": 7,
+          "error": 0,
+          "zero": 0,
+          "value": 3550
+        },
+        "product_price_range": {
+          "absent": 0,
+          "no_value": 3978,
+          "unauthorized": 0,
+          "error": 0,
+          "zero": 0,
+          "value": 0
+        },
+        "video_publish_cnt_30d": {
+          "absent": 0,
+          "no_value": 3978,
+          "unauthorized": 0,
+          "error": 0,
+          "zero": 0,
+          "value": 0
+        },
+        "ec_video_publish_cnt_30d": {
+          "absent": 0,
+          "no_value": 3978,
+          "unauthorized": 0,
+          "error": 0,
+          "zero": 0,
+          "value": 0
+        },
+        "live_streaming_cnt_30d": {
+          "absent": 0,
+          "no_value": 3978,
+          "unauthorized": 0,
+          "error": 0,
+          "zero": 0,
+          "value": 0
+        },
+        "ec_live_streaming_cnt_30d": {
+          "absent": 0,
+          "no_value": 3978,
+          "unauthorized": 0,
+          "error": 0,
+          "zero": 0,
+          "value": 0
+        },
+        "gpm": {
+          "absent": 0,
+          "no_value": 3978,
+          "unauthorized": 0,
+          "error": 0,
+          "zero": 0,
+          "value": 0
+        },
+        "ec_live_gpm": {
+          "absent": 0,
+          "no_value": 3978,
+          "unauthorized": 0,
+          "error": 0,
+          "zero": 0,
+          "value": 0
+        },
+        "ec_video_gpm": {
+          "absent": 0,
+          "no_value": 3978,
+          "unauthorized": 0,
+          "error": 0,
+          "zero": 0,
+          "value": 0
+        },
+        "partnered_brand": {
+          "absent": 0,
+          "no_value": 315,
+          "unauthorized": 0,
+          "error": 0,
+          "zero": 0,
+          "value": 3663
+        },
+        "sales_performance_end_time": {
+          "absent": 0,
+          "no_value": 0,
+          "unauthorized": 0,
+          "error": 0,
+          "zero": 0,
+          "value": 3978
+        }
+      },
+      "contentGroupsAvailable": 3830,
+      "topVideoCountAvailable": 3550,
+      "brandsFieldAvailable": 3663,
+      "brandsAvailable": 3663
+    },
+    "provenance": {
+      "extractedAt": "2026-09-12T01:16:58.489518+00:00",
+      "sourceTable": "creator_profile_snapshot",
+      "transactionReadOnly": true,
+      "transactionIsolation": "repeatable_read",
+      "sourceCohortPath": "data/research/outreach-ai/runs/oa_f9a4f4af84f3142fc119664a82de4be5/creator-snapshot.json",
+      "sourceCohortSha256": "d86c929587a712c7192b0e952bf855f6bab939bad7f1ca6a630e2dfaff08551d",
+      "fixedCohortCount": 3978,
+      "sourceFields": [
+        "handle",
+        "creator_oecuid",
+        "selection_region",
+        "follower_cnt",
+        "med_gmv_revenue",
+        "video_gmv",
+        "live_gmv",
+        "units_sold",
+        "video_avg_view_cnt",
+        "industry_groups",
+        "content_groups",
+        "top_video_data",
+        "product_price_range",
+        "video_publish_cnt_30d",
+        "ec_video_publish_cnt_30d",
+        "live_streaming_cnt_30d",
+        "ec_live_streaming_cnt_30d",
+        "gpm",
+        "ec_live_gpm",
+        "ec_video_gpm",
+        "partnered_brand",
+        "sales_performance_end_time"
+      ],
+      "recordsSha256": "ea952c0d7770ceb33d006baa8e51087d5dfb50bb633456e031f126e3927701c5",
+      "filterModuleSha256": "a5f20c4dc04712956a8efd9f66af44e8d8fc3b22b0862a7908cd2d41920a874c",
+      "recordsHashEncoding": "UTF-8 JSON ensure_ascii=False sort_keys=True separators=(',',':')",
+      "interpretation": "7月30日已有本地快照的字段整理，不是实时抓取；未推断金额币种、统计窗口、内容类目权重含义。",
+      "privacy": "字段白名单；不输出bio/email/头像/联系方式/媒体URL/视频正文/token。top_video_data只留数量和结构键。"
+    }
+  },
+  "testsPassed": 19,
+  "oldBusinessDatabaseWrites": 0,
+  "realSends": 0,
+  "appMatchingDatabaseUpdated": false,
+  "conclusion": "Local existing fields recovered; live Profile supplementation not reached because the first Find response required verification."
+}
