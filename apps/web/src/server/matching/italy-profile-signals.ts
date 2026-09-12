@@ -2,7 +2,7 @@ import {createHash} from "node:crypto";
 import type {MatchingBatch,CreatorInput,ProfileSignals} from "../../features/matching/contracts.ts";
 
 // Explicit label translation only. Modest Fashion stays distinct; it is not inferred to be a religious category.
-const LABELS:Record<string,string>={
+export const LABELS:Record<string,string>={
   "Beauty & Personal Care":"美妆个护","Household Appliances":"家电","Phones & Electronics":"手机与数码","Health":"保健",
   "Sports & Outdoor":"运动与户外","Womenswear & Underwear":"女装与女士内衣","Home Supplies":"居家日用","Furniture":"家具",
   "Food & Beverages":"食品饮料","Home Improvement":"家装建材","Automotive & Motorcycle":"汽车与摩托车","Tools & Hardware":"五金工具",

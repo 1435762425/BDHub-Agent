@@ -29,7 +29,7 @@ npm run typecheck
 npm test
 ```
 
-`npm test` 当前运行185项检查；`npm run test:matching`运行79项匹配/导入/迁移/自动分析/人工评审检查，`npm run test:runtime`只运行本地运行底座相关检查。覆盖进程恢复、关系接管、版本/租约、重复入站、上下文隔离、意大利字段适配与逐组件结果核验。它不验证真实平台或模型效果。浏览器与视觉验收记录见仓库根目录 `design-qa.md`。
+`npm test` 当前运行218项检查；`npm run test:matching`运行79项匹配/导入/迁移/自动分析/人工评审检查，`npm run test:runtime`只运行本地运行底座相关检查。覆盖进程恢复、关系接管、版本/租约、重复入站、上下文隔离、意大利字段适配与逐组件结果核验。它不验证真实平台或模型效果。浏览器与视觉验收记录见仓库根目录 `design-qa.md`。
 
 ## 七个页面
 
@@ -98,3 +98,7 @@ npm test
 ## 批量扩充达人池
 
 达人库的“批量添加达人”支持最多500项handle/@handle/主页链接，先本机预览，再提交真实只读发现。已存在的OEC归入原档案，未匹配线索复用；Find成功而Profile失败仍保留身份。`npm run identity:worker`现同时顺序处理OEC刷新和handle发现，不需要另开同账号Worker。暂停、继续未处理项及页面恢复均已实测，详见[批量入池](../../docs/implementation/creator-discovery.md)。
+
+## 新画像参与匹配
+
+`italy-profiles` 现按身份库追加观察增量更新，不需新增Worker；页面可见时每5秒读取同步版本，并将过时结果标明，用户明确重新分析后切换新结果。旧包和人工判断保留。可从达人档案“分析适合商品”按canonical身份进入，或运行 `npm run sync:identity-profiles -- --verify` 追上水位并验证。旧历史批次导入脚本不再用于覆盖已同步库。详见[同步合同与验收](../../docs/implementation/registry-profile-matching-sync.md)。

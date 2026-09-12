@@ -15,7 +15,7 @@
 
 意大利已有数据的离线测试已获授权并完成首轮，见 `docs/implementation/italy-offline-matching.md`。`dataset=italy` 使用独立 `var/matching-italy.sqlite`：5商品/48达人/50同品边，无可执行Offer。OEC与关系控制/拒联未知，不从Kalodata ID或历史handle交集补成已验证身份；只组织离线证据，不发送、不调用模型。真实数据测试与合成库的万级容量基准是不同验收。
 
-`dataset=italy-profiles`的一发实验使用另一个`var/matching-italy-profiles.sqlite`，含3,978条7月30日历史OEC画像，不与Kalodata按handle合并，不导入同品销量边。分类保留`CategoryFact`来源与历史/冲突状态；Freegrin分类冲突不自动改标签。人工评审默认未评估，程序或助手不能预填成用户认可；标注不改变执行权。范围见`docs/implementation/italy-first-profile-evaluation.md`。
+`dataset=italy-profiles`的一发实验使用另一个`var/matching-italy-profiles.sqlite`，初始含3,978条7月30日历史OEC画像，不与Kalodata按handle合并，不导入同品销量边。分类保留`CategoryFact`来源与历史/冲突状态；Freegrin分类冲突不自动改标签。人工评审默认未评估，程序或助手不能预填成用户认可；标注不改变执行权。范围见`docs/implementation/italy-first-profile-evaluation.md`。
 
 2026-09-12用户最新分析口径：忽略画像年龄，价格带和内容形式只作参考；依据已有多类目与可比经营数据自动分析，自行完成离线测试，人工标签不是前置条件。原始快照已补齐3,978人的多类目、销量、均播、粉丝和GMV；主动分析与真实执行资格分开。详细规则与全量测试见`docs/implementation/existing-profile-auto-analysis.md`。
 
@@ -29,6 +29,8 @@
 
 2026-09-12画像补全测试见`docs/research/italy-profile-completion-test-20260912.md`。用户明确复用MX完整HTTP及现成验证流程后，已补齐EU signer/captcha/transport配置并调用client.post，取代早期单步探针“先人工验证”的限制。ACC6固定48人实测：31个当前同OEC画像，26人22项字段全有值，17人无精确handle；111次业务请求、1次验证和重放均成功。身份文件未改、旧库未写、真实发送0。当前画像与未匹配名单在var/italy-profile-live-completion-20260912/，未覆盖matching/second-pilot库；当前handle→OEC不证明历史Kalodata跨来源身份。Find+[2]离线重组31/31与完整结果相同，但尚未独立运行该精简流程。content_groups保留来源分组，不误称视频主题类目；价格带和形式仍只作参考。后续测试沿同账号与现有验证/重放实现，遇最终错误有界停止，不换号冲验证。
 
-2026-09-12达人库与画像刷新已接入`/creators`，见`docs/implementation/creator-identity-ui.md`。独立刷新队列var/creator-profile-refresh.sqlite和`npm run identity:worker`只消费显式IT/OEC刷新任务；同请求幂等、同达人活动任务归并、失去租约不导入、重启先结算已有报告。页面1人实测成功（Find0、Profile3，含验证重放共4业务请求），旧业务表哈希不变；新增观察不自动覆盖匹配排序数据或解锁真实发送。
+2026-09-12达人库与画像刷新已接入`/creators`，见`docs/implementation/creator-identity-ui.md`。独立刷新队列var/creator-profile-refresh.sqlite和`npm run identity:worker`只消费显式IT/OEC刷新任务；同请求幂等、同达人活动任务归并、失去租约不导入、重启先结算已有报告。页面1人实测成功（Find0、Profile3，含验证重放共4业务请求），该轮旧业务表哈希不变；新观察进入排序由后续增量同步负责，不解锁真实发送。
 
 2026-09-12批量handle入池见`docs/implementation/creator-discovery.md`：达人库可预览并提交最多500项IT名单，格式/重复检查不联网；共享identity Worker顺序处理OEC刷新与handle发现。当前真实小样新增1、已有1、未匹配1，重复/无效零请求，待解析不重复堆积；Find已核验但Profile失败保留OEC且标画像未完成。暂停只停止后续领取、失败不盲重跑；新输入不能按历史handle缓存跳过Find。原匹配/二发业务表仍未改绑。
+
+2026-09-12新画像已接入匹配，见`docs/implementation/registry-profile-matching-sync.md`。italy-profiles按注册表rowid增量投影，原21人更新/新增11人，总3,989；原ID/来源/控制/拒联/冲突保留。经营指标取单一最新观察，历史类别单独保留时点，不将旧指标拼进新统计窗口。相同观察时间完整Profile优先于Find，源库代际/水位和索引原子提交；后台有界重算依赖分区的最新查询，旧run/资料包/判断不改。仅该数据集自动同步，Kalodata二发库不改绑。

@@ -16,6 +16,7 @@ import type {
 } from "./contracts";
 import { AssessmentPanel, AssessmentSummary, validAssessmentResponse, type AssessmentLabel } from "./AssessmentPanel";
 import { AutoAnalysisBadge, AutoAnalysisDetails, AutoAnalysisSummary } from "./AutoAnalysisPanel";
+import type { MatchingProfileSyncStatus } from "./profile-sync-contracts";
 
 const API = "/api/matching";
 const PENDING_KEY = "bdhub-matching-pending-v1";
@@ -53,10 +54,10 @@ function formatNames(formats: Subject["formats"]) { return formats.length ? form
 function CategoryProvenance({ subject, detailed = false, profileAnalysis = false }: { subject: Subject; detailed?: boolean; profileAnalysis?: boolean }) {
   const fact = subject.categoryFact;
   if (!fact) return null;
-  const status = fact.status === "historical" ? profileAnalysis ? "已有画像类目" : "历史类目 · 待复核" : fact.status === "conflict" ? "类目来源冲突 · 暂不匹配" : "类目缺失";
+  const status = fact.status === "observed" ? "平台已观测类目" : fact.status === "historical" ? profileAnalysis ? "已有画像类目" : "历史类目 · 待复核" : fact.status === "conflict" ? "类目来源冲突 · 暂不匹配" : "类目缺失";
   return <div className={detailed ? "rounded-lg border border-gray-100 p-3 text-xs leading-6 text-gray-500 dark:border-gray-800" : "mt-2 text-xs leading-5 text-gray-500"}>
     <span className={fact.status === "conflict" ? "text-warning-600 dark:text-warning-400" : "text-gray-500"}>{detailed ? `${isProduct(subject) ? "商品" : "达人"}类目：` : ""}{status}</span>
-    {detailed && <><p>来源标签：{fact.sourceLabels.join(" / ") || "未记录"}</p><p className="break-all">命名空间：{fact.namespace} · {fact.transformVersion ? `映射版本 ${fact.transformVersion}` : "归一版本未记录"}</p><p>{fact.note}</p><p className="break-all">{fact.source.ref}</p><p>{fact.timeBasis === "batch_completed" ? "批次完成于" : "字段观测于"} {date(fact.source.observedAt)}（北京时间）；不代表当前已核实。</p></>}
+    {detailed && <><p>来源标签：{fact.sourceLabels.join(" / ") || "未记录"}</p><p className="break-all">命名空间：{fact.namespace} · {fact.transformVersion ? `映射版本 ${fact.transformVersion}` : "归一版本未记录"}</p><p>{fact.note}</p><p className="break-all">{fact.source.ref}</p><p>{fact.timeBasis === "batch_completed" ? "批次完成于" : "字段观测于"} {date(fact.source.observedAt)}（北京时间）{fact.status === "observed" ? "；本次平台观察已记录。" : "；保留该时点的来源记录。"}</p></>}
   </div>;
 }
 function validResponse(value: unknown): value is MatchingResponse {
@@ -249,7 +250,7 @@ function CandidateCard({ candidate, direction, disabled, reviewing, packetReady,
         <CategoryProvenance subject={candidate.creator} detailed profileAnalysis={profileAnalysis} />
         {candidate.offers.map(offer => <OfferDetails key={offer.id} offer={offer} offline={offline} />)}
         {!candidate.offers.length && <p className="text-xs leading-5 text-warning-600">商品可被发现，但缺少当前可核实方案，不能据此承诺佣金或发送卡片。</p>}
-        <div className="break-all text-xs leading-5 text-gray-400"><p>商品来源：{candidate.product.source.ref}</p><p>采集于 {date(candidate.product.source.observedAt)} · 统计窗口：{observationWindow(candidate.product)}</p><p className="mt-2">达人来源：{candidate.creator.source.ref}</p><p>采集于 {date(candidate.creator.source.observedAt)} · 统计窗口：{observationWindow(candidate.creator)}</p><p className="mt-1">采集时间显示为北京时间；统计窗口保留来源日期。历史采集不代表当前事实。</p></div>
+        <div className="break-all text-xs leading-5 text-gray-400"><p>商品来源：{candidate.product.source.ref}</p><p>采集于 {date(candidate.product.source.observedAt)} · 统计窗口：{observationWindow(candidate.product)}</p><p className="mt-2">达人来源：{candidate.creator.source.ref}</p><p>采集于 {date(candidate.creator.source.observedAt)} · 统计窗口：{observationWindow(candidate.creator)}</p><p className="mt-1">采集时间显示为北京时间；统计窗口保留来源日期。{candidate.creator.profileOrigin ? "各字段沿用各自的观察来源，后续同步不改写本次结果。" : "历史采集不代表当前事实。"}</p></div>
         {candidate.evidenceRefs.length > 0 && <p className="break-all text-xs leading-5 text-gray-400">证据引用：{candidate.evidenceRefs.join(" · ")}</p>}
       </div>
     </details>
@@ -257,20 +258,28 @@ function CandidateCard({ candidate, direction, disabled, reviewing, packetReady,
   </article>;
 }
 
+function ProfileSyncSummary({value}:{value:MatchingProfileSyncStatus}) {
+  return <div className="mb-5 rounded-xl border border-gray-200 bg-white px-4 py-3 dark:border-gray-800 dark:bg-white/[0.015]">
+    <div className="flex flex-wrap items-center justify-between gap-2"><p className="text-sm font-medium text-gray-700 dark:text-gray-200">达人画像同步</p><Pill tone={value.status==="error"?"warning":value.status==="not_imported"?"neutral":"brand"}>{value.status==="error"?"暂未完成更新":value.status==="not_imported"?"尚未导入":`已接入 ${value.syncedCreators} / ${value.registryCreators} 位档案`}</Pill></div>
+    <p className="mt-2 text-xs leading-6 text-gray-500">最近应用于 {date(value.lastAppliedAt)}（北京时间）。最近一批：更新 {value.lastBatch.updated} 位 · 新增 {value.lastBatch.inserted} 位 · 跳过 {value.lastBatch.skipped} 位。</p>
+    <details className="mt-1 text-xs text-gray-500"><summary className="cursor-pointer py-1">本批数据缺口与分析更新</summary><div className="mt-2 flex flex-wrap gap-x-5 gap-y-2 leading-5"><span>类目未提供 {value.gaps.categoryUnavailable}</span><span>沿用历史类目 {value.gaps.categoryHistorical}</span><span>经营字段不全 {value.gaps.metricsPartial}</span><span>统计周期未知 {value.gaps.periodUnknown}</span><span>后台已重算 {value.recomputedRuns} 份</span><span>待重算 {value.pendingRecomputes} 份</span></div><p className="mt-2 leading-5">本页正在查看的旧结果保留，可按需切换到最新分析。缺值不按零处理，周期不同的经营数据分别比较。</p></details>
+  </div>;
+}
+
 export default function MatchingWorkspace() {
   const params = useSearchParams();
   const requestedDataset = params.get("dataset");
   const dataset: Dataset = requestedDataset === "italy" || requestedDataset === "italy-profiles" ? requestedDataset : "demo";
-  return <MatchingDatasetWorkspace key={dataset} dataset={dataset} />;
+  return <MatchingDatasetWorkspace key={dataset} dataset={dataset} registryCreatorId={params.get("registryCreatorId") || ""} />;
 }
 
-function MatchingDatasetWorkspace({ dataset }: { dataset: Dataset }) {
+function MatchingDatasetWorkspace({ dataset, registryCreatorId }: { dataset: Dataset; registryCreatorId: string }) {
   const { state, dispatch, notify, go } = useDemo();
   const offline = dataset !== "demo";
   const profiles = dataset === "italy-profiles";
   const api = `${API}?dataset=${dataset}`;
   const commands = useMatchingCommands(api, `${PENDING_KEY}:${dataset}:${API}`);
-  const [direction, setDirection] = useState<RecallQuery["direction"]>("product");
+  const [direction, setDirection] = useState<RecallQuery["direction"]>(registryCreatorId ? "creator" : "product");
   const [source, setSource] = useState<RecallQuery["source"]>(profiles ? "first" : offline ? "second" : "all");
   const [search, setSearch] = useState("");
   const [query, setQuery] = useState("");
@@ -285,6 +294,10 @@ function MatchingDatasetWorkspace({ dataset }: { dataset: Dataset }) {
   const [refresh, setRefresh] = useState(0);
   const [run, setRun] = useState<MatchRun | null>(null);
   const [packet, setPacket] = useState<ReviewPacket | null>(null);
+  const [historicalPackets, setHistoricalPackets] = useState<ReviewPacket[]>([]);
+  const [linkedState, setLinkedState] = useState<{id:string;status:"loading"|"ready"|"missing"|"error";message:string}|null>(null);
+  const [linkedRetry, setLinkedRetry] = useState(0);
+  const [runCheckError, setRunCheckError] = useState("");
   const [reviewingId, setReviewingId] = useState("");
   const [changeMessage, setChangeMessage] = useState("");
   const [assessments, setAssessments] = useState<AssessmentResponse | null>(null);
@@ -299,10 +312,15 @@ function MatchingDatasetWorkspace({ dataset }: { dataset: Dataset }) {
   const viewRevision = useRef(0);
   const readSequence = useRef(0);
   const packetRef = useRef<HTMLElement | null>(null);
+  const packetRecord = useRef(packet);packetRecord.current=packet;
+  const linkedLoaded = useRef("");
+  const linkedContext = useRef("");
+  const syncRevision = stats?.profileSync?.revision;
+  const preservePacket = useCallback(() => {const current=packetRecord.current;if(current)setHistoricalPackets(previous=>previous.some(item=>item.id===current.id)?previous:[current,...previous]);}, []);
   const market = offline ? "it" : state.marketFilter;
   const listKey = `${dataset}|${direction}|${market}|${query}|${offset}`;
   const previousContext = useRef(`${direction}|${market}`);
-  const clearResult = useCallback(() => { ++viewRevision.current; setRun(null); setPacket(null); setChangeMessage(""); setAssessments(null); setAssessmentError(""); }, []);
+  const clearResult = useCallback(() => { ++viewRevision.current; preservePacket(); setRun(null); setPacket(null); setRunCheckError(""); setChangeMessage(""); setAssessments(null); setAssessmentError(""); }, [preservePacket]);
 
   const rememberAssessmentRecovery = useCallback((runId: string, result: AssessmentResponse | null, error = "") => {
     // Keep only the confirmed run identity in session storage; labels remain in SQLite.
@@ -333,14 +351,14 @@ function MatchingDatasetWorkspace({ dataset }: { dataset: Dataset }) {
       const restored = recoveredRun as MatchRun;
       previousContext.current = `${restored.query.direction}|${restored.market}`;
       setDirection(restored.query.direction); setSource(restored.query.source); setSelected(restored.subject);
-      setSearch(""); setQuery(""); setOffset(0); setRun(restored); setPacket(null); setChangeMessage("");
+      preservePacket();setSearch(""); setQuery(""); setOffset(0); setRun(restored); setPacket(null); setChangeMessage("");
       setAssessments(recoveredAssessments); setAssessmentError("");
       try { sessionStorage.removeItem(recoveryKey); } catch {}
       setAssessmentRecovery(null);
     } catch (failure) {
       if (!controller.signal.aborted) setAssessmentRecovery({ runId, result: confirmed, busy: false, error: failure instanceof Error ? failure.message : "无法连接本地服务以恢复原候选。" });
     }
-  }, [api, recoveryKey]);
+  }, [api, recoveryKey, preservePacket]);
 
   useEffect(() => () => { recoveryController.current?.abort(); recoveryStartupDone.current = false; }, []);
   useEffect(() => {
@@ -351,9 +369,10 @@ function MatchingDatasetWorkspace({ dataset }: { dataset: Dataset }) {
       if (!raw) return;
       const saved: unknown = JSON.parse(raw);
       if (!saved || typeof saved !== "object" || !("runId" in saved) || typeof saved.runId !== "string" || !saved.runId || saved.runId.length > 100) return;
+      if(registryCreatorId){setAssessmentRecovery({runId:saved.runId,result:null,busy:false,error:"另有已保存的历史评审，可按需恢复原上下文。"});return;}
       void recoverAssessmentContext(saved.runId, null, viewRevision.current);
     } catch { /* Command storage errors remain separate from confirmed, read-only context recovery. */ }
-  }, [profiles, recoveryKey, recoverAssessmentContext]);
+  }, [profiles, recoveryKey, recoverAssessmentContext, registryCreatorId]);
 
   useEffect(() => { const timer = window.setTimeout(() => setQuery(search.trim()), 250); return () => window.clearTimeout(timer); }, [search]);
   useEffect(() => {
@@ -367,7 +386,6 @@ function MatchingDatasetWorkspace({ dataset }: { dataset: Dataset }) {
   useEffect(() => {
     if (commands.error?.code === "stale_run") {
       setRun(current => current ? { ...current, stale: true } : current);
-      setPacket(null);
     } else if (profiles && (commands.error?.code === "assessment_conflict" || commands.error?.code === "revision_conflict")) {
       setAssessmentRefresh(value => value + 1);
     } else if (commands.error?.code === "revision_conflict") {
@@ -394,11 +412,12 @@ function MatchingDatasetWorkspace({ dataset }: { dataset: Dataset }) {
       } finally { if (!controller.signal.aborted && current === readSequence.current) setLoading(false); }
     })();
     return () => controller.abort();
-  }, [api, direction, market, query, offset, refresh, listKey]);
+  }, [api, direction, market, query, offset, refresh, listKey, syncRevision]);
 
   useEffect(() => {
-    const controller = new AbortController();
-    void (async () => {
+    const controller = new AbortController();let readingStats=false;
+    const read=async()=>{
+      if(readingStats||document.visibilityState!=="visible")return;readingStats=true;
       try {
         const response = await fetch(`${api}&view=stats`, { credentials: "same-origin", cache: "no-store", signal: controller.signal });
         const body = await response.json();
@@ -406,9 +425,50 @@ function MatchingDatasetWorkspace({ dataset }: { dataset: Dataset }) {
         if (body.mode !== (offline ? "imported-offline" : "synthetic-local") || typeof body.products !== "number" || typeof body.creators !== "number") throw new Error("规模信息响应不完整。");
         if (!controller.signal.aborted) { setStats(body); setStatsError(""); }
       } catch (failure) { if (!controller.signal.aborted) setStatsError(failure instanceof Error ? failure.message : "规模信息暂时无法读取。"); }
+      finally{readingStats=false;}
+    };
+    void read();const timer=profiles?window.setInterval(()=>void read(),5000):null;
+    const visible=()=>{if(profiles)void read();};document.addEventListener("visibilitychange",visible);
+    return () => {controller.abort();if(timer!==null)window.clearInterval(timer);document.removeEventListener("visibilitychange",visible);};
+  }, [api, offline, profiles, refresh]);
+
+  useEffect(()=>{
+    if(!profiles||!registryCreatorId||commands.blocked||linkedLoaded.current===registryCreatorId)return;
+    const controller=new AbortController();
+    if(linkedContext.current!==registryCreatorId){linkedContext.current=registryCreatorId;recoveryController.current?.abort();clearResult();previousContext.current="creator|it";setDirection("creator");setSource("first");setSelected(null);setSearch("");setQuery("");setOffset(0);}
+    const version=viewRevision.current;
+    setLinkedState({id:registryCreatorId,status:"loading",message:"正在关联达人档案与匹配资料…"});
+    void(async()=>{
+      try{
+        const response=await fetch(`${api}&view=linked_creator&registryCreatorId=${encodeURIComponent(registryCreatorId)}`,{credentials:"same-origin",cache:"no-store",signal:controller.signal});const body=await response.json();
+        if(!response.ok)throw new Error(body?.error?.message||"暂时无法关联这份达人档案。");
+        if(!body||!("creator" in body))throw new Error("关联资料响应不完整。");
+        if(controller.signal.aborted)return;
+        if(version!==viewRevision.current){linkedLoaded.current=registryCreatorId;setLinkedState({id:registryCreatorId,status:"error",message:"选择已经改变，未覆盖当前分析对象。可重新读取档案关联。"});return;}
+        if(body.creator===null){setLinkedState({id:registryCreatorId,status:"missing",message:"此档案尚未进入匹配资料。新画像同步后可重新读取。"});return;}
+        const creator=body.creator as MatchCreator;
+        if(typeof creator.id!=="string"||creator.market!=="it"||!creator.oecId||creator.profileOrigin?.creatorId!==registryCreatorId)throw new Error("档案关联尚未得到精确确认。");
+        linkedLoaded.current=registryCreatorId;previousContext.current="creator|it";setDirection("creator");setSource("first");setSelected(creator);setSearch(creator.name);setQuery(creator.name);setOffset(0);setLinkedState({id:registryCreatorId,status:"ready",message:"已按稳定身份选中达人，可开始分析适合的商品。"});
+      }catch(failure){if(!controller.signal.aborted)setLinkedState({id:registryCreatorId,status:"error",message:failure instanceof Error?failure.message:"暂时无法关联达人档案。"});}
     })();
-    return () => controller.abort();
-  }, [api, offline, refresh]);
+    return()=>controller.abort();
+  },[api,profiles,registryCreatorId,commands.blocked,linkedRetry,syncRevision,clearResult]);
+
+  const checkedRunId=run?.id;
+  useEffect(()=>{
+    if(!profiles||!checkedRunId)return;
+    const controller=new AbortController();setRunCheckError("");
+    void(async()=>{
+      try{
+        const response=await fetch(`${api}&view=run&runId=${encodeURIComponent(checkedRunId)}`,{credentials:"same-origin",cache:"no-store",signal:controller.signal});const body=await response.json();
+        if(controller.signal.aborted)return;
+        if(!response.ok){if(body?.error?.code==="stale_run"){setRun(current=>current?.id===checkedRunId?{...current,stale:true}:current);return;}throw new Error(body?.error?.message||"暂时无法核对结果版本。");}
+        if(!validResponse({kind:"run",run:body})||body.id!==checkedRunId)throw new Error("结果版本响应不完整。");
+        if(body.stale)setRun(current=>current?.id===checkedRunId?{...current,stale:true}:current);
+      }catch(failure){if(!controller.signal.aborted)setRunCheckError(failure instanceof Error?failure.message:"暂时无法核对结果版本。");}
+    })();
+    return()=>controller.abort();
+  },[api,profiles,checkedRunId,syncRevision,refresh]);
 
   const isCurrent = Boolean(run && selected && run.query.direction === direction && run.query.source === source && run.query.subjectId === selected.id && (market === "all" || run.market === market));
   const visibleRun = isCurrent ? run : null;
@@ -459,10 +519,10 @@ function MatchingDatasetWorkspace({ dataset }: { dataset: Dataset }) {
         previousContext.current = `${result.run.query.direction}|${result.run.market}`;
         if (!offline) dispatch({ type: "market", market: result.run.market });
       }
-      setRun(result.run); setPacket(null); setChangeMessage("");
+      preservePacket();setRun(result.run);setSelected(current=>current?.id===result.run.subject.id?result.run.subject:current); setPacket(null); setChangeMessage("");
       notify(profiles ? `已完成 ${result.run.candidates.length} 个候选的画像分析，未调用模型。` : `找到 ${result.run.candidates.length} 个有依据的候选，未调用模型。`);
     } else if (result.kind === "packet") {
-      setPacket(result.packet);
+      preservePacket();setPacket(result.packet);
       notify(`已准备 ${result.packet.candidates} 个商品的关系资料包，未调用模型。`);
       window.setTimeout(() => packetRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
     } else {
@@ -471,8 +531,7 @@ function MatchingDatasetWorkspace({ dataset }: { dataset: Dataset }) {
         previousContext.current = `product|${result.product.market}`;
         if (!offline) dispatch({ type: "market", market: result.product.market });
       } else setSelected(current => current?.id === result.product.id ? result.product : current);
-      setRun(current => current ? { ...current, stale: true } : current);
-      setPacket(null); setChangeMessage(result.message);
+      setRun(current => current ? { ...current, stale: true } : current); setChangeMessage(result.message);
       notify("示例商品条件已更新，请重新召回查看变化。");
     }
   };
@@ -508,7 +567,7 @@ function MatchingDatasetWorkspace({ dataset }: { dataset: Dataset }) {
   return <div className="min-w-0">
     <PageHeading title={profiles ? "画像分析" : "匹配工作台"} description={profiles ? "以已有画像中的类目与经营表现分析商品和达人，自动整理适配依据与推进顺序。" : offline ? "用意大利已有商品与达人证据，验证双向召回和有限上下文。" : "从万级资料中找到有依据的合作机会，把少量方案交给关系 Agent。"} action={<div className="flex flex-wrap items-center gap-2"><Link href="/creators" className="inline-flex items-center gap-2 rounded-lg border border-gray-300 bg-white px-3 py-2 text-xs font-medium text-gray-700 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300"><Icon name="users" className="size-4" />达人库</Link><Button variant="outline" size="sm" onClick={() => go("opportunities")}><Icon name="grid" className="size-4" />回到界面演示</Button></div>} />
     <div className="mb-5 flex flex-wrap items-end justify-between gap-x-6 gap-y-3">
-      <div className="w-full sm:w-72"><Field label="测试数据集"><Select value={dataset} disabled={commands.busy} onChange={event => { const next = new URL(window.location.href); next.searchParams.set("mode", "matching"); next.searchParams.set("dataset", event.target.value); window.location.assign(next.toString()); }}><option value="italy-profiles">意大利画像分析 · 一发</option><option value="italy">意大利真实数据 · 二发回放</option><option value="demo">合成演示数据</option></Select></Field></div>
+      <div className="w-full sm:w-72"><Field label="资料范围"><Select value={dataset} disabled={commands.busy} onChange={event => { const next = new URL(window.location.href); next.searchParams.set("mode", "matching"); next.searchParams.set("dataset", event.target.value); window.location.assign(next.toString()); }}><option value="italy-profiles">意大利画像分析 · 一发</option><option value="italy">意大利真实数据 · 二发回放</option><option value="demo">合成演示数据</option></Select></Field></div>
       <p className="max-w-lg text-xs leading-5 text-gray-500">{profiles ? "以已有画像为分析基础，商品与达人双向查找；每项结论可展开查看依据。" : offline ? "仅在独立测试库中查询历史资料。真实身份、联系状态和商业条件仍需核实。" : "合成数据用于体验匹配流程与模拟条件变化。"}</p>
     </div>
     <div className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-brand-100 bg-brand-50 px-4 py-3 dark:border-brand-900 dark:bg-brand-500/10">
@@ -516,11 +575,14 @@ function MatchingDatasetWorkspace({ dataset }: { dataset: Dataset }) {
       <span className="text-xs text-gray-400">{stats?.matchingVersion || "结构召回"} · 模型未调用 · 不会发送消息</span>
     </div>
     {offline && stats?.dataset && <div className="mb-5 rounded-xl border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-white/[0.015]">
-      <div className="flex flex-wrap items-center justify-between gap-2"><p className="text-sm font-medium text-gray-700 dark:text-gray-200">{profiles ? "本次分析口径" : stats.dataset.label}</p><span className="text-xs text-gray-400">导入于 {date(stats.dataset.importedAt)}（北京时间）</span></div>
+      <div className="flex flex-wrap items-center justify-between gap-2"><p className="text-sm font-medium text-gray-700 dark:text-gray-200">{profiles ? "本次分析口径" : stats.dataset.label}</p><span className="text-xs text-gray-400">初始导入于 {date(stats.dataset.importedAt)}（北京时间）</span></div>
       <p className="mt-2 text-xs leading-6 text-gray-500">{profiles ? "按已有多类目分析适配性，用同一来源口径内的销量与播放表现补充排序。画像时间不阻塞分析，价格带与内容形式仅作参考。" : "这是已知同款关系的离线回放，可验证检索是否正确；尚不能证明 AI 选人质量或当前可联系性。"}</p>
       {!profiles && stats.dataset.warnings.length > 0 && <p className="mt-1 text-xs leading-6 text-gray-500">{stats.dataset.warnings.find(warning => warning.startsWith("历史快照：")) || stats.dataset.warnings[0]}</p>}
-      <details className="mt-2 text-xs text-gray-500"><summary className="cursor-pointer py-1">查看数据范围、历史记录与来源</summary><ul className="mt-2 list-disc space-y-1.5 pl-4 leading-6">{(profiles ? stats.dataset.warnings : stats.dataset.warnings.slice(1)).map((warning, index) => <li key={index}>{warning}</li>)}</ul><div className="mt-3 space-y-1 border-t border-gray-100 pt-3 text-gray-400 dark:border-gray-800">{stats.dataset.sourceRefs.map(ref => <p key={ref} className="break-all leading-5">{ref}</p>)}</div></details>
+      <details className="mt-2 text-xs text-gray-500"><summary className="cursor-pointer py-1">查看初始资料背景与来源</summary><ul className="mt-2 list-disc space-y-1.5 pl-4 leading-6">{(profiles ? stats.dataset.warnings : stats.dataset.warnings.slice(1)).map((warning, index) => <li key={index}>{warning}</li>)}</ul><div className="mt-3 space-y-1 border-t border-gray-100 pt-3 text-gray-400 dark:border-gray-800">{stats.dataset.sourceRefs.map(ref => <p key={ref} className="break-all leading-5">{ref}</p>)}</div></details>
     </div>}
+    {profiles&&stats?.profileSync&&<ProfileSyncSummary value={stats.profileSync}/>}
+    {registryCreatorId&&!profiles&&<div className="mb-5"><Notice tone="warning">达人档案的匹配入口使用意大利画像资料。<Link href={`/opportunities?mode=matching&dataset=italy-profiles&direction=creator&registryCreatorId=${encodeURIComponent(registryCreatorId)}`} className="ml-2 underline">切到对应资料</Link></Notice></div>}
+    {profiles&&linkedState?.id===registryCreatorId&&(linkedState.status!=="ready"||(selected&&!isProduct(selected)&&selected.profileOrigin?.creatorId===registryCreatorId))&&<div className="mb-5"><Notice tone={linkedState.status==="error"?"warning":"info"}><p>{linkedState.message}</p>{(linkedState.status==="missing"||linkedState.status==="error")&&<Button size="sm" variant="outline" className="mt-2" disabled={commands.blocked} onClick={()=>{linkedLoaded.current="";linkedContext.current="";setLinkedRetry(value=>value+1);}}>重新读取关联</Button>}</Notice></div>}
     {statsError && <div className="mb-4"><Notice tone="warning"><div className="flex flex-wrap items-center gap-3">{statsError}<Button size="sm" variant="outline" onClick={() => setRefresh(value => value + 1)}>重新读取</Button></div></Notice></div>}
     {profiles && assessmentRecovery && <div className="mb-5" role="status"><Notice tone={assessmentRecovery.error ? "warning" : "info"}>
       <p className="font-medium">人工判断已经保存{assessmentRecovery.busy ? "，正在恢复原候选与评审统计…" : "，候选上下文尚未恢复。"}</p>
@@ -558,7 +620,8 @@ function MatchingDatasetWorkspace({ dataset }: { dataset: Dataset }) {
         <Card title={visibleRun ? `${profiles ? "分析结果" : "候选机会"} · ${visibleRun.candidates.length}` : profiles ? "分析结果" : "候选机会"} subtitle={selected ? subjectName(selected) : "选择左侧资料，开始一次有依据的匹配。"} action={visibleRun && <Pill tone="neutral">模型未调用</Pill>}>
           {!visibleRun ? <EmptyState title={selected ? profiles ? "已选好，开始画像分析" : "已选好，开始查找候选" : "一次聚焦一个经营问题"} description={selected ? profiles ? "索引召回后，自动整理类目交集和已有经营表现；本步骤不消耗模型 Token。" : "结构索引先缩小范围，保留适配理由和事实缺口；此步骤不消耗模型 Token。" : "为一个商品找到适合的达人，或为一位达人找到少量值得推进的商品。"} />
             : <div className="space-y-4 p-4 sm:p-5">
-              {visibleRun.stale && <Notice tone="warning">资料或匹配版本已变化，这批候选与评审已不再适用于当前版本。请重新查找候选。</Notice>}
+              {visibleRun.stale && <Notice tone="warning"><p>已有更新，这里保留的是上次分析结果。</p><Button className="mt-3" size="sm" variant="outline" disabled={commands.blocked || !selected} onClick={recall}>{commands.busy?"正在分析…":"按最新画像重新分析"}</Button></Notice>}
+              {runCheckError&&<p role="status" className="text-xs leading-5 text-gray-500">{runCheckError} 现有结果保留，可重新读取确认。<Button size="sm" variant="ghost" onClick={()=>setRefresh(value=>value+1)}>核对版本</Button></p>}
               {profiles && <AutoAnalysisSummary run={visibleRun} />}
               {direction==="creator"&&visibleRun.candidates.length>0&&<div className="flex flex-wrap items-center justify-between gap-3 border-b border-gray-100 pb-4 dark:border-gray-800"><p className="text-xs leading-5 text-gray-500">为这位达人合并最多 5 个商品，整理一份关系资料包。</p><Button size="sm" disabled={commands.blocked||visibleRun.stale||visibleRun.candidates.every(c=>c.readiness==="suppressed")} onClick={()=>prepare(visibleRun.subject.id)}><Icon name="agent" className="size-4"/>{visiblePacket?"查看关系资料包":"整理该达人资料包"}</Button></div>}
               {!visibleRun.candidates.length && <EmptyState title="本次没有符合条件的候选" description={profiles ? "类目缺失或来源冲突时会暂停类目推荐。可以查看选中资料的来源，或更换其他商品、达人。" : "可以更换商品、达人或候选来源；没有同款证据并不代表达人从未带过该商品。"} />}
@@ -577,7 +640,8 @@ function MatchingDatasetWorkspace({ dataset }: { dataset: Dataset }) {
               <details className="rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-400 dark:bg-gray-800/40"><summary className="cursor-pointer py-1">本次召回记录与数据范围</summary><div className="mt-2 flex flex-wrap gap-x-5 gap-y-2 pb-1"><span>{visibleRun.cacheHit ? "复用有效缓存" : "新建召回结果"}</span><span>召回返回 {visibleRun.diagnostics.rowsFetched.toLocaleString()} 行</span><span>用时 {visibleRun.diagnostics.durationMs.toFixed(1)} ms</span><span>候选上限 {visibleRun.diagnostics.candidateLimit}</span><span>模型调用 {visibleRun.diagnostics.llmCalls} 次</span></div>{visibleRun.diagnostics.truncated && <p className="mt-2 leading-5">已按本次候选上限截取结果，当前列表不是全库的全部匹配。</p>}{visibleRun.warnings.map((warning, index) => <p key={`${index}-${warning}`} className="mt-2 leading-5">{warning}</p>)}<p className="mt-2 break-all leading-5">{visibleRun.matchingVersion} · {date(visibleRun.createdAt)} · {visibleRun.id}</p></details>
             </div>}
         </Card>
-        {visiblePacket && <section ref={packetRef} className="scroll-mt-24"><Card title={profiles ? "关系资料包" : offline ? "离线证据评审包" : "关系评审包"} subtitle="同一位达人的少量商品集中评审，避免重复读取整库和全部关系历史。" action={<Pill tone="brand">已准备 · 未调用模型</Pill>}><div className="space-y-4 p-4 sm:p-5"><div className="grid grid-cols-3 gap-3"><div className="rounded-xl bg-gray-50 p-3 dark:bg-gray-800/50"><p className="text-xs text-gray-400">商品方案</p><p className="mt-2 text-xl font-semibold text-gray-800 dark:text-gray-200">{visiblePacket.candidates}<span className="ml-1 text-xs font-normal text-gray-400">/ 最多 5</span></p></div><div className="rounded-xl bg-gray-50 p-3 dark:bg-gray-800/50"><p className="text-xs text-gray-400">上下文字符</p><p className="mt-2 text-xl font-semibold text-gray-800 dark:text-gray-200">{visiblePacket.characters.toLocaleString()}</p></div><div className="rounded-xl bg-gray-50 p-3 dark:bg-gray-800/50"><p className="text-xs text-gray-400">计费 Token</p><p className="mt-2 text-sm font-medium text-gray-700 dark:text-gray-300">待实际调用测量</p></div></div><p className="text-sm leading-6 text-gray-600 dark:text-gray-400">资料对象：<strong className="font-medium text-gray-800 dark:text-gray-200">{visibleRun?.candidates.find(candidate => candidate.creator.id === visiblePacket.creatorId)?.creator.name || visiblePacket.creatorId}</strong>。结构摘要包含关系控制、候选理由、已记录条件与证据引用；未核实字段保持未知，不将全部商品逐对交给模型。</p><Notice>{profiles ? "画像自动分析已完成，本资料包可供后续关系 Agent 使用；模型仍未调用，未生成或发送消息。字符数不等于模型 Token。" : "本次只准备模型输入。尚未进行 AI 决策、生成话术或发送消息；字符数不等于模型 Token。"}</Notice><details><summary className="cursor-pointer py-2 text-sm text-gray-500">查看实际结构摘要</summary><pre className="mt-2 max-h-96 overflow-y-auto whitespace-pre-wrap break-words rounded-xl bg-gray-50 p-4 text-xs leading-6 text-gray-600 dark:bg-gray-800/60 dark:text-gray-400">{JSON.stringify(visiblePacket.payload, null, 2)}</pre></details></div></Card></section>}
+        {visiblePacket && <section ref={packetRef} className="scroll-mt-24"><Card title={profiles ? "关系资料包" : offline ? "离线证据评审包" : "关系评审包"} subtitle="同一位达人的少量商品集中评审，保留生成时的资料与来源。" action={<Pill tone={visibleRun?.stale?"neutral":"brand"}>{visibleRun?.stale?"历史版本 · 仅供查看":"已准备 · 未调用模型"}</Pill>}><div className="space-y-4 p-4 sm:p-5"><div className="grid grid-cols-3 gap-3"><div className="rounded-xl bg-gray-50 p-3 dark:bg-gray-800/50"><p className="text-xs text-gray-400">商品方案</p><p className="mt-2 text-xl font-semibold text-gray-800 dark:text-gray-200">{visiblePacket.candidates}<span className="ml-1 text-xs font-normal text-gray-400">/ 最多 5</span></p></div><div className="rounded-xl bg-gray-50 p-3 dark:bg-gray-800/50"><p className="text-xs text-gray-400">上下文字符</p><p className="mt-2 text-xl font-semibold text-gray-800 dark:text-gray-200">{visiblePacket.characters.toLocaleString()}</p></div><div className="rounded-xl bg-gray-50 p-3 dark:bg-gray-800/50"><p className="text-xs text-gray-400">计费 Token</p><p className="mt-2 text-sm font-medium text-gray-700 dark:text-gray-300">待实际调用测量</p></div></div><p className="text-sm leading-6 text-gray-600 dark:text-gray-400">资料对象：<strong className="font-medium text-gray-800 dark:text-gray-200">{visibleRun?.candidates.find(candidate => candidate.creator.id === visiblePacket.creatorId)?.creator.name || visiblePacket.creatorId}</strong>。结构摘要包含关系控制、候选理由、已记录条件与证据引用；未核实字段保持未知，不将全部商品逐对交给模型。</p><Notice>{visibleRun?.stale?"这是依据旧画像生成的历史资料包，内容保持不变。请重新分析并整理新资料包。":profiles ? "画像自动分析已完成，本资料包可供后续关系 Agent 使用；模型仍未调用，未生成或发送消息。字符数不等于模型 Token。" : "本次只准备模型输入。尚未进行 AI 决策、生成话术或发送消息；字符数不等于模型 Token。"}</Notice><details><summary className="cursor-pointer py-2 text-sm text-gray-500">查看实际结构摘要</summary><pre className="mt-2 max-h-96 overflow-y-auto whitespace-pre-wrap break-words rounded-xl bg-gray-50 p-4 text-xs leading-6 text-gray-600 dark:bg-gray-800/60 dark:text-gray-400">{JSON.stringify(visiblePacket.payload, null, 2)}</pre></details></div></Card></section>}
+        {historicalPackets.filter(item=>item.id!==visiblePacket?.id).length>0&&<Card title="本页保留的历史资料包" subtitle="内容按生成时的版本保留，新画像不会改写旧资料。"><div className="divide-y divide-gray-100 px-5 dark:divide-gray-800">{historicalPackets.filter(item=>item.id!==visiblePacket?.id).map(item=><details key={item.id} className="py-4 text-xs text-gray-500"><summary className="cursor-pointer leading-6">{date(item.createdAt)} · {item.candidates} 个商品 · 历史版本</summary><p className="mt-2 break-all">资料对象 {item.creatorId} · {item.id}</p><pre className="mt-3 max-h-72 overflow-y-auto whitespace-pre-wrap break-words rounded-lg bg-gray-50 p-3 leading-5 dark:bg-gray-800/40">{JSON.stringify(item.payload,null,2)}</pre></details>)}</div></Card>}
       </div>
     </div>
   </div>;

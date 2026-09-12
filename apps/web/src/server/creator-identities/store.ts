@@ -1,5 +1,6 @@
 import {existsSync} from "node:fs";
 import {DatabaseSync} from "node:sqlite";
+import {profileObservationOrder} from "./observation-order.ts";
 import type {CreatorIdentityDetail,CreatorIdentityList,CreatorIdentityOverview,CreatorIdentitySummary,IdentityMarket,IdentityOverviewCounts,IdentityProfileField,IdentitySourceResolution,ProfileFieldStatus,ProfileFieldValue} from "../../features/creator-identities/contracts.ts";
 
 export const PROFILE_FIELDS=["handle","creator_oecuid","selection_region","follower_cnt","med_gmv_revenue","video_gmv","live_gmv","units_sold","video_avg_view_cnt","industry_groups","content_groups","top_video_data","product_price_range","video_publish_cnt_30d","ec_video_publish_cnt_30d","live_streaming_cnt_30d","ec_live_streaming_cnt_30d","gpm","ec_live_gpm","ec_video_gpm","partnered_brand","sales_performance_end_time"] as const;
@@ -116,7 +117,7 @@ export class CreatorIdentityReadStore {
     if(!row)return empty;
     const scope=[String(row.market),String(row.oec_id)];
     const aliases=this.db.prepare("SELECT handle,min(observed_at) first_at,max(observed_at) last_at FROM identity_observation WHERE market=? AND oec_id=? AND kind='profile' AND handle IS NOT NULL GROUP BY handle ORDER BY max(observed_us) DESC,handle").all(...scope).map(alias=>({handle:String(alias.handle),firstObservedAt:String(alias.first_at),lastObservedAt:String(alias.last_at),isCurrent:alias.handle===row.current_handle}));
-    const latest=this.db.prepare(`SELECT e.observed_at,json_extract(${safePayload},'$.fields') fields_json FROM identity_observation e WHERE e.market=? AND e.oec_id=? AND e.kind='profile' AND json_type(${safePayload},'$.fields')='object' ORDER BY e.observed_us DESC,e.event_id DESC LIMIT 1`).get(...scope);
+    const latest=this.db.prepare(`SELECT e.observed_at,json_extract(${safePayload},'$.fields') fields_json FROM identity_observation e WHERE e.market=? AND e.oec_id=? AND e.kind='profile' AND json_type(${safePayload},'$.fields')='object' ORDER BY ${profileObservationOrder()} LIMIT 1`).get(...scope);
     const fieldsObject=latest?obj(JSON.parse(String(latest.fields_json))):null;
     const observedAt=latest?String(latest.observed_at):null;
     const fields=PROFILE_FIELDS.map(name=>sanitizeProfileField(name,fieldsObject?.[name],observedAt));
@@ -124,7 +125,7 @@ export class CreatorIdentityReadStore {
       const placeholders=PROFILE_FIELDS.map(()=>"?").join(",");
       const historical=this.db.prepare(`WITH values_by_field AS (
         SELECT j.key field_name,j.value field_json,e.observed_at,
-          row_number() OVER(PARTITION BY j.key ORDER BY e.observed_us DESC,e.event_id DESC) position
+          row_number() OVER(PARTITION BY j.key ORDER BY ${profileObservationOrder()}) position
         FROM identity_observation e,json_each(${safePayload},'$.fields') j
         WHERE e.market=? AND e.oec_id=? AND e.kind='profile' AND j.key IN (${placeholders})
           AND json_extract(CASE WHEN j.type='object' THEN j.value ELSE '{}' END,'$.status') IN ('value','zero')

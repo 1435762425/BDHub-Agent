@@ -22,6 +22,8 @@
 
 批量扩充达人池已接入 **[达人库](http://127.0.0.1:5198/creators) → 批量添加达人**：支持 handle/@handle/主页链接，预览去重后入队，逐项显示新增、已有及未匹配，支持暂停和页面恢复。当前32位已核验达人、17条待解析线索。[批量入池与实测](docs/implementation/creator-discovery.md)。
 
+新画像现已自动接入 **[画像分析](http://127.0.0.1:5198/opportunities?mode=matching&dataset=italy-profiles)**：原21人更新、新增11人，匹配池3,989位；达人档案可直接“分析适合商品”，旧结果和资料包保留版本。[同步与实测](docs/implementation/registry-profile-matching-sync.md)。
+
 ## 启动与体验
 
 在 `apps/web` 执行：

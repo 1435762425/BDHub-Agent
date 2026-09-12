@@ -99,3 +99,17 @@ test("field projection keeps only allowed typed values and discards unauthorized
   const value=sanitizeProfileField("top_video_data",{status:"value",value:{count:2,structureKeys:["video","cookie"],raw:"SECRET"}},TIMES[0]).value;
   assert.deepEqual(value,{count:2,structureKeys:["video"]});
 });
+test("same-time full Profile beats later Find for current fields and historical available values",t=>{
+  const f=fixture(t),insert=f.db.prepare("INSERT INTO identity_observation VALUES(?,?,?,?,?,?,?,?,?,?,?,?)");
+  const add=(event,ref,fields)=>insert.run(event,IDS[0],"it","111","profile","new_name","observed",TIMES[2],2,ref,"fingerprint",JSON.stringify({fields}));
+  add("a-full-profile","probe:profile",{follower_cnt:{status:"value",value:55},med_gmv_revenue:{status:"value",value:{decimal:"100.00"}}});
+  add("z-later-find","probe:find-profile",{follower_cnt:{status:"value",value:5},med_gmv_revenue:{status:"value",value:{decimal:"2.00"}}});
+  const current=f.open().detail(IDS[0]);assert.equal(current.fields.find(field=>field.name==="follower_cnt").value,55);
+});
+test("historical field fallback follows full Profile quality before rowid or random event id",t=>{
+  const f=fixture(t),insert=f.db.prepare("INSERT INTO identity_observation VALUES(?,?,?,?,?,?,?,?,?,?,?,?)");
+  for(const [event,ref,amount] of [["a-full","probe:profile","100.00"],["z-find","probe:find-profile","2.00"]])
+    insert.run(event,IDS[0],"it","111","profile","new_name","observed",TIMES[2],2,ref,"fingerprint",JSON.stringify({fields:{med_gmv_revenue:{status:"value",value:{decimal:amount}}}}));
+  insert.run("latest-missing-money",IDS[0],"it","111","profile","new_name","observed",TIMES[3],3,"latest:profile","fingerprint",JSON.stringify({fields:{med_gmv_revenue:{status:"no_value"}}}));
+  const detail=f.open().detail(IDS[0]),field=detail.fields.find(field=>field.name==="med_gmv_revenue");assert.equal(field.status,"no_value");assert.equal(field.lastAvailable.value.decimal,"100.00");
+});

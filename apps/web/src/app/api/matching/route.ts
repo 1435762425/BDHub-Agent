@@ -2,6 +2,7 @@ import {getMatchingStore} from "@/server/matching/instance";
 import {MatchingError} from "@/server/matching/store";
 import {parseMatchingCommand,parseMatchingQuery} from "@/server/matching/validation";
 import {InputError,isLocalRequest} from "@/server/runtime/validation";
+import {registrySyncStatus} from "@/server/matching/identity-profile-sync";
 
 export const runtime="nodejs";
 export const dynamic="force-dynamic";
@@ -15,8 +16,10 @@ function failure(error:unknown){
 export async function GET(request:Request){
   if(!isLocalRequest(request,false))return reject();
   try {
-    const {view,options,dataset,runId}=parseMatchingQuery(request.url),store=getMatchingStore(dataset);
-    return Response.json(view==="stats"?store.stats():view==="products"?store.listProducts(options):view==="run"?store.getRun(runId!):view==="assessments"?store.assessments(runId!):store.listCreators(options),{headers});
+    const {view,options,dataset,runId,registryCreatorId}=parseMatchingQuery(request.url),store=getMatchingStore(dataset);
+    if(view==="linked_creator")return Response.json({creator:store.resolveRegistryCreator(registryCreatorId!)},{headers});
+    const sync=dataset==="italy-profiles"?registrySyncStatus(store):null;
+    return Response.json(view==="stats"?{...store.stats(),...(sync?{profileSync:sync}:{})}:view==="products"?store.listProducts(options):view==="run"?store.getRun(runId!):view==="assessments"?store.assessments(runId!):store.listCreators(options),{headers});
   }catch(error){return failure(error);}
 }
 export async function POST(request:Request){

@@ -4,6 +4,7 @@ import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import type { MatchingBatch, MatchingDataset, MatchMarket, FactSource, MatchProduct, MatchCreator, MatchOffer, ProductInput, CreatorInput, OfferInput, ProductEvidence, CreatorDemand, ImportResult, MatchPage, RecallQuery, MatchRun, MatchCandidate, CandidateSource, ReviewPacket, MatchingStats, AssessmentLabel, CandidateAssessment, AssessmentResponse, ProfileSignals } from "../../features/matching/contracts.ts";
 import type {CategoryFact} from "../../features/matching/category-facts.ts";
+import type {MatchingProfileOrigin,MatchingProfileSyncStatus} from "../../features/matching/profile-sync-contracts.ts";
 import { makeMatchingFixture } from "./fixtures.ts";
 import {analysisPolicy,analyzeProfile,orderProfileCandidates,profileRankScope} from "./profile-analysis.ts";
 
@@ -12,6 +13,14 @@ const currencies={mx:"MXN",br:"BRL",it:"EUR"} as const;
 type Row={data:string;semantic_hash?:string;commercial_hash?:string;relation_hash?:string};
 type Route={source:CandidateSource;sql:string;args:SQLInputValue[]};
 type StoredRun={run:MatchRun;dependencies:string[];expiresAt:number|null};
+export interface ProfileSyncCheckpoint {sourceKey:string|null;cursor:number;revision:number;}
+export interface ProfileSyncMapping {registryCreatorId:string;market:"it";oecId:string;matchingCreatorId:string;}
+export interface ProfileSyncInput {
+  expectedRevision:number;expectedCursor:number;sourceKey:string;cursor:number;registryCreators:number;events:number;
+  creators:CreatorInput[];mappings:ProfileSyncMapping[];skipped:number;gaps:MatchingProfileSyncStatus["gaps"];
+}
+export interface ProfileSyncResult {result:ImportResult;status:MatchingProfileSyncStatus;changedCreatorIds:string[];affectedRunIds:string[];}
+type SyncRow={source_key:string;cursor:number;revision:number;payload_hash:string;status_json:string};
 
 export class MatchingError extends Error {
   status:number;code:string;
@@ -42,10 +51,10 @@ function hash(v:unknown):string{return createHash("sha256").update(stable(v)).di
 function categoryFact(value:CategoryFact|undefined,categories:string[]):CategoryFact|undefined {
   if(value===undefined)return undefined;
   if(!value||typeof value!=="object"||Array.isArray(value))bad("分类来源必须为对象。");
-  const result:CategoryFact={status:choice(value.status,["historical","conflict","missing"],"categoryFact.status"),namespace:text(value.namespace,"categoryFact.namespace",100),sourceLabels:strings(value.sourceLabels,"categoryFact.sourceLabels"),source:fact(value.source),transformVersion:value.transformVersion===null?null:text(value.transformVersion,"categoryFact.transformVersion",100),timeBasis:choice(value.timeBasis,["field_observation","batch_completed"],"categoryFact.timeBasis"),note:optionalText(value.note,"categoryFact.note",600)};
+  const result:CategoryFact={status:choice(value.status,["observed","historical","conflict","missing"],"categoryFact.status"),namespace:text(value.namespace,"categoryFact.namespace",100),sourceLabels:strings(value.sourceLabels,"categoryFact.sourceLabels"),source:fact(value.source),transformVersion:value.transformVersion===null?null:text(value.transformVersion,"categoryFact.transformVersion",100),timeBasis:choice(value.timeBasis,["field_observation","batch_completed"],"categoryFact.timeBasis"),note:optionalText(value.note,"categoryFact.note",600)};
   // The sequence of raw category labels is a hierarchy, not a set to alphabetize.
   result.sourceLabels=[...new Set(value.sourceLabels.map(label=>text(label,"categoryFact.sourceLabels",100)))];
-  if(result.status!=="historical"&&categories.length)bad("冲突或缺失分类不能写入可用类目索引。");
+  if(result.status!=="historical"&&result.status!=="observed"&&categories.length)bad("冲突或缺失分类不能写入可用类目索引。");
   return result;
 }
 function productInput(value:ProductInput):ProductInput{const v=value,m=choice(v.market,["mx","br","it"],"market");return {id:text(v.id,"product.id",100),market:m,pid:identity(v.pid,"pid"),title:text(v.title,"title",300),image:optionalText(v.image,"image",500),categories:strings(v.categories,"categories"),...(v.categoryFact!==undefined?{categoryFact:categoryFact(v.categoryFact,v.categories)}:{}),formats:strings(v.formats,"formats",2).map(f=>choice(f,["video","live"],"format")),description:optionalText(v.description,"description"),priceMinor:integer(v.priceMinor,"priceMinor",true),currency:marketCurrency(m,v.currency),source:fact(v.source)};}
@@ -57,6 +66,12 @@ function profileSignals(value:ProfileSignals,market:MatchMarket):ProfileSignals 
   if(gmv!==null&&!/^(0|[1-9]\d*)(\.\d+)?$/.test(gmv))bad("画像 GMV 必须保留非负十进制原值字符串。");
   return {followers:integer(value.followers,"profileSignals.followers",true),unitsSold:integer(value.unitsSold,"profileSignals.unitsSold",true),avgViews:average,gmvValue:gmv,gmvCurrency:value.gmvCurrency===null?null:marketCurrency(market,value.gmvCurrency),periodLabel:value.periodLabel===null?null:text(value.periodLabel,"profileSignals.periodLabel",200),comparisonScope:text(value.comparisonScope,"profileSignals.comparisonScope",200),source:fact(value.source)};
 }
+function profileOrigin(value:MatchingProfileOrigin):MatchingProfileOrigin {
+  if(!value||typeof value!=="object"||Array.isArray(value)||!value.metricStates||typeof value.metricStates!=="object"||Array.isArray(value.metricStates))bad("profileOrigin 必须保留身份库来源与指标状态。");
+  const creatorId=text(value.creatorId,"profileOrigin.creatorId",100);if(!/^creator_[a-f0-9]{32}$/.test(creatorId))bad("profileOrigin.creatorId 不是有效身份库标识。");
+  const states=["absent","no_value","unauthorized","error","zero","value"] as const;
+  return {kind:choice(value.kind,["identity_registry"],"profileOrigin.kind"),creatorId,observationRef:text(value.observationRef,"profileOrigin.observationRef",300),observedAt:integer(value.observedAt,"profileOrigin.observedAt")!,categoryMode:choice(value.categoryMode,["observed","historical_fallback","unavailable","conflict_preserved"],"profileOrigin.categoryMode"),metricStates:{followers:choice(value.metricStates.followers,states,"profileOrigin.followers"),unitsSold:choice(value.metricStates.unitsSold,states,"profileOrigin.unitsSold"),avgViews:choice(value.metricStates.avgViews,states,"profileOrigin.avgViews"),gmvValue:choice(value.metricStates.gmvValue,states,"profileOrigin.gmvValue")}};
+}
 function creatorInput(value:CreatorInput):CreatorInput{
   const v=value,m=choice(v.market,["mx","br","it"],"market"),min=integer(v.priceMinMinor,"priceMinMinor",true),max=integer(v.priceMaxMinor,"priceMaxMinor",true);
   if(min!==null&&max!==null&&min>max)bad("达人价格带起点大于终点。");
@@ -67,7 +82,8 @@ function creatorInput(value:CreatorInput):CreatorInput{
     externalIdentity={namespace:choice(v.externalIdentity.namespace,["kalodata"],"externalIdentity.namespace"),id:identity(v.externalIdentity.id,"externalIdentity.id")};
   }
   if(oecId===null&&!externalIdentity)bad("OEC 未知时必须提供独立的外部身份，不可用外部 ID 代填 OEC。");
-  return {id:text(v.id,"creator.id",100),market:m,oecId,...(externalIdentity?{externalIdentity}:{}),name:text(v.name,"name",200),avatar:optionalText(v.avatar,"avatar",500),categories:strings(v.categories,"categories"),...(v.categoryFact!==undefined?{categoryFact:categoryFact(v.categoryFact,v.categories)}:{}),...(v.profileSignals!==undefined?{profileSignals:profileSignals(v.profileSignals,m)}:{}),formats:strings(v.formats,"formats",2).map(f=>choice(f,["video","live"],"format")),bio:optionalText(v.bio,"bio"),priceMinMinor:min,priceMaxMinor:max,currency:marketCurrency(m,v.currency),control:choice(v.control,["auto","human","paused","unknown"],"control"),marketingStopped:bool(v.marketingStopped,"marketingStopped",true),source:fact(v.source)};
+  if(v.profileOrigin!==undefined&&oecId===null)bad("身份库画像必须绑定已知 OEC。");
+  return {id:text(v.id,"creator.id",100),market:m,oecId,...(externalIdentity?{externalIdentity}:{}),...(v.profileOrigin!==undefined?{profileOrigin:profileOrigin(v.profileOrigin)}:{}),name:text(v.name,"name",200),avatar:optionalText(v.avatar,"avatar",500),categories:strings(v.categories,"categories"),...(v.categoryFact!==undefined?{categoryFact:categoryFact(v.categoryFact,v.categories)}:{}),...(v.profileSignals!==undefined?{profileSignals:profileSignals(v.profileSignals,m)}:{}),formats:strings(v.formats,"formats",2).map(f=>choice(f,["video","live"],"format")),bio:optionalText(v.bio,"bio"),priceMinMinor:min,priceMaxMinor:max,currency:marketCurrency(m,v.currency),control:choice(v.control,["auto","human","paused","unknown"],"control"),marketingStopped:bool(v.marketingStopped,"marketingStopped",true),source:fact(v.source)};
 }
 function datasetInput(value:MatchingDataset):MatchingDataset{
   if(!value||typeof value!=="object"||Array.isArray(value))bad("dataset 必须是明确的数据集描述。");
@@ -86,6 +102,8 @@ function creatorRelation(c:CreatorInput){return {control:c.control,marketingStop
 
 export class MatchingStore {
   private db:DatabaseSync;private now:()=>number;private statements=new Map<string,StatementSync>();private dataset:MatchingDataset;
+  private syncBumps:Set<string>|null=null;
+  private profileSyncEnabled=false;
   constructor(dbPath:string,options:{now?:()=>number;seed?:boolean;dataset?:MatchingDataset}={}) {
     if(dbPath!==":memory:")mkdirSync(dirname(dbPath),{recursive:true});this.now=options.now??Date.now;this.db=new DatabaseSync(dbPath);
     try {
@@ -126,6 +144,7 @@ export class MatchingStore {
     `);
     this.migrateIdentitySchema();
     this.migrateProfileRank();
+    if(this.db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='matching_profile_sync'").get())this.migrateProfileSync();
     this.dataset=this.transaction(()=>{
       const saved=this.stmt("SELECT data FROM matching_dataset WHERE singleton=1").get() as Row|undefined;
       const provided=options.dataset?datasetInput(options.dataset):null;
@@ -171,6 +190,18 @@ export class MatchingStore {
     for(const category of [...(creator.categories.length?creator.categories:["__missing__"]),"__all__"])
       this.stmt("INSERT INTO creator_profile_rank VALUES(?,?,?,?,?,?,?)").run(creator.market,category,creator.id,creator.categoryFact?.namespace??"",profileRankScope(creator),signals?.unitsSold??null,signals?.avgViews??null);
   }
+  private migrateProfileSync(){this.transaction(()=>this.createProfileSyncSchema());this.profileSyncEnabled=true;}
+  private createProfileSyncSchema(){
+    this.db.exec(`CREATE TABLE IF NOT EXISTS matching_profile_sync(singleton INTEGER PRIMARY KEY CHECK(singleton=1),source_key TEXT NOT NULL,cursor INTEGER NOT NULL,revision INTEGER NOT NULL,payload_hash TEXT NOT NULL,status_json TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS matching_profile_map(registry_creator_id TEXT PRIMARY KEY,market TEXT NOT NULL,oec_id TEXT NOT NULL,matching_creator_id TEXT NOT NULL UNIQUE REFERENCES creators(id),UNIQUE(market,oec_id));
+      CREATE TABLE IF NOT EXISTS matching_latest_query(query_hash TEXT PRIMARY KEY,run_id TEXT NOT NULL REFERENCES recall_runs(id));
+      CREATE TABLE IF NOT EXISTS matching_profile_recompute(query_hash TEXT PRIMARY KEY,old_run_id TEXT NOT NULL REFERENCES recall_runs(id),query_json TEXT NOT NULL,requested_revision INTEGER NOT NULL,status TEXT NOT NULL CHECK(status IN ('pending','done')));
+      CREATE TABLE IF NOT EXISTS matching_profile_run_replacement(old_run_id TEXT PRIMARY KEY REFERENCES recall_runs(id),new_run_id TEXT NOT NULL REFERENCES recall_runs(id),revision INTEGER NOT NULL,created_at INTEGER NOT NULL);`);
+    if(!this.stmt("SELECT value FROM matching_meta WHERE key='profile_sync_schema_version'").get()){
+      for(const row of this.stmt("SELECT id,json_extract(data,'$.run.query') query_json FROM recall_runs ORDER BY rowid").all() as {id:string;query_json:string}[]){this.stmt("INSERT INTO matching_latest_query VALUES(?,?) ON CONFLICT(query_hash) DO UPDATE SET run_id=excluded.run_id").run(hash(JSON.parse(row.query_json)),row.id);}
+      this.stmt("INSERT INTO matching_meta VALUES('profile_sync_schema_version',1)").run();
+    }
+  }
   close(){this.db.close();}
   private stmt(sql:string){let statement=this.statements.get(sql);if(!statement){statement=this.db.prepare(sql);this.statements.set(sql,statement);}return statement;}
   private transaction<T>(fn:()=>T):T{this.db.exec("BEGIN IMMEDIATE");try{const result=fn();this.db.exec("COMMIT");return result;}catch(error){this.db.exec("ROLLBACK");if(error instanceof MatchingError)throw error;if(error instanceof Error&&/UNIQUE constraint/.test(error.message))throw new MatchingError(409,"identity_conflict","稳定身份或同活动 Offer 已存在，不能用不同 ID 覆盖。");throw error;}}
@@ -180,11 +211,123 @@ export class MatchingStore {
   private count(table:string){return (this.stmt(`SELECT COUNT(*) n FROM ${table}`).get() as {n:number}).n;}
   private raw(table:string,id:string){return this.stmt(`SELECT * FROM ${table} WHERE id=?`).get(id) as Row|undefined;}
   private entity<T>(table:string,id:string):T{const row=this.raw(table,id);if(!row)throw new MatchingError(404,"entity_missing",`未找到 ${table} 中的记录。`);return JSON.parse(row.data) as T;}
-  private bump(key:string){this.stmt("INSERT INTO partition_versions(key,version) VALUES(?,1) ON CONFLICT(key) DO UPDATE SET version=version+1").run(key);}
+  private bump(key:string){this.stmt("INSERT INTO partition_versions(key,version) VALUES(?,1) ON CONFLICT(key) DO UPDATE SET version=version+1").run(key);this.syncBumps?.add(key);}
   private productPartitions(p:MatchProduct){this.bump(`product:${p.id}`);this.bump(`products:${p.market}`);this.bump(`pid:${p.market}:${p.pid}`);for(const cat of p.categories.length?p.categories:["__missing__"])this.bump(`pc:${p.market}:${cat}`);}
   private creatorPartitions(c:MatchCreator){this.bump(`creator:${c.id}`);this.bump(`creators:${c.market}`);for(const cat of c.categories.length?c.categories:["__missing__"])this.bump(`cc:${c.market}:${cat}`);const edges=this.stmt("SELECT DISTINCT pid FROM evidence WHERE creator_id=?").all(c.id) as {pid:string}[];for(const e of edges)this.bump(`ep:${c.market}:${e.pid}`);for(const d of this.demandsFor(c.id))this.demandPartitions(d,c.market);}
   private demandPartitions(d:CreatorDemand,m:MatchMarket){this.bump(`dc:${d.creatorId}`);if(d.productId)this.bump(`dp:${d.productId}`);for(const cat of d.categories)this.bump(`dcat:${m}:${cat}`);}
-  stats():MatchingStats{return {mode:this.dataset.mode,dataset:structuredClone(this.dataset),products:this.count("products"),creators:this.count("creators"),offers:this.count("offers"),evidence:this.count("evidence"),demands:this.count("demands"),runs:this.count("recall_runs"),packets:this.count("review_packets"),semanticBuilds:(this.stmt("SELECT value FROM matching_meta WHERE key='semantic_builds'").get() as {value:number}).value,llmCalls:0,billedTokens:0,matchingVersion:VERSION};}
+  stats():MatchingStats{const profileSync=this.getProfileSyncStatus();return {mode:this.dataset.mode,dataset:structuredClone(this.dataset),products:this.count("products"),creators:this.count("creators"),offers:this.count("offers"),evidence:this.count("evidence"),demands:this.count("demands"),runs:this.count("recall_runs"),packets:this.count("review_packets"),semanticBuilds:(this.stmt("SELECT value FROM matching_meta WHERE key='semantic_builds'").get() as {value:number}).value,llmCalls:0,billedTokens:0,matchingVersion:VERSION,...(profileSync?{profileSync}:{})};}
+  private hasProfileSync(){
+    if(!this.profileSyncEnabled&&this.db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='matching_profile_sync'").get())this.profileSyncEnabled=true;
+    return this.profileSyncEnabled;
+  }
+  private syncRow():SyncRow|null{if(!this.hasProfileSync())return null;return this.stmt("SELECT source_key,cursor,revision,payload_hash,status_json FROM matching_profile_sync WHERE singleton=1").get() as SyncRow|undefined??null;}
+  profileSyncCheckpoint():ProfileSyncCheckpoint{const row=this.syncRow();return {sourceKey:row?.source_key??null,cursor:row?.cursor??0,revision:row?.revision??0};}
+  getProfileSyncStatus():MatchingProfileSyncStatus|null{
+    const row=this.syncRow();if(!row)return null;
+    return {...JSON.parse(row.status_json) as MatchingProfileSyncStatus,revision:row.revision,sourceCursor:row.cursor,syncedCreators:this.count("matching_profile_map"),recomputedRuns:this.count("matching_profile_run_replacement"),pendingRecomputes:Number((this.stmt("SELECT count(*) n FROM matching_profile_recompute WHERE status='pending'").get() as {n:number}).n)};
+  }
+  getCreatorByOec(market:MatchMarket,oecId:string):MatchCreator|null{
+    const m=choice(market,["it","mx","br"],"market"),oec=identity(oecId,"oecId"),row=this.stmt("SELECT data FROM creators WHERE market=? AND oec_id=?").get(m,oec) as Row|undefined;
+    return row?JSON.parse(row.data) as MatchCreator:null;
+  }
+  resolveRegistryCreator(registryCreatorId:string):MatchCreator|null{
+    const id=text(registryCreatorId,"registryCreatorId",100);if(!/^creator_[a-f0-9]{32}$/.test(id))bad("无效的身份库标识。");
+    if(!this.hasProfileSync())return null;
+    const row=this.stmt("SELECT c.data FROM matching_profile_map m JOIN creators c ON c.id=m.matching_creator_id AND c.market=m.market AND c.oec_id=m.oec_id WHERE m.registry_creator_id=?").get(id) as Row|undefined;
+    return row?JSON.parse(row.data) as MatchCreator:null;
+  }
+  syncProfiles(input:ProfileSyncInput):ProfileSyncResult {
+    if(this.dataset.mode!=="imported-offline")throw new MatchingError(409,"profile_sync_dataset","身份画像只同步到独立真实资料库。");
+    const previouslyEnabled=this.profileSyncEnabled;
+    try{return this.transaction(()=>{
+    if(!this.profileSyncEnabled){this.createProfileSyncSchema();this.profileSyncEnabled=true;}
+    const sourceKey=text(input.sourceKey,"sourceKey",300),cursor=integer(input.cursor,"cursor")!,expectedCursor=integer(input.expectedCursor,"expectedCursor")!,expectedRevision=integer(input.expectedRevision,"expectedRevision")!;
+    const registryCreators=integer(input.registryCreators,"registryCreators")!,events=integer(input.events,"events")!,skipped=integer(input.skipped,"skipped")!;
+    const gaps={categoryUnavailable:integer(input.gaps?.categoryUnavailable,"gaps.categoryUnavailable")!,categoryHistorical:integer(input.gaps?.categoryHistorical,"gaps.categoryHistorical")!,metricsPartial:integer(input.gaps?.metricsPartial,"gaps.metricsPartial")!,periodUnknown:integer(input.gaps?.periodUnknown,"gaps.periodUnknown")!};
+    if(!Array.isArray(input.creators)||!Array.isArray(input.mappings)||input.creators.length>100_000||input.mappings.length>100_000)bad("画像与映射必须是有界数组。");
+    const saved=this.syncRow(),checkpoint=this.profileSyncCheckpoint();
+    if(checkpoint.revision!==expectedRevision||checkpoint.cursor!==expectedCursor)throw new MatchingError(409,"profile_sync_conflict","匹配同步版本已变化，请重新读取水位。");
+    const emptySource=checkpoint.sourceKey?.match(/^registry:([a-f0-9]{64}):empty$/),firstSource=sourceKey.match(/^registry:([a-f0-9]{64}):([a-f0-9]{64})$/);
+    const firstObservation=checkpoint.cursor===0&&cursor>0&&emptySource!==null&&emptySource!==undefined&&firstSource!==null&&emptySource[1]===firstSource[1];
+    if(checkpoint.sourceKey!==null&&checkpoint.sourceKey!==sourceKey&&!firstObservation)throw new MatchingError(409,"profile_sync_source_conflict","身份来源库已变化，旧水位不能用于新库。");
+    if(cursor<checkpoint.cursor)throw new MatchingError(409,"profile_sync_cursor_conflict","身份同步水位不能倒退。");
+    const payloadHash=hash({sourceKey,cursor,registryCreators,events,creators:input.creators,mappings:input.mappings,skipped,gaps});
+    const empty:ImportResult={inserted:0,updated:0,unchanged:0,semanticChanges:0,commercialChanges:0,relationChanges:0};
+    if(saved&&cursor===checkpoint.cursor){
+      if(saved.payload_hash!==payloadHash&&(events!==0||input.creators.length!==0||input.mappings.length!==0))throw new MatchingError(409,"profile_sync_cursor_conflict","同一来源水位不能提交不同画像事实。");
+      return {result:empty,status:this.getProfileSyncStatus()!,changedCreatorIds:[],affectedRunIds:[]};
+    }
+    const incoming=new Map<string,CreatorInput>();
+    for(const value of input.creators){const c=creatorInput(value);if(c.market!=="it"||c.oecId===null||!c.profileOrigin||incoming.has(c.id))bad("同步画像必须为不重复的意大利 OEC 与身份来源。");incoming.set(c.id,c);}
+    const mappings:ProfileSyncMapping[]=[],mappingIds=new Set<string>(),matchingIds=new Set<string>(),mappingByMatching=new Map<string,ProfileSyncMapping>();
+    for(const value of input.mappings){
+      if(!value||typeof value!=="object")bad("身份映射无效。");
+      const mapping={registryCreatorId:text(value.registryCreatorId,"registryCreatorId",100),market:choice(value.market,["it"] as const,"mapping.market"),oecId:identity(value.oecId,"mapping.oecId"),matchingCreatorId:text(value.matchingCreatorId,"matchingCreatorId",100)};
+      if(!/^creator_[a-f0-9]{32}$/.test(mapping.registryCreatorId)||mappingIds.has(mapping.registryCreatorId)||matchingIds.has(mapping.matchingCreatorId))bad("身份映射必须唯一。");
+      mappingIds.add(mapping.registryCreatorId);matchingIds.add(mapping.matchingCreatorId);
+      const candidate=incoming.get(mapping.matchingCreatorId)??this.getCreatorByOec(mapping.market,mapping.oecId);
+      if(!candidate||candidate.id!==mapping.matchingCreatorId||candidate.market!==mapping.market||candidate.oecId!==mapping.oecId||candidate.profileOrigin?.creatorId!==mapping.registryCreatorId)throw new MatchingError(409,"profile_sync_identity_conflict","身份映射与画像 OEC 不一致。");
+      const previous=this.stmt("SELECT market,oec_id,matching_creator_id FROM matching_profile_map WHERE registry_creator_id=?").get(mapping.registryCreatorId) as {market:string;oec_id:string;matching_creator_id:string}|undefined;
+      if(previous&&(previous.market!==mapping.market||previous.oec_id!==mapping.oecId||previous.matching_creator_id!==mapping.matchingCreatorId))throw new MatchingError(409,"profile_sync_identity_conflict","已登记的身份映射不能重新指向另一达人。");
+      mappings.push(mapping);
+      mappingByMatching.set(mapping.matchingCreatorId,mapping);
+    }
+    if([...incoming.values()].some(c=>mappingByMatching.get(c.id)?.registryCreatorId!==c.profileOrigin!.creatorId))bad("每条画像都需要精确身份映射。");
+    const creators:CreatorInput[]=[],changedCreatorIds:string[]=[];
+    for(const c of incoming.values()){
+      const raw=this.raw("creators",c.id),old=raw?JSON.parse(raw.data) as MatchCreator:null;
+      const canonical=this.getCreatorByOec(c.market,c.oecId!);if(canonical&&canonical.id!==c.id)throw new MatchingError(409,"profile_sync_identity_conflict","同一 OEC 必须继续使用原匹配 ID。");
+      if(old&&(old.market!==c.market||old.oecId!==c.oecId))throw new MatchingError(409,"profile_sync_identity_conflict","画像同步不能变更已有达人 ID 或 OEC。");
+      if(old?.profileOrigin&&old.profileOrigin.creatorId!==c.profileOrigin!.creatorId)throw new MatchingError(409,"profile_sync_identity_conflict","已有画像不能切换身份库来源达人。");
+      let next:CreatorInput=c;
+      if(old){
+        next={...c,id:old.id,control:old.control,marketingStopped:old.marketingStopped,source:old.source};
+        if(old.externalIdentity)next.externalIdentity=old.externalIdentity;else delete next.externalIdentity;
+        if(old.categoryFact?.status==="conflict")next={...next,categories:old.categories,categoryFact:old.categoryFact,profileOrigin:{...c.profileOrigin!,categoryMode:"conflict_preserved"}};
+        if(old.profileOrigin&&c.profileOrigin!.observedAt<old.profileOrigin.observedAt)throw new MatchingError(409,"older_observation","较早的画像观察不能替换较新的同步结果。");
+      }
+      const normalized=creatorInput(next),oldInput=old?(({semanticRevision,relationRevision,...rest})=>{void semanticRevision;void relationRevision;return rest;})(old):null;
+      if(!oldInput||stable(normalized)!==stable(oldInput))changedCreatorIds.push(c.id);
+      creators.push(normalized);
+    }
+    const changedPartitions=new Set<string>(),priorCapture=this.syncBumps;this.syncBumps=changedPartitions;
+    let result:ImportResult;try{result=this.importBatch({creators});}finally{this.syncBumps=priorCapture;}
+    for(const mapping of mappings)this.stmt("INSERT INTO matching_profile_map VALUES(?,?,?,?) ON CONFLICT(registry_creator_id) DO NOTHING").run(mapping.registryCreatorId,mapping.market,mapping.oecId,mapping.matchingCreatorId);
+    const revision=checkpoint.revision+1,affectedRunIds:string[]=[];
+    if(changedPartitions.size){
+      // Read only dependency/query metadata, not every cached candidate payload.
+      for(const row of this.stmt("SELECT q.query_hash,r.id,json_extract(r.data,'$.dependencies') dependencies_json,json_extract(r.data,'$.run.query') query_json FROM matching_latest_query q JOIN recall_runs r ON r.id=q.run_id").all() as {query_hash:string;id:string;dependencies_json:string;query_json:string}[]){
+        const dependencies=JSON.parse(row.dependencies_json) as string[];if(!dependencies.some(key=>changedPartitions.has(key)))continue;
+        affectedRunIds.push(row.id);
+        this.stmt("INSERT INTO matching_profile_recompute VALUES(?,?,?,?, 'pending') ON CONFLICT(query_hash) DO UPDATE SET old_run_id=excluded.old_run_id,query_json=excluded.query_json,requested_revision=excluded.requested_revision,status='pending'").run(row.query_hash,row.id,row.query_json,revision);
+      }
+    }
+    const status:MatchingProfileSyncStatus={status:"ready",errorCode:null,revision,sourceCursor:cursor,lastAppliedAt:this.now(),registryCreators,syncedCreators:this.count("matching_profile_map"),lastBatch:{events,considered:creators.length,inserted:result.inserted,updated:result.updated,unchanged:result.unchanged,skipped},gaps,recomputedRuns:this.count("matching_profile_run_replacement"),pendingRecomputes:Number((this.stmt("SELECT count(*) n FROM matching_profile_recompute WHERE status='pending'").get() as {n:number}).n)};
+    this.stmt("INSERT INTO matching_profile_sync VALUES(1,?,?,?,?,?) ON CONFLICT(singleton) DO UPDATE SET source_key=excluded.source_key,cursor=excluded.cursor,revision=excluded.revision,payload_hash=excluded.payload_hash,status_json=excluded.status_json").run(sourceKey,cursor,revision,payloadHash,JSON.stringify(status));
+    return {result,status:this.getProfileSyncStatus()!,changedCreatorIds,affectedRunIds};
+  });}catch(error){if(!previouslyEnabled){this.profileSyncEnabled=false;this.statements.clear();}throw error;}}
+  private trackLatestRun(run:MatchRun){
+    if(!this.hasProfileSync())return;
+    const queryHash=hash(run.query);this.stmt("INSERT INTO matching_latest_query VALUES(?,?) ON CONFLICT(query_hash) DO UPDATE SET run_id=excluded.run_id").run(queryHash,run.id);
+    const pending=this.stmt("SELECT old_run_id,requested_revision FROM matching_profile_recompute WHERE query_hash=? AND status='pending'").get(queryHash) as {old_run_id:string;requested_revision:number}|undefined;
+    if(pending){
+      if(pending.old_run_id!==run.id)this.stmt("INSERT INTO matching_profile_run_replacement VALUES(?,?,?,?) ON CONFLICT(old_run_id) DO UPDATE SET new_run_id=excluded.new_run_id,revision=excluded.revision,created_at=excluded.created_at").run(pending.old_run_id,run.id,pending.requested_revision,this.now());
+      this.stmt("UPDATE matching_profile_recompute SET status='done' WHERE query_hash=? AND requested_revision=?").run(queryHash,pending.requested_revision);
+    }
+  }
+  drainProfileRecomputes(limit=3):{replacements:{oldRunId:string;newRunId:string}[];status:MatchingProfileSyncStatus|null}{
+    integer(limit,"recompute limit",false,20);if(limit<1)bad("每次至少处理一个待重算查询。");
+    if(!this.hasProfileSync())return {replacements:[],status:null};
+    const pending=this.stmt("SELECT old_run_id,query_json FROM matching_profile_recompute WHERE status='pending' ORDER BY requested_revision,query_hash LIMIT ?").all(limit) as {old_run_id:string;query_json:string}[];
+    const replacements:{oldRunId:string;newRunId:string}[]=[];
+    for(const task of pending){const run=this.recall(JSON.parse(task.query_json) as RecallQuery);if(run.id!==task.old_run_id)replacements.push({oldRunId:task.old_run_id,newRunId:run.id});}
+    return {replacements,status:this.getProfileSyncStatus()};
+  }
+  profileRunReplacement(oldRunId:string):string|null{
+    let current=text(oldRunId,"runId",100);const seen=new Set<string>([current]);
+    if(!this.hasProfileSync())return null;
+    for(;;){const row=this.stmt("SELECT new_run_id FROM matching_profile_run_replacement WHERE old_run_id=?").get(current) as {new_run_id:string}|undefined;if(!row)return current===oldRunId?null:current;if(seen.has(row.new_run_id))throw new MatchingError(409,"profile_sync_replacement_conflict","召回替代关系发生冲突。");current=row.new_run_id;seen.add(current);}
+  }
   upsert(batch:MatchingBatch):ImportResult{return this.transaction(()=>this.importBatch(batch));}
   private importBatch(batch:MatchingBatch):ImportResult {
     if(!batch||typeof batch!=="object"||Array.isArray(batch))bad("导入必须为结构化事实对象。");
@@ -378,7 +521,7 @@ export class MatchingStore {
   }
   recall(input:RecallQuery):MatchRun {return this.transaction(()=>{
     const started=performance.now(),q=this.query(input),s=this.subject(q),dependencies=this.dependencies(q,s);let fingerprint=this.fingerprint(q,dependencies);const cached=this.stmt("SELECT data FROM recall_runs WHERE fingerprint=?").get(fingerprint) as Row|undefined;
-    if(cached){const stored=JSON.parse(cached.data) as StoredRun;if(stored.expiresAt===null||stored.expiresAt>this.now())return {...stored.run,cacheHit:true};this.bump(`clock:${s.market}`);fingerprint=this.fingerprint(q,dependencies);}
+    if(cached){const stored=JSON.parse(cached.data) as StoredRun;if(stored.expiresAt===null||stored.expiresAt>this.now()){this.trackLatestRun(stored.run);return {...stored.run,cacheHit:true};}this.bump(`clock:${s.market}`);fingerprint=this.fingerprint(q,dependencies);}
     const pairSources=new Map<string,Set<CandidateSource>>();let rowsFetched=0,truncated=false;
     for(const route of this.routes(q,s)) {
       const rows=this.stmt(route.sql).all(...route.args) as {id:string}[];rowsFetched+=rows.length;if(rows.length>=ROUTE_LIMIT)truncated=true;
@@ -393,7 +536,7 @@ export class MatchingStore {
     const result:MatchRun={analysisPolicy:analysisPolicy(this.dataset.mode),id:`match-run-${randomUUID()}`,query:q,market:s.market,createdAt:this.now(),matchingVersion:VERSION,fingerprint,cacheHit:false,stale:false,subject:s,candidates:candidates.slice(0,q.limit),diagnostics:{rowsFetched,perRouteLimit:ROUTE_LIMIT,candidateLimit:FINAL_LIMIT,truncated,durationMs:Math.round((performance.now()-started)*100)/100,fullCartesianEvaluated:false,llmCalls:0,billedTokens:0},warnings:[...("categoryFact" in s&&s.categoryFact?.status==="conflict"?["主体商品分类存在来源冲突，已暂停类目和探索召回；保留原观察供核验。"]:[]),...(this.dataset.mode==="imported-offline"?["已自动分析已有画像；画像年龄、价格带和内容形式不阻碍本轮判断。人工标注可选，不是推进前提。","表现仅在相同来源口径和指标可用性组内辅助排序；不同组按组内名次交错，未知不当零。","分析与平台执行分开；本轮不执行发送，真实合作效果尚未验证。"]:["全部为合成事实；结构召回覆盖与排序质量仍需真实样本评估。"]),"每路有界返回不能证明真实适配质量；销量窗口可能重叠，因此不累计为总销量。",...(truncated?["召回或结果达到数量边界；部分候选未展示。"]:[])]};
     const boundaries=candidates.flatMap(c=>c.offers.flatMap(o=>[o.startsAt,o.endsAt])).filter(at=>at>this.now());
     const stored:StoredRun={run:result,dependencies,expiresAt:boundaries.length?Math.min(...boundaries):null};
-    this.stmt("INSERT INTO recall_runs VALUES(?,?,?)").run(result.id,fingerprint,JSON.stringify(stored));return result;
+    this.stmt("INSERT INTO recall_runs VALUES(?,?,?)").run(result.id,fingerprint,JSON.stringify(stored));this.trackLatestRun(result);return result;
   });}
   private currentRun(runId:string):MatchRun {const row=this.raw("recall_runs",text(runId,"runId",100));if(!row)throw new MatchingError(404,"run_missing","召回记录不存在或已过期，请重新召回。");const stored=JSON.parse(row.data) as StoredRun,run=stored.run;const current=this.fingerprint(run.query,this.dependencies(run.query,this.subject(run.query)));if(current!==run.fingerprint||stored.expiresAt!==null&&stored.expiresAt<=this.now())throw new MatchingError(409,"stale_run","商品、关系或候选索引已经变化，请重新召回后再准备上下文。");return run;}
   private assessmentsFor(run:MatchRun):AssessmentResponse {
@@ -438,6 +581,7 @@ export class MatchingStore {
     const common=(get:(candidate:MatchCandidate)=>string[])=>creator.profileSignals?get(matching[0]).filter(value=>matching.every(candidate=>get(candidate).includes(value))):[];
     const sharedExecutionGaps=common(candidate=>candidate.gaps),sharedAnalysisLimitations=common(candidate=>candidate.analysis.limitations);
     const payload:Record<string,unknown>={schema:"bdhub.relationship-review.v2",analysisPolicy:run.analysisPolicy,mode:this.dataset.mode,datasetId:this.dataset.id,datasetImportedAt:this.dataset.importedAt,datasetWarnings:this.dataset.warnings.slice(0,2),datasetWarningsRole:"仅为来源快照备注；本轮分析遵循 analysisPolicy，旧备注中的过期、价带、形式或人工评审提示不是分析前提",omittedDatasetWarnings:Math.max(0,this.dataset.warnings.length-2),executionBlocked:true,purpose:this.dataset.mode==="imported-offline"?"依据已有画像自动分析少量候选；忽略画像年龄，价格和形式仅作背景，人工标注可选；执行资格独立判断":"供一个关系 Agent 判断少量候选；尚未调用模型，不构成发送授权",creator:{id:creator.id,oecId:creator.oecId,externalIdentity:creator.externalIdentity??null,market:creator.market,currency:creator.currency,categories:creator.categories,categoryFact:packetCategory(creator.categoryFact),profileSignals:creator.profileSignals??null,formats:creator.formats,priceBand:[creator.priceMinMinor,creator.priceMaxMinor],control:creator.control,marketingStopped:creator.marketingStopped,semanticRevision:creator.semanticRevision,relationRevision:creator.relationRevision,source:creator.source},candidates:[]};
+    if(creator.profileOrigin)(payload.creator as Record<string,unknown>).identityRegistryId=creator.profileOrigin.creatorId;
     if(creator.profileSignals){
       payload.sharedExecutionGaps=sharedExecutionGaps;payload.sharedAnalysisLimitations=sharedAnalysisLimitations;
       payload.datasetWarnings=[];payload.omittedDatasetWarnings=this.dataset.warnings.length;

@@ -1,4 +1,5 @@
 import type {CategoryFact} from "./category-facts.ts";
+import type {MatchingProfileOrigin,MatchingProfileSyncStatus} from "./profile-sync-contracts.ts";
 export type MatchMarket = "mx" | "br" | "it";
 export type MatchCurrency = "MXN" | "BRL" | "EUR";
 export type ContentFormat = "video" | "live";
@@ -19,6 +20,7 @@ export interface MatchOffer {
   source:FactSource; version:number;
 }
 export interface MatchCreator {
+  profileOrigin?:MatchingProfileOrigin;
   profileSignals?:ProfileSignals;
   categoryFact?:CategoryFact;
   id:string; market:MatchMarket; oecId:string|null; name:string; avatar:string;
@@ -61,6 +63,7 @@ export interface MatchingDataset {
   importedAt:number|null; sourceRefs:string[]; warnings:string[];
 }
 export interface MatchingStats {
+  profileSync?:MatchingProfileSyncStatus;
   mode:MatchingDataset["mode"]; dataset:MatchingDataset; products:number; creators:number; offers:number; evidence:number;
   demands:number; runs:number; packets:number; semanticBuilds:number;
   llmCalls:0; billedTokens:0; matchingVersion:string;

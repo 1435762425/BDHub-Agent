@@ -4,7 +4,7 @@ import type {CategoryFact} from "../../features/matching/category-facts.ts";
 import {decimalToHundredths,type ItalySourceFile} from "./italy-import.ts";
 
 type Obj=Record<string,unknown>;
-const ALIGNMENT="it-history-top-label-v1";
+export const ALIGNMENT="it-history-top-label-v1";
 export interface ItalyProfileSources {pilot:ItalySourceFile;products:ItalySourceFile;creators:ItalySourceFile;}
 function obj(value:unknown,label:string):Obj {if(!value||typeof value!=="object"||Array.isArray(value))throw new Error(`${label}: expected object`);return value as Obj;}
 function list(value:unknown,label:string):Obj[] {if(!Array.isArray(value))throw new Error(`${label}: expected array`);return value.map(v=>obj(v,label));}
