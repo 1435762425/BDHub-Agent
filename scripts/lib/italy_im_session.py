@@ -284,7 +284,7 @@ class ItalyImReadSession:
         self.on_update()
         return result
 
-    def history_summary(self, conversation):
+    def history_summary(self, conversation, *, include_sender_counts=False):
         if not isinstance(conversation, VerifiedConversation) or self.verified.get(conversation.conversation_id) is not conversation:
             raise ItalyImReadError("im_conversation_unverified")
         wire = self.wire
@@ -306,6 +306,18 @@ class ItalyImReadSession:
             raise
         except Exception:
             raise ItalyImReadError("im_response_invalid") from None
+        if include_sender_counts:
+            counts={"ourMessages":0,"creatorReplies":0,"showcaseNotifications":0,"otherOrUnknown":0}
+            for item in rows:
+                message=wire.wire_fields(item)
+                ext={wire.one(wire.wire_fields(v),1):wire.one(wire.wire_fields(v),2) for v in message.get(9,[])}
+                role=ext.get(b"sender_role");sender=wire.one(message,7)
+                if role==b"4" and sender==int(self.im_id):counts["ourMessages"]+=1
+                elif role==b"1" and type(sender) is int and sender>0 and sender!=int(self.im_id):counts["creatorReplies"]+=1
+                elif role==b"3" and ext.get(b"type")==b"notification" and ext.get(b"starling_content_key")==b"ttspc_im_message_relation_ststem_message_6_plural":counts["showcaseNotifications"]+=1
+                else:counts["otherOrUnknown"]+=1
+            result["senderCounts"]=counts
+            result["countScope"]="returned page of this verified conversation, not institution quota"
         self.report["historyReadCount"] = self.report.get("historyReadCount", 0) + 1
         self.on_update()
         return result

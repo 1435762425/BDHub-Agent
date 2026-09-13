@@ -73,6 +73,21 @@ class ItalyImSessionTests(unittest.TestCase):
         self.assertNotIn("PRIVATE",repr(conversation)+json.dumps(history)+json.dumps(report))
         self.assertEqual(report["verifiedConversationCount"],1)
 
+    def test_sender_counts_are_scoped_and_missing_sender_is_not_reply(self):
+        def row(role,sender=None,**extra):
+            value=W.vb(1,'full-10')+W.vi(5,10)
+            if sender is not None:value+=W.vi(7,sender)
+            for key,val in {'sender_role':role,**extra}.items():value+=W.vb(9,W.vb(1,key)+W.vb(2,val))
+            return W.vb(1,value)
+        rows=row('4',987)+row('1',555)+row('1')+row('4',555)+row('3',1,type='notification',starling_content_key='ttspc_im_message_relation_ststem_message_6_plural')
+        def reply(command,sequence,_):
+            body=W.vb(1,info()) if command==608 else rows+W.vi(3,1)
+            return SimpleNamespace(status_code=200,headers={},content=envelope(command,sequence,body))
+        s,_,_,_=session(HTTP(reply));conv=s.conversation('10','100')
+        result=s.history_summary(conv,include_sender_counts=True)
+        self.assertEqual(result['senderCounts'],dict(ourMessages=1,creatorReplies=1,showcaseNotifications=1,otherOrUnknown=2))
+        self.assertTrue(result['hasMore']);self.assertIn('returned page',result['countScope'])
+
     def test_mx_host_and_cookie_or_write_command_are_rejected_before_http(self):
         original=W.READ_HOST;http=HTTP()
         with self.assertRaises(ItalyImReadError):ItalyImReadSession(auth(host=original),{},http=http)

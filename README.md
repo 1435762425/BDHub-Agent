@@ -97,3 +97,5 @@ npm run start
 本机预览：[模板选择目录](http://127.0.0.1:5196/design/template-catalog.html)。也可直接打开 design/template-catalog.html；图片来自官方公开预览资源，需要网络。页面中的“记下此选项”只保存到本机浏览器，须把生成的选择文字发回对话，不会自动通知或购买。
 
 需要重开静态预览时，在本仓库执行 `python3 -m http.server 5196 --bind 127.0.0.1`。这只服务研究文档与模板目录，不启动 BDHub 后端。
+
+B.7已完成3人只读核对快照及页面，见[second-cycle-review-v1](docs/implementation/second-cycle-review-v1.md)。bru_none远端已有我方5条/回复0/加橱窗通知0，旧库却为0，当前不放行；另2人会话仍待定位。v4执行未接、真实发送0。

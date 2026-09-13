@@ -68,3 +68,5 @@ B.4身份自动交接与回填已接，见docs/implementation/second-cycle-ident
 B.5商品名按PID/标题/语言缓存、v4固定预览和既有卡只读检查已接，见docs/implementation/second-cycle-materials-v1.md。5商品一次名称模型调用（非逐达人），1卡匹配/4卡需新方案，未建链发送；旧v3准备按钮停用、原冻结记录不改。
 
 B.6已按明确4款范围逐项创建并回查，当前5款卡匹配；4创建/26读取/0未知/0发送，IT tap_link保持canary。见docs/implementation/second-cycle-card-creation-v1.md。后续须组合具体收件人、卡、v4正文及关系/额度条件；旧暂停试点不复活。
+
+B.7已完成3人只读核对快照及页面，见[second-cycle-review-v1](docs/implementation/second-cycle-review-v1.md)。bru_none远端已有我方5条/回复0/加橱窗通知0，旧库却为0，当前不放行；另2人会话仍待定位。v4执行未接、真实发送0。

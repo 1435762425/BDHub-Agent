@@ -1,0 +1,45 @@
+import sys,unittest,tempfile,json
+from pathlib import Path
+sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'scripts'))
+from lib.second_cycle import CycleStore,CycleError,digest
+from lib.cycle_review import ReviewBatches,latest_review
+from test_second_cycle import offer,edge,NOW
+class ReviewTests(unittest.TestCase):
+ def setUp(self):
+  self.t=tempfile.TemporaryDirectory();self.now=NOW;self.s=CycleStore(Path(self.t.name)/'db',lambda:self.now);self.p=self.s.plan('test','it');self.o=offer(title='test',endAt=NOW+90*86400)
+  self.s.publish(self.p,'source',NOW,[self.o]);self.s.import_edges(self.p,[edge()]);self.b=ReviewBatches(self.s)
+  self.req={'planId':self.p,'limit':3,'template':'standard'}
+  self.c={'planRevision':1,'creatorId':'c1','oecId':'123','handle':'test','controlRevision':1,'offer':self.o,'offerFingerprint':digest(self.o),'name':{'mentionIt':'questo prodotto','shortNameZh':'商品'},'source':{}}
+  self.e={'123':{'legacy':{},'platform':{'hasPermission':True}}}
+ def tearDown(self):self.s.close();self.t.cleanup()
+ def create(self):return self.b.create('request',self.req,[self.c],self.e,[])
+ def test_permission_true_does_not_enable_send(self):
+  r=self.create();self.assertFalse(r['executionAllowed']);self.assertIn('institution_market_quota_not_verified',r['items'][0]['blockingReasons'])
+ def test_request_replay_keeps_frozen_content(self):
+  a=self.create();self.now+=20;self.assertEqual(a,self.create())
+ def test_observed_outbound_blocks_card_and_text_without_unlock(self):
+  for n in (4,5):
+   self.e['123']['remoteHistory']={'status':'observed_summary','history':{'senderCounts':{'ourMessages':n}}}
+   r=self.b.create('count'+str(n),self.req,[self.c],self.e,[])
+   self.assertIn('insufficient_locked_message_allowance',r['items'][0]['blockingReasons'])
+ def test_reply_is_evidence_not_automatic_controller_unlock(self):
+  self.e['123']['remoteHistory']={'status':'observed_summary','history':{'senderCounts':{'ourMessages':5,'creatorReplies':1}}}
+  r=self.create()['items'][0]
+  self.assertIn('interaction_evidence_not_applied_to_controller',r['blockingReasons'])
+  self.assertNotIn('insufficient_locked_message_allowance',r['blockingReasons']);self.assertFalse(r['executionAllowed'])
+ def test_request_conflict(self):
+  self.create()
+  with self.assertRaises(CycleError):self.b.existing('request',self.req|{'limit':2})
+ def test_control_change_during_evidence_read(self):
+  self.s.control(self.p,'human',1,'human','c1')
+  with self.assertRaisesRegex(CycleError,'relationship_changed'):self.create()
+ def test_offer_change_during_read(self):
+  self.s.publish(self.p,'source',NOW+1,[self.o|{'creatorPercent':'13'}])
+  with self.assertRaisesRegex(CycleError,'offer_changed'):self.create()
+ def test_legacy_rejection_remains_visible(self):
+  self.e['123']['legacy']={'manualState':'rejected'}
+  self.assertIn('legacy_relationship_needs_review',self.create()['items'][0]['blockingReasons'])
+ def test_expiry_and_immutable_record(self):
+  self.create();self.now+=1801;self.assertTrue(latest_review(self.s,self.p)['expired'])
+  with self.assertRaises(Exception):self.s.db.execute("UPDATE cycle_review_batch SET payload='{}'")
+if __name__=='__main__':unittest.main()
