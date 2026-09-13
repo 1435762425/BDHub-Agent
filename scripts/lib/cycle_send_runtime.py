@@ -1,10 +1,12 @@
 """Current card binding for the cycle sender; only known verified conversations."""
-import importlib.util,hashlib,time
+import importlib.util,hashlib,time,sqlite3
+from contextlib import closing
 from datetime import datetime,timezone
 from pathlib import Path
 from decimal import Decimal
 from dataclasses import asdict
 from lib.second_cycle import CycleError,digest
+from lib.product_stock_policy import full_managed,mark_full_managed
 from lib.italy_im_delivery import ItalyVerifiedProductCard,card_binding_sha256,CARD_ORIGIN,CARD_TITLE_KEY
 ROOT=Path(__file__).resolve().parents[2]
 spec=importlib.util.spec_from_file_location('cycle_card_reader',ROOT/'scripts/prepare-cycle-materials.py');module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
@@ -17,6 +19,12 @@ def fresh_card(candidate,account,identity,headers,maintenance,stopped,*,request_
  import requests
  from lib.italy_cards import legacy_params
  offer=candidate['offer'];last=0
+ # Old delivered snapshots retain their original bytes; apply the current product policy only to this fresh read.
+ if not full_managed(offer):
+  with closing(sqlite3.connect((ROOT/'var/second-cycle.sqlite').as_uri()+'?mode=ro',uri=True)) as policy:
+   if policy.execute("SELECT 1 FROM sqlite_master WHERE name='cycle_product_management'").fetchone():
+    row=policy.execute("SELECT m.evidence_ref FROM cycle_product_management m JOIN plan p ON p.id=m.plan_id WHERE p.market='it' AND p.institution='bjn-local-research' AND m.pid=? AND m.kind='full_managed'",(offer['pid'],)).fetchone()
+    if row:offer=mark_full_managed(offer,row[0])
  with requests.Session() as session:
   session.trust_env=False
   safe={k:v for k,v in headers.items() if not k.startswith(':') and k.lower() not in ('host','content-length','origin','referer')};safe.update(origin='https://partner.eu.tiktokshop.com',referer='https://partner.eu.tiktokshop.com/')

@@ -11,6 +11,7 @@ import json
 from pathlib import Path
 import sqlite3
 import time
+from lib.product_stock_policy import require_stock,full_managed,mark_full_managed
 
 class CycleError(ValueError):
     pass
@@ -48,10 +49,11 @@ def epoch(v):
 def assess_offer(offer,at):
     reasons=[]
     if offer.get('executionHold'):reasons.append('current_offer_on_hold')
-    for key in ('stock','creatorPercent','publicPercent','endAt','available'):
+    stock_needed=require_stock(offer)
+    for key in (('stock',) if stock_needed else ())+('creatorPercent','publicPercent','endAt','available'):
         if offer.get(key) is None:reasons.append('missing_'+key)
     try:
-        stock=decimal(offer.get('stock')); creator=decimal(offer.get('creatorPercent')); public=decimal(offer.get('publicPercent'))
+        stock=decimal(offer.get('stock')) if stock_needed else None; creator=decimal(offer.get('creatorPercent')); public=decimal(offer.get('publicPercent'))
         if stock is not None and (stock<0 or stock!=stock.to_integral_value()):reasons.append('invalid_stock')
         elif stock is not None and stock<=100:reasons.append('stock_not_over_100')
         if any(v is not None and not 0<=v<=100 for v in (creator,public)):reasons.append('invalid_commission')
@@ -63,12 +65,13 @@ def assess_offer(offer,at):
     try:
         rating=decimal(offer.get('rating')); preferred=rating is not None and 4<rating<=5
     except (ValueError,InvalidOperation):preferred=False
-    return {'eligible':not reasons,'reasons':reasons,'ratingPreferred':preferred,'executionAllowed':False}
+    return {'eligible':not reasons,'reasons':reasons,'ratingPreferred':preferred,'stockRequired':stock_needed,'executionAllowed':False}
 
 SCHEMA='''
 CREATE TABLE IF NOT EXISTS cycle_meta(version INTEGER PRIMARY KEY CHECK(version=1));
 INSERT OR IGNORE INTO cycle_meta VALUES(1);
 CREATE TABLE IF NOT EXISTS plan(id TEXT PRIMARY KEY,institution TEXT NOT NULL,market TEXT NOT NULL,state TEXT NOT NULL DEFAULT 'active',revision INTEGER NOT NULL DEFAULT 1,capacity_new INTEGER NOT NULL DEFAULT 0,capacity_established INTEGER NOT NULL DEFAULT 0,UNIQUE(institution,market));
+CREATE TABLE IF NOT EXISTS cycle_product_management(plan_id TEXT NOT NULL,pid TEXT NOT NULL,kind TEXT NOT NULL,evidence_ref TEXT NOT NULL,observed REAL NOT NULL,PRIMARY KEY(plan_id,pid));
 CREATE TABLE IF NOT EXISTS relationship(plan_id TEXT NOT NULL REFERENCES plan(id),creator_id TEXT NOT NULL,oec TEXT NOT NULL,mode TEXT NOT NULL DEFAULT 'auto',rejected INTEGER NOT NULL DEFAULT 0,revision INTEGER NOT NULL DEFAULT 1,inbox_until REAL NOT NULL DEFAULT 0,unlocked INTEGER NOT NULL DEFAULT 0,PRIMARY KEY(plan_id,creator_id),UNIQUE(plan_id,oec));
 CREATE TABLE IF NOT EXISTS control_event(plan_id TEXT NOT NULL,event_id TEXT NOT NULL,payload TEXT NOT NULL,PRIMARY KEY(plan_id,event_id));
 CREATE TABLE IF NOT EXISTS catalog(id TEXT PRIMARY KEY,plan_id TEXT NOT NULL REFERENCES plan(id),source TEXT NOT NULL,observed REAL NOT NULL,state TEXT NOT NULL,payload TEXT NOT NULL);
@@ -197,11 +200,23 @@ class CycleStore:
         # Initial historical imports remain evidence, not a second current catalog.
         if any(r['source'].startswith('live-it-') for r in rows):
             rows=[r for r in rows if r['source']!='italy-historical-source']
+        management={}
+        if self.db.execute("SELECT 1 FROM sqlite_master WHERE name='cycle_product_management'").fetchone():
+            management={r['pid']:r['evidence_ref'] for r in self.db.execute("SELECT * FROM cycle_product_management WHERE plan_id=? AND kind='full_managed'",(p,))}
         held={}
         if self.db.execute("SELECT 1 FROM sqlite_master WHERE name='cycle_card_creation'").fetchone():
-            held={r['offer_json']:{'reason':'current_offer_changed','evidenceRef':'card-preflight:'+r['id']} for r in self.db.execute("SELECT id,offer_json FROM cycle_card_creation WHERE plan_id=? AND state='invalidated'",(p,))}
-        # Keep immutable catalog evidence; current execution eligibility carries a separate hold.
-        return [(r['id'],o|{'executionHold':held[encoded(o)]} if encoded(o) in held else o) for r in rows for o in json.loads(r['payload'])]
+            held={r['offer_json']:dict(r) for r in self.db.execute("SELECT id,offer_json,readback FROM cycle_card_creation WHERE plan_id=? AND state='invalidated'",(p,))}
+        result=[]
+        for row in rows:
+            for original in json.loads(row['payload']):
+                o=mark_full_managed(original,management[original['pid']]) if original['pid'] in management else original
+                hold=held.get(encoded(original))
+                if hold:
+                    reasons=set((json.loads(hold['readback'] or '{}').get('assessment') or {}).get('reasons',[]))
+                    stock_only=bool(reasons) and reasons<={'stock_not_over_100','missing_stock','invalid_stock'}
+                    if not (full_managed(o) and stock_only):o=o|{'executionHold':{'reason':'current_offer_changed','evidenceRef':'card-preflight:'+hold['id']}}
+                result.append((row['id'],o))
+        return result
     def import_edges(self,p,edges):
         with self.tx():
             self._plan(p);self._edges(p,edges)

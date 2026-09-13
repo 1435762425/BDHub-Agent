@@ -2,6 +2,7 @@
 from datetime import datetime,timezone
 from decimal import Decimal, InvalidOperation
 from lib.second_cycle import CycleError,digest
+from lib.product_stock_policy import mark_full_managed,require_stock,unavailable_allowed
 
 CAMPAIGNS='/api/v1/affiliate/partner/campaign/list'
 PRODUCTS='/api/v1/affiliate/partner/campaign/product/list'
@@ -25,6 +26,7 @@ def timestamp(v):
 def normalize(product,campaign,source,rule,calculator,evidence,at):
  pid=str(product.get('product_id') or '');cid=str(campaign.get('campaign_id') or '')
  if not pid.isdigit() or not cid.isdigit():raise CycleError('catalog_identity_missing')
+ management=mark_full_managed({},evidence) if str(campaign.get('crs_campaign_type')) in ('8','9') else {}
  total=product.get('total_commission_percent')
  if total is None:total=product.get('partner_commission_percent')
  public=product.get('plan_commission_percent');result=calculator(total,public)
@@ -34,14 +36,14 @@ def normalize(product,campaign,source,rule,calculator,evidence,at):
  if governed is True:available=False
  elif status is not None:
   if str(status)!='2':available=False
-  elif unavailable in (None,'',0,'0','0.0'):available=True
+  elif unavailable_allowed(unavailable,management):available=True
   else:available=False
  start=timestamp(campaign.get('promotion_start_time'));end=timestamp(campaign.get('promotion_end_time'))
  if start and datetime.fromisoformat(start).timestamp()>at:available=False
  if end and datetime.fromisoformat(end).timestamp()<=at:available=False
  title=product.get('product_name') or product.get('title') or pid
- return {'pid':pid,'offerKey':source+':'+pid+':'+cid,'campaignId':cid,'title':str(title)[:500],'catalogSource':source,
- 'stock':str(number(product.get('stock'))) if number(product.get('stock')) is not None else None,'creatorPercent':creator,
+ return {**management,'pid':pid,'offerKey':source+':'+pid+':'+cid,'campaignId':cid,'title':str(title)[:500],'catalogSource':source,
+ 'stock':str(number(product.get('stock'))) if require_stock(management) and number(product.get('stock')) is not None else None,'creatorPercent':creator,
  'publicPercent':percent(public),'totalPercent':percent(total),'endAt':end,'startAt':start,'available':available,
  'rating':str(number(product.get('product_rating'))) if number(product.get('product_rating')) is not None else None,
  'evidenceRef':evidence,'observedAt':at,'commissionState':'proposed_not_applied','commissionRuleId':rule['id'],

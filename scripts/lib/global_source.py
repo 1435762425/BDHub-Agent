@@ -6,7 +6,8 @@ from contextlib import contextmanager
 from collections import Counter
 from copy import deepcopy
 import json,re,sqlite3,time
-from lib.second_cycle import encoded,digest
+from lib.second_cycle import encoded,digest,assess_offer
+from lib.product_stock_policy import mark_full_managed
 
 SOURCE='opportunity_global_only'
 FILTER={'product_source':[],'campaign_type':[8],'label_type':[],'product_status':1}
@@ -158,7 +159,11 @@ class GlobalSources:
         total=self.db.execute('SELECT count(*) FROM global_source_product p WHERE '+clause,args).fetchone()[0]
         items=[]
         for row in self.db.execute('SELECT p.*,d.payload details,s.payload stock FROM global_source_product p LEFT JOIN global_source_detail d ON d.run_id=p.run_id AND d.pid=p.pid AND d.listing_fingerprint=p.fingerprint LEFT JOIN global_source_stock s ON s.run_id=p.run_id AND s.pid=p.pid AND s.listing_fingerprint=p.fingerprint WHERE '+clause+' ORDER BY p.first_page,p.pid LIMIT ? OFFSET ?',(*args,limit,offset)):
-            product=json.loads(row['payload']);items.append({'pid':row['pid'],'title':str(product.get('title') or row['pid']),'listedSelected':product.get('fs_is_selected'),'totalCommissionRaw':product.get('commission_rate'),'publicCommissionRaw':product.get('open_collab_rate'),'observedAt':row['observed'],'detailsChecked':row['details'] is not None,'stockChecked':row['stock'] is not None,'selectedOffers':json.loads(row['stock']) if row['stock'] else []})
+            product=json.loads(row['payload'])
+            offers=[]
+            for old in json.loads(row['stock']) if row['stock'] else []:
+                current=mark_full_managed(old,'global-source:'+id+':'+row['pid']+':'+row['fingerprint']);current['assessment']=assess_offer(current,self.clock());offers.append(current)
+            items.append({'pid':row['pid'],'title':str(product.get('title') or row['pid']),'listedSelected':product.get('fs_is_selected'),'totalCommissionRaw':product.get('commission_rate'),'publicCommissionRaw':product.get('open_collab_rate'),'observedAt':row['observed'],'detailsChecked':row['details'] is not None,'stockChecked':row['stock'] is not None,'conditionsChecked':row['stock'] is not None,'stockRequired':False,'selectedOffers':offers})
         return status|{'displayRunId':id,'displayIsComplete':id==(status.get('activePublished') or {}).get('id'),'items':items,'totalMatches':total,'offset':offset,'limit':limit}
     def status(self,id=None):
         if id is None:
@@ -172,4 +177,4 @@ class GlobalSources:
         active=self.db.execute("SELECT r.id,r.updated,(SELECT count(*) FROM global_source_product p WHERE p.run_id=r.id) products FROM global_source_head h JOIN global_source_run r ON r.id=h.run_id WHERE h.scope_hash=? AND r.state='completed' AND r.identity_unchanged=1",(r['scope_hash'],)).fetchone()
         return {'activePublished':dict(active) if active else None,'listedSelectedProducts':selected,'listedUnselectedProducts':unselected,'platformWrites':0,'modelCalls':0,'available':True,'id':id,'market':r['scope']['market'],'account':r['scope']['account'],'source':SOURCE,'state':r['state'],'products':count,'pages':r['next_page']-1,'reportedTotal':r['reported_total'],'nextPage':r['next_page'],'detailProducts':detail_count,'reason':r['terminal_reason'],
             'identityFileUnchanged':bool(r['identity_unchanged']),'published':bool(self.db.execute('SELECT 1 FROM global_source_head WHERE run_id=?',(id,)).fetchone()),'coverage':'current_query_endpoint_and_total' if r['state']=='completed' else 'partial_query',
-            'updatedAt':r['updated'],'listingOnly':True,'stockVerified':False,'executionAllowed':False,'sample':[{'pid':x['pid'],'title':json.loads(x['payload']).get('title'),'listedSelected':json.loads(x['payload']).get('fs_is_selected')} for x in self.db.execute('SELECT pid,payload FROM global_source_product WHERE run_id=? ORDER BY first_page,pid LIMIT 6',(id,))]}
+            'updatedAt':r['updated'],'listingOnly':True,'stockVerified':False,'stockRequired':False,'executionAllowed':False,'sample':[{'pid':x['pid'],'title':json.loads(x['payload']).get('title'),'listedSelected':json.loads(x['payload']).get('fs_is_selected')} for x in self.db.execute('SELECT pid,payload FROM global_source_product WHERE run_id=? ORDER BY first_page,pid LIMIT 6',(id,))]}

@@ -15,6 +15,11 @@ class CatalogTests(unittest.TestCase):
   self.assertTrue(assess_offer(r,AT)['eligible']);self.assertFalse(r['cardBindingVerified']);self.assertEqual(r['commissionState'],'proposed_not_applied');self.assertEqual(r['publicPercent'],'10');self.assertEqual(r['totalPercent'],'15')
  def test_missing_stock_not_zero(self):
   r=normalize(P|{'stock':None},C,'campaign',RULE,calc,'ref',AT);self.assertIsNone(r['stock']);self.assertIn('missing_stock',assess_offer(r,AT)['reasons'])
+ def test_full_managed_no_quantity_gate_but_delisted_is_still_blocked(self):
+  for stock in (None,'0','100'):
+   r=normalize(P|{'stock':stock,'unavailable_type':8},C|{'crs_campaign_type':9},'selected',RULE,calc,'official',AT)
+   self.assertIsNone(r['stock']);self.assertTrue(assess_offer(r,AT)['eligible'])
+  r=normalize(P|{'stock':None,'product_status':5},C|{'crs_campaign_type':9},'selected',RULE,calc,'official',AT);self.assertFalse(r['available'])
  def test_future_and_expired(self):
   for c in [C|{'promotion_start_time':str((AT+1)*1000)},C|{'promotion_end_time':str(AT*1000)}]:self.assertFalse(normalize(P,c,'campaign',RULE,calc,'ref',AT)['available'])
  def test_explicit_unavailable(self):

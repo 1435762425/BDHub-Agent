@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Read bounded current campaign/selected facts for discovered products. No selection or creation."""
+"""Read bounded current campaign/selected facts for discovered products. Full-managed stock is not a gate. No selection or creation."""
 import argparse,json,sys,time
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1];sys.dont_write_bytecode=True;sys.path.insert(0,str(ROOT/'scripts'))

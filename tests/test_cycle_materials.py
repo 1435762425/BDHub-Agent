@@ -66,6 +66,13 @@ class CardTests(unittest.TestCase):
    return b,sha
   self.assertNotEqual(self.mod.inspect_card(self.o,selected_read)['state'],'verified_read_only')
  def test_exact_card_with_member_readback(self):self.assertEqual(self.mod.inspect_card(self.o,self.read)['state'],'verified_read_only')
+ def test_full_managed_card_does_not_need_stock_number(self):
+  from lib.product_stock_policy import mark_full_managed
+  def read(path,q):
+   b,sha=self.read(path,q)
+   if path==self.mod.MEMBERS:b['data']['campaign_products'][0].pop('stock');b['data']['campaign_products'][0]['unavailable_type']=8
+   return b,sha
+  card=self.mod.inspect_card(mark_full_managed(self.o,'official-source'),read);self.assertEqual(card['state'],'verified_read_only');self.assertIsNone(card['stock']);self.assertFalse(card['stockRequired'])
  def test_rate_mismatch_is_not_verified(self):self.assertEqual(self.mod.inspect_card(self.o|{'creatorPercent':'13'},self.read)['state'],'needs_card_preparation')
  def test_partial_member_page_is_not_accepted(self):
   def read(path,q):

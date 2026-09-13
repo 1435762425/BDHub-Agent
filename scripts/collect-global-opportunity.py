@@ -58,6 +58,9 @@ def main():
     for _ in range(5 if busy else 2):
      if STOP:break
      time.sleep(1)
+   if s.status(a.run_id)['published']:
+    from lib.cycle_management import sync_full_managed
+    sync_full_managed(ROOT/'var/second-cycle.sqlite',db,scope)
    print(json.dumps(s.status(a.run_id),ensure_ascii=False),flush=True)
   finally:s.close()
 if __name__=='__main__':main()

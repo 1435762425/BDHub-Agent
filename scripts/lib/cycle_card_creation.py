@@ -1,6 +1,7 @@
 """One-shot card creation ledger. Transport supplied explicitly by the caller."""
 import json,time,re
 from lib.second_cycle import CycleError,digest,encoded,assess_offer
+from lib.product_stock_policy import full_managed
 SCHEMA='''CREATE TABLE IF NOT EXISTS cycle_card_creation(
  id TEXT PRIMARY KEY,plan_id TEXT NOT NULL,pid TEXT NOT NULL,offer_key TEXT NOT NULL,offer_json TEXT NOT NULL,
  plan_revision INTEGER NOT NULL,list_name TEXT NOT NULL,state TEXT NOT NULL,receipt TEXT,readback TEXT,created_at REAL NOT NULL);
@@ -18,8 +19,14 @@ class CardCreation:
   with self.store.tx():
    prior=self.store.db.execute('SELECT * FROM cycle_card_creation WHERE id=?',(identifier,)).fetchone()
    if prior:return dict(prior)
-   other=self.store.db.execute("SELECT id FROM cycle_card_creation WHERE plan_id=? AND pid=? AND state IN ('prepared','started','response_saved','unknown')",(plan,offer['pid'])).fetchone()
-   if other:raise CycleError('prior_creation_unresolved')
+   other=self.store.db.execute("SELECT * FROM cycle_card_creation WHERE plan_id=? AND pid=? AND state IN ('prepared','started','response_saved','unknown')",(plan,offer['pid'])).fetchone()
+   if other:
+    ignored={'stock','stockRequired','managementType','managementEvidenceRef'}
+    prior_offer=json.loads(other['offer_json'])
+    same_business={k:v for k,v in prior_offer.items() if k not in ignored}=={k:v for k,v in offer.items() if k not in ignored}
+    if other['state']=='prepared' and other['receipt'] is None and full_managed(offer) and same_business:
+     self.store.db.execute("UPDATE cycle_card_creation SET state='superseded',readback=? WHERE id=?",(encoded({'reason':'full_managed_stock_policy_changed','replacementId':identifier,'platformCreateAttempts':0}),other['id']))
+    else:raise CycleError('prior_creation_unresolved')
    p=self.store._plan(plan)
    if p['state']!='active':raise CycleError('plan_paused')
    suffix=' '+offer['creatorPercent']+'% '+identifier[-6:]
