@@ -122,6 +122,25 @@ class CycleTests(unittest.TestCase):
   with CycleStore(self.path,lambda:self.now,readonly=True) as ro:
    self.assertEqual(ro.status(self.p)['relationships'],0)
    with self.assertRaises(Exception):ro.plan('new','it')
+ def test_new_offer_projection_keeps_history_and_control(self):
+  self.s.import_edges(self.p,[edge(offerKey='unknown')]);self.s.control(self.p,'pause',1,'paused','c1')
+  self.publish();self.s.project_current_offers(self.p);self.s.project_current_offers(self.p)
+  self.assertEqual(self.s.status(self.p)['opportunities'],1)
+  self.assertEqual(self.s.status(self.p)['sourceEdges'],1)
+  self.assertEqual(self.s.status(self.p)['eligibleUniqueCreators'],0)
+  self.assertEqual(__import__('json').loads(self.s.db.execute('SELECT payload FROM source_edge').fetchone()[0])['offerKey'],'unknown')
+ def test_old_window_does_not_fill_current_supply(self):
+  self.publish();self.s.import_edges(self.p,[edge(windowStart='2026-08-26',windowEnd='2026-09-08')])
+  self.assertEqual(self.s.status(self.p)['eligibleUniqueCreators'],1)
+  self.assertEqual(len(self.schedule(new_remaining=1)['created']),1)
+ def test_status_limits_offers_but_keeps_full_counts(self):
+  self.publish([offer(str(i)) for i in range(100)])
+  r=self.s.status(self.p);self.assertEqual(r['offerCount'],100);self.assertEqual(len(r['offers']),40)
+ def test_live_catalog_supersedes_historical_commercial_view(self):
+  self.s.publish(self.p,'italy-historical-source',NOW,[offer()])
+  self.s.publish(self.p,'live-it-selected',NOW+1,[])
+  self.assertEqual(self.s.status(self.p)['offerCount'],0)
+  self.assertEqual(self.s.db.execute('SELECT count(*) FROM catalog').fetchone()[0],2)
  def test_no_execution_capability(self):
   self.assertFalse(self.s.status(self.p)['executionAllowed']);self.assertFalse(self.s.status(self.p)['legacyTrialControlIntegrated'])
  def test_latest_window_not_highest_historical_units(self):

@@ -48,6 +48,8 @@ npm run start
 
 已落地[二发本地控制与供给底座B.1](docs/implementation/second-cycle-foundation-v1.md)：31稳定关系/50来源边/33关系商品机会，页面展示资格缺口；持久队列已离线验证，持续采集与真实发送未接通。
 
+已接[意大利实时货盘B.2](docs/implementation/second-cycle-catalog-v1.md)：43活动及完整已选池共6213条方案，2213条满足准备条件，原5款线索商品已有可关联方案；拟分佣尚未建链，Kalodata持续采集尚未接通。
+
 ## 最小阅读入口
 
 | 内容 | 入口 |

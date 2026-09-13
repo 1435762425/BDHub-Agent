@@ -170,8 +170,27 @@ class CycleStore:
             if complete and head and at==head['observed'] and sid!=head['id']:raise CycleError('catalog_time_conflict')
             if complete and (not head or at>head['observed']):self.db.execute('INSERT INTO catalog_head VALUES(?,?,?) ON CONFLICT(plan_id,source) DO UPDATE SET snapshot_id=excluded.snapshot_id',(p,source,sid))
         return sid
+    def project_current_offers(self,p):
+        """Derive candidate offers by PID without rewriting imported historical edges."""
+        with self.tx():
+            self._plan(p)
+            by_pid={}
+            for sid,o in self._offers(p):by_pid.setdefault(o['pid'],[]).append((sid,o))
+            for row in self.db.execute('SELECT payload FROM source_edge WHERE plan_id=?',(p,)).fetchall():
+                edge=json.loads(row[0])
+                if not edge.get('creatorId'):continue
+                for sid,o in by_pid.get(edge['pid'],[]):
+                    if o['offerKey']==edge['offerKey']:continue
+                    payload=encoded({**edge,'offerKey':o['offerKey'],'originalOfferKey':edge['offerKey'],'offerSnapshot':sid,'offerEvidenceRef':o['evidenceRef']})
+                    previous=self.db.execute('SELECT payload FROM opportunity WHERE plan_id=? AND creator_id=? AND pid=? AND offer_key=?',(p,edge['creatorId'],edge['pid'],o['offerKey'])).fetchone()
+                    if not previous or epoch(edge['observedAt'])>=epoch(json.loads(previous[0])['observedAt']):
+                        self.db.execute('INSERT INTO opportunity VALUES(?,?,?,?,?,?) ON CONFLICT(plan_id,creator_id,pid,offer_key) DO UPDATE SET units=excluded.units,payload=excluded.payload',(p,edge['creatorId'],edge['pid'],o['offerKey'],edge['units'],payload))
+
     def _offers(self,p):
-        rows=self.db.execute('SELECT c.* FROM catalog_head h JOIN catalog c ON c.id=h.snapshot_id WHERE h.plan_id=?',(p,))
+        rows=list(self.db.execute('SELECT c.* FROM catalog_head h JOIN catalog c ON c.id=h.snapshot_id WHERE h.plan_id=?',(p,)))
+        # Initial historical imports remain evidence, not a second current catalog.
+        if any(r['source'].startswith('live-it-') for r in rows):
+            rows=[r for r in rows if r['source']!='italy-historical-source']
         return [(r['id'],o) for r in rows for o in json.loads(r['payload'])]
     def import_edges(self,p,edges):
         with self.tx():
@@ -197,11 +216,11 @@ class CycleStore:
                 if not previous or epoch(e['observedAt'])>epoch(json.loads(previous[0])['observedAt']):
                     self.db.execute('INSERT INTO opportunity VALUES(?,?,?,?,?,?) ON CONFLICT(plan_id,creator_id,pid,offer_key) DO UPDATE SET units=excluded.units,payload=excluded.payload',(p,person,e['pid'],e['offerKey'],e['units'],data))
             self.db.execute('INSERT INTO source_edge VALUES(?,?,?)',(p,e['sourceId'],data))
-    def _eligible_people(self,p):
+    def _eligible_people(self,p,window_end=None):
         eligible={(o['pid'],o['offerKey']) for _,o in self._offers(p) if assess_offer(o,self.clock())['eligible']}
-        return {r['creator_id'] for r in self.db.execute('SELECT o.*,r.mode,r.rejected,r.inbox_until FROM opportunity o JOIN relationship r USING(plan_id,creator_id) WHERE o.plan_id=?',(p,)) if (r['pid'],r['offer_key']) in eligible and r['mode']=='auto' and not r['rejected'] and not r['inbox_until']}
-    def _prepared(self,p,new,established):
-        people=self._eligible_people(p)
+        return {r['creator_id'] for r in self.db.execute('SELECT o.*,r.mode,r.rejected,r.inbox_until FROM opportunity o JOIN relationship r USING(plan_id,creator_id) WHERE o.plan_id=?',(p,)) if (r['pid'],r['offer_key']) in eligible and r['mode']=='auto' and not r['rejected'] and not r['inbox_until'] and (window_end is None or json.loads(r['payload'])['windowEnd']==window_end)}
+    def _prepared(self,p,new,established,window_end=None):
+        people=self._eligible_people(p,window_end)
         unlocked={r[0] for r in self.db.execute('SELECT creator_id FROM relationship WHERE plan_id=? AND unlocked=1',(p,))}
         return min(new,len(people-unlocked))+min(established,len(people&unlocked))
 
@@ -215,10 +234,10 @@ class CycleStore:
             if plan['state']!='active':return {'created':[],'reason':'plan_paused'}
             valid={(sid,o['offerKey']) for sid,o in self._offers(p) if assess_offer(o,self.clock())['eligible']}
             for job in self.db.execute("SELECT * FROM source_job WHERE plan_id=? AND state IN ('queued','running')",(p,)).fetchall():
-                if (job['snapshot_id'],job['offer_key']) not in valid:
+                if (job['snapshot_id'],job['offer_key']) not in valid or job['window_end']!=str(end):
                     self.db.execute("UPDATE source_job SET state='obsolete' WHERE id=?",(job['id'],))
             self.db.execute('UPDATE plan SET capacity_new=?,capacity_established=? WHERE id=?',(new_remaining,established_capacity,p))
-            target=new_remaining+established_capacity;prepared=self._prepared(p,new_remaining,established_capacity)
+            target=new_remaining+established_capacity;prepared=self._prepared(p,new_remaining,established_capacity,str(end))
             pending=self.db.execute("SELECT coalesce(sum(estimated),0) FROM source_job WHERE plan_id=? AND state IN ('queued','running')",(p,)).fetchone()[0]
             deficit=max(0,target-prepared-pending);created=[]
             offers=sorted(self._offers(p),key=lambda pair:(not assess_offer(pair[1],self.clock())['ratingPreferred'],pair[1]['pid'],pair[1]['offerKey']))
@@ -239,7 +258,8 @@ class CycleStore:
             if plan['state']!='active':return None
             target=plan['capacity_new']+plan['capacity_established']
             running=self.db.execute("SELECT coalesce(sum(estimated),0) FROM source_job WHERE plan_id=? AND state='running' AND lease_until>?",(p,self.clock())).fetchone()[0]
-            if target<=self._prepared(p,plan['capacity_new'],plan['capacity_established'])+running:return None
+            window=self.db.execute("SELECT window_end FROM source_job WHERE plan_id=? AND state IN ('queued','running') ORDER BY rowid DESC LIMIT 1",(p,)).fetchone()
+            if target<=self._prepared(p,plan['capacity_new'],plan['capacity_established'],window[0] if window else None)+running:return None
             valid={(sid,o['offerKey']) for sid,o in self._offers(p) if assess_offer(o,self.clock())['eligible']}
             for r in self.db.execute("SELECT * FROM source_job WHERE plan_id=? AND (state='queued' OR (state='running' AND lease_until<=?)) ORDER BY rowid",(p,self.clock())).fetchall():
                 if (r['snapshot_id'],r['offer_key']) not in valid:
@@ -263,6 +283,8 @@ class CycleStore:
             self.db.execute('UPDATE source_job SET cursor=?,state=?,owner=NULL,lease_until=0 WHERE id=?',(next_cursor,'completed' if done else 'queued',r['id']))
     def status(self,p):
         plan=dict(self._plan(p));offers=[dict(o,assessment=assess_offer(o,self.clock())) for _,o in self._offers(p)]
+        known={r[0] for r in self.db.execute('SELECT DISTINCT pid FROM opportunity WHERE plan_id=?',(p,))}
+        offers.sort(key=lambda o:(o['pid'] not in known,not o['assessment']['eligible'],o['pid'],o['offerKey']))
         counts=lambda table:self.db.execute(f'SELECT count(*) FROM {table} WHERE plan_id=?',(p,)).fetchone()[0]
         jobs={r[0]:r[1] for r in self.db.execute('SELECT state,count(*) FROM source_job WHERE plan_id=? GROUP BY state',(p,))}
-        return {'schema':'bdhub.second-cycle.v1','plan':plan,'mode':'local_preparation_only','offers':offers,'relationships':counts('relationship'),'sourceEdges':counts('source_edge'),'opportunities':counts('opportunity'),'eligibleUniqueCreators':len(self._eligible_people(p)),'jobs':jobs,'executionAllowed':False,'legacyTrialControlIntegrated':False,'modelCalls':0,'realSends':0}
+        return {'schema':'bdhub.second-cycle.v1','plan':plan,'mode':'local_preparation_only','offers':offers[:40],'offerCount':len(offers),'eligibleOfferCount':sum(o['assessment']['eligible'] for o in offers),'relationships':counts('relationship'),'sourceEdges':counts('source_edge'),'opportunities':self.db.execute('SELECT count(*) FROM (SELECT DISTINCT creator_id,pid FROM opportunity WHERE plan_id=?)',(p,)).fetchone()[0],'eligibleUniqueCreators':len(self._eligible_people(p)),'jobs':jobs,'executionAllowed':False,'legacyTrialControlIntegrated':False,'modelCalls':0,'realSends':0}
