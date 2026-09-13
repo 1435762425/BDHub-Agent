@@ -134,3 +134,8 @@ sample/budget/review为审批写入，sample/price已从历史SDK补明GET方法
 
 
 生成分类与字段文档：审查并更新endpoint-registry.json及field-observations后，运行 `python3 scripts/render-tiktok-interface-docs.py`，同步生成用途目录/路径表/字段字典，避免多份说明漂移。完整静态候选见web-bundle-candidates.json，只有已审查项进入业务注册表。
+
+
+## 后续实施补验：限定创建（2026-09-13）
+
+此前只读调查之后，在用户继续准备4款匹配佣金商品卡的范围内，TK-005已完成4次单项创建与独立回查。能力仍为canary；未发送消息、未开放批量。见[实施证据](../../implementation/second-cycle-card-creation-v1.md)。该阶段与前文最初只读调查的0写入统计分开。

@@ -56,6 +56,8 @@ npm run start
 
 已接[商品材料与v4话术B.5](docs/implementation/second-cycle-materials-v1.md)：5商品短名称一次模型生成并缓存，1卡预检匹配、4卡佣金不匹配待准备，旧v3区仅历史参考；未建链/发送。
 
+已完成[4款新卡创建与回查B.6](docs/implementation/second-cycle-card-creation-v1.md)：当前5款均有匹配卡，4创建/0未知/0发送；仍为逐项canary，不开放批量。
+
 ## 最小阅读入口
 
 | 内容 | 入口 |

@@ -161,7 +161,7 @@
     },
     {
       "path": "/api/v1/affiliate/partner/campaign/product_list/create",
-      "evidence": "source_only",
+      "evidence": "scoped_write_verified_20260913",
       "references": [
         {
           "file": "bdhub/send/taplink/protocol.py",
@@ -181,7 +181,18 @@
       "inputContractSummary": "name、campaign_id、items[{product_id,creator_commission_rate}]；selected路线source=2且外层campaign_id=0",
       "availableData": "data.list，url及product_list_id/id/list_id候选",
       "businessUse": "为已选商品或活动商品准备可发卡列表",
-      "notEvidenceFor": "写入成功不等于IM已可查卡；来源Campaign与wire Campaign分开"
+      "notEvidenceFor": "写入成功不等于IM已可查卡；来源Campaign与wire Campaign分开",
+      "liveWriteEvidence": [
+        {
+          "market": "it",
+          "account": "acc6",
+          "count": 4,
+          "status": "verified",
+          "capability": "canary",
+          "executionBound": "one POST per invocation, serial readback",
+          "reference": "../../implementation/second-cycle-card-creation-v1.md"
+        }
+      ]
     },
     {
       "path": "/api/v1/affiliate/partner/campaign/product_list/delete",

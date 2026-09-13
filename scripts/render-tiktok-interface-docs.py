@@ -6,6 +6,8 @@ B=Path(__file__).resolve().parents[1]/'docs/contracts/tiktok'
 def main():
  r=json.loads((B/'endpoint-registry.json').read_text());obs=json.loads((B/'field-observations-20260913.json').read_text())
  def evidence(x):
+  writes='；'.join(e['market']+'：限定创建'+str(e['count'])+'项已回查（canary未扩权）' for e in x.get('liveWriteEvidence',[]))
+  if writes:return writes
   return '；'.join(e['market']+'：'+('成功读取' if e['status']=='observed' else '拒绝/未验收')+('（无明细）' if e.get('coverageNote') else '') for e in x.get('liveEvidence',[])) or '源码/历史脚本；未重验'
  lines=['# 接口路径目录','','与[业务用途目录](business-catalog.md)使用同一注册表生成。GET也可能写入；未知副作用不得调用。','', '| ID | 方法 | 路径 | 副作用 | 读取证据 |','|---|---|---|---|---|']
  for x in r['entries']:lines.append('| '+' | '.join([x['id'],x['method'],'`'+x['path']+'`',x['sideEffect'],evidence(x)])+' |')

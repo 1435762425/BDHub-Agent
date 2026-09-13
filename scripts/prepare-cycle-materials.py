@@ -9,7 +9,7 @@ from lib.second_cycle import CycleStore,CycleError,digest,encoded
 from lib.cycle_materials import Materials,render
 CARD='/api/v1/affiliate/partner/im/product_list/list';MEMBERS='/api/v1/affiliate/partner/campaign/product_list/products'
 
-def inspect_card(offer,read):
+def inspect_card(offer,read,*,expected_list_id=None,expected_name=None):
  wanted=str(offer['campaignId']);wire='0' if offer['catalogSource']=='selected' else wanted
  candidates=[];rates=[];seen=set();total=None
  for page in range(1,6):
@@ -20,6 +20,8 @@ def inspect_card(offer,read):
    lid=str(row.get('product_list_id') or '')
    if not lid.isdigit() or lid in seen:raise CycleError('card_search_duplicate')
    seen.add(lid)
+   if expected_list_id and lid!=expected_list_id:continue
+   if expected_name and row.get('product_list_name')!=expected_name:continue
    if str(row.get('campaign_id') or '0')!=wire:continue
    products=[p for p in row.get('campaign_products',[]) if str(p.get('product_id'))==offer['pid']]
    if len(products)!=1:continue
@@ -29,6 +31,7 @@ def inspect_card(offer,read):
   if len(seen)>=total:break
   if not rows:raise CycleError('card_search_incomplete')
  else:raise CycleError('card_search_incomplete')
+ if expected_name and len(candidates)>1:raise CycleError('card_name_ambiguous')
  for lid,imsha in candidates[:3]:
   body,sha=read(MEMBERS,{'list_id':lid,'source':2 if wire=='0' else 1});data=body.get('data',{});rows=data.get('campaign_products')
   if not isinstance(rows,list) or data.get('total_num')!=len(rows):raise CycleError('card_members_incomplete')
@@ -39,7 +42,7 @@ def inspect_card(offer,read):
   if rate!=Decimal(offer['creatorPercent']):continue
   if str(p.get('product_status'))!='2' or p.get('is_under_governed') is True or p.get('unavailable_type') not in (None,'',0,'0'):continue
   if Decimal(str(p.get('stock')))<=100:continue
-  return {'state':'verified_read_only','listId':lid,'wireCampaignId':wire,'sourceCampaignId':wanted,'creatorPercent':format(rate,'f'),'checkedAt':time.time(),'evidenceRefs':[imsha,sha],'executionAllowed':False}
+  return {'state':'verified_read_only','pid':offer['pid'],'verifiedListName':expected_name,'listId':lid,'wireCampaignId':wire,'sourceCampaignId':wanted,'creatorPercent':format(rate,'f'),'checkedAt':time.time(),'evidenceRefs':[imsha,sha],'executionAllowed':False}
  if len(candidates)>3:raise CycleError('card_candidates_incomplete')
  return {'state':'needs_card_preparation','checkedAt':time.time(),'observedCreatorRates':sorted(set(rates)),'candidateListsChecked':min(len(candidates),3),'executionAllowed':False}
 

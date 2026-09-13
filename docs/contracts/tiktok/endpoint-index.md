@@ -8,7 +8,7 @@
 | TK-002 | GET | `/api/v1/affiliate/partner/campaign/list` | business_read | mx：成功读取；it：成功读取；br：成功读取 |
 | TK-003 | GET | `/api/v1/affiliate/partner/campaign/product/link` | external_write | 源码/历史脚本；未重验 |
 | TK-004 | GET | `/api/v1/affiliate/partner/campaign/product/list` | business_read | 源码/历史脚本；未重验 |
-| TK-005 | POST | `/api/v1/affiliate/partner/campaign/product_list/create` | external_write | 源码/历史脚本；未重验 |
+| TK-005 | POST | `/api/v1/affiliate/partner/campaign/product_list/create` | external_write | it：限定创建4项已回查（canary未扩权） |
 | TK-006 | POST | `/api/v1/affiliate/partner/campaign/product_list/delete` | external_write | 源码/历史脚本；未重验 |
 | TK-007 | GET | `/api/v1/affiliate/partner/campaign/product_list/list` | business_read | it：成功读取 |
 | TK-008 | GET | `/api/v1/affiliate/partner/campaign/product_list/products` | business_read | it：成功读取 |

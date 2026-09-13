@@ -66,3 +66,5 @@ B.3 Kalodata Worker实现及当前阻断见docs/implementation/second-cycle-kalo
 B.4身份自动交接与回填已接，见docs/implementation/second-cycle-identity-v1.md：新23边15绑定/8未匹配，新增3/已有12；新准备层34关系/36机会。既有身份Worker加载桥接，源边不改写、缺证据不按同名绑定；未匹配释放等待解析容量但保留线索。当前无采集失败/在途，不代表发送已开放。
 
 B.5商品名按PID/标题/语言缓存、v4固定预览和既有卡只读检查已接，见docs/implementation/second-cycle-materials-v1.md。5商品一次名称模型调用（非逐达人），1卡匹配/4卡需新方案，未建链发送；旧v3准备按钮停用、原冻结记录不改。
+
+B.6已按明确4款范围逐项创建并回查，当前5款卡匹配；4创建/26读取/0未知/0发送，IT tap_link保持canary。见docs/implementation/second-cycle-card-creation-v1.md。后续须组合具体收件人、卡、v4正文及关系/额度条件；旧暂停试点不复活。

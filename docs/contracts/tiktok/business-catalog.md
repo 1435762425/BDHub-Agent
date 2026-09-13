@@ -211,7 +211,7 @@
 - **可取得：** data.list，url及product_list_id/id/list_id候选
 - **业务用途：** 为已选商品或活动商品准备可发卡列表
 - **不能据此判断：** 写入成功不等于IM已可查卡；来源Campaign与wire Campaign分开
-- **副作用：** external_write；**证据：** 源码/历史脚本；未重验
+- **副作用：** external_write；**证据：** it：限定创建4项已回查（canary未扩权）
 
 ### TK-006 删除商品列表
 
