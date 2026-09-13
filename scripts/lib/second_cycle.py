@@ -76,6 +76,8 @@ CREATE TABLE IF NOT EXISTS source_job(id TEXT PRIMARY KEY,plan_id TEXT NOT NULL 
 CREATE TABLE IF NOT EXISTS source_page(job_id TEXT NOT NULL,cursor TEXT NOT NULL,payload TEXT NOT NULL,PRIMARY KEY(job_id,cursor));
 CREATE TABLE IF NOT EXISTS source_edge(plan_id TEXT NOT NULL,source_id TEXT NOT NULL,payload TEXT NOT NULL,PRIMARY KEY(plan_id,source_id));
 CREATE TABLE IF NOT EXISTS opportunity(plan_id TEXT NOT NULL,creator_id TEXT NOT NULL,pid TEXT NOT NULL,offer_key TEXT NOT NULL,units INTEGER NOT NULL,payload TEXT NOT NULL,PRIMARY KEY(plan_id,creator_id,pid,offer_key),FOREIGN KEY(plan_id,creator_id) REFERENCES relationship(plan_id,creator_id));
+CREATE TABLE IF NOT EXISTS cycle_identity_outcome(plan_id TEXT NOT NULL,source_id TEXT NOT NULL,status TEXT NOT NULL,PRIMARY KEY(plan_id,source_id));
+CREATE TABLE IF NOT EXISTS cycle_identity_resolution(plan_id TEXT NOT NULL,source_id TEXT NOT NULL,creator_id TEXT NOT NULL,oec TEXT NOT NULL,evidence_ref TEXT NOT NULL,PRIMARY KEY(plan_id,source_id));
 CREATE INDEX IF NOT EXISTS cycle_job_claim ON source_job(plan_id,state,lease_until);
 '''
 
@@ -178,9 +180,12 @@ class CycleStore:
             for sid,o in self._offers(p):by_pid.setdefault(o['pid'],[]).append((sid,o))
             for row in self.db.execute('SELECT payload FROM source_edge WHERE plan_id=?',(p,)).fetchall():
                 edge=json.loads(row[0])
-                if not edge.get('creatorId'):continue
+                if not edge.get('creatorId'):
+                    binding=self.db.execute('SELECT * FROM cycle_identity_resolution WHERE plan_id=? AND source_id=?',(p,edge['sourceId'])).fetchone()
+                    if not binding:continue
+                    edge={**edge,'creatorId':binding['creator_id'],'oec':binding['oec'],'identityEvidenceRef':binding['evidence_ref']}
                 for sid,o in by_pid.get(edge['pid'],[]):
-                    if o['offerKey']==edge['offerKey']:continue
+                    if o['offerKey']==edge['offerKey'] and not edge.get('identityEvidenceRef'):continue
                     payload=encoded({**edge,'offerKey':o['offerKey'],'originalOfferKey':edge['offerKey'],'offerSnapshot':sid,'offerEvidenceRef':o['evidenceRef']})
                     previous=self.db.execute('SELECT payload FROM opportunity WHERE plan_id=? AND creator_id=? AND pid=? AND offer_key=?',(p,edge['creatorId'],edge['pid'],o['offerKey'])).fetchone()
                     if not previous or epoch(edge['observedAt'])>=epoch(json.loads(previous[0])['observedAt']):
@@ -225,7 +230,7 @@ class CycleStore:
         return min(new,len(people-unlocked))+min(established,len(people&unlocked))
 
     def pending_identity_count(self,p,window_end):
-        return self.db.execute("SELECT count(DISTINCT coalesce(json_extract(payload,'$.kalodataCreatorId'),json_extract(payload,'$.sourceHandle'),source_id)) FROM source_edge WHERE plan_id=? AND json_extract(payload,'$.creatorId') IS NULL AND json_extract(payload,'$.windowEnd')=?",(p,window_end)).fetchone()[0]
+        return self.db.execute("SELECT count(DISTINCT coalesce(json_extract(payload,'$.kalodataCreatorId'),json_extract(payload,'$.sourceHandle'),source_id)) FROM source_edge e WHERE plan_id=? AND json_extract(payload,'$.creatorId') IS NULL AND json_extract(payload,'$.windowEnd')=? AND NOT EXISTS (SELECT 1 FROM cycle_identity_resolution r WHERE r.plan_id=e.plan_id AND r.source_id=e.source_id) AND NOT EXISTS (SELECT 1 FROM cycle_identity_outcome o WHERE o.plan_id=e.plan_id AND o.source_id=e.source_id AND o.status IN ('unresolved','blocked'))",(p,window_end)).fetchone()[0]
 
     def replenish(self,p,*,new_remaining,established_capacity,expected_per_pid=10,max_pids=5,window_end=None):
         integer(new_remaining,500);integer(established_capacity,10000);integer(expected_per_pid,500);integer(max_pids,100)
@@ -295,4 +300,6 @@ class CycleStore:
         issues=[]
         if self.db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='cycle_source_issue'").fetchone():
             issues=[dict(r) for r in self.db.execute("SELECT i.code,j.window_start,j.window_end FROM cycle_source_issue i JOIN source_job j ON i.job_id=j.id WHERE j.plan_id=? AND j.state='blocked' ORDER BY i.created DESC LIMIT 5",(p,))]
-        return {'schema':'bdhub.second-cycle.v1','plan':plan,'mode':'local_preparation_only','offers':offers[:40],'offerCount':len(offers),'eligibleOfferCount':sum(o['assessment']['eligible'] for o in offers),'relationships':counts('relationship'),'sourceEdges':counts('source_edge'),'opportunities':self.db.execute('SELECT count(*) FROM (SELECT DISTINCT creator_id,pid FROM opportunity WHERE plan_id=?)',(p,)).fetchone()[0],'eligibleUniqueCreators':len(self._eligible_people(p)),'jobs':jobs,'sourceIssues':issues,'executionAllowed':False,'legacyTrialControlIntegrated':False,'modelCalls':0,'realSends':0}
+        identity_total=self.db.execute("SELECT count(*) FROM source_edge WHERE plan_id=? AND json_extract(payload,'$.sourceKind')='kalodata_http'",(p,)).fetchone()[0]
+        identity_resolved=self.db.execute('SELECT count(*) FROM cycle_identity_resolution WHERE plan_id=?',(p,)).fetchone()[0]
+        return {'schema':'bdhub.second-cycle.v1','plan':plan,'mode':'local_preparation_only','offers':offers[:40],'offerCount':len(offers),'eligibleOfferCount':sum(o['assessment']['eligible'] for o in offers),'relationships':counts('relationship'),'sourceEdges':counts('source_edge'),'opportunities':self.db.execute('SELECT count(*) FROM (SELECT DISTINCT creator_id,pid FROM opportunity WHERE plan_id=?)',(p,)).fetchone()[0],'eligibleUniqueCreators':len(self._eligible_people(p)),'jobs':jobs,'sourceIssues':issues,'identitySourceEdges':identity_total,'identityResolvedEdges':identity_resolved,'identityUnmatchedEdges':self.db.execute("SELECT count(*) FROM cycle_identity_outcome WHERE plan_id=? AND status='unresolved'",(p,)).fetchone()[0],'executionAllowed':False,'legacyTrialControlIntegrated':False,'modelCalls':0,'realSends':0}

@@ -68,7 +68,13 @@ def main():
     with HttpProvider() as provider:
      worker=KalodataWorker(store,provider,owner='kalodata-worker-'+str(os.getpid()))
      for _ in range(a.max_steps):
-      result=worker.once(plan);report['steps'].append(result);report['networkRequests']=provider.requests;report['diagnostics']=provider.diagnostics;save()
+      result=worker.once(plan)
+      if result['status'] in ('completed','checkpointed'):
+       from lib.creator_discovery import CreatorDiscoveryStore
+       from lib.cycle_identity import IdentityBridge
+       with CreatorDiscoveryStore(ROOT/'var') as discovery:
+        bridge=IdentityBridge(store,discovery,ROOT/'var/creator-identities.sqlite');bridge.freeze(plan);bridge.dispatch(plan)
+      report['steps'].append(result);report['networkRequests']=provider.requests;report['diagnostics']=provider.diagnostics;save()
       if result['status'] in ('idle','blocked'):break
     report['cookieFileUnchanged']=provider.unchanged
     report['state']=store.status(plan)

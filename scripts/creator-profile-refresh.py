@@ -23,6 +23,25 @@ def read_request(fields):
     return value
 
 
+def reconcile_cycle(var_dir,discovery_store):
+    path=var_dir/'second-cycle.sqlite'
+    if not path.exists():return None
+    try:
+        from lib.second_cycle import CycleStore
+        from lib.cycle_identity import IdentityBridge
+        with CycleStore(path) as cycle:
+            plan=cycle.db.execute("SELECT id FROM plan WHERE institution='bjn-local-research' AND market='it'").fetchone()
+            if not plan:return None
+            bridge=IdentityBridge(cycle,discovery_store,var_dir/'creator-identities.sqlite')
+            if cycle._plan(plan[0])['state']=='active':
+                bridge.freeze(plan[0])
+                bridge.dispatch(plan[0])
+            return bridge.reconcile(plan[0])
+    except Exception:
+        # An optional supply projection must not take down manual identity work.
+        return {'status':'blocked','error':'cycle_identity_reconcile_failed'}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
@@ -56,8 +75,9 @@ def main():
                         # takes at most one refresh and one discovery item.
                         refreshed = runner.run_once()
                         discovered = discovery.run_once()
+                        cycle_result = reconcile_cycle(store.var_dir,discovery_store)
                         if refreshed is not None or discovered is not None or args.once:
-                            print(json.dumps({"refresh": refreshed, "discovery": discovered["batch"] if discovered else None}), flush=True)
+                            print(json.dumps({"refresh": refreshed, "discovery": discovered["batch"] if discovered else None,**({"cycleIdentity":cycle_result} if cycle_result is not None else {})}), flush=True)
                         if args.once:
                             break
                         time.sleep(args.interval)

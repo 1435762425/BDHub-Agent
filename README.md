@@ -52,6 +52,8 @@ npm run start
 
 已接[Kalodata持久Worker B.3](docs/implementation/second-cycle-kalodata-v1.md)：分页回执、恢复和待解析库存控制通过离线测试；用户完成插件登录后原2个PID实测成功，新增23条待解析线索；未发送。
 
+已接[线索身份自动交接B.4](docs/implementation/second-cycle-identity-v1.md)：23条新线索核验15成功/8未匹配，新增3个档案；新准备层34关系/36机会，交接与回填自动接入现有Worker，未发送。
+
 ## 最小阅读入口
 
 | 内容 | 入口 |
