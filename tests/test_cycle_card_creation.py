@@ -16,6 +16,34 @@ class CreationTests(unittest.TestCase):
   card=self.card()|{'pid':'7','wireCampaignId':'2','verifiedListName':self.c.get(id)['list_name']}
   self.c.confirm(id,card);self.assertEqual(self.c.get(id)['state'],'verified')
  def test_prepare_idempotent(self):self.assertEqual(self.c.prepare(self.p,self.o,'cuscino')['id'],self.i)
+ def test_unsubmitted_changed_offer_leaves_queue_with_evidence(self):
+  fresh=self.o|{'stock':'0','observedAt':self.s.clock(),'evidenceRef':'fresh-read'}
+  self.c.invalidate_preflight(self.i,fresh)
+  row=self.c.get(self.i);self.assertEqual(row['state'],'invalidated');self.assertEqual(json.loads(row['readback'])['platformCreateAttempts'],0)
+  with self.assertRaises(CycleError):self.c.begin(self.i)
+  self.assertEqual(self.c.prepare(self.p,self.o,'cuscino')['state'],'invalidated')
+  changed=self.o|{'observedAt':self.s.clock(),'stock':'200'}
+  self.assertEqual(self.c.prepare(self.p,changed,'cuscino')['state'],'prepared')
+ def test_attempted_creation_cannot_be_invalidated_or_replaced(self):
+  self.c.begin(self.i);self.c.unknown(self.i)
+  with self.assertRaisesRegex(CycleError,'cannot_invalidate'):self.c.invalidate_preflight(self.i,self.o|{'stock':'0','observedAt':self.s.clock()})
+  self.assertEqual(self.c.get(self.i)['state'],'unknown')
+ def test_wrong_or_stale_preflight_cannot_invalidate(self):
+  fresh=self.o|{'stock':'0','observedAt':self.s.clock()}
+  for invalid in (fresh|{'pid':'other'},fresh|{'observedAt':self.s.clock()-61},fresh|{'evidenceRef':None},fresh|{'stock':'101'}):
+   with self.assertRaises(CycleError):self.c.invalidate_preflight(self.i,invalid)
+  self.assertEqual(self.c.get(self.i)['state'],'prepared')
+ def test_invalidated_offer_does_not_starve_next_product(self):
+  from lib.cycle_materials import select_offers
+  from test_second_cycle import edge
+  self.s.publish(self.p,'s',self.s.clock(),[self.o,self.o|{'pid':'9','offerKey':'o9'}]);self.s.import_edges(self.p,[edge(),edge('9',source='e9')])
+  self.c.invalidate_preflight(self.i,self.o|{'stock':'0','observedAt':self.s.clock()})
+  self.assertEqual([o['pid'] for o in select_offers(self.s,self.p)],['9'])
+  self.assertEqual(self.s._eligible_people(self.p),{'c1'})
+  observed=dict((o['pid'],o) for _,o in self.s._offers(self.p))
+  self.assertEqual(observed['1']['executionHold']['reason'],'current_offer_changed')
+  self.s.publish(self.p,'s',self.s.clock()+1,[self.o|{'stock':'200'},self.o|{'pid':'9','offerKey':'o9'}])
+  self.assertEqual({o['pid'] for o in select_offers(self.s,self.p)},{'1','9'})
  def test_no_double_attempt(self):
   self.c.begin(self.i)
   with self.assertRaises(CycleError):self.c.begin(self.i)

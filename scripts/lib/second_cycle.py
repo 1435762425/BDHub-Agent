@@ -47,6 +47,7 @@ def epoch(v):
 
 def assess_offer(offer,at):
     reasons=[]
+    if offer.get('executionHold'):reasons.append('current_offer_on_hold')
     for key in ('stock','creatorPercent','publicPercent','endAt','available'):
         if offer.get(key) is None:reasons.append('missing_'+key)
     try:
@@ -196,7 +197,11 @@ class CycleStore:
         # Initial historical imports remain evidence, not a second current catalog.
         if any(r['source'].startswith('live-it-') for r in rows):
             rows=[r for r in rows if r['source']!='italy-historical-source']
-        return [(r['id'],o) for r in rows for o in json.loads(r['payload'])]
+        held={}
+        if self.db.execute("SELECT 1 FROM sqlite_master WHERE name='cycle_card_creation'").fetchone():
+            held={r['offer_json']:{'reason':'current_offer_changed','evidenceRef':'card-preflight:'+r['id']} for r in self.db.execute("SELECT id,offer_json FROM cycle_card_creation WHERE plan_id=? AND state='invalidated'",(p,))}
+        # Keep immutable catalog evidence; current execution eligibility carries a separate hold.
+        return [(r['id'],o|{'executionHold':held[encoded(o)]} if encoded(o) in held else o) for r in rows for o in json.loads(r['payload'])]
     def import_edges(self,p,edges):
         with self.tx():
             self._plan(p);self._edges(p,edges)

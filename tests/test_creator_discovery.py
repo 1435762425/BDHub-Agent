@@ -196,6 +196,26 @@ class CreatorDiscoveryTests(unittest.TestCase):
         self.assertEqual(self.identities.get_handle_lead(old_lead["leadId"])["creatorId"], old["identity"]["creatorId"])
         self.assertEqual(len(self.identities.find_handle_candidates("it", "alice")), 2)
 
+    def test_intentional_identity_only_completes_without_fabricating_profile_failure(self):
+        self.submit()
+        def find_only(target_file,output):
+            t=json.loads(target_file.read_text())['targets'][0];r=report_for(t);r['identityOnly']=True;r['requests']=r['requests'][:1];r['counters']['request_count']=1
+            r['targets'][0].update(status='identity_verified',profileCollection='not_requested',profiles=[]);r['targets'][0].pop('merged')
+            output.mkdir();(output/'report.private.json').write_text(json.dumps(r))
+        result=self.worker(find_only).run_once();item=result['items'][0]
+        self.assertEqual(item['status'],'completed');self.assertEqual(item['outcome'],'identity_only');self.assertEqual(item['requestCount'],1)
+        self.assertFalse(any(e.get('kind')=='failure' for e in self.identities.history('it','123456789')))
+    def test_only_active_cycle_handoff_selects_identity_only_mode(self):
+        import sqlite3
+        batch=self.submit();worker=self.worker();item=self.store.claim(worker.owner)
+        self.assertFalse(worker._identity_only_batch(item))
+        with contextlib.closing(sqlite3.connect(self.var/'second-cycle.sqlite')) as db,db:
+            db.executescript("CREATE TABLE plan(id,state,market); CREATE TABLE cycle_identity_outbox(batch_id,plan_id); INSERT INTO plan VALUES('p','active','it');")
+            db.execute('INSERT INTO cycle_identity_outbox VALUES(?,?)',(batch['id'],'p'))
+        self.assertTrue(worker._identity_only_batch(item))
+        with contextlib.closing(sqlite3.connect(self.var/'second-cycle.sqlite')) as db,db:db.execute("UPDATE plan SET state='paused'")
+        self.assertFalse(worker._identity_only_batch(item))
+
     def test_find_success_profile_failure_preserves_identity_and_stops_only_current_item(self):
         self.lead()
         batch = self.submit("alice,bob")

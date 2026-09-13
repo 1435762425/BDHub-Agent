@@ -115,3 +115,5 @@ B.13最新任务：[提速与额度实测](docs/implementation/second-cycle-spee
 B.14接续：[按需素材与Campaign卡](docs/implementation/second-cycle-material-supply-v2.md)。已解除发送端前5 PID限制，按待发需求补名称/卡片；Campaign成员可在严格绑定父列表后继承活动ID，已选wire0不能继承。新暖奶器卡创建1次、核验恢复成功。certo误发确认句已保留并纠错，无追加消息；模型分类v2加入最近已发文字。继续本批500及真实额度标志实测。
 
 当前吞吐任务接续：[每分钟20位达人的改造与实测](docs/implementation/second-cycle-throughput-20-v1.md)。目标尚未验收；批次继续运行，以完整卡文回查速度为准。
+
+最新供给接续：[素材解阻与精确Find身份通路](docs/implementation/second-cycle-supply-repair-v1.md)。

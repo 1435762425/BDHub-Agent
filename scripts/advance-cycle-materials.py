@@ -24,7 +24,9 @@ def main():
   CHILD=None
   data=json.loads(report.read_text()) if report.exists() else {}
   result['steps'].append({'stage':label,'report':str(report),'exitCode':r.returncode,'errorCode':'account_busy' if any(x in r.stderr for x in ('BlockingIOError','account_in_use')) else 'stage_failed' if r.returncode else None});a.report.write_text(json.dumps(result,indent=2))
-  if r.returncode or data.get('error') or (label.startswith('create') or label=='reconcile') and data.get('status') not in ('verified','reused','already_verified'):raise RuntimeError('account_busy' if result['steps'][-1]['errorCode']=='account_busy' else 'material_stage_failed')
+  accepted=('verified','reused','already_verified')+(('invalidated',) if label.startswith('create') else ())
+  result['steps'][-1]['status']=data.get('status')
+  if r.returncode or data.get('error') or (label.startswith('create') or label=='reconcile') and data.get('status') not in accepted:raise RuntimeError('account_busy' if result['steps'][-1]['errorCode']=='account_busy' else 'material_stage_failed')
   return data
  try:
   with closing(sqlite3.connect((ROOT/'var/second-cycle.sqlite').as_uri()+'?mode=ro',uri=True)) as db, db:

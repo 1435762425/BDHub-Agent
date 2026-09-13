@@ -1,7 +1,7 @@
 """Explicit handle discovery batches, separate from OEC-only profile refresh."""
 from __future__ import annotations
 
-from contextlib import contextmanager
+from contextlib import contextmanager, closing
 from datetime import datetime
 import hashlib
 import importlib.util
@@ -348,6 +348,14 @@ class CreatorDiscoveryWorker:
         with self.store.transaction():
             self.store._db.execute("DELETE FROM discovery_heartbeat WHERE owner=?", (self.owner,))
 
+    def _identity_only_batch(self,item):
+        """Only actual active cycle handoffs use the shortened critical path."""
+        path=self.store.var_dir/'second-cycle.sqlite'
+        if not path.exists():return False
+        with closing(sqlite3.connect(path.resolve().as_uri()+'?mode=ro',uri=True,timeout=2)) as db:
+            if not db.execute("SELECT 1 FROM sqlite_master WHERE name='cycle_identity_outbox'").fetchone():return False
+            return db.execute("SELECT 1 FROM cycle_identity_outbox o JOIN plan p ON p.id=o.plan_id WHERE o.batch_id=? AND p.state='active' AND p.market='it'",(item['batch_id'],)).fetchone() is not None
+
     def _paths(self, item):
         if not re.fullmatch(r"discovery_item_[0-9a-f]{32}", item["id"]):
             raise CreatorDiscoveryError("invalid_request")
@@ -429,6 +437,9 @@ class CreatorDiscoveryWorker:
             if target.get("currentHandleResolved") is not True or found_identity["handle"] != item["handle"] or found_identity["market"] not in (None, "it") or \
                     not isinstance(found_identity["oecId"], str) or not re.fullmatch(r"[0-9]{1,40}", found_identity["oecId"]) or found_identity["oecId"] != target.get("oecId"):
                 raise CreatorDiscoveryError("probe_report_invalid")
+            identity_only = report.get("identityOnly") is True and report.get("status")=="completed" and target.get("status")=="identity_verified"
+            if identity_only and (target.get("profiles") or target.get("profileCollection")!="not_requested" or any(r.get("stage")!="find" or r.get("status")!="returned" or r.get("httpStatus")!=200 or r.get("code")!="0" or r.get("verificationRequired") is not False for r in requests)):
+                raise CreatorDiscoveryError("probe_report_invalid")
             complete = report.get("status") == "completed" and target.get("status") == "completed"
             completion_error = None
             if complete:
@@ -464,15 +475,17 @@ class CreatorDiscoveryWorker:
                 if complete:
                     merged = importer.evidence.normalized(target["merged"])
                     current = identities.observe_profile("it", oec_id, merged["identity"]["handle"], observed_at, reference + ":profile", payload=merged)
-                else:
+                elif not identity_only:
                     identities.record_profile_failure("it", oec_id, observed_at, reference + ":profile-failure", "timeout" if report.get("status") == "bounded_timeout" else "unknown")
                 # Persist classification while this transaction still owns the
                 # first-creation decision. A recovery reuses this event marker.
                 marker = identities.history("it", oec_id)
                 prior_marker = next((event for event in marker if event["evidenceRef"] == reference + ":discovery-result"), None)
                 created = prior_marker["payload"]["created"] if prior_marker else previous is None
-                identities.observe_profile("it", oec_id, None, observed_at, reference + ":discovery-result", payload={"created": created, "scope": "current_discovery_only"})
+                identities.observe_profile("it", oec_id, None, observed_at, reference + ":discovery-result", payload={"created": created, "scope": "identity_only" if identity_only else "current_discovery_only", "profileCollection": "not_requested" if identity_only else "attempted"})
             values = {"creator_id": current["creatorId"], "oec_id": oec_id, "request_count": count}
+            if identity_only:
+                return self.store.finish(item,self.owner,"completed",outcome="identity_only",**values)
             if complete:
                 return self.store.finish(item, self.owner, "completed", outcome="created" if created else "existing", **values)
             return self._blocked(item, completion_error or ("probe_timeout" if report.get("status") == "bounded_timeout" else report.get("reason")), outcome="identity_only", **values)
@@ -502,7 +515,7 @@ class CreatorDiscoveryWorker:
             directory.mkdir(parents=True, exist_ok=True, mode=0o700)
             with target_file.open("x", encoding="utf-8") as stream:
                 target_file.chmod(0o600)
-                json.dump({"market": "it", "targets": [{"ref": item["id"], "handle": item["handle"], "externalId": item["id"]}]}, stream)
+                json.dump({"market": "it", "identityOnly":self._identity_only_batch(item), "targets": [{"ref": item["id"], "handle": item["handle"], "externalId": item["id"]}]}, stream)
             self.executor(target_file, output)
             report = self._final(output / "report.private.json")
             return self._settle(item, report) if report else self._blocked(item, "probe_report_missing")

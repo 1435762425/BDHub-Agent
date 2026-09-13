@@ -31,7 +31,7 @@ def main():
    report['intents']=intents;save();print(json.dumps(report,ensure_ascii=False));return
   intent=ledger.get(a.id);offer=json.loads(intent['offer_json']);report.update(intentId=intent['id'],pid=offer['pid'],targetCreatorPercent=offer['creatorPercent']);save()
   if intent['plan_id']!=plan:raise CycleError('plan_mismatch')
-  if intent['state']=='verified':report['status']='already_verified';save();print(json.dumps(report));return
+  if intent['state'] in ('verified','invalidated'):report['status']='already_verified' if intent['state']=='verified' else 'invalidated';save();print(json.dumps(report));return
   from bdhub import scheduled_relogin
   from bdhub.hub.markets import MARKETS,identity_for
   from bdhub.send.taplink.transport import account_for
@@ -82,7 +82,9 @@ def main():
      rule=link_rules_for('it',offer['catalogSource'])[0]
      if digest(rule)!=offer['commissionRuleFingerprint']:raise CycleError('commission_rule_changed')
      fresh=read_current_offer(offer,rule,engine_for(rule).calculate,request,time.time)
-     if not assess_offer(fresh,time.time())['eligible'] or fresh['creatorPercent']!=offer['creatorPercent']:raise CycleError('current_offer_changed')
+     if not assess_offer(fresh,time.time())['eligible'] or fresh['creatorPercent']!=offer['creatorPercent']:
+      ledger.invalidate_preflight(intent['id'],fresh)
+      report.update(status='invalidated',reason='current_offer_changed',currentAssessment=assess_offer(fresh,time.time()),currentCreatorPercent=fresh['creatorPercent']);save();return
      existing=inspection.inspect_card(offer,read)
      if existing['state']=='verified_read_only':
       ledger.confirm(intent['id'],existing,reused=True);report.update(status='reused',card=existing);save();print(json.dumps(report));return

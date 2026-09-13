@@ -28,6 +28,18 @@ class CardCreation:
    name='BJN '+short+suffix
    self.store.db.execute('INSERT INTO cycle_card_creation VALUES(?,?,?,?,?,?,?,\'prepared\',NULL,NULL,?)',(identifier,plan,offer['pid'],offer['offerKey'],encoded(offer),p['revision'],name,self.store.clock()))
   return self.get(identifier)
+ def invalidate_preflight(self,i,fresh):
+  """Retire only an unsubmitted intent after exact current commercial evidence."""
+  with self.store.tx():
+   row=self.get(i);offer=json.loads(row['offer_json'])
+   if row['state']!='prepared' or row['receipt'] is not None:raise CycleError('cannot_invalidate_attempted_creation')
+   if any(fresh.get(k)!=offer.get(k) for k in ('pid','offerKey','campaignId','catalogSource')):raise CycleError('preflight_identity_mismatch')
+   if not fresh.get('evidenceRef') or not isinstance(fresh.get('observedAt'),(int,float)) or not 0<=self.store.clock()-fresh['observedAt']<=60:raise CycleError('preflight_evidence_missing')
+   assessment=assess_offer(fresh,self.store.clock())
+   if assessment['eligible'] and fresh.get('creatorPercent')==offer['creatorPercent']:raise CycleError('preflight_still_eligible')
+   evidence={'reason':'current_offer_changed','freshOffer':fresh,'assessment':assessment,'invalidatedAt':self.store.clock(),'platformCreateAttempts':0}
+   self.store.db.execute("UPDATE cycle_card_creation SET state='invalidated',readback=? WHERE id=?",(encoded(evidence),i))
+  return self.get(i)
  def begin(self,i):
   with self.store.tx():
    row=self.get(i);p=self.store._plan(row['plan_id'])

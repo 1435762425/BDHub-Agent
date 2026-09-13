@@ -266,6 +266,18 @@ class ProfileProbePipelineTests(unittest.TestCase):
             self.assertEqual(client.captcha_attempts, 3)
             self.assertEqual(client.config["qps"], 1)
 
+    def test_identity_only_stops_after_exact_it_find(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            h=ProbeHarness(Path(temporary));data=json.loads(h.targets.read_text());data['identityOnly']=True;h.targets.write_text(json.dumps(data))
+            code,report=h.run();self.assertEqual(code,0);self.assertEqual([stage for stage,_ in h.calls],['find'])
+            self.assertEqual(report['targets'][0]['status'],'identity_verified');self.assertEqual(report['targets'][0]['profileCollection'],'not_requested')
+            self.assertTrue(report['identityFileUnchanged'])
+    def test_identity_only_falls_back_to_profiles_when_find_market_missing(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            h=ProbeHarness(Path(temporary));h.replies[0]['exact'].pop('selection_region');data=json.loads(h.targets.read_text());data['identityOnly']=True;h.targets.write_text(json.dumps(data))
+            code,report=h.run();self.assertEqual(code,0);self.assertEqual([stage for stage,_ in h.calls],['find','profile','profile'])
+            self.assertEqual(report['targets'][0]['status'],'completed')
+
     def test_full_post_after_verification_continues_same_oec_profiles_and_merge(self):
         with tempfile.TemporaryDirectory() as temporary:
             h = ProbeHarness(Path(temporary))

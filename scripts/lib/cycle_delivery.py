@@ -33,6 +33,7 @@ class Deliveries:
   if p['state']!='active' or p['revision']!=c['planRevision']:raise CycleError('plan_changed')
   if not r or r['oec']!=c['oecId'] or r['mode']!='auto' or r['rejected'] or r['inbox_until'] or r['revision']!=c['controlRevision']:raise CycleError('relationship_changed')
   if not assess_offer(c['offer'],self.s.clock())['eligible']:raise CycleError('offer_not_eligible')
+  if self.s.db.execute("SELECT 1 FROM sqlite_master WHERE name='cycle_card_creation'").fetchone() and self.s.db.execute("SELECT 1 FROM cycle_card_creation WHERE plan_id=? AND offer_json=? AND state='invalidated'",(plan,encoded(c['offer']))).fetchone():raise CycleError('offer_currently_ineligible')
   current={o['offerKey']:o for _,o in self.s._offers(plan)}
   if digest(current.get(c['offer']['offerKey']))!=digest(c['offer']):raise CycleError('offer_changed')
   if c['message']['version']!=4 or c['message']['deliveryOrder']!='card_then_text':raise CycleError('message_not_v4')

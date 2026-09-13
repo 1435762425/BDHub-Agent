@@ -160,13 +160,16 @@ def network_child(account_name: str, target_file: Path, output: Path) -> int:
     from bdhub.enrich.shared_backoff import snapshot as backoff_snapshot
     from bdhub.enrich.creator_profile import merge_profiles
 
-    targets = [normalize_target(t) for t in json.loads(target_file.read_text())["targets"]]
+    target_input=json.loads(target_file.read_text())
+    if type(target_input.get("identityOnly",False)) is not bool:raise ValueError("invalid_identity_mode")
+    identity_only=target_input.get("identityOnly",False)
+    targets = [normalize_target(t) for t in target_input["targets"]]
     if not 1 <= len(targets) <= 3:
         raise ValueError("bounded_target_count")
     report = {"schema": "bdhub.italy-profile-probe.v3", "market": "it", "account": account_name,
               "startedAt": datetime.now(timezone.utc).isoformat(), "mode": "live_readonly_profile", "requests": [], "targets": [],
               "qps": 1, "businessRetries": 2, "captchaAttempts": 3, "verificationMode": "existing_market_aware_http_pipeline",
-              "oldDatabaseWrites": 0, "realSends": 0, "status": "starting"}
+              "oldDatabaseWrites": 0, "realSends": 0, "status": "starting", "identityOnly": identity_only}
     report_file = output / "report.private.json"
     save = lambda: write_json(report_file, report)
     save()
@@ -290,6 +293,11 @@ def network_child(account_name: str, target_file: Path, output: Path) -> int:
                         summaries.append(exact_summary)
                         raw_profiles.append(exact)
                     result["oecId"] = oec
+                    if identity_only and handle and exact_summary["identity"]["market"] == "it":
+                        result.update(status="identity_verified",currentPlatformIdentityVerified=True,
+                                      historicalCrossSourceIdentityProven=False,profileCollection="not_requested")
+                        save()
+                        continue
                     # Explicit controlled comparison, including [2] even if IT's minimal completeness check passed.
                     for profile_types in ([1, 2, 6], [2]):
                         payload = request("profile", {"creator_oec_id": oec, "profile_types": profile_types}, target["ref"])
@@ -417,7 +425,9 @@ def main() -> int:
         report.update(status="bounded_timeout", reason="whole_probe_deadline")
         write_json(report_file, report)
     public = {"status": report.get("status"), "reason": report.get("reason"), "account": args.account,
-              "completedTargets": sum(t.get("status") == "completed" for t in report.get("targets", [])),
+              "completedTargets": sum(t.get("status") in ("completed","identity_verified") for t in report.get("targets", [])),
+              "identityOnly":report.get("identityOnly",False),
+              "profileCompletedTargets":sum(t.get("status")=="completed" for t in report.get("targets", [])),
               "requests": [{k:v for k,v in row.items() if k in {"targetRef", "stage", "profileTypes", "status", "httpStatus", "code", "verificationRequired", "systemError3", "durationMs", "errorType", "stopAccount", "attempts", "verificationAttempts"}} for row in report.get("requests", [])],
               "counters": report.get("counters"), "businessRetries": report.get("businessRetries"), "captchaAttempts": report.get("captchaAttempts"),
               "identityFileUnchanged": report.get("identityFileUnchanged"), "oldDatabaseWrites": 0, "realSends": 0,
