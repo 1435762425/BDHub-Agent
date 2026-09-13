@@ -44,6 +44,8 @@ npm run start
 
 新增[可复用TikTok接口与Agent能力手册](docs/contracts/tiktok/README.md)：源码路径/字段、三市场只读样本、Agent工具合同与未验证缺口分开登记。
 
+当前实施入口：[意大利二发闭环实施蓝图](docs/implementation/italy-second-closed-loop-blueprint.md)。明确每段输入/接口/状态/完成证据，先统一关系控制和容量驱动供给，再接收信与回复；一发留V2。
+
 ## 最小阅读入口
 
 | 内容 | 入口 |
