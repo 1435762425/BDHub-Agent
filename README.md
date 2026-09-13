@@ -50,7 +50,7 @@ npm run start
 
 已接[意大利实时货盘B.2](docs/implementation/second-cycle-catalog-v1.md)：43活动及完整已选池共6213条方案，2213条满足准备条件，原5款线索商品已有可关联方案；拟分佣尚未建链，Kalodata持续采集尚未接通。
 
-已接[Kalodata持久Worker B.3](docs/implementation/second-cycle-kalodata-v1.md)：分页回执、恢复和待解析库存控制通过离线测试；当前真实请求HTTP401，原有限任务保持阻断，未取得新增线索。
+已接[Kalodata持久Worker B.3](docs/implementation/second-cycle-kalodata-v1.md)：分页回执、恢复和待解析库存控制通过离线测试；用户完成插件登录后原2个PID实测成功，新增23条待解析线索；未发送。
 
 ## 最小阅读入口
 

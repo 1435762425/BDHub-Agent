@@ -60,3 +60,5 @@ B.1已实现本地second_cycle控制/供给原语与只读面板，见docs/imple
 B.2已接IT当前已加入Campaign/已选池只读分页及拟分佣投影，见docs/implementation/second-cycle-catalog-v1.md。按当前旧workspace已选分佣规则计算，不声称已生效卡佣金。当前6213方案/2213合格为本轮快照；新采集不得把旧Kalodata窗口抵扣当前14天供应。完整全球销售发现与周期/Kalodata Worker仍未接。
 
 B.3 Kalodata Worker实现及当前阻断见docs/implementation/second-cycle-kalodata-v1.md。只读有限任务，14天窗口沿旧版滞后2日。HTTP401认证未过，1 blocked/1 queued，未新增真实线索；不得把Worker测试通过当线上采集成功。会话有效后显式恢复原范围，不自动换账号或改旧Cookie。
+
+最新B.3续测：用户插件登录后原Kalodata作业已成功，2 PID/3请求新增23条待解析线索，2 completed/0 blocked；原401仅历史。新准备库sourceEdges73、稳定关系31，未将Kalodata ID当OEC，未发送。见second-cycle-kalodata-v1.md最新续测。
