@@ -198,7 +198,7 @@ class CycleStore:
     def _edges(self,p,edges):
         if not isinstance(edges,list) or len(edges)>500:raise CycleError('page_limit')
         for e in edges:
-            identifier(e['sourceId']);identifier(e['pid']);identifier(e['offerKey']);identifier(e['evidenceRef']);integer(e['units'])
+            identifier(e['sourceId']);identifier(e['pid']);identifier(e['offerKey']);identifier(e['evidenceRef']);integer(e['units'],9007199254740991)
             epoch(e['observedAt'])
             if (date.fromisoformat(e['windowEnd'])-date.fromisoformat(e['windowStart'])).days!=13:raise CycleError('source_window_not_14_days')
             data=encoded(e);old=self.db.execute('SELECT payload FROM source_edge WHERE plan_id=? AND source_id=?',(p,e['sourceId'])).fetchone()
@@ -224,6 +224,9 @@ class CycleStore:
         unlocked={r[0] for r in self.db.execute('SELECT creator_id FROM relationship WHERE plan_id=? AND unlocked=1',(p,))}
         return min(new,len(people-unlocked))+min(established,len(people&unlocked))
 
+    def pending_identity_count(self,p,window_end):
+        return self.db.execute("SELECT count(DISTINCT coalesce(json_extract(payload,'$.kalodataCreatorId'),json_extract(payload,'$.sourceHandle'),source_id)) FROM source_edge WHERE plan_id=? AND json_extract(payload,'$.creatorId') IS NULL AND json_extract(payload,'$.windowEnd')=?",(p,window_end)).fetchone()[0]
+
     def replenish(self,p,*,new_remaining,established_capacity,expected_per_pid=10,max_pids=5,window_end=None):
         integer(new_remaining,500);integer(established_capacity,10000);integer(expected_per_pid,500);integer(max_pids,100)
         if not expected_per_pid or not max_pids:raise CycleError('invalid_capacity')
@@ -239,8 +242,10 @@ class CycleStore:
             self.db.execute('UPDATE plan SET capacity_new=?,capacity_established=? WHERE id=?',(new_remaining,established_capacity,p))
             target=new_remaining+established_capacity;prepared=self._prepared(p,new_remaining,established_capacity,str(end))
             pending=self.db.execute("SELECT coalesce(sum(estimated),0) FROM source_job WHERE plan_id=? AND state IN ('queued','running')",(p,)).fetchone()[0]
-            deficit=max(0,target-prepared-pending);created=[]
-            offers=sorted(self._offers(p),key=lambda pair:(not assess_offer(pair[1],self.clock())['ratingPreferred'],pair[1]['pid'],pair[1]['offerKey']))
+            pending_identity=self.pending_identity_count(p,str(end))
+            deficit=max(0,target-prepared-pending-pending_identity);created=[]
+            prior={r[0]:r[1] for r in self.db.execute("SELECT json_extract(payload,'$.pid'),count(*) FROM source_edge WHERE plan_id=? GROUP BY json_extract(payload,'$.pid')",(p,))}
+            offers=sorted(self._offers(p),key=lambda pair:(-prior.get(pair[1]['pid'],0),not assess_offer(pair[1],self.clock())['ratingPreferred'],pair[1]['pid'],pair[1]['offerKey']))
             seen=set()
             for sid,o in offers:
                 if deficit<=0 or len(created)>=max_pids:break
@@ -249,7 +254,7 @@ class CycleStore:
                 estimate=min(deficit,expected_per_pid)
                 cur=self.db.execute('INSERT OR IGNORE INTO source_job(id,plan_id,snapshot_id,offer_key,pid,window_start,window_end,estimated) VALUES(?,?,?,?,?,?,?,?)',(jid,p,sid,o['offerKey'],o['pid'],str(start),str(end),estimate))
                 if cur.rowcount:created.append(jid);deficit-=estimate
-            return {'created':created,'target':target,'preparedUniqueCreators':prepared,'pendingEstimatedCreators':pending,'unfilled':deficit,'windowDays':14,'mode':'local_preparation_only','quotaWindowVerified':False}
+            return {'created':created,'target':target,'preparedUniqueCreators':prepared,'pendingEstimatedCreators':pending,'pendingIdentityCreators':pending_identity,'unfilled':deficit,'windowDays':14,'mode':'local_preparation_only','quotaWindowVerified':False}
     def claim(self,p,owner,lease_seconds=30):
         identifier(owner);integer(lease_seconds,300)
         if not lease_seconds:raise CycleError('invalid_lease')
@@ -259,7 +264,7 @@ class CycleStore:
             target=plan['capacity_new']+plan['capacity_established']
             running=self.db.execute("SELECT coalesce(sum(estimated),0) FROM source_job WHERE plan_id=? AND state='running' AND lease_until>?",(p,self.clock())).fetchone()[0]
             window=self.db.execute("SELECT window_end FROM source_job WHERE plan_id=? AND state IN ('queued','running') ORDER BY rowid DESC LIMIT 1",(p,)).fetchone()
-            if target<=self._prepared(p,plan['capacity_new'],plan['capacity_established'],window[0] if window else None)+running:return None
+            if target<=self._prepared(p,plan['capacity_new'],plan['capacity_established'],window[0] if window else None)+running+(self.pending_identity_count(p,window[0]) if window else 0):return None
             valid={(sid,o['offerKey']) for sid,o in self._offers(p) if assess_offer(o,self.clock())['eligible']}
             for r in self.db.execute("SELECT * FROM source_job WHERE plan_id=? AND (state='queued' OR (state='running' AND lease_until<=?)) ORDER BY rowid",(p,self.clock())).fetchall():
                 if (r['snapshot_id'],r['offer_key']) not in valid:
@@ -287,4 +292,7 @@ class CycleStore:
         offers.sort(key=lambda o:(o['pid'] not in known,not o['assessment']['eligible'],o['pid'],o['offerKey']))
         counts=lambda table:self.db.execute(f'SELECT count(*) FROM {table} WHERE plan_id=?',(p,)).fetchone()[0]
         jobs={r[0]:r[1] for r in self.db.execute('SELECT state,count(*) FROM source_job WHERE plan_id=? GROUP BY state',(p,))}
-        return {'schema':'bdhub.second-cycle.v1','plan':plan,'mode':'local_preparation_only','offers':offers[:40],'offerCount':len(offers),'eligibleOfferCount':sum(o['assessment']['eligible'] for o in offers),'relationships':counts('relationship'),'sourceEdges':counts('source_edge'),'opportunities':self.db.execute('SELECT count(*) FROM (SELECT DISTINCT creator_id,pid FROM opportunity WHERE plan_id=?)',(p,)).fetchone()[0],'eligibleUniqueCreators':len(self._eligible_people(p)),'jobs':jobs,'executionAllowed':False,'legacyTrialControlIntegrated':False,'modelCalls':0,'realSends':0}
+        issues=[]
+        if self.db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='cycle_source_issue'").fetchone():
+            issues=[dict(r) for r in self.db.execute("SELECT i.code,j.window_start,j.window_end FROM cycle_source_issue i JOIN source_job j ON i.job_id=j.id WHERE j.plan_id=? AND j.state='blocked' ORDER BY i.created DESC LIMIT 5",(p,))]
+        return {'schema':'bdhub.second-cycle.v1','plan':plan,'mode':'local_preparation_only','offers':offers[:40],'offerCount':len(offers),'eligibleOfferCount':sum(o['assessment']['eligible'] for o in offers),'relationships':counts('relationship'),'sourceEdges':counts('source_edge'),'opportunities':self.db.execute('SELECT count(*) FROM (SELECT DISTINCT creator_id,pid FROM opportunity WHERE plan_id=?)',(p,)).fetchone()[0],'eligibleUniqueCreators':len(self._eligible_people(p)),'jobs':jobs,'sourceIssues':issues,'executionAllowed':False,'legacyTrialControlIntegrated':False,'modelCalls':0,'realSends':0}

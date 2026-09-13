@@ -58,3 +58,5 @@ IT已真实只读验证EU info/id/token、I18N IM host的203/608/301和Freegrin 
 B.1已实现本地second_cycle控制/供给原语与只读面板，见docs/implementation/second-cycle-foundation-v1.md。var/second-cycle.sqlite只用于新准备层；旧试点控制尚未接管、真实采集/发送未接通，不把该层暂停当全系统暂停。新联系容量是输入估计，非真实配额查询。
 
 B.2已接IT当前已加入Campaign/已选池只读分页及拟分佣投影，见docs/implementation/second-cycle-catalog-v1.md。按当前旧workspace已选分佣规则计算，不声称已生效卡佣金。当前6213方案/2213合格为本轮快照；新采集不得把旧Kalodata窗口抵扣当前14天供应。完整全球销售发现与周期/Kalodata Worker仍未接。
+
+B.3 Kalodata Worker实现及当前阻断见docs/implementation/second-cycle-kalodata-v1.md。只读有限任务，14天窗口沿旧版滞后2日。HTTP401认证未过，1 blocked/1 queued，未新增真实线索；不得把Worker测试通过当线上采集成功。会话有效后显式恢复原范围，不自动换账号或改旧Cookie。
