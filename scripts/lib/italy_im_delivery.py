@@ -304,11 +304,13 @@ def verify_history_body(body: bytes, conversation: VerifiedConversation, *, send
             if wire.one(message, 1) != conversation.full_cid or wire.one(message, 5) != int(conversation.conversation_id):
                 raise ValueError()
             ext = _ext(wire, message)
-            if ext.get(b"creator_oec_id") not in (None, conversation.oec_id.encode()) or ext.get(b"shop_region") not in (None, b"IT", b"it") or ext.get(b"market_region") not in (None, b"8"):
-                raise ValueError()
             server_id, client_id = wire.one(message, 3), ext.get(b"s:client_message_id")
             if client_id != request_ref.encode() and (expected_message is None or server_id != expected_message):
                 continue
+            # Legacy messages can carry stale per-message region metadata. Validate
+            # the exact target's identity; every row still has to belong to this CID.
+            if ext.get(b"creator_oec_id") not in (None, conversation.oec_id.encode()) or ext.get(b"shop_region") not in (None, b"IT", b"it") or ext.get(b"market_region") not in (None, b"8"):
+                raise ValueError()
             if type(server_id) is not int or not 0 < server_id <= (1 << 63) - 1 or expected_message is not None and server_id != expected_message or \
                     client_id != request_ref.encode() or wire.one(message, 7) != int(sender_id) or wire.one(message, 6) != 1000 or wire.one(message, 8) != content or \
                     ext.get(b"s:visible") not in (None, b"") or ext.get(b"visibility_type") not in (None, b"", b"0") or \

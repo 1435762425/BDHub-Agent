@@ -60,6 +60,7 @@ def main():
    print(json.dumps({k:r[k] for k in ('processed','added','historical','liveReplies','errorCode','state') if k in r}),flush=True)
    if not a.worker:break
    # Backoff failure; never spin or send to discover quota.
-   until=time.monotonic()+(max(a.interval,300) if r.get('errorCode') else a.interval)
+   delay=15 if r.get('errorCode')=='live_guard_busy' else max(a.interval,300) if r.get('errorCode') else a.interval
+   until=time.monotonic()+delay
    while not STOP and time.monotonic()<until:time.sleep(max(0,min(1,until-time.monotonic())))
 if __name__=='__main__':main()

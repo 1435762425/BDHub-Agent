@@ -27,12 +27,12 @@ def inspect_card(offer,read,*,expected_list_id=None,expected_name=None):
    if len(products)!=1:continue
    raw=products[0].get('creator_commission_percent');rate=Decimal(str(raw))/100 if raw is not None else None
    if rate is not None:rates.append(format(rate,'f'))
-   if rate is None or rate==Decimal(offer['creatorPercent']):candidates.append((lid,sha))
+   if rate is None or rate==Decimal(offer['creatorPercent']):candidates.append((lid,sha,row))
   if len(seen)>=total:break
   if not rows:raise CycleError('card_search_incomplete')
  else:raise CycleError('card_search_incomplete')
  if expected_name and len(candidates)>1:raise CycleError('card_name_ambiguous')
- for lid,imsha in candidates[:3]:
+ for lid,imsha,card_row in candidates[:3]:
   body,sha=read(MEMBERS,{'list_id':lid,'source':2 if wire=='0' else 1});data=body.get('data',{});rows=data.get('campaign_products')
   if not isinstance(rows,list) or data.get('total_num')!=len(rows):raise CycleError('card_members_incomplete')
   members=[p for p in rows if str(p.get('product_id'))==offer['pid'] and str(p.get('campaign_id'))==wanted]
@@ -42,7 +42,7 @@ def inspect_card(offer,read,*,expected_list_id=None,expected_name=None):
   if rate!=Decimal(offer['creatorPercent']):continue
   if str(p.get('product_status'))!='2' or p.get('is_under_governed') is True or p.get('unavailable_type') not in (None,'',0,'0'):continue
   if Decimal(str(p.get('stock')))<=100:continue
-  return {'state':'verified_read_only','pid':offer['pid'],'verifiedListName':expected_name,'listId':lid,'wireCampaignId':wire,'sourceCampaignId':wanted,'creatorPercent':format(rate,'f'),'checkedAt':time.time(),'evidenceRefs':[imsha,sha],'executionAllowed':False}
+  return {'state':'verified_read_only','pid':offer['pid'],'verifiedListName':expected_name,'listName':str(card_row.get('product_list_name') or ''),'campaignName':str(card_row.get('campaign_name') or ''),'stock':str(p.get('stock')),'publicPercent':format(Decimal(str(p['plan_commission_percent']))/100,'f') if p.get('plan_commission_percent') is not None else None,'listId':lid,'wireCampaignId':wire,'sourceCampaignId':wanted,'creatorPercent':format(rate,'f'),'checkedAt':time.time(),'evidenceRefs':[imsha,sha],'executionAllowed':False}
  if len(candidates)>3:raise CycleError('card_candidates_incomplete')
  return {'state':'needs_card_preparation','checkedAt':time.time(),'observedCreatorRates':sorted(set(rates)),'candidateListsChecked':min(len(candidates),3),'executionAllowed':False}
 

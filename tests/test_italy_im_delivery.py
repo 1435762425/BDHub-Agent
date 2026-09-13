@@ -108,6 +108,15 @@ def allow(scope):
 
 
 class ItalyImDeliveryTests(unittest.TestCase):
+    def test_unrelated_legacy_region_does_not_override_exact_it_target(self):
+        conv=VerifiedConversation('10',b'full-10',2,b'ticket','100')
+        old=W.vb(1,message(server_id=666,client=OTHER,ext_changes={'shop_region':'TH'}))
+        target=W.vb(1,card_message())
+        args=dict(sender_id='987',market_id='99',text=CARD_CONTENT,request_ref=REQUEST,message_id='777',card=card())
+        self.assertEqual(verify_history_body(old+target,conv,**args),'777')
+        with self.assertRaises(ItalyImDeliveryError):verify_history_body(old+W.vb(1,card_message(ext_changes={'shop_region':'TH'})),conv,**args)
+        with self.assertRaises(ItalyImDeliveryError):verify_history_body(W.vb(1,message(cid=11,client=OTHER))+target,conv,**args)
+
     def test_card_binding_requires_exact_it_account_verified_origin_and_hash(self):
         mutations = ({"market": "mx"}, {"account_name": "acc1"}, {"verified": False}, {"verified": 1},
                      {"origin": "https://other.invalid/product_list/list"}, {"verified_at": "2026-09-12T01:00:00"},

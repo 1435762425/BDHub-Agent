@@ -8,7 +8,7 @@ CREATE TRIGGER IF NOT EXISTS review_no_update BEFORE UPDATE ON cycle_review_batc
 CREATE TRIGGER IF NOT EXISTS review_no_delete BEFORE DELETE ON cycle_review_batch BEGIN SELECT RAISE(ABORT,'review is immutable'); END;'''
 
 def choose_candidates(store,plan,identity_reader,limit=3):
- if type(limit) is not int or not 1<=limit<=3:raise CycleError('review_limit')
+ if type(limit) is not int or not 1<=limit<=100:raise CycleError('review_limit')
  offers={o['pid']:o for o in select_offers(store,plan)}
  rows=store.db.execute('SELECT e.payload,r.creator_id,r.oec,r.evidence_ref FROM cycle_identity_resolution r JOIN source_edge e USING(plan_id,source_id) WHERE r.plan_id=?',(plan,)).fetchall()
  candidates=[];skipped=[]
@@ -31,6 +31,7 @@ def choose_candidates(store,plan,identity_reader,limit=3):
  result=[];seen=set()
  for c in candidates:
   if c['oecId'] in seen:continue
+  if store.db.execute("SELECT 1 FROM sqlite_master WHERE name='cycle_delivery'").fetchone() and store.db.execute("SELECT 1 FROM cycle_delivery WHERE plan_id=? AND creator_id=? AND pid=? AND source_id=? AND state IN ('ready','running','unknown','confirmed')",(plan,c['creatorId'],c['pid'],c['source']['sourceId'])).fetchone():continue
   seen.add(c['oecId']);result.append(c)
   if len(result)==limit:break
  return result,skipped

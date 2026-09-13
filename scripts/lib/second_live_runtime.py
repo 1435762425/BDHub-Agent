@@ -290,7 +290,7 @@ def _new_gate_directory(var_dir):
 
 
 @contextmanager
-def live_runtime(expected_sender_binding_hash, report, *, var_dir=VAR, stopped=lambda: False):
+def live_runtime(expected_sender_binding_hash, report, *, var_dir=VAR, stopped=lambda: False, card_validator=None):
     if not isinstance(expected_sender_binding_hash, str) or re.fullmatch(r"[0-9a-f]{64}", expected_sender_binding_hash) is None:
         raise SecondLiveRuntimeError("live_sender_binding_required")
     gate_directory = _new_gate_directory(var_dir)
@@ -346,6 +346,10 @@ def live_runtime(expected_sender_binding_hash, report, *, var_dir=VAR, stopped=l
             check()
             if not isinstance(previous, ItalyVerifiedProductCard):
                 raise SecondLiveRuntimeError("live_sender_invalid")
+            if card_validator is not None:
+                current=card_validator(previous,account,identity,headers,maintenance,lambda:closed or stopped())
+                check()
+                return current
             # The fixed collector does its own exact product/market checks.
             card_identity = identity.require_product_search()
             card_report = {}
