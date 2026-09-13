@@ -72,15 +72,27 @@ def remote_history_evidence(oecs):
    reads=ItalyImReadSession(auth,report,maintenance_due=maintenance)
    try:
     cursor=0;seen=set();found={}
-    for _ in range(3):
+    index_path=ROOT/'var/it-conversations.sqlite'
+    if index_path.exists():
+     with sqlite3.connect(index_path.as_uri()+'?mode=ro',uri=True) as index:
+      for o in oecs:
+       rows=index.execute('SELECT cid,kind FROM conversation WHERE scope=? AND oec=?',('it:acc6',o)).fetchall()
+       if len(rows)==1:found[o]={'conversationId':rows[0][0],'conversationType':rows[0][1]}
+       elif len(rows)>1:result[o]['indexAmbiguous']=True
+    for _ in range(0 if len(found)==len(oecs) else 3):
      page=reads.initialize(cursor)
      for c in page['conversations']:
-      if c['oecId'] in result:found[c['oecId']]=c
+      if c['oecId'] in result:
+       o=c['oecId']
+       if o in found and found[o]['conversationId']!=c['conversationId']:result[o]['indexAmbiguous']=True
+       if not result[o].get('indexAmbiguous'):found[o]=c
      if len(found)==len(oecs) or not page['hasMore']:break
      next_cursor=int(page['nextCursor'])
      if next_cursor==cursor or next_cursor in seen:break
      seen.add(cursor);cursor=next_cursor
     for o in oecs:
+     if result[o].get('indexAmbiguous'):
+      result[o]['status']='ambiguous_conversations';continue
      c=found.get(o)
      if not c and result[o].get('priorObservation'):c={'conversationId':result[o]['priorObservation']['conversationId'],'conversationType':2}
      if c:

@@ -1,5 +1,6 @@
 """Immutable review batches, not executable sending trials."""
 import json,time
+from datetime import datetime,timezone
 from lib.second_cycle import CycleError,encoded,digest,assess_offer
 from lib.cycle_materials import select_offers,render,name_key
 SCHEMA='''CREATE TABLE IF NOT EXISTS cycle_review_batch(id TEXT PRIMARY KEY,request_id TEXT NOT NULL UNIQUE,request_json TEXT NOT NULL,snapshot_hash TEXT NOT NULL,payload TEXT NOT NULL,created_at REAL NOT NULL);
@@ -63,7 +64,12 @@ class ReviewBatches:
     if 'remote_sender_counts_not_verified' in c['blockingReasons']:c['blockingReasons'].remove('remote_sender_counts_not_verified')
     c['blockingReasons'].append('marketing_frequency_not_verified')
     if not c.get('relationshipUnlocked') and c['observedContactSignal']=='not_established' and counts.get('ourMessages',0)+2>5:
-     c['blockingReasons'].append('insufficient_locked_message_allowance')
+     c['blockingReasons'].append('message_allowance_window_unverified')
+     raw=history.get('outboundCreateTimeRaw',[])
+     valid=[v for v in raw if type(v) is int and 946684800000<=v<=int(self.store.clock()*1000)+300000]
+     last=max(valid) if valid else None
+     complete_times=len(valid)==counts['ourMessages'] and history.get('outboundTimeMissingCount',0)==0
+     c['allowanceReview']={'state':'awaiting_window_verification','historicalOutboundObserved':counts['ourMessages'],'renewalPolicy':'monthly_user_confirmed','resetAt':None,'permanentExclusion':False,'lastObservedOutboundAt':datetime.fromtimestamp(last/1000,timezone.utc).isoformat() if last else None,'observedOutboundTimesComplete':complete_times,'elapsedDaysSinceObservedOutbound':int((self.store.clock()-last/1000)/86400) if last and complete_times else None,'automaticResetApplied':False}
    old=c['checks'].get('legacy',{})
    if old.get('manualState') in ('processing','pending_reply','rejected'):c['blockingReasons'].append('legacy_relationship_needs_review')
    if old.get('activeOrUnknownIntents',0)>0:c['blockingReasons'].append('legacy_delivery_needs_reconciliation')

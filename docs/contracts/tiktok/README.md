@@ -139,3 +139,5 @@ sample/budget/review为审批写入，sample/price已从历史SDK补明GET方法
 ## 后续实施补验：限定创建（2026-09-13）
 
 此前只读调查之后，在用户继续准备4款匹配佣金商品卡的范围内，TK-005已完成4次单项创建与独立回查。能力仍为canary；未发送消息、未开放批量。见[实施证据](../../implementation/second-cycle-card-creation-v1.md)。该阶段与前文最初只读调查的0写入统计分开。
+
+2026-09-13补充：用户确认未解锁达人消息额度会按月刷新，刷新锚点尚未探明。IT会话203分页已采集104条元数据，301新增field10=create_time观察（field4是索引）；历史累计我方5条不作当前额度耗尽证明。详见[会话与额度核验](../../implementation/second-cycle-conversation-index-v1.md)。

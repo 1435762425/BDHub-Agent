@@ -78,6 +78,7 @@ class ItalyImSessionTests(unittest.TestCase):
             value=W.vb(1,'full-10')+W.vi(5,10)
             if sender is not None:value+=W.vi(7,sender)
             for key,val in {'sender_role':role,**extra}.items():value+=W.vb(9,W.vb(1,key)+W.vb(2,val))
+            if role=='4' and sender==987:value+=W.vi(10,1789200000000)+W.vi(4,999)
             return W.vb(1,value)
         rows=row('4',987)+row('1',555)+row('1')+row('4',555)+row('3',1,type='notification',starling_content_key='ttspc_im_message_relation_ststem_message_6_plural')
         def reply(command,sequence,_):
@@ -87,6 +88,7 @@ class ItalyImSessionTests(unittest.TestCase):
         result=s.history_summary(conv,include_sender_counts=True)
         self.assertEqual(result['senderCounts'],dict(ourMessages=1,creatorReplies=1,showcaseNotifications=1,otherOrUnknown=2))
         self.assertTrue(result['hasMore']);self.assertIn('returned page',result['countScope'])
+        self.assertEqual(result['outboundCreateTimeRaw'],[1789200000000]);self.assertEqual(result['outboundTimeMissingCount'],0)
 
     def test_mx_host_and_cookie_or_write_command_are_rejected_before_http(self):
         original=W.READ_HOST;http=HTTP()

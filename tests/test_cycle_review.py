@@ -17,16 +17,22 @@ class ReviewTests(unittest.TestCase):
   r=self.create();self.assertFalse(r['executionAllowed']);self.assertIn('institution_market_quota_not_verified',r['items'][0]['blockingReasons'])
  def test_request_replay_keeps_frozen_content(self):
   a=self.create();self.now+=20;self.assertEqual(a,self.create())
- def test_observed_outbound_blocks_card_and_text_without_unlock(self):
+ def test_historical_outbound_needs_window_verification_not_permanent_exclusion(self):
   for n in (4,5):
    self.e['123']['remoteHistory']={'status':'observed_summary','history':{'senderCounts':{'ourMessages':n}}}
    r=self.b.create('count'+str(n),self.req,[self.c],self.e,[])
-   self.assertIn('insufficient_locked_message_allowance',r['items'][0]['blockingReasons'])
+   self.assertIn('message_allowance_window_unverified',r['items'][0]['blockingReasons'])
+   self.assertFalse(r['items'][0]['allowanceReview']['permanentExclusion']);self.assertIsNone(r['items'][0]['allowanceReview']['resetAt'])
+ def test_old_messages_record_age_without_guessing_reset(self):
+  stamp=int((self.now-60*86400)*1000)
+  self.e['123']['remoteHistory']={'status':'observed_summary','history':{'senderCounts':{'ourMessages':5},'outboundCreateTimeRaw':[stamp]*5,'outboundTimeMissingCount':0}}
+  a=self.create()['items'][0]['allowanceReview']
+  self.assertEqual(a['elapsedDaysSinceObservedOutbound'],60);self.assertFalse(a['automaticResetApplied']);self.assertIsNone(a['resetAt'])
  def test_reply_is_evidence_not_automatic_controller_unlock(self):
   self.e['123']['remoteHistory']={'status':'observed_summary','history':{'senderCounts':{'ourMessages':5,'creatorReplies':1}}}
   r=self.create()['items'][0]
   self.assertIn('interaction_evidence_not_applied_to_controller',r['blockingReasons'])
-  self.assertNotIn('insufficient_locked_message_allowance',r['blockingReasons']);self.assertFalse(r['executionAllowed'])
+  self.assertNotIn('message_allowance_window_unverified',r['blockingReasons']);self.assertFalse(r['executionAllowed'])
  def test_request_conflict(self):
   self.create()
   with self.assertRaises(CycleError):self.b.existing('request',self.req|{'limit':2})

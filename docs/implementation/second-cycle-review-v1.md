@@ -34,3 +34,5 @@
 验证：review 9、IM session 10、second_cycle 31、second-cycle API 3，共 53 项通过；Next 生产构建通过。前端回读记录见同目录 validation.json。
 
 运行回读：仅新 Web 更新为 PID95420，身份 Worker75937保留；页面和批次 API HTTP200，API确认3人及5条消息拦截。内置浏览器连接错误页阻止视觉验收，未标成通过。
+
+**B.8覆盖说明：**用户后续确认消息额度会按月刷新。历史4/5条不能单独证明当前余量不足；已改为窗口待核实。conbarakah已通过索引定位，详见[后续核验](second-cycle-conversation-index-v1.md)。

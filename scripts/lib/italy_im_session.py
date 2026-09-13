@@ -307,16 +307,24 @@ class ItalyImReadSession:
         except Exception:
             raise ItalyImReadError("im_response_invalid") from None
         if include_sender_counts:
+            outbound_times=[];missing_outbound_times=0
             counts={"ourMessages":0,"creatorReplies":0,"showcaseNotifications":0,"otherOrUnknown":0}
             for item in rows:
                 message=wire.wire_fields(item)
                 ext={wire.one(wire.wire_fields(v),1):wire.one(wire.wire_fields(v),2) for v in message.get(9,[])}
                 role=ext.get(b"sender_role");sender=wire.one(message,7)
-                if role==b"4" and sender==int(self.im_id):counts["ourMessages"]+=1
+                if role==b"4" and sender==int(self.im_id):
+                    counts["ourMessages"]+=1
+                    stamp=wire.one(message,10)
+                    if type(stamp) is int and stamp>0:outbound_times.append(stamp)
+                    else:missing_outbound_times+=1
                 elif role==b"1" and type(sender) is int and sender>0 and sender!=int(self.im_id):counts["creatorReplies"]+=1
                 elif role==b"3" and ext.get(b"type")==b"notification" and ext.get(b"starling_content_key")==b"ttspc_im_message_relation_ststem_message_6_plural":counts["showcaseNotifications"]+=1
                 else:counts["otherOrUnknown"]+=1
             result["senderCounts"]=counts
+            result["outboundCreateTimeRaw"]=sorted(outbound_times)
+            result["outboundTimeMissingCount"]=missing_outbound_times
+            result["timestampContract"]="MessageBody field10 create_time; unit pending verification; field4 is index"
             result["countScope"]="returned page of this verified conversation, not institution quota"
         self.report["historyReadCount"] = self.report.get("historyReadCount", 0) + 1
         self.on_update()
