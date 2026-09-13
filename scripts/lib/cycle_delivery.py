@@ -10,7 +10,9 @@ CREATE UNIQUE INDEX IF NOT EXISTS cycle_one_active_delivery ON cycle_delivery(pl
 CREATE TABLE IF NOT EXISTS cycle_delivery_part(delivery_id TEXT NOT NULL,kind TEXT NOT NULL,request_ref TEXT NOT NULL UNIQUE,state TEXT NOT NULL DEFAULT 'ready',receipt TEXT,confirmation TEXT,started REAL,PRIMARY KEY(delivery_id,kind));
 CREATE TRIGGER IF NOT EXISTS cycle_delivery_frozen BEFORE UPDATE OF snapshot,source_id,creator_id,oec,pid ON cycle_delivery BEGIN SELECT RAISE(ABORT,'immutable delivery'); END;'''
 class Deliveries:
- def __init__(self,store):self.s=store;store.db.executescript(SCHEMA)
+ def __init__(self,store,*,concurrent_recipient_limit=1):
+  if concurrent_recipient_limit not in (1,2,4):raise CycleError('invalid_recipient_concurrency')
+  self.s=store;self.concurrent_recipient_limit=concurrent_recipient_limit;store.db.executescript(SCHEMA)
  def get(self,id):
   row=self.s.db.execute('SELECT * FROM cycle_delivery WHERE id=?',(id,)).fetchone()
   if not row:raise CycleError('delivery_missing')
@@ -48,7 +50,8 @@ class Deliveries:
    if self.s.db.execute("SELECT 1 FROM sqlite_master WHERE name='service_reply'").fetchone() and self.s.db.execute("SELECT 1 FROM service_reply WHERE plan_id=? AND state IN ('inflight','accepted','unknown')",(d['plan_id'],)).fetchone():raise CycleError('reply_reconciliation_required')
    part=next((p for p in d['parts'] if p['kind']==kind),None)
    if not part or part['state']!='ready':raise CycleError('part_not_ready')
-   if self.s.db.execute("SELECT 1 FROM cycle_delivery_part p JOIN cycle_delivery d ON d.id=p.delivery_id WHERE d.plan_id=? AND p.state IN ('inflight','accepted','unknown')",(d['plan_id'],)).fetchone():raise CycleError('verify_before_dispatch')
+   pending=self.s.db.execute("SELECT d.creator_id FROM cycle_delivery_part p JOIN cycle_delivery d ON d.id=p.delivery_id WHERE d.plan_id=? AND p.state IN ('inflight','accepted','unknown')",(d['plan_id'],)).fetchall()
+   if len(pending)>=self.concurrent_recipient_limit or any(r['creator_id']==d['creator_id'] for r in pending):raise CycleError('verify_before_dispatch')
    if kind=='text' and d['parts'][0]['state']!='confirmed':raise CycleError('card_not_confirmed')
    self.s.db.execute("UPDATE cycle_delivery_part SET state='inflight',started=? WHERE delivery_id=? AND kind=?",(self.s.clock(),id,kind));self.s.db.execute("UPDATE cycle_delivery SET state='running' WHERE id=?",(id,))
   return {'dispatchAllowed':True,'requestRef':part['request_ref'],'kind':kind}

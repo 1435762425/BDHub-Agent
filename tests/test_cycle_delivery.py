@@ -44,6 +44,17 @@ class DeliveryTests(unittest.TestCase):
  def test_reserved_source_exits_ready_supply_without_deleting_history(self):
   self.assertEqual(self.s._eligible_people(self.p),set())
   self.assertGreater(self.s.db.execute('SELECT count(*) FROM source_edge').fetchone()[0],0)
+ def test_bounded_cross_recipient_pipeline_still_blocks_same_creator_and_unknown(self):
+  self.s.import_edges(self.p,[edge(person='c2',source='e2'),edge(person='c3',source='e3',oec='789')])
+  d=Deliveries(self.s,concurrent_recipient_limit=2)
+  c2=self.c|{'creatorId':'c2','oecId':'456','source':{'sourceId':'e2'}}
+  c3=self.c|{'creatorId':'c3','oecId':'789','source':{'sourceId':'e3'}}
+  second=d.prepare(self.p,c2)['id'];third=d.prepare(self.p,c3)['id']
+  self.begin('card');d.begin(second,'card',authorized_snapshot_hash=digest(c2),recipient_verified=True,allowance_verified=True)
+  with self.assertRaisesRegex(CycleError,'verify_before_dispatch'):d.begin(third,'card',authorized_snapshot_hash=digest(c3),recipient_verified=True,allowance_verified=True)
+  with self.assertRaisesRegex(CycleError,'verify_before_dispatch'):d.begin(self.id,'text',authorized_snapshot_hash=digest(self.c),recipient_verified=True,allowance_verified=True)
+  d.unknown(second,'card')
+  with self.assertRaisesRegex(CycleError,'delivery_unknown'):d.begin(third,'card',authorized_snapshot_hash=digest(c3),recipient_verified=True,allowance_verified=True)
  def test_wrong_recipient_receipt_cannot_confirm(self):
   self.begin('card')
   with self.assertRaises(CycleError):self.d.confirm(self.id,'card',self.proof('card')|{'oecId':'other'})

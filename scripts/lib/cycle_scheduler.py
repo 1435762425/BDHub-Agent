@@ -2,7 +2,7 @@
 import json
 from lib.second_cycle import CycleError,encoded
 SCHEMA='''CREATE TABLE IF NOT EXISTS cycle_schedule(plan_id TEXT NOT NULL,stage TEXT NOT NULL,period INTEGER NOT NULL,due REAL NOT NULL,state TEXT NOT NULL DEFAULT 'idle',run_id TEXT,started REAL,finished REAL,failures INTEGER NOT NULL DEFAULT 0,result TEXT,PRIMARY KEY(plan_id,stage));'''
-PERIODS={'catalog_selected':86400,'catalog_campaign':86400,'kalodata':300,'identity_reconcile':60,'reply_facts':60,'materials_check':60}
+PERIODS={'catalog_selected':86400,'catalog_campaign':86400,'kalodata':30,'identity_reconcile':60,'reply_facts':60,'materials_check':15}
 class Scheduler:
  def __init__(self,store):self.s=store;store.db.executescript(SCHEMA)
  def initialize(self,plan):
@@ -22,7 +22,8 @@ class Scheduler:
   with self.s.tx():
    r=self.s.db.execute('SELECT * FROM cycle_schedule WHERE plan_id=? AND stage=?',(plan,stage)).fetchone()
    if not r or r['state']!='running' or r['run_id']!=run_id:raise CycleError('schedule_stale_run')
-   failures=0 if success else r['failures']+1;delay=(45 if result.get('checkpointed') else r['period']) if success else min(3600,60*2**min(failures,6))
+   busy=result.get('reason')=='account_busy'
+   failures=0 if success or busy else r['failures']+1;delay=15 if busy else (45 if result.get('checkpointed') else r['period']) if success else min(3600,60*2**min(failures,6))
    self.s.db.execute('UPDATE cycle_schedule SET state=?,due=?,finished=?,failures=?,result=? WHERE plan_id=? AND stage=?',('idle' if success else 'waiting',self.s.clock()+delay,self.s.clock(),failures,encoded(result),plan,stage))
  def recover(self,plan):
   # Called only after acquiring the process lock; the old child must not survive.

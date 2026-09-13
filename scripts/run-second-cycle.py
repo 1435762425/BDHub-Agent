@@ -20,10 +20,10 @@ def command(stage,run,target):
   # Same UTC-day run file resumes interrupted read pages, instead of restarting full fetches.
   report=ROOT/'var/cycle-scheduler'/f'{stage}-{time.strftime("%Y%m%d",time.gmtime())}.json'
   return [PYTHON,str(ROOT/'scripts/sync-cycle-catalog.py'),'--source',source,'--run',str(report),'--max-requests','5'],report
- if stage=='kalodata':return [PYTHON,str(ROOT/'scripts/second-cycle-worker.py'),'--prepare-target',str(target),'--max-pids','2','--max-steps','3','--report',str(report)],report
+ if stage=='kalodata':return [PYTHON,str(ROOT/'scripts/second-cycle-worker.py'),'--prepare-target',str(target),'--max-pids','5','--max-steps','10','--report',str(report)],report
  if stage=='reply_facts':return [PYTHON,str(ROOT/'scripts/query-cycle-reply-facts.py'),'--process-due'],None
  if stage=='identity_reconcile':return [PYTHON,str(ROOT/'scripts/second-cycle-identities.py'),'reconcile'],None
- if stage=='materials_check':return [PYTHON,str(ROOT/'scripts/advance-cycle-materials.py'),'--report',str(report)],report
+ if stage=='materials_check':return [PYTHON,str(ROOT/'scripts/advance-cycle-materials.py'),'--max-cards','3','--report',str(report)],report
  raise ValueError('unknown_stage')
 
 def main():
@@ -49,7 +49,7 @@ def main():
        if isinstance(data.get('state'),str) and data['state']=='running':success=False
        checkpointed=job['stage'].startswith('catalog_') and data.get('state')=='paused' and not data.get('error')
        if job['stage']=='kalodata' and any(v.get('status')=='blocked' for v in data.get('steps',[])):success=False
-      result={'exitCode':code,'report':str(report) if report else None,'realSends':0,'checkpointed':checkpointed if report and report.exists() else False}
+      result={'exitCode':code,'report':str(report) if report else None,'realSends':0,'checkpointed':checkpointed if report and report.exists() else False,'reason':data.get('error') if report and report.exists() else None}
      except subprocess.TimeoutExpired:
       CHILD.kill();CHILD.wait();result={'reason':'reader_timeout','realSends':0}
      finally:CHILD=None

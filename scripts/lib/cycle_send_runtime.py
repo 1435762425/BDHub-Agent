@@ -13,7 +13,7 @@ def descriptor(c):
  value={'product_id':c['pid'],'list_id':c['listId'],'campaign_id':c['wireCampaignId'],'list_name':c['listName'],'campaign_name':c['campaignName'],'market':'it','account_name':'acc6','verified_at':datetime.fromtimestamp(c['checkedAt'],timezone.utc).isoformat(),'origin':CARD_ORIGIN,'evidence_sha256':digest(c['evidenceRefs']),'verified':True,'title_key':CARD_TITLE_KEY}
  value['binding_sha256']=card_binding_sha256(value);return ItalyVerifiedProductCard(**value)
 
-def fresh_card(candidate,account,identity,headers,maintenance,stopped):
+def fresh_card(candidate,account,identity,headers,maintenance,stopped,*,request_budget=None):
  import requests
  from lib.italy_cards import legacy_params
  offer=candidate['offer'];last=0
@@ -24,7 +24,10 @@ def fresh_card(candidate,account,identity,headers,maintenance,stopped):
    nonlocal last
    if stopped() or maintenance():raise CycleError('account_unavailable')
    if path not in (module.CARD,module.MEMBERS):raise CycleError('read_path_forbidden')
-   time.sleep(max(0,last+1-time.monotonic()));last=time.monotonic()
+   if request_budget is not None:request_budget.acquire()
+   else:time.sleep(max(0,last+1-time.monotonic()))
+   if stopped() or maintenance():raise CycleError('account_unavailable')
+   last=time.monotonic()
    r=session.get(identity.host+path,params=legacy_params(identity,account)|params,headers=safe,timeout=(5,20),allow_redirects=False)
    if r.status_code!=200 or r.headers.get('bdturing-verify'):raise CycleError('card_read_unavailable')
    b=r.json()

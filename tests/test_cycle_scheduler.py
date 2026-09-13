@@ -13,6 +13,9 @@ class SchedulerTests(unittest.TestCase):
   j=self.q.claim(self.p);self.q.complete(self.p,j['stage'],j['run_id'],False,{'error':'unavailable'})
   r=self.s.db.execute('SELECT * FROM cycle_schedule WHERE stage=?',(j['stage'],)).fetchone();self.assertEqual(r['due'],1120);self.assertEqual(r['failures'],1)
   with self.assertRaises(CycleError):self.q.complete(self.p,j['stage'],j['run_id'],True,{})
+ def test_account_contention_does_not_turn_into_minutes_of_supply_backoff(self):
+  j=self.q.claim(self.p);self.q.complete(self.p,j['stage'],j['run_id'],False,{'reason':'account_busy'})
+  r=self.s.db.execute('SELECT due,failures FROM cycle_schedule WHERE stage=?',(j['stage'],)).fetchone();self.assertEqual(tuple(r),(1015,0))
  def test_catalog_checkpoint_continues_without_daily_delay(self):
   j=self.q.claim(self.p);self.q.complete(self.p,j['stage'],j['run_id'],True,{'checkpointed':True})
   r=self.s.db.execute('SELECT due,failures FROM cycle_schedule WHERE stage=?',(j['stage'],)).fetchone();self.assertEqual(tuple(r),(1045,0))

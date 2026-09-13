@@ -58,6 +58,18 @@ class ItalyImSessionTests(unittest.TestCase):
         with self.assertRaises(ItalyImReadError):stopped.initialize()
         self.assertFalse(stopped_report["imHostRequested"]);self.assertEqual(no_http.calls,[])
 
+    def test_short_conversation_reuse_requires_same_identity_and_expires(self):
+        s,report,http,timer=session()
+        first=s.conversation('10','100',max_age=15)
+        self.assertIs(first,s.conversation('10','100',max_age=15));self.assertEqual(len(http.calls),1)
+        with self.assertRaises(ItalyImReadError):s.conversation('10','200',max_age=15)
+        self.assertEqual(len(http.calls),2)
+        timer.value+=15
+        self.assertIsNot(first,s.conversation('10','100',max_age=15));self.assertEqual(len(http.calls),3)
+        s.stopped=lambda:True
+        with self.assertRaises(ItalyImReadError):s.conversation('10','100',max_age=15)
+        self.assertEqual(len(http.calls),3)
+
     def test_init_exports_only_cid_oec_metadata_and_no_body_or_ticket(self):
         s,report,http,_=session();result=s.initialize()
         self.assertEqual(result["conversations"][0],{"conversationId":"10","oecId":"100","conversationType":2,"ticketPresent":True,"identitySource":"conversation_core.creator_oec_id"})

@@ -9,6 +9,12 @@ class SpeedTests(unittest.TestCase):
   self.begin('card');s=speed_status(self.s,self.p);self.assertEqual(s['contactsPerMinute'],0);self.assertEqual(s['unconfirmedAttemptPercent'],100)
   self.d.confirm(self.id,'card',self.proof('card'));self.now+=4;self.begin('text');self.d.confirm(self.id,'text',self.proof('text'));s=speed_status(self.s,self.p)
   self.assertEqual(s['contactsPerMinute'],0.2);self.assertEqual(s['messagesPerMinute'],0.4);self.assertEqual(s['cardToTextMedianSeconds'],4);self.assertEqual(sum(b['messages'] for b in s['buckets']),2)
+ def test_card_touch_does_not_count_as_completed_group(self):
+  self.begin('card');self.d.confirm(self.id,'card',self.proof('card'))
+  self.assertEqual(speed_status(self.s,self.p)['completedGroupsPerMinute'],0)
+  self.now+=4;self.begin('text');self.d.record_check(self.id,'text',{'status':'confirmed'});self.d.confirm(self.id,'text',self.proof('text'))
+  status=speed_status(self.s,self.p);self.assertEqual(status['completedGroupsPerMinute'],0.2);self.assertEqual(status['targetAttainmentPercent'],1)
+  self.now+=301;self.assertEqual(speed_status(self.s,self.p)['completedGroupsPerMinute'],0)
  def test_windows_expire_without_counting_historical_total_as_speed(self):
   self.begin('card');self.d.confirm(self.id,'card',self.proof('card'));self.now+=301;s=speed_status(self.s,self.p);self.assertEqual(s['contactsPerMinute'],0);self.assertEqual(s['last15MinutesContacts'],1)
 del DeliveryTests

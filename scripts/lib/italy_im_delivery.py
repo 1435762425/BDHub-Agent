@@ -374,6 +374,9 @@ class ItalyImDeliveryAdapter:
         if not callable(before_dispatch):raise ItalyImDeliveryError("it_delivery_dispatch_not_allowed")
         if key in self.dispatched:raise ItalyImDeliveryError("it_delivery_duplicate_dispatch")
         self._check();session.sleep(max(0, session.next_request_at - session.monotonic()));self._check()
+        if session.request_budget is not None:
+            session.request_budget.acquire()
+            self._check()
         try:
             decision = before_dispatch(dict(scope))
         except ImProbeDeadline:
@@ -388,7 +391,7 @@ class ItalyImDeliveryAdapter:
                 raise ItalyImDeliveryError("it_delivery_dispatch_not_allowed")
         self._check()
         # This local pacer shares read-session cadence, not the runner's global quota.
-        session.next_request_at = session.monotonic() + 1.0
+        session.next_request_at = session.monotonic() + (0 if session.request_budget is not None else 1.0)
         self.dispatched.add(key)
         counter = "conversationCreateRequests" if scope["stage"] == "create_conversation" else "sendRequests"
         session.report[counter] = session.report.get(counter, 0) + 1

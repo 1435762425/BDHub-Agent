@@ -17,6 +17,11 @@ def speed_status(store,plan):
  for r in rows:groups.setdefault(r['id'],{})[r['kind']]=r
  intervals=[g['text']['started']-g['card']['started'] for g in groups.values() if 'text' in g and 'card' in g and g['text']['state']=='confirmed' and g['card']['state']=='confirmed']
  optimized=[g['text']['started']-g['card']['started'] for g in groups.values() if policy and 'text' in g and 'card' in g and g['text']['state']=='confirmed' and g['card']['started']>=policy['at']]
+ complete=[]
+ if db.execute("SELECT 1 FROM sqlite_master WHERE name='cycle_delivery_check'").fetchone():
+  complete=[dict(r) for r in db.execute("SELECT d.id,min(c.checked) at FROM cycle_delivery d JOIN cycle_delivery_check c ON c.delivery_id=d.id WHERE d.plan_id=? AND d.state='confirmed' AND c.kind='text' AND json_extract(c.payload,'$.status')='confirmed' GROUP BY d.id HAVING at>?",(plan,now-900))]
+ completed_rate=round(sum(r['at']>=now-300 for r in complete)/5,2)
+ for bucket in buckets:bucket['completed']=sum(bucket['at']<=r['at']<bucket['at']+60 for r in complete)
  waits=[r['started']-r['created'] for r in rows if r['kind']=='card' and r['state']=='confirmed']
  stage=[]
  if db.execute("SELECT 1 FROM sqlite_master WHERE name='cycle_bulk_timing'").fetchone():
@@ -27,7 +32,7 @@ def speed_status(store,plan):
   if r:runtime={**dict(r),'fresh':now-r['seen']<90}
  native_rejections=db.execute("SELECT count(*) FROM cycle_platform_signal s JOIN cycle_delivery d ON d.id=s.delivery_id WHERE d.plan_id=? AND s.at>? AND s.outcome='rejected'",(plan,now-900)).fetchone()[0] if db.execute("SELECT 1 FROM sqlite_master WHERE name='cycle_platform_signal'").fetchone() else 0
  attempts=[r for r in rows if r['started']>=now-900]
- return {'policy':policy,'optimizedSamples':len(optimized),'optimizedCardToTextMedianSeconds':round(statistics.median(optimized),2) if optimized else None,'observedAt':now,'contactsPerMinute':round(len(confirmed(300,'card'))/5,2),'messagesPerMinute':round(len(confirmed(300))/5,2),
+ return {'targetContactsPerMinute':20,'completedGroupsPerMinute':completed_rate,'targetAttainmentPercent':round(completed_rate/20*100,1),'lastMinuteCompletedGroups':sum(r['at']>=now-60 for r in complete),'policy':policy,'optimizedSamples':len(optimized),'optimizedCardToTextMedianSeconds':round(statistics.median(optimized),2) if optimized else None,'observedAt':now,'contactsPerMinute':round(len(confirmed(300,'card'))/5,2),'messagesPerMinute':round(len(confirmed(300))/5,2),
  'lastMinuteContacts':len(confirmed(60,'card')),'last15MinutesContacts':len(confirmed(900,'card')),
  'cardToTextMedianSeconds':round(statistics.median(intervals),2) if intervals else None,
  'preparedToCardMedianSeconds':round(statistics.median(waits),2) if waits else None,

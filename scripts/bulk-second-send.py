@@ -14,16 +14,16 @@ def stop(*_):
  STOP=True
 
 def invoke(cmd):
- stage=cmd[2];start=time.monotonic();code=-1
+ stage='cohort' if cmd[1].endswith('cycle-send-cohort.py') else cmd[2];start=time.monotonic();code=-1
  BULK_STORE.db.execute('INSERT OR REPLACE INTO cycle_bulk_runtime VALUES(?,?,?,?)',(BULK_ID,__import__('os').getpid(),time.time(),stage))
  try:
-  result=subprocess.run(cmd,cwd=ROOT,capture_output=True,text=True,timeout=65);code=result.returncode;return result
+  result=subprocess.run(cmd,cwd=ROOT,capture_output=True,text=True,timeout=120 if stage=='cohort' else 65);code=result.returncode;return result
  finally:
   BULK_STORE.db.execute('INSERT INTO cycle_bulk_timing(batch_id,stage,seconds,exit_code,at) VALUES(?,?,?,?,?)',(BULK_ID,stage,time.monotonic()-start,code,time.time()))
 
 def main():
  global BULK_STORE,BULK_ID
- p=argparse.ArgumentParser();p.add_argument('--batch-id',required=True);p.add_argument('--target',type=int,default=100);p.add_argument('--once',action='store_true');a=p.parse_args()
+ p=argparse.ArgumentParser();p.add_argument('--batch-id',required=True);p.add_argument('--target',type=int,default=100);p.add_argument('--once',action='store_true');p.add_argument('--lanes',type=int,choices=(1,2,4),default=1);a=p.parse_args()
  if not a.batch_id.replace('-','').isalnum() or not 1<=a.target<=500:p.error('invalid scope')
  signal.signal(signal.SIGTERM,stop);signal.signal(signal.SIGINT,stop)
  out=ROOT/'var/bulk-second';out.mkdir(exist_ok=True)
@@ -59,6 +59,18 @@ CREATE TABLE IF NOT EXISTS cycle_bulk_item(batch_id TEXT NOT NULL,creator_id TEX
     if a.once:break
     time.sleep(10);continue
    s.db.execute("UPDATE cycle_bulk SET state='running' WHERE id=?",(a.batch_id,))
+   if a.lanes>1:
+    try:
+     r=invoke([sys.executable,str(ROOT/'scripts/cycle-send-cohort.py'),'--batch-id',a.batch_id,'--lanes',str(a.lanes),'--limit','8'])
+     result=json.loads(r.stdout.strip().splitlines()[-1]) if r.stdout.strip() else {'error':'cohort_failed'}
+     print(json.dumps(result),flush=True)
+     if r.returncode:time.sleep(3)
+    except subprocess.TimeoutExpired:
+     # Child kill leaves persistent parts intact; next iteration recovers before new writes.
+     print(json.dumps({'error':'cohort_timeout_reconcile_before_send'}),flush=True)
+    if a.once:break
+    time.sleep(1)  # Release the account/cycle locks so inbound and reply workers can run.
+    continue
    try:
     did=item['delivery_id']
     if not did:

@@ -110,6 +110,18 @@ class SecondLiveRuntimeTests(unittest.TestCase):
             self.assertEqual(error.exception.code, "live_market_send_unavailable")
             fixture.adapter.assert_not_called()
 
+    def test_borrowed_runtime_reuses_outer_guard_and_auth_but_closes_each_session(self):
+        with self.fixture() as f:
+            report={}
+            with M._authenticated(report,stopped=f.stopped) as context:
+                for _ in range(2):
+                    with M.live_runtime(M.sender_binding_sha256(f.auth),dict(report),var_dir=f.var,
+                                        authenticated_context=context,send_interval=.75):
+                        self.assertTrue(f.state['guarded'])
+                self.assertEqual(f.state['authCalls'],1)
+                self.assertTrue(f.state['guarded'])
+            self.assertFalse(f.state['guarded'])
+
     def test_sender_hash_is_canonical_identity_only_and_token_independent(self):
         source = auth(); expected = {"account": "acc6", "market": "it", "im_id": "101", "market_id": "202", "partner_id": "303"}
         result = M.sender_binding_sha256(source)

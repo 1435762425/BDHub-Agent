@@ -84,3 +84,5 @@ B.12当前授权与运行：[批量二发及自动回复](docs/implementation/se
 B.13最新任务：[提速与额度实测](docs/implementation/second-cycle-speed-and-limit-test-v1.md)。用户要求持续发至每日新触达上限，并观察平台停止标志；本批目标已扩500。新系统2秒写入间隔、同组runtime复用、速度监控已实现；初始13组卡→文字中位约4.09秒。尚未遇到平台日额度返回，本地500计数不作为平台信号。按本文持续验证，不在100人处停止。
 
 B.14接续：[按需素材与Campaign卡](docs/implementation/second-cycle-material-supply-v2.md)。已解除发送端前5 PID限制，按待发需求补名称/卡片；Campaign成员可在严格绑定父列表后继承活动ID，已选wire0不能继承。新暖奶器卡创建1次、核验恢复成功。certo误发确认句已保留并纠错，无追加消息；模型分类v2加入最近已发文字。继续本批500及真实额度标志实测。
+
+B.15最新接续：[20位/分钟吞吐改造](docs/implementation/second-cycle-throughput-20-v1.md)。it-bulk-20260913使用4通道短批次、一次认证、独立Session、全局写队列0.75秒与IM合计3 QPS；同达人卡先文后、多达人最多4组件在途、unknown与原生失败停止均保留。商品核验按Offer/listId复用10秒、会话身份同Session最多15秒，消息历史与回查不省略。供给节拍同步提高，账号竞争不再触发长退避。小批实测3人14.15秒，尚未达成持续20人/分钟；不要把设置值或理论速度当验收。继续解决身份/材料供给与账号争用。

@@ -127,7 +127,7 @@ def decode_initial_conversations(body, wire=None):
 class ItalyImReadSession:
     def __init__(self, auth, report, *, http=None, monotonic=time.monotonic, sleep=time.sleep,
                  maintenance_due=lambda: False, stopped=lambda: False, on_update=lambda: None,
-                 use_environment_proxy=True, sequence=None):
+                 use_environment_proxy=True, sequence=None, request_budget=None):
         self.wire = _proto()
         try:
             if auth.account_name != "acc6" or auth.native_context.get("market_region") != "8":
@@ -152,12 +152,14 @@ class ItalyImReadSession:
         except Exception:
             raise ItalyImReadError("im_auth_context_invalid") from None
         self.report, self.monotonic, self.sleep = report, monotonic, sleep
+        self.request_budget = request_budget
         self.maintenance_due, self.stopped, self.on_update = maintenance_due, stopped, on_update
         self.sequence = sequence if sequence is not None else secrets.randbelow(1_000_000_000) + 1
         if type(self.sequence) is not int or self.sequence < 1:
             raise ItalyImReadError("im_input_invalid")
         self.expires_at = monotonic() + 15 * 60
         self.verified = {}
+        self.verified_at = {}
         self.session, self.owned = http, False
         if self.session is None:
             try:
@@ -191,6 +193,11 @@ class ItalyImReadSession:
         if self.stopped(): raise ItalyImReadError("stopped")
         if self.maintenance_due(): raise ItalyImReadError("maintenance_due")
         if self.monotonic() >= self.expires_at: raise ItalyImReadError("im_auth_expired")
+        if self.request_budget is not None:
+            self.request_budget.acquire()
+            if self.stopped(): raise ItalyImReadError("stopped")
+            if self.maintenance_due(): raise ItalyImReadError("maintenance_due")
+            if self.monotonic() >= self.expires_at: raise ItalyImReadError("im_auth_expired")
         self.sequence += 1
         sequence, wire = self.sequence, self.wire
         packet = (wire.vi(1, command) + wire.vi(2, sequence) + wire.vb(3, "1.2.2") + wire.vb(4, self.token)
@@ -202,7 +209,7 @@ class ItalyImReadSession:
         if wire.one(fields, 1) != command or set(wire.wire_fields(wire.one(fields, 8))) != {command}:
             raise ItalyImReadError("im_command_forbidden")
         start = self.monotonic()
-        self.next_request_at = start + 1
+        self.next_request_at = start + (0 if self.request_budget is not None else 1)
         entry = {"command": command, "endpointPath": PATHS[command], "status": "inflight", "httpStatus": None,
                  "sequenceMatches": None, "outerStatus": None, "responseBytes": None, "latencyMs": None}
         self.report["imReads"].append(entry)
@@ -261,10 +268,22 @@ class ItalyImReadSession:
         self.on_update()
         return result
 
-    def conversation(self, cid, oec_id, *, conversation_type=2):
+    def conversation(self, cid, oec_id, *, conversation_type=2, max_age=0):
         cid, oec_id = _id(cid), _id(oec_id)
         if type(conversation_type) is not int or not 0 <= conversation_type <= 10:
             raise ItalyImReadError("im_input_invalid")
+        if type(max_age) not in (int,float) or not 0 <= max_age <= 15:
+            raise ItalyImReadError("im_input_invalid")
+        prior = self.verified.get(cid)
+        if (max_age and prior and prior.oec_id == oec_id and prior.conversation_type == conversation_type
+                and self.monotonic()-self.verified_at.get(cid, -1000) < max_age):
+            if self.stopped(): raise ItalyImReadError("stopped")
+            if self.maintenance_due(): raise ItalyImReadError("maintenance_due")
+            if self.monotonic() >= self.expires_at: raise ItalyImReadError("im_auth_expired")
+            self.report["conversationProofReuses"] = self.report.get("conversationProofReuses", 0)+1
+            return prior
+        self.verified.pop(cid, None)
+        self.verified_at.pop(cid, None)
         wire = self.wire
         body, raw, sequence = self._read(608, wire.vb(1, cid) + wire.vi(2, int(cid)) + wire.vi(3, conversation_type))
         try:
@@ -280,6 +299,7 @@ class ItalyImReadSession:
         except Exception:
             raise ItalyImReadError("im_conversation_identity_mismatch") from None
         self.verified[cid] = result
+        self.verified_at[cid] = self.monotonic()
         self.report["verifiedConversationCount"] = len(self.verified)
         self.on_update()
         return result

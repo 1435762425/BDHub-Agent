@@ -7,7 +7,7 @@ are snapshots, never a claim of atomic coordination with the old project.
 """
 from __future__ import annotations
 
-from contextlib import contextmanager, redirect_stdout, redirect_stderr
+from contextlib import contextmanager, redirect_stdout, redirect_stderr, nullcontext
 import fcntl
 import hashlib
 import importlib.util
@@ -290,11 +290,11 @@ def _new_gate_directory(var_dir):
 
 
 @contextmanager
-def live_runtime(expected_sender_binding_hash, report, *, var_dir=VAR, stopped=lambda: False, card_validator=None, send_interval=None):
+def live_runtime(expected_sender_binding_hash, report, *, var_dir=VAR, stopped=lambda: False, card_validator=None, send_interval=None, authenticated_context=None, request_budget=None):
     if not isinstance(expected_sender_binding_hash, str) or re.fullmatch(r"[0-9a-f]{64}", expected_sender_binding_hash) is None:
         raise SecondLiveRuntimeError("live_sender_binding_required")
     gate_directory = _new_gate_directory(var_dir)
-    with _authenticated(report, stopped=stopped) as (account, identity, headers, auth, maintenance, available):
+    with (nullcontext(authenticated_context) if authenticated_context is not None else _authenticated(report, stopped=stopped)) as (account, identity, headers, auth, maintenance, available):
         if report.get("sendCapability") not in {"canary", "enabled"}:
             raise SecondLiveRuntimeError("live_market_send_unavailable")
         binding = sender_binding_sha256(auth)
@@ -303,7 +303,7 @@ def live_runtime(expected_sender_binding_hash, report, *, var_dir=VAR, stopped=l
         policy = _resolve_policy(account)
         interval = policy.im_send_interval_seconds
         if send_interval is not None:
-            if type(send_interval) not in (int,float) or not math.isfinite(send_interval) or not 1<=send_interval<=60:raise SecondLiveRuntimeError("live_interval_invalid")
+            if type(send_interval) not in (int,float) or not math.isfinite(send_interval) or not 0.5<=send_interval<=60:raise SecondLiveRuntimeError("live_interval_invalid")
             interval=float(send_interval)
         if (not policy.im_send_pool or isinstance(interval, bool) or not isinstance(interval, (int, float))
                 or not math.isfinite(interval) or interval <= 0):
@@ -365,7 +365,7 @@ def live_runtime(expected_sender_binding_hash, report, *, var_dir=VAR, stopped=l
             return current
         try:
             with ItalyImReadSession(auth, report, maintenance_due=maintenance,
-                    stopped=lambda: closed or stopped(), use_environment_proxy=True) as reads:
+                    stopped=lambda: closed or stopped(), use_environment_proxy=True, request_budget=request_budget) as reads:
                 adapter = ItalyImDeliveryAdapter(auth, reads)
                 check()
                 yield {"adapter": adapter, "reads": reads, "write_gate": write_gate,
