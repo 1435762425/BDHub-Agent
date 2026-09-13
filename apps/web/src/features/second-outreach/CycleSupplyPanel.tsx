@@ -11,7 +11,7 @@ export default function CycleSupplyPanel(){const [template,setTemplate]=useState
  void poll();return()=>{controller.abort();if(timer)clearTimeout(timer);};},[]);
  return <section className="mb-5 rounded-2xl border border-gray-200 bg-white p-5 dark:border-gray-800 dark:bg-gray-900" aria-label="二发供给底座">
  <h2 className="text-base font-semibold text-gray-900 dark:text-white">二发经营 · 运行状态</h2>
- <p className="mt-1 text-sm text-gray-500">货盘与 Kalodata 持久采集已接入；批量二发与自动回复按当前经营规则运行。</p>
+ <p className="mt-1 text-sm text-gray-500">查看当前实测批次、货盘供给和收信状态。</p>
  {error?<p role="status" className="mt-3 text-sm">暂时无法读取供给状态，未启动任何操作。</p>:!data?<p role="status" className="mt-3 text-sm">正在读取供给状态…</p>:data.available===false?<p className="mt-3 text-sm">尚未导入本地供给资料。</p>:<>
  <div className="mt-4 flex flex-wrap gap-x-6 gap-y-2 text-sm text-gray-700 dark:text-gray-200"><span>货盘方案 <strong>{data.offerCount??data.offers?.length??0}</strong></span><span>条件合格方案 <strong>{data.eligibleOfferCount??0}</strong></span><span>稳定关系 <strong>{data.relationships}</strong></span><span>来源线索 <strong>{data.sourceEdges}</strong></span><span>达人×商品机会 <strong>{data.opportunities}</strong></span><span>条件齐全达人 <strong>{data.eligibleUniqueCreators}</strong></span></div>
  <div className="mt-3 text-sm text-gray-600 dark:text-gray-300">Kalodata 任务：排队 {data.jobs?.queued??0} · 处理中 {data.jobs?.running??0} · 已完成 {data.jobs?.completed??0} · 待处理异常 {data.jobs?.blocked??0}</div>
