@@ -1,0 +1,7981 @@
+{
+  "schema": "bdhub.tiktok.source-inventory.v1",
+  "scope": "Python source literals in bdhub/dashboard excluding tests; no runtime or credentials",
+  "limitations": [
+    "Not an exhaustive platform endpoint list",
+    "String paths may be partial bases",
+    "Method and side effects require review",
+    "get keys are code candidates, not verified response fields",
+    "Dynamically constructed/JS bundle paths may be absent"
+  ],
+  "filesScanned": 405,
+  "parseErrors": [],
+  "sourceSha256": {
+    "bdhub/enrich/browser_fetch.py": "6ce5002873b5b4aefb81da34d6b369e75d71543cd540d9411557c2f9016e4cd1",
+    "bdhub/enrich/client.py": "81d3bad1daa0bf9b15faa3a94fbc8eec2573e845c533f455822afe5a424319e3",
+    "bdhub/enrich/profile_observer.py": "d7f42b458efcc2c6a183e6fa2af210853e3126b7421909e63613d8a74aa053e4",
+    "bdhub/hub/markets.py": "6be5341d74ec0aa68f3df0b234527a4802d898c8a632bdd0dc7096bec02113b5",
+    "bdhub/hub/schema.py": "8b02aad8163d657cb4562a57a29d2cca31d871940d00012d843bec8d5bcedded",
+    "bdhub/imbase/http_readonly_probe.py": "919c9ec98d3f927ede62b74c5d6a31f241e1c0958ce5817ab8f22b39afed6caa",
+    "bdhub/monitor/identity_capture.py": "db90d1ba6c30539c343e50ce06e236794a5dee3abec375a8b5cc608d0ceb929c",
+    "bdhub/probe/market_interfaces.py": "25332dc2c052710418795d66520ebbabf48e1e3b915c02be35bdc08bdcca7366",
+    "bdhub/promotion_site_sample_sync.py": "ac3d20630ce1bc4920570264804b367c19afe7f17518ce4181617d8ab68d522f",
+    "bdhub/report_sync/browser.py": "40c24f9fb11da2bf179679a41eb6686ec65c1658abf3c4690dc5474b16990e92",
+    "bdhub/research/commerce_transport.py": "f374d227f8fefdacc8355cd86bdaba4a53481479819869265941c425be4b2de0",
+    "bdhub/research/product_source_transport.py": "b7a8a585e556e5cbc750eeb0a254418e7716feb677bbe75c0b9fac0e18e64c24",
+    "bdhub/sample_review/transport.py": "9d826570c303bb1dc85303e0caf65d4592ff3a740da93b96e2da48be5f3b68af",
+    "bdhub/send/dispatch.py": "b1582a9e699b0884ef2b13fb62faf6d76a3bc616258637e792312c8bfe873aa8",
+    "bdhub/send/http_auth.py": "a809a9c191f104b42601c2e0e9310eade9b4dd354d7306e41514a751ba01ed41",
+    "bdhub/send/http_card.py": "002deb206a31c2b8faf2d8293c80cf457ec0d1fa04b3cf3f87625528fdde9361",
+    "bdhub/send/http_conversation.py": "78d1d40304d391947fa10037d17c0b6b8ea633c953b795acca96c30a486dc6db",
+    "bdhub/send/http_protocol.py": "57a2c321c0aa2ac8cf42440ed2170c32e55166b22e51b865b0afda85298e10aa",
+    "bdhub/send/sharelink/transport.py": "82e29dfbadd673fe6ebfd2b9e699031c2d3b489e9e73dffdf2ef3cbb4d0e00ff",
+    "bdhub/send/taplink/cleanup.py": "9ae7b9445a6028f2c0644a9851efc5b3013d0f9f81dfd8eb87725720bc4727ff",
+    "bdhub/send/taplink/protocol.py": "46367b6a6574ecaba7bcc4f8f531bd77b3132370e7fdfdbd254981edf1340092",
+    "bdhub/send/transport_scripts.py": "f0f45ef9f4f0bd9564cbe4f315e9b1783f27e0f4670b3405ff260468f3e6cdfb",
+    "dashboard/promotion_site_staging.py": "1cdca1f4e09c2e45e9acedec859300d1962c1945fff337311d032b6babc5d018"
+  },
+  "endpoints": [
+    {
+      "path": "/api/v1/affiliate/lux/product/category/childrenv2",
+      "evidence": "source_only",
+      "references": [
+        {
+          "file": "bdhub/research/commerce_transport.py",
+          "line": 20
+        }
+      ]
+    },
+    {
+      "path": "/api/v1/affiliate/partner/",
+      "evidence": "source_only",
+      "references": [
+        {
+          "file": "bdhub/send/http_auth.py",
+          "line": 25
+        }
+      ]
+    },
+    {
+      "path": "/api/v1/affiliate/partner/campaign/list",
+      "evidence": "source_only",
+      "references": [
+        {
+          "file": "bdhub/enrich/client.py",
+          "line": 24
+        },
+        {
+          "file": "bdhub/enrich/client.py",
+          "line": 123
+        },
+        {
+          "file": "bdhub/send/sharelink/transport.py",
+          "line": 26
+        }
+      ]
+    },
+    {
+      "path": "/api/v1/affiliate/partner/campaign/product/link",
+      "evidence": "source_only",
+      "references": [
+        {
+          "file": "bdhub/send/sharelink/transport.py",
+          "line": 28
+        }
+      ]
+    },
+    {
+      "path": "/api/v1/affiliate/partner/campaign/product/list",
+      "evidence": "source_only",
+      "references": [
+        {
+          "file": "bdhub/enrich/client.py",
+          "line": 25
+        },
+        {
+          "file": "bdhub/enrich/client.py",
+          "line": 124
+        },
+        {
+          "file": "bdhub/send/sharelink/transport.py",
+          "line": 27
+        }
+      ]
+    },
+    {
+      "path": "/api/v1/affiliate/partner/campaign/product_list/create",
+      "evidence": "source_only",
+      "references": [
+        {
+          "file": "bdhub/send/taplink/protocol.py",
+          "line": 8
+        }
+      ]
+    },
+    {
+      "path": "/api/v1/affiliate/partner/campaign/product_list/delete",
+      "evidence": "source_only",
+      "references": [
+        {
+          "file": "bdhub/send/taplink/cleanup.py",
+          "line": 22
+        }
+      ]
+    },
+    {
+      "path": "/api/v1/affiliate/partner/campaign/product_list/list",
+      "evidence": "source_only",
+      "references": [
+        {
+          "file": "bdhub/send/taplink/cleanup.py",
+          "line": 20
+        }
+      ]
+    },
+    {
+      "path": "/api/v1/affiliate/partner/campaign/product_list/products",
+      "evidence": "source_only",
+      "references": [
+        {
+          "file": "bdhub/research/commerce_transport.py",
+          "line": 19
+        },
+        {
+          "file": "bdhub/send/taplink/cleanup.py",
+          "line": 21
+        }
+      ]
+    },
+    {
+      "path": "/api/v1/affiliate/partner/campaign/review",
+      "evidence": "source_only",
+      "references": [
+        {
+          "file": "bdhub/research/commerce_transport.py",
+          "line": 18
+        }
+      ]
+    },
+    {
+      "path": "/api/v1/affiliate/partner/campaign/sample/budget/review",
+      "evidence": "source_only",
+      "references": [
+        {
+          "file": "bdhub/sample_review/transport.py",
+          "line": 19
+        }
+      ]
+    },
+    {
+      "path": "/api/v1/affiliate/partner/campaign/sample/price",
+      "evidence": "source_only",
+      "references": [
+        {
+          "file": "bdhub/sample_review/transport.py",
+          "line": 20
+        }
+      ]
+    },
+    {
+      "path": "/api/v1/affiliate/partner/campaign/seller_requested/review",
+      "evidence": "source_only",
+      "references": [
+        {
+          "file": "bdhub/research/product_source_transport.py",
+          "line": 9
+        }
+      ]
+    },
+    {
+      "path": "/api/v1/affiliate/partner/im/filter/creator/mget",
+      "evidence": "source_only",
+      "references": [
+        {
+          "file": "bdhub/monitor/identity_capture.py",
+          "line": 8
+        }
+      ]
+    },
+    {
+      "path": "/api/v1/affiliate/partner/im/id/get",
+      "evidence": "source_only",
+      "references": [
+        {
+          "file": "bdhub/probe/market_interfaces.py",
+          "line": 21
+        }
+      ]
+    },
+    {
+      "path": "/api/v1/affiliate/partner/im/product_list/list",
+      "evidence": "source_only",
+      "references": [
+        {
+          "file": "bdhub/probe/market_interfaces.py",
+          "line": 20
+        },
+        {
+          "file": "bdhub/send/dispatch.py",
+          "line": 124
+        },
+        {
+          "file": "bdhub/send/dispatch.py",
+          "line": 229
+        },
+        {
+          "file": "bdhub/send/http_card.py",
+          "line": 48
+        },
+        {
+          "file": "bdhub/send/taplink/protocol.py",
+          "line": 9
+        },
+        {
+          "file": "bdhub/send/transport_scripts.py",
+          "line": 225
+        },
+        {
+          "file": "bdhub/send/transport_scripts.py",
+          "line": 292
+        }
+      ]
+    },
+    {
+      "path": "/api/v1/affiliate/partner/product/opportunity_product/campaign_detail",
+      "evidence": "source_only",
+      "references": [
+        {
+          "file": "bdhub/send/sharelink/transport.py",
+          "line": 24
+        }
+      ]
+    },
+    {
+      "path": "/api/v1/affiliate/partner/product/opportunity_product/list",
+      "evidence": "source_only",
+      "references": [
+        {
+          "file": "bdhub/send/sharelink/transport.py",
+          "line": 23
+        }
+      ]
+    },
+    {
+      "path": "/api/v1/affiliate/partner/product/pick_up/list",
+      "evidence": "source_only",
+      "references": [
+        {
+          "file": "bdhub/send/sharelink/transport.py",
+          "line": 22
+        }
+      ]
+    },
+    {
+      "path": "/api/v1/affiliate/partner/product/pick_up/select",
+      "evidence": "source_only",
+      "references": [
+        {
+          "file": "bdhub/send/sharelink/transport.py",
+          "line": 25
+        }
+      ]
+    },
+    {
+      "path": "/api/v1/affiliate/partner/relation/list",
+      "evidence": "source_only",
+      "references": [
+        {
+          "file": "bdhub/enrich/client.py",
+          "line": 23
+        },
+        {
+          "file": "bdhub/enrich/client.py",
+          "line": 122
+        },
+        {
+          "file": "bdhub/report_sync/browser.py",
+          "line": 70
+        }
+      ]
+    },
+    {
+      "path": "/api/v1/affiliate/partner/sample/records/list",
+      "evidence": "source_only",
+      "references": [
+        {
+          "file": "bdhub/sample_review/transport.py",
+          "line": 18
+        }
+      ]
+    },
+    {
+      "path": "/api/v1/im/conversation/create",
+      "evidence": "source_only",
+      "references": [
+        {
+          "file": "bdhub/send/http_conversation.py",
+          "line": 7
+        }
+      ]
+    },
+    {
+      "path": "/api/v1/insights/export/file/",
+      "evidence": "source_only",
+      "references": [
+        {
+          "file": "bdhub/report_sync/browser.py",
+          "line": 24
+        }
+      ]
+    },
+    {
+      "path": "/api/v1/internal/sample-requests",
+      "evidence": "source_only",
+      "references": [
+        {
+          "file": "bdhub/promotion_site_sample_sync.py",
+          "line": 18
+        }
+      ]
+    },
+    {
+      "path": "/api/v1/oec/affiliate/creator/marketplace/4partner/find",
+      "evidence": "source_only",
+      "references": [
+        {
+          "file": "bdhub/enrich/browser_fetch.py",
+          "line": 19
+        },
+        {
+          "file": "bdhub/enrich/client.py",
+          "line": 21
+        },
+        {
+          "file": "bdhub/enrich/client.py",
+          "line": 120
+        },
+        {
+          "file": "bdhub/hub/markets.py",
+          "line": 22
+        },
+        {
+          "file": "bdhub/probe/market_interfaces.py",
+          "line": 19
+        },
+        {
+          "file": "bdhub/send/dispatch.py",
+          "line": 111
+        },
+        {
+          "file": "bdhub/send/dispatch.py",
+          "line": 218
+        }
+      ]
+    },
+    {
+      "path": "/api/v1/oec/affiliate/creator/marketplace/4partner/profile",
+      "evidence": "source_only",
+      "references": [
+        {
+          "file": "bdhub/enrich/client.py",
+          "line": 22
+        },
+        {
+          "file": "bdhub/enrich/client.py",
+          "line": 121
+        },
+        {
+          "file": "bdhub/enrich/profile_observer.py",
+          "line": 16
+        }
+      ]
+    },
+    {
+      "path": "/api/v1/promotion-site",
+      "evidence": "source_only",
+      "references": [
+        {
+          "file": "dashboard/promotion_site_staging.py",
+          "line": 133
+        },
+        {
+          "file": "dashboard/promotion_site_staging.py",
+          "line": 220
+        },
+        {
+          "file": "dashboard/promotion_site_staging.py",
+          "line": 265
+        }
+      ]
+    },
+    {
+      "path": "/api/v1/promotion-site/{slug}",
+      "evidence": "source_only",
+      "references": [
+        {
+          "file": "dashboard/promotion_site_staging.py",
+          "line": 147
+        },
+        {
+          "file": "dashboard/promotion_site_staging.py",
+          "line": 234
+        }
+      ]
+    },
+    {
+      "path": "/v1/message/get_by_conversation",
+      "evidence": "source_only",
+      "references": [
+        {
+          "file": "bdhub/send/http_protocol.py",
+          "line": 8
+        }
+      ]
+    },
+    {
+      "path": "/v1/message/get_by_id",
+      "evidence": "source_only",
+      "references": [
+        {
+          "file": "bdhub/send/http_protocol.py",
+          "line": 7
+        }
+      ]
+    },
+    {
+      "path": "/v1/message/send",
+      "evidence": "source_only",
+      "references": [
+        {
+          "file": "bdhub/send/http_protocol.py",
+          "line": 6
+        }
+      ]
+    },
+    {
+      "path": "/v2/conversation/get_info",
+      "evidence": "source_only",
+      "references": [
+        {
+          "file": "bdhub/send/http_protocol.py",
+          "line": 9
+        }
+      ]
+    },
+    {
+      "path": "/v2/message/get_by_user_init",
+      "evidence": "source_only",
+      "references": [
+        {
+          "file": "bdhub/imbase/http_readonly_probe.py",
+          "line": 3
+        }
+      ]
+    }
+  ],
+  "candidateKeysByFile": {
+    "bdhub/enrich/browser_fetch.py": [
+      "error",
+      "list"
+    ],
+    "bdhub/enrich/client.py": [
+      "code"
+    ],
+    "bdhub/enrich/profile_observer.py": [
+      "creator_oec_id",
+      "profile_types"
+    ],
+    "bdhub/hub/markets.py": [],
+    "bdhub/imbase/http_readonly_probe.py": [],
+    "bdhub/monitor/identity_capture.py": [
+      "code",
+      "conversation_id",
+      "creator_oec_id",
+      "creator_oecuid",
+      "data",
+      "handle",
+      "is_authorized",
+      "items",
+      "list",
+      "nickname",
+      "oec_id",
+      "status",
+      "value"
+    ],
+    "bdhub/probe/market_interfaces.py": [
+      "aid",
+      "code",
+      "component_method_available",
+      "content-type",
+      "conversation_count",
+      "conversation_service_ready",
+      "data",
+      "href",
+      "http_status",
+      "key",
+      "label",
+      "listen_method_available",
+      "market",
+      "market_code",
+      "partner_id",
+      "possible_soft_block",
+      "query",
+      "request",
+      "response",
+      "response_code",
+      "sdk_method_available",
+      "sdk_ready",
+      "source_url",
+      "status",
+      "url",
+      "x-tts-oec-bsid"
+    ],
+    "bdhub/promotion_site_sample_sync.py": [
+      "cursor_request_id",
+      "cursor_submitted_at",
+      "hasMore",
+      "items",
+      "nextCursor",
+      "origin",
+      "remote_origin",
+      "requestId",
+      "submittedAt",
+      "token"
+    ],
+    "bdhub/report_sync/browser.py": [
+      "code",
+      "content",
+      "content-type",
+      "content_base64",
+      "data",
+      "file",
+      "file_locator",
+      "kind",
+      "partner_id",
+      "region_code",
+      "status"
+    ],
+    "bdhub/research/commerce_transport.py": [
+      "action",
+      "bdturing-verify",
+      "campaign",
+      "campaign_id",
+      "campaign_products",
+      "category_id",
+      "category_infos",
+      "creator_commission_percent",
+      "crs_campaign_type",
+      "data",
+      "has_more",
+      "is_leaf",
+      "is_selected",
+      "is_under_governed",
+      "items",
+      "list",
+      "list_id",
+      "method",
+      "name",
+      "open_collab_rate",
+      "path",
+      "payload",
+      "plan_commission_percent",
+      "product_campaign_detail",
+      "product_id",
+      "product_list_id",
+      "product_list_name",
+      "product_status",
+      "products",
+      "receipt",
+      "stock",
+      "total",
+      "total_commission_percent",
+      "total_num",
+      "unavailable_type",
+      "unified",
+      "write"
+    ],
+    "bdhub/research/product_source_transport.py": [
+      "campaign",
+      "campaign_id",
+      "commission",
+      "data",
+      "is_under_governed",
+      "items",
+      "product_campaign_detail",
+      "total_num",
+      "unavailable_type"
+    ],
+    "bdhub/sample_review/transport.py": [
+      "campaign_info",
+      "campaign_statistics",
+      "creator_commission_percent",
+      "creator_info",
+      "data",
+      "follower_num",
+      "image_url",
+      "is_fast_growing",
+      "is_posted",
+      "nick_name",
+      "order_expired_time",
+      "product_info",
+      "product_price",
+      "product_sales",
+      "product_status",
+      "promotion_end_time",
+      "promotion_start_time",
+      "room_count",
+      "sample_budget",
+      "sample_records",
+      "shop_experience_score",
+      "shop_score",
+      "sku_info",
+      "status",
+      "stock",
+      "total",
+      "total_commission_percent",
+      "unavailable_type",
+      "video_count"
+    ],
+    "bdhub/send/dispatch.py": [
+      "card",
+      "cardSent",
+      "cid",
+      "cold_resolved",
+      "comm",
+      "detail",
+      "err",
+      "flight",
+      "foundItem",
+      "lists",
+      "oec",
+      "oec_id",
+      "oid",
+      "ok",
+      "pid",
+      "product_id",
+      "results",
+      "stage"
+    ],
+    "bdhub/send/http_auth.py": [
+      "api_url",
+      "bdturing-verify",
+      "code",
+      "data",
+      "im_id",
+      "market_list",
+      "market_region",
+      "partner_biz_role_info",
+      "partner_id",
+      "token",
+      "type_list"
+    ],
+    "bdhub/send/http_card.py": [
+      "bdturing-verify",
+      "campaign_id",
+      "campaign_name",
+      "campaign_products",
+      "code",
+      "data",
+      "list",
+      "productId",
+      "product_id",
+      "product_list_id",
+      "product_list_name",
+      "stock",
+      "type"
+    ],
+    "bdhub/send/http_conversation.py": [
+      "api_url",
+      "app_id",
+      "avatar_url",
+      "code",
+      "company_name",
+      "company_region",
+      "conversation_short_id",
+      "data",
+      "is_new",
+      "partner_biz_role_info",
+      "partner_id",
+      "partner_info",
+      "type",
+      "type_list"
+    ],
+    "bdhub/send/http_protocol.py": [],
+    "bdhub/send/sharelink/transport.py": [
+      "campaign",
+      "campaign_id",
+      "campaign_info",
+      "campaign_name",
+      "campaign_product",
+      "campaigns",
+      "category",
+      "category_l1",
+      "category_l2",
+      "category_l3",
+      "code",
+      "commission",
+      "crs_campaign_type",
+      "crs_campaign_types",
+      "data",
+      "description",
+      "error_code",
+      "first_category_name",
+      "has_free_sample",
+      "has_turing",
+      "http_status",
+      "id",
+      "image",
+      "is_selected",
+      "is_under_governed",
+      "items",
+      "kind",
+      "market",
+      "message",
+      "msg",
+      "name",
+      "open_collab_rate",
+      "pages_scanned",
+      "partner_commission_percent",
+      "plan_commission_percent",
+      "plan_id",
+      "price",
+      "product_campaign_detail",
+      "product_id",
+      "product_name",
+      "product_price",
+      "product_rating",
+      "product_review_count",
+      "product_sales",
+      "product_status",
+      "product_thumbnail",
+      "products",
+      "remaining_sample_budget",
+      "sales",
+      "sample_quota",
+      "second_category_name",
+      "seller_id",
+      "shop_code",
+      "shop_experience_score",
+      "shop_name",
+      "shop_score",
+      "stock",
+      "system_error_3",
+      "text",
+      "third_category_name",
+      "title",
+      "total",
+      "total_commission_percent",
+      "total_num",
+      "unavailable_type",
+      "url"
+    ],
+    "bdhub/send/taplink/cleanup.py": [
+      "action",
+      "campaign_id",
+      "campaign_products",
+      "card",
+      "data",
+      "delete_attempted",
+      "eligible",
+      "id",
+      "is_under_governed",
+      "items",
+      "list_id",
+      "lists",
+      "name",
+      "next_cursor",
+      "platform_updated_at",
+      "product_id",
+      "product_name",
+      "product_status",
+      "products",
+      "receipt",
+      "resume_read",
+      "scan_complete",
+      "source_scope",
+      "state",
+      "stock",
+      "total",
+      "total_num",
+      "unavailable_type",
+      "update_time",
+      "url",
+      "worker_pid"
+    ],
+    "bdhub/send/taplink/protocol.py": [
+      "campaign_id",
+      "campaign_info",
+      "campaign_name",
+      "campaign_products",
+      "code",
+      "data",
+      "id",
+      "is_under_governed",
+      "list",
+      "list_id",
+      "product_id",
+      "product_list_id",
+      "product_list_name",
+      "stock",
+      "unavailable_type",
+      "url"
+    ],
+    "bdhub/send/transport_scripts.py": [],
+    "dashboard/promotion_site_staging.py": [
+      "Cache-Control",
+      "X-BJN-Edge",
+      "created_at",
+      "id",
+      "items",
+      "meta",
+      "pageCount",
+      "pages",
+      "payload",
+      "productRating",
+      "productSales",
+      "products",
+      "releaseId",
+      "release_id",
+      "remote_release_id",
+      "shareLink",
+      "slug",
+      "source_sha256",
+      "staged_at",
+      "status"
+    ]
+  },
+  "databaseColumnsByTable": {
+    "creator_profile": [
+      {
+        "name": "handle_key",
+        "type": "Text",
+        "line": 49
+      },
+      {
+        "name": "bd_market",
+        "type": "Text",
+        "line": 50
+      },
+      {
+        "name": "raw_json",
+        "type": "JSONB",
+        "line": 52
+      },
+      {
+        "name": "captured_at",
+        "type": "DateTime(timezone=True)",
+        "line": 53
+      }
+    ],
+    "miss_log": [
+      {
+        "name": "handle_key",
+        "type": "Text",
+        "line": 64
+      },
+      {
+        "name": "bd_market",
+        "type": "Text",
+        "line": 65
+      },
+      {
+        "name": "missed_at",
+        "type": "DateTime(timezone=True)",
+        "line": 66
+      },
+      {
+        "name": "n",
+        "type": "Integer",
+        "line": 67
+      }
+    ],
+    "creator_identity": [
+      {
+        "name": "bd_market",
+        "type": "Text",
+        "line": 74
+      },
+      {
+        "name": "oec_id",
+        "type": "Text",
+        "line": 75
+      },
+      {
+        "name": "current_handle_key",
+        "type": "Text",
+        "line": 76
+      },
+      {
+        "name": "first_seen_at",
+        "type": "DateTime(timezone=True)",
+        "line": 77
+      },
+      {
+        "name": "last_seen_at",
+        "type": "DateTime(timezone=True)",
+        "line": 78
+      },
+      {
+        "name": "last_light_at",
+        "type": "DateTime(timezone=True)",
+        "line": 79
+      },
+      {
+        "name": "last_full_at",
+        "type": "DateTime(timezone=True)",
+        "line": 80
+      },
+      {
+        "name": "created_at",
+        "type": "DateTime(timezone=True)",
+        "line": 81
+      },
+      {
+        "name": "updated_at",
+        "type": "DateTime(timezone=True)",
+        "line": 82
+      }
+    ],
+    "creator_handle_alias": [
+      {
+        "name": "alias_id",
+        "type": "Text",
+        "line": 88
+      },
+      {
+        "name": "bd_market",
+        "type": "Text",
+        "line": 89
+      },
+      {
+        "name": "oec_id",
+        "type": "Text",
+        "line": 90
+      },
+      {
+        "name": "handle_key",
+        "type": "Text",
+        "line": 91
+      },
+      {
+        "name": "handle",
+        "type": "Text",
+        "line": 92
+      },
+      {
+        "name": "valid_from",
+        "type": "DateTime(timezone=True)",
+        "line": 93
+      },
+      {
+        "name": "valid_to",
+        "type": "DateTime(timezone=True)",
+        "line": 94
+      },
+      {
+        "name": "confirmed_snapshot_id",
+        "type": "Text",
+        "line": 95
+      }
+    ],
+    "creator_profile_snapshot": [
+      {
+        "name": "snapshot_id",
+        "type": "Text",
+        "line": 115
+      },
+      {
+        "name": "idempotency_key",
+        "type": "Text",
+        "line": 116
+      },
+      {
+        "name": "bd_market",
+        "type": "Text",
+        "line": 117
+      },
+      {
+        "name": "oec_id",
+        "type": "Text",
+        "line": 118
+      },
+      {
+        "name": "observed_handle_key",
+        "type": "Text",
+        "line": 119
+      },
+      {
+        "name": "observed_handle",
+        "type": "Text",
+        "line": 120
+      },
+      {
+        "name": "capture_kind",
+        "type": "Text",
+        "line": 121
+      },
+      {
+        "name": "route",
+        "type": "Text",
+        "line": 122
+      },
+      {
+        "name": "quality_status",
+        "type": "Text",
+        "line": 123
+      },
+      {
+        "name": "valid_fields",
+        "type": "JSONB",
+        "line": 124
+      },
+      {
+        "name": "rejection_reasons",
+        "type": "JSONB",
+        "line": 125
+      },
+      {
+        "name": "parsed_json",
+        "type": "JSONB",
+        "line": 131
+      },
+      {
+        "name": "raw_json",
+        "type": "JSONB",
+        "line": 132
+      },
+      {
+        "name": "payload_hash",
+        "type": "Text",
+        "line": 133
+      },
+      {
+        "name": "schema_version",
+        "type": "Integer",
+        "line": 134
+      },
+      {
+        "name": "captured_at",
+        "type": "DateTime(timezone=True)",
+        "line": 135
+      }
+    ],
+    "creator_profile_current": [
+      {
+        "name": "bd_market",
+        "type": "Text",
+        "line": 141
+      },
+      {
+        "name": "oec_id",
+        "type": "Text",
+        "line": 142
+      },
+      {
+        "name": "handle_key",
+        "type": "Text",
+        "line": 143
+      },
+      {
+        "name": "handle",
+        "type": "Text",
+        "line": 144
+      },
+      {
+        "name": "peak_gmv_value",
+        "type": "Numeric",
+        "line": 145
+      },
+      {
+        "name": "peak_gmv_at",
+        "type": "DateTime(timezone=True)",
+        "line": 146
+      },
+      {
+        "name": "field_sources",
+        "type": "JSONB",
+        "line": 152
+      },
+      {
+        "name": "captured_at",
+        "type": "DateTime(timezone=True)",
+        "line": 153
+      }
+    ],
+    "enrich_run": [
+      {
+        "name": "run_id",
+        "type": "Text",
+        "line": 163
+      },
+      {
+        "name": "bd_market",
+        "type": "Text",
+        "line": 164
+      },
+      {
+        "name": "capture_kind",
+        "type": "Text",
+        "line": 165
+      },
+      {
+        "name": "route",
+        "type": "Text",
+        "line": 166
+      },
+      {
+        "name": "status",
+        "type": "Text",
+        "line": 167
+      },
+      {
+        "name": "parameters",
+        "type": "JSONB",
+        "line": 168
+      },
+      {
+        "name": "created_at",
+        "type": "DateTime(timezone=True)",
+        "line": 169
+      },
+      {
+        "name": "started_at",
+        "type": "DateTime(timezone=True)",
+        "line": 170
+      },
+      {
+        "name": "finished_at",
+        "type": "DateTime(timezone=True)",
+        "line": 171
+      }
+    ],
+    "enrich_item": [
+      {
+        "name": "item_id",
+        "type": "Text",
+        "line": 176
+      },
+      {
+        "name": "run_id",
+        "type": "Text",
+        "line": 177
+      },
+      {
+        "name": "bd_market",
+        "type": "Text",
+        "line": 178
+      },
+      {
+        "name": "oec_id",
+        "type": "Text",
+        "line": 179
+      },
+      {
+        "name": "requested_handle",
+        "type": "Text",
+        "line": 180
+      },
+      {
+        "name": "capture_kind",
+        "type": "Text",
+        "line": 181
+      },
+      {
+        "name": "status",
+        "type": "Text",
+        "line": 182
+      },
+      {
+        "name": "total_attempts",
+        "type": "Integer",
+        "line": 183
+      },
+      {
+        "name": "error_retries",
+        "type": "Integer",
+        "line": 184
+      },
+      {
+        "name": "persistence_retries",
+        "type": "Integer",
+        "line": 185
+      },
+      {
+        "name": "retry_at",
+        "type": "DateTime(timezone=True)",
+        "line": 186
+      },
+      {
+        "name": "terminal_reason",
+        "type": "Text",
+        "line": 187
+      },
+      {
+        "name": "snapshot_id",
+        "type": "Text",
+        "line": 188
+      },
+      {
+        "name": "claimed_by",
+        "type": "Text",
+        "line": 189
+      },
+      {
+        "name": "claimed_at",
+        "type": "DateTime(timezone=True)",
+        "line": 190
+      },
+      {
+        "name": "created_at",
+        "type": "DateTime(timezone=True)",
+        "line": 191
+      },
+      {
+        "name": "updated_at",
+        "type": "DateTime(timezone=True)",
+        "line": 192
+      }
+    ],
+    "enrich_attempt": [
+      {
+        "name": "attempt_id",
+        "type": "Text",
+        "line": 202
+      },
+      {
+        "name": "item_id",
+        "type": "Text",
+        "line": 203
+      },
+      {
+        "name": "account",
+        "type": "Text",
+        "line": 204
+      },
+      {
+        "name": "route",
+        "type": "Text",
+        "line": 205
+      },
+      {
+        "name": "outcome_kind",
+        "type": "Text",
+        "line": 206
+      },
+      {
+        "name": "remote_code",
+        "type": "Text",
+        "line": 207
+      },
+      {
+        "name": "detail_code",
+        "type": "Text",
+        "line": 208
+      },
+      {
+        "name": "request_ms",
+        "type": "Numeric",
+        "line": 209
+      },
+      {
+        "name": "limiter_wait_ms",
+        "type": "Numeric",
+        "line": 210
+      },
+      {
+        "name": "parse_ms",
+        "type": "Numeric",
+        "line": 211
+      },
+      {
+        "name": "field_count",
+        "type": "Integer",
+        "line": 212
+      },
+      {
+        "name": "quality_status",
+        "type": "Text",
+        "line": 213
+      },
+      {
+        "name": "started_at",
+        "type": "DateTime(timezone=True)",
+        "line": 214
+      },
+      {
+        "name": "finished_at",
+        "type": "DateTime(timezone=True)",
+        "line": 215
+      }
+    ],
+    "manual_seed": [
+      {
+        "name": "handle_key",
+        "type": "Text",
+        "line": 224
+      },
+      {
+        "name": "bd_market",
+        "type": "Text",
+        "line": 225
+      },
+      {
+        "name": "raw_input",
+        "type": "Text",
+        "line": 226
+      },
+      {
+        "name": "note",
+        "type": "Text",
+        "line": 227
+      },
+      {
+        "name": "region",
+        "type": "Text",
+        "line": 228
+      },
+      {
+        "name": "added_at",
+        "type": "DateTime(timezone=True)",
+        "line": 229
+      },
+      {
+        "name": "captured_at",
+        "type": "DateTime(timezone=True)",
+        "line": 230
+      }
+    ],
+    "im_conversation": [
+      {
+        "name": "conversation_id",
+        "type": "Text",
+        "line": 242
+      },
+      {
+        "name": "bd_market",
+        "type": "Text",
+        "line": 243
+      },
+      {
+        "name": "creator_oec_id",
+        "type": "Text",
+        "line": 244
+      },
+      {
+        "name": "unread_count",
+        "type": "Integer",
+        "line": 245
+      },
+      {
+        "name": "last_active_ms",
+        "type": "BigInteger",
+        "line": 246
+      },
+      {
+        "name": "creator_reply_count",
+        "type": "Integer",
+        "line": 247
+      },
+      {
+        "name": "last_creator_reply",
+        "type": "Text",
+        "line": 248
+      },
+      {
+        "name": "last_creator_reply_ms",
+        "type": "BigInteger",
+        "line": 249
+      },
+      {
+        "name": "last_mine_ms",
+        "type": "BigInteger",
+        "line": 250
+      },
+      {
+        "name": "collaboration_type",
+        "type": "Text",
+        "line": 251
+      },
+      {
+        "name": "intent",
+        "type": "Text",
+        "line": 252
+      },
+      {
+        "name": "showcase_at",
+        "type": "DateTime(timezone=True)",
+        "line": 253
+      },
+      {
+        "name": "showcase_count",
+        "type": "Integer",
+        "line": 254
+      },
+      {
+        "name": "raw_json",
+        "type": "JSONB",
+        "line": 255
+      },
+      {
+        "name": "captured_at",
+        "type": "DateTime(timezone=True)",
+        "line": 256
+      }
+    ],
+    "im_creator_identity": [
+      {
+        "name": "bd_market",
+        "type": "Text",
+        "line": 269
+      },
+      {
+        "name": "creator_oec_id",
+        "type": "Text",
+        "line": 270
+      },
+      {
+        "name": "handle",
+        "type": "Text",
+        "line": 271
+      },
+      {
+        "name": "nickname",
+        "type": "Text",
+        "line": 272
+      },
+      {
+        "name": "handle_status",
+        "type": "Text",
+        "line": 273
+      },
+      {
+        "name": "handle_authorized",
+        "type": "Boolean",
+        "line": 274
+      },
+      {
+        "name": "source",
+        "type": "Text",
+        "line": 275
+      },
+      {
+        "name": "first_seen_at",
+        "type": "DateTime(timezone=True)",
+        "line": 276
+      },
+      {
+        "name": "last_seen_at",
+        "type": "DateTime(timezone=True)",
+        "line": 277
+      },
+      {
+        "name": "last_conversation_id",
+        "type": "Text",
+        "line": 278
+      }
+    ],
+    "im_message": [
+      {
+        "name": "server_id",
+        "type": "Text",
+        "line": 289
+      },
+      {
+        "name": "bd_market",
+        "type": "Text",
+        "line": 290
+      },
+      {
+        "name": "conversation_id",
+        "type": "Text",
+        "line": 291
+      },
+      {
+        "name": "creator_oec_id",
+        "type": "Text",
+        "line": 292
+      },
+      {
+        "name": "is_from_me",
+        "type": "Boolean",
+        "line": 293
+      },
+      {
+        "name": "sender_role",
+        "type": "SmallInteger",
+        "line": 294
+      },
+      {
+        "name": "content",
+        "type": "Text",
+        "line": 295
+      },
+      {
+        "name": "intent",
+        "type": "Text",
+        "line": 296
+      },
+      {
+        "name": "message_type",
+        "type": "Integer",
+        "line": 297
+      },
+      {
+        "name": "card_pid",
+        "type": "Text",
+        "line": 298
+      },
+      {
+        "name": "card_list",
+        "type": "Text",
+        "line": 299
+      },
+      {
+        "name": "create_ms",
+        "type": "BigInteger",
+        "line": 300
+      },
+      {
+        "name": "index_hi",
+        "type": "Integer",
+        "line": 301
+      },
+      {
+        "name": "index_lo",
+        "type": "Integer",
+        "line": 302
+      },
+      {
+        "name": "raw_json",
+        "type": "JSONB",
+        "line": 303
+      },
+      {
+        "name": "captured_at",
+        "type": "DateTime(timezone=True)",
+        "line": 304
+      }
+    ],
+    "im_auto_reply": [
+      {
+        "name": "conversation_id",
+        "type": "Text",
+        "line": 317
+      },
+      {
+        "name": "bd_market",
+        "type": "Text",
+        "line": 318
+      },
+      {
+        "name": "creator_oec_id",
+        "type": "Text",
+        "line": 319
+      },
+      {
+        "name": "state",
+        "type": "Text",
+        "line": 320
+      },
+      {
+        "name": "whatsapp",
+        "type": "Text",
+        "line": 321
+      },
+      {
+        "name": "handoff_reason",
+        "type": "Text",
+        "line": 322
+      },
+      {
+        "name": "last_intent",
+        "type": "Text",
+        "line": 323
+      },
+      {
+        "name": "objection_count",
+        "type": "Integer",
+        "line": 324
+      },
+      {
+        "name": "link_sent_at",
+        "type": "DateTime(timezone=True)",
+        "line": 325
+      },
+      {
+        "name": "wa_added_at",
+        "type": "DateTime(timezone=True)",
+        "line": 326
+      },
+      {
+        "name": "handoff_done_at",
+        "type": "DateTime(timezone=True)",
+        "line": 327
+      },
+      {
+        "name": "ai_reply_count_today",
+        "type": "Integer",
+        "line": 328
+      },
+      {
+        "name": "count_date",
+        "type": "Date",
+        "line": 329
+      },
+      {
+        "name": "total_ai_replies",
+        "type": "Integer",
+        "line": 330
+      },
+      {
+        "name": "last_ai_reply_at",
+        "type": "DateTime(timezone=True)",
+        "line": 331
+      },
+      {
+        "name": "updated_at",
+        "type": "DateTime(timezone=True)",
+        "line": 332
+      }
+    ],
+    "reply_template": [
+      {
+        "name": "bd_market",
+        "type": "Text",
+        "line": 342
+      },
+      {
+        "name": "slot",
+        "type": "Text",
+        "line": 343
+      },
+      {
+        "name": "body",
+        "type": "Text",
+        "line": 344
+      },
+      {
+        "name": "updated_at",
+        "type": "DateTime(timezone=True)",
+        "line": 345
+      }
+    ],
+    "im_delivery_intent": [
+      {
+        "name": "intent_id",
+        "type": "Text",
+        "line": 353
+      },
+      {
+        "name": "source_kind",
+        "type": "Text",
+        "line": 354
+      },
+      {
+        "name": "source_id",
+        "type": "Text",
+        "line": 355
+      },
+      {
+        "name": "bd_market",
+        "type": "Text",
+        "line": 356
+      },
+      {
+        "name": "conversation_id",
+        "type": "Text",
+        "line": 357
+      },
+      {
+        "name": "account_name",
+        "type": "Text",
+        "line": 358
+      },
+      {
+        "name": "message_kind",
+        "type": "Text",
+        "line": 359
+      },
+      {
+        "name": "body",
+        "type": "Text",
+        "line": 360
+      },
+      {
+        "name": "status",
+        "type": "Text",
+        "line": 361
+      },
+      {
+        "name": "process_id",
+        "type": "Integer",
+        "line": 362
+      },
+      {
+        "name": "started_at",
+        "type": "DateTime(timezone=True)",
+        "line": 363
+      },
+      {
+        "name": "finished_at",
+        "type": "DateTime(timezone=True)",
+        "line": 364
+      },
+      {
+        "name": "server_id",
+        "type": "Text",
+        "line": 365
+      },
+      {
+        "name": "error_code",
+        "type": "Text",
+        "line": 366
+      },
+      {
+        "name": "receipt",
+        "type": "JSONB",
+        "line": 367
+      }
+    ],
+    "reply_outbox": [
+      {
+        "name": "id",
+        "type": "Text",
+        "line": 376
+      },
+      {
+        "name": "bd_market",
+        "type": "Text",
+        "line": 377
+      },
+      {
+        "name": "conversation_id",
+        "type": "Text",
+        "line": 378
+      },
+      {
+        "name": "body",
+        "type": "Text",
+        "line": 379
+      },
+      {
+        "name": "message_kind",
+        "type": "Text",
+        "line": 380
+      },
+      {
+        "name": "media_path",
+        "type": "Text",
+        "line": 381
+      },
+      {
+        "name": "media_name",
+        "type": "Text",
+        "line": 382
+      },
+      {
+        "name": "media_type",
+        "type": "Text",
+        "line": 383
+      },
+      {
+        "name": "media_size",
+        "type": "BigInteger",
+        "line": 384
+      },
+      {
+        "name": "status",
+        "type": "Text",
+        "line": 385
+      },
+      {
+        "name": "retry_no",
+        "type": "Integer",
+        "line": 386
+      },
+      {
+        "name": "error",
+        "type": "Text",
+        "line": 387
+      },
+      {
+        "name": "server_id",
+        "type": "Text",
+        "line": 388
+      },
+      {
+        "name": "created_at",
+        "type": "DateTime(timezone=True)",
+        "line": 389
+      },
+      {
+        "name": "sent_at",
+        "type": "DateTime(timezone=True)",
+        "line": 390
+      }
+    ],
+    "mcn_creator_relation": [
+      {
+        "name": "bd_market",
+        "type": "Text",
+        "line": 404
+      },
+      {
+        "name": "relation_id",
+        "type": "Text",
+        "line": 405
+      },
+      {
+        "name": "partner_id",
+        "type": "Text",
+        "line": 406
+      },
+      {
+        "name": "partner_name",
+        "type": "Text",
+        "line": 407
+      },
+      {
+        "name": "oec_id",
+        "type": "Text",
+        "line": 408
+      },
+      {
+        "name": "creator_id",
+        "type": "Text",
+        "line": 409
+      },
+      {
+        "name": "handle_key",
+        "type": "Text",
+        "line": 410
+      },
+      {
+        "name": "handle",
+        "type": "Text",
+        "line": 411
+      },
+      {
+        "name": "nickname",
+        "type": "Text",
+        "line": 412
+      },
+      {
+        "name": "avatar_url",
+        "type": "Text",
+        "line": 413
+      },
+      {
+        "name": "creator_level",
+        "type": "Text",
+        "line": 414
+      },
+      {
+        "name": "status",
+        "type": "SmallInteger",
+        "line": 415
+      },
+      {
+        "name": "status_key",
+        "type": "Text",
+        "line": 416
+      },
+      {
+        "name": "data_relation_id",
+        "type": "Text",
+        "line": 417
+      },
+      {
+        "name": "data_relation_status",
+        "type": "SmallInteger",
+        "line": 418
+      },
+      {
+        "name": "data_page_link",
+        "type": "Text",
+        "line": 419
+      },
+      {
+        "name": "commission_relation_id",
+        "type": "Text",
+        "line": 420
+      },
+      {
+        "name": "commission_relation_status",
+        "type": "SmallInteger",
+        "line": 421
+      },
+      {
+        "name": "commission_proportion",
+        "type": "Numeric",
+        "line": 422
+      },
+      {
+        "name": "record_type",
+        "type": "SmallInteger",
+        "line": 423
+      },
+      {
+        "name": "create_at",
+        "type": "DateTime(timezone=True)",
+        "line": 424
+      },
+      {
+        "name": "effective_start_at",
+        "type": "DateTime(timezone=True)",
+        "line": 425
+      },
+      {
+        "name": "effective_end_at",
+        "type": "DateTime(timezone=True)",
+        "line": 426
+      },
+      {
+        "name": "expire_at",
+        "type": "DateTime(timezone=True)",
+        "line": 427
+      },
+      {
+        "name": "extend_relation_id",
+        "type": "Text",
+        "line": 428
+      },
+      {
+        "name": "extend_relation_status",
+        "type": "SmallInteger",
+        "line": 429
+      },
+      {
+        "name": "extend_effective_start_at",
+        "type": "DateTime(timezone=True)",
+        "line": 430
+      },
+      {
+        "name": "extend_effective_end_at",
+        "type": "DateTime(timezone=True)",
+        "line": 431
+      },
+      {
+        "name": "first_seen_at",
+        "type": "DateTime(timezone=True)",
+        "line": 432
+      },
+      {
+        "name": "last_seen_at",
+        "type": "DateTime(timezone=True)",
+        "line": 433
+      },
+      {
+        "name": "raw_json",
+        "type": "JSONB",
+        "line": 434
+      }
+    ],
+    "mcn_relation_observation": [
+      {
+        "name": "observation_id",
+        "type": "Text",
+        "line": 443
+      },
+      {
+        "name": "bd_market",
+        "type": "Text",
+        "line": 444
+      },
+      {
+        "name": "relation_id",
+        "type": "Text",
+        "line": 445
+      },
+      {
+        "name": "oec_id",
+        "type": "Text",
+        "line": 446
+      },
+      {
+        "name": "status",
+        "type": "SmallInteger",
+        "line": 447
+      },
+      {
+        "name": "status_key",
+        "type": "Text",
+        "line": 448
+      },
+      {
+        "name": "payload_hash",
+        "type": "Text",
+        "line": 449
+      },
+      {
+        "name": "observed_at",
+        "type": "DateTime(timezone=True)",
+        "line": 450
+      },
+      {
+        "name": "raw_json",
+        "type": "JSONB",
+        "line": 451
+      }
+    ],
+    "mcn_relation_sync_run": [
+      {
+        "name": "sync_id",
+        "type": "Text",
+        "line": 462
+      },
+      {
+        "name": "bd_market",
+        "type": "Text",
+        "line": 463
+      },
+      {
+        "name": "official_total",
+        "type": "Integer",
+        "line": 464
+      },
+      {
+        "name": "retrievable_total",
+        "type": "Integer",
+        "line": 465
+      },
+      {
+        "name": "official_status_counts",
+        "type": "JSONB",
+        "line": 466
+      },
+      {
+        "name": "observed_at",
+        "type": "DateTime(timezone=True)",
+        "line": 467
+      }
+    ],
+    "reply_setting": [
+      {
+        "name": "bd_market",
+        "type": "Text",
+        "line": 475
+      },
+      {
+        "name": "key",
+        "type": "Text",
+        "line": 476
+      },
+      {
+        "name": "value",
+        "type": "Text",
+        "line": 477
+      },
+      {
+        "name": "updated_at",
+        "type": "DateTime(timezone=True)",
+        "line": 478
+      }
+    ],
+    "im_ai_dry_log": [
+      {
+        "name": "id",
+        "type": "Integer",
+        "line": 486
+      },
+      {
+        "name": "bd_market",
+        "type": "Text",
+        "line": 487
+      },
+      {
+        "name": "conversation_id",
+        "type": "Text",
+        "line": 488
+      },
+      {
+        "name": "creator_oec_id",
+        "type": "Text",
+        "line": 489
+      },
+      {
+        "name": "intent",
+        "type": "Text",
+        "line": 490
+      },
+      {
+        "name": "body",
+        "type": "Text",
+        "line": 491
+      },
+      {
+        "name": "created_at",
+        "type": "DateTime(timezone=True)",
+        "line": 492
+      }
+    ],
+    "creator_product": [
+      {
+        "name": "handle_key",
+        "type": "Text",
+        "line": 507
+      },
+      {
+        "name": "video_id",
+        "type": "Text",
+        "line": 508
+      },
+      {
+        "name": "pid",
+        "type": "Text",
+        "line": 509
+      },
+      {
+        "name": "bd_market",
+        "type": "Text",
+        "line": 510
+      },
+      {
+        "name": "oec_id",
+        "type": "Text",
+        "line": 511
+      },
+      {
+        "name": "product_name",
+        "type": "Text",
+        "line": 512
+      },
+      {
+        "name": "commission_public",
+        "type": "Numeric",
+        "line": 513
+      },
+      {
+        "name": "commission_ours",
+        "type": "Numeric",
+        "line": 514
+      },
+      {
+        "name": "video_publish_time",
+        "type": "DateTime(timezone=True)",
+        "line": 515
+      },
+      {
+        "name": "video_views",
+        "type": "BigInteger",
+        "line": 516
+      },
+      {
+        "name": "video_likes",
+        "type": "BigInteger",
+        "line": 517
+      },
+      {
+        "name": "first_seen_at",
+        "type": "DateTime(timezone=True)",
+        "line": 518
+      },
+      {
+        "name": "last_seen_at",
+        "type": "DateTime(timezone=True)",
+        "line": 519
+      },
+      {
+        "name": "raw_json",
+        "type": "JSONB",
+        "line": 520
+      }
+    ],
+    "message_template": [
+      {
+        "name": "template_id",
+        "type": "Text",
+        "line": 532
+      },
+      {
+        "name": "name",
+        "type": "Text",
+        "line": 533
+      },
+      {
+        "name": "lang",
+        "type": "Text",
+        "line": 534
+      },
+      {
+        "name": "tag",
+        "type": "Text",
+        "line": 535
+      },
+      {
+        "name": "body",
+        "type": "Text",
+        "line": 536
+      },
+      {
+        "name": "enabled",
+        "type": "Boolean",
+        "line": 537
+      },
+      {
+        "name": "market",
+        "type": "Text",
+        "line": 538
+      },
+      {
+        "name": "placeholders",
+        "type": "JSONB",
+        "line": 539
+      },
+      {
+        "name": "created_at",
+        "type": "DateTime(timezone=True)",
+        "line": 540
+      },
+      {
+        "name": "updated_at",
+        "type": "DateTime(timezone=True)",
+        "line": 541
+      }
+    ],
+    "outreach": [
+      {
+        "name": "outreach_id",
+        "type": "Text",
+        "line": 551
+      },
+      {
+        "name": "bd_market",
+        "type": "Text",
+        "line": 552
+      },
+      {
+        "name": "handle_key",
+        "type": "Text",
+        "line": 553
+      },
+      {
+        "name": "oec_id",
+        "type": "Text",
+        "line": 554
+      },
+      {
+        "name": "conversation_id",
+        "type": "Text",
+        "line": 555
+      },
+      {
+        "name": "pid",
+        "type": "Text",
+        "line": 556
+      },
+      {
+        "name": "video_id",
+        "type": "Text",
+        "line": 557
+      },
+      {
+        "name": "template_id",
+        "type": "Text",
+        "line": 558
+      },
+      {
+        "name": "rendered_message",
+        "type": "Text",
+        "line": 559
+      },
+      {
+        "name": "send_account",
+        "type": "Text",
+        "line": 560
+      },
+      {
+        "name": "status",
+        "type": "Text",
+        "line": 561
+      },
+      {
+        "name": "outcome",
+        "type": "Text",
+        "line": 562
+      },
+      {
+        "name": "sent_at",
+        "type": "DateTime(timezone=True)",
+        "line": 563
+      },
+      {
+        "name": "replied_at",
+        "type": "DateTime(timezone=True)",
+        "line": 564
+      },
+      {
+        "name": "created_at",
+        "type": "DateTime(timezone=True)",
+        "line": 565
+      },
+      {
+        "name": "updated_at",
+        "type": "DateTime(timezone=True)",
+        "line": 566
+      },
+      {
+        "name": "raw_json",
+        "type": "JSONB",
+        "line": 567
+      },
+      {
+        "name": "send_task_id",
+        "type": "Text",
+        "line": 568
+      },
+      {
+        "name": "send_task_lead_id",
+        "type": "Text",
+        "line": 569
+      },
+      {
+        "name": "logical_touch_id",
+        "type": "Text",
+        "line": 570
+      }
+    ],
+    "creator_scan": [
+      {
+        "name": "handle_key",
+        "type": "Text",
+        "line": 587
+      },
+      {
+        "name": "bd_market",
+        "type": "Text",
+        "line": 588
+      },
+      {
+        "name": "oec_id",
+        "type": "Text",
+        "line": 589
+      },
+      {
+        "name": "sec_uid",
+        "type": "Text",
+        "line": 590
+      },
+      {
+        "name": "last_scanned_at",
+        "type": "DateTime(timezone=True)",
+        "line": 591
+      },
+      {
+        "name": "video_count",
+        "type": "Integer",
+        "line": 592
+      },
+      {
+        "name": "shoppable_count",
+        "type": "Integer",
+        "line": 593
+      },
+      {
+        "name": "pid_count",
+        "type": "Integer",
+        "line": 594
+      },
+      {
+        "name": "next_due_at",
+        "type": "DateTime(timezone=True)",
+        "line": 595
+      },
+      {
+        "name": "last_status",
+        "type": "Text",
+        "line": 596
+      },
+      {
+        "name": "scan_count",
+        "type": "Integer",
+        "line": 597
+      }
+    ],
+    "creator_contact": [
+      {
+        "name": "oec_id",
+        "type": "Text",
+        "line": 609
+      },
+      {
+        "name": "handle",
+        "type": "Text",
+        "line": 610
+      },
+      {
+        "name": "whatsapp",
+        "type": "Text",
+        "line": 611
+      },
+      {
+        "name": "email",
+        "type": "Text",
+        "line": 612
+      },
+      {
+        "name": "other_json",
+        "type": "JSONB(none_as_null=True)",
+        "line": 615
+      },
+      {
+        "name": "raw_json",
+        "type": "JSONB(none_as_null=True)",
+        "line": 616
+      },
+      {
+        "name": "captured_at",
+        "type": "DateTime(timezone=True)",
+        "line": 617
+      }
+    ],
+    "creator_contact_point": [
+      {
+        "name": "contact_point_id",
+        "type": "Text",
+        "line": 623
+      },
+      {
+        "name": "bd_market",
+        "type": "Text",
+        "line": 624
+      },
+      {
+        "name": "oec_id",
+        "type": "Text",
+        "line": 625
+      },
+      {
+        "name": "contact_type",
+        "type": "Text",
+        "line": 626
+      },
+      {
+        "name": "contact_value",
+        "type": "Text",
+        "line": 627
+      },
+      {
+        "name": "value_hash",
+        "type": "Text",
+        "line": 628
+      },
+      {
+        "name": "first_seen_at",
+        "type": "DateTime(timezone=True)",
+        "line": 629
+      },
+      {
+        "name": "last_seen_at",
+        "type": "DateTime(timezone=True)",
+        "line": 630
+      },
+      {
+        "name": "is_current",
+        "type": "Boolean",
+        "line": 631
+      },
+      {
+        "name": "source",
+        "type": "Text",
+        "line": 632
+      }
+    ],
+    "creator_relationship": [
+      {
+        "name": "bd_market",
+        "type": "Text",
+        "line": 664
+      },
+      {
+        "name": "oec_id",
+        "type": "Text",
+        "line": 665
+      },
+      {
+        "name": "whatsapp",
+        "type": "Text",
+        "line": 666
+      },
+      {
+        "name": "whatsapp_obtained_at",
+        "type": "DateTime(timezone=True)",
+        "line": 667
+      },
+      {
+        "name": "wa_added_at",
+        "type": "DateTime(timezone=True)",
+        "line": 668
+      },
+      {
+        "name": "group_invited_at",
+        "type": "DateTime(timezone=True)",
+        "line": 669
+      },
+      {
+        "name": "group_joined_at",
+        "type": "DateTime(timezone=True)",
+        "line": 670
+      },
+      {
+        "name": "deep_operation_at",
+        "type": "DateTime(timezone=True)",
+        "line": 671
+      },
+      {
+        "name": "mcn_potential_at",
+        "type": "DateTime(timezone=True)",
+        "line": 672
+      },
+      {
+        "name": "mcn_converted_at",
+        "type": "DateTime(timezone=True)",
+        "line": 673
+      },
+      {
+        "name": "assignee",
+        "type": "Text",
+        "line": 674
+      },
+      {
+        "name": "group_name",
+        "type": "Text",
+        "line": 675
+      },
+      {
+        "name": "note",
+        "type": "Text",
+        "line": 676
+      },
+      {
+        "name": "source",
+        "type": "Text",
+        "line": 677
+      },
+      {
+        "name": "created_at",
+        "type": "DateTime(timezone=True)",
+        "line": 678
+      },
+      {
+        "name": "updated_at",
+        "type": "DateTime(timezone=True)",
+        "line": 679
+      }
+    ],
+    "creator_task": [
+      {
+        "name": "task_id",
+        "type": "Text",
+        "line": 687
+      },
+      {
+        "name": "bd_market",
+        "type": "Text",
+        "line": 688
+      },
+      {
+        "name": "oec_id",
+        "type": "Text",
+        "line": 689
+      },
+      {
+        "name": "task_type",
+        "type": "Text",
+        "line": 690
+      },
+      {
+        "name": "status",
+        "type": "Text",
+        "line": 691
+      },
+      {
+        "name": "priority",
+        "type": "Integer",
+        "line": 692
+      },
+      {
+        "name": "assignee",
+        "type": "Text",
+        "line": 693
+      },
+      {
+        "name": "open_key",
+        "type": "Text",
+        "line": 694
+      },
+      {
+        "name": "source",
+        "type": "Text",
+        "line": 695
+      },
+      {
+        "name": "due_at",
+        "type": "DateTime(timezone=True)",
+        "line": 696
+      },
+      {
+        "name": "completion_note",
+        "type": "Text",
+        "line": 697
+      },
+      {
+        "name": "created_at",
+        "type": "DateTime(timezone=True)",
+        "line": 698
+      },
+      {
+        "name": "updated_at",
+        "type": "DateTime(timezone=True)",
+        "line": 699
+      },
+      {
+        "name": "completed_at",
+        "type": "DateTime(timezone=True)",
+        "line": 700
+      }
+    ],
+    "creator_event": [
+      {
+        "name": "event_id",
+        "type": "Text",
+        "line": 709
+      },
+      {
+        "name": "bd_market",
+        "type": "Text",
+        "line": 710
+      },
+      {
+        "name": "oec_id",
+        "type": "Text",
+        "line": 711
+      },
+      {
+        "name": "event_type",
+        "type": "Text",
+        "line": 712
+      },
+      {
+        "name": "actor",
+        "type": "Text",
+        "line": 713
+      },
+      {
+        "name": "from_value",
+        "type": "Text",
+        "line": 714
+      },
+      {
+        "name": "to_value",
+        "type": "Text",
+        "line": 715
+      },
+      {
+        "name": "payload",
+        "type": "JSONB",
+        "line": 716
+      },
+      {
+        "name": "created_at",
+        "type": "DateTime(timezone=True)",
+        "line": 717
+      }
+    ],
+    "send_task": [
+      {
+        "name": "task_id",
+        "type": "Text",
+        "line": 727
+      },
+      {
+        "name": "bd_market",
+        "type": "Text",
+        "line": 728
+      },
+      {
+        "name": "name",
+        "type": "Text",
+        "line": 729
+      },
+      {
+        "name": "source_type",
+        "type": "Text",
+        "line": 730
+      },
+      {
+        "name": "send_mode",
+        "type": "Text",
+        "line": 731
+      },
+      {
+        "name": "template_id",
+        "type": "Text",
+        "line": 732
+      },
+      {
+        "name": "text_snapshot",
+        "type": "Text",
+        "line": 733
+      },
+      {
+        "name": "template_snapshot",
+        "type": "JSONB",
+        "line": 734
+      },
+      {
+        "name": "default_pid",
+        "type": "Text",
+        "line": 735
+      },
+      {
+        "name": "card_limit_per_creator",
+        "type": "Integer",
+        "line": 736
+      },
+      {
+        "name": "status",
+        "type": "Text",
+        "line": 742
+      },
+      {
+        "name": "status_reason",
+        "type": "Text",
+        "line": 743
+      },
+      {
+        "name": "revision",
+        "type": "Integer",
+        "line": 744
+      },
+      {
+        "name": "preflight_revision",
+        "type": "Integer",
+        "line": 745
+      },
+      {
+        "name": "created_by",
+        "type": "Text",
+        "line": 746
+      },
+      {
+        "name": "updated_by",
+        "type": "Text",
+        "line": 747
+      },
+      {
+        "name": "created_at",
+        "type": "DateTime(timezone=True)",
+        "line": 748
+      },
+      {
+        "name": "updated_at",
+        "type": "DateTime(timezone=True)",
+        "line": 749
+      },
+      {
+        "name": "started_at",
+        "type": "DateTime(timezone=True)",
+        "line": 750
+      },
+      {
+        "name": "finished_at",
+        "type": "DateTime(timezone=True)",
+        "line": 751
+      }
+    ],
+    "send_task_lead": [
+      {
+        "name": "lead_id",
+        "type": "Text",
+        "line": 776
+      },
+      {
+        "name": "task_id",
+        "type": "Text",
+        "line": 777
+      },
+      {
+        "name": "source_row_no",
+        "type": "Integer",
+        "line": 778
+      },
+      {
+        "name": "raw_handle",
+        "type": "Text",
+        "line": 779
+      },
+      {
+        "name": "creator_identity_key",
+        "type": "Text",
+        "line": 780
+      },
+      {
+        "name": "oec_id",
+        "type": "Text",
+        "line": 781
+      },
+      {
+        "name": "pid",
+        "type": "Text",
+        "line": 782
+      },
+      {
+        "name": "input_fingerprint",
+        "type": "Text",
+        "line": 783
+      },
+      {
+        "name": "rendered_text_snapshot",
+        "type": "Text",
+        "line": 784
+      },
+      {
+        "name": "match_status",
+        "type": "Text",
+        "line": 785
+      },
+      {
+        "name": "eligibility_status",
+        "type": "Text",
+        "line": 786
+      },
+      {
+        "name": "exclusion_code",
+        "type": "Text",
+        "line": 787
+      },
+      {
+        "name": "manual_excluded",
+        "type": "Boolean",
+        "line": 788
+      },
+      {
+        "name": "source_snapshot",
+        "type": "JSONB",
+        "line": 789
+      },
+      {
+        "name": "gmv_tier_snapshot",
+        "type": "JSONB",
+        "line": 795
+      },
+      {
+        "name": "relationship_snapshot",
+        "type": "JSONB",
+        "line": 801
+      },
+      {
+        "name": "status",
+        "type": "Text",
+        "line": 807
+      },
+      {
+        "name": "created_at",
+        "type": "DateTime(timezone=True)",
+        "line": 808
+      },
+      {
+        "name": "updated_at",
+        "type": "DateTime(timezone=True)",
+        "line": 809
+      }
+    ],
+    "send_task_component": [
+      {
+        "name": "component_id",
+        "type": "Text",
+        "line": 820
+      },
+      {
+        "name": "lead_id",
+        "type": "Text",
+        "line": 821
+      },
+      {
+        "name": "component_kind",
+        "type": "Text",
+        "line": 822
+      },
+      {
+        "name": "sequence_no",
+        "type": "Integer",
+        "line": 823
+      },
+      {
+        "name": "status",
+        "type": "Text",
+        "line": 824
+      },
+      {
+        "name": "dedupe_key",
+        "type": "Text",
+        "line": 825
+      },
+      {
+        "name": "conversation_id",
+        "type": "Text",
+        "line": 826
+      },
+      {
+        "name": "platform_message_id",
+        "type": "Text",
+        "line": 827
+      },
+      {
+        "name": "attempt_count",
+        "type": "Integer",
+        "line": 828
+      },
+      {
+        "name": "sent_at",
+        "type": "DateTime(timezone=True)",
+        "line": 829
+      },
+      {
+        "name": "created_at",
+        "type": "DateTime(timezone=True)",
+        "line": 830
+      },
+      {
+        "name": "updated_at",
+        "type": "DateTime(timezone=True)",
+        "line": 831
+      }
+    ],
+    "send_component_attempt": [
+      {
+        "name": "attempt_id",
+        "type": "Text",
+        "line": 842
+      },
+      {
+        "name": "component_id",
+        "type": "Text",
+        "line": 843
+      },
+      {
+        "name": "attempt_no",
+        "type": "Integer",
+        "line": 844
+      },
+      {
+        "name": "status",
+        "type": "Text",
+        "line": 845
+      },
+      {
+        "name": "send_account",
+        "type": "Text",
+        "line": 846
+      },
+      {
+        "name": "worker_id",
+        "type": "Text",
+        "line": 847
+      },
+      {
+        "name": "platform_message_id",
+        "type": "Text",
+        "line": 848
+      },
+      {
+        "name": "conversation_id",
+        "type": "Text",
+        "line": 849
+      },
+      {
+        "name": "started_at",
+        "type": "DateTime(timezone=True)",
+        "line": 850
+      },
+      {
+        "name": "finished_at",
+        "type": "DateTime(timezone=True)",
+        "line": 851
+      },
+      {
+        "name": "error_code",
+        "type": "Text",
+        "line": 852
+      },
+      {
+        "name": "error_detail",
+        "type": "Text",
+        "line": 853
+      },
+      {
+        "name": "transport_snapshot",
+        "type": "JSONB",
+        "line": 854
+      }
+    ],
+    "send_worker_state": [
+      {
+        "name": "worker_id",
+        "type": "Text",
+        "line": 869
+      },
+      {
+        "name": "bd_market",
+        "type": "Text",
+        "line": 870
+      },
+      {
+        "name": "account_name",
+        "type": "Text",
+        "line": 871
+      },
+      {
+        "name": "status",
+        "type": "Text",
+        "line": 872
+      },
+      {
+        "name": "process_id",
+        "type": "Integer",
+        "line": 873
+      },
+      {
+        "name": "current_task_id",
+        "type": "Text",
+        "line": 874
+      },
+      {
+        "name": "current_lead_id",
+        "type": "Text",
+        "line": 875
+      },
+      {
+        "name": "heartbeat_at",
+        "type": "DateTime(timezone=True)",
+        "line": 876
+      },
+      {
+        "name": "started_at",
+        "type": "DateTime(timezone=True)",
+        "line": 877
+      },
+      {
+        "name": "last_error_code",
+        "type": "Text",
+        "line": 878
+      },
+      {
+        "name": "last_error_detail",
+        "type": "Text",
+        "line": 879
+      },
+      {
+        "name": "updated_at",
+        "type": "DateTime(timezone=True)",
+        "line": 880
+      }
+    ],
+    "share_link_job": [
+      {
+        "name": "job_id",
+        "type": "Text",
+        "line": 903
+      },
+      {
+        "name": "bd_market",
+        "type": "Text",
+        "line": 904
+      },
+      {
+        "name": "name",
+        "type": "Text",
+        "line": 905
+      },
+      {
+        "name": "commission_mode",
+        "type": "Text",
+        "line": 906
+      },
+      {
+        "name": "commission_config",
+        "type": "JSONB",
+        "line": 907
+      },
+      {
+        "name": "account_name",
+        "type": "Text",
+        "line": 913
+      },
+      {
+        "name": "operator_name",
+        "type": "Text",
+        "line": 914
+      },
+      {
+        "name": "creator_name",
+        "type": "Text",
+        "line": 915
+      },
+      {
+        "name": "operation_type",
+        "type": "Text",
+        "line": 916
+      },
+      {
+        "name": "status",
+        "type": "Text",
+        "line": 917
+      },
+      {
+        "name": "phase",
+        "type": "Text",
+        "line": 918
+      },
+      {
+        "name": "revision",
+        "type": "Integer",
+        "line": 919
+      },
+      {
+        "name": "source_name",
+        "type": "Text",
+        "line": 920
+      },
+      {
+        "name": "source_sha256",
+        "type": "Text",
+        "line": 921
+      },
+      {
+        "name": "confirmed_snapshot",
+        "type": "JSONB",
+        "line": 922
+      },
+      {
+        "name": "process_job_id",
+        "type": "Text",
+        "line": 928
+      },
+      {
+        "name": "created_by",
+        "type": "Text",
+        "line": 929
+      },
+      {
+        "name": "created_at",
+        "type": "DateTime(timezone=True)",
+        "line": 930
+      },
+      {
+        "name": "updated_at",
+        "type": "DateTime(timezone=True)",
+        "line": 931
+      },
+      {
+        "name": "started_at",
+        "type": "DateTime(timezone=True)",
+        "line": 932
+      },
+      {
+        "name": "finished_at",
+        "type": "DateTime(timezone=True)",
+        "line": 933
+      }
+    ],
+    "share_link_plan": [
+      {
+        "name": "plan_record_id",
+        "type": "Text",
+        "line": 961
+      },
+      {
+        "name": "bd_market",
+        "type": "Text",
+        "line": 962
+      },
+      {
+        "name": "account_name",
+        "type": "Text",
+        "line": 963
+      },
+      {
+        "name": "partner_identity_fingerprint",
+        "type": "Text",
+        "line": 964
+      },
+      {
+        "name": "pid",
+        "type": "Text",
+        "line": 965
+      },
+      {
+        "name": "campaign_id",
+        "type": "Text",
+        "line": 966
+      },
+      {
+        "name": "creator_commission",
+        "type": "Numeric",
+        "line": 967
+      },
+      {
+        "name": "request_fingerprint",
+        "type": "Text",
+        "line": 968
+      },
+      {
+        "name": "share_url",
+        "type": "Text",
+        "line": 969
+      },
+      {
+        "name": "platform_plan_id",
+        "type": "Text",
+        "line": 970
+      },
+      {
+        "name": "status",
+        "type": "Text",
+        "line": 971
+      },
+      {
+        "name": "source",
+        "type": "Text",
+        "line": 972
+      },
+      {
+        "name": "created_at",
+        "type": "DateTime(timezone=True)",
+        "line": 973
+      },
+      {
+        "name": "last_verified_at",
+        "type": "DateTime(timezone=True)",
+        "line": 974
+      }
+    ],
+    "share_link_record": [
+      {
+        "name": "record_id",
+        "type": "Text",
+        "line": 989
+      },
+      {
+        "name": "bd_market",
+        "type": "Text",
+        "line": 990
+      },
+      {
+        "name": "pid",
+        "type": "Text",
+        "line": 991
+      },
+      {
+        "name": "operator_name",
+        "type": "Text",
+        "line": 992
+      },
+      {
+        "name": "creator_name",
+        "type": "Text",
+        "line": 993
+      },
+      {
+        "name": "current_plan_record_id",
+        "type": "Text",
+        "line": 994
+      },
+      {
+        "name": "latest_item_id",
+        "type": "Text",
+        "line": 995
+      },
+      {
+        "name": "status",
+        "type": "Text",
+        "line": 996
+      },
+      {
+        "name": "source",
+        "type": "Text",
+        "line": 997
+      },
+      {
+        "name": "created_at",
+        "type": "DateTime(timezone=True)",
+        "line": 998
+      },
+      {
+        "name": "updated_at",
+        "type": "DateTime(timezone=True)",
+        "line": 999
+      }
+    ],
+    "share_link_product_current": [
+      {
+        "name": "bd_market",
+        "type": "Text",
+        "line": 1020
+      },
+      {
+        "name": "pid",
+        "type": "Text",
+        "line": 1021
+      },
+      {
+        "name": "product_name",
+        "type": "Text",
+        "line": 1022
+      },
+      {
+        "name": "shop_name",
+        "type": "Text",
+        "line": 1023
+      },
+      {
+        "name": "product_thumbnail",
+        "type": "Text",
+        "line": 1024
+      },
+      {
+        "name": "product_sales",
+        "type": "BigInteger",
+        "line": 1025
+      },
+      {
+        "name": "stock",
+        "type": "BigInteger",
+        "line": 1026
+      },
+      {
+        "name": "product_price",
+        "type": "Numeric",
+        "line": 1027
+      },
+      {
+        "name": "product_rating",
+        "type": "Numeric",
+        "line": 1028
+      },
+      {
+        "name": "product_review_count",
+        "type": "BigInteger",
+        "line": 1029
+      },
+      {
+        "name": "shop_score",
+        "type": "Numeric",
+        "line": 1030
+      },
+      {
+        "name": "shop_experience_score",
+        "type": "Numeric",
+        "line": 1031
+      },
+      {
+        "name": "selected_campaign_id",
+        "type": "Text",
+        "line": 1032
+      },
+      {
+        "name": "selected_campaign_name",
+        "type": "Text",
+        "line": 1033
+      },
+      {
+        "name": "total_commission",
+        "type": "Numeric",
+        "line": 1034
+      },
+      {
+        "name": "open_commission",
+        "type": "Numeric",
+        "line": 1035
+      },
+      {
+        "name": "creator_commission",
+        "type": "Numeric",
+        "line": 1036
+      },
+      {
+        "name": "agency_margin",
+        "type": "Numeric",
+        "line": 1037
+      },
+      {
+        "name": "campaign_end_at",
+        "type": "DateTime(timezone=True)",
+        "line": 1038
+      },
+      {
+        "name": "free_sample",
+        "type": "Boolean",
+        "line": 1039
+      },
+      {
+        "name": "source_job_id",
+        "type": "Text",
+        "line": 1040
+      },
+      {
+        "name": "captured_at",
+        "type": "DateTime(timezone=True)",
+        "line": 1041
+      },
+      {
+        "name": "platform_captured_at",
+        "type": "DateTime(timezone=True)",
+        "line": 1042
+      }
+    ],
+    "share_link_item": [
+      {
+        "name": "item_id",
+        "type": "Text",
+        "line": 1060
+      },
+      {
+        "name": "job_id",
+        "type": "Text",
+        "line": 1061
+      },
+      {
+        "name": "record_id",
+        "type": "Text",
+        "line": 1062
+      },
+      {
+        "name": "operation_type",
+        "type": "Text",
+        "line": 1063
+      },
+      {
+        "name": "target_campaign_id",
+        "type": "Text",
+        "line": 1064
+      },
+      {
+        "name": "source_row_no",
+        "type": "Integer",
+        "line": 1065
+      },
+      {
+        "name": "pid",
+        "type": "Text",
+        "line": 1066
+      },
+      {
+        "name": "commission_override",
+        "type": "Numeric",
+        "line": 1067
+      },
+      {
+        "name": "input_fingerprint",
+        "type": "Text",
+        "line": 1068
+      },
+      {
+        "name": "selected_for_generation",
+        "type": "Boolean",
+        "line": 1069
+      },
+      {
+        "name": "search_status",
+        "type": "Text",
+        "line": 1070
+      },
+      {
+        "name": "create_status",
+        "type": "Text",
+        "line": 1071
+      },
+      {
+        "name": "candidate_snapshot",
+        "type": "JSONB",
+        "line": 1072
+      },
+      {
+        "name": "selected_campaign_id",
+        "type": "Text",
+        "line": 1078
+      },
+      {
+        "name": "selected_campaign_name",
+        "type": "Text",
+        "line": 1079
+      },
+      {
+        "name": "product_name",
+        "type": "Text",
+        "line": 1080
+      },
+      {
+        "name": "shop_name",
+        "type": "Text",
+        "line": 1081
+      },
+      {
+        "name": "campaign_type",
+        "type": "Integer",
+        "line": 1082
+      },
+      {
+        "name": "campaign_end_at",
+        "type": "DateTime(timezone=True)",
+        "line": 1083
+      },
+      {
+        "name": "free_sample",
+        "type": "Boolean",
+        "line": 1084
+      },
+      {
+        "name": "total_commission",
+        "type": "Numeric",
+        "line": 1085
+      },
+      {
+        "name": "open_commission",
+        "type": "Numeric",
+        "line": 1086
+      },
+      {
+        "name": "creator_commission",
+        "type": "Numeric",
+        "line": 1087
+      },
+      {
+        "name": "agency_margin",
+        "type": "Numeric",
+        "line": 1088
+      },
+      {
+        "name": "plan_record_id",
+        "type": "Text",
+        "line": 1089
+      },
+      {
+        "name": "error_code",
+        "type": "Text",
+        "line": 1090
+      },
+      {
+        "name": "error_detail",
+        "type": "Text",
+        "line": 1091
+      },
+      {
+        "name": "created_at",
+        "type": "DateTime(timezone=True)",
+        "line": 1092
+      },
+      {
+        "name": "updated_at",
+        "type": "DateTime(timezone=True)",
+        "line": 1093
+      }
+    ],
+    "share_link_attempt": [
+      {
+        "name": "attempt_id",
+        "type": "Text",
+        "line": 1121
+      },
+      {
+        "name": "item_id",
+        "type": "Text",
+        "line": 1122
+      },
+      {
+        "name": "phase",
+        "type": "Text",
+        "line": 1123
+      },
+      {
+        "name": "attempt_no",
+        "type": "Integer",
+        "line": 1124
+      },
+      {
+        "name": "status",
+        "type": "Text",
+        "line": 1125
+      },
+      {
+        "name": "account_name",
+        "type": "Text",
+        "line": 1126
+      },
+      {
+        "name": "request_dispatched_at",
+        "type": "DateTime(timezone=True)",
+        "line": 1127
+      },
+      {
+        "name": "finished_at",
+        "type": "DateTime(timezone=True)",
+        "line": 1128
+      },
+      {
+        "name": "http_status",
+        "type": "Integer",
+        "line": 1129
+      },
+      {
+        "name": "platform_code",
+        "type": "Text",
+        "line": 1130
+      },
+      {
+        "name": "error_code",
+        "type": "Text",
+        "line": 1131
+      },
+      {
+        "name": "error_detail",
+        "type": "Text",
+        "line": 1132
+      },
+      {
+        "name": "transport_snapshot",
+        "type": "JSONB",
+        "line": 1133
+      },
+      {
+        "name": "created_at",
+        "type": "DateTime(timezone=True)",
+        "line": 1139
+      }
+    ],
+    "public_share_link_request": [
+      {
+        "name": "request_id",
+        "type": "Text",
+        "line": 1153
+      },
+      {
+        "name": "token_hash",
+        "type": "Text",
+        "line": 1154
+      },
+      {
+        "name": "bd_market",
+        "type": "Text",
+        "line": 1155
+      },
+      {
+        "name": "pid",
+        "type": "Text",
+        "line": 1156
+      },
+      {
+        "name": "status",
+        "type": "Text",
+        "line": 1157
+      },
+      {
+        "name": "job_id",
+        "type": "Text",
+        "line": 1158
+      },
+      {
+        "name": "record_id",
+        "type": "Text",
+        "line": 1159
+      },
+      {
+        "name": "ip_hash",
+        "type": "Text",
+        "line": 1160
+      },
+      {
+        "name": "country_code",
+        "type": "Text",
+        "line": 1161
+      },
+      {
+        "name": "claim_token",
+        "type": "Text",
+        "line": 1162
+      },
+      {
+        "name": "claimed_at",
+        "type": "DateTime(timezone=True)",
+        "line": 1163
+      },
+      {
+        "name": "error_code",
+        "type": "Text",
+        "line": 1164
+      },
+      {
+        "name": "created_at",
+        "type": "DateTime(timezone=True)",
+        "line": 1165
+      },
+      {
+        "name": "updated_at",
+        "type": "DateTime(timezone=True)",
+        "line": 1166
+      },
+      {
+        "name": "expires_at",
+        "type": "DateTime(timezone=True)",
+        "line": 1167
+      }
+    ],
+    "im_listener_state": [
+      {
+        "name": "listener_id",
+        "type": "Text",
+        "line": 1203
+      },
+      {
+        "name": "bd_market",
+        "type": "Text",
+        "line": 1204
+      },
+      {
+        "name": "account_name",
+        "type": "Text",
+        "line": 1205
+      },
+      {
+        "name": "status",
+        "type": "Text",
+        "line": 1206
+      },
+      {
+        "name": "process_id",
+        "type": "Integer",
+        "line": 1207
+      },
+      {
+        "name": "heartbeat_at",
+        "type": "DateTime(timezone=True)",
+        "line": 1208
+      },
+      {
+        "name": "last_sync_at",
+        "type": "DateTime(timezone=True)",
+        "line": 1209
+      },
+      {
+        "name": "last_event_at",
+        "type": "DateTime(timezone=True)",
+        "line": 1210
+      },
+      {
+        "name": "last_error_code",
+        "type": "Text",
+        "line": 1211
+      },
+      {
+        "name": "last_error_detail",
+        "type": "Text",
+        "line": 1212
+      },
+      {
+        "name": "started_at",
+        "type": "DateTime(timezone=True)",
+        "line": 1213
+      },
+      {
+        "name": "updated_at",
+        "type": "DateTime(timezone=True)",
+        "line": 1214
+      }
+    ],
+    "im_history_recovery_state": [
+      {
+        "name": "bd_market",
+        "type": "Text",
+        "line": 1234
+      },
+      {
+        "name": "conversation_id",
+        "type": "Text",
+        "line": 1235
+      },
+      {
+        "name": "failure_count",
+        "type": "Integer",
+        "line": 1236
+      },
+      {
+        "name": "next_retry_at",
+        "type": "DateTime(timezone=True)",
+        "line": 1237
+      },
+      {
+        "name": "quarantined",
+        "type": "Boolean",
+        "line": 1238
+      },
+      {
+        "name": "observed_update_ms",
+        "type": "BigInteger",
+        "line": 1239
+      },
+      {
+        "name": "updated_at",
+        "type": "DateTime(timezone=True)",
+        "line": 1240
+      }
+    ],
+    "im_conversation_sync_request": [
+      {
+        "name": "request_id",
+        "type": "Text",
+        "line": 1260
+      },
+      {
+        "name": "bd_market",
+        "type": "Text",
+        "line": 1261
+      },
+      {
+        "name": "identity",
+        "type": "Text",
+        "line": 1262
+      },
+      {
+        "name": "oec_id",
+        "type": "Text",
+        "line": 1263
+      },
+      {
+        "name": "conversation_id",
+        "type": "Text",
+        "line": 1264
+      },
+      {
+        "name": "requested_count",
+        "type": "Integer",
+        "line": 1265
+      },
+      {
+        "name": "status",
+        "type": "Text",
+        "line": 1266
+      },
+      {
+        "name": "error",
+        "type": "Text",
+        "line": 1267
+      },
+      {
+        "name": "created_at",
+        "type": "DateTime(timezone=True)",
+        "line": 1268
+      },
+      {
+        "name": "started_at",
+        "type": "DateTime(timezone=True)",
+        "line": 1269
+      },
+      {
+        "name": "finished_at",
+        "type": "DateTime(timezone=True)",
+        "line": 1270
+      },
+      {
+        "name": "updated_at",
+        "type": "DateTime(timezone=True)",
+        "line": 1271
+      }
+    ],
+    "creator_im_state": [
+      {
+        "name": "bd_market",
+        "type": "Text",
+        "line": 1289
+      },
+      {
+        "name": "creator_identity_key",
+        "type": "Text",
+        "line": 1290
+      },
+      {
+        "name": "status",
+        "type": "Text",
+        "line": 1291
+      },
+      {
+        "name": "status_set_by",
+        "type": "Text",
+        "line": 1292
+      },
+      {
+        "name": "status_set_at",
+        "type": "DateTime(timezone=True)",
+        "line": 1293
+      },
+      {
+        "name": "last_inbound_at",
+        "type": "DateTime(timezone=True)",
+        "line": 1294
+      },
+      {
+        "name": "last_seen_interaction_at",
+        "type": "DateTime(timezone=True)",
+        "line": 1296
+      },
+      {
+        "name": "rejected_at",
+        "type": "DateTime(timezone=True)",
+        "line": 1297
+      },
+      {
+        "name": "updated_at",
+        "type": "DateTime(timezone=True)",
+        "line": 1298
+      }
+    ],
+    "send_task_account": [
+      {
+        "name": "task_id",
+        "type": "Text",
+        "line": 1310
+      },
+      {
+        "name": "account_name",
+        "type": "Text",
+        "line": 1311
+      },
+      {
+        "name": "assigned_by",
+        "type": "Text",
+        "line": 1312
+      },
+      {
+        "name": "assigned_at",
+        "type": "DateTime(timezone=True)",
+        "line": 1313
+      }
+    ],
+    "human_reply_template": [
+      {
+        "name": "template_id",
+        "type": "Text",
+        "line": 1322
+      },
+      {
+        "name": "bd_market",
+        "type": "Text",
+        "line": 1323
+      },
+      {
+        "name": "name",
+        "type": "Text",
+        "line": 1324
+      },
+      {
+        "name": "category",
+        "type": "Text",
+        "line": 1325
+      },
+      {
+        "name": "language",
+        "type": "Text",
+        "line": 1326
+      },
+      {
+        "name": "scope",
+        "type": "Text",
+        "line": 1327
+      },
+      {
+        "name": "status",
+        "type": "Text",
+        "line": 1328
+      },
+      {
+        "name": "body",
+        "type": "Text",
+        "line": 1329
+      },
+      {
+        "name": "placeholders",
+        "type": "JSONB",
+        "line": 1330
+      },
+      {
+        "name": "version",
+        "type": "Integer",
+        "line": 1331
+      },
+      {
+        "name": "usage_count",
+        "type": "Integer",
+        "line": 1332
+      },
+      {
+        "name": "last_used_at",
+        "type": "DateTime(timezone=True)",
+        "line": 1333
+      },
+      {
+        "name": "created_at",
+        "type": "DateTime(timezone=True)",
+        "line": 1334
+      },
+      {
+        "name": "updated_at",
+        "type": "DateTime(timezone=True)",
+        "line": 1335
+      }
+    ],
+    "tap_creator_product_history": [
+      {
+        "name": "bd_market",
+        "type": "Text",
+        "line": 1356
+      },
+      {
+        "name": "creator_identity_key",
+        "type": "Text",
+        "line": 1357
+      },
+      {
+        "name": "pid",
+        "type": "Text",
+        "line": 1358
+      },
+      {
+        "name": "first_seen_report_date",
+        "type": "Date",
+        "line": 1359
+      },
+      {
+        "name": "last_seen_report_date",
+        "type": "Date",
+        "line": 1360
+      },
+      {
+        "name": "seen_day_count",
+        "type": "Integer",
+        "line": 1361
+      },
+      {
+        "name": "first_source_file_id",
+        "type": "Text",
+        "line": 1362
+      },
+      {
+        "name": "last_source_file_id",
+        "type": "Text",
+        "line": 1363
+      },
+      {
+        "name": "created_at",
+        "type": "DateTime(timezone=True)",
+        "line": 1364
+      },
+      {
+        "name": "updated_at",
+        "type": "DateTime(timezone=True)",
+        "line": 1365
+      }
+    ],
+    "send_task_attribution": [
+      {
+        "name": "attribution_id",
+        "type": "Text",
+        "line": 1374
+      },
+      {
+        "name": "task_id",
+        "type": "Text",
+        "line": 1375
+      },
+      {
+        "name": "lead_id",
+        "type": "Text",
+        "line": 1376
+      },
+      {
+        "name": "bd_market",
+        "type": "Text",
+        "line": 1377
+      },
+      {
+        "name": "creator_identity_key",
+        "type": "Text",
+        "line": 1378
+      },
+      {
+        "name": "pid",
+        "type": "Text",
+        "line": 1379
+      },
+      {
+        "name": "card_sent_at",
+        "type": "DateTime(timezone=True)",
+        "line": 1380
+      },
+      {
+        "name": "window_start_date",
+        "type": "Date",
+        "line": 1381
+      },
+      {
+        "name": "window_end_date",
+        "type": "Date",
+        "line": 1382
+      },
+      {
+        "name": "status",
+        "type": "Text",
+        "line": 1383
+      },
+      {
+        "name": "matched_report_date",
+        "type": "Date",
+        "line": 1384
+      },
+      {
+        "name": "matched_file_id",
+        "type": "Text",
+        "line": 1385
+      },
+      {
+        "name": "finalized_at",
+        "type": "DateTime(timezone=True)",
+        "line": 1386
+      },
+      {
+        "name": "ineligible_reason",
+        "type": "Text",
+        "line": 1387
+      },
+      {
+        "name": "created_at",
+        "type": "DateTime(timezone=True)",
+        "line": 1388
+      },
+      {
+        "name": "updated_at",
+        "type": "DateTime(timezone=True)",
+        "line": 1389
+      }
+    ],
+    "send_task_event": [
+      {
+        "name": "event_id",
+        "type": "Text",
+        "line": 1406
+      },
+      {
+        "name": "task_id",
+        "type": "Text",
+        "line": 1407
+      },
+      {
+        "name": "lead_id",
+        "type": "Text",
+        "line": 1408
+      },
+      {
+        "name": "event_type",
+        "type": "Text",
+        "line": 1409
+      },
+      {
+        "name": "actor",
+        "type": "Text",
+        "line": 1410
+      },
+      {
+        "name": "payload",
+        "type": "JSONB",
+        "line": 1411
+      },
+      {
+        "name": "created_at",
+        "type": "DateTime(timezone=True)",
+        "line": 1412
+      }
+    ],
+    "report_contract": [
+      {
+        "name": "contract_id",
+        "type": "Text",
+        "line": 1423
+      },
+      {
+        "name": "market",
+        "type": "Text",
+        "line": 1424
+      },
+      {
+        "name": "report_kind",
+        "type": "Text",
+        "line": 1425
+      },
+      {
+        "name": "version",
+        "type": "Integer",
+        "line": 1426
+      },
+      {
+        "name": "biz_role",
+        "type": "Integer",
+        "line": 1427
+      },
+      {
+        "name": "granularity",
+        "type": "Text",
+        "line": 1428
+      },
+      {
+        "name": "dimensions",
+        "type": "JSONB",
+        "line": 1429
+      },
+      {
+        "name": "filter_payload",
+        "type": "JSONB",
+        "line": 1430
+      },
+      {
+        "name": "require_summation",
+        "type": "Boolean",
+        "line": 1431
+      },
+      {
+        "name": "request_fingerprint",
+        "type": "Text",
+        "line": 1432
+      },
+      {
+        "name": "status",
+        "type": "Text",
+        "line": 1433
+      },
+      {
+        "name": "effective_from",
+        "type": "Date",
+        "line": 1434
+      },
+      {
+        "name": "captured_at",
+        "type": "DateTime(timezone=True)",
+        "line": 1435
+      }
+    ],
+    "report_sync_run": [
+      {
+        "name": "run_id",
+        "type": "Text",
+        "line": 1454
+      },
+      {
+        "name": "market",
+        "type": "Text",
+        "line": 1455
+      },
+      {
+        "name": "account_name",
+        "type": "Text",
+        "line": 1456
+      },
+      {
+        "name": "mode",
+        "type": "Text",
+        "line": 1457
+      },
+      {
+        "name": "requested_dates",
+        "type": "JSONB",
+        "line": 1458
+      },
+      {
+        "name": "actor",
+        "type": "Text",
+        "line": 1459
+      },
+      {
+        "name": "status",
+        "type": "Text",
+        "line": 1460
+      },
+      {
+        "name": "queued_at",
+        "type": "DateTime(timezone=True)",
+        "line": 1461
+      },
+      {
+        "name": "started_at",
+        "type": "DateTime(timezone=True)",
+        "line": 1462
+      },
+      {
+        "name": "completed_at",
+        "type": "DateTime(timezone=True)",
+        "line": 1463
+      },
+      {
+        "name": "success_count",
+        "type": "Integer",
+        "line": 1464
+      },
+      {
+        "name": "waiting_count",
+        "type": "Integer",
+        "line": 1465
+      },
+      {
+        "name": "failed_count",
+        "type": "Integer",
+        "line": 1466
+      },
+      {
+        "name": "error_code",
+        "type": "Text",
+        "line": 1467
+      },
+      {
+        "name": "error_summary",
+        "type": "Text",
+        "line": 1468
+      }
+    ],
+    "report_schema": [
+      {
+        "name": "schema_id",
+        "type": "Text",
+        "line": 1474
+      },
+      {
+        "name": "report_kind",
+        "type": "Text",
+        "line": 1475
+      },
+      {
+        "name": "header_fingerprint",
+        "type": "Text",
+        "line": 1476
+      },
+      {
+        "name": "ordered_headers",
+        "type": "JSONB",
+        "line": 1477
+      },
+      {
+        "name": "mapping_version",
+        "type": "Integer",
+        "line": 1478
+      },
+      {
+        "name": "unknown_headers",
+        "type": "JSONB",
+        "line": 1479
+      },
+      {
+        "name": "missing_required_headers",
+        "type": "JSONB",
+        "line": 1480
+      },
+      {
+        "name": "status",
+        "type": "Text",
+        "line": 1481
+      },
+      {
+        "name": "first_seen_at",
+        "type": "DateTime(timezone=True)",
+        "line": 1482
+      },
+      {
+        "name": "approved_at",
+        "type": "DateTime(timezone=True)",
+        "line": 1483
+      },
+      {
+        "name": "approved_by",
+        "type": "Text",
+        "line": 1484
+      }
+    ],
+    "report_file": [
+      {
+        "name": "file_id",
+        "type": "Text",
+        "line": 1495
+      },
+      {
+        "name": "run_id",
+        "type": "Text",
+        "line": 1496
+      },
+      {
+        "name": "contract_id",
+        "type": "Text",
+        "line": 1497
+      },
+      {
+        "name": "market",
+        "type": "Text",
+        "line": 1498
+      },
+      {
+        "name": "report_kind",
+        "type": "Text",
+        "line": 1499
+      },
+      {
+        "name": "report_date",
+        "type": "Date",
+        "line": 1500
+      },
+      {
+        "name": "version",
+        "type": "Integer",
+        "line": 1501
+      },
+      {
+        "name": "status",
+        "type": "Text",
+        "line": 1502
+      },
+      {
+        "name": "relative_path",
+        "type": "Text",
+        "line": 1503
+      },
+      {
+        "name": "sha256",
+        "type": "Text",
+        "line": 1504
+      },
+      {
+        "name": "byte_size",
+        "type": "BigInteger",
+        "line": 1505
+      },
+      {
+        "name": "row_count",
+        "type": "BigInteger",
+        "line": 1506
+      },
+      {
+        "name": "schema_id",
+        "type": "Text",
+        "line": 1507
+      },
+      {
+        "name": "is_current",
+        "type": "Boolean",
+        "line": 1508
+      },
+      {
+        "name": "supersedes_file_id",
+        "type": "Text",
+        "line": 1509
+      },
+      {
+        "name": "downloaded_at",
+        "type": "DateTime(timezone=True)",
+        "line": 1510
+      },
+      {
+        "name": "sealed_at",
+        "type": "DateTime(timezone=True)",
+        "line": 1511
+      },
+      {
+        "name": "failure_code",
+        "type": "Text",
+        "line": 1512
+      },
+      {
+        "name": "failure_summary",
+        "type": "Text",
+        "line": 1513
+      }
+    ],
+    "report_raw_row": [
+      {
+        "name": "file_id",
+        "type": "Text",
+        "line": 1541
+      },
+      {
+        "name": "row_number",
+        "type": "BigInteger",
+        "line": 1542
+      },
+      {
+        "name": "row_payload",
+        "type": "JSONB",
+        "line": 1543
+      },
+      {
+        "name": "row_hash",
+        "type": "Text",
+        "line": 1544
+      }
+    ],
+    "partner_attribution_daily": [
+      {
+        "name": "file_id",
+        "type": "Text",
+        "line": 1550
+      },
+      {
+        "name": "row_number",
+        "type": "BigInteger",
+        "line": 1551
+      },
+      {
+        "name": "report_date",
+        "type": "Date",
+        "line": 1552
+      },
+      {
+        "name": "market",
+        "type": "Text",
+        "line": 1553
+      },
+      {
+        "name": "report_kind",
+        "type": "Text",
+        "line": 1554
+      },
+      {
+        "name": "campaign_id",
+        "type": "Text",
+        "line": 1555
+      },
+      {
+        "name": "campaign_name",
+        "type": "Text",
+        "line": 1556
+      },
+      {
+        "name": "campaign_duration",
+        "type": "Text",
+        "line": 1557
+      },
+      {
+        "name": "creator_handle",
+        "type": "Text",
+        "line": 1558
+      },
+      {
+        "name": "creator_oec_id",
+        "type": "Text",
+        "line": 1559
+      },
+      {
+        "name": "creator_identity_key",
+        "type": "Text",
+        "line": 1560
+      },
+      {
+        "name": "creator_level",
+        "type": "Text",
+        "line": 1561
+      },
+      {
+        "name": "creator_followers",
+        "type": "BigInteger",
+        "line": 1562
+      },
+      {
+        "name": "product_id",
+        "type": "Text",
+        "line": 1563
+      },
+      {
+        "name": "product_name",
+        "type": "Text",
+        "line": 1564
+      },
+      {
+        "name": "shop_code",
+        "type": "Text",
+        "line": 1565
+      },
+      {
+        "name": "shop_id",
+        "type": "Text",
+        "line": 1566
+      },
+      {
+        "name": "shop_name",
+        "type": "Text",
+        "line": 1567
+      },
+      {
+        "name": "category_level_1",
+        "type": "Text",
+        "line": 1568
+      },
+      {
+        "name": "category_level_2",
+        "type": "Text",
+        "line": 1569
+      },
+      {
+        "name": "creator_attributed_gmv",
+        "type": "Numeric",
+        "line": 1570
+      },
+      {
+        "name": "live_attributed_gmv",
+        "type": "Numeric",
+        "line": 1571
+      },
+      {
+        "name": "video_attributed_gmv",
+        "type": "Numeric",
+        "line": 1572
+      },
+      {
+        "name": "creator_attributed_orders",
+        "type": "BigInteger",
+        "line": 1573
+      },
+      {
+        "name": "live_attributed_orders",
+        "type": "BigInteger",
+        "line": 1574
+      },
+      {
+        "name": "video_attributed_orders",
+        "type": "BigInteger",
+        "line": 1575
+      },
+      {
+        "name": "direct_gmv",
+        "type": "Numeric",
+        "line": 1576
+      },
+      {
+        "name": "live_direct_gmv",
+        "type": "Numeric",
+        "line": 1577
+      },
+      {
+        "name": "video_direct_gmv",
+        "type": "Numeric",
+        "line": 1578
+      },
+      {
+        "name": "product_card_direct_gmv",
+        "type": "Numeric",
+        "line": 1579
+      },
+      {
+        "name": "creator_attributed_units",
+        "type": "BigInteger",
+        "line": 1580
+      },
+      {
+        "name": "direct_orders",
+        "type": "BigInteger",
+        "line": 1581
+      },
+      {
+        "name": "live_direct_orders",
+        "type": "BigInteger",
+        "line": 1582
+      },
+      {
+        "name": "video_direct_orders",
+        "type": "BigInteger",
+        "line": 1583
+      },
+      {
+        "name": "product_card_orders",
+        "type": "BigInteger",
+        "line": 1584
+      },
+      {
+        "name": "live_attributed_units",
+        "type": "BigInteger",
+        "line": 1585
+      },
+      {
+        "name": "video_attributed_units",
+        "type": "BigInteger",
+        "line": 1586
+      },
+      {
+        "name": "product_card_units",
+        "type": "BigInteger",
+        "line": 1587
+      },
+      {
+        "name": "direct_refund_gmv",
+        "type": "Numeric",
+        "line": 1588
+      },
+      {
+        "name": "refunded_units",
+        "type": "BigInteger",
+        "line": 1589
+      },
+      {
+        "name": "watch_click_rate",
+        "type": "Numeric",
+        "line": 1590
+      },
+      {
+        "name": "ctor_sku_order_rate",
+        "type": "Numeric",
+        "line": 1591
+      },
+      {
+        "name": "service_provider_creator_attributed_gmv",
+        "type": "Numeric",
+        "line": 1592
+      },
+      {
+        "name": "service_provider_creator_attributed_orders",
+        "type": "BigInteger",
+        "line": 1593
+      },
+      {
+        "name": "live_likes",
+        "type": "BigInteger",
+        "line": 1594
+      },
+      {
+        "name": "video_likes",
+        "type": "BigInteger",
+        "line": 1595
+      },
+      {
+        "name": "video_views",
+        "type": "BigInteger",
+        "line": 1596
+      },
+      {
+        "name": "live_views",
+        "type": "BigInteger",
+        "line": 1597
+      },
+      {
+        "name": "live_count",
+        "type": "BigInteger",
+        "line": 1598
+      },
+      {
+        "name": "video_count",
+        "type": "BigInteger",
+        "line": 1599
+      },
+      {
+        "name": "showcase_product_count",
+        "type": "BigInteger",
+        "line": 1600
+      },
+      {
+        "name": "estimated_partner_commission",
+        "type": "Numeric",
+        "line": 1601
+      },
+      {
+        "name": "actual_partner_commission",
+        "type": "Numeric",
+        "line": 1602
+      },
+      {
+        "name": "estimated_creator_commission",
+        "type": "Numeric",
+        "line": 1603
+      },
+      {
+        "name": "actual_creator_commission",
+        "type": "Numeric",
+        "line": 1604
+      },
+      {
+        "name": "refund_gmv",
+        "type": "Numeric",
+        "line": 1605
+      },
+      {
+        "name": "settled_gmv",
+        "type": "Numeric",
+        "line": 1606
+      },
+      {
+        "name": "showcase_gmv",
+        "type": "Numeric",
+        "line": 1607
+      },
+      {
+        "name": "extra_metrics",
+        "type": "JSONB",
+        "line": 1608
+      }
+    ],
+    "creator_report_observation": [
+      {
+        "name": "file_id",
+        "type": "Text",
+        "line": 1639
+      },
+      {
+        "name": "creator_handle",
+        "type": "Text",
+        "line": 1640
+      },
+      {
+        "name": "market",
+        "type": "Text",
+        "line": 1641
+      },
+      {
+        "name": "report_date",
+        "type": "Date",
+        "line": 1642
+      },
+      {
+        "name": "report_kind",
+        "type": "Text",
+        "line": 1643
+      },
+      {
+        "name": "oec_id",
+        "type": "Text",
+        "line": 1644
+      },
+      {
+        "name": "creator_level",
+        "type": "Text",
+        "line": 1645
+      },
+      {
+        "name": "followers",
+        "type": "BigInteger",
+        "line": 1646
+      },
+      {
+        "name": "identity_status",
+        "type": "Text",
+        "line": 1647
+      },
+      {
+        "name": "candidate_oec_ids",
+        "type": "JSONB",
+        "line": 1648
+      },
+      {
+        "name": "observed_at",
+        "type": "DateTime(timezone=True)",
+        "line": 1654
+      }
+    ],
+    "report_creator_identity": [
+      {
+        "name": "market",
+        "type": "Text",
+        "line": 1671
+      },
+      {
+        "name": "identity_key",
+        "type": "Text",
+        "line": 1672
+      },
+      {
+        "name": "oec_id",
+        "type": "Text",
+        "line": 1673
+      },
+      {
+        "name": "current_handle_key",
+        "type": "Text",
+        "line": 1674
+      },
+      {
+        "name": "display_handle",
+        "type": "Text",
+        "line": 1675
+      },
+      {
+        "name": "identity_status",
+        "type": "Text",
+        "line": 1676
+      },
+      {
+        "name": "classifiable",
+        "type": "Boolean",
+        "line": 1677
+      },
+      {
+        "name": "candidate_oec_ids",
+        "type": "JSONB",
+        "line": 1678
+      },
+      {
+        "name": "link_source",
+        "type": "Text",
+        "line": 1684
+      },
+      {
+        "name": "first_report_date",
+        "type": "Date",
+        "line": 1685
+      },
+      {
+        "name": "last_report_date",
+        "type": "Date",
+        "line": 1686
+      },
+      {
+        "name": "last_seen_at",
+        "type": "DateTime(timezone=True)",
+        "line": 1687
+      },
+      {
+        "name": "created_at",
+        "type": "DateTime(timezone=True)",
+        "line": 1688
+      },
+      {
+        "name": "updated_at",
+        "type": "DateTime(timezone=True)",
+        "line": 1689
+      }
+    ],
+    "report_creator_identity_handle": [
+      {
+        "name": "market",
+        "type": "Text",
+        "line": 1747
+      },
+      {
+        "name": "handle_key",
+        "type": "Text",
+        "line": 1748
+      },
+      {
+        "name": "identity_key",
+        "type": "Text",
+        "line": 1749
+      },
+      {
+        "name": "display_handle",
+        "type": "Text",
+        "line": 1750
+      },
+      {
+        "name": "first_report_date",
+        "type": "Date",
+        "line": 1751
+      },
+      {
+        "name": "last_report_date",
+        "type": "Date",
+        "line": 1752
+      },
+      {
+        "name": "is_current",
+        "type": "Boolean",
+        "line": 1753
+      },
+      {
+        "name": "mapping_status",
+        "type": "Text",
+        "line": 1754
+      },
+      {
+        "name": "conflict_first_report_date",
+        "type": "Date",
+        "line": 1755
+      },
+      {
+        "name": "updated_at",
+        "type": "DateTime(timezone=True)",
+        "line": 1756
+      }
+    ],
+    "report_creator_identity_event": [
+      {
+        "name": "event_id",
+        "type": "Text",
+        "line": 1773
+      },
+      {
+        "name": "market",
+        "type": "Text",
+        "line": 1774
+      },
+      {
+        "name": "handle_key",
+        "type": "Text",
+        "line": 1775
+      },
+      {
+        "name": "from_identity_key",
+        "type": "Text",
+        "line": 1776
+      },
+      {
+        "name": "to_identity_key",
+        "type": "Text",
+        "line": 1777
+      },
+      {
+        "name": "event_type",
+        "type": "Text",
+        "line": 1778
+      },
+      {
+        "name": "candidate_oec_ids",
+        "type": "JSONB",
+        "line": 1779
+      },
+      {
+        "name": "evidence_source",
+        "type": "Text",
+        "line": 1785
+      },
+      {
+        "name": "report_file_id",
+        "type": "Text",
+        "line": 1786
+      },
+      {
+        "name": "report_date",
+        "type": "Date",
+        "line": 1787
+      },
+      {
+        "name": "actor",
+        "type": "Text",
+        "line": 1788
+      },
+      {
+        "name": "occurred_at",
+        "type": "DateTime(timezone=True)",
+        "line": 1789
+      }
+    ],
+    "creator_classification": [
+      {
+        "name": "classification_id",
+        "type": "Text",
+        "line": 1811
+      },
+      {
+        "name": "market",
+        "type": "Text",
+        "line": 1812
+      },
+      {
+        "name": "name",
+        "type": "Text",
+        "line": 1813
+      },
+      {
+        "name": "name_key",
+        "type": "Text",
+        "line": 1814
+      },
+      {
+        "name": "color",
+        "type": "Text",
+        "line": 1815
+      },
+      {
+        "name": "sort_order",
+        "type": "Integer",
+        "line": 1816
+      },
+      {
+        "name": "description",
+        "type": "Text",
+        "line": 1817
+      },
+      {
+        "name": "active",
+        "type": "Boolean",
+        "line": 1818
+      },
+      {
+        "name": "created_by",
+        "type": "Text",
+        "line": 1819
+      },
+      {
+        "name": "updated_by",
+        "type": "Text",
+        "line": 1820
+      },
+      {
+        "name": "created_at",
+        "type": "DateTime(timezone=True)",
+        "line": 1821
+      },
+      {
+        "name": "updated_at",
+        "type": "DateTime(timezone=True)",
+        "line": 1822
+      }
+    ],
+    "creator_classification_assignment": [
+      {
+        "name": "market",
+        "type": "Text",
+        "line": 1843
+      },
+      {
+        "name": "identity_key",
+        "type": "Text",
+        "line": 1844
+      },
+      {
+        "name": "classification_id",
+        "type": "Text",
+        "line": 1846
+      },
+      {
+        "name": "oec_id",
+        "type": "Text",
+        "line": 1847
+      },
+      {
+        "name": "handle_key",
+        "type": "Text",
+        "line": 1848
+      },
+      {
+        "name": "handle_snapshot",
+        "type": "Text",
+        "line": 1849
+      },
+      {
+        "name": "classifiable_guard",
+        "type": "Boolean",
+        "line": 1850
+      },
+      {
+        "name": "note",
+        "type": "Text",
+        "line": 1856
+      },
+      {
+        "name": "source",
+        "type": "Text",
+        "line": 1857
+      },
+      {
+        "name": "assigned_by",
+        "type": "Text",
+        "line": 1858
+      },
+      {
+        "name": "created_at",
+        "type": "DateTime(timezone=True)",
+        "line": 1859
+      },
+      {
+        "name": "updated_at",
+        "type": "DateTime(timezone=True)",
+        "line": 1860
+      }
+    ],
+    "creator_classification_event": [
+      {
+        "name": "event_id",
+        "type": "Text",
+        "line": 1896
+      },
+      {
+        "name": "market",
+        "type": "Text",
+        "line": 1897
+      },
+      {
+        "name": "identity_key",
+        "type": "Text",
+        "line": 1898
+      },
+      {
+        "name": "from_classification_id",
+        "type": "Text",
+        "line": 1899
+      },
+      {
+        "name": "to_classification_id",
+        "type": "Text",
+        "line": 1900
+      },
+      {
+        "name": "event_type",
+        "type": "Text",
+        "line": 1901
+      },
+      {
+        "name": "source",
+        "type": "Text",
+        "line": 1902
+      },
+      {
+        "name": "import_id",
+        "type": "Text",
+        "line": 1903
+      },
+      {
+        "name": "actor",
+        "type": "Text",
+        "line": 1904
+      },
+      {
+        "name": "note",
+        "type": "Text",
+        "line": 1905
+      },
+      {
+        "name": "occurred_at",
+        "type": "DateTime(timezone=True)",
+        "line": 1906
+      }
+    ],
+    "creator_classification_definition_event": [
+      {
+        "name": "event_id",
+        "type": "Text",
+        "line": 1930
+      },
+      {
+        "name": "market",
+        "type": "Text",
+        "line": 1931
+      },
+      {
+        "name": "classification_id",
+        "type": "Text",
+        "line": 1932
+      },
+      {
+        "name": "event_type",
+        "type": "Text",
+        "line": 1933
+      },
+      {
+        "name": "before_payload",
+        "type": "JSONB",
+        "line": 1934
+      },
+      {
+        "name": "after_payload",
+        "type": "JSONB",
+        "line": 1935
+      },
+      {
+        "name": "actor",
+        "type": "Text",
+        "line": 1936
+      },
+      {
+        "name": "occurred_at",
+        "type": "DateTime(timezone=True)",
+        "line": 1937
+      }
+    ],
+    "classification_import_batch": [
+      {
+        "name": "import_id",
+        "type": "Text",
+        "line": 1963
+      },
+      {
+        "name": "market",
+        "type": "Text",
+        "line": 1964
+      },
+      {
+        "name": "status",
+        "type": "Text",
+        "line": 1965
+      },
+      {
+        "name": "file_name",
+        "type": "Text",
+        "line": 1966
+      },
+      {
+        "name": "sha256",
+        "type": "Text",
+        "line": 1967
+      },
+      {
+        "name": "row_count",
+        "type": "BigInteger",
+        "line": 1968
+      },
+      {
+        "name": "matched_count",
+        "type": "BigInteger",
+        "line": 1969
+      },
+      {
+        "name": "unchanged_count",
+        "type": "BigInteger",
+        "line": 1970
+      },
+      {
+        "name": "conflict_count",
+        "type": "BigInteger",
+        "line": 1971
+      },
+      {
+        "name": "ambiguous_count",
+        "type": "BigInteger",
+        "line": 1972
+      },
+      {
+        "name": "unknown_count",
+        "type": "BigInteger",
+        "line": 1973
+      },
+      {
+        "name": "warning_count",
+        "type": "BigInteger",
+        "line": 1974
+      },
+      {
+        "name": "skipped_count",
+        "type": "BigInteger",
+        "line": 1975
+      },
+      {
+        "name": "invalid_count",
+        "type": "BigInteger",
+        "line": 1976
+      },
+      {
+        "name": "new_classification_names",
+        "type": "JSONB",
+        "line": 1977
+      },
+      {
+        "name": "replace_conflicts",
+        "type": "Boolean",
+        "line": 1983
+      },
+      {
+        "name": "create_missing_classifications",
+        "type": "Boolean",
+        "line": 1989
+      },
+      {
+        "name": "created_by",
+        "type": "Text",
+        "line": 1995
+      },
+      {
+        "name": "created_at",
+        "type": "DateTime(timezone=True)",
+        "line": 1996
+      },
+      {
+        "name": "started_at",
+        "type": "DateTime(timezone=True)",
+        "line": 1997
+      },
+      {
+        "name": "heartbeat_at",
+        "type": "DateTime(timezone=True)",
+        "line": 1998
+      },
+      {
+        "name": "attempt_id",
+        "type": "Text",
+        "line": 1999
+      },
+      {
+        "name": "lease_expires_at",
+        "type": "DateTime(timezone=True)",
+        "line": 2000
+      },
+      {
+        "name": "attempt_count",
+        "type": "Integer",
+        "line": 2001
+      },
+      {
+        "name": "applied_at",
+        "type": "DateTime(timezone=True)",
+        "line": 2002
+      },
+      {
+        "name": "failure_summary",
+        "type": "Text",
+        "line": 2003
+      },
+      {
+        "name": "result_summary",
+        "type": "JSONB",
+        "line": 2004
+      }
+    ],
+    "classification_import_row": [
+      {
+        "name": "import_id",
+        "type": "Text",
+        "line": 2022
+      },
+      {
+        "name": "row_number",
+        "type": "BigInteger",
+        "line": 2023
+      },
+      {
+        "name": "status",
+        "type": "Text",
+        "line": 2024
+      },
+      {
+        "name": "identity_key",
+        "type": "Text",
+        "line": 2025
+      },
+      {
+        "name": "oec_id",
+        "type": "Text",
+        "line": 2026
+      },
+      {
+        "name": "handle_key",
+        "type": "Text",
+        "line": 2027
+      },
+      {
+        "name": "requested_classification_name",
+        "type": "Text",
+        "line": 2028
+      },
+      {
+        "name": "resolved_classification_id",
+        "type": "Text",
+        "line": 2029
+      },
+      {
+        "name": "current_classification_id",
+        "type": "Text",
+        "line": 2030
+      },
+      {
+        "name": "note",
+        "type": "Text",
+        "line": 2031
+      },
+      {
+        "name": "error_code",
+        "type": "Text",
+        "line": 2032
+      }
+    ],
+    "merchant": [
+      {
+        "name": "bd_market",
+        "type": "Text",
+        "line": 2070
+      },
+      {
+        "name": "seller_id",
+        "type": "Text",
+        "line": 2071
+      },
+      {
+        "name": "shop_name",
+        "type": "Text",
+        "line": 2072
+      },
+      {
+        "name": "relationship_status",
+        "type": "Text",
+        "line": 2073
+      },
+      {
+        "name": "relationship_source",
+        "type": "Text",
+        "line": 2074
+      },
+      {
+        "name": "primary_category",
+        "type": "Text",
+        "line": 2075
+      },
+      {
+        "name": "merchant_grade",
+        "type": "Text",
+        "line": 2076
+      },
+      {
+        "name": "rating",
+        "type": "Numeric",
+        "line": 2077
+      },
+      {
+        "name": "sales",
+        "type": "BigInteger",
+        "line": 2078
+      },
+      {
+        "name": "owner",
+        "type": "Text",
+        "line": 2079
+      },
+      {
+        "name": "email",
+        "type": "Text",
+        "line": 2080
+      },
+      {
+        "name": "whatsapp",
+        "type": "Text",
+        "line": 2081
+      },
+      {
+        "name": "phone",
+        "type": "Text",
+        "line": 2082
+      },
+      {
+        "name": "country_code",
+        "type": "Text",
+        "line": 2083
+      },
+      {
+        "name": "notes",
+        "type": "Text",
+        "line": 2084
+      },
+      {
+        "name": "source_file",
+        "type": "Text",
+        "line": 2085
+      },
+      {
+        "name": "created_by",
+        "type": "Text",
+        "line": 2086
+      },
+      {
+        "name": "updated_by",
+        "type": "Text",
+        "line": 2087
+      },
+      {
+        "name": "created_at",
+        "type": "DateTime(timezone=True)",
+        "line": 2088
+      },
+      {
+        "name": "updated_at",
+        "type": "DateTime(timezone=True)",
+        "line": 2089
+      }
+    ],
+    "merchant_event": [
+      {
+        "name": "event_id",
+        "type": "Text",
+        "line": 2128
+      },
+      {
+        "name": "bd_market",
+        "type": "Text",
+        "line": 2129
+      },
+      {
+        "name": "seller_id",
+        "type": "Text",
+        "line": 2130
+      },
+      {
+        "name": "event_type",
+        "type": "Text",
+        "line": 2131
+      },
+      {
+        "name": "before_payload",
+        "type": "JSONB",
+        "line": 2132
+      },
+      {
+        "name": "after_payload",
+        "type": "JSONB",
+        "line": 2133
+      },
+      {
+        "name": "source",
+        "type": "Text",
+        "line": 2134
+      },
+      {
+        "name": "import_id",
+        "type": "Text",
+        "line": 2135
+      },
+      {
+        "name": "actor",
+        "type": "Text",
+        "line": 2136
+      },
+      {
+        "name": "occurred_at",
+        "type": "DateTime(timezone=True)",
+        "line": 2137
+      }
+    ],
+    "merchant_import_batch": [
+      {
+        "name": "import_id",
+        "type": "Text",
+        "line": 2152
+      },
+      {
+        "name": "bd_market",
+        "type": "Text",
+        "line": 2153
+      },
+      {
+        "name": "status",
+        "type": "Text",
+        "line": 2154
+      },
+      {
+        "name": "file_name",
+        "type": "Text",
+        "line": 2155
+      },
+      {
+        "name": "sha256",
+        "type": "Text",
+        "line": 2156
+      },
+      {
+        "name": "row_count",
+        "type": "BigInteger",
+        "line": 2157
+      },
+      {
+        "name": "insert_count",
+        "type": "BigInteger",
+        "line": 2158
+      },
+      {
+        "name": "update_count",
+        "type": "BigInteger",
+        "line": 2159
+      },
+      {
+        "name": "unchanged_count",
+        "type": "BigInteger",
+        "line": 2160
+      },
+      {
+        "name": "protected_count",
+        "type": "BigInteger",
+        "line": 2161
+      },
+      {
+        "name": "error_count",
+        "type": "BigInteger",
+        "line": 2162
+      },
+      {
+        "name": "created_by",
+        "type": "Text",
+        "line": 2163
+      },
+      {
+        "name": "created_at",
+        "type": "DateTime(timezone=True)",
+        "line": 2164
+      },
+      {
+        "name": "applied_at",
+        "type": "DateTime(timezone=True)",
+        "line": 2165
+      },
+      {
+        "name": "result_summary",
+        "type": "JSONB",
+        "line": 2166
+      }
+    ],
+    "merchant_import_row": [
+      {
+        "name": "import_id",
+        "type": "Text",
+        "line": 2179
+      },
+      {
+        "name": "row_number",
+        "type": "BigInteger",
+        "line": 2180
+      },
+      {
+        "name": "status",
+        "type": "Text",
+        "line": 2181
+      },
+      {
+        "name": "seller_id",
+        "type": "Text",
+        "line": 2182
+      },
+      {
+        "name": "payload",
+        "type": "JSONB",
+        "line": 2183
+      },
+      {
+        "name": "error_code",
+        "type": "Text",
+        "line": 2184
+      }
+    ],
+    "promotion_sharelink_binding": [
+      {
+        "name": "bd_market",
+        "type": "Text",
+        "line": 2207
+      },
+      {
+        "name": "pid",
+        "type": "Text",
+        "line": 2208
+      },
+      {
+        "name": "plan_record_id",
+        "type": "Text",
+        "line": 2209
+      },
+      {
+        "name": "status",
+        "type": "Text",
+        "line": 2210
+      },
+      {
+        "name": "source",
+        "type": "Text",
+        "line": 2211
+      },
+      {
+        "name": "created_by",
+        "type": "Text",
+        "line": 2212
+      },
+      {
+        "name": "updated_by",
+        "type": "Text",
+        "line": 2213
+      },
+      {
+        "name": "created_at",
+        "type": "DateTime(timezone=True)",
+        "line": 2214
+      },
+      {
+        "name": "updated_at",
+        "type": "DateTime(timezone=True)",
+        "line": 2215
+      },
+      {
+        "name": "last_verified_at",
+        "type": "DateTime(timezone=True)",
+        "line": 2216
+      }
+    ],
+    "promotion_catalog_product": [
+      {
+        "name": "bd_market",
+        "type": "Text",
+        "line": 2244
+      },
+      {
+        "name": "catalog_key",
+        "type": "Text",
+        "line": 2245
+      },
+      {
+        "name": "pid",
+        "type": "Text",
+        "line": 2246
+      },
+      {
+        "name": "seller_id",
+        "type": "Text",
+        "line": 2247
+      },
+      {
+        "name": "campaign_id",
+        "type": "Text",
+        "line": 2248
+      },
+      {
+        "name": "status",
+        "type": "Text",
+        "line": 2249
+      },
+      {
+        "name": "source_release_id",
+        "type": "Text",
+        "line": 2250
+      },
+      {
+        "name": "created_by",
+        "type": "Text",
+        "line": 2251
+      },
+      {
+        "name": "updated_by",
+        "type": "Text",
+        "line": 2252
+      },
+      {
+        "name": "created_at",
+        "type": "DateTime(timezone=True)",
+        "line": 2253
+      },
+      {
+        "name": "updated_at",
+        "type": "DateTime(timezone=True)",
+        "line": 2254
+      }
+    ],
+    "sample_confirmation_rule": [
+      {
+        "name": "rule_id",
+        "type": "Text",
+        "line": 2277
+      },
+      {
+        "name": "bd_market",
+        "type": "Text",
+        "line": 2278
+      },
+      {
+        "name": "scope_type",
+        "type": "Text",
+        "line": 2279
+      },
+      {
+        "name": "scope_value",
+        "type": "Text",
+        "line": 2280
+      },
+      {
+        "name": "requires_confirmation",
+        "type": "Boolean",
+        "line": 2281
+      },
+      {
+        "name": "status",
+        "type": "Text",
+        "line": 2282
+      },
+      {
+        "name": "notes",
+        "type": "Text",
+        "line": 2283
+      },
+      {
+        "name": "created_by",
+        "type": "Text",
+        "line": 2284
+      },
+      {
+        "name": "updated_by",
+        "type": "Text",
+        "line": 2285
+      },
+      {
+        "name": "created_at",
+        "type": "DateTime(timezone=True)",
+        "line": 2286
+      },
+      {
+        "name": "updated_at",
+        "type": "DateTime(timezone=True)",
+        "line": 2287
+      }
+    ],
+    "sample_sync_run": [
+      {
+        "name": "run_id",
+        "type": "Text",
+        "line": 2310
+      },
+      {
+        "name": "bd_market",
+        "type": "Text",
+        "line": 2311
+      },
+      {
+        "name": "trigger_type",
+        "type": "Text",
+        "line": 2312
+      },
+      {
+        "name": "status",
+        "type": "Text",
+        "line": 2313
+      },
+      {
+        "name": "created_by",
+        "type": "Text",
+        "line": 2314
+      },
+      {
+        "name": "started_at",
+        "type": "DateTime(timezone=True)",
+        "line": 2315
+      },
+      {
+        "name": "finished_at",
+        "type": "DateTime(timezone=True)",
+        "line": 2316
+      },
+      {
+        "name": "new_count",
+        "type": "BigInteger",
+        "line": 2317
+      },
+      {
+        "name": "updated_count",
+        "type": "BigInteger",
+        "line": 2318
+      },
+      {
+        "name": "error_count",
+        "type": "BigInteger",
+        "line": 2319
+      },
+      {
+        "name": "error_code",
+        "type": "Text",
+        "line": 2320
+      },
+      {
+        "name": "result_summary",
+        "type": "JSONB",
+        "line": 2321
+      }
+    ],
+    "sample_creator_eligibility": [
+      {
+        "name": "bd_market",
+        "type": "Text",
+        "line": 2342
+      },
+      {
+        "name": "creator_oec_id",
+        "type": "Text",
+        "line": 2343
+      },
+      {
+        "name": "creator_handle",
+        "type": "Text",
+        "line": 2344
+      },
+      {
+        "name": "status",
+        "type": "Text",
+        "line": 2345
+      },
+      {
+        "name": "notes",
+        "type": "Text",
+        "line": 2346
+      },
+      {
+        "name": "created_by",
+        "type": "Text",
+        "line": 2347
+      },
+      {
+        "name": "updated_by",
+        "type": "Text",
+        "line": 2348
+      },
+      {
+        "name": "created_at",
+        "type": "DateTime(timezone=True)",
+        "line": 2349
+      },
+      {
+        "name": "updated_at",
+        "type": "DateTime(timezone=True)",
+        "line": 2350
+      }
+    ],
+    "sample_creator_eligibility_event": [
+      {
+        "name": "event_id",
+        "type": "Text",
+        "line": 2366
+      },
+      {
+        "name": "bd_market",
+        "type": "Text",
+        "line": 2367
+      },
+      {
+        "name": "creator_oec_id",
+        "type": "Text",
+        "line": 2368
+      },
+      {
+        "name": "creator_handle",
+        "type": "Text",
+        "line": 2369
+      },
+      {
+        "name": "source_type",
+        "type": "Text",
+        "line": 2370
+      },
+      {
+        "name": "event_type",
+        "type": "Text",
+        "line": 2371
+      },
+      {
+        "name": "actor",
+        "type": "Text",
+        "line": 2372
+      },
+      {
+        "name": "notes",
+        "type": "Text",
+        "line": 2373
+      },
+      {
+        "name": "occurred_at",
+        "type": "DateTime(timezone=True)",
+        "line": 2374
+      }
+    ],
+    "sample_workflow_import_batch": [
+      {
+        "name": "import_id",
+        "type": "Text",
+        "line": 2393
+      },
+      {
+        "name": "bd_market",
+        "type": "Text",
+        "line": 2394
+      },
+      {
+        "name": "import_type",
+        "type": "Text",
+        "line": 2395
+      },
+      {
+        "name": "status",
+        "type": "Text",
+        "line": 2396
+      },
+      {
+        "name": "file_name",
+        "type": "Text",
+        "line": 2397
+      },
+      {
+        "name": "sha256",
+        "type": "Text",
+        "line": 2398
+      },
+      {
+        "name": "row_count",
+        "type": "BigInteger",
+        "line": 2399
+      },
+      {
+        "name": "insert_count",
+        "type": "BigInteger",
+        "line": 2400
+      },
+      {
+        "name": "update_count",
+        "type": "BigInteger",
+        "line": 2401
+      },
+      {
+        "name": "unchanged_count",
+        "type": "BigInteger",
+        "line": 2402
+      },
+      {
+        "name": "remove_count",
+        "type": "BigInteger",
+        "line": 2403
+      },
+      {
+        "name": "conflict_count",
+        "type": "BigInteger",
+        "line": 2404
+      },
+      {
+        "name": "error_count",
+        "type": "BigInteger",
+        "line": 2405
+      },
+      {
+        "name": "import_metadata",
+        "type": "JSONB",
+        "line": 2406
+      },
+      {
+        "name": "created_by",
+        "type": "Text",
+        "line": 2407
+      },
+      {
+        "name": "created_at",
+        "type": "DateTime(timezone=True)",
+        "line": 2408
+      },
+      {
+        "name": "applied_at",
+        "type": "DateTime(timezone=True)",
+        "line": 2409
+      },
+      {
+        "name": "result_summary",
+        "type": "JSONB",
+        "line": 2410
+      }
+    ],
+    "sample_workflow_import_row": [
+      {
+        "name": "import_id",
+        "type": "Text",
+        "line": 2435
+      },
+      {
+        "name": "row_number",
+        "type": "BigInteger",
+        "line": 2436
+      },
+      {
+        "name": "status",
+        "type": "Text",
+        "line": 2437
+      },
+      {
+        "name": "entity_key",
+        "type": "Text",
+        "line": 2438
+      },
+      {
+        "name": "payload",
+        "type": "JSONB",
+        "line": 2439
+      },
+      {
+        "name": "current_payload",
+        "type": "JSONB",
+        "line": 2440
+      },
+      {
+        "name": "error_code",
+        "type": "Text",
+        "line": 2441
+      }
+    ],
+    "product_catalog_version": [
+      {
+        "name": "version_id",
+        "type": "Text",
+        "line": 2457
+      },
+      {
+        "name": "bd_market",
+        "type": "Text",
+        "line": 2458
+      },
+      {
+        "name": "catalog_key",
+        "type": "Text",
+        "line": 2459
+      },
+      {
+        "name": "version_label",
+        "type": "Text",
+        "line": 2460
+      },
+      {
+        "name": "source_name",
+        "type": "Text",
+        "line": 2461
+      },
+      {
+        "name": "source_sha256",
+        "type": "Text",
+        "line": 2462
+      },
+      {
+        "name": "status",
+        "type": "Text",
+        "line": 2463
+      },
+      {
+        "name": "row_count",
+        "type": "BigInteger",
+        "line": 2464
+      },
+      {
+        "name": "created_by",
+        "type": "Text",
+        "line": 2465
+      },
+      {
+        "name": "created_at",
+        "type": "DateTime(timezone=True)",
+        "line": 2466
+      },
+      {
+        "name": "activated_at",
+        "type": "DateTime(timezone=True)",
+        "line": 2467
+      }
+    ],
+    "product_catalog_item": [
+      {
+        "name": "version_id",
+        "type": "Text",
+        "line": 2492
+      },
+      {
+        "name": "pid",
+        "type": "Text",
+        "line": 2493
+      },
+      {
+        "name": "seller_id",
+        "type": "Text",
+        "line": 2494
+      },
+      {
+        "name": "source_pool_key",
+        "type": "Text",
+        "line": 2495
+      },
+      {
+        "name": "product_name",
+        "type": "Text",
+        "line": 2496
+      },
+      {
+        "name": "image_url",
+        "type": "Text",
+        "line": 2497
+      },
+      {
+        "name": "category",
+        "type": "Text",
+        "line": 2498
+      },
+      {
+        "name": "created_at",
+        "type": "DateTime(timezone=True)",
+        "line": 2499
+      }
+    ],
+    "product_source_pool_version": [
+      {
+        "name": "version_id",
+        "type": "Text",
+        "line": 2521
+      },
+      {
+        "name": "bd_market",
+        "type": "Text",
+        "line": 2522
+      },
+      {
+        "name": "pool_key",
+        "type": "Text",
+        "line": 2523
+      },
+      {
+        "name": "version_label",
+        "type": "Text",
+        "line": 2524
+      },
+      {
+        "name": "source_name",
+        "type": "Text",
+        "line": 2525
+      },
+      {
+        "name": "source_sha256",
+        "type": "Text",
+        "line": 2526
+      },
+      {
+        "name": "source_metadata",
+        "type": "JSONB",
+        "line": 2527
+      },
+      {
+        "name": "status",
+        "type": "Text",
+        "line": 2528
+      },
+      {
+        "name": "row_count",
+        "type": "BigInteger",
+        "line": 2529
+      },
+      {
+        "name": "created_by",
+        "type": "Text",
+        "line": 2530
+      },
+      {
+        "name": "activated_by",
+        "type": "Text",
+        "line": 2531
+      },
+      {
+        "name": "created_at",
+        "type": "DateTime(timezone=True)",
+        "line": 2532
+      },
+      {
+        "name": "activated_at",
+        "type": "DateTime(timezone=True)",
+        "line": 2533
+      }
+    ],
+    "product_source_pool_item": [
+      {
+        "name": "version_id",
+        "type": "Text",
+        "line": 2565
+      },
+      {
+        "name": "pid",
+        "type": "Text",
+        "line": 2566
+      },
+      {
+        "name": "product_name",
+        "type": "Text",
+        "line": 2567
+      },
+      {
+        "name": "image_url",
+        "type": "Text",
+        "line": 2568
+      },
+      {
+        "name": "shop_name",
+        "type": "Text",
+        "line": 2569
+      },
+      {
+        "name": "seller_id",
+        "type": "Text",
+        "line": 2570
+      },
+      {
+        "name": "category",
+        "type": "Text",
+        "line": 2571
+      },
+      {
+        "name": "category_l1",
+        "type": "Text",
+        "line": 2572
+      },
+      {
+        "name": "category_l2",
+        "type": "Text",
+        "line": 2573
+      },
+      {
+        "name": "category_l3",
+        "type": "Text",
+        "line": 2574
+      },
+      {
+        "name": "canonical_category_l1",
+        "type": "Text",
+        "line": 2575
+      },
+      {
+        "name": "category_mapping_method",
+        "type": "Text",
+        "line": 2576
+      },
+      {
+        "name": "category_rule_version",
+        "type": "Text",
+        "line": 2577
+      },
+      {
+        "name": "product_url",
+        "type": "Text",
+        "line": 2578
+      },
+      {
+        "name": "price_min",
+        "type": "Numeric",
+        "line": 2579
+      },
+      {
+        "name": "price_max",
+        "type": "Numeric",
+        "line": 2580
+      },
+      {
+        "name": "price_currency",
+        "type": "Text",
+        "line": 2581
+      },
+      {
+        "name": "list_price_text",
+        "type": "Text",
+        "line": 2582
+      },
+      {
+        "name": "sale_price_text",
+        "type": "Text",
+        "line": 2583
+      },
+      {
+        "name": "stock_quantity",
+        "type": "BigInteger",
+        "line": 2584
+      },
+      {
+        "name": "source_tags",
+        "type": "JSONB",
+        "line": 2585
+      },
+      {
+        "name": "source_refs",
+        "type": "JSONB",
+        "line": 2586
+      },
+      {
+        "name": "source_attributes",
+        "type": "JSONB",
+        "line": 2587
+      },
+      {
+        "name": "created_at",
+        "type": "DateTime(timezone=True)",
+        "line": 2588
+      }
+    ],
+    "promotion_site_page": [
+      {
+        "name": "page_id",
+        "type": "Text",
+        "line": 2638
+      },
+      {
+        "name": "bd_market",
+        "type": "Text",
+        "line": 2639
+      },
+      {
+        "name": "page_name",
+        "type": "Text",
+        "line": 2640
+      },
+      {
+        "name": "slug",
+        "type": "Text",
+        "line": 2641
+      },
+      {
+        "name": "page_type",
+        "type": "Text",
+        "line": 2642
+      },
+      {
+        "name": "status",
+        "type": "Text",
+        "line": 2643
+      },
+      {
+        "name": "sort_order",
+        "type": "BigInteger",
+        "line": 2644
+      },
+      {
+        "name": "created_by",
+        "type": "Text",
+        "line": 2645
+      },
+      {
+        "name": "updated_by",
+        "type": "Text",
+        "line": 2646
+      },
+      {
+        "name": "created_at",
+        "type": "DateTime(timezone=True)",
+        "line": 2647
+      },
+      {
+        "name": "updated_at",
+        "type": "DateTime(timezone=True)",
+        "line": 2648
+      }
+    ],
+    "promotion_site_release": [
+      {
+        "name": "release_id",
+        "type": "Text",
+        "line": 2678
+      },
+      {
+        "name": "bd_market",
+        "type": "Text",
+        "line": 2679
+      },
+      {
+        "name": "version_label",
+        "type": "Text",
+        "line": 2680
+      },
+      {
+        "name": "status",
+        "type": "Text",
+        "line": 2681
+      },
+      {
+        "name": "payload",
+        "type": "JSONB",
+        "line": 2682
+      },
+      {
+        "name": "source_sha256",
+        "type": "Text",
+        "line": 2683
+      },
+      {
+        "name": "page_count",
+        "type": "BigInteger",
+        "line": 2684
+      },
+      {
+        "name": "product_count",
+        "type": "BigInteger",
+        "line": 2685
+      },
+      {
+        "name": "validation_summary",
+        "type": "JSONB",
+        "line": 2686
+      },
+      {
+        "name": "remote_release_id",
+        "type": "Text",
+        "line": 2687
+      },
+      {
+        "name": "created_by",
+        "type": "Text",
+        "line": 2688
+      },
+      {
+        "name": "created_at",
+        "type": "DateTime(timezone=True)",
+        "line": 2689
+      },
+      {
+        "name": "staged_at",
+        "type": "DateTime(timezone=True)",
+        "line": 2690
+      },
+      {
+        "name": "activated_at",
+        "type": "DateTime(timezone=True)",
+        "line": 2691
+      }
+    ],
+    "promotion_site_draft": [
+      {
+        "name": "draft_id",
+        "type": "Text",
+        "line": 2722
+      },
+      {
+        "name": "bd_market",
+        "type": "Text",
+        "line": 2723
+      },
+      {
+        "name": "base_release_id",
+        "type": "Text",
+        "line": 2724
+      },
+      {
+        "name": "status",
+        "type": "Text",
+        "line": 2725
+      },
+      {
+        "name": "revision",
+        "type": "BigInteger",
+        "line": 2726
+      },
+      {
+        "name": "created_by",
+        "type": "Text",
+        "line": 2727
+      },
+      {
+        "name": "updated_by",
+        "type": "Text",
+        "line": 2728
+      },
+      {
+        "name": "created_at",
+        "type": "DateTime(timezone=True)",
+        "line": 2729
+      },
+      {
+        "name": "updated_at",
+        "type": "DateTime(timezone=True)",
+        "line": 2730
+      }
+    ],
+    "promotion_site_draft_item": [
+      {
+        "name": "draft_id",
+        "type": "Text",
+        "line": 2752
+      },
+      {
+        "name": "page_id",
+        "type": "Text",
+        "line": 2753
+      },
+      {
+        "name": "pid",
+        "type": "Text",
+        "line": 2754
+      },
+      {
+        "name": "source_pool_key",
+        "type": "Text",
+        "line": 2755
+      },
+      {
+        "name": "category_key",
+        "type": "Text",
+        "line": 2756
+      },
+      {
+        "name": "sort_order",
+        "type": "BigInteger",
+        "line": 2757
+      },
+      {
+        "name": "added_by",
+        "type": "Text",
+        "line": 2758
+      },
+      {
+        "name": "added_at",
+        "type": "DateTime(timezone=True)",
+        "line": 2759
+      }
+    ],
+    "promotion_site_sharelink_batch": [
+      {
+        "name": "batch_id",
+        "type": "Text",
+        "line": 2790
+      },
+      {
+        "name": "draft_id",
+        "type": "Text",
+        "line": 2791
+      },
+      {
+        "name": "status",
+        "type": "Text",
+        "line": 2792
+      },
+      {
+        "name": "account_name",
+        "type": "Text",
+        "line": 2793
+      },
+      {
+        "name": "account_names",
+        "type": "JSONB",
+        "line": 2794
+      },
+      {
+        "name": "revision",
+        "type": "BigInteger",
+        "line": 2795
+      },
+      {
+        "name": "created_by",
+        "type": "Text",
+        "line": 2796
+      },
+      {
+        "name": "created_at",
+        "type": "DateTime(timezone=True)",
+        "line": 2797
+      },
+      {
+        "name": "updated_at",
+        "type": "DateTime(timezone=True)",
+        "line": 2798
+      },
+      {
+        "name": "confirmed_at",
+        "type": "DateTime(timezone=True)",
+        "line": 2799
+      },
+      {
+        "name": "finished_at",
+        "type": "DateTime(timezone=True)",
+        "line": 2800
+      }
+    ],
+    "promotion_site_sharelink_item": [
+      {
+        "name": "batch_id",
+        "type": "Text",
+        "line": 2833
+      },
+      {
+        "name": "pid",
+        "type": "Text",
+        "line": 2834
+      },
+      {
+        "name": "sort_order",
+        "type": "BigInteger",
+        "line": 2835
+      },
+      {
+        "name": "status",
+        "type": "Text",
+        "line": 2836
+      },
+      {
+        "name": "job_id",
+        "type": "Text",
+        "line": 2837
+      },
+      {
+        "name": "record_id",
+        "type": "Text",
+        "line": 2838
+      },
+      {
+        "name": "account_name",
+        "type": "Text",
+        "line": 2839
+      },
+      {
+        "name": "error_code",
+        "type": "Text",
+        "line": 2840
+      },
+      {
+        "name": "created_at",
+        "type": "DateTime(timezone=True)",
+        "line": 2841
+      },
+      {
+        "name": "updated_at",
+        "type": "DateTime(timezone=True)",
+        "line": 2842
+      }
+    ],
+    "promotion_site_sample_request": [
+      {
+        "name": "request_id",
+        "type": "Text",
+        "line": 2880
+      },
+      {
+        "name": "bd_market",
+        "type": "Text",
+        "line": 2881
+      },
+      {
+        "name": "creator_handle",
+        "type": "Text",
+        "line": 2882
+      },
+      {
+        "name": "creator_handle_key",
+        "type": "Text",
+        "line": 2883
+      },
+      {
+        "name": "pid",
+        "type": "Text",
+        "line": 2884
+      },
+      {
+        "name": "release_id",
+        "type": "Text",
+        "line": 2885
+      },
+      {
+        "name": "source_pool_key",
+        "type": "Text",
+        "line": 2886
+      },
+      {
+        "name": "page_slug",
+        "type": "Text",
+        "line": 2887
+      },
+      {
+        "name": "submitted_at",
+        "type": "DateTime(timezone=True)",
+        "line": 2888
+      },
+      {
+        "name": "synced_at",
+        "type": "DateTime(timezone=True)",
+        "line": 2889
+      }
+    ],
+    "promotion_site_sample_sync_state": [
+      {
+        "name": "bd_market",
+        "type": "Text",
+        "line": 2920
+      },
+      {
+        "name": "remote_origin",
+        "type": "Text",
+        "line": 2921
+      },
+      {
+        "name": "cursor_submitted_at",
+        "type": "DateTime(timezone=True)",
+        "line": 2922
+      },
+      {
+        "name": "cursor_request_id",
+        "type": "Text",
+        "line": 2923
+      },
+      {
+        "name": "last_synced_at",
+        "type": "DateTime(timezone=True)",
+        "line": 2924
+      },
+      {
+        "name": "last_error",
+        "type": "Text",
+        "line": 2925
+      },
+      {
+        "name": "updated_at",
+        "type": "DateTime(timezone=True)",
+        "line": 2926
+      }
+    ],
+    "website_catalog_release": [
+      {
+        "name": "release_id",
+        "type": "Text",
+        "line": 2935
+      },
+      {
+        "name": "bd_market",
+        "type": "Text",
+        "line": 2936
+      },
+      {
+        "name": "catalog_key",
+        "type": "Text",
+        "line": 2937
+      },
+      {
+        "name": "status",
+        "type": "Text",
+        "line": 2938
+      },
+      {
+        "name": "payload",
+        "type": "JSONB",
+        "line": 2939
+      },
+      {
+        "name": "source_sha256",
+        "type": "Text",
+        "line": 2940
+      },
+      {
+        "name": "product_count",
+        "type": "BigInteger",
+        "line": 2941
+      },
+      {
+        "name": "validation_summary",
+        "type": "JSONB",
+        "line": 2942
+      },
+      {
+        "name": "remote_release_id",
+        "type": "Text",
+        "line": 2943
+      },
+      {
+        "name": "created_by",
+        "type": "Text",
+        "line": 2944
+      },
+      {
+        "name": "created_at",
+        "type": "DateTime(timezone=True)",
+        "line": 2945
+      },
+      {
+        "name": "staged_at",
+        "type": "DateTime(timezone=True)",
+        "line": 2946
+      },
+      {
+        "name": "activated_at",
+        "type": "DateTime(timezone=True)",
+        "line": 2947
+      }
+    ],
+    "sample_official_product_form": [
+      {
+        "name": "form_version_id",
+        "type": "Text",
+        "line": 2970
+      },
+      {
+        "name": "bd_market",
+        "type": "Text",
+        "line": 2971
+      },
+      {
+        "name": "version_label",
+        "type": "Text",
+        "line": 2972
+      },
+      {
+        "name": "source_name",
+        "type": "Text",
+        "line": 2973
+      },
+      {
+        "name": "source_sha256",
+        "type": "Text",
+        "line": 2974
+      },
+      {
+        "name": "status",
+        "type": "Text",
+        "line": 2975
+      },
+      {
+        "name": "row_count",
+        "type": "BigInteger",
+        "line": 2976
+      },
+      {
+        "name": "created_by",
+        "type": "Text",
+        "line": 2977
+      },
+      {
+        "name": "created_at",
+        "type": "DateTime(timezone=True)",
+        "line": 2978
+      },
+      {
+        "name": "activated_at",
+        "type": "DateTime(timezone=True)",
+        "line": 2979
+      }
+    ],
+    "sample_official_product_form_item": [
+      {
+        "name": "form_version_id",
+        "type": "Text",
+        "line": 3001
+      },
+      {
+        "name": "pid",
+        "type": "Text",
+        "line": 3002
+      },
+      {
+        "name": "seller_id",
+        "type": "Text",
+        "line": 3003
+      },
+      {
+        "name": "product_name",
+        "type": "Text",
+        "line": 3004
+      },
+      {
+        "name": "image_url",
+        "type": "Text",
+        "line": 3005
+      },
+      {
+        "name": "created_at",
+        "type": "DateTime(timezone=True)",
+        "line": 3006
+      }
+    ],
+    "sample_product_approval_route": [
+      {
+        "name": "bd_market",
+        "type": "Text",
+        "line": 3022
+      },
+      {
+        "name": "pid",
+        "type": "Text",
+        "line": 3023
+      },
+      {
+        "name": "approval_route",
+        "type": "Text",
+        "line": 3024
+      },
+      {
+        "name": "source_kind",
+        "type": "Text",
+        "line": 3025
+      },
+      {
+        "name": "source_form_version_id",
+        "type": "Text",
+        "line": 3026
+      },
+      {
+        "name": "notes",
+        "type": "Text",
+        "line": 3027
+      },
+      {
+        "name": "created_by",
+        "type": "Text",
+        "line": 3028
+      },
+      {
+        "name": "updated_by",
+        "type": "Text",
+        "line": 3029
+      },
+      {
+        "name": "created_at",
+        "type": "DateTime(timezone=True)",
+        "line": 3030
+      },
+      {
+        "name": "updated_at",
+        "type": "DateTime(timezone=True)",
+        "line": 3031
+      }
+    ],
+    "sample_request_current": [
+      {
+        "name": "request_id",
+        "type": "Text",
+        "line": 3059
+      },
+      {
+        "name": "bd_market",
+        "type": "Text",
+        "line": 3060
+      },
+      {
+        "name": "creator_oec_id",
+        "type": "Text",
+        "line": 3061
+      },
+      {
+        "name": "platform_creator_id",
+        "type": "Text",
+        "line": 3062
+      },
+      {
+        "name": "creator_handle",
+        "type": "Text",
+        "line": 3063
+      },
+      {
+        "name": "campaign_id",
+        "type": "Text",
+        "line": 3064
+      },
+      {
+        "name": "campaign_name",
+        "type": "Text",
+        "line": 3065
+      },
+      {
+        "name": "pid",
+        "type": "Text",
+        "line": 3066
+      },
+      {
+        "name": "product_name",
+        "type": "Text",
+        "line": 3067
+      },
+      {
+        "name": "image_url",
+        "type": "Text",
+        "line": 3068
+      },
+      {
+        "name": "shop_name",
+        "type": "Text",
+        "line": 3069
+      },
+      {
+        "name": "seller_id",
+        "type": "Text",
+        "line": 3070
+      },
+      {
+        "name": "applied_at",
+        "type": "DateTime(timezone=True)",
+        "line": 3071
+      },
+      {
+        "name": "review_deadline_at",
+        "type": "DateTime(timezone=True)",
+        "line": 3072
+      },
+      {
+        "name": "platform_status",
+        "type": "Text",
+        "line": 3073
+      },
+      {
+        "name": "lifecycle_status",
+        "type": "Text",
+        "line": 3074
+      },
+      {
+        "name": "pool_type",
+        "type": "Text",
+        "line": 3080
+      },
+      {
+        "name": "gmv_mxn",
+        "type": "Numeric",
+        "line": 3081
+      },
+      {
+        "name": "post_rate",
+        "type": "Numeric",
+        "line": 3082
+      },
+      {
+        "name": "video_count",
+        "type": "BigInteger",
+        "line": 3083
+      },
+      {
+        "name": "average_views",
+        "type": "BigInteger",
+        "line": 3084
+      },
+      {
+        "name": "showcase_added",
+        "type": "Boolean",
+        "line": 3085
+      },
+      {
+        "name": "sample_stock",
+        "type": "BigInteger",
+        "line": 3086
+      },
+      {
+        "name": "merchant_confirmation_status",
+        "type": "Text",
+        "line": 3087
+      },
+      {
+        "name": "review_status",
+        "type": "Text",
+        "line": 3093
+      },
+      {
+        "name": "latest_sync_run_id",
+        "type": "Text",
+        "line": 3094
+      },
+      {
+        "name": "source_payload",
+        "type": "JSONB",
+        "line": 3095
+      },
+      {
+        "name": "first_observed_at",
+        "type": "DateTime(timezone=True)",
+        "line": 3096
+      },
+      {
+        "name": "last_observed_at",
+        "type": "DateTime(timezone=True)",
+        "line": 3097
+      },
+      {
+        "name": "updated_at",
+        "type": "DateTime(timezone=True)",
+        "line": 3098
+      }
+    ],
+    "sample_request_observation": [
+      {
+        "name": "observation_id",
+        "type": "Text",
+        "line": 3167
+      },
+      {
+        "name": "request_id",
+        "type": "Text",
+        "line": 3168
+      },
+      {
+        "name": "sync_run_id",
+        "type": "Text",
+        "line": 3169
+      },
+      {
+        "name": "observed_at",
+        "type": "DateTime(timezone=True)",
+        "line": 3170
+      },
+      {
+        "name": "platform_status",
+        "type": "Text",
+        "line": 3171
+      },
+      {
+        "name": "payload_hash",
+        "type": "Text",
+        "line": 3172
+      },
+      {
+        "name": "snapshot",
+        "type": "JSONB",
+        "line": 3173
+      }
+    ],
+    "sample_weekly_creator_snapshot": [
+      {
+        "name": "bd_market",
+        "type": "Text",
+        "line": 3194
+      },
+      {
+        "name": "week_start",
+        "type": "Date",
+        "line": 3195
+      },
+      {
+        "name": "creator_oec_id",
+        "type": "Text",
+        "line": 3196
+      },
+      {
+        "name": "creator_handle",
+        "type": "Text",
+        "line": 3197
+      },
+      {
+        "name": "gmv_mxn",
+        "type": "Numeric",
+        "line": 3198
+      },
+      {
+        "name": "tier_key",
+        "type": "Text",
+        "line": 3199
+      },
+      {
+        "name": "mcn_bound",
+        "type": "Boolean",
+        "line": 3200
+      },
+      {
+        "name": "captured_at",
+        "type": "DateTime(timezone=True)",
+        "line": 3201
+      },
+      {
+        "name": "source_updated_at",
+        "type": "DateTime(timezone=True)",
+        "line": 3202
+      }
+    ],
+    "sample_quota_policy": [
+      {
+        "name": "policy_id",
+        "type": "Text",
+        "line": 3212
+      },
+      {
+        "name": "bd_market",
+        "type": "Text",
+        "line": 3213
+      },
+      {
+        "name": "policy_version",
+        "type": "Text",
+        "line": 3214
+      },
+      {
+        "name": "pool_type",
+        "type": "Text",
+        "line": 3215
+      },
+      {
+        "name": "mcn_bound",
+        "type": "Boolean",
+        "line": 3216
+      },
+      {
+        "name": "min_gmv_mxn",
+        "type": "Numeric",
+        "line": 3217
+      },
+      {
+        "name": "max_gmv_mxn",
+        "type": "Numeric",
+        "line": 3218
+      },
+      {
+        "name": "weekly_limit",
+        "type": "BigInteger",
+        "line": 3219
+      },
+      {
+        "name": "status",
+        "type": "Text",
+        "line": 3220
+      },
+      {
+        "name": "effective_from",
+        "type": "Date",
+        "line": 3221
+      },
+      {
+        "name": "effective_to",
+        "type": "Date",
+        "line": 3222
+      },
+      {
+        "name": "created_at",
+        "type": "DateTime(timezone=True)",
+        "line": 3223
+      },
+      {
+        "name": "updated_by",
+        "type": "Text",
+        "line": 3229
+      },
+      {
+        "name": "updated_at",
+        "type": "DateTime(timezone=True)",
+        "line": 3230
+      }
+    ],
+    "sample_quota_policy_event": [
+      {
+        "name": "event_id",
+        "type": "Text",
+        "line": 3264
+      },
+      {
+        "name": "policy_id",
+        "type": "Text",
+        "line": 3265
+      },
+      {
+        "name": "old_weekly_limit",
+        "type": "BigInteger",
+        "line": 3266
+      },
+      {
+        "name": "new_weekly_limit",
+        "type": "BigInteger",
+        "line": 3267
+      },
+      {
+        "name": "actor",
+        "type": "Text",
+        "line": 3268
+      },
+      {
+        "name": "occurred_at",
+        "type": "DateTime(timezone=True)",
+        "line": 3269
+      }
+    ],
+    "sample_quota_event": [
+      {
+        "name": "event_id",
+        "type": "Text",
+        "line": 3286
+      },
+      {
+        "name": "request_id",
+        "type": "Text",
+        "line": 3287
+      },
+      {
+        "name": "week_start",
+        "type": "Date",
+        "line": 3288
+      },
+      {
+        "name": "pool_type",
+        "type": "Text",
+        "line": 3289
+      },
+      {
+        "name": "event_type",
+        "type": "Text",
+        "line": 3290
+      },
+      {
+        "name": "reserved_delta",
+        "type": "BigInteger",
+        "line": 3291
+      },
+      {
+        "name": "consumed_delta",
+        "type": "BigInteger",
+        "line": 3292
+      },
+      {
+        "name": "actor",
+        "type": "Text",
+        "line": 3293
+      },
+      {
+        "name": "note",
+        "type": "Text",
+        "line": 3294
+      },
+      {
+        "name": "occurred_at",
+        "type": "DateTime(timezone=True)",
+        "line": 3295
+      }
+    ],
+    "sample_review_attempt": [
+      {
+        "name": "attempt_id",
+        "type": "Text",
+        "line": 3319
+      },
+      {
+        "name": "request_id",
+        "type": "Text",
+        "line": 3320
+      },
+      {
+        "name": "action",
+        "type": "Text",
+        "line": 3321
+      },
+      {
+        "name": "status",
+        "type": "Text",
+        "line": 3322
+      },
+      {
+        "name": "actor",
+        "type": "Text",
+        "line": 3323
+      },
+      {
+        "name": "reason",
+        "type": "Text",
+        "line": 3324
+      },
+      {
+        "name": "request_dispatched_at",
+        "type": "DateTime(timezone=True)",
+        "line": 3325
+      },
+      {
+        "name": "finished_at",
+        "type": "DateTime(timezone=True)",
+        "line": 3326
+      },
+      {
+        "name": "http_status",
+        "type": "BigInteger",
+        "line": 3327
+      },
+      {
+        "name": "platform_code",
+        "type": "Text",
+        "line": 3328
+      },
+      {
+        "name": "error_code",
+        "type": "Text",
+        "line": 3329
+      },
+      {
+        "name": "response_metadata",
+        "type": "JSONB",
+        "line": 3330
+      },
+      {
+        "name": "created_at",
+        "type": "DateTime(timezone=True)",
+        "line": 3331
+      }
+    ],
+    "sample_review_batch": [
+      {
+        "name": "batch_id",
+        "type": "Text",
+        "line": 3365
+      },
+      {
+        "name": "bd_market",
+        "type": "Text",
+        "line": 3366
+      },
+      {
+        "name": "status",
+        "type": "Text",
+        "line": 3367
+      },
+      {
+        "name": "selected_count",
+        "type": "BigInteger",
+        "line": 3368
+      },
+      {
+        "name": "ready_count",
+        "type": "BigInteger",
+        "line": 3369
+      },
+      {
+        "name": "excluded_count",
+        "type": "BigInteger",
+        "line": 3370
+      },
+      {
+        "name": "succeeded_count",
+        "type": "BigInteger",
+        "line": 3371
+      },
+      {
+        "name": "failed_count",
+        "type": "BigInteger",
+        "line": 3372
+      },
+      {
+        "name": "result_unknown_count",
+        "type": "BigInteger",
+        "line": 3373
+      },
+      {
+        "name": "preview_snapshot",
+        "type": "JSONB",
+        "line": 3374
+      },
+      {
+        "name": "sync_run_id",
+        "type": "Text",
+        "line": 3375
+      },
+      {
+        "name": "account_name",
+        "type": "Text",
+        "line": 3376
+      },
+      {
+        "name": "created_by",
+        "type": "Text",
+        "line": 3377
+      },
+      {
+        "name": "created_at",
+        "type": "DateTime(timezone=True)",
+        "line": 3378
+      },
+      {
+        "name": "started_at",
+        "type": "DateTime(timezone=True)",
+        "line": 3379
+      },
+      {
+        "name": "finished_at",
+        "type": "DateTime(timezone=True)",
+        "line": 3380
+      },
+      {
+        "name": "error_code",
+        "type": "Text",
+        "line": 3381
+      }
+    ],
+    "sample_review_batch_item": [
+      {
+        "name": "batch_id",
+        "type": "Text",
+        "line": 3404
+      },
+      {
+        "name": "request_id",
+        "type": "Text",
+        "line": 3405
+      },
+      {
+        "name": "item_order",
+        "type": "BigInteger",
+        "line": 3406
+      },
+      {
+        "name": "status",
+        "type": "Text",
+        "line": 3407
+      },
+      {
+        "name": "blocking_reason",
+        "type": "Text",
+        "line": 3408
+      },
+      {
+        "name": "attempt_id",
+        "type": "Text",
+        "line": 3409
+      },
+      {
+        "name": "started_at",
+        "type": "DateTime(timezone=True)",
+        "line": 3410
+      },
+      {
+        "name": "finished_at",
+        "type": "DateTime(timezone=True)",
+        "line": 3411
+      }
+    ],
+    "report_analysis_schema_revision": [
+      {
+        "name": "revision",
+        "type": "Text",
+        "line": 3434
+      },
+      {
+        "name": "status",
+        "type": "Text",
+        "line": 3435
+      },
+      {
+        "name": "market",
+        "type": "Text",
+        "line": 3436
+      },
+      {
+        "name": "last_file_id",
+        "type": "Text",
+        "line": 3437
+      },
+      {
+        "name": "last_report_date",
+        "type": "Date",
+        "line": 3438
+      },
+      {
+        "name": "result_summary",
+        "type": "JSONB",
+        "line": 3439
+      },
+      {
+        "name": "failure_summary",
+        "type": "Text",
+        "line": 3440
+      },
+      {
+        "name": "started_at",
+        "type": "DateTime(timezone=True)",
+        "line": 3441
+      },
+      {
+        "name": "updated_at",
+        "type": "DateTime(timezone=True)",
+        "line": 3442
+      },
+      {
+        "name": "ready_at",
+        "type": "DateTime(timezone=True)",
+        "line": 3443
+      }
+    ],
+    "report_classification_object_daily": [
+      {
+        "name": "market",
+        "type": "Text",
+        "line": 3523
+      },
+      {
+        "name": "report_kind",
+        "type": "Text",
+        "line": 3524
+      },
+      {
+        "name": "report_date",
+        "type": "Date",
+        "line": 3525
+      },
+      {
+        "name": "dimension",
+        "type": "Text",
+        "line": 3526
+      },
+      {
+        "name": "identity_key",
+        "type": "Text",
+        "line": 3527
+      },
+      {
+        "name": "dimension_key",
+        "type": "Text",
+        "line": 3528
+      },
+      {
+        "name": "label",
+        "type": "Text",
+        "line": 3529
+      },
+      {
+        "name": "row_count",
+        "type": "BigInteger",
+        "line": 3530
+      },
+      {
+        "name": "gmv",
+        "type": "Numeric",
+        "line": 3531
+      },
+      {
+        "name": "orders",
+        "type": "BigInteger",
+        "line": 3532
+      },
+      {
+        "name": "refreshed_at",
+        "type": "DateTime(timezone=True)",
+        "line": 3533
+      }
+    ],
+    "ai_distribution_plan": [
+      {
+        "name": "plan_id",
+        "type": "Text",
+        "line": 3570
+      },
+      {
+        "name": "request_key",
+        "type": "Text",
+        "line": 3571
+      },
+      {
+        "name": "market",
+        "type": "Text",
+        "line": 3572
+      },
+      {
+        "name": "name",
+        "type": "Text",
+        "line": 3573
+      },
+      {
+        "name": "parameters",
+        "type": "JSONB",
+        "line": 3574
+      },
+      {
+        "name": "source_fingerprint",
+        "type": "Text",
+        "line": 3575
+      },
+      {
+        "name": "products",
+        "type": "JSONB",
+        "line": 3576
+      },
+      {
+        "name": "creator_total",
+        "type": "Integer",
+        "line": 3577
+      },
+      {
+        "name": "status",
+        "type": "Text",
+        "line": 3578
+      },
+      {
+        "name": "profile_days",
+        "type": "Integer",
+        "line": 3579
+      },
+      {
+        "name": "ai_review",
+        "type": "JSONB",
+        "line": 3580
+      },
+      {
+        "name": "created_at",
+        "type": "DateTime(timezone=True)",
+        "line": 3581
+      },
+      {
+        "name": "updated_at",
+        "type": "DateTime(timezone=True)",
+        "line": 3582
+      }
+    ],
+    "ai_distribution_match": [
+      {
+        "name": "plan_id",
+        "type": "Text",
+        "line": 3587
+      },
+      {
+        "name": "oec_id",
+        "type": "Text",
+        "line": 3588
+      },
+      {
+        "name": "creator",
+        "type": "JSONB",
+        "line": 3589
+      },
+      {
+        "name": "status",
+        "type": "Text",
+        "line": 3590
+      },
+      {
+        "name": "result",
+        "type": "JSONB",
+        "line": 3591
+      }
+    ],
+    "ai_cooperation_case": [
+      {
+        "name": "case_id",
+        "type": "Text",
+        "line": 3598
+      },
+      {
+        "name": "plan_id",
+        "type": "Text",
+        "line": 3599
+      },
+      {
+        "name": "oec_id",
+        "type": "Text",
+        "line": 3600
+      },
+      {
+        "name": "pid",
+        "type": "Text",
+        "line": 3601
+      },
+      {
+        "name": "creator",
+        "type": "JSONB",
+        "line": 3602
+      },
+      {
+        "name": "product",
+        "type": "JSONB",
+        "line": 3603
+      },
+      {
+        "name": "stage",
+        "type": "Text",
+        "line": 3604
+      },
+      {
+        "name": "owner",
+        "type": "Text",
+        "line": 3605
+      },
+      {
+        "name": "next_step",
+        "type": "Text",
+        "line": 3606
+      },
+      {
+        "name": "next_check_at",
+        "type": "DateTime(timezone=True)",
+        "line": 3607
+      },
+      {
+        "name": "revision",
+        "type": "Integer",
+        "line": 3608
+      },
+      {
+        "name": "created_at",
+        "type": "DateTime(timezone=True)",
+        "line": 3609
+      },
+      {
+        "name": "updated_at",
+        "type": "DateTime(timezone=True)",
+        "line": 3610
+      }
+    ],
+    "ai_cooperation_event": [
+      {
+        "name": "event_id",
+        "type": "Text",
+        "line": 3618
+      },
+      {
+        "name": "case_id",
+        "type": "Text",
+        "line": 3619
+      },
+      {
+        "name": "revision",
+        "type": "Integer",
+        "line": 3620
+      },
+      {
+        "name": "payload",
+        "type": "JSONB",
+        "line": 3621
+      },
+      {
+        "name": "created_at",
+        "type": "DateTime(timezone=True)",
+        "line": 3622
+      }
+    ]
+  }
+}

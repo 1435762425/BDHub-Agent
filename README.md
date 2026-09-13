@@ -42,6 +42,8 @@ npm run start
 
 开发时使用 `npm run dev`；开发和生产预览共用 `127.0.0.1:5198`，同一时间只启动一种。完整命令与演示流程见 [前端说明](apps/web/README.md)。建议先点击页面中的“体验流程”，依次体验 Sofía 的二发合作、Luca 的人工决定和 Camila 的历史接续。“重置演示”可恢复初始示例。
 
+新增[可复用TikTok接口与Agent能力手册](docs/contracts/tiktok/README.md)：源码路径/字段、三市场只读样本、Agent工具合同与未验证缺口分开登记。
+
 ## 最小阅读入口
 
 | 内容 | 入口 |

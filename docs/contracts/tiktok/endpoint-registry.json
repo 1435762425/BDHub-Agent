@@ -1,0 +1,782 @@
+{
+  "schema": "bdhub.tiktok.interface-registry.v1",
+  "updatedOn": "2026-09-13",
+  "scope": "33 reviewed path contracts including a file path prefix; not all TikTok APIs",
+  "legacyRoot": "/Users/bjn00003/BDHub/01-BDSystem-V2",
+  "entries": [
+    {
+      "path": "/api/v1/affiliate/lux/product/category/childrenv2",
+      "evidence": "source_only",
+      "references": [
+        {
+          "file": "bdhub/research/commerce_transport.py",
+          "line": 20
+        }
+      ],
+      "id": "TK-001",
+      "method": "POST",
+      "sideEffect": "business_read",
+      "action": "read",
+      "agentExposure": "not_registered; proposed typed wrapper only",
+      "liveEvidence": [],
+      "coverage": "source implementation only unless explicit liveEvidence; not proof of market deployment",
+      "replayPolicy": "bounded transient read retry; auth/verification errors stop"
+    },
+    {
+      "path": "/api/v1/affiliate/partner/campaign/list",
+      "evidence": "live_read_sample_20260913",
+      "references": [
+        {
+          "file": "bdhub/enrich/client.py",
+          "line": 24
+        },
+        {
+          "file": "bdhub/enrich/client.py",
+          "line": 123
+        },
+        {
+          "file": "bdhub/send/sharelink/transport.py",
+          "line": 26
+        }
+      ],
+      "id": "TK-002",
+      "method": "GET",
+      "sideEffect": "business_read",
+      "action": "read",
+      "agentExposure": "not_registered; proposed typed wrapper only",
+      "liveEvidence": [
+        {
+          "market": "mx",
+          "account": "acc6",
+          "observedAt": "2026-09-13T03:20:08.842287+00:00",
+          "status": "observed",
+          "http": 200,
+          "businessCode": 0,
+          "evidence": "field-observations-20260913.json#mx/campaigns"
+        },
+        {
+          "market": "it",
+          "account": "acc6",
+          "observedAt": "2026-09-13T03:20:17.725006+00:00",
+          "status": "observed",
+          "http": 200,
+          "businessCode": 0,
+          "evidence": "field-observations-20260913.json#it/campaigns"
+        },
+        {
+          "market": "br",
+          "account": "acc6",
+          "observedAt": "2026-09-13T03:20:24.707356+00:00",
+          "status": "observed",
+          "http": 200,
+          "businessCode": 0,
+          "evidence": "field-observations-20260913.json#br/campaigns"
+        }
+      ],
+      "coverage": "source implementation only unless explicit liveEvidence; not proof of market deployment",
+      "replayPolicy": "bounded transient read retry; auth/verification errors stop"
+    },
+    {
+      "path": "/api/v1/affiliate/partner/campaign/product/link",
+      "evidence": "source_only",
+      "references": [
+        {
+          "file": "bdhub/send/sharelink/transport.py",
+          "line": 28
+        }
+      ],
+      "id": "TK-003",
+      "method": "POST",
+      "sideEffect": "external_write",
+      "action": "create_sharelink",
+      "agentExposure": "not_registered; proposed typed wrapper only",
+      "liveEvidence": [],
+      "coverage": "source implementation only unless explicit liveEvidence; not proof of market deployment",
+      "replayPolicy": "never auto replay unknown write"
+    },
+    {
+      "path": "/api/v1/affiliate/partner/campaign/product/list",
+      "evidence": "source_only",
+      "references": [
+        {
+          "file": "bdhub/enrich/client.py",
+          "line": 25
+        },
+        {
+          "file": "bdhub/enrich/client.py",
+          "line": 124
+        },
+        {
+          "file": "bdhub/send/sharelink/transport.py",
+          "line": 27
+        }
+      ],
+      "id": "TK-004",
+      "method": "GET",
+      "sideEffect": "business_read",
+      "action": "read",
+      "agentExposure": "not_registered; proposed typed wrapper only",
+      "liveEvidence": [],
+      "coverage": "source implementation only unless explicit liveEvidence; not proof of market deployment",
+      "replayPolicy": "bounded transient read retry; auth/verification errors stop"
+    },
+    {
+      "path": "/api/v1/affiliate/partner/campaign/product_list/create",
+      "evidence": "source_only",
+      "references": [
+        {
+          "file": "bdhub/send/taplink/protocol.py",
+          "line": 8
+        }
+      ],
+      "id": "TK-005",
+      "method": "POST",
+      "sideEffect": "external_write",
+      "action": "create_product_list",
+      "agentExposure": "not_registered; proposed typed wrapper only",
+      "liveEvidence": [],
+      "coverage": "source implementation only unless explicit liveEvidence; not proof of market deployment",
+      "replayPolicy": "never auto replay unknown write"
+    },
+    {
+      "path": "/api/v1/affiliate/partner/campaign/product_list/delete",
+      "evidence": "source_only",
+      "references": [
+        {
+          "file": "bdhub/send/taplink/cleanup.py",
+          "line": 22
+        }
+      ],
+      "id": "TK-006",
+      "method": "POST",
+      "sideEffect": "external_write",
+      "action": "delete_product_list",
+      "agentExposure": "not_registered; proposed typed wrapper only",
+      "liveEvidence": [],
+      "coverage": "source implementation only unless explicit liveEvidence; not proof of market deployment",
+      "replayPolicy": "never auto replay unknown write"
+    },
+    {
+      "path": "/api/v1/affiliate/partner/campaign/product_list/list",
+      "evidence": "source_only",
+      "references": [
+        {
+          "file": "bdhub/send/taplink/cleanup.py",
+          "line": 20
+        }
+      ],
+      "id": "TK-007",
+      "method": "GET",
+      "sideEffect": "business_read",
+      "action": "read",
+      "agentExposure": "not_registered; proposed typed wrapper only",
+      "liveEvidence": [],
+      "coverage": "source implementation only unless explicit liveEvidence; not proof of market deployment",
+      "replayPolicy": "bounded transient read retry; auth/verification errors stop"
+    },
+    {
+      "path": "/api/v1/affiliate/partner/campaign/product_list/products",
+      "evidence": "live_read_sample_20260913",
+      "references": [
+        {
+          "file": "bdhub/research/commerce_transport.py",
+          "line": 19
+        },
+        {
+          "file": "bdhub/send/taplink/cleanup.py",
+          "line": 21
+        }
+      ],
+      "id": "TK-008",
+      "method": "GET",
+      "sideEffect": "business_read",
+      "action": "read",
+      "agentExposure": "not_registered; proposed typed wrapper only",
+      "liveEvidence": [
+        {
+          "market": "it",
+          "account": "acc6",
+          "observedAt": "2026-09-13T03:20:23.096120+00:00",
+          "status": "observed",
+          "http": 200,
+          "businessCode": 0,
+          "evidence": "field-observations-20260913.json#it/members"
+        }
+      ],
+      "coverage": "source implementation only unless explicit liveEvidence; not proof of market deployment",
+      "replayPolicy": "bounded transient read retry; auth/verification errors stop"
+    },
+    {
+      "path": "/api/v1/affiliate/partner/campaign/review",
+      "evidence": "source_only",
+      "references": [
+        {
+          "file": "bdhub/research/commerce_transport.py",
+          "line": 18
+        }
+      ],
+      "id": "TK-009",
+      "method": "POST",
+      "sideEffect": "external_write",
+      "action": "campaign_review",
+      "agentExposure": "not_registered; proposed typed wrapper only",
+      "liveEvidence": [],
+      "coverage": "source implementation only unless explicit liveEvidence; not proof of market deployment",
+      "replayPolicy": "never auto replay unknown write"
+    },
+    {
+      "path": "/api/v1/affiliate/partner/campaign/sample/budget/review",
+      "evidence": "source_only",
+      "references": [
+        {
+          "file": "bdhub/sample_review/transport.py",
+          "line": 19
+        }
+      ],
+      "id": "TK-010",
+      "method": "POST",
+      "sideEffect": "external_write",
+      "action": "sample_review",
+      "agentExposure": "not_registered; proposed typed wrapper only",
+      "liveEvidence": [],
+      "coverage": "source implementation only unless explicit liveEvidence; not proof of market deployment",
+      "replayPolicy": "never auto replay unknown write"
+    },
+    {
+      "path": "/api/v1/affiliate/partner/campaign/sample/price",
+      "evidence": "source_only",
+      "references": [
+        {
+          "file": "bdhub/sample_review/transport.py",
+          "line": 20
+        }
+      ],
+      "id": "TK-011",
+      "method": "unverified",
+      "sideEffect": "unverified",
+      "action": "inspect_before_use",
+      "agentExposure": "not_registered; proposed typed wrapper only",
+      "liveEvidence": [],
+      "coverage": "source implementation only unless explicit liveEvidence; not proof of market deployment",
+      "replayPolicy": "never auto replay unknown write"
+    },
+    {
+      "path": "/api/v1/affiliate/partner/campaign/seller_requested/review",
+      "evidence": "source_only",
+      "references": [
+        {
+          "file": "bdhub/research/product_source_transport.py",
+          "line": 9
+        }
+      ],
+      "id": "TK-012",
+      "method": "POST",
+      "sideEffect": "external_write",
+      "action": "join_campaign",
+      "agentExposure": "not_registered; proposed typed wrapper only",
+      "liveEvidence": [],
+      "coverage": "source implementation only unless explicit liveEvidence; not proof of market deployment",
+      "replayPolicy": "never auto replay unknown write"
+    },
+    {
+      "path": "/api/v1/affiliate/partner/im/filter/creator/mget",
+      "evidence": "source_only",
+      "references": [
+        {
+          "file": "bdhub/monitor/identity_capture.py",
+          "line": 8
+        }
+      ],
+      "id": "TK-013",
+      "method": "unverified",
+      "sideEffect": "unverified",
+      "action": "inspect_before_use",
+      "agentExposure": "not_registered; proposed typed wrapper only",
+      "liveEvidence": [],
+      "coverage": "source implementation only unless explicit liveEvidence; not proof of market deployment",
+      "replayPolicy": "never auto replay unknown write"
+    },
+    {
+      "path": "/api/v1/affiliate/partner/im/id/get",
+      "evidence": "source_only",
+      "references": [
+        {
+          "file": "bdhub/probe/market_interfaces.py",
+          "line": 21
+        }
+      ],
+      "id": "TK-014",
+      "method": "GET",
+      "sideEffect": "business_read",
+      "action": "read",
+      "agentExposure": "not_registered; proposed typed wrapper only",
+      "liveEvidence": [],
+      "coverage": "source implementation only unless explicit liveEvidence; not proof of market deployment",
+      "replayPolicy": "bounded transient read retry; auth/verification errors stop"
+    },
+    {
+      "path": "/api/v1/affiliate/partner/im/product_list/list",
+      "evidence": "source_only",
+      "references": [
+        {
+          "file": "bdhub/probe/market_interfaces.py",
+          "line": 20
+        },
+        {
+          "file": "bdhub/send/dispatch.py",
+          "line": 124
+        },
+        {
+          "file": "bdhub/send/dispatch.py",
+          "line": 229
+        },
+        {
+          "file": "bdhub/send/http_card.py",
+          "line": 48
+        },
+        {
+          "file": "bdhub/send/taplink/protocol.py",
+          "line": 9
+        },
+        {
+          "file": "bdhub/send/transport_scripts.py",
+          "line": 225
+        },
+        {
+          "file": "bdhub/send/transport_scripts.py",
+          "line": 292
+        }
+      ],
+      "id": "TK-015",
+      "method": "GET",
+      "sideEffect": "business_read",
+      "action": "read",
+      "agentExposure": "not_registered; proposed typed wrapper only",
+      "liveEvidence": [],
+      "coverage": "source implementation only unless explicit liveEvidence; not proof of market deployment",
+      "replayPolicy": "bounded transient read retry; auth/verification errors stop"
+    },
+    {
+      "path": "/api/v1/affiliate/partner/im/token/get",
+      "evidence": "source_only",
+      "references": [
+        {
+          "file": "bdhub/send/http_auth.py",
+          "line": 1
+        }
+      ],
+      "id": "TK-016",
+      "method": "GET",
+      "sideEffect": "business_read",
+      "action": "read",
+      "agentExposure": "not_registered; proposed typed wrapper only",
+      "liveEvidence": [],
+      "coverage": "source implementation only unless explicit liveEvidence; not proof of market deployment",
+      "replayPolicy": "bounded transient read retry; auth/verification errors stop"
+    },
+    {
+      "path": "/api/v1/affiliate/partner/info",
+      "evidence": "source_only",
+      "references": [
+        {
+          "file": "bdhub/send/http_auth.py",
+          "line": 1
+        }
+      ],
+      "id": "TK-017",
+      "method": "GET",
+      "sideEffect": "business_read",
+      "action": "read",
+      "agentExposure": "not_registered; proposed typed wrapper only",
+      "liveEvidence": [],
+      "coverage": "source implementation only unless explicit liveEvidence; not proof of market deployment",
+      "replayPolicy": "bounded transient read retry; auth/verification errors stop"
+    },
+    {
+      "path": "/api/v1/affiliate/partner/product/opportunity_product/campaign_detail",
+      "evidence": "source_only",
+      "references": [
+        {
+          "file": "bdhub/send/sharelink/transport.py",
+          "line": 24
+        }
+      ],
+      "id": "TK-018",
+      "method": "GET",
+      "sideEffect": "business_read",
+      "action": "read",
+      "agentExposure": "not_registered; proposed typed wrapper only",
+      "liveEvidence": [],
+      "coverage": "source implementation only unless explicit liveEvidence; not proof of market deployment",
+      "replayPolicy": "bounded transient read retry; auth/verification errors stop"
+    },
+    {
+      "path": "/api/v1/affiliate/partner/product/opportunity_product/list",
+      "evidence": "source_only",
+      "references": [
+        {
+          "file": "bdhub/send/sharelink/transport.py",
+          "line": 23
+        }
+      ],
+      "id": "TK-019",
+      "method": "POST",
+      "sideEffect": "business_read",
+      "action": "read",
+      "agentExposure": "not_registered; proposed typed wrapper only",
+      "liveEvidence": [],
+      "coverage": "source implementation only unless explicit liveEvidence; not proof of market deployment",
+      "replayPolicy": "bounded transient read retry; auth/verification errors stop"
+    },
+    {
+      "path": "/api/v1/affiliate/partner/product/pick_up/list",
+      "evidence": "live_read_sample_20260913",
+      "references": [
+        {
+          "file": "bdhub/send/sharelink/transport.py",
+          "line": 22
+        }
+      ],
+      "id": "TK-020",
+      "method": "POST",
+      "sideEffect": "business_read",
+      "action": "read",
+      "agentExposure": "not_registered; proposed typed wrapper only",
+      "liveEvidence": [
+        {
+          "market": "mx",
+          "account": "acc6",
+          "observedAt": "2026-09-13T03:20:11.847184+00:00",
+          "status": "observed",
+          "http": 200,
+          "businessCode": 0,
+          "evidence": "field-observations-20260913.json#mx/selected"
+        },
+        {
+          "market": "it",
+          "account": "acc6",
+          "observedAt": "2026-09-13T03:20:21.303793+00:00",
+          "status": "observed",
+          "http": 200,
+          "businessCode": 0,
+          "evidence": "field-observations-20260913.json#it/selected"
+        },
+        {
+          "market": "br",
+          "account": "acc6",
+          "observedAt": "2026-09-13T03:20:26.978342+00:00",
+          "status": "observed",
+          "http": 200,
+          "businessCode": 0,
+          "evidence": "field-observations-20260913.json#br/selected"
+        }
+      ],
+      "coverage": "source implementation only unless explicit liveEvidence; not proof of market deployment",
+      "replayPolicy": "bounded transient read retry; auth/verification errors stop"
+    },
+    {
+      "path": "/api/v1/affiliate/partner/product/pick_up/select",
+      "evidence": "source_only",
+      "references": [
+        {
+          "file": "bdhub/send/sharelink/transport.py",
+          "line": 25
+        }
+      ],
+      "id": "TK-021",
+      "method": "POST",
+      "sideEffect": "external_write",
+      "action": "select_product",
+      "agentExposure": "not_registered; proposed typed wrapper only",
+      "liveEvidence": [],
+      "coverage": "source implementation only unless explicit liveEvidence; not proof of market deployment",
+      "replayPolicy": "never auto replay unknown write"
+    },
+    {
+      "path": "/api/v1/affiliate/partner/relation/list",
+      "evidence": "source_only",
+      "references": [
+        {
+          "file": "bdhub/enrich/client.py",
+          "line": 23
+        },
+        {
+          "file": "bdhub/enrich/client.py",
+          "line": 122
+        },
+        {
+          "file": "bdhub/report_sync/browser.py",
+          "line": 70
+        }
+      ],
+      "id": "TK-022",
+      "method": "GET",
+      "sideEffect": "business_read",
+      "action": "read",
+      "agentExposure": "not_registered; proposed typed wrapper only",
+      "liveEvidence": [],
+      "coverage": "source implementation only unless explicit liveEvidence; not proof of market deployment",
+      "replayPolicy": "bounded transient read retry; auth/verification errors stop"
+    },
+    {
+      "path": "/api/v1/affiliate/partner/sample/records/list",
+      "evidence": "live_read_sample_20260913",
+      "references": [
+        {
+          "file": "bdhub/sample_review/transport.py",
+          "line": 18
+        }
+      ],
+      "id": "TK-023",
+      "method": "POST",
+      "sideEffect": "business_read",
+      "action": "read",
+      "agentExposure": "not_registered; proposed typed wrapper only",
+      "liveEvidence": [
+        {
+          "market": "mx",
+          "account": "acc6",
+          "observedAt": "2026-09-13T03:20:13.976400+00:00",
+          "status": "observed",
+          "http": 200,
+          "businessCode": 0,
+          "evidence": "field-observations-20260913.json#mx/samples"
+        },
+        {
+          "market": "it",
+          "account": "acc6",
+          "observedAt": "2026-09-13T03:28:00.826344+00:00",
+          "status": "observed",
+          "http": 200,
+          "businessCode": 0,
+          "coverageNote": "Success envelope with data.total but no sample_records in this response; row schema unverified",
+          "evidence": "field-observations-20260913.json#it/samples"
+        },
+        {
+          "market": "br",
+          "account": "acc6",
+          "observedAt": "2026-09-13T03:28:04.146400+00:00",
+          "status": "observed",
+          "http": 200,
+          "businessCode": 0,
+          "coverageNote": "Success envelope with data.total but no sample_records in this response; row schema unverified",
+          "evidence": "field-observations-20260913.json#br/samples"
+        }
+      ],
+      "coverage": "source implementation only unless explicit liveEvidence; not proof of market deployment",
+      "replayPolicy": "bounded transient read retry; auth/verification errors stop"
+    },
+    {
+      "path": "/api/v1/im/conversation/create",
+      "evidence": "source_only",
+      "references": [
+        {
+          "file": "bdhub/send/http_conversation.py",
+          "line": 7
+        }
+      ],
+      "id": "TK-024",
+      "method": "POST",
+      "sideEffect": "external_write",
+      "action": "get_or_create_conversation",
+      "agentExposure": "not_registered; proposed typed wrapper only",
+      "liveEvidence": [],
+      "coverage": "source implementation only unless explicit liveEvidence; not proof of market deployment",
+      "replayPolicy": "never auto replay unknown write"
+    },
+    {
+      "path": "/api/v1/insights/export/file/",
+      "evidence": "source_only",
+      "references": [
+        {
+          "file": "bdhub/report_sync/browser.py",
+          "line": 24
+        }
+      ],
+      "id": "TK-025",
+      "method": "GET",
+      "sideEffect": "business_read",
+      "action": "read",
+      "agentExposure": "not_registered; proposed typed wrapper only",
+      "liveEvidence": [],
+      "coverage": "source implementation only unless explicit liveEvidence; not proof of market deployment",
+      "replayPolicy": "bounded transient read retry; auth/verification errors stop"
+    },
+    {
+      "path": "/api/v1/insights/partner/report/data/list/export",
+      "evidence": "source_only",
+      "references": [
+        {
+          "file": "bdhub/report_sync/contracts/mx_v1.json",
+          "line": 1
+        }
+      ],
+      "id": "TK-026",
+      "method": "POST",
+      "sideEffect": "remote_export_job",
+      "action": "request_export_file",
+      "agentExposure": "not_registered; proposed typed wrapper only",
+      "liveEvidence": [],
+      "coverage": "source implementation only unless explicit liveEvidence; not proof of market deployment",
+      "replayPolicy": "never auto replay unknown write"
+    },
+    {
+      "path": "/api/v1/oec/affiliate/creator/marketplace/4partner/find",
+      "evidence": "source_only",
+      "references": [
+        {
+          "file": "bdhub/enrich/browser_fetch.py",
+          "line": 19
+        },
+        {
+          "file": "bdhub/enrich/client.py",
+          "line": 21
+        },
+        {
+          "file": "bdhub/enrich/client.py",
+          "line": 120
+        },
+        {
+          "file": "bdhub/hub/markets.py",
+          "line": 22
+        },
+        {
+          "file": "bdhub/probe/market_interfaces.py",
+          "line": 19
+        },
+        {
+          "file": "bdhub/send/dispatch.py",
+          "line": 111
+        },
+        {
+          "file": "bdhub/send/dispatch.py",
+          "line": 218
+        }
+      ],
+      "id": "TK-027",
+      "method": "POST",
+      "sideEffect": "business_read",
+      "action": "read",
+      "agentExposure": "not_registered; proposed typed wrapper only",
+      "liveEvidence": [],
+      "coverage": "source implementation only unless explicit liveEvidence; not proof of market deployment",
+      "replayPolicy": "bounded transient read retry; auth/verification errors stop"
+    },
+    {
+      "path": "/api/v1/oec/affiliate/creator/marketplace/4partner/profile",
+      "evidence": "source_only",
+      "references": [
+        {
+          "file": "bdhub/enrich/client.py",
+          "line": 22
+        },
+        {
+          "file": "bdhub/enrich/client.py",
+          "line": 121
+        },
+        {
+          "file": "bdhub/enrich/profile_observer.py",
+          "line": 16
+        }
+      ],
+      "id": "TK-028",
+      "method": "POST",
+      "sideEffect": "business_read",
+      "action": "read",
+      "agentExposure": "not_registered; proposed typed wrapper only",
+      "liveEvidence": [],
+      "coverage": "source implementation only unless explicit liveEvidence; not proof of market deployment",
+      "replayPolicy": "bounded transient read retry; auth/verification errors stop"
+    },
+    {
+      "path": "/v1/message/get_by_conversation",
+      "evidence": "source_only",
+      "references": [
+        {
+          "file": "bdhub/send/http_protocol.py",
+          "line": 8
+        }
+      ],
+      "id": "TK-029",
+      "method": "POST",
+      "sideEffect": "business_read",
+      "action": "read",
+      "agentExposure": "not_registered; proposed typed wrapper only",
+      "liveEvidence": [],
+      "coverage": "source implementation only unless explicit liveEvidence; not proof of market deployment",
+      "replayPolicy": "bounded transient read retry; auth/verification errors stop"
+    },
+    {
+      "path": "/v1/message/get_by_id",
+      "evidence": "source_only",
+      "references": [
+        {
+          "file": "bdhub/send/http_protocol.py",
+          "line": 7
+        }
+      ],
+      "id": "TK-030",
+      "method": "POST",
+      "sideEffect": "business_read",
+      "action": "read",
+      "agentExposure": "not_registered; proposed typed wrapper only",
+      "liveEvidence": [],
+      "coverage": "source implementation only unless explicit liveEvidence; not proof of market deployment",
+      "replayPolicy": "bounded transient read retry; auth/verification errors stop"
+    },
+    {
+      "path": "/v1/message/send",
+      "evidence": "source_only",
+      "references": [
+        {
+          "file": "bdhub/send/http_protocol.py",
+          "line": 6
+        }
+      ],
+      "id": "TK-031",
+      "method": "POST",
+      "sideEffect": "external_write",
+      "action": "send_message",
+      "agentExposure": "not_registered; proposed typed wrapper only",
+      "liveEvidence": [],
+      "coverage": "source implementation only unless explicit liveEvidence; not proof of market deployment",
+      "replayPolicy": "never auto replay unknown write"
+    },
+    {
+      "path": "/v2/conversation/get_info",
+      "evidence": "source_only",
+      "references": [
+        {
+          "file": "bdhub/send/http_protocol.py",
+          "line": 9
+        }
+      ],
+      "id": "TK-032",
+      "method": "POST",
+      "sideEffect": "business_read",
+      "action": "read",
+      "agentExposure": "not_registered; proposed typed wrapper only",
+      "liveEvidence": [],
+      "coverage": "source implementation only unless explicit liveEvidence; not proof of market deployment",
+      "replayPolicy": "bounded transient read retry; auth/verification errors stop"
+    },
+    {
+      "path": "/v2/message/get_by_user_init",
+      "evidence": "source_only",
+      "references": [
+        {
+          "file": "bdhub/imbase/http_readonly_probe.py",
+          "line": 3
+        }
+      ],
+      "id": "TK-033",
+      "method": "POST",
+      "sideEffect": "business_read",
+      "action": "read",
+      "agentExposure": "not_registered; proposed typed wrapper only",
+      "liveEvidence": [],
+      "coverage": "source implementation only unless explicit liveEvidence; not proof of market deployment",
+      "replayPolicy": "bounded transient read retry; auth/verification errors stop"
+    }
+  ]
+}
