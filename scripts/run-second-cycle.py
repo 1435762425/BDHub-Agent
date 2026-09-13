@@ -21,6 +21,7 @@ def command(stage,run,target):
   report=ROOT/'var/cycle-scheduler'/f'{stage}-{time.strftime("%Y%m%d",time.gmtime())}.json'
   return [PYTHON,str(ROOT/'scripts/sync-cycle-catalog.py'),'--source',source,'--run',str(report),'--max-requests','5'],report
  if stage=='kalodata':return [PYTHON,str(ROOT/'scripts/second-cycle-worker.py'),'--prepare-target',str(target),'--max-pids','2','--max-steps','3','--report',str(report)],report
+ if stage=='reply_facts':return [PYTHON,str(ROOT/'scripts/query-cycle-reply-facts.py'),'--process-due'],None
  if stage=='identity_reconcile':return [PYTHON,str(ROOT/'scripts/second-cycle-identities.py'),'reconcile'],None
  if stage=='materials_check':return [PYTHON,str(ROOT/'scripts/prepare-cycle-materials.py'),'--check-cards','--report',str(report)],report
  raise ValueError('unknown_stage')

@@ -105,3 +105,5 @@ B.8最新覆盖B.7：用户确认5条会按月刷新，历史累计5条不证明
 B.9已接IT已关联会话只读轮询与持久入站事件，见[入站底座](docs/implementation/second-cycle-inbox-v1.md)：11会话/46历史事件（回复1、橱窗1），二轮新增0、待办0、发送0。Worker持续读取但未接完整IM覆盖、原文处理及自动回复；历史不触发回复，新回复等待60秒并停在awaiting_content。
 
 B.10当前接续入口：[真实卡文小循环与调度](docs/implementation/second-cycle-execution-and-scheduler-v1.md)。用户确认的bru_none颈椎枕13%卡＋话术已真实确认，2组件、无重发；delivery-9b6427e0ab4ef600430aecf88a11ca39不得再次投递。新供给调度已启动，自动批量发送尚未开启。当前任务后台续办ID bdhub-agent；按该文继续完成完整闭环，不重复询问已授权的开发步骤。
+
+B.11接续：[正文与人工接续](docs/implementation/second-cycle-service-v1.md)。正文已入本机版本库，历史不触发回复；新咨询规则路由、待办和版本校验交还已接。真实历史AI分类1次/317tokens，仅影子验证；自动回复尚未开启。当前商品上下文/佣金只读工具已接并实测13%，下一步接版本绑定回复意图与执行。

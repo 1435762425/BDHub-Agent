@@ -2,7 +2,7 @@
 import json
 from lib.second_cycle import CycleError,encoded
 SCHEMA='''CREATE TABLE IF NOT EXISTS cycle_schedule(plan_id TEXT NOT NULL,stage TEXT NOT NULL,period INTEGER NOT NULL,due REAL NOT NULL,state TEXT NOT NULL DEFAULT 'idle',run_id TEXT,started REAL,finished REAL,failures INTEGER NOT NULL DEFAULT 0,result TEXT,PRIMARY KEY(plan_id,stage));'''
-PERIODS={'catalog_selected':86400,'catalog_campaign':86400,'kalodata':300,'identity_reconcile':60,'materials_check':3600}
+PERIODS={'catalog_selected':86400,'catalog_campaign':86400,'kalodata':300,'identity_reconcile':60,'reply_facts':60,'materials_check':3600}
 class Scheduler:
  def __init__(self,store):self.s=store;store.db.executescript(SCHEMA)
  def initialize(self,plan):

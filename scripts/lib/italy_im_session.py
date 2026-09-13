@@ -284,7 +284,7 @@ class ItalyImReadSession:
         self.on_update()
         return result
 
-    def history_summary(self, conversation, *, include_sender_counts=False, include_events=False):
+    def history_summary(self, conversation, *, include_sender_counts=False, include_events=False, include_contents=False):
         if not isinstance(conversation, VerifiedConversation) or self.verified.get(conversation.conversation_id) is not conversation:
             raise ItalyImReadError("im_conversation_unverified")
         wire = self.wire
@@ -306,8 +306,8 @@ class ItalyImReadSession:
             raise
         except Exception:
             raise ItalyImReadError("im_response_invalid") from None
-        if include_sender_counts or include_events:
-            outbound_times=[];missing_outbound_times=0;events=[]
+        if include_sender_counts or include_events or include_contents:
+            outbound_times=[];missing_outbound_times=0;events=[];contents=[]
             counts={"ourMessages":0,"creatorReplies":0,"showcaseNotifications":0,"otherOrUnknown":0}
             for item in rows:
                 message=wire.wire_fields(item)
@@ -321,9 +321,19 @@ class ItalyImReadSession:
                 elif role==b"1" and type(sender) is int and sender>0 and sender!=int(self.im_id):kind="creatorReplies";counts[kind]+=1
                 elif role==b"3" and ext.get(b"type")==b"notification" and ext.get(b"starling_content_key")==b"ttspc_im_message_relation_ststem_message_6_plural":kind="showcaseNotifications";counts[kind]+=1
                 else:counts["otherOrUnknown"]+=1
-                if include_events:
+                if include_events or include_contents:
                     events.append({"messageId":_id(wire.one(message,3)),"kind":kind,"createTimeRaw":wire.one(message,10),"messageType":wire.one(message,6),"conversationId":conversation.conversation_id,"oecId":conversation.oec_id})
-            if include_events:result["events"]=events
+                if include_contents:
+                    raw=wire.one(message,8,b"")
+                    content_type=ext.get(b"type",b"")
+                    plain=wire.one(message,6)==1000 and content_type in (b"",b"text")
+                    try:text=raw.decode("utf-8") if isinstance(raw,bytes) and len(raw)<=65536 else None
+                    except UnicodeError:text=None
+                    contents.append({"messageId":_id(wire.one(message,3)),"format":"text" if plain and text is not None else "attachment_or_unsupported","text":text if plain else None,"nativeType":content_type.decode("utf-8",errors="replace")[:80],"rawSha256":hashlib.sha256(raw).hexdigest() if isinstance(raw,bytes) else None})
+            if include_events or include_contents:result["events"]=events
+            if include_contents:
+                result["contents"]=contents
+                result["messageBodiesStored"]=True
             result["senderCounts"]=counts
             result["outboundCreateTimeRaw"]=sorted(outbound_times)
             result["outboundTimeMissingCount"]=missing_outbound_times

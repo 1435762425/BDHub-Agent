@@ -100,6 +100,12 @@ class ItalyImSessionTests(unittest.TestCase):
         s,_,_,_=session(HTTP(reply));conv=s.conversation('10','100')
         with self.assertRaises(ItalyImReadError):s.history_summary(conv,include_events=True)
 
+    def test_contents_are_opt_in_and_separate_from_event_identity(self):
+        s,_,_,_=session();conv=s.conversation('10','100')
+        old=s.history_summary(conv,include_events=True);new=s.history_summary(conv,include_contents=True)
+        self.assertEqual(old['events'],new['events']);self.assertNotIn('contents',old)
+        self.assertEqual(new['contents'][0]['text'],'PRIVATE_MESSAGE_BODY');self.assertEqual(new['contents'][0]['format'],'text')
+
     def test_mx_host_and_cookie_or_write_command_are_rejected_before_http(self):
         original=W.READ_HOST;http=HTTP()
         with self.assertRaises(ItalyImReadError):ItalyImReadSession(auth(host=original),{},http=http)

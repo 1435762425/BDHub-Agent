@@ -1,0 +1,8 @@
+import test from 'node:test';import assert from 'node:assert/strict';
+import {createServiceHandlers} from '../src/server/cycle-service/bridge.ts';
+const url='http://127.0.0.1:5198/api/cycle-service';
+const headers={host:'127.0.0.1:5198',origin:'http://127.0.0.1:5198','content-type':'application/json'};
+const body={action:'resolve',caseId:'case-'+'a'.repeat(24),expectedRevision:1,expectedControlRevision:2,note:'已核对'};
+test('foreign origin and invented send action never invoke service',async()=>{let calls=0;const h=createServiceHandlers(async()=>{calls++;return {};});assert.equal((await h.POST(new Request(url,{method:'POST',headers:{...headers,origin:'https://other.test'},body:JSON.stringify(body)}))).status,403);assert.equal((await h.POST(new Request(url,{method:'POST',headers,body:JSON.stringify({...body,action:'send'})}))).status,400);assert.equal(calls,0);});
+test('resolution requires note and current versions; server conflicts stay conflicts',async()=>{const h=createServiceHandlers(async()=>{throw Error('private');});assert.equal((await h.POST(new Request(url,{method:'POST',headers,body:JSON.stringify({...body,note:''})}))).status,400);const r=await h.POST(new Request(url,{method:'POST',headers,body:JSON.stringify(body)}));assert.equal(r.status,409);assert.equal((await r.text()).includes('private'),false);});
+test('local status is uncached and completion passes exact input',async()=>{let got;const h=createServiceHandlers(async v=>{got=v;return {state:'resolved'};});const r=await h.POST(new Request(url,{method:'POST',headers,body:JSON.stringify(body)}));assert.equal(r.status,200);assert.deepEqual(got,body);assert.equal(r.headers.get('cache-control'),'no-store');});

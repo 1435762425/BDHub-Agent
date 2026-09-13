@@ -6,6 +6,7 @@ sys.dont_write_bytecode=True
 ROOT=Path(__file__).resolve().parents[1];sys.path.insert(0,str(ROOT/'scripts'))
 from lib.second_cycle import CycleStore
 from lib.cycle_inbox import Inbox,inbox_status
+from lib.cycle_service import Service
 from lib.second_live_runtime import _authenticated
 from lib.italy_im_session import ItalyImReadSession
 STOP=False
@@ -17,7 +18,7 @@ def stop(*_):
 def tick(limit):
  report={'realSends':0,'automaticReplies':0,'processed':0};reader=None
  with CycleStore(ROOT/'var/second-cycle.sqlite') as store:
-  inbox=Inbox(store);plan=store.db.execute("SELECT id FROM plan WHERE institution='bjn-local-research' AND market='it'").fetchone()[0]
+  inbox=Inbox(store);service=Service(store);plan=store.db.execute("SELECT id FROM plan WHERE institution='bjn-local-research' AND market='it'").fetchone()[0]
   if store._plan(plan)['state']!='active':return {'state':'plan_paused','realSends':0}
   if (ROOT/'var/cycle-inbox.pause').exists():return {'state':'paused','realSends':0}
   with sqlite3.connect((ROOT/'var/it-conversations.sqlite').as_uri()+'?mode=ro',uri=True) as idx:
@@ -37,14 +38,14 @@ def tick(limit):
      for _,cid,oec,kind in targets[:limit]:
       if STOP or (ROOT/'var/cycle-inbox.pause').exists() or store._plan(plan)['state']!='active':break
       conv=reader.conversation(cid,oec,conversation_type=kind)
-      history=reader.history_summary(conv,include_events=True)
-      result=inbox.ingest(plan,cid,oec,history);report['processed']+=1
+      history=reader.history_summary(conv,include_events=True,include_contents=True)
+      result=inbox.ingest(plan,cid,oec,history);service.capture(plan,cid,oec,history.get('contents',[]));report['processed']+=1
       for key in ('added','historical','liveReplies'):report[key]=report.get(key,0)+result[key]
   except Exception as e:report['errorCode']=getattr(e,'code',type(e).__name__)
   finally:
    signal.setitimer(signal.ITIMER_REAL,0)
    if reader:reader.close()
-   report['status']=inbox_status(store,plan);report['checkedAt']=time.time()
+   report['serviceDecisions']=len(service.process_due(plan));report['status']=inbox_status(store,plan);report['checkedAt']=time.time()
  return report
 
 def main():
