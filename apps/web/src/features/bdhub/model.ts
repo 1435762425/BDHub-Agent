@@ -1,6 +1,6 @@
 // Deterministic, browser-only prototype data. No platform credentials or real creators.
 export type Market = "mx" | "br" | "it";
-export type View = "overview" | "goals" | "opportunities" | "workspace" | "results" | "agents" | "settings" | "creators";
+export type View = "catalog" | "overview" | "goals" | "opportunities" | "workspace" | "results" | "agents" | "settings" | "creators";
 export type CaseStatus = "processing" | "waiting_creator" | "waiting_business" | "needs_operator" | "closed";
 export const MARKETS: Record<Market,{name:string;locale:string;currency:string}> = {
   mx:{name:"墨西哥",locale:"es-MX",currency:"MXN"},br:{name:"巴西",locale:"pt-BR",currency:"BRL"},it:{name:"意大利",locale:"it-IT",currency:"EUR"},

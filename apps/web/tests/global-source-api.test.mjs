@@ -1,0 +1,14 @@
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import {createGlobalGet} from '../src/server/global-source/bridge.ts';
+const base='http://127.0.0.1:5198/api/global-source';
+const fixture={available:true,executionAllowed:false,market:'it',source:'opportunity_global_only',products:3,totalMatches:3,items:[],offset:0,limit:30};
+test('source read is local, bounded and cannot launch workers',async()=>{let calls=0;const handler=createGlobalGet(async()=>{calls++;return fixture});
+ for(const url of [base+'?start=1',base+'?offset=-1',base+'?offset=1.5'])assert.equal((await handler(new Request(url,{headers:{host:'127.0.0.1:5198'}}))).status,400);
+ assert.equal((await handler(new Request(base,{headers:{host:'127.0.0.1:5198',origin:'https://outside.test'}}))).status,403);assert.equal(calls,0);
+ const r=await handler(new Request(base,{headers:{host:'127.0.0.1:5198'}}));assert.equal(r.status,200);assert.equal(r.headers.get('Cache-Control'),'no-store');});
+test('cannot claim another market or executable source',async()=>{for(const change of [{market:'mx'},{executionAllowed:true},{products:-1}]){const h=createGlobalGet(async()=>({...fixture,...change}));assert.equal((await h(new Request(base,{headers:{host:'127.0.0.1:5198'}}))).status,503);}});
+import {createGlobalPost} from '../src/server/global-source/bridge.ts';
+test('sync accepts only the explicit local read-job action',async()=>{let calls=0;const h=createGlobalPost(async id=>{calls++;return {state:'already_running',runId:'existing',executionAllowed:false}});const headers={host:'127.0.0.1:5198',origin:'http://127.0.0.1:5198'};
+ for(const body of [{action:'send',requestId:'one'},{action:'sync',requestId:'../bad'},{action:'sync',requestId:'one',account:'acc2'}])assert.equal((await h(new Request(base,{method:'POST',headers,body:JSON.stringify(body)}))).status,400);
+ assert.equal(calls,0);assert.equal((await h(new Request(base,{method:'POST',headers,body:JSON.stringify({action:'sync',requestId:'one'})}))).status,200);assert.equal(calls,1);});
