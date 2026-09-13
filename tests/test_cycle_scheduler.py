@@ -16,6 +16,8 @@ class SchedulerTests(unittest.TestCase):
  def test_catalog_checkpoint_continues_without_daily_delay(self):
   j=self.q.claim(self.p);self.q.complete(self.p,j['stage'],j['run_id'],True,{'checkpointed':True})
   r=self.s.db.execute('SELECT due,failures FROM cycle_schedule WHERE stage=?',(j['stage'],)).fetchone();self.assertEqual(tuple(r),(1045,0))
+ def test_sending_blocks_catalog_but_allows_replenishment(self):
+  j=self.q.claim(self.p,('catalog_selected','catalog_campaign','materials_check'));self.assertIn(j['stage'],('kalodata','identity_reconcile','reply_facts'))
  def test_pause_does_not_dispatch(self):
   self.s.control(self.p,'pause',1,'paused');self.assertIsNone(self.q.claim(self.p))
  def test_initialization_does_not_reset_due_or_failures(self):

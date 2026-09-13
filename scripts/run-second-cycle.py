@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Continuously coordinate existing read-only supply stages. Sends remain a separate authority."""
+"""Coordinate authorized catalog, supply, identity and product-card preparation. Sends use their own ledger."""
 import argparse,fcntl,json,os,signal,subprocess,sys,time
 from pathlib import Path
 sys.dont_write_bytecode=True
@@ -23,7 +23,7 @@ def command(stage,run,target):
  if stage=='kalodata':return [PYTHON,str(ROOT/'scripts/second-cycle-worker.py'),'--prepare-target',str(target),'--max-pids','2','--max-steps','3','--report',str(report)],report
  if stage=='reply_facts':return [PYTHON,str(ROOT/'scripts/query-cycle-reply-facts.py'),'--process-due'],None
  if stage=='identity_reconcile':return [PYTHON,str(ROOT/'scripts/second-cycle-identities.py'),'reconcile'],None
- if stage=='materials_check':return [PYTHON,str(ROOT/'scripts/prepare-cycle-materials.py'),'--check-cards','--report',str(report)],report
+ if stage=='materials_check':return [PYTHON,str(ROOT/'scripts/advance-cycle-materials.py'),'--report',str(report)],report
  raise ValueError('unknown_stage')
 
 def main():
@@ -38,7 +38,7 @@ def main():
   if store.db.execute("SELECT 1 FROM cycle_schedule WHERE plan_id=? AND state='running'",(plan,)).fetchone():raise SystemExit('interrupted_stage_needs_process_check')
   while not STOP:
    active=store.db.execute("SELECT 1 FROM sqlite_master WHERE name='cycle_delivery'").fetchone() and store.db.execute("SELECT 1 FROM cycle_delivery WHERE plan_id=? AND state IN ('ready','running','unknown') AND expires>?",(plan,time.time())).fetchone()
-   job=None if active or (out/'pause').exists() else s.claim(plan)
+   job=None if (out/'pause').exists() else s.claim(plan,('catalog_selected','catalog_campaign') if active else ())
    if job:
     args,report=command(job['stage'],job['run_id'],a.target);success=False;result={}
     with (out/f"{job['run_id']}.log").open('w') as log:

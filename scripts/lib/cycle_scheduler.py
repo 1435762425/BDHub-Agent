@@ -2,17 +2,18 @@
 import json
 from lib.second_cycle import CycleError,encoded
 SCHEMA='''CREATE TABLE IF NOT EXISTS cycle_schedule(plan_id TEXT NOT NULL,stage TEXT NOT NULL,period INTEGER NOT NULL,due REAL NOT NULL,state TEXT NOT NULL DEFAULT 'idle',run_id TEXT,started REAL,finished REAL,failures INTEGER NOT NULL DEFAULT 0,result TEXT,PRIMARY KEY(plan_id,stage));'''
-PERIODS={'catalog_selected':86400,'catalog_campaign':86400,'kalodata':300,'identity_reconcile':60,'reply_facts':60,'materials_check':3600}
+PERIODS={'catalog_selected':86400,'catalog_campaign':86400,'kalodata':300,'identity_reconcile':60,'reply_facts':60,'materials_check':60}
 class Scheduler:
  def __init__(self,store):self.s=store;store.db.executescript(SCHEMA)
  def initialize(self,plan):
   with self.s.tx():
    for stage,period in PERIODS.items():self.s.db.execute('INSERT OR IGNORE INTO cycle_schedule(plan_id,stage,period,due) VALUES(?,?,?,?)',(plan,stage,period,self.s.clock()))
- def claim(self,plan):
+ def claim(self,plan,blocked_stages=()):
   with self.s.tx():
    if self.s._plan(plan)['state']!='active':return None
    if self.s.db.execute("SELECT 1 FROM cycle_schedule WHERE plan_id=? AND state='running'",(plan,)).fetchone():return None
-   r=self.s.db.execute("SELECT * FROM cycle_schedule WHERE plan_id=? AND due<=? AND state<>'running' ORDER BY due,stage LIMIT 1",(plan,self.s.clock())).fetchone()
+   clause=(' AND stage NOT IN ('+','.join('?' for _ in blocked_stages)+')') if blocked_stages else ''
+   r=self.s.db.execute("SELECT * FROM cycle_schedule WHERE plan_id=? AND due<=? AND state<>'running'"+clause+" ORDER BY due,stage LIMIT 1",(plan,self.s.clock(),*blocked_stages)).fetchone()
    if not r:return None
    run=f"{r['stage']}-{int(self.s.clock()*1000000)}"
    self.s.db.execute("UPDATE cycle_schedule SET state='running',run_id=?,started=? WHERE plan_id=? AND stage=?",(run,self.s.clock(),plan,r['stage']))

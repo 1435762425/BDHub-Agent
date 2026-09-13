@@ -32,11 +32,13 @@ SAFE_CODES = frozenset({"it_delivery_auth_invalid", "it_delivery_session_mismatc
 
 
 class ItalyImDeliveryError(RuntimeError):
-    def __init__(self, code, *, outcome="not_submitted", native_status=None, check_code=None):
+    def __init__(self, code, *, outcome="not_submitted", native_status=None, check_code=None, check_message=None, response_ref=None):
         self.code = code if code in SAFE_CODES else "it_delivery_input_invalid"
         self.outcome = outcome if outcome in {"not_submitted", "result_unknown", "rejected"} else "result_unknown"
         self.native_status = native_status if type(native_status) is int else None
         self.check_code = check_code if type(check_code) is int else None
+        self.check_message=check_message if isinstance(check_message,str) else None
+        self.response_ref=response_ref
         super().__init__(self.code)
 
 
@@ -276,7 +278,7 @@ def decode_send_candidate(data: bytes, packet: ItalyTextPacket) -> dict:
         if type(status) is not int or type(check) is not int:
             raise ValueError()
         if status in (1, 2, 3, 4, 5):
-            raise ItalyImDeliveryError("it_delivery_send_rejected", outcome="rejected", native_status=status, check_code=check)
+            raise ItalyImDeliveryError("it_delivery_send_rejected", outcome="rejected", native_status=status, check_code=check, check_message=wire.one(response,6,b"").decode("utf-8",errors="replace")[:1000],response_ref="im-response:"+hashlib.sha256(data).hexdigest())
         message_id = wire.one(response, 1)
         if status != 0 or type(message_id) is not int or not 0 < message_id <= (1 << 63) - 1:
             raise ValueError()
@@ -285,7 +287,8 @@ def decode_send_candidate(data: bytes, packet: ItalyTextPacket) -> dict:
     except ItalyImDeliveryError:
         raise
     except Exception:
-        raise ItalyImDeliveryError("it_delivery_receipt_mismatch", outcome="result_unknown") from None
+        raw_message=wire.one(response,6,b"") if isinstance(locals().get('response'),dict) else b""
+        raise ItalyImDeliveryError("it_delivery_receipt_mismatch", outcome="result_unknown",native_status=locals().get('status'),check_code=locals().get('check'),check_message=raw_message.decode('utf-8',errors='replace')[:1000] if isinstance(raw_message,bytes) else None,response_ref="im-response:"+hashlib.sha256(data).hexdigest()) from None
 
 
 def verify_history_body(body: bytes, conversation: VerifiedConversation, *, sender_id: str, market_id: str,

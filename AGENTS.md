@@ -78,3 +78,9 @@ B.9已接IT已关联会话只读轮询与持久入站事件，见[入站底座](
 B.10当前接续入口：[真实卡文小循环与调度](docs/implementation/second-cycle-execution-and-scheduler-v1.md)。用户确认的bru_none颈椎枕13%卡＋话术已真实确认，2组件、无重发；delivery-9b6427e0ab4ef600430aecf88a11ca39不得再次投递。新供给调度已启动，自动批量发送尚未开启。当前任务后台续办ID bdhub-agent；按该文继续完成完整闭环，不重复询问已授权的开发步骤。
 
 B.11接续：[正文与人工接续](docs/implementation/second-cycle-service-v1.md)。正文已入本机版本库，历史不触发回复；新咨询规则路由、待办和版本校验交还已接。真实历史AI分类1次/317tokens，仅影子验证；自动回复尚未开启。当前商品上下文/佣金只读工具已接并实测13%，按消息版本提交facts_ready_for_review；下一步接回复草稿、人工确认句意图与受控执行，不停在分类层。
+
+B.12当前授权与运行：[批量二发及自动回复](docs/implementation/second-cycle-bulk-and-auto-replies-v1.md)。用户已明确要求大批量发和启用自动回复；本批it-bulk-20260913目标100、已有至少45人确认，按运行库更新；自动回复已开启，历史不触发。主界面移除旧草稿流程。此授权覆盖B.10单人阶段限制，不再逐条征询；旧暂停试点及已确认记录仍不重发。
+
+B.13最新任务：[提速与额度实测](docs/implementation/second-cycle-speed-and-limit-test-v1.md)。用户要求持续发至每日新触达上限，并观察平台停止标志；本批目标已扩500。新系统2秒写入间隔、同组runtime复用、速度监控已实现；初始13组卡→文字中位约4.09秒。尚未遇到平台日额度返回，本地500计数不作为平台信号。按本文持续验证，不在100人处停止。
+
+B.14接续：[按需素材与Campaign卡](docs/implementation/second-cycle-material-supply-v2.md)。已解除发送端前5 PID限制，按待发需求补名称/卡片；Campaign成员可在严格绑定父列表后继承活动ID，已选wire0不能继承。新暖奶器卡创建1次、核验恢复成功。certo误发确认句已保留并纠错，无追加消息；模型分类v2加入最近已发文字。继续本批500及真实额度标志实测。

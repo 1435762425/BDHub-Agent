@@ -1,5 +1,6 @@
 """Durable handoff from Kalodata source edges to existing identity discovery."""
 import json,sqlite3
+from contextlib import closing
 from pathlib import Path
 from lib.second_cycle import CycleError,digest,encoded,identifier
 from lib.creator_discovery import preview
@@ -37,7 +38,7 @@ class IdentityBridge:
  def reconcile(self,plan):
   if self.store._plan(plan)['market']!='it':raise CycleError('identity_market_not_enabled')
   bound=0;states={};finished=[]
-  with sqlite3.connect(self.identity_path.resolve().as_uri()+'?mode=ro',uri=True) as identities:
+  with closing(sqlite3.connect(self.identity_path.resolve().as_uri()+'?mode=ro',uri=True)) as identities, identities:
    identities.row_factory=sqlite3.Row
    for box in self.store.db.execute('SELECT * FROM cycle_identity_outbox WHERE plan_id=? AND batch_id IS NOT NULL AND settled=0',(plan,)).fetchall():
     detail=self.discovery.detail(box['batch_id']);states[box['batch_id']]=detail['batch']['counts']

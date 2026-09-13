@@ -51,10 +51,13 @@ class Inbox:
 def inbox_status(store,plan):
  db=store.db
  if not db.execute("SELECT 1 FROM sqlite_master WHERE name='inbox_event'").fetchone():return None
+ enabled=False
+ if db.execute("SELECT 1 FROM sqlite_master WHERE name='service_reply_config'").fetchone():
+  config=db.execute('SELECT enabled FROM service_reply_config WHERE plan_id=?',(plan,)).fetchone();enabled=bool(config and config[0])
  return {'events':db.execute('SELECT count(*) FROM inbox_event WHERE plan_id=?',(plan,)).fetchone()[0],
  'historicalEvents':db.execute('SELECT count(*) FROM inbox_event WHERE plan_id=? AND historical=1',(plan,)).fetchone()[0],
  'conversations':db.execute('SELECT count(*) FROM inbox_checkpoint WHERE plan_id=?',(plan,)).fetchone()[0],
  'gaps':db.execute("SELECT count(*) FROM inbox_checkpoint WHERE plan_id=? AND state='gap'",(plan,)).fetchone()[0],
  'pendingContent':db.execute('SELECT count(*) FROM inbox_pending WHERE plan_id=?',(plan,)).fetchone()[0],
  'lastCheckedAt':db.execute('SELECT max(checked_at) FROM inbox_checkpoint WHERE plan_id=?',(plan,)).fetchone()[0],
- 'automaticRepliesEnabled':False}
+ 'automaticRepliesEnabled':enabled}

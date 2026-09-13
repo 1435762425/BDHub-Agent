@@ -223,10 +223,11 @@ class CycleStore:
             self.db.execute('INSERT INTO source_edge VALUES(?,?,?)',(p,e['sourceId'],data))
     def _eligible_people(self,p,window_end=None):
         eligible={(o['pid'],o['offerKey']) for _,o in self._offers(p) if assess_offer(o,self.clock())['eligible']}
-        consumed=set()
+        consumed=set();cooldown=set()
         if self.db.execute("SELECT 1 FROM sqlite_master WHERE name='cycle_delivery'").fetchone():
-            consumed={(r[0],r[1],r[2]) for r in self.db.execute("SELECT creator_id,pid,source_id FROM cycle_delivery WHERE plan_id=? AND state IN ('ready','running','unknown','confirmed')",(p,))}
-        return {r['creator_id'] for r in self.db.execute('SELECT o.*,r.mode,r.rejected,r.inbox_until FROM opportunity o JOIN relationship r USING(plan_id,creator_id) WHERE o.plan_id=?',(p,)) if (r['pid'],r['offer_key']) in eligible and r['mode']=='auto' and not r['rejected'] and not r['inbox_until'] and (r['creator_id'],r['pid'],json.loads(r['payload'])['sourceId']) not in consumed and (window_end is None or json.loads(r['payload'])['windowEnd']==window_end)}
+            consumed={(r[0],r[1],r[2]) for r in self.db.execute("SELECT creator_id,pid,source_id FROM cycle_delivery WHERE plan_id=? AND state IN ('ready','running','unknown','confirmed','partial_delivery')",(p,))}
+            cooldown={r[0] for r in self.db.execute("SELECT d.creator_id,max(p.started),r.unlocked FROM cycle_delivery d JOIN cycle_delivery_part p ON p.delivery_id=d.id JOIN relationship r ON r.plan_id=d.plan_id AND r.creator_id=d.creator_id WHERE d.plan_id=? AND d.state IN ('confirmed','partial_delivery') GROUP BY d.creator_id",(p,)) if r[1] and self.clock()-r[1]<(86400 if r[2] else 172800)}
+        return {r['creator_id'] for r in self.db.execute('SELECT o.*,r.mode,r.rejected,r.inbox_until FROM opportunity o JOIN relationship r USING(plan_id,creator_id) WHERE o.plan_id=?',(p,)) if r['creator_id'] not in cooldown and (r['pid'],r['offer_key']) in eligible and r['mode']=='auto' and not r['rejected'] and not r['inbox_until'] and (r['creator_id'],r['pid'],json.loads(r['payload'])['sourceId']) not in consumed and (window_end is None or json.loads(r['payload'])['windowEnd']==window_end)}
     def _prepared(self,p,new,established,window_end=None):
         people=self._eligible_people(p,window_end)
         unlocked={r[0] for r in self.db.execute('SELECT creator_id FROM relationship WHERE plan_id=? AND unlocked=1',(p,))}
@@ -314,8 +315,10 @@ class CycleStore:
         from lib.cycle_delivery import delivery_status
         from lib.cycle_scheduler import schedule_status
         delivery=delivery_status(self,p);schedule=schedule_status(self,p)
+        from lib.cycle_speed import speed_status
+        speed=speed_status(self,p)
         model_calls=unknown_model_requests=0
         if self.db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='cycle_name_job'").fetchone():
             model_calls=self.db.execute("SELECT count(*) FROM cycle_name_job WHERE state IN ('ready','response_saved')").fetchone()[0]
             unknown_model_requests=self.db.execute("SELECT count(*) FROM cycle_name_job WHERE state IN ('unknown','request_started')").fetchone()[0]
-        return {'schema':'bdhub.second-cycle.v1','plan':plan,'mode':'local_preparation_only','offers':offers[:40],'offerCount':len(offers),'eligibleOfferCount':sum(o['assessment']['eligible'] for o in offers),'relationships':counts('relationship'),'sourceEdges':counts('source_edge'),'opportunities':self.db.execute('SELECT count(*) FROM (SELECT DISTINCT creator_id,pid FROM opportunity WHERE plan_id=?)',(p,)).fetchone()[0],'eligibleUniqueCreators':len(self._eligible_people(p)),'jobs':jobs,'sourceIssues':issues,'materials':materials,'reviewBatch':review,'inbox':inbox,'delivery':delivery,'schedule':schedule,'identitySourceEdges':identity_total,'identityResolvedEdges':identity_resolved,'identityUnmatchedEdges':self.db.execute("SELECT count(*) FROM cycle_identity_outcome WHERE plan_id=? AND status='unresolved'",(p,)).fetchone()[0],'executionAllowed':False,'legacyTrialControlIntegrated':False,'modelCalls':model_calls,'modelRequestsUnresolved':unknown_model_requests,'realSends':delivery['confirmedParts'] if delivery else 0}
+        return {'schema':'bdhub.second-cycle.v1','plan':plan,'mode':'local_preparation_only','offers':offers[:40],'offerCount':len(offers),'eligibleOfferCount':sum(o['assessment']['eligible'] for o in offers),'relationships':counts('relationship'),'sourceEdges':counts('source_edge'),'opportunities':self.db.execute('SELECT count(*) FROM (SELECT DISTINCT creator_id,pid FROM opportunity WHERE plan_id=?)',(p,)).fetchone()[0],'eligibleUniqueCreators':len(self._eligible_people(p)),'jobs':jobs,'sourceIssues':issues,'materials':materials,'reviewBatch':review,'inbox':inbox,'delivery':delivery,'schedule':schedule,'speed':speed,'identitySourceEdges':identity_total,'identityResolvedEdges':identity_resolved,'identityUnmatchedEdges':self.db.execute("SELECT count(*) FROM cycle_identity_outcome WHERE plan_id=? AND status='unresolved'",(p,)).fetchone()[0],'executionAllowed':False,'legacyTrialControlIntegrated':False,'modelCalls':model_calls,'modelRequestsUnresolved':unknown_model_requests,'realSends':delivery['confirmedParts'] if delivery else 0}

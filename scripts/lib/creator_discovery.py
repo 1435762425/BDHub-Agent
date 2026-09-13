@@ -124,6 +124,9 @@ class CreatorDiscoveryStore:
             self._db.execute("PRAGMA foreign_keys=ON")
             self._db.execute("PRAGMA journal_mode=WAL")
             self._db.executescript("BEGIN IMMEDIATE;\n" + _SCHEMA + "\nCOMMIT;")
+            columns={r[1] for r in self._db.execute('PRAGMA table_info(discovery_item)')}
+            if 'attempt_no' not in columns:self._db.execute('ALTER TABLE discovery_item ADD COLUMN attempt_no INTEGER NOT NULL DEFAULT 1')
+            if 'retry_at' not in columns:self._db.execute('ALTER TABLE discovery_item ADD COLUMN retry_at REAL NOT NULL DEFAULT 0')
             path.chmod(0o600)
         except BaseException:
             self._db.close()
@@ -252,7 +255,7 @@ class CreatorDiscoveryStore:
                 if running:
                     return None
                 row = self._db.execute("""SELECT i.* FROM discovery_item i JOIN discovery_batch b ON b.id=i.batch_id
-                    WHERE i.status='queued' AND b.status IN ('queued','running') ORDER BY b.created_at,b.id,i.row_index LIMIT 1""").fetchone()
+                    WHERE i.status='queued' AND b.status IN ('queued','running') AND i.retry_at<=? ORDER BY b.created_at,b.id,i.row_index LIMIT 1""",(self.now(),)).fetchone()
                 if row is None:
                     return None
                 self._db.execute("UPDATE discovery_batch SET status='running',started_at=COALESCE(started_at,?) WHERE id=?", (_iso(self.now()), row["batch_id"]))
@@ -268,6 +271,14 @@ class CreatorDiscoveryStore:
                 raise CreatorDiscoveryError("stale_lease", 409)
             self._db.execute("UPDATE discovery_item SET lease_until=? WHERE id=?", (self.now() + LEASE_SECONDS, item["id"]))
             yield
+
+    def defer_busy(self,item,owner):
+        with self.transaction():
+            current=self._db.execute('SELECT * FROM discovery_item WHERE id=?',(item['id'],)).fetchone()
+            if current['status']!='running' or current['lease_owner']!=owner:raise CreatorDiscoveryError('stale_lease')
+            self._db.execute("UPDATE discovery_item SET status='queued',reason=NULL,request_count=0,attempt_no=attempt_no+1,retry_at=?,lease_owner=NULL,lease_pid=NULL,lease_until=NULL WHERE id=?",(self.now()+30,item['id']))
+            self._db.execute("UPDATE discovery_batch SET status='queued',error_code=NULL WHERE id=? AND status<>'paused'",(item['batch_id'],))
+        return self.detail(item['batch_id'])
 
     def finish(self, item, owner, status, *, reason=None, creator_id=None, oec_id=None, outcome=None, request_count=None):
         with self.transaction():
@@ -341,7 +352,8 @@ class CreatorDiscoveryWorker:
         if not re.fullmatch(r"discovery_item_[0-9a-f]{32}", item["id"]):
             raise CreatorDiscoveryError("invalid_request")
         directory = self.store.output_root / item["batch_id"] / item["id"]
-        paths = directory, directory / "attempt-1", directory / "targets.private.json"
+        number=item.get("attempt_no",1)
+        paths = directory, directory / f"attempt-{number}", directory / ("targets.private.json" if number==1 else f"targets-{number}.private.json")
         if any(not path.resolve().is_relative_to(self.store.var_dir) for path in (*paths, paths[1] / "report.private.json")):
             raise CreatorDiscoveryError("invalid_request")
         return paths
@@ -392,6 +404,8 @@ class CreatorDiscoveryWorker:
             targets, requests = report.get("targets"), report.get("requests")
             if not isinstance(targets, list) or not isinstance(requests, list) or len(targets) > 1:
                 raise CreatorDiscoveryError("probe_report_invalid")
+            if not targets and not requests and report.get('errorType')=='BlockingIOError' and report.get('reason')=='probe_initialization_or_validation_error':
+                return self.store.defer_busy(item,self.owner)
             if not targets:
                 return self._blocked(item, report.get("reason"), request_count=count)
             target = targets[0]

@@ -35,7 +35,7 @@ def inspect_card(offer,read,*,expected_list_id=None,expected_name=None):
  for lid,imsha,card_row in candidates[:3]:
   body,sha=read(MEMBERS,{'list_id':lid,'source':2 if wire=='0' else 1});data=body.get('data',{});rows=data.get('campaign_products')
   if not isinstance(rows,list) or data.get('total_num')!=len(rows):raise CycleError('card_members_incomplete')
-  members=[p for p in rows if str(p.get('product_id'))==offer['pid'] and str(p.get('campaign_id'))==wanted]
+  members=[p for p in rows if str(p.get('product_id'))==offer['pid'] and (str(p.get('campaign_id'))==wanted or wire!='0' and p.get('campaign_id') is None)]
   if len(members)!=1:continue
   p=members[0];rate=Decimal(str(p.get('creator_commission_percent')))/100
   rates.append(format(rate,'f'))
@@ -59,7 +59,7 @@ def main():
   if a.generate_names:
    from lib.draft_provider import call_model
    report['namePreparation']=materials.prepare_names(offers,call_model);report['modelCalls']=report['namePreparation']['modelCalls'];save()
-  if a.check_cards:
+  if a.check_cards and offers:
    from bdhub import scheduled_relogin
    from bdhub.send.taplink.transport import account_for
    from bdhub.hub.markets import identity_for
@@ -70,7 +70,7 @@ def main():
    if not identity.partner_id_is_own:raise CycleError('identity_not_own')
    before=hashlib.sha256(Path(account.headers_json).read_bytes()).hexdigest()
    spec=importlib.util.spec_from_file_location('material_guard',ROOT/'scripts/probe-italy-profile.py');guard=importlib.util.module_from_spec(spec);spec.loader.exec_module(guard)
-   with guard.readonly_guard(account),requests.Session() as session:
+   with guard.readonly_guard(account,wait_seconds=30),requests.Session() as session:
     session.trust_env=False;headers={k:v for k,v in load_identity(account.headers_json).headers.items() if not k.startswith(':') and k.lower() not in ('host','content-length','origin','referer')};headers.update(origin='https://partner.eu.tiktokshop.com',referer='https://partner.eu.tiktokshop.com/');params=legacy_params(identity,account);last=[0.]
     def read(path,extra):
      if path not in (CARD,MEMBERS):raise CycleError('read_path_forbidden')

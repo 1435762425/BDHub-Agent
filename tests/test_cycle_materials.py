@@ -3,11 +3,19 @@ from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'scripts'))
 from lib.cycle_materials import Materials,checked_names,name_key,render,material_status
 from lib.second_cycle import CycleStore,CycleError
-from test_second_cycle import offer,NOW
+from test_second_cycle import offer,edge,NOW
 class MaterialTests(unittest.TestCase):
  def setUp(self):self.t=tempfile.TemporaryDirectory();self.s=CycleStore(Path(self.t.name)/'db');self.m=Materials(self.s);self.o=offer(title='Cuscino cervicale lungo titolo',endAt=NOW+90*86400)
  def tearDown(self):self.s.close();self.t.cleanup()
  def model(self,*a,**kw):return {'content':json.dumps({'items':[{'ref':'0','shortNameIt':'cuscino cervicale','mentionIt':'questo cuscino cervicale','shortNameZh':'颈枕'}]}),'usage':{'test':True}}
+ def test_prepared_first_five_do_not_hide_later_product_demand(self):
+  from lib.second_cycle import digest,encoded
+  self.s.clock=lambda:NOW;plan=self.s.plan('test','it');offers=[offer(str(i),title='Cuscino '+str(i)) for i in range(1,7)]
+  self.s.publish(plan,'s',NOW,offers);self.s.import_edges(plan,[edge(str(i),source='e'+str(i)) for i in range(1,7)])
+  def model(*a,**kw):return {'content':json.dumps({'items':[{'ref':str(i),'shortNameIt':'cuscino','mentionIt':'questo cuscino','shortNameZh':'枕头'} for i in range(5)]})}
+  self.m.prepare_names(offers[:5],model)
+  for o in offers[:5]:self.s.db.execute('INSERT INTO cycle_card_check VALUES(?,?,?,?)',(plan,o['offerKey'],digest(o),encoded({'state':'verified_read_only'})))
+  self.assertEqual([o['pid'] for o in self.m.candidates(plan)],['6'])
  def test_product_cache_ignores_offer_and_creator_changes(self):
   self.assertEqual(self.m.prepare_names([self.o],self.model)['modelCalls'],1)
   self.assertEqual(self.m.prepare_names([self.o|{'creatorPercent':'15'}],lambda *a:1/0)['modelCalls'],0)
@@ -45,6 +53,18 @@ class CardTests(unittest.TestCase):
  def read(self,path,q):
   if path==self.mod.CARD:return {'data':{'total':1,'list':[{'product_list_id':'789','campaign_id':'0','campaign_products':[{'product_id':'123','creator_commission_percent':'1200'}]}]}},'im'
   return {'data':{'total_num':1,'campaign_products':[{'product_id':'123','campaign_id':'456','creator_commission_percent':'1200','stock':'200','product_status':2}]}},'members'
+ def test_campaign_members_inherit_verified_parent_campaign_only(self):
+  def read(path,q):
+   b,sha=self.read(path,q)
+   if path==self.mod.CARD:b['data']['list'][0]['campaign_id']='456'
+   else:b['data']['campaign_products'][0].pop('campaign_id')
+   return b,sha
+  self.assertEqual(self.mod.inspect_card(self.o|{'catalogSource':'campaign'},read)['state'],'verified_read_only')
+  def selected_read(path,q):
+   b,sha=read(path,q)
+   if path==self.mod.CARD:b['data']['list'][0]['campaign_id']='0'
+   return b,sha
+  self.assertNotEqual(self.mod.inspect_card(self.o,selected_read)['state'],'verified_read_only')
  def test_exact_card_with_member_readback(self):self.assertEqual(self.mod.inspect_card(self.o,self.read)['state'],'verified_read_only')
  def test_rate_mismatch_is_not_verified(self):self.assertEqual(self.mod.inspect_card(self.o|{'creatorPercent':'13'},self.read)['state'],'needs_card_preparation')
  def test_partial_member_page_is_not_accepted(self):

@@ -13,7 +13,7 @@ class CardCreation:
   return dict(r)
  def prepare(self,plan,offer,short_name):
   if not assess_offer(offer,self.store.clock())['eligible']:raise CycleError('offer_not_eligible')
-  if offer.get('catalogSource')!='selected':raise CycleError('creation_route_not_enabled')
+  if offer.get('catalogSource') not in ('selected','campaign'):raise CycleError('creation_route_not_enabled')
   identifier='card-create-'+digest([plan,offer])[:32]
   with self.store.tx():
    prior=self.store.db.execute('SELECT * FROM cycle_card_creation WHERE id=?',(identifier,)).fetchone()
@@ -46,7 +46,7 @@ class CardCreation:
    row=self.get(i);offer=json.loads(row['offer_json'])
    if row['state']=='verified':return
    if card.get('state')!='verified_read_only' or card.get('pid')!=offer['pid'] or card.get('sourceCampaignId')!=offer['campaignId'] or card.get('creatorPercent')!=offer['creatorPercent']:raise CycleError('card_binding_mismatch')
-   if card.get('wireCampaignId')!='0' or not re.fullmatch(r'[0-9]{1,32}',str(card.get('listId',''))):raise CycleError('card_binding_mismatch')
+   if card.get('wireCampaignId')!=('0' if offer['catalogSource']=='selected' else offer['campaignId']) or not re.fullmatch(r'[0-9]{1,32}',str(card.get('listId',''))):raise CycleError('card_binding_mismatch')
    if not reused:
     receipt=json.loads(row['receipt']) if row['receipt'] else {}
     if receipt.get('list_id'):

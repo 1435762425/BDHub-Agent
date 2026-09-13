@@ -11,6 +11,10 @@ class CreationTests(unittest.TestCase):
   self.i=self.c.prepare(self.p,self.o,'cuscino')['id']
  def tearDown(self):self.s.close();self.t.cleanup()
  def card(self):return {'state':'verified_read_only','pid':'1','sourceCampaignId':'2','creatorPercent':'12','listId':'3','wireCampaignId':'0','verifiedListName':self.c.get(self.i)['list_name']}
+ def test_campaign_wire_id_is_preserved(self):
+  other=self.o|{'pid':'7','offerKey':'o7','catalogSource':'campaign'};id=self.c.prepare(self.p,other,'cuscino')['id'];self.c.begin(id)
+  card=self.card()|{'pid':'7','wireCampaignId':'2','verifiedListName':self.c.get(id)['list_name']}
+  self.c.confirm(id,card);self.assertEqual(self.c.get(id)['state'],'verified')
  def test_prepare_idempotent(self):self.assertEqual(self.c.prepare(self.p,self.o,'cuscino')['id'],self.i)
  def test_no_double_attempt(self):
   self.c.begin(self.i)

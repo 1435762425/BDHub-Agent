@@ -34,7 +34,7 @@ def render(name,offer,kind='standard',handle=None):
  'translationZh':f"你好！这款{name['shortNameZh']}可以为你提供更高的 {rate}% 佣金，下一条视频或直播可以再推一轮。",
  'deliveryOrder':'card_then_text','pid':offer['pid'],'executionAllowed':False,'requiresVerifiedCard':True,'commissionState':'proposed_not_applied'}
 
-def select_offers(store,plan,limit=5):
+def select_offers(store,plan,limit=5,require_demand=False):
  if store._plan(plan)['market']!='it':return []
  pids={r[0] for r in store.db.execute('SELECT DISTINCT pid FROM opportunity WHERE plan_id=?',(plan,))}
  chosen={}
@@ -42,11 +42,21 @@ def select_offers(store,plan,limit=5):
   if offer['pid'] not in pids or not assess_offer(offer,store.clock())['eligible']:continue
   old=chosen.get(offer['pid'])
   if old is None or (Decimal(offer['creatorPercent']),offer['endAt'],offer['offerKey'])>(Decimal(old['creatorPercent']),old['endAt'],old['offerKey']):chosen[offer['pid']]=offer
- return sorted(chosen.values(),key=lambda o:o['pid'])[:limit]
+ people=store._eligible_people(plan);demand={}
+ for row in store.db.execute('SELECT creator_id,pid,units FROM opportunity WHERE plan_id=?',(plan,)):
+  if row['creator_id'] in people:demand.setdefault(row['pid'],set()).add(row['creator_id'])
+ return sorted((o for o in chosen.values() if not require_demand or demand.get(o['pid'])),key=lambda o:(-len(demand.get(o['pid'],set())),o['pid']))[:limit]
 
 class Materials:
  def __init__(self,store):self.store=store;store.db.executescript(SCHEMA)
- def candidates(self,plan,limit=5):return select_offers(self.store,plan,limit)
+ def candidates(self,plan,limit=5):
+  result=[]
+  for o in select_offers(self.store,plan,1000,require_demand=True):
+   check=self.store.db.execute('SELECT payload FROM cycle_card_check WHERE plan_id=? AND offer_key=? AND offer_fingerprint=?',(plan,o['offerKey'],digest(o))).fetchone()
+   if self.name(o) and check and json.loads(check[0]).get('state')=='verified_read_only':continue
+   result.append(o)
+   if len(result)>=limit:break
+  return result
  def prepare_names(self,offers,call):
   missing=[o for o in offers if not self.store.db.execute('SELECT 1 FROM cycle_product_name WHERE id=?',(name_key(o),)).fetchone()]
   if not missing:return {'modelCalls':0,'cached':len(offers)}

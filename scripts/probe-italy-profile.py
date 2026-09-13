@@ -115,7 +115,7 @@ def get_readiness() -> dict:
 
 
 @contextmanager
-def readonly_guard(account):
+def readonly_guard(account, *, wait_seconds=0):
     from bdhub.enrich.profile_lease import ProfileLease
     lease = ProfileLease(account.profile_dir, account=account.name, market="it", operation="agent-readonly-profile-probe")
     fd = os.open(lease.mutex_path, os.O_RDONLY | os.O_NOFOLLOW)
@@ -123,7 +123,13 @@ def readonly_guard(account):
         before = os.fstat(fd)
         if not stat.S_ISREG(before.st_mode):
             raise RuntimeError("guard_not_regular")
-        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        deadline=time.monotonic()+wait_seconds
+        while True:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB);break
+            except BlockingIOError:
+                if time.monotonic()>=deadline:raise
+                time.sleep(0.25)
         current = lease.mutex_path.lstat()
         if stat.S_ISLNK(current.st_mode) or (current.st_dev, current.st_ino) != (before.st_dev, before.st_ino):
             raise RuntimeError("guard_changed")

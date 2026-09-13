@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Read-only IT/ACC6 polling of indexed cycle relationships. No sender/model tools."""
 import argparse,fcntl,json,os,signal,sqlite3,sys,time
+from contextlib import closing
 from pathlib import Path
 sys.dont_write_bytecode=True
 ROOT=Path(__file__).resolve().parents[1];sys.path.insert(0,str(ROOT/'scripts'))
@@ -18,10 +19,14 @@ def stop(*_):
 def tick(limit):
  report={'realSends':0,'automaticReplies':0,'processed':0};reader=None
  with CycleStore(ROOT/'var/second-cycle.sqlite') as store:
-  inbox=Inbox(store);service=Service(store);plan=store.db.execute("SELECT id FROM plan WHERE institution='bjn-local-research' AND market='it'").fetchone()[0]
+  inbox=Inbox(store)
+  from lib.cycle_agent import AgentEvaluation
+  from lib.draft_provider import call_model
+  service=Service(store,classifier=lambda contents,background:AgentEvaluation(store).evaluate(contents,call_model,mode='live_classification',background=background))
+  plan=store.db.execute("SELECT id FROM plan WHERE institution='bjn-local-research' AND market='it'").fetchone()[0]
   if store._plan(plan)['state']!='active':return {'state':'plan_paused','realSends':0}
   if (ROOT/'var/cycle-inbox.pause').exists():return {'state':'paused','realSends':0}
-  with sqlite3.connect((ROOT/'var/it-conversations.sqlite').as_uri()+'?mode=ro',uri=True) as idx:
+  with closing(sqlite3.connect((ROOT/'var/it-conversations.sqlite').as_uri()+'?mode=ro',uri=True)) as idx, idx:
    rows=idx.execute("SELECT cid,oec,kind FROM conversation WHERE scope='it:acc6' AND kind=2 ORDER BY cid").fetchall()
   targets=[]
   for cid,oec,kind in rows:

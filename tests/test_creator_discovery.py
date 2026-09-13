@@ -109,6 +109,14 @@ class CreatorDiscoveryTests(unittest.TestCase):
         value = preview("it", "test source", text)
         return self.store.submit("it", "test source", text, value["previewHash"], request)
 
+    def test_zero_request_guard_busy_defers_without_blocking_batch(self):
+        batch=self.submit();worker=CreatorDiscoveryWorker(self.store,executor=self.execute);item=self.store.claim(worker.owner)
+        report={'schema':'bdhub.italy-profile-probe.v3','market':'it','account':'acc6','oldDatabaseWrites':0,'realSends':0,'targets':[],'requests':[],'errorType':'BlockingIOError','reason':'probe_initialization_or_validation_error'}
+        worker._settle(item,report)
+        self.assertIsNone(self.store.claim(worker.owner));self.clock+=31;retry=self.store.claim(worker.owner)
+        self.assertEqual(retry['attempt_no'],2);self.assertEqual(worker._paths(retry)[1].name,'attempt-2')
+        self.assertEqual(self.store.detail(batch['id'])['batch']['counts']['blocked'],0)
+
     def execute(self, target_file, output):
         target = json.loads(target_file.read_text())["targets"][0]
         self.calls.append(target)

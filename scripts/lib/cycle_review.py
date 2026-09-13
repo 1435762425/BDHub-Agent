@@ -9,13 +9,16 @@ CREATE TRIGGER IF NOT EXISTS review_no_delete BEFORE DELETE ON cycle_review_batc
 
 def choose_candidates(store,plan,identity_reader,limit=3):
  if type(limit) is not int or not 1<=limit<=100:raise CycleError('review_limit')
- offers={o['pid']:o for o in select_offers(store,plan)}
+ offers={o['pid']:o for o in select_offers(store,plan,1000)}
  rows=store.db.execute('SELECT e.payload,r.creator_id,r.oec,r.evidence_ref FROM cycle_identity_resolution r JOIN source_edge e USING(plan_id,source_id) WHERE r.plan_id=?',(plan,)).fetchall()
  candidates=[];skipped=[]
  for row in rows:
   edge=json.loads(row['payload']);control=store.db.execute('SELECT * FROM relationship WHERE plan_id=? AND creator_id=?',(plan,row['creator_id'])).fetchone();o=offers.get(edge['pid'])
   if not o or not control or control['mode']!='auto' or control['rejected'] or control['inbox_until']:
    skipped.append({'sourceId':edge['sourceId'],'reason':'control_or_offer_not_ready'});continue
+  if store.db.execute("SELECT 1 FROM sqlite_master WHERE name='cycle_delivery'").fetchone():
+   last=store.db.execute("SELECT max(p.started) FROM cycle_delivery d JOIN cycle_delivery_part p ON p.delivery_id=d.id WHERE d.plan_id=? AND d.creator_id=? AND d.state IN ('confirmed','partial_delivery')",(plan,row['creator_id'])).fetchone()[0]
+   if last and store.clock()-last<(86400 if control['unlocked'] else 172800):continue
   person=identity_reader(row['creator_id'],row['oec'])
   if not person or not person.get('handle'):
    skipped.append({'sourceId':edge['sourceId'],'reason':'current_identity_missing'});continue
@@ -23,6 +26,13 @@ def choose_candidates(store,plan,identity_reader,limit=3):
   name=json.loads(named[0]) if named else None
   check=store.db.execute('SELECT payload FROM cycle_card_check WHERE plan_id=? AND offer_key=? AND offer_fingerprint=?',(plan,o['offerKey'],digest(o))).fetchone()
   card=json.loads(check[0]) if check else None
+  if card is None:
+   # Cached card locates the native object only. Every actual send re-reads it.
+   prior=store.db.execute('SELECT payload FROM cycle_card_check WHERE plan_id=? AND offer_key=? ORDER BY rowid DESC',(plan,o['offerKey'])).fetchall()
+   for saved in prior:
+    value=json.loads(saved[0])
+    if value.get('state')=='verified_read_only' and value.get('pid')==o['pid'] and value.get('sourceCampaignId')==o['campaignId'] and value.get('creatorPercent')==o['creatorPercent']:
+     card=value|{'requiresFreshReadBeforeSend':True};break
   if not name or not card or card.get('state')!='verified_read_only':
    skipped.append({'sourceId':edge['sourceId'],'reason':'material_or_card_missing'});continue
   candidates.append({'planRevision':store._plan(plan)['revision'],'creatorId':row['creator_id'],'oecId':row['oec'],'handle':person['handle'],'identityEvidence':row['evidence_ref'],'controlRevision':control['revision'],
@@ -31,7 +41,7 @@ def choose_candidates(store,plan,identity_reader,limit=3):
  result=[];seen=set()
  for c in candidates:
   if c['oecId'] in seen:continue
-  if store.db.execute("SELECT 1 FROM sqlite_master WHERE name='cycle_delivery'").fetchone() and store.db.execute("SELECT 1 FROM cycle_delivery WHERE plan_id=? AND creator_id=? AND pid=? AND source_id=? AND state IN ('ready','running','unknown','confirmed')",(plan,c['creatorId'],c['pid'],c['source']['sourceId'])).fetchone():continue
+  if store.db.execute("SELECT 1 FROM sqlite_master WHERE name='cycle_delivery'").fetchone() and store.db.execute("SELECT 1 FROM cycle_delivery WHERE plan_id=? AND creator_id=? AND pid=? AND source_id=? AND state IN ('ready','running','unknown','confirmed','partial_delivery')",(plan,c['creatorId'],c['pid'],c['source']['sourceId'])).fetchone():continue
   seen.add(c['oecId']);result.append(c)
   if len(result)==limit:break
  return result,skipped

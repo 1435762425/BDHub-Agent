@@ -7,7 +7,7 @@ sys.dont_write_bytecode=True;sys.path.insert(0,str(LEGACY));sys.path.insert(0,st
 from lib.second_cycle import CycleStore,CycleError,digest,assess_offer
 from lib.cycle_materials import Materials
 from lib.cycle_card_creation import CardCreation
-from lib.cycle_catalog import normalize
+from lib.cycle_catalog import normalize,read_current_offer,CAMPAIGNS,PRODUCTS
 SPEC=importlib.util.spec_from_file_location('cycle_card_inspection',ROOT/'scripts/prepare-cycle-materials.py');inspection=importlib.util.module_from_spec(SPEC);SPEC.loader.exec_module(inspection)
 CREATE='/api/v1/affiliate/partner/campaign/product_list/create';SELECTED='/api/v1/affiliate/partner/product/pick_up/list'
 
@@ -26,7 +26,7 @@ def main():
     r=store.db.execute('SELECT payload FROM cycle_card_check WHERE plan_id=? AND offer_key=? AND offer_fingerprint=?',(plan,offer['offerKey'],digest(offer))).fetchone()
     if not r or json.loads(r[0])['state']!='needs_card_preparation':continue
     name=materials.name(offer)
-    if not name:raise CycleError('product_name_missing')
+    if not name:continue
     row=ledger.prepare(plan,offer,name['shortNameIt']);intents.append({k:row[k] for k in ('id','pid','list_name','state')})
    report['intents']=intents;save();print(json.dumps(report,ensure_ascii=False));return
   intent=ledger.get(a.id);offer=json.loads(intent['offer_json']);report.update(intentId=intent['id'],pid=offer['pid'],targetCreatorPercent=offer['creatorPercent']);save()
@@ -49,10 +49,10 @@ def main():
   before=hashlib.sha256(Path(account.headers_json).read_bytes()).hexdigest()
   spec=importlib.util.spec_from_file_location('create_guard',ROOT/'scripts/probe-italy-profile.py');guard=importlib.util.module_from_spec(spec);spec.loader.exec_module(guard)
   try:
-   with guard.readonly_guard(account),requests.Session() as session:
+   with guard.readonly_guard(account,wait_seconds=30),requests.Session() as session:
     session.trust_env=False;headers={k:v for k,v in load_identity(account.headers_json).headers.items() if not k.startswith(':') and k.lower() not in ('host','content-length','origin','referer')};headers.update(origin='https://partner.eu.tiktokshop.com',referer='https://partner.eu.tiktokshop.com/');params=legacy_params(identity,account);last=[0.]
     def request(method,path,extra,body=None,write=False):
-     allowed={("GET",inspection.CARD),("GET",inspection.MEMBERS),("POST",SELECTED)}
+     allowed={("GET",inspection.CARD),("GET",inspection.MEMBERS),("POST",SELECTED),("GET",CAMPAIGNS),("GET",PRODUCTS)}
      if write:
       if (method,path)!=('POST',CREATE) or report['createRequests'] or a.action!='execute-one':raise CycleError('write_scope_invalid')
      elif (method,path) not in allowed:raise CycleError('read_scope_invalid')
@@ -67,23 +67,26 @@ def main():
      if response.status_code!=200 or response.headers.get('bdturing-verify') or response.headers.get('x-tt-system-error')=='3':raise CycleError('remote_result_unconfirmed')
      data=response.json()
      if type(data.get('code')) is not int or data['code']!=0:raise CycleError('remote_business_rejected')
+     if path==inspection.CARD:
+      rows=(data.get('data') or {}).get('list') or []
+      report['lastImCardRows']=[{'listId':r.get('product_list_id'),'name':r.get('product_list_name'),'campaignId':r.get('campaign_id'),'matchingProducts':[{'pid':v.get('product_id'),'campaignId':v.get('campaign_id'),'creatorPercentRaw':v.get('creator_commission_percent')} for v in r.get('campaign_products',[]) if str(v.get('product_id'))==offer['pid']]} for r in rows]
+     if path==inspection.MEMBERS:
+      body=data.get('data') or {};report['lastMembersSummary']={'total':body.get('total_num'),'products':[{k:v.get(k) for k in ('product_id','campaign_id','creator_commission_percent','stock','product_status','is_under_governed','unavailable_type')} for v in body.get('campaign_products',[]) if str(v.get('product_id'))==offer['pid']]}
+     save()
      return data,hashlib.sha256(response.content).hexdigest()
     read=lambda path,extra:request('GET',path,extra)
     if a.action=='execute-one':
      if intent['state']!='prepared':raise CycleError('verify_existing_attempt_first')
      current={o['offerKey']:o for _,o in store._offers(plan)}
      if offer['offerKey'] not in current or digest(current[offer['offerKey']])!=digest(offer):raise CycleError('offer_snapshot_changed')
-     rule=link_rules_for('it','selected')[0]
+     rule=link_rules_for('it',offer['catalogSource'])[0]
      if digest(rule)!=offer['commissionRuleFingerprint']:raise CycleError('commission_rule_changed')
-     body,sha=request('POST',SELECTED,{}, {'cur_page':1,'page_size':100,'product_ids':[offer['pid']],'filter':{'product_source':[],'campaign_type':[],'label_type':[],'product_status':1}})
-     rows=body.get('data');matches=[r for r in rows if str((r.get('campaign_product') or {}).get('product_id'))==offer['pid'] and str((r.get('campaign_info') or {}).get('campaign_id'))==offer['campaignId']] if isinstance(rows,list) else []
-     if len(matches)!=1 or str(body.get('total_num'))!=str(len(rows)):raise CycleError('current_offer_not_unique')
-     fresh=normalize(matches[0]['campaign_product'],matches[0]['campaign_info'],'selected',rule,engine_for(rule).calculate,sha,time.time())
+     fresh=read_current_offer(offer,rule,engine_for(rule).calculate,request,time.time)
      if not assess_offer(fresh,time.time())['eligible'] or fresh['creatorPercent']!=offer['creatorPercent']:raise CycleError('current_offer_changed')
      existing=inspection.inspect_card(offer,read)
      if existing['state']=='verified_read_only':
       ledger.confirm(intent['id'],existing,reused=True);report.update(status='reused',card=existing);save();print(json.dumps(report));return
-     payload=create_payload(pid=offer['pid'],campaign_id=offer['campaignId'],creator_pct=offer['creatorPercent'],name=intent['list_name'],route='selected')
+     payload=create_payload(pid=offer['pid'],campaign_id=offer['campaignId'],creator_pct=offer['creatorPercent'],name=intent['list_name'],route=offer['catalogSource'])
      body,sha=request('POST',CREATE,{},payload,True)
      receipt=creation_receipt(body);receipt['responseSha256']=sha;ledger.save_receipt(intent['id'],receipt)
     else:receipt=json.loads(intent['receipt']) if intent['receipt'] else {}

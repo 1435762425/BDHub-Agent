@@ -7,7 +7,7 @@ class ReplyFacts:
  def __init__(self,store,refresh):self.s=store;self.refresh=refresh;store.db.executescript(SCHEMA)
  def product(self,plan,creator):
   # Explicit source is the latest completely confirmed group, not a sample record or a guessed PID.
-  rows=self.s.db.execute("SELECT snapshot FROM cycle_delivery WHERE plan_id=? AND creator_id=? AND state='confirmed' ORDER BY created DESC LIMIT 2",(plan,creator)).fetchall()
+  rows=self.s.db.execute("SELECT snapshot FROM cycle_delivery WHERE plan_id=? AND creator_id=? AND (state='confirmed' OR state='partial_delivery' AND EXISTS(SELECT 1 FROM cycle_delivery_part p WHERE p.delivery_id=cycle_delivery.id AND p.kind='card' AND p.state='confirmed')) ORDER BY created DESC LIMIT 2",(plan,creator)).fetchall()
   if not rows:raise CycleError('no_confirmed_product_context')
   candidates=[json.loads(r[0]) for r in rows]
   if len({c['pid'] for c in candidates})>1:raise CycleError('ambiguous_product_context')
@@ -15,7 +15,7 @@ class ReplyFacts:
  def call(self,tool,plan,creator):
   if tool not in TOOLS:raise CycleError('reply_tool_not_allowed')
   c=self.product(plan,creator)
-  result={'pid':c['pid'],'shortName':c['name']['shortNameIt'],'source':'confirmed_delivery','sourceId':c['source']['sourceId'],'productContextRequiresReview':True}
+  result={'pid':c['pid'],'shortName':c['name']['shortNameIt'],'source':'confirmed_product_card','sourceId':c['source']['sourceId'],'productContextRequiresReview':True}
   if tool=='get_current_creator_commission':
    proof=self.refresh(c)
    if proof.get('state')!='verified_read_only' or proof.get('pid')!=c['pid'] or proof.get('listId')!=c['card']['listId']:raise CycleError('reply_fact_binding_mismatch')
@@ -27,7 +27,7 @@ class ReplyFacts:
   rows=self.s.db.execute("SELECT * FROM inbox_pending WHERE plan_id=? AND state='needs_facts'",(plan,)).fetchall();results=[]
   for p in rows[:3]:
    rel=self.s.db.execute('SELECT * FROM relationship WHERE plan_id=? AND creator_id=?',(plan,p['creator_id'])).fetchone()
-   if rel['mode']!='auto' or rel['rejected']:continue
+   if rel['mode']!='auto':continue
    assessment=self.s.db.execute('SELECT decision FROM service_assessment WHERE plan_id=? AND creator_id=? AND pending_revision=?',(plan,p['creator_id'],p['revision'])).fetchone()
    if not assessment:continue
    tools=json.loads(assessment[0])['requiredTools']

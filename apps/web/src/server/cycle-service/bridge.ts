@@ -3,7 +3,7 @@ import {join} from "node:path";
 import {projectRoot} from "../creator-identities/refresh.ts";
 import {isLocalRequest} from "../runtime/validation.ts";
 export type ServiceCase={handle?:string|null;id:string;creator_id:string;assessment_revision:number;control_revision:number;reason:string;overdue:boolean;ack_state:string;messages:Array<{messageId:string;text:string|null;format:string}>};
-export type ServiceStatus={historicalAiEvaluations?:number;available:boolean;cases:ServiceCase[];incomingContents?:number;assessments?:number;caseCount?:number;pending?:Record<string,number>;automaticReplies:false};
+export type ServiceStatus={replyCounts?:Record<string,number>;historicalAiEvaluations?:number;available:boolean;cases:ServiceCase[];incomingContents?:number;assessments?:number;caseCount?:number;pending?:Record<string,number>;automaticReplies:boolean};
 type RequestData={action:"status"}|{action:"resolve";caseId:string;expectedRevision:number;expectedControlRevision:number;note:string};
 export function invokeService(input:RequestData):Promise<unknown>{const root=projectRoot();return new Promise((resolve,reject)=>{const child=execFile(join(root,"../01-BDSystem-V2/.venv/bin/python"),[join(root,"scripts/cycle-service.py")],{cwd:root,timeout:10000,maxBuffer:2*1024*1024,env:{...process.env,PYTHONDONTWRITEBYTECODE:"1"}},(error,stdout)=>{try{const value=JSON.parse(stdout);if(error||value.error)throw new Error("service_conflict");resolve(value);}catch{reject(new Error("service_unavailable"));}});child.stdin?.end(JSON.stringify(input));});}
 const headers={"Cache-Control":"no-store","X-Content-Type-Options":"nosniff"};

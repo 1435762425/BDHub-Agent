@@ -1,7 +1,10 @@
 """Plan-owned card/text outbox. External effects require explicit runtime permits."""
 import json,uuid
 from lib.second_cycle import CycleError,digest,encoded,assess_offer
-SCHEMA='''CREATE TABLE IF NOT EXISTS cycle_delivery_check(delivery_id TEXT NOT NULL,kind TEXT NOT NULL,checked REAL NOT NULL,payload TEXT NOT NULL);
+SCHEMA='''CREATE TABLE IF NOT EXISTS cycle_platform_signal(id INTEGER PRIMARY KEY AUTOINCREMENT,delivery_id TEXT NOT NULL,at REAL NOT NULL,outcome TEXT,code TEXT,native_status INTEGER,check_code INTEGER,check_message TEXT,response_ref TEXT);
+CREATE TABLE IF NOT EXISTS cycle_conversation_intent(delivery_id TEXT PRIMARY KEY,request_ref TEXT NOT NULL UNIQUE,state TEXT NOT NULL,cid TEXT,receipt TEXT);
+CREATE TABLE IF NOT EXISTS cycle_contact_reservation(plan_id TEXT NOT NULL,oec TEXT NOT NULL,reserved REAL NOT NULL,PRIMARY KEY(plan_id,oec));
+CREATE TABLE IF NOT EXISTS cycle_delivery_check(delivery_id TEXT NOT NULL,kind TEXT NOT NULL,checked REAL NOT NULL,payload TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS cycle_delivery(id TEXT PRIMARY KEY,plan_id TEXT NOT NULL,creator_id TEXT NOT NULL,oec TEXT NOT NULL,pid TEXT NOT NULL,source_id TEXT NOT NULL,snapshot TEXT NOT NULL,created REAL NOT NULL,expires REAL NOT NULL,state TEXT NOT NULL DEFAULT 'ready',UNIQUE(plan_id,creator_id,pid,source_id));
 CREATE UNIQUE INDEX IF NOT EXISTS cycle_one_active_delivery ON cycle_delivery(plan_id,creator_id) WHERE state IN ('ready','running','unknown');
 CREATE TABLE IF NOT EXISTS cycle_delivery_part(delivery_id TEXT NOT NULL,kind TEXT NOT NULL,request_ref TEXT NOT NULL UNIQUE,state TEXT NOT NULL DEFAULT 'ready',receipt TEXT,confirmation TEXT,started REAL,PRIMARY KEY(delivery_id,kind));
@@ -31,7 +34,7 @@ class Deliveries:
   current={o['offerKey']:o for _,o in self.s._offers(plan)}
   if digest(current.get(c['offer']['offerKey']))!=digest(c['offer']):raise CycleError('offer_changed')
   if c['message']['version']!=4 or c['message']['deliveryOrder']!='card_then_text':raise CycleError('message_not_v4')
-  prior=self.s.db.execute("SELECT max(p.started) FROM cycle_delivery d JOIN cycle_delivery_part p ON p.delivery_id=d.id WHERE d.plan_id=? AND d.creator_id=? AND p.kind='card' AND d.state='confirmed'",(plan,c['creatorId'])).fetchone()[0]
+  prior=self.s.db.execute("SELECT max(p.started) FROM cycle_delivery d JOIN cycle_delivery_part p ON p.delivery_id=d.id WHERE d.plan_id=? AND d.creator_id=? AND p.kind='card' AND d.state IN ('confirmed','partial_delivery')",(plan,c['creatorId'])).fetchone()[0]
   if prior and self.s.clock()-prior<(86400 if r['unlocked'] else 172800):raise CycleError('marketing_cooldown')
  def begin(self,id,kind,*,authorized_snapshot_hash,recipient_verified=False,allowance_verified=False):
   # Authorization is supplied by the plan runtime, never inferred from existence of a review.
@@ -42,17 +45,69 @@ class Deliveries:
    self._eligible(d['plan_id'],c)
    if self.s.clock()>=d['expires']:raise CycleError('delivery_expired')
    if self.s.db.execute("SELECT 1 FROM cycle_delivery WHERE plan_id=? AND state='unknown'",(d['plan_id'],)).fetchone():raise CycleError('delivery_unknown')
+   if self.s.db.execute("SELECT 1 FROM sqlite_master WHERE name='service_reply'").fetchone() and self.s.db.execute("SELECT 1 FROM service_reply WHERE plan_id=? AND state IN ('inflight','accepted','unknown')",(d['plan_id'],)).fetchone():raise CycleError('reply_reconciliation_required')
    part=next((p for p in d['parts'] if p['kind']==kind),None)
    if not part or part['state']!='ready':raise CycleError('part_not_ready')
    if self.s.db.execute("SELECT 1 FROM cycle_delivery_part p JOIN cycle_delivery d ON d.id=p.delivery_id WHERE d.plan_id=? AND p.state IN ('inflight','accepted','unknown')",(d['plan_id'],)).fetchone():raise CycleError('verify_before_dispatch')
    if kind=='text' and d['parts'][0]['state']!='confirmed':raise CycleError('card_not_confirmed')
    self.s.db.execute("UPDATE cycle_delivery_part SET state='inflight',started=? WHERE delivery_id=? AND kind=?",(self.s.clock(),id,kind));self.s.db.execute("UPDATE cycle_delivery SET state='running' WHERE id=?",(id,))
   return {'dispatchAllowed':True,'requestRef':part['request_ref'],'kind':kind}
+ def interrupted_by_inquiry(self,id):
+  with self.s.tx():
+   d=self.get(id)
+   if d['state']=='unknown' or not self.s.db.execute("SELECT 1 FROM sqlite_master WHERE name='inbox_pending'").fetchone():return False
+   pending=self.s.db.execute('SELECT 1 FROM inbox_pending WHERE plan_id=? AND creator_id=?',(d['plan_id'],d['creator_id'])).fetchone()
+   if not pending or d['parts'][0]['state']!='confirmed' or d['parts'][1]['started'] is not None:return False
+   self.s.db.execute("UPDATE cycle_delivery_part SET state='cancelled' WHERE delivery_id=? AND kind='text' AND started IS NULL",(id,));self.s.db.execute("UPDATE cycle_delivery SET state='partial_delivery' WHERE id=?",(id,));return True
+ def reserve_contact(self,id):
+  with self.s.tx():
+   d=self.get(id);r=self.s.db.execute('SELECT unlocked FROM relationship WHERE plan_id=? AND creator_id=?',(d['plan_id'],d['creator_id'])).fetchone()
+   if r[0]:return
+   old=self.s.db.execute('SELECT reserved FROM cycle_contact_reservation WHERE plan_id=? AND oec=?',(d['plan_id'],d['oec'])).fetchone()
+   if old and old[0]>self.s.clock()-86400:return
+   count=self.s.db.execute("SELECT count(*) FROM (SELECT oec FROM cycle_contact_reservation WHERE plan_id=? AND reserved>? UNION SELECT d.oec FROM cycle_delivery d JOIN cycle_delivery_part p ON p.delivery_id=d.id WHERE d.plan_id=? AND p.kind='card' AND p.started>?)",(d['plan_id'],self.s.clock()-86400,d['plan_id'],self.s.clock()-86400)).fetchone()[0]
+   if count>=500:raise CycleError('new_contact_capacity_reached')
+   self.s.db.execute('INSERT INTO cycle_contact_reservation VALUES(?,?,?) ON CONFLICT(plan_id,oec) DO UPDATE SET reserved=excluded.reserved',(d['plan_id'],d['oec'],self.s.clock()))
+ def conversation_intent(self,id):
+  row=self.s.db.execute('SELECT * FROM cycle_conversation_intent WHERE delivery_id=?',(id,)).fetchone()
+  return dict(row) if row else None
+ def prepare_conversation(self,id):
+  with self.s.tx():
+   self.s.db.execute("INSERT OR IGNORE INTO cycle_conversation_intent VALUES(?,?,'ready',NULL,NULL)",(id,str(uuid.uuid4())))
+  return self.conversation_intent(id)
+ def begin_conversation(self,id,approved_hash):
+  self.reserve_contact(id)
+  with self.s.tx():
+   d=self.get(id)
+   if approved_hash!=digest(d['snapshot']):raise CycleError('execution_authorization_missing')
+   self._eligible(d['plan_id'],d['snapshot'])
+   if self.s.clock()>=d['expires']:raise CycleError('delivery_expired')
+   if self.s.db.execute("SELECT 1 FROM cycle_delivery WHERE plan_id=? AND state='unknown'",(d['plan_id'],)).fetchone():raise CycleError('delivery_unknown')
+   row=self.conversation_intent(id)
+   if not row or row['state']!='ready':raise CycleError('conversation_attempt_not_ready')
+   self.s.db.execute("UPDATE cycle_conversation_intent SET state='inflight' WHERE delivery_id=?",(id,))
+  return row['request_ref']
+ def save_conversation(self,id,receipt):
+  with self.s.tx():
+   row=self.conversation_intent(id)
+   if row['state']!='inflight' or not str(receipt.get('conversationId','')).isdigit():raise CycleError('conversation_receipt_invalid')
+   self.s.db.execute("UPDATE cycle_conversation_intent SET state='received',cid=?,receipt=? WHERE delivery_id=?",(receipt['conversationId'],encoded(receipt),id))
+ def confirm_conversation(self,id,cid,oec):
+  with self.s.tx():
+   d=self.get(id);r=self.conversation_intent(id)
+   if not r or r['cid']!=cid or d['oec']!=oec:raise CycleError('conversation_identity_mismatch')
+   self.s.db.execute("UPDATE cycle_conversation_intent SET state='confirmed' WHERE delivery_id=?",(id,))
  def receipt(self,id,kind,receipt):
   with self.s.tx():
    p=next(p for p in self.get(id)['parts'] if p['kind']==kind)
    if p['state']!='inflight' or receipt.get('requestRef')!=p['request_ref']:raise CycleError('receipt_mismatch')
    self.s.db.execute("UPDATE cycle_delivery_part SET state='accepted',receipt=? WHERE delivery_id=? AND kind=?",(encoded(receipt),id,kind))
+ def rejected(self,id,kind,error):
+  if getattr(error,'outcome',None)!='rejected' or getattr(error,'native_status',None) not in (1,2,3,4,5):raise CycleError('rejection_not_verified')
+  with self.s.tx():
+   self.s.db.execute("UPDATE cycle_delivery_part SET state='rejected' WHERE delivery_id=? AND kind=? AND state IN ('inflight','accepted','unknown')",(id,kind))
+   any_sent=self.s.db.execute("SELECT 1 FROM cycle_delivery_part WHERE delivery_id=? AND state='confirmed'",(id,)).fetchone()
+   self.s.db.execute('UPDATE cycle_delivery SET state=? WHERE id=?',('partial_delivery' if any_sent else 'rejected',id))
  def unknown(self,id,kind):
   with self.s.tx():
    self.s.db.execute("UPDATE cycle_delivery_part SET state='unknown' WHERE delivery_id=? AND kind=? AND state IN ('inflight','accepted')",(id,kind));self.s.db.execute("UPDATE cycle_delivery SET state='unknown' WHERE id=? AND state<>'confirmed'",(id,))
@@ -71,5 +126,9 @@ class Deliveries:
 
 def delivery_status(store,plan):
  if not store.db.execute("SELECT 1 FROM sqlite_master WHERE name='cycle_delivery'").fetchone():return None
- return {'states':dict(store.db.execute('SELECT state,count(*) FROM cycle_delivery WHERE plan_id=? GROUP BY state',(plan,))),
+ bulk=None
+ if store.db.execute("SELECT 1 FROM sqlite_master WHERE name='cycle_bulk'").fetchone():
+  b=store.db.execute('SELECT * FROM cycle_bulk WHERE plan_id=? ORDER BY created DESC LIMIT 1',(plan,)).fetchone()
+  if b:bulk={'id':b['id'],'state':b['state'],'target':b['target'],'counts':dict(store.db.execute('SELECT state,count(*) FROM cycle_bulk_item WHERE batch_id=? GROUP BY state',(b['id'],)))}
+ return {'bulk':bulk,'states':dict(store.db.execute('SELECT state,count(*) FROM cycle_delivery WHERE plan_id=? GROUP BY state',(plan,))),
  'confirmedParts':store.db.execute("SELECT count(*) FROM cycle_delivery_part p JOIN cycle_delivery d ON d.id=p.delivery_id WHERE d.plan_id=? AND p.state='confirmed'",(plan,)).fetchone()[0]}

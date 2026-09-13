@@ -9,10 +9,12 @@ from test_cycle_delivery import DeliveryTests
 class ExecutorTests(unittest.TestCase):
  setUp=DeliveryTests.setUp
  tearDown=DeliveryTests.tearDown
- def runtime(self,fail=False):
-  self.calls=[];owner=self;c=self.c;c['conversationId']='88';self.s.db.execute('DELETE FROM cycle_delivery_part');self.s.db.execute('DELETE FROM cycle_delivery');self.id=self.d.prepare(self.p,c)['id']
+ def runtime(self,fail=False,new=False):
+  self.calls=[];owner=self;c=self.c;c['conversationId']=None if new else '88';self.s.db.execute('DELETE FROM cycle_delivery_part');self.s.db.execute('DELETE FROM cycle_delivery');self.id=self.d.prepare(self.p,c)['id']
   card=SimpleNamespace(product_id='1',list_id='2',binding_sha256='hash')
   class Adapter:
+   def create_once(self,oec,ref,before_dispatch):
+    before_dispatch({'oecId':oec,'requestRef':ref,'stage':'create_conversation','market':'it','account':'acc6'});owner.calls.append('create');return {'conversationId':'88'}
    def send(self,kind,ref,before):
     scope={'oecId':c['oecId'],'conversationId':'88','market':'it','account':'acc6','requestRef':ref,'componentKind':kind,'stage':'send_message','productId':'1','listId':'2','campaignId':'0','bindingSha256':'hash'}
     before(scope);owner.calls.append(kind)
@@ -27,6 +29,9 @@ class ExecutorTests(unittest.TestCase):
   @contextmanager
   def rt(*_,**kw):yield {'adapter':Adapter(),'reads':SimpleNamespace(conversation=lambda *a:SimpleNamespace(conversation_id='88')),'card':card,'write_gate':gate,'validate_card':lambda c:c}
   return rt
+ def test_new_conversation_is_durable_and_created_once(self):
+  rt=self.runtime(new=True);execute(self.d,self.id,rt,lambda c:None,lambda *a:None);execute(self.d,self.id,rt,lambda c:None,lambda *a:None)
+  self.assertEqual(self.calls,['create','card','text']);self.assertEqual(self.d.conversation_intent(self.id)['state'],'confirmed')
  def test_full_card_text_cycle(self):
   rt=self.runtime();r=execute(self.d,self.id,rt,lambda c:None,lambda *a:None)
   self.assertEqual(r['state'],'confirmed');self.assertEqual(self.calls,['card','text'])

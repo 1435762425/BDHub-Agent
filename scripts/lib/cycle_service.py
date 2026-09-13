@@ -22,6 +22,7 @@ RULES=[('do_not_contact',r'\b(non (?:(?:mi|ci) (?:contattare|contattate|scrivere
 def route(contents):
  if not contents or any(c['format']!='text' or not c.get('text','').strip() for c in contents):return {'category':'unsupported_input','action':'human','requiredTools':[]}
  text='\n'.join(c['text'] for c in contents).casefold();found=[name for name,pattern in RULES if re.search(pattern,text)]
+ if 'merchant_replacement' in found and 'sample_request' in found:found.remove('sample_request')
  if 'do_not_contact' in found:return {'category':'do_not_contact','action':'suppress_marketing','requiredTools':[]}
  if len(found)>1:return {'category':'multiple_requests','action':'human','intents':found,'requiredTools':[]}
  if found:
@@ -32,11 +33,14 @@ def route(contents):
   else:action='policy_review';tools=['get_relationship_product_context']
   return {'category':name,'action':action,'requiredTools':tools}
  # Broad and unrecognised text goes to review, never to an invented commercial answer.
- if re.fullmatch(r'(?:grazie|grazie mille|ok|okay|va bene|perfetto|gracias|thanks|thank you)[! .😊👍🙏]*',text.strip()):return {'category':'acknowledgement','action':'review_no_followup','requiredTools':[]}
+ acknowledgement=r"(?:grazie|grazie mille|ok|okay|ok grazie|va bene|va benissimo|perfetto|certo|certamente|sì|si|assolutamente|volentieri|d’accordo|d'accordo|gracias|claro|sí|de acuerdo|thanks|thank you|yes|sure|of course)"
+ words=re.fullmatch(rf"{acknowledgement}(?:[\s!.,😊👍🙏]+{acknowledgement})*[\s!.,😊👍🙏]*",text.strip())
+ emoji=re.fullmatch(r"[👍🙏😊👌✅❤❤️🙂\ufe0f\U0001f3fb-\U0001f3ff\s!.,]+",text.strip()) and any(c in text for c in '👍🙏😊👌✅❤🙂')
+ if words or emoji:return {'category':'acknowledgement','action':'review_no_followup','requiredTools':[]}
  return {'category':'unclassified','action':'human','requiredTools':[]}
 
 class Service:
- def __init__(self,store):self.s=store;store.db.executescript(SCHEMA)
+ def __init__(self,store,classifier=None):self.s=store;self.classifier=classifier;store.db.executescript(SCHEMA)
  def capture(self,plan,cid,oec,contents):
   changed=0
   with self.s.tx():
@@ -65,6 +69,24 @@ class Service:
  WHERE e.plan_id=? AND e.oec=? AND e.kind='creatorReplies' ORDER BY e.occurred_ms,e.message_id''',(plan,rel['oec'])).fetchall()
   return [{'eventRowid':r['event_rowid'],'cid':r['cid'],'messageId':r['message_id'],'occurredMs':r['occurred_ms'],'historical':bool(r['historical']),'content':json.loads(r['payload']) if r['payload'] else None,'contentHash':r['hash']} for r in rows]
  def process(self,plan,creator,expected_revision):
+  evaluated=None;expected_context=None
+  if self.classifier and self.s._plan(plan)['state']=='active':
+   p=self.s.db.execute('SELECT * FROM inbox_pending WHERE plan_id=? AND creator_id=?',(plan,creator)).fetchone()
+   if p and p['revision']==expected_revision and p['due_at']<=self.s.clock():
+    all_context=self.context(plan,creator);cursor=self.s.db.execute('SELECT event_rowid FROM service_cursor WHERE plan_id=? AND creator_id=?',(plan,creator)).fetchone();watermark=cursor[0] if cursor else 0
+    texts=[r['content'] for r in all_context if not r['historical'] and r['eventRowid']>watermark]
+    if texts and all(c and c.get('format')=='text' for c in texts) and route(texts)['category']=='unclassified':
+     expected_context=digest(all_context)
+     background={};outbound=[]
+     if self.s.db.execute("SELECT 1 FROM sqlite_master WHERE name='cycle_delivery_part'").fetchone():
+      row=self.s.db.execute("SELECT json_extract(d.snapshot,'$.message.textIt'),p.started FROM cycle_delivery d JOIN cycle_delivery_part p ON p.delivery_id=d.id WHERE d.plan_id=? AND d.creator_id=? AND p.kind='text' AND p.state='confirmed' ORDER BY p.started DESC LIMIT 1",(plan,creator)).fetchone()
+      if row and row[0]:outbound.append((row[1],row[0]))
+     if self.s.db.execute("SELECT 1 FROM sqlite_master WHERE name='service_reply'").fetchone():
+      row=self.s.db.execute("SELECT started,text FROM service_reply WHERE plan_id=? AND creator_id=? AND state='confirmed' ORDER BY started DESC LIMIT 1",(plan,creator)).fetchone()
+      if row:outbound.append((row[0],row[1]))
+     if outbound:background['recentOutbound']=max(outbound,key=lambda v:v[0] or 0)[1][:1000]
+     try:evaluated=self.classifier(texts,background)
+     except Exception:evaluated=None
   with self.s.tx():
    if self.s._plan(plan)['state']!='active':return {'state':'plan_paused'}
    pending=self.s.db.execute('SELECT * FROM inbox_pending WHERE plan_id=? AND creator_id=?',(plan,creator)).fetchone()
@@ -72,17 +94,25 @@ class Service:
    if pending['due_at']>self.s.clock():return {'state':'debouncing'}
    existing=self.s.db.execute('SELECT decision FROM service_assessment WHERE plan_id=? AND creator_id=? AND pending_revision=?',(plan,creator,expected_revision)).fetchone()
    if existing:return json.loads(existing[0])
-   context=self.context(plan,creator);cursor=self.s.db.execute('SELECT event_rowid FROM service_cursor WHERE plan_id=? AND creator_id=?',(plan,creator)).fetchone();watermark=cursor[0] if cursor else 0;live=[r for r in context if not r['historical'] and r['eventRowid']>watermark]
+   context=self.context(plan,creator)
+   if expected_context and digest(context)!=expected_context:raise CycleError('inbox_version_changed')
+   cursor=self.s.db.execute('SELECT event_rowid FROM service_cursor WHERE plan_id=? AND creator_id=?',(plan,creator)).fetchone();watermark=cursor[0] if cursor else 0;live=[r for r in context if not r['historical'] and r['eventRowid']>watermark]
    if not live or any(r['content'] is None for r in live):return {'state':'awaiting_content'}
    decision=route([r['content'] for r in live]);decision.update(engine='deterministic_policy_router_v1',automaticReply=False)
+   if evaluated and decision['category']=='unclassified':
+    category=evaluated['category'];action='needs_facts' if category=='commission_question' else 'policy_review' if category in ('sample_request','merchant_replacement') else 'review_no_followup' if category=='acknowledgement' else 'suppress_marketing' if category=='do_not_contact' else 'human'
+    decision.update(category=category,action=action,requiredTools=evaluated['requiredTools'],engine='deepseek_policy_classifier_v1',evidenceQuote=evaluated['evidenceQuote'])
    self.s.db.execute('INSERT INTO service_assessment VALUES(?,?,?,?,?,?,?)',(plan,creator,expected_revision,digest(context),encoded(context),encoded(decision),self.s.clock()))
    action=decision['action']
    if action=='suppress_marketing':self.s.db.execute("UPDATE relationship SET rejected=1,revision=revision+1 WHERE plan_id=? AND creator_id=?",(plan,creator))
-   if action in ('human','suppress_marketing'):
+   if action=='human':
     now=self.s.clock();old=self.s.db.execute("SELECT id FROM service_case WHERE plan_id=? AND creator_id=? AND state='open'",(plan,creator)).fetchone()
     if old:self.s.db.execute('UPDATE service_case SET assessment_revision=?,reason=?,updated=? WHERE id=?',(expected_revision,decision['category'],now,old[0]))
     else:self.s.db.execute("INSERT INTO service_case VALUES(?,?,?,'open',?,?,?,?, 'not_sent')",('case-'+digest([plan,creator,now])[:24],plan,creator,expected_revision,decision['category'],now,now))
     self.s.db.execute("UPDATE relationship SET mode='human',revision=revision+1 WHERE plan_id=? AND creator_id=? AND mode='auto'",(plan,creator))
+   if action=='suppress_marketing':
+    self.s.db.execute('INSERT INTO service_cursor VALUES(?,?,?) ON CONFLICT(plan_id,creator_id) DO UPDATE SET event_rowid=excluded.event_rowid',(plan,creator,max(r['eventRowid'] for r in live)))
+    self.s.db.execute("UPDATE relationship SET inbox_until=0,revision=revision+1 WHERE plan_id=? AND creator_id=? AND mode='auto'",(plan,creator));action='suppressed_no_reply'
    if action=='review_no_followup' and not self.s.db.execute("SELECT 1 FROM service_case WHERE plan_id=? AND creator_id=? AND state='open'",(plan,creator)).fetchone():
     self.s.db.execute('INSERT INTO service_cursor VALUES(?,?,?) ON CONFLICT(plan_id,creator_id) DO UPDATE SET event_rowid=excluded.event_rowid',(plan,creator,max(r['eventRowid'] for r in live)))
     self.s.db.execute("UPDATE relationship SET inbox_until=0,revision=revision+1 WHERE plan_id=? AND creator_id=? AND mode='auto'",(plan,creator));action='resolved_no_reply'
@@ -123,7 +153,11 @@ def service_status(store,plan):
   case['messages']=[{'messageId':m['messageId'],'text':(m.get('content') or {}).get('text'),'format':(m.get('content') or {}).get('format','not_fetched')} for m in context if not m['historical']][-20:]
   case['overdue']=store.clock()-row['created']>86400;case['decision']=json.loads(a[1]) if a else {};cases.append(case)
  evaluations=db.execute("SELECT count(*) FROM service_agent_evaluation WHERE state='ready' AND mode='historical_shadow'").fetchone()[0] if db.execute("SELECT 1 FROM sqlite_master WHERE name='service_agent_evaluation'").fetchone() else 0
- return {'historicalAiEvaluations':evaluations,'available':True,'cases':cases,'automaticReplies':False,'incomingContents':db.execute('SELECT count(*) FROM inbox_content_head WHERE plan_id=?',(plan,)).fetchone()[0],
+ enabled=False
+ if db.execute("SELECT 1 FROM sqlite_master WHERE name='service_reply_config'").fetchone():
+  config=db.execute('SELECT enabled FROM service_reply_config WHERE plan_id=?',(plan,)).fetchone();enabled=bool(config and config[0])
+ reply_counts=dict(db.execute('SELECT state,count(*) FROM service_reply WHERE plan_id=? GROUP BY state',(plan,))) if db.execute("SELECT 1 FROM sqlite_master WHERE name='service_reply'").fetchone() else {}
+ return {'replyCounts':reply_counts,'historicalAiEvaluations':evaluations,'available':True,'cases':cases,'automaticReplies':enabled,'incomingContents':db.execute('SELECT count(*) FROM inbox_content_head WHERE plan_id=?',(plan,)).fetchone()[0],
  'assessments':db.execute('SELECT count(*) FROM service_assessment WHERE plan_id=?',(plan,)).fetchone()[0],
  'pending':dict(db.execute('SELECT state,count(*) FROM inbox_pending WHERE plan_id=? GROUP BY state',(plan,))),
  'caseCount':db.execute("SELECT count(*) FROM service_case WHERE plan_id=? AND state='open'",(plan,)).fetchone()[0]}

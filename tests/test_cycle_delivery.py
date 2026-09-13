@@ -33,6 +33,12 @@ class DeliveryTests(unittest.TestCase):
   with self.assertRaises(CycleError):self.d.prepare(self.p,self.c|{'message':{'textIt':'different'}})
   self.now+=1801
   with self.assertRaisesRegex(CycleError,'delivery_expired'):self.begin('card')
+ def test_contact_reservation_is_shared_and_not_recounted(self):
+  self.d.reserve_contact(self.id);self.d.reserve_contact(self.id);self.assertEqual(self.s.db.execute('SELECT count(*) FROM cycle_contact_reservation').fetchone()[0],1)
+ def test_contact_capacity_blocks_before_any_message(self):
+  self.s.db.executemany('INSERT INTO cycle_contact_reservation VALUES(?,?,?)',[(self.p,'other'+str(i),self.now) for i in range(500)])
+  with self.assertRaisesRegex(CycleError,'capacity_reached'):self.d.reserve_contact(self.id)
+  self.assertTrue(all(p['started'] is None for p in self.d.get(self.id)['parts']))
  def test_missing_quota_evidence_no_dispatch(self):
   with self.assertRaisesRegex(CycleError,'execution_evidence_missing'):self.d.begin(self.id,'card',authorized_snapshot_hash=digest(self.c),recipient_verified=True)
  def test_reserved_source_exits_ready_supply_without_deleting_history(self):

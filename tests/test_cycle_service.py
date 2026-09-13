@@ -30,7 +30,7 @@ class ServiceTests(unittest.TestCase):
   self.now+=5;self.add('2','Ho un altro problema')
   with self.assertRaisesRegex(CycleError,'case_changed'):self.service.resolve_case(self.p,case['id'],1,revision,'Checked')
  def test_human_resolution_preserves_rejection_and_requires_note(self):
-  self.baseline();self.add('1','Non mi contattare più');self.process();case=self.s.db.execute('SELECT * FROM service_case').fetchone();revision=self.rel()['revision']
+  self.baseline();self.add('1','Il link non funziona');self.process();self.s.db.execute('UPDATE relationship SET rejected=1');case=self.s.db.execute('SELECT * FROM service_case').fetchone();revision=self.rel()['revision']
   with self.assertRaises(CycleError):self.service.resolve_case(self.p,case['id'],1,revision,'')
   self.service.resolve_case(self.p,case['id'],1,revision,'Refusal respected');self.assertTrue(self.rel()['rejected']);self.assertEqual(self.rel()['mode'],'auto')
   self.assertTrue(self.service.resolve_case(self.p,case['id'],1,revision,'Refusal respected')['duplicate'])
@@ -40,6 +40,10 @@ class ServiceTests(unittest.TestCase):
  def test_ack_does_not_reopen_resolved_topic(self):
   self.baseline();self.add('1','Il link non funziona');self.process();case=self.s.db.execute('SELECT * FROM service_case').fetchone();self.service.resolve_case(self.p,case['id'],1,self.rel()['revision'],'Resolved by operator')
   self.now+=10;self.add('2','Grazie');d=self.process();self.assertEqual(d['category'],'acknowledgement');self.assertEqual(self.rel()['inbox_until'],0)
+ def test_simple_assent_is_not_a_human_case(self):
+  for text in ('certo','Certo!','sì','volentieri','sure','claro','Certo, grazie!','Sì va bene','👍'):
+   self.assertEqual(route([self.content('1',text)])['category'],'acknowledgement')
+  self.assertNotEqual(route([self.content('1','Certo, ma il link non funziona')])['category'],'acknowledgement')
  def test_other_links_and_samples_keep_both_intents(self):
   d=route([self.content('1','Avete altri link per richiedere campioni?')]);self.assertEqual(d['action'],'human');self.assertEqual(d['category'],'multiple_requests')
  def test_edited_resolved_message_is_reassessed(self):

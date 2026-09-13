@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Local service reads and explicit human case completion. No outbound APIs."""
 import json,sys,sqlite3
+from contextlib import closing
 from pathlib import Path
 from lib.second_cycle import CycleStore,CycleError
 from lib.cycle_service import Service,service_status
@@ -17,7 +18,7 @@ def main():
     result=service_status(store,plan)
     identity_path=ROOT/'var/creator-identities.sqlite'
     if identity_path.exists():
-     with sqlite3.connect(identity_path.as_uri()+'?mode=ro',uri=True) as ids:
+     with closing(sqlite3.connect(identity_path.as_uri()+'?mode=ro',uri=True)) as ids, ids:
       for case in result['cases']:
        row=ids.execute("SELECT current_handle FROM creator_identity WHERE market='it' AND creator_id=? AND oec_id=?",(case['creator_id'],case['oec'])).fetchone()
        case['handle']=row[0] if row else None

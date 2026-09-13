@@ -290,7 +290,7 @@ def _new_gate_directory(var_dir):
 
 
 @contextmanager
-def live_runtime(expected_sender_binding_hash, report, *, var_dir=VAR, stopped=lambda: False, card_validator=None):
+def live_runtime(expected_sender_binding_hash, report, *, var_dir=VAR, stopped=lambda: False, card_validator=None, send_interval=None):
     if not isinstance(expected_sender_binding_hash, str) or re.fullmatch(r"[0-9a-f]{64}", expected_sender_binding_hash) is None:
         raise SecondLiveRuntimeError("live_sender_binding_required")
     gate_directory = _new_gate_directory(var_dir)
@@ -302,6 +302,9 @@ def live_runtime(expected_sender_binding_hash, report, *, var_dir=VAR, stopped=l
             raise SecondLiveRuntimeError("live_sender_binding_mismatch")
         policy = _resolve_policy(account)
         interval = policy.im_send_interval_seconds
+        if send_interval is not None:
+            if type(send_interval) not in (int,float) or not math.isfinite(send_interval) or not 1<=send_interval<=60:raise SecondLiveRuntimeError("live_interval_invalid")
+            interval=float(send_interval)
         if (not policy.im_send_pool or isinstance(interval, bool) or not isinstance(interval, (int, float))
                 or not math.isfinite(interval) or interval <= 0):
             raise SecondLiveRuntimeError("live_interval_invalid")
@@ -314,7 +317,7 @@ def live_runtime(expected_sender_binding_hash, report, *, var_dir=VAR, stopped=l
                 raise SecondLiveRuntimeError("live_sender_binding_mismatch")
         def conflicts():
             check()
-            gate_state = check_legacy_gate(auth.im_id, interval=interval)
+            gate_state = check_legacy_gate(auth.im_id, interval=policy.im_send_interval_seconds)
             report["legacyWriteGate"] = gate_state
             check_legacy_send_state(report)
         conflicts()

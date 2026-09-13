@@ -110,3 +110,27 @@ def step(state,read,calculator,at):
    if state['campaignIndex']>=len(state['campaigns']):state['state']='completed'
   else:state['state']='completed'
  else:state['page']+=1
+
+def read_current_offer(offer,rule,calculator,request,now):
+ """Fresh exact PID/campaign facts for either selected or joined-campaign cards."""
+ if offer['catalogSource']=='selected':
+  body,sha=request('POST',SELECTED,{}, {'cur_page':1,'page_size':100,'product_ids':[offer['pid']],'filter':{'product_source':[],'campaign_type':[],'label_type':[],'product_status':1}})
+  rows=body.get('data');matches=[r for r in rows if str((r.get('campaign_product') or {}).get('product_id'))==offer['pid'] and str((r.get('campaign_info') or {}).get('campaign_id'))==offer['campaignId']] if isinstance(rows,list) else []
+  if len(matches)!=1 or str(body.get('total_num'))!=str(len(rows)):raise CycleError('current_offer_not_unique')
+  return normalize(matches[0]['campaign_product'],matches[0]['campaign_info'],'selected',rule,calculator,sha,now())
+ if offer['catalogSource']!='campaign':raise CycleError('creation_route_not_enabled')
+ campaign=None
+ for page in range(1,6):
+  body,_=request('GET',CAMPAIGNS,{'campaign_join_status_category':'1','crs_campaign_types':'','cur_page':page,'page_size':100});data=body.get('data') or {};rows=data.get('campaign') or []
+  matches=[r for r in rows if str(r.get('campaign_id'))==offer['campaignId']]
+  if len(matches)>1:raise CycleError('current_campaign_not_unique')
+  if matches:campaign=matches[0];break
+  if page*100>=_total(data,'total_num'):break
+ if not campaign:raise CycleError('current_campaign_missing')
+ for page in range(1,21):
+  body,sha=request('GET',PRODUCTS,{'campaign_id':offer['campaignId'],'marked':'0' if str(campaign.get('crs_campaign_type'))=='7' else 'false','cur_page':page,'page_size':100});data=body.get('data') or {};rows=data.get('campaign_product') or []
+  matches=[r for r in rows if str(r.get('product_id'))==offer['pid']]
+  if len(matches)>1:raise CycleError('current_offer_not_unique')
+  if matches:return normalize(matches[0],campaign,'campaign',rule,calculator,sha,now())
+  if page*100>=_total(data,'total_num'):break
+ raise CycleError('current_campaign_product_not_located')
