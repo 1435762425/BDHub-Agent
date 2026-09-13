@@ -64,3 +64,5 @@ B.3 Kalodata Worker实现及当前阻断见docs/implementation/second-cycle-kalo
 最新B.3续测：用户插件登录后原Kalodata作业已成功，2 PID/3请求新增23条待解析线索，2 completed/0 blocked；原401仅历史。新准备库sourceEdges73、稳定关系31，未将Kalodata ID当OEC，未发送。见second-cycle-kalodata-v1.md最新续测。
 
 B.4身份自动交接与回填已接，见docs/implementation/second-cycle-identity-v1.md：新23边15绑定/8未匹配，新增3/已有12；新准备层34关系/36机会。既有身份Worker加载桥接，源边不改写、缺证据不按同名绑定；未匹配释放等待解析容量但保留线索。当前无采集失败/在途，不代表发送已开放。
+
+B.5商品名按PID/标题/语言缓存、v4固定预览和既有卡只读检查已接，见docs/implementation/second-cycle-materials-v1.md。5商品一次名称模型调用（非逐达人），1卡匹配/4卡需新方案，未建链发送；旧v3准备按钮停用、原冻结记录不改。

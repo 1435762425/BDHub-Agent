@@ -54,6 +54,8 @@ npm run start
 
 已接[线索身份自动交接B.4](docs/implementation/second-cycle-identity-v1.md)：23条新线索核验15成功/8未匹配，新增3个档案；新准备层34关系/36机会，交接与回填自动接入现有Worker，未发送。
 
+已接[商品材料与v4话术B.5](docs/implementation/second-cycle-materials-v1.md)：5商品短名称一次模型生成并缓存，1卡预检匹配、4卡佣金不匹配待准备，旧v3区仅历史参考；未建链/发送。
+
 ## 最小阅读入口
 
 | 内容 | 入口 |
