@@ -143,3 +143,5 @@ sample/budget/review为审批写入，sample/price已从历史SDK补明GET方法
 2026-09-13补充：用户确认未解锁达人消息额度会按月刷新，刷新锚点尚未探明。IT会话203分页已采集104条元数据，301新增field10=create_time观察（field4是索引）；历史累计我方5条不作当前额度耗尽证明。详见[会话与额度核验](../../implementation/second-cycle-conversation-index-v1.md)。
 
 真实IT卡文回查补充：同一已验证IT会话内可能存在shop_region=TH的旧消息。目标回执需按精确请求ID/消息ID定位后核验其市场、身份、可见性和内容；整页仍需同CID。不可因无关旧消息市场字段异常而重复发送已接受的目标消息。实测与回归见[执行闭环](../../implementation/second-cycle-execution-and-scheduler-v1.md)。
+
+Campaign 商品卡实证补充：IT列表父层可提供campaign_id，而成员商品行省略该字段。只有父层精确匹配且按该listId/source=1取得成员时，才允许继承父活动；已选来源wire Campaign=0不得采用该推断。创建与回查证据及回归见[按需素材](../../implementation/second-cycle-material-supply-v2.md)。
