@@ -90,6 +90,16 @@ class ItalyImSessionTests(unittest.TestCase):
         self.assertTrue(result['hasMore']);self.assertIn('returned page',result['countScope'])
         self.assertEqual(result['outboundCreateTimeRaw'],[1789200000000]);self.assertEqual(result['outboundTimeMissingCount'],0)
 
+    def test_event_export_requires_native_ids_and_discards_body(self):
+        s,_,_,_=session();conv=s.conversation('10','100');h=s.history_summary(conv,include_events=True)
+        self.assertEqual(h['events'][0]['messageId'],'55');self.assertEqual(h['events'][0]['oecId'],'100')
+        self.assertNotIn('PRIVATE',json.dumps(h));self.assertFalse(h['messageBodiesStored'])
+        def reply(command,sequence,_):
+            body=W.vb(1,info()) if command==608 else W.vb(1,W.vb(1,'full-10')+W.vi(5,10))
+            return SimpleNamespace(status_code=200,headers={},content=envelope(command,sequence,body))
+        s,_,_,_=session(HTTP(reply));conv=s.conversation('10','100')
+        with self.assertRaises(ItalyImReadError):s.history_summary(conv,include_events=True)
+
     def test_mx_host_and_cookie_or_write_command_are_rejected_before_http(self):
         original=W.READ_HOST;http=HTTP()
         with self.assertRaises(ItalyImReadError):ItalyImReadSession(auth(host=original),{},http=http)

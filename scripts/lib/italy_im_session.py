@@ -284,7 +284,7 @@ class ItalyImReadSession:
         self.on_update()
         return result
 
-    def history_summary(self, conversation, *, include_sender_counts=False):
+    def history_summary(self, conversation, *, include_sender_counts=False, include_events=False):
         if not isinstance(conversation, VerifiedConversation) or self.verified.get(conversation.conversation_id) is not conversation:
             raise ItalyImReadError("im_conversation_unverified")
         wire = self.wire
@@ -306,21 +306,24 @@ class ItalyImReadSession:
             raise
         except Exception:
             raise ItalyImReadError("im_response_invalid") from None
-        if include_sender_counts:
-            outbound_times=[];missing_outbound_times=0
+        if include_sender_counts or include_events:
+            outbound_times=[];missing_outbound_times=0;events=[]
             counts={"ourMessages":0,"creatorReplies":0,"showcaseNotifications":0,"otherOrUnknown":0}
             for item in rows:
                 message=wire.wire_fields(item)
                 ext={wire.one(wire.wire_fields(v),1):wire.one(wire.wire_fields(v),2) for v in message.get(9,[])}
-                role=ext.get(b"sender_role");sender=wire.one(message,7)
+                role=ext.get(b"sender_role");sender=wire.one(message,7);kind="otherOrUnknown"
                 if role==b"4" and sender==int(self.im_id):
-                    counts["ourMessages"]+=1
+                    kind="ourMessages";counts[kind]+=1
                     stamp=wire.one(message,10)
                     if type(stamp) is int and stamp>0:outbound_times.append(stamp)
                     else:missing_outbound_times+=1
-                elif role==b"1" and type(sender) is int and sender>0 and sender!=int(self.im_id):counts["creatorReplies"]+=1
-                elif role==b"3" and ext.get(b"type")==b"notification" and ext.get(b"starling_content_key")==b"ttspc_im_message_relation_ststem_message_6_plural":counts["showcaseNotifications"]+=1
+                elif role==b"1" and type(sender) is int and sender>0 and sender!=int(self.im_id):kind="creatorReplies";counts[kind]+=1
+                elif role==b"3" and ext.get(b"type")==b"notification" and ext.get(b"starling_content_key")==b"ttspc_im_message_relation_ststem_message_6_plural":kind="showcaseNotifications";counts[kind]+=1
                 else:counts["otherOrUnknown"]+=1
+                if include_events:
+                    events.append({"messageId":_id(wire.one(message,3)),"kind":kind,"createTimeRaw":wire.one(message,10),"messageType":wire.one(message,6),"conversationId":conversation.conversation_id,"oecId":conversation.oec_id})
+            if include_events:result["events"]=events
             result["senderCounts"]=counts
             result["outboundCreateTimeRaw"]=sorted(outbound_times)
             result["outboundTimeMissingCount"]=missing_outbound_times

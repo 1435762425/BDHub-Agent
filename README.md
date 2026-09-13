@@ -101,3 +101,5 @@ npm run start
 B.7已完成3人只读核对快照及页面，见[second-cycle-review-v1](docs/implementation/second-cycle-review-v1.md)。bru_none远端已有我方5条/回复0/加橱窗通知0，旧库却为0，当前不放行；另2人会话仍待定位。v4执行未接、真实发送0。
 
 B.8最新覆盖B.7：用户确认5条会按月刷新，历史累计5条不证明当前额度不足。已索引IT/ACC6共104会话，新定位conbarakah；两人历史消息均7月底，转为月度额度待核实，非永久排除。见[会话索引与月度额度](docs/implementation/second-cycle-conversation-index-v1.md)。未真实发送。
+
+B.9已接IT已关联会话只读轮询与持久入站事件，见[入站底座](docs/implementation/second-cycle-inbox-v1.md)：11会话/46历史事件（回复1、橱窗1），二轮新增0、待办0、发送0。Worker持续读取但未接完整IM覆盖、原文处理及自动回复；历史不触发回复，新回复等待60秒并停在awaiting_content。
