@@ -1,0 +1,7 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {createCycleGet,validateCycle} from '../src/server/second-cycle/bridge.ts';
+const empty={available:false,executionAllowed:false};
+test('cycle endpoint is local read only and never accepts parameters',async()=>{let reads=0;const get=createCycleGet(async()=>{reads++;return empty;});assert.equal((await get(new Request('http://127.0.0.1:5198/api/second-cycle?send=true',{headers:{host:'127.0.0.1:5198'}}))).status,400);assert.equal(reads,0);assert.equal((await get(new Request('http://example.com/api/second-cycle'))).status,403);assert.equal(reads,0);const response=await get(new Request('http://127.0.0.1:5198/api/second-cycle',{headers:{host:'127.0.0.1:5198'}}));assert.equal(response.status,200);assert.equal(response.headers.get('cache-control'),'no-store');assert.deepEqual(await response.json(),empty);});
+test('cycle decoder does not present executable or malformed state',()=>{assert.throws(()=>validateCycle({executionAllowed:true}));assert.throws(()=>validateCycle({executionAllowed:false,relationships:-1}));});
+test('failed child read gives generic error without details',async()=>{const response=await createCycleGet(async()=>{throw new Error('sensitive path');})(new Request('http://127.0.0.1:5198/api/second-cycle',{headers:{host:'127.0.0.1:5198'}}));assert.equal(response.status,503);assert.equal((await response.text()).includes('sensitive'),false);});

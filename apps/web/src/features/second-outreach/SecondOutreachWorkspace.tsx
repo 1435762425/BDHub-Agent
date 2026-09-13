@@ -4,6 +4,7 @@ import Link from "next/link";
 import {useCallback,useEffect,useRef,useState} from "react";
 import {useRouter,useSearchParams} from "next/navigation";
 import TrialPanel from "./TrialPanel";
+import CycleSupplyPanel from "./CycleSupplyPanel";
 import {Button,Card,EmptyState,Icon,Input,Notice,PageHeading,Pill,Select} from "../bdhub/ui";
 import TemplatePanel from "./TemplatePanel";
 import BatchTemplates from "./BatchTemplates";
@@ -94,6 +95,7 @@ export default function SecondOutreachWorkspace(){
   const prepare=()=>draftRef.current?.scrollIntoView({behavior:"smooth",block:"start"});
 
   return <div className="min-w-0"><PageHeading title="意大利二发" description="按达人归并同品机会，核对当前身份，再准备一份清楚的合作邀约。" action={<div className="flex flex-wrap items-center gap-2"><Link href="/workspace?mode=second" className="rounded-lg px-3 py-2.5 text-xs font-medium text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800">查看旧版预演</Link><Button variant="outline" disabled={commands.blocked} onClick={()=>commands.submit({type:"refresh"})}><Icon name="arrow" className="size-4"/>{commands.busy?"正在处理…":"同步本机线索"}</Button></div>}/>
+    <CycleSupplyPanel/>
     {params.get("trialId")&&<TrialPanel key={params.get("trialId")!} trialId={params.get("trialId")!}/>}
     <Card className="mb-5"><div className="grid grid-cols-2 gap-5 p-5 sm:grid-cols-4">{[["达人机会",summary?.opportunities,"按人归并商品"],["当前身份已确认",summary?.identified,"已有稳定 OEC"],["身份待确认",summary?.unresolved,"保留来源线索"],["同品证据",summary?.edges,summary?`${summary.products} 个来源商品`:"读取来源商品"]].map(([label,value,note])=><div key={String(label)} className="min-w-0"><p className="text-xs text-gray-500">{label}</p><p className="mt-2 text-2xl font-semibold tracking-tight text-gray-800 dark:text-gray-100">{value===undefined?"—":Number(value).toLocaleString("zh-CN")}</p><p className="mt-1 text-[11px] text-gray-400">{note}</p></div>)}</div></Card>
     <TransportStatus value={summary}/>

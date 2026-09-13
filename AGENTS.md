@@ -54,3 +54,5 @@ IT已真实只读验证EU info/id/token、I18N IM host的203/608/301和Freegrin 
 最新产品规则集中入口：docs/architecture/second-cycle-confirmed-policy.md。已确认未解锁第二轮至少48小时、已解锁主动营销每24小时至多1组；简单致谢/加橱窗不追加催拍。人工接续先确认后系统内待办，飞书后续；首页新触达/回复/加橱窗/GMV；允许认可模板与合格池内自调比例。商品级反馈后换适配商品，全局拒联仍停止。此汇总覆盖以上阶段未决口径；尚未发布为运行规则。
 
 下一段实施按docs/implementation/italy-second-closed-loop-blueprint.md：先共享关系控制、货盘资格与容量驱动供给，后接卡片材料、收信、人工待办及回复。保留现有身份和执行证据，固定来源/ACC6限制需按宿主合同改造，不把试点放大或复活旧暂停批次。
+
+B.1已实现本地second_cycle控制/供给原语与只读面板，见docs/implementation/second-cycle-foundation-v1.md。var/second-cycle.sqlite只用于新准备层；旧试点控制尚未接管、真实采集/发送未接通，不把该层暂停当全系统暂停。新联系容量是输入估计，非真实配额查询。

@@ -46,6 +46,8 @@ npm run start
 
 当前实施入口：[意大利二发闭环实施蓝图](docs/implementation/italy-second-closed-loop-blueprint.md)。明确每段输入/接口/状态/完成证据，先统一关系控制和容量驱动供给，再接收信与回复；一发留V2。
 
+已落地[二发本地控制与供给底座B.1](docs/implementation/second-cycle-foundation-v1.md)：31稳定关系/50来源边/33关系商品机会，页面展示资格缺口；持久队列已离线验证，持续采集与真实发送未接通。
+
 ## 最小阅读入口
 
 | 内容 | 入口 |
