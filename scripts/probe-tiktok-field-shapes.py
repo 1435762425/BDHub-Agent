@@ -18,6 +18,12 @@ READS={
  'selected':('POST','/api/v1/affiliate/partner/product/pick_up/list'),
  'samples':('POST','/api/v1/affiliate/partner/sample/records/list'),
  'members':('GET','/api/v1/affiliate/partner/campaign/product_list/products'),
+ 'lists':('GET','/api/v1/affiliate/partner/campaign/product_list/list'),
+ 'opportunities':('POST','/api/v1/affiliate/partner/product/opportunity_product/list'),
+ 'offers':('GET','/api/v1/affiliate/partner/product/opportunity_product/campaign_detail'),
+ 'categories':('POST','/api/v1/affiliate/lux/product/category/childrenv2'),
+ 'im_cards':('GET','/api/v1/affiliate/partner/im/product_list/list'),
+ 'relations':('GET','/api/v1/affiliate/partner/relation/list'),
 }
 
 def field_shapes(value):
@@ -64,8 +70,9 @@ def run(output, markets=('mx','it','br'), only=None):
                 params=legacy_params(identity,account)
                 with requests.Session() as session:
                     session.trust_env=False
-                    names=[only] if only else ['campaigns','selected']+(['samples'] if market=='mx' else ['members'] if market=='it' else [])
+                    names=(['lists','opportunities','offers','categories','im_cards','relations'] if only=='supply_detail' else [only]) if only else ['campaigns','selected']+(['samples'] if market=='mx' else ['members'] if market=='it' else [])
                     if 'members' in names and market!='it':raise ValueError('members_scope_is_it_only')
+                    if any(n in names for n in ('offers','im_cards')) and market!='it':raise ValueError('fixed_product_scope_is_it_only')
                     for name in names:
                         method,endpoint=READS[name]
                         query=dict(params);body=None
@@ -73,6 +80,12 @@ def run(output, markets=('mx','it','br'), only=None):
                         elif name=='selected':body={'cur_page':1,'page_size':5,'filter':{'product_source':[],'campaign_type':[],'label_type':[],'product_status':1}}
                         elif name=='samples':body={'search_params':[{'search_key':28,'search_type':1,'value':'2'}],'order_params':[{'order_key':9,'order_type':2}],'page_size':5,'cur_page':1}
                         elif name=='members':query.update(list_id='8650713863250615062',source=2)
+                        elif name=='lists':query.update(campaign_id='0',source=2,cur_page=1,page_size=5)
+                        elif name=='opportunities':body={'filter':{'product_source':[],'campaign_type':[8],'label_type':[],'product_status':1},'page':1,'page_size':5}
+                        elif name=='offers':query.update(product_id='1729779362302171335')
+                        elif name=='categories':body={'category_id':'0','status_param':{'region':market.upper()}}
+                        elif name=='im_cards':query.update(cur_page=1,page_size=20,version=1,search_type=2,key_word='1729779362302171335')
+                        elif name=='relations':query.update(status=0,cur_page=1,page_size=5,related_biz_types='2,6',relation_tag=0)
                         time.sleep(1)
                         item={'market':market,'account':'acc6','name':name,'method':method,'path':endpoint,'observedAt':datetime.now(timezone.utc).isoformat(),'scope':'one page, not full dataset','queryKeys':sorted(query),'bodyKeys':sorted(body or {})}
                         result['requests'].append(item);save()
@@ -96,7 +109,7 @@ def run(output, markets=('mx','it','br'), only=None):
 if __name__=='__main__':
     p=argparse.ArgumentParser(description=__doc__);p.add_argument('--output',type=Path,required=True)
     p.add_argument('--markets',nargs='+',choices=['mx','it','br'],default=['mx','it','br'])
-    p.add_argument('--only',choices=list(READS));args=p.parse_args()
+    p.add_argument('--only',choices=list(READS)+['supply_detail']);args=p.parse_args()
     out=args.output.resolve()
     if not out.is_relative_to(ROOT/'var'):p.error('output must be in new project var')
     if out.exists():p.error('use a new evidence file')

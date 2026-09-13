@@ -2,12 +2,12 @@
   "schema": "bdhub.interface-audit-validation.v1",
   "sourceFiles": 405,
   "sourcePathLiterals": 34,
-  "registeredPaths": 33,
+  "registeredPaths": 34,
   "tableSchemas": 111,
   "sourceParseErrors": 0,
-  "liveReadRequests": 10,
-  "liveHttp200Code0": 10,
-  "fieldPathObservationsPerRequest": 490,
+  "liveReadRequests": 20,
+  "liveHttp200Code0": 19,
+  "fieldPathObservationsPerRequest": 652,
   "rowCoverageCaveat": "IT/BR sample query returned no row array; row schema unverified",
   "identityFilesUnchanged": true,
   "sourceRepeatDeterministic": true,
@@ -16,5 +16,8 @@
   "fieldShapeTypesNullAndNoValuesChecked": true,
   "platformWriteRequests": 0,
   "legacyBusinessWrites": 0,
-  "newAgentToolsEnabled": 0
+  "newAgentToolsEnabled": 0,
+  "historicalSdkCandidatePaths": 283,
+  "liveBusinessRejected": 1,
+  "sampleAdoptionInferenceWithdrawn": true
 }

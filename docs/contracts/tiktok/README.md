@@ -1,18 +1,24 @@
 # TikTok接口与Agent能力手册
 
-版本1；核查日期2026-09-13。面向BDHub-Agent V1二发自循环、IM回复及必要账号/货盘/数据底座。本文是新系统的复用入口，不是任意TikTok API的完整官方规格，也不宣称所有市场已经接通。
+版本2；核查日期2026-09-13。面向BDHub-Agent V1二发自循环、IM回复及必要账号/货盘/数据底座。本文是新系统的复用入口，不是任意TikTok API的完整官方规格，也不宣称所有市场已经接通。
+
+## 用户纠正：样品不是二发采用证据
+
+二发来源是Kalodata历史同品带货，不要求达人曾从本机构获批样品。样品记录仅服务其可见范围的样品咨询，不能验证二发历史持样来源，不能把其中橱窗布尔作为本次二发采用事实。采用主线保留IM互动与本机构TAP，精确单次链接归因另核实。
 
 ## 阅读入口
 
 | 内容 | 文件 |
 |---|---|
+| 按业务查用途、输入与能取得的数据 | [业务分类目录](business-catalog.md) |
+| 历史网页脚本补充发现 | [网页接口发现](web-discoveries.md) / [283条候选](web-bundle-candidates.json) |
 | 方法、路径、副作用、实际读取市场 | [接口目录](endpoint-index.md) / [机器注册表](endpoint-registry.json) |
 | 本轮真实响应的全部字段路径与类型 | [字段字典](field-dictionary.md) / [原始字段观察证据](field-observations-20260913.json) |
 | 源文件/行号/指纹、源码候选字段、111张表字段 | [源码清单](source-inventory.json) |
 | Agent工具、输入输出、业务权限与失败行为 | [Agent工具合同](agent-tools.md) |
 | 新发现、旧能力复用、未解决项与调查路线 | [发现与缺口](findings-and-backlog.md) |
 
-旧工作台API是本地应用命令，不等于TikTok接口。新注册表排除了公开推品站/internal sample等非TikTok路径，单独补入动态拼接的info/token与JSON报告合同。扫描405个非测试Python文件发现34个路径字符串；人工归类补充后为33条TikTok路径记录，其中一项为下载路径前缀。无解析错误。动态拼接、浏览器SDK、JSON合同和公开Open API的其余能力可能不在该扫描范围，数量不是平台接口总量。
+旧工作台API是本地应用命令，不等于TikTok接口。新注册表排除了公开推品站/internal sample等非TikTok路径，单独补入动态拼接的info/token与JSON报告合同。扫描405个非测试Python文件发现34个路径字符串；人工归类及本轮网页SDK实测补充后为34条TikTok路径记录，其中一项为下载路径前缀。无解析错误。动态拼接、浏览器SDK、JSON合同和公开Open API的其余能力可能不在该扫描范围，数量不是平台接口总量。
 
 本目录主要记录已登录Partner后台和IM使用的原生网页接口，不是已取得Open API授权的证明；官方开放平台SDK/权限需要独立登记。
 
@@ -23,6 +29,8 @@ ACC6，MX/IT/BR活动列表及已选商品各1页，MX样品已发货状态1页�
 本轮不发送、不创建/删除链接、不加入活动、不审批样品、不启动旧同步/监听任务，不写旧数据库。现场只读请求与本地文档/证据写入分开。响应中有联系信息字段，但实际联系方式没有进入报告。
 
 此前本任务MX三个会话的10条橱窗通知原始HTTP读取、IT画像及IM只读结果作为带日期的既有证据引用，不重复计入这10次请求。旧库中的sent、历史页面和代码可运行均不能替代本轮写入验收。
+
+本轮续查新增10次请求：9次成功、IT类目树业务码10000未通过。累计20次请求、19次成功、652条按请求计字段路径；详见字段字典。新增发现的IM关系权限返回与批量身份映射已在MX实测，其他网页SDK候选仍分层记录。
 
 ## 证据状态
 
@@ -52,7 +60,7 @@ ACC6，MX/IT/BR活动列表及已选商品各1页，MX样品已发货状态1页�
 
 `4partner/profile` POST：creator_oec_id、profile_types。金额取精确值与货币，不解析格式缩写。授权占位、字段缺失、观察窗口冲突都必须保留。旧源码当前creator_profile.py默认[2]与项目较早文档[1,2,6]存在口径差异；本轮只记录，不改旧系统或擅选生产策略，接入前核对实际调用入口和当前部署。
 
-`relation/list` GET：status、page_size、cur_page、related_biz_types、relation_tag；这是机构绑定关系，不是所有可营销达人。IM mget可产生当前OEC/handle及授权状态，但本轮仅确认旧响应解析器，尚无可复用请求体，不猜测调用参数。
+`relation/list` GET：status、page_size、cur_page、related_biz_types、relation_tag；这是机构绑定关系，不是所有可营销达人。IM mget可产生当前OEC/handle及授权状态，本轮已从历史网页callsite补明请求体并完成MX三人批量只读核验，见TK-013。
 
 ### 2. 活动货盘
 
@@ -66,7 +74,7 @@ ACC6，MX/IT/BR活动列表及已选商品各1页，MX样品已发货状态1页�
 
 ### 3. 佣金、链接与卡
 
-`campaign/product/link`、`campaign/product_list/create`是不同写动作，具体冻结PID/Campaign/达人点位及来源路线见旧sharelink与taplink实现，不能将URL/Plan与商品列表ID视为同一实体。
+`campaign/product/link`是GET创建、`campaign/product_list/create`是POST创建，两者都是写动作且不同，具体冻结PID/Campaign/达人点位及来源路线见旧sharelink与taplink实现，不能将URL/Plan与商品列表ID视为同一实体。
 
 `im/product_list/list` GET返回可发卡列表；`campaign/product_list/products` GET按list_id、source、cursor读取成员，返回campaign_products、total_num、next_cursor。当前IT单品样本补验成功。
 
@@ -90,11 +98,11 @@ Protobuf203初始化、608会话核验、301历史读取；100发送、JSON get-
 
 `sample/records/list` POST首屏本轮实际验证：search_params[{search_key:28,search_type:1,value:'2'}]、order_params[{order_key:9,order_type:2}]、page_size:5、cur_page:1。2为旧代码已发货枚举；不穷举未确认状态值。返回sample_records[]、total_num/状态汇总以实际字段字典为准。
 
-关键关联为apply_id/sample_main_id、creator_info.oec_id、product_info.product_id、campaign_info.campaign_id。is_product_in_showcase、is_posted、video_count、room_count可辅助跟进，但仅覆盖有样品记录者；不等于全体达人实时状态或具体视频身份。
+关键关联为apply_id/sample_main_id、creator_info.oec_id、product_info.product_id、campaign_info.campaign_id。is_product_in_showcase、is_posted、video_count、room_count仅描述该可见样品记录的上下文。达人历史样品可能来自其他商家/机构，查不到不能说没有样品，查到也不能证明采用本次二发链接；不得输入二发采用或额度解锁判定。
 
 商品seller_contact_info和活动contact_info是不同角色联系方式；先核实商家/活动联系人及允许用途，不能把达人私人电话或机构联系人误当卖家。新工具仅返回当前事项需要的商家联系路径，不批量给模型完整联系资料。
 
-sample/budget/review为审批写入，sample/price仅确认常量，未足够证据确认可复用请求。用户本轮索样/损坏规则是联系商家，不因此接通自动审批、补寄、赔偿。
+sample/budget/review为审批写入，sample/price已从历史SDK补明GET方法，但仍无足够证据确认参数与可复用请求。用户本轮索样/损坏规则是联系商家，不因此接通自动审批、补寄、赔偿。
 
 ### 6. TAP/MCN报表与内容
 
@@ -123,3 +131,6 @@ sample/budget/review为审批写入，sample/price仅确认常量，未足够证
 字段变化处理：保存新版本形状→区分缺失与空样本→只暂停依赖字段的功能→重复核对有效样本→更新转换与合同测试→再发布工具。不要因新增字段使所有服务停机，也不能把必需身份字段消失当兼容成功。
 
 工具发布前需要正常/空/权限不足/身份冲突/过时/限流/结果未知的契约测试；写动作还须单独小样实证与业务授权。本文没有自动建立监控、启用Agent或新增付费模型调用。
+
+
+生成分类与字段文档：审查并更新endpoint-registry.json及field-observations后，运行 `python3 scripts/render-tiktok-interface-docs.py`，同步生成用途目录/路径表/字段字典，避免多份说明漂移。完整静态候选见web-bundle-candidates.json，只有已审查项进入业务注册表。

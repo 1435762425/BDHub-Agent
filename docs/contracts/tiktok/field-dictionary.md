@@ -1,12 +1,13 @@
-# 本轮实际返回字段字典
+# 实际响应字段字典
 
-只保存字段路径、JSON类型和该类型出现次数，不保存原始业务值。数组内路径合并，次数不是独立达人数；空对象/空数组不证明字段不支持。总计490个按请求计的路径观察，不是490个唯一业务字段。
+累计20次请求，652条按请求计的字段路径观察；不是唯一业务字段数。只保留路径、类型及出现次数，不保留实际业务值。空数组不证明字段不存在，code0不证明明细兼容。
 
-## MX / campaigns
+## 1 MX / campaigns
 
-GET `/api/v1/affiliate/partner/campaign/list`；2026-09-13T03:20:08.842287+00:00；单页样本。
+GET `/api/v1/affiliate/partner/campaign/list`；2026-09-13T03:20:08.842287+00:00；observed。
+单次/单页样本。
 
-| 字段路径 | 类型及出现次数 |
+| 字段路径 | 类型及次数 |
 |---|---|
 | `$` | object:1 |
 | `$.code` | number:1 |
@@ -68,11 +69,12 @@ GET `/api/v1/affiliate/partner/campaign/list`；2026-09-13T03:20:08.842287+00:00
 | `$.data.total_num` | number:1 |
 | `$.msg` | string:1 |
 
-## MX / selected
+## 2 MX / selected
 
-POST `/api/v1/affiliate/partner/product/pick_up/list`；2026-09-13T03:20:11.847184+00:00；单页样本。
+POST `/api/v1/affiliate/partner/product/pick_up/list`；2026-09-13T03:20:11.847184+00:00；observed。
+单次/单页样本。
 
-| 字段路径 | 类型及出现次数 |
+| 字段路径 | 类型及次数 |
 |---|---|
 | `$` | object:1 |
 | `$.code` | number:1 |
@@ -116,11 +118,12 @@ POST `/api/v1/affiliate/partner/product/pick_up/list`；2026-09-13T03:20:11.8471
 | `$.msg` | string:1 |
 | `$.total_num` | number:1 |
 
-## MX / samples
+## 3 MX / samples
 
-POST `/api/v1/affiliate/partner/sample/records/list`；2026-09-13T03:20:13.976400+00:00；单页样本。
+POST `/api/v1/affiliate/partner/sample/records/list`；2026-09-13T03:20:13.976400+00:00；observed。
+单次/单页样本。
 
-| 字段路径 | 类型及出现次数 |
+| 字段路径 | 类型及次数 |
 |---|---|
 | `$` | object:1 |
 | `$.code` | number:1 |
@@ -260,11 +263,12 @@ POST `/api/v1/affiliate/partner/sample/records/list`；2026-09-13T03:20:13.97640
 | `$.data.total` | number:1 |
 | `$.msg` | string:1 |
 
-## IT / campaigns
+## 4 IT / campaigns
 
-GET `/api/v1/affiliate/partner/campaign/list`；2026-09-13T03:20:17.725006+00:00；单页样本。
+GET `/api/v1/affiliate/partner/campaign/list`；2026-09-13T03:20:17.725006+00:00；observed。
+单次/单页样本。
 
-| 字段路径 | 类型及出现次数 |
+| 字段路径 | 类型及次数 |
 |---|---|
 | `$` | object:1 |
 | `$.code` | number:1 |
@@ -322,11 +326,12 @@ GET `/api/v1/affiliate/partner/campaign/list`；2026-09-13T03:20:17.725006+00:00
 | `$.data.total_num` | number:1 |
 | `$.msg` | string:1 |
 
-## IT / selected
+## 5 IT / selected
 
-POST `/api/v1/affiliate/partner/product/pick_up/list`；2026-09-13T03:20:21.303793+00:00；单页样本。
+POST `/api/v1/affiliate/partner/product/pick_up/list`；2026-09-13T03:20:21.303793+00:00；observed。
+单次/单页样本。
 
-| 字段路径 | 类型及出现次数 |
+| 字段路径 | 类型及次数 |
 |---|---|
 | `$` | object:1 |
 | `$.code` | number:1 |
@@ -370,11 +375,12 @@ POST `/api/v1/affiliate/partner/product/pick_up/list`；2026-09-13T03:20:21.3037
 | `$.msg` | string:1 |
 | `$.total_num` | number:1 |
 
-## IT / members
+## 6 IT / members
 
-GET `/api/v1/affiliate/partner/campaign/product_list/products`；2026-09-13T03:20:23.096120+00:00；单页样本。
+GET `/api/v1/affiliate/partner/campaign/product_list/products`；2026-09-13T03:20:23.096120+00:00；observed。
+单次/单页样本。
 
-| 字段路径 | 类型及出现次数 |
+| 字段路径 | 类型及次数 |
 |---|---|
 | `$` | object:1 |
 | `$.code` | number:1 |
@@ -420,11 +426,12 @@ GET `/api/v1/affiliate/partner/campaign/product_list/products`；2026-09-13T03:2
 | `$.data.total_num` | number:1 |
 | `$.msg` | string:1 |
 
-## BR / campaigns
+## 7 BR / campaigns
 
-GET `/api/v1/affiliate/partner/campaign/list`；2026-09-13T03:20:24.707356+00:00；单页样本。
+GET `/api/v1/affiliate/partner/campaign/list`；2026-09-13T03:20:24.707356+00:00；observed。
+单次/单页样本。
 
-| 字段路径 | 类型及出现次数 |
+| 字段路径 | 类型及次数 |
 |---|---|
 | `$` | object:1 |
 | `$.code` | number:1 |
@@ -482,11 +489,12 @@ GET `/api/v1/affiliate/partner/campaign/list`；2026-09-13T03:20:24.707356+00:00
 | `$.data.total_num` | number:1 |
 | `$.msg` | string:1 |
 
-## BR / selected
+## 8 BR / selected
 
-POST `/api/v1/affiliate/partner/product/pick_up/list`；2026-09-13T03:20:26.978342+00:00；单页样本。
+POST `/api/v1/affiliate/partner/product/pick_up/list`；2026-09-13T03:20:26.978342+00:00；observed。
+单次/单页样本。
 
-| 字段路径 | 类型及出现次数 |
+| 字段路径 | 类型及次数 |
 |---|---|
 | `$` | object:1 |
 | `$.code` | number:1 |
@@ -538,11 +546,12 @@ POST `/api/v1/affiliate/partner/product/pick_up/list`；2026-09-13T03:20:26.9783
 | `$.msg` | string:1 |
 | `$.total_num` | number:1 |
 
-## IT / samples
+## 9 IT / samples
 
-仅成功响应及data.total，未返回样品明细；不证明行字段兼容。
+POST `/api/v1/affiliate/partner/sample/records/list`；2026-09-13T03:28:00.826344+00:00；observed。
+Success envelope with data.total but no sample_records in this response; row schema unverified
 
-| 字段路径 | 类型及出现次数 |
+| 字段路径 | 类型及次数 |
 |---|---|
 | `$` | object:1 |
 | `$.code` | number:1 |
@@ -550,14 +559,258 @@ POST `/api/v1/affiliate/partner/product/pick_up/list`；2026-09-13T03:20:26.9783
 | `$.data.total` | number:1 |
 | `$.msg` | string:1 |
 
-## BR / samples
+## 10 BR / samples
 
-仅成功响应及data.total，未返回样品明细；不证明行字段兼容。
+POST `/api/v1/affiliate/partner/sample/records/list`；2026-09-13T03:28:04.146400+00:00；observed。
+Success envelope with data.total but no sample_records in this response; row schema unverified
 
-| 字段路径 | 类型及出现次数 |
+| 字段路径 | 类型及次数 |
 |---|---|
 | `$` | object:1 |
 | `$.code` | number:1 |
 | `$.data` | object:1 |
 | `$.data.total` | number:1 |
+| `$.msg` | string:1 |
+
+## 11 IT / lists
+
+GET `/api/v1/affiliate/partner/campaign/product_list/list`；2026-09-13T03:41:30.150914+00:00；observed。
+单次/单页样本。
+
+| 字段路径 | 类型及次数 |
+|---|---|
+| `$` | object:1 |
+| `$.code` | number:1 |
+| `$.data` | object:1 |
+| `$.data.lists` | array:1 |
+| `$.data.lists[]` | object:5 |
+| `$.data.lists[].id` | string:5 |
+| `$.data.lists[].name` | string:5 |
+| `$.data.lists[].product_images` | array:5 |
+| `$.data.lists[].product_images[]` | object:5 |
+| `$.data.lists[].product_images[].uri` | string:5 |
+| `$.data.lists[].product_images[].url_list` | array:5 |
+| `$.data.lists[].product_images[].url_list[]` | string:10 |
+| `$.data.lists[].total` | number:5 |
+| `$.data.lists[].update_time` | string:5 |
+| `$.data.lists[].url` | string:5 |
+| `$.data.total` | number:1 |
+| `$.msg` | string:1 |
+
+## 12 IT / opportunities
+
+POST `/api/v1/affiliate/partner/product/opportunity_product/list`；2026-09-13T03:41:32.571571+00:00；observed。
+单次/单页样本。
+
+| 字段路径 | 类型及次数 |
+|---|---|
+| `$` | object:1 |
+| `$.code` | number:1 |
+| `$.data` | object:1 |
+| `$.data.has_more` | boolean:1 |
+| `$.data.products` | array:1 |
+| `$.data.products[]` | object:5 |
+| `$.data.products[].campaign_id` | string:5 |
+| `$.data.products[].commission_rate` | string:5 |
+| `$.data.products[].contact_info` | object:5 |
+| `$.data.products[].earn_amount` | string:5 |
+| `$.data.products[].fs_is_selected` | boolean:5 |
+| `$.data.products[].has_campaign_contact_info` | boolean:5 |
+| `$.data.products[].has_more_contact` | number:5 |
+| `$.data.products[].is_free_sample` | boolean:5 |
+| `$.data.products[].open_collab_ads_rate` | string:5 |
+| `$.data.products[].open_collab_rate` | string:5 |
+| `$.data.products[].price` | object:5 |
+| `$.data.products[].price.celling_price` | string:5 |
+| `$.data.products[].price.currency` | string:5 |
+| `$.data.products[].price.floor_price` | string:5 |
+| `$.data.products[].product_id` | string:5 |
+| `$.data.products[].product_image` | object:5 |
+| `$.data.products[].product_image.uri` | string:5 |
+| `$.data.products[].product_image.url_list` | array:5 |
+| `$.data.products[].product_image.url_list[]` | string:10 |
+| `$.data.products[].product_rating` | number:5 |
+| `$.data.products[].product_regions` | array:5 |
+| `$.data.products[].product_regions[]` | string:53 |
+| `$.data.products[].sales` | string:5 |
+| `$.data.products[].shop_info` | object:5 |
+| `$.data.products[].shop_info.shop_experience_score` | number:5 |
+| `$.data.products[].shop_info.shop_name` | string:5 |
+| `$.data.products[].shop_info.shop_rating` | string:5 |
+| `$.data.products[].title` | string:5 |
+| `$.data.total` | number:1 |
+| `$.msg` | string:1 |
+
+## 13 IT / offers
+
+GET `/api/v1/affiliate/partner/product/opportunity_product/campaign_detail`；2026-09-13T03:41:34.665201+00:00；observed。
+单次/单页样本。
+
+| 字段路径 | 类型及次数 |
+|---|---|
+| `$` | object:1 |
+| `$.code` | number:1 |
+| `$.data` | object:1 |
+| `$.data.product_campaign_detail` | array:1 |
+| `$.data.product_campaign_detail[]` | object:1 |
+| `$.data.product_campaign_detail[].campaign` | object:1 |
+| `$.data.product_campaign_detail[].campaign.campaign_id` | string:1 |
+| `$.data.product_campaign_detail[].campaign.commission` | string:1 |
+| `$.data.product_campaign_detail[].campaign.crs_campaign_type` | number:1 |
+| `$.data.product_campaign_detail[].campaign.name` | string:1 |
+| `$.data.product_campaign_detail[].campaign.promotion_end_time` | string:1 |
+| `$.data.product_campaign_detail[].campaign.promotion_start_time` | string:1 |
+| `$.data.product_campaign_detail[].is_free_sample` | boolean:1 |
+| `$.data.product_campaign_detail[].is_selected` | boolean:1 |
+| `$.data.product_campaign_detail[].open_collab_ads_rate` | string:1 |
+| `$.data.product_campaign_detail[].open_collab_rate` | string:1 |
+| `$.data.total` | number:1 |
+| `$.msg` | string:1 |
+
+## 14 IT / categories
+
+POST `/api/v1/affiliate/lux/product/category/childrenv2`；2026-09-13T03:41:36.466654+00:00；blocked。
+单次/单页样本。
+
+| 字段路径 | 类型及次数 |
+|---|---|
+| 未取得成功字段样本 | 不用错误响应推导正常合同 |
+
+## 15 IT / im_cards
+
+GET `/api/v1/affiliate/partner/im/product_list/list`；2026-09-13T03:42:54.572441+00:00；observed。
+单次/单页样本。
+
+| 字段路径 | 类型及次数 |
+|---|---|
+| `$` | object:1 |
+| `$.code` | number:1 |
+| `$.data` | object:1 |
+| `$.data.list` | array:1 |
+| `$.data.list[]` | object:1 |
+| `$.data.list[].campaign_id` | string:1 |
+| `$.data.list[].campaign_products` | array:1 |
+| `$.data.list[].campaign_products[]` | object:1 |
+| `$.data.list[].campaign_products[].creator_commission_percent` | string:1 |
+| `$.data.list[].campaign_products[].creator_earn_amount` | string:1 |
+| `$.data.list[].campaign_products[].product_id` | string:1 |
+| `$.data.list[].campaign_products[].product_name` | string:1 |
+| `$.data.list[].campaign_products[].product_price` | object:1 |
+| `$.data.list[].campaign_products[].product_price.max_price` | string:1 |
+| `$.data.list[].campaign_products[].product_price.min_price` | string:1 |
+| `$.data.list[].campaign_products[].product_sales` | string:1 |
+| `$.data.list[].campaign_products[].product_thumbnail` | object:1 |
+| `$.data.list[].campaign_products[].product_thumbnail.uri` | string:1 |
+| `$.data.list[].campaign_products[].product_thumbnail.url_list` | array:1 |
+| `$.data.list[].campaign_products[].product_thumbnail.url_list[]` | string:2 |
+| `$.data.list[].campaign_products[].stock` | string:1 |
+| `$.data.list[].campaign_products[].total_commission_percent` | null:1 |
+| `$.data.list[].product_list_id` | string:1 |
+| `$.data.list[].product_list_name` | string:1 |
+| `$.data.list[].total_num` | number:1 |
+| `$.data.list[].url` | string:1 |
+| `$.data.total` | number:1 |
+| `$.msg` | string:1 |
+
+## 16 MX / relations
+
+GET `/api/v1/affiliate/partner/relation/list`；2026-09-13T03:42:57.126882+00:00；observed。
+单次/单页样本。
+
+| 字段路径 | 类型及次数 |
+|---|---|
+| `$` | object:1 |
+| `$.code` | number:1 |
+| `$.data` | object:1 |
+| `$.data.creator_raise_relation_count` | number:1 |
+| `$.data.has_more` | boolean:1 |
+| `$.data.partner_raise_relation_count` | number:1 |
+| `$.data.status_count` | object:1 |
+| `$.data.status_count.all` | number:1 |
+| `$.data.status_count.binding_failed_expired` | number:1 |
+| `$.data.status_count.binding_failed_reject` | number:1 |
+| `$.data.status_count.bound` | number:1 |
+| `$.data.status_count.pending` | number:1 |
+| `$.data.status_count.unbinding` | number:1 |
+| `$.data.status_count.unbound` | number:1 |
+| `$.data.status_count.unbound_expired` | number:1 |
+| `$.data.status_count.unbound_partially_bind` | number:1 |
+| `$.data.status_count.unbound_unlink` | number:1 |
+| `$.data.total_num` | number:1 |
+| `$.msg` | string:1 |
+
+## 17 MX / get
+
+GET `/api/v1/affiliate/partner/im/collaboration/get`；2026-09-13T03:48:18.090391+00:00；observed。
+单次/单页样本。
+
+| 字段路径 | 类型及次数 |
+|---|---|
+| `$` | object:1 |
+| `$.code` | number:1 |
+| `$.collaboration_type` | array:1 |
+| `$.collaboration_type[]` | number:1 |
+| `$.has_permission` | boolean:1 |
+| `$.msg` | string:1 |
+
+## 18 MX / get
+
+GET `/api/v1/affiliate/partner/im/collaboration/get`；2026-09-13T03:48:20.891085+00:00；observed。
+单次/单页样本。
+
+| 字段路径 | 类型及次数 |
+|---|---|
+| `$` | object:1 |
+| `$.code` | number:1 |
+| `$.collaboration_type` | array:1 |
+| `$.collaboration_type[]` | number:1 |
+| `$.has_permission` | boolean:1 |
+| `$.msg` | string:1 |
+
+## 19 MX / get
+
+GET `/api/v1/affiliate/partner/im/collaboration/get`；2026-09-13T03:48:23.468053+00:00；observed。
+单次/单页样本。
+
+| 字段路径 | 类型及次数 |
+|---|---|
+| `$` | object:1 |
+| `$.code` | number:1 |
+| `$.collaboration_type` | array:1 |
+| `$.collaboration_type[]` | number:1 |
+| `$.has_permission` | boolean:1 |
+| `$.msg` | string:1 |
+
+## 20 MX / mget
+
+POST `/api/v1/affiliate/partner/im/filter/creator/mget`；2026-09-13T03:48:25.042709+00:00；observed。
+单次/单页样本。
+
+| 字段路径 | 类型及次数 |
+|---|---|
+| `$` | object:1 |
+| `$.code` | number:1 |
+| `$.data` | array:1 |
+| `$.data[]` | object:3 |
+| `$.data[].avatar` | object:3 |
+| `$.data[].avatar.is_authorized` | boolean:3 |
+| `$.data[].avatar.status` | number:3 |
+| `$.data[].avatar.value` | object:3 |
+| `$.data[].avatar.value.thumb_url_list` | array:3 |
+| `$.data[].avatar.value.thumb_url_list[]` | string:3 |
+| `$.data[].avatar.value.url_list` | array:3 |
+| `$.data[].avatar.value.url_list[]` | string:3 |
+| `$.data[].conversation_id` | string:3 |
+| `$.data[].creator_im_id` | string:3 |
+| `$.data[].creator_oec_id` | string:3 |
+| `$.data[].creator_type` | array:3 |
+| `$.data[].creator_type[]` | number:3 |
+| `$.data[].handle` | object:3 |
+| `$.data[].handle.is_authorized` | boolean:3 |
+| `$.data[].handle.status` | number:3 |
+| `$.data[].handle.value` | string:3 |
+| `$.data[].nickname` | object:3 |
+| `$.data[].nickname.is_authorized` | boolean:3 |
+| `$.data[].nickname.status` | number:3 |
+| `$.data[].nickname.value` | string:3 |
 | `$.msg` | string:1 |

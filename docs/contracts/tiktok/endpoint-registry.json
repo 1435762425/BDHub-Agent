@@ -1,12 +1,12 @@
 {
   "schema": "bdhub.tiktok.interface-registry.v1",
   "updatedOn": "2026-09-13",
-  "scope": "33 reviewed path contracts including a file path prefix; not all TikTok APIs",
+  "scope": "34 curated TikTok path contracts; 283 historical SDK candidates separately classified",
   "legacyRoot": "/Users/bjn00003/BDHub/01-BDSystem-V2",
   "entries": [
     {
       "path": "/api/v1/affiliate/lux/product/category/childrenv2",
-      "evidence": "source_only",
+      "evidence": "live_read_rejected_20260913",
       "references": [
         {
           "file": "bdhub/research/commerce_transport.py",
@@ -18,9 +18,26 @@
       "sideEffect": "business_read",
       "action": "read",
       "agentExposure": "not_registered; proposed typed wrapper only",
-      "liveEvidence": [],
+      "liveEvidence": [
+        {
+          "market": "it",
+          "account": "acc6",
+          "observedAt": "2026-09-13T03:41:36.466654+00:00",
+          "status": "blocked",
+          "http": 200,
+          "businessCode": 10000,
+          "coverageNote": null,
+          "evidenceRun": "supply-detail.json"
+        }
+      ],
       "coverage": "source implementation only unless explicit liveEvidence; not proof of market deployment",
-      "replayPolicy": "bounded transient read retry; auth/verification errors stop"
+      "replayPolicy": "bounded transient read retry; auth/verification errors stop",
+      "category": "货盘与选品",
+      "purpose": "读取商品类目树",
+      "inputContractSummary": "category_id、status_param.region",
+      "availableData": "category_infos：category_id、name、is_leaf",
+      "businessUse": "统一商品类目；辅助短名称与归类",
+      "notEvidenceFor": "不是达人兴趣画像；错误响应不当空类目"
     },
     {
       "path": "/api/v1/affiliate/partner/campaign/list",
@@ -52,7 +69,8 @@
           "status": "observed",
           "http": 200,
           "businessCode": 0,
-          "evidence": "field-observations-20260913.json#mx/campaigns"
+          "coverageNote": null,
+          "evidenceRun": null
         },
         {
           "market": "it",
@@ -61,7 +79,8 @@
           "status": "observed",
           "http": 200,
           "businessCode": 0,
-          "evidence": "field-observations-20260913.json#it/campaigns"
+          "coverageNote": null,
+          "evidenceRun": null
         },
         {
           "market": "br",
@@ -70,11 +89,18 @@
           "status": "observed",
           "http": 200,
           "businessCode": 0,
-          "evidence": "field-observations-20260913.json#br/campaigns"
+          "coverageNote": null,
+          "evidenceRun": null
         }
       ],
       "coverage": "source implementation only unless explicit liveEvidence; not proof of market deployment",
-      "replayPolicy": "bounded transient read retry; auth/verification errors stop"
+      "replayPolicy": "bounded transient read retry; auth/verification errors stop",
+      "category": "货盘与选品",
+      "purpose": "查询可见活动及加入状态",
+      "inputContractSummary": "cur_page/page_size、加入状态/活动类型过滤",
+      "availableData": "campaign[]、total_num、推广/报名时间、佣金区间、new_products_count、活动配额计数",
+      "businessUse": "活动发现、每日货盘刷新入口、增量刷新优先级",
+      "notEvidenceFor": "活动quota不是IM配额；一页不是全量"
     },
     {
       "path": "/api/v1/affiliate/partner/campaign/product/link",
@@ -86,13 +112,20 @@
         }
       ],
       "id": "TK-003",
-      "method": "POST",
+      "method": "GET",
       "sideEffect": "external_write",
       "action": "create_sharelink",
       "agentExposure": "not_registered; proposed typed wrapper only",
       "liveEvidence": [],
       "coverage": "source implementation only unless explicit liveEvidence; not proof of market deployment",
-      "replayPolicy": "never auto replay unknown write"
+      "replayPolicy": "never auto replay unknown write",
+      "methodEvidence": "bdhub/send/sharelink/transport.py:create_link explicitly uses GET with write=True",
+      "category": "链接与商品卡",
+      "purpose": "创建普通高佣ShareLink",
+      "inputContractSummary": "product_id、campaign_id、creator_commission_percent",
+      "availableData": "平台创建结果与链接/方案信息；完整字段按旧create_link及实测回执核对",
+      "businessUse": "生成某PID某方案的分享链接",
+      "notEvidenceFor": "GET有真实写入；不等于ProductList，不自动变成可发卡"
     },
     {
       "path": "/api/v1/affiliate/partner/campaign/product/list",
@@ -118,7 +151,13 @@
       "agentExposure": "not_registered; proposed typed wrapper only",
       "liveEvidence": [],
       "coverage": "source implementation only unless explicit liveEvidence; not proof of market deployment",
-      "replayPolicy": "bounded transient read retry; auth/verification errors stop"
+      "replayPolicy": "bounded transient read retry; auth/verification errors stop",
+      "category": "货盘与选品",
+      "purpose": "读取某活动商品",
+      "inputContractSummary": "campaign_id、marked、cur_page/page_size、可选PID/状态",
+      "availableData": "campaign_products及分页总量，商品/库存/评分/佣金/样品与活动字段",
+      "businessUse": "形成全部货盘、按>45天/>100库存等规则筛选",
+      "notEvidenceFor": "样品额度不作为二发必需；旧默认筛选不覆盖新规则"
     },
     {
       "path": "/api/v1/affiliate/partner/campaign/product_list/create",
@@ -136,7 +175,13 @@
       "agentExposure": "not_registered; proposed typed wrapper only",
       "liveEvidence": [],
       "coverage": "source implementation only unless explicit liveEvidence; not proof of market deployment",
-      "replayPolicy": "never auto replay unknown write"
+      "replayPolicy": "never auto replay unknown write",
+      "category": "链接与商品卡",
+      "purpose": "创建商品列表/TapLink",
+      "inputContractSummary": "name、campaign_id、items[{product_id,creator_commission_rate}]；selected路线source=2且外层campaign_id=0",
+      "availableData": "data.list，url及product_list_id/id/list_id候选",
+      "businessUse": "为已选商品或活动商品准备可发卡列表",
+      "notEvidenceFor": "写入成功不等于IM已可查卡；来源Campaign与wire Campaign分开"
     },
     {
       "path": "/api/v1/affiliate/partner/campaign/product_list/delete",
@@ -154,11 +199,17 @@
       "agentExposure": "not_registered; proposed typed wrapper only",
       "liveEvidence": [],
       "coverage": "source implementation only unless explicit liveEvidence; not proof of market deployment",
-      "replayPolicy": "never auto replay unknown write"
+      "replayPolicy": "never auto replay unknown write",
+      "category": "链接与商品卡",
+      "purpose": "删除商品列表",
+      "inputContractSummary": "list_id",
+      "availableData": "删除请求结果，仍须原来源回查",
+      "businessUse": "有明确范围的失效列表清理",
+      "notEvidenceFor": "真实删除；不能因近期无点击就删除有效或仍产佣链接"
     },
     {
       "path": "/api/v1/affiliate/partner/campaign/product_list/list",
-      "evidence": "source_only",
+      "evidence": "live_read_sample_20260913",
       "references": [
         {
           "file": "bdhub/send/taplink/cleanup.py",
@@ -170,9 +221,26 @@
       "sideEffect": "business_read",
       "action": "read",
       "agentExposure": "not_registered; proposed typed wrapper only",
-      "liveEvidence": [],
+      "liveEvidence": [
+        {
+          "market": "it",
+          "account": "acc6",
+          "observedAt": "2026-09-13T03:41:30.150914+00:00",
+          "status": "observed",
+          "http": 200,
+          "businessCode": 0,
+          "coverageNote": null,
+          "evidenceRun": "supply-detail.json"
+        }
+      ],
       "coverage": "source implementation only unless explicit liveEvidence; not proof of market deployment",
-      "replayPolicy": "bounded transient read retry; auth/verification errors stop"
+      "replayPolicy": "bounded transient read retry; auth/verification errors stop",
+      "category": "链接与商品卡",
+      "purpose": "盘点既有商品列表",
+      "inputContractSummary": "campaign_id、source、cur_page/page_size",
+      "availableData": "data.lists：id、name、url、total、update_time；data.total",
+      "businessUse": "看现有链接、清理候选、检测变化",
+      "notEvidenceFor": "列表计数不等于GMV/点击/达人采用人数"
     },
     {
       "path": "/api/v1/affiliate/partner/campaign/product_list/products",
@@ -200,11 +268,18 @@
           "status": "observed",
           "http": 200,
           "businessCode": 0,
-          "evidence": "field-observations-20260913.json#it/members"
+          "coverageNote": null,
+          "evidenceRun": null
         }
       ],
       "coverage": "source implementation only unless explicit liveEvidence; not proof of market deployment",
-      "replayPolicy": "bounded transient read retry; auth/verification errors stop"
+      "replayPolicy": "bounded transient read retry; auth/verification errors stop",
+      "category": "链接与商品卡",
+      "purpose": "读取列表的商品成员",
+      "inputContractSummary": "list_id、source、cursor",
+      "availableData": "campaign_products：PID、Campaign、creator/plan/partner/total点位、stock、status、sample_quota；total_num/next_cursor",
+      "businessUse": "精确卡片方案核验、发现失效成员",
+      "notEvidenceFor": "不据列表存在判断达人已加入橱窗"
     },
     {
       "path": "/api/v1/affiliate/partner/campaign/review",
@@ -222,7 +297,13 @@
       "agentExposure": "not_registered; proposed typed wrapper only",
       "liveEvidence": [],
       "coverage": "source implementation only unless explicit liveEvidence; not proof of market deployment",
-      "replayPolicy": "never auto replay unknown write"
+      "replayPolicy": "never auto replay unknown write",
+      "category": "货盘写操作",
+      "purpose": "审核/加入活动类动作",
+      "inputContractSummary": "旧CommerceTransport调用的review参数；具体场景须核验",
+      "availableData": "原生业务回执，当前未实测字段",
+      "businessUse": "供给流程指定活动操作",
+      "notEvidenceFor": "不可作为活动只读详情接口；不与seller_requested/review混用"
     },
     {
       "path": "/api/v1/affiliate/partner/campaign/sample/budget/review",
@@ -240,7 +321,13 @@
       "agentExposure": "not_registered; proposed typed wrapper only",
       "liveEvidence": [],
       "coverage": "source implementation only unless explicit liveEvidence; not proof of market deployment",
-      "replayPolicy": "never auto replay unknown write"
+      "replayPolicy": "never auto replay unknown write",
+      "category": "样品服务",
+      "purpose": "批准或拒绝样品申请",
+      "inputContractSummary": "campaign_id、平台creator_id、product_id、is_approved、可选payment",
+      "availableData": "审批业务回执，需重查申请生命周期",
+      "businessUse": "仅处理可见并有权限的具体样品申请",
+      "notEvidenceFor": "不是给任意二发达人补寄；creator_id不随意换OEC"
     },
     {
       "path": "/api/v1/affiliate/partner/campaign/sample/price",
@@ -252,13 +339,20 @@
         }
       ],
       "id": "TK-011",
-      "method": "unverified",
+      "method": "GET",
       "sideEffect": "unverified",
       "action": "inspect_before_use",
       "agentExposure": "not_registered; proposed typed wrapper only",
       "liveEvidence": [],
       "coverage": "source implementation only unless explicit liveEvidence; not proof of market deployment",
-      "replayPolicy": "never auto replay unknown write"
+      "replayPolicy": "never auto replay unknown write",
+      "category": "样品服务",
+      "purpose": "样品价格相关路径候选",
+      "inputContractSummary": "只发现PRICE_PATH常量，方法/参数未确认",
+      "availableData": "未知；没有已验证响应合同",
+      "businessUse": "暂只列待调查",
+      "notEvidenceFor": "不对Agent开放，不猜参数试写",
+      "methodEvidence": "historical SDK GetSamplePrice, _t=GET; input/side effects still need validation"
     },
     {
       "path": "/api/v1/affiliate/partner/campaign/seller_requested/review",
@@ -276,11 +370,17 @@
       "agentExposure": "not_registered; proposed typed wrapper only",
       "liveEvidence": [],
       "coverage": "source implementation only unless explicit liveEvidence; not proof of market deployment",
-      "replayPolicy": "never auto replay unknown write"
+      "replayPolicy": "never auto replay unknown write",
+      "category": "货盘写操作",
+      "purpose": "加入商家发起活动",
+      "inputContractSummary": "campaign_id、is_joined、contact_info.campaign_contact_info",
+      "availableData": "加入业务结果，需活动列表回查",
+      "businessUse": "按规则扩充可获取货盘的活动来源",
+      "notEvidenceFor": "不是读取活动，也不自动继承全部商家承诺"
     },
     {
       "path": "/api/v1/affiliate/partner/im/filter/creator/mget",
-      "evidence": "source_only",
+      "evidence": "live_read_sample_20260913",
       "references": [
         {
           "file": "bdhub/monitor/identity_capture.py",
@@ -288,13 +388,30 @@
         }
       ],
       "id": "TK-013",
-      "method": "unverified",
-      "sideEffect": "unverified",
-      "action": "inspect_before_use",
+      "method": "POST",
+      "sideEffect": "business_read",
+      "action": "read",
       "agentExposure": "not_registered; proposed typed wrapper only",
-      "liveEvidence": [],
+      "liveEvidence": [
+        {
+          "market": "mx",
+          "account": "acc1",
+          "observedAt": "2026-09-13T03:48:25.042709+00:00",
+          "status": "observed",
+          "http": 200,
+          "businessCode": 0,
+          "coverageNote": null,
+          "evidenceRun": "mx-im-context.json"
+        }
+      ],
       "coverage": "source implementation only unless explicit liveEvidence; not proof of market deployment",
-      "replayPolicy": "never auto replay unknown write"
+      "replayPolicy": "never auto replay unknown write",
+      "category": "达人身份与关系",
+      "purpose": "IM达人映射响应",
+      "inputContractSummary": "creator_ids:[{creator_oec_id,conversation_id,可选creator_im_id}]；partner_id由同账号宿主提供",
+      "availableData": "data[]：OEC、creator_im_id、conversation_id、creator_type、handle/nickname/avatar的value/status/is_authorized",
+      "businessUse": "补IM身份、核对当前名称与授权状态",
+      "notEvidenceFor": "授权字段可能缺失；IM身份映射不证明实际合作、样品来源或发送额度"
     },
     {
       "path": "/api/v1/affiliate/partner/im/id/get",
@@ -312,11 +429,17 @@
       "agentExposure": "not_registered; proposed typed wrapper only",
       "liveEvidence": [],
       "coverage": "source implementation only unless explicit liveEvidence; not proof of market deployment",
-      "replayPolicy": "bounded transient read retry; auth/verification errors stop"
+      "replayPolicy": "bounded transient read retry; auth/verification errors stop",
+      "category": "账号与认证",
+      "purpose": "获取机构市场IM身份",
+      "inputContractSummary": "user_id=已核验market_id、type及机构身份参数",
+      "availableData": "im_id",
+      "businessUse": "给会话读取/发送认证绑定正确机构市场身份",
+      "notEvidenceFor": "不是达人OEC；多个ACC可能返回同一IM身份"
     },
     {
       "path": "/api/v1/affiliate/partner/im/product_list/list",
-      "evidence": "source_only",
+      "evidence": "live_read_sample_20260913",
       "references": [
         {
           "file": "bdhub/probe/market_interfaces.py",
@@ -352,9 +475,26 @@
       "sideEffect": "business_read",
       "action": "read",
       "agentExposure": "not_registered; proposed typed wrapper only",
-      "liveEvidence": [],
+      "liveEvidence": [
+        {
+          "market": "it",
+          "account": "acc6",
+          "observedAt": "2026-09-13T03:42:54.572441+00:00",
+          "status": "observed",
+          "http": 200,
+          "businessCode": 0,
+          "coverageNote": null,
+          "evidenceRun": "im-card-specific.json"
+        }
+      ],
       "coverage": "source implementation only unless explicit liveEvidence; not proof of market deployment",
-      "replayPolicy": "bounded transient read retry; auth/verification errors stop"
+      "replayPolicy": "bounded transient read retry; auth/verification errors stop",
+      "category": "链接与商品卡",
+      "purpose": "读取IM可发送商品卡列表",
+      "inputContractSummary": "cur_page/page_size、version=1、search_type=2、key_word=PID（按当前已验搜索合同）",
+      "availableData": "data.list：product_list_id、列表名称、campaign_id、campaign_products；data.total",
+      "businessUse": "验证PID和列表是否可用于IM卡片",
+      "notEvidenceFor": "不能用product_id参数猜测等效搜索；查到不是已发送"
     },
     {
       "path": "/api/v1/affiliate/partner/im/token/get",
@@ -372,7 +512,13 @@
       "agentExposure": "not_registered; proposed typed wrapper only",
       "liveEvidence": [],
       "coverage": "source implementation only unless explicit liveEvidence; not proof of market deployment",
-      "replayPolicy": "bounded transient read retry; auth/verification errors stop"
+      "replayPolicy": "bounded transient read retry; auth/verification errors stop",
+      "category": "账号与认证",
+      "purpose": "获取IM临时Token与服务地址",
+      "inputContractSummary": "im_id与本账号机构参数",
+      "availableData": "token、api_url、app_id、服务配置等，仅在内存",
+      "businessUse": "建立正确IM host的认证会话",
+      "notEvidenceFor": "Token和设备字段不入模型、文档或日志；不证明发送权限"
     },
     {
       "path": "/api/v1/affiliate/partner/info",
@@ -390,11 +536,17 @@
       "agentExposure": "not_registered; proposed typed wrapper only",
       "liveEvidence": [],
       "coverage": "source implementation only unless explicit liveEvidence; not proof of market deployment",
-      "replayPolicy": "bounded transient read retry; auth/verification errors stop"
+      "replayPolicy": "bounded transient read retry; auth/verification errors stop",
+      "category": "账号与认证",
+      "purpose": "读取机构与市场身份",
+      "inputContractSummary": "partner_type、partner_id、aid及同账号认证",
+      "availableData": "partner_biz_role_info.market_list、market_id/type_list、公司与角色信息",
+      "businessUse": "确定机构×市场×角色映射",
+      "notEvidenceFor": "市场可见不等于所有动作可用"
     },
     {
       "path": "/api/v1/affiliate/partner/product/opportunity_product/campaign_detail",
-      "evidence": "source_only",
+      "evidence": "live_read_sample_20260913",
       "references": [
         {
           "file": "bdhub/send/sharelink/transport.py",
@@ -406,13 +558,30 @@
       "sideEffect": "business_read",
       "action": "read",
       "agentExposure": "not_registered; proposed typed wrapper only",
-      "liveEvidence": [],
+      "liveEvidence": [
+        {
+          "market": "it",
+          "account": "acc6",
+          "observedAt": "2026-09-13T03:41:34.665201+00:00",
+          "status": "observed",
+          "http": 200,
+          "businessCode": 0,
+          "coverageNote": null,
+          "evidenceRun": "supply-detail.json"
+        }
+      ],
       "coverage": "source implementation only unless explicit liveEvidence; not proof of market deployment",
-      "replayPolicy": "bounded transient read retry; auth/verification errors stop"
+      "replayPolicy": "bounded transient read retry; auth/verification errors stop",
+      "category": "货盘与选品",
+      "purpose": "查询某PID可用活动方案",
+      "inputContractSummary": "product_id",
+      "availableData": "data.product_campaign_detail[]；具体campaign/commission/期限/状态以字段字典为准",
+      "businessUse": "比较同品多方案，给规则选品与建链供给",
+      "notEvidenceFor": "不是达人在其他卖家的私人定邀点位"
     },
     {
       "path": "/api/v1/affiliate/partner/product/opportunity_product/list",
-      "evidence": "source_only",
+      "evidence": "live_read_sample_20260913",
       "references": [
         {
           "file": "bdhub/send/sharelink/transport.py",
@@ -424,9 +593,26 @@
       "sideEffect": "business_read",
       "action": "read",
       "agentExposure": "not_registered; proposed typed wrapper only",
-      "liveEvidence": [],
+      "liveEvidence": [
+        {
+          "market": "it",
+          "account": "acc6",
+          "observedAt": "2026-09-13T03:41:32.571571+00:00",
+          "status": "observed",
+          "http": 200,
+          "businessCode": 0,
+          "coverageNote": null,
+          "evidenceRun": "supply-detail.json"
+        }
+      ],
       "coverage": "source implementation only unless explicit liveEvidence; not proof of market deployment",
-      "replayPolicy": "bounded transient read retry; auth/verification errors stop"
+      "replayPolicy": "bounded transient read retry; auth/verification errors stop",
+      "category": "货盘与选品",
+      "purpose": "搜索高机会/全球销售商品",
+      "inputContractSummary": "filter.product_source/campaign_type/label_type/product_status、page/page_size、可选product_id",
+      "availableData": "data.products、has_more及产品候选字段（空样本不证明详情合同）",
+      "businessUse": "从平台供给找PID；全球销售独立路线",
+      "notEvidenceFor": "不是Kalodata；不能把所有高机会商品都当全球销售"
     },
     {
       "path": "/api/v1/affiliate/partner/product/pick_up/list",
@@ -450,7 +636,8 @@
           "status": "observed",
           "http": 200,
           "businessCode": 0,
-          "evidence": "field-observations-20260913.json#mx/selected"
+          "coverageNote": null,
+          "evidenceRun": null
         },
         {
           "market": "it",
@@ -459,7 +646,8 @@
           "status": "observed",
           "http": 200,
           "businessCode": 0,
-          "evidence": "field-observations-20260913.json#it/selected"
+          "coverageNote": null,
+          "evidenceRun": null
         },
         {
           "market": "br",
@@ -468,11 +656,18 @@
           "status": "observed",
           "http": 200,
           "businessCode": 0,
-          "evidence": "field-observations-20260913.json#br/selected"
+          "coverageNote": null,
+          "evidenceRun": null
         }
       ],
       "coverage": "source implementation only unless explicit liveEvidence; not proof of market deployment",
-      "replayPolicy": "bounded transient read retry; auth/verification errors stop"
+      "replayPolicy": "bounded transient read retry; auth/verification errors stop",
+      "category": "货盘与选品",
+      "purpose": "查询已选商品",
+      "inputContractSummary": "cur_page/page_size、filter、可选product_ids",
+      "availableData": "data[]中的campaign_product、campaign_info、has_free_sample",
+      "businessUse": "维护已选池，核对现有方案与库存",
+      "notEvidenceFor": "已选≠已建商品列表≠已发送"
     },
     {
       "path": "/api/v1/affiliate/partner/product/pick_up/select",
@@ -490,11 +685,17 @@
       "agentExposure": "not_registered; proposed typed wrapper only",
       "liveEvidence": [],
       "coverage": "source implementation only unless explicit liveEvidence; not proof of market deployment",
-      "replayPolicy": "never auto replay unknown write"
+      "replayPolicy": "never auto replay unknown write",
+      "category": "货盘写操作",
+      "purpose": "选入商品",
+      "inputContractSummary": "product_id、campaign_id",
+      "availableData": "单次选入结果，需已选列表回查",
+      "businessUse": "全球销售等路线的卡片供给准备",
+      "notEvidenceFor": "结果未知不重发；不是商品搜索"
     },
     {
       "path": "/api/v1/affiliate/partner/relation/list",
-      "evidence": "source_only",
+      "evidence": "live_read_sample_20260913",
       "references": [
         {
           "file": "bdhub/enrich/client.py",
@@ -514,9 +715,26 @@
       "sideEffect": "business_read",
       "action": "read",
       "agentExposure": "not_registered; proposed typed wrapper only",
-      "liveEvidence": [],
+      "liveEvidence": [
+        {
+          "market": "mx",
+          "account": "acc6",
+          "observedAt": "2026-09-13T03:42:57.126882+00:00",
+          "status": "observed",
+          "http": 200,
+          "businessCode": 0,
+          "coverageNote": null,
+          "evidenceRun": "mx-relations.json"
+        }
+      ],
       "coverage": "source implementation only unless explicit liveEvidence; not proof of market deployment",
-      "replayPolicy": "bounded transient read retry; auth/verification errors stop"
+      "replayPolicy": "bounded transient read retry; auth/verification errors stop",
+      "category": "达人身份与关系",
+      "purpose": "查询机构绑定关系",
+      "inputContractSummary": "status、cur_page/page_size、related_biz_types、relation_tag",
+      "availableData": "data.relations（有样本时）：关系、creator_info、OEC/handle等",
+      "businessUse": "MCN等绑定关系服务、身份来源",
+      "notEvidenceFor": "不是全部二发达人池或全部回复达人"
     },
     {
       "path": "/api/v1/affiliate/partner/sample/records/list",
@@ -540,7 +758,8 @@
           "status": "observed",
           "http": 200,
           "businessCode": 0,
-          "evidence": "field-observations-20260913.json#mx/samples"
+          "coverageNote": null,
+          "evidenceRun": null
         },
         {
           "market": "it",
@@ -550,7 +769,7 @@
           "http": 200,
           "businessCode": 0,
           "coverageNote": "Success envelope with data.total but no sample_records in this response; row schema unverified",
-          "evidence": "field-observations-20260913.json#it/samples"
+          "evidenceRun": null
         },
         {
           "market": "br",
@@ -560,11 +779,17 @@
           "http": 200,
           "businessCode": 0,
           "coverageNote": "Success envelope with data.total but no sample_records in this response; row schema unverified",
-          "evidence": "field-observations-20260913.json#br/samples"
+          "evidenceRun": null
         }
       ],
       "coverage": "source implementation only unless explicit liveEvidence; not proof of market deployment",
-      "replayPolicy": "bounded transient read retry; auth/verification errors stop"
+      "replayPolicy": "bounded transient read retry; auth/verification errors stop",
+      "category": "样品服务",
+      "purpose": "查询本机构可见的样品记录",
+      "inputContractSummary": "search_params状态、order_params、cur_page/page_size",
+      "availableData": "申请ID、OEC、PID、Campaign、样品状态、卖家联系信息、样品上下文橱窗/内容字段",
+      "businessUse": "回答该记录涉及的样品问题、准备商家联系路径",
+      "notEvidenceFor": "不能证明达人原来从我们拿样；不能证明本次二发采用；查无记录不等于没样品"
     },
     {
       "path": "/api/v1/im/conversation/create",
@@ -582,7 +807,13 @@
       "agentExposure": "not_registered; proposed typed wrapper only",
       "liveEvidence": [],
       "coverage": "source implementation only unless explicit liveEvidence; not proof of market deployment",
-      "replayPolicy": "never auto replay unknown write"
+      "replayPolicy": "never auto replay unknown write",
+      "category": "IM消息",
+      "purpose": "获取或创建会话",
+      "inputContractSummary": "participants、options、biz_hook_ext，由已核验机构市场与OEC组装",
+      "availableData": "候选CID及创建结果，后续608核验",
+      "businessUse": "没有本地CID时取得可用会话",
+      "notEvidenceFor": "可能创建远端会话，有写副作用，不能当纯查询"
     },
     {
       "path": "/api/v1/insights/export/file/",
@@ -600,7 +831,13 @@
       "agentExposure": "not_registered; proposed typed wrapper only",
       "liveEvidence": [],
       "coverage": "source implementation only unless explicit liveEvidence; not proof of market deployment",
-      "replayPolicy": "bounded transient read retry; auth/verification errors stop"
+      "replayPolicy": "bounded transient read retry; auth/verification errors stop",
+      "category": "经营报表",
+      "purpose": "下载已生成报表",
+      "inputContractSummary": "平台返回的文件定位符（路径前缀，不拼猜）",
+      "availableData": "报表文件字节，格式与表头需核验",
+      "businessUse": "导入TAP/MCN指定日期和维度报告",
+      "notEvidenceFor": "下载成功不等于解析完整，不自动算本次发送贡献"
     },
     {
       "path": "/api/v1/insights/partner/report/data/list/export",
@@ -618,7 +855,13 @@
       "agentExposure": "not_registered; proposed typed wrapper only",
       "liveEvidence": [],
       "coverage": "source implementation only unless explicit liveEvidence; not proof of market deployment",
-      "replayPolicy": "never auto replay unknown write"
+      "replayPolicy": "never auto replay unknown write",
+      "category": "经营报表",
+      "purpose": "请求TAP/MCN导出文件",
+      "inputContractSummary": "角色biz_role、维度dimensions、日期/过滤、pagination；MX既有合同",
+      "availableData": "导出任务/文件定位符，随后下载",
+      "businessUse": "本机构TAP归属GMV、达人/PID等日报",
+      "notEvidenceFor": "可能建立远端导出作业；现有视频指标不等于含video_id"
     },
     {
       "path": "/api/v1/oec/affiliate/creator/marketplace/4partner/find",
@@ -660,7 +903,13 @@
       "agentExposure": "not_registered; proposed typed wrapper only",
       "liveEvidence": [],
       "coverage": "source implementation only unless explicit liveEvidence; not proof of market deployment",
-      "replayPolicy": "bounded transient read retry; auth/verification errors stop"
+      "replayPolicy": "bounded transient read retry; auth/verification errors stop",
+      "category": "达人身份与关系",
+      "purpose": "按handle精确发现或显式相似搜索",
+      "inputContractSummary": "query、query_type、分页/filter；签名由宿主生成",
+      "availableData": "creator_profile_list中的OEC、handle及轻量画像",
+      "businessUse": "Kalodata handle→OEC；相似达人只作其他探索",
+      "notEvidenceFor": "相似模式不是精确身份；不能取第一条替代精确匹配"
     },
     {
       "path": "/api/v1/oec/affiliate/creator/marketplace/4partner/profile",
@@ -686,7 +935,13 @@
       "agentExposure": "not_registered; proposed typed wrapper only",
       "liveEvidence": [],
       "coverage": "source implementation only unless explicit liveEvidence; not proof of market deployment",
-      "replayPolicy": "bounded transient read retry; auth/verification errors stop"
+      "replayPolicy": "bounded transient read retry; auth/verification errors stop",
+      "category": "达人身份与关系",
+      "purpose": "按OEC获取画像",
+      "inputContractSummary": "creator_oec_id、profile_types",
+      "availableData": "creator_profile及分型指标；指标值/币种/类目/授权与时点",
+      "businessUse": "画像更新、带货和类目排序、改名继续跟踪",
+      "notEvidenceFor": "不证明本人持有样品或接受合作；缺值不能填0"
     },
     {
       "path": "/v1/message/get_by_conversation",
@@ -704,7 +959,13 @@
       "agentExposure": "not_registered; proposed typed wrapper only",
       "liveEvidence": [],
       "coverage": "source implementation only unless explicit liveEvidence; not proof of market deployment",
-      "replayPolicy": "bounded transient read retry; auth/verification errors stop"
+      "replayPolicy": "bounded transient read retry; auth/verification errors stop",
+      "category": "IM消息",
+      "purpose": "读取会话历史",
+      "inputContractSummary": "cmd301、full/short CID、类型、方向、anchor、数量",
+      "availableData": "MessageBody：serverID、发送者、content、type、ext、时间/索引",
+      "businessUse": "收信补回、关系上下文、发送结果核验",
+      "notEvidenceFor": "首屏非全量；不可仅正文相似认定是某次发送"
     },
     {
       "path": "/v1/message/get_by_id",
@@ -722,7 +983,13 @@
       "agentExposure": "not_registered; proposed typed wrapper only",
       "liveEvidence": [],
       "coverage": "source implementation only unless explicit liveEvidence; not proof of market deployment",
-      "replayPolicy": "bounded transient read retry; auth/verification errors stop"
+      "replayPolicy": "bounded transient read retry; auth/verification errors stop",
+      "category": "IM消息",
+      "purpose": "按消息ID回查",
+      "inputContractSummary": "旧build_readback组装的cmd/消息ID/会话参数",
+      "availableData": "单消息查询候选；实际可用性待按旧失败记录复验",
+      "businessUse": "指定消息核验候选路线",
+      "notEvidenceFor": "不能保证所有市场支持；读取失败不能触发重发"
     },
     {
       "path": "/v1/message/send",
@@ -740,7 +1007,13 @@
       "agentExposure": "not_registered; proposed typed wrapper only",
       "liveEvidence": [],
       "coverage": "source implementation only unless explicit liveEvidence; not proof of market deployment",
-      "replayPolicy": "never auto replay unknown write"
+      "replayPolicy": "never auto replay unknown write",
+      "category": "IM消息",
+      "purpose": "发送文字或商品卡",
+      "inputContractSummary": "cmd100、固定会话/ticket、sender、client UUID、content/type/ext",
+      "availableData": "候选平台消息ID与状态，必须后续回查",
+      "businessUse": "二发卡→文、已批准AI回复的最终执行",
+      "notEvidenceFor": "真正外部发送；未知保留，禁止整组重发"
     },
     {
       "path": "/v2/conversation/get_info",
@@ -758,7 +1031,13 @@
       "agentExposure": "not_registered; proposed typed wrapper only",
       "liveEvidence": [],
       "coverage": "source implementation only unless explicit liveEvidence; not proof of market deployment",
-      "replayPolicy": "bounded transient read retry; auth/verification errors stop"
+      "replayPolicy": "bounded transient read retry; auth/verification errors stop",
+      "category": "IM消息",
+      "purpose": "核验指定会话身份与ticket",
+      "inputContractSummary": "cmd608、CID与预期OEC",
+      "availableData": "ConversationInfoV2、ticket、core.ext中的creator_oec_id等",
+      "businessUse": "防止发错人，恢复已有会话",
+      "notEvidenceFor": "会话存在不证明消息已发或额度已解锁"
     },
     {
       "path": "/v2/message/get_by_user_init",
@@ -776,7 +1055,68 @@
       "agentExposure": "not_registered; proposed typed wrapper only",
       "liveEvidence": [],
       "coverage": "source implementation only unless explicit liveEvidence; not proof of market deployment",
-      "replayPolicy": "bounded transient read retry; auth/verification errors stop"
+      "replayPolicy": "bounded transient read retry; auth/verification errors stop",
+      "category": "IM消息",
+      "purpose": "初始化/按用户取会话与消息",
+      "inputContractSummary": "cmd203、身份Token、游标及SDK固定字段",
+      "availableData": "会话、消息集合、游标/has_more；取决于body字段",
+      "businessUse": "IM初始化与补回入口",
+      "notEvidenceFor": "初始化成功不是持续监听上线，不能当完整收件箱"
+    },
+    {
+      "id": "TK-034",
+      "path": "/api/v1/affiliate/partner/im/collaboration/get",
+      "method": "GET",
+      "sideEffect": "business_read",
+      "action": "read",
+      "category": "达人身份与关系",
+      "purpose": "查询指定达人与本机构的IM合作类型及权限标记",
+      "inputContractSummary": "creator_id（绑定OEC），机构账号参数由宿主提供",
+      "availableData": "响应顶层collaboration_type数组、has_permission布尔；不在data内",
+      "businessUse": "补关系类别/联系资格调查依据；SDK据其显示陌生、绑定、已合作类别",
+      "notEvidenceFor": "尚未证明has_permission与500/5条额度完全等价；不能推导配额重置时间",
+      "agentExposure": "not_registered; host-scoped wrapper proposed",
+      "references": [
+        {
+          "file": "/Users/bjn00003/BDHub/01-BDSystem-V2/outputs/im-http-probe-20260906/73c6c8af85a24be7ce885c006339808303f71ba9a94f2647140997bac1e54676.js",
+          "offset": 86024
+        }
+      ],
+      "liveEvidence": [
+        {
+          "market": "mx",
+          "account": "acc1",
+          "observedAt": "2026-09-13T03:48:18.090391+00:00",
+          "status": "observed",
+          "http": 200,
+          "businessCode": 0,
+          "coverageNote": null,
+          "evidenceRun": "mx-im-context.json"
+        },
+        {
+          "market": "mx",
+          "account": "acc1",
+          "observedAt": "2026-09-13T03:48:20.891085+00:00",
+          "status": "observed",
+          "http": 200,
+          "businessCode": 0,
+          "coverageNote": null,
+          "evidenceRun": "mx-im-context.json"
+        },
+        {
+          "market": "mx",
+          "account": "acc1",
+          "observedAt": "2026-09-13T03:48:23.468053+00:00",
+          "status": "observed",
+          "http": 200,
+          "businessCode": 0,
+          "coverageNote": null,
+          "evidenceRun": "mx-im-context.json"
+        }
+      ],
+      "replayPolicy": "bounded read retry only",
+      "coverage": "3 existing MX showcase conversations, not all relation types",
+      "evidence": "live_read_sample_20260913"
     }
   ]
 }

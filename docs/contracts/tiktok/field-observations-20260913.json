@@ -1846,6 +1846,845 @@
         }
       },
       "coverageNote": "Success envelope with data.total but no sample_records in this response; row schema unverified"
+    },
+    {
+      "market": "it",
+      "account": "acc6",
+      "name": "lists",
+      "method": "GET",
+      "path": "/api/v1/affiliate/partner/campaign/product_list/list",
+      "observedAt": "2026-09-13T03:41:30.150914+00:00",
+      "scope": "one page, not full dataset",
+      "queryKeys": [
+        "aid",
+        "app_name",
+        "browser_language",
+        "browser_name",
+        "browser_online",
+        "browser_platform",
+        "browser_version",
+        "campaign_id",
+        "cookie_enabled",
+        "cur_page",
+        "device_id",
+        "device_platform",
+        "page_size",
+        "partner_id",
+        "source",
+        "timezone_name",
+        "user_language"
+      ],
+      "bodyKeys": [],
+      "http": 200,
+      "verificationRequired": false,
+      "systemError": false,
+      "businessCode": 0,
+      "responseSha256": "9ff99702fb1837d3557540cbc61e1735e139eed2e4aac753fb5d684455121398",
+      "status": "observed",
+      "fields": {
+        "$": {
+          "object": 1
+        },
+        "$.code": {
+          "number": 1
+        },
+        "$.data": {
+          "object": 1
+        },
+        "$.data.lists": {
+          "array": 1
+        },
+        "$.data.lists[]": {
+          "object": 5
+        },
+        "$.data.lists[].id": {
+          "string": 5
+        },
+        "$.data.lists[].name": {
+          "string": 5
+        },
+        "$.data.lists[].product_images": {
+          "array": 5
+        },
+        "$.data.lists[].product_images[]": {
+          "object": 5
+        },
+        "$.data.lists[].product_images[].uri": {
+          "string": 5
+        },
+        "$.data.lists[].product_images[].url_list": {
+          "array": 5
+        },
+        "$.data.lists[].product_images[].url_list[]": {
+          "string": 10
+        },
+        "$.data.lists[].total": {
+          "number": 5
+        },
+        "$.data.lists[].update_time": {
+          "string": 5
+        },
+        "$.data.lists[].url": {
+          "string": 5
+        },
+        "$.data.total": {
+          "number": 1
+        },
+        "$.msg": {
+          "string": 1
+        }
+      },
+      "evidenceRun": "supply-detail.json"
+    },
+    {
+      "market": "it",
+      "account": "acc6",
+      "name": "opportunities",
+      "method": "POST",
+      "path": "/api/v1/affiliate/partner/product/opportunity_product/list",
+      "observedAt": "2026-09-13T03:41:32.571571+00:00",
+      "scope": "one page, not full dataset",
+      "queryKeys": [
+        "aid",
+        "app_name",
+        "browser_language",
+        "browser_name",
+        "browser_online",
+        "browser_platform",
+        "browser_version",
+        "cookie_enabled",
+        "device_id",
+        "device_platform",
+        "partner_id",
+        "timezone_name",
+        "user_language"
+      ],
+      "bodyKeys": [
+        "filter",
+        "page",
+        "page_size"
+      ],
+      "http": 200,
+      "verificationRequired": false,
+      "systemError": false,
+      "businessCode": 0,
+      "responseSha256": "9eea8124c5f8cbaa8598e57d2b589eb19ef7ac705993934f5cf08680a596ca59",
+      "status": "observed",
+      "fields": {
+        "$": {
+          "object": 1
+        },
+        "$.code": {
+          "number": 1
+        },
+        "$.data": {
+          "object": 1
+        },
+        "$.data.has_more": {
+          "boolean": 1
+        },
+        "$.data.products": {
+          "array": 1
+        },
+        "$.data.products[]": {
+          "object": 5
+        },
+        "$.data.products[].campaign_id": {
+          "string": 5
+        },
+        "$.data.products[].commission_rate": {
+          "string": 5
+        },
+        "$.data.products[].contact_info": {
+          "object": 5
+        },
+        "$.data.products[].earn_amount": {
+          "string": 5
+        },
+        "$.data.products[].fs_is_selected": {
+          "boolean": 5
+        },
+        "$.data.products[].has_campaign_contact_info": {
+          "boolean": 5
+        },
+        "$.data.products[].has_more_contact": {
+          "number": 5
+        },
+        "$.data.products[].is_free_sample": {
+          "boolean": 5
+        },
+        "$.data.products[].open_collab_ads_rate": {
+          "string": 5
+        },
+        "$.data.products[].open_collab_rate": {
+          "string": 5
+        },
+        "$.data.products[].price": {
+          "object": 5
+        },
+        "$.data.products[].price.celling_price": {
+          "string": 5
+        },
+        "$.data.products[].price.currency": {
+          "string": 5
+        },
+        "$.data.products[].price.floor_price": {
+          "string": 5
+        },
+        "$.data.products[].product_id": {
+          "string": 5
+        },
+        "$.data.products[].product_image": {
+          "object": 5
+        },
+        "$.data.products[].product_image.uri": {
+          "string": 5
+        },
+        "$.data.products[].product_image.url_list": {
+          "array": 5
+        },
+        "$.data.products[].product_image.url_list[]": {
+          "string": 10
+        },
+        "$.data.products[].product_rating": {
+          "number": 5
+        },
+        "$.data.products[].product_regions": {
+          "array": 5
+        },
+        "$.data.products[].product_regions[]": {
+          "string": 53
+        },
+        "$.data.products[].sales": {
+          "string": 5
+        },
+        "$.data.products[].shop_info": {
+          "object": 5
+        },
+        "$.data.products[].shop_info.shop_experience_score": {
+          "number": 5
+        },
+        "$.data.products[].shop_info.shop_name": {
+          "string": 5
+        },
+        "$.data.products[].shop_info.shop_rating": {
+          "string": 5
+        },
+        "$.data.products[].title": {
+          "string": 5
+        },
+        "$.data.total": {
+          "number": 1
+        },
+        "$.msg": {
+          "string": 1
+        }
+      },
+      "evidenceRun": "supply-detail.json"
+    },
+    {
+      "market": "it",
+      "account": "acc6",
+      "name": "offers",
+      "method": "GET",
+      "path": "/api/v1/affiliate/partner/product/opportunity_product/campaign_detail",
+      "observedAt": "2026-09-13T03:41:34.665201+00:00",
+      "scope": "one page, not full dataset",
+      "queryKeys": [
+        "aid",
+        "app_name",
+        "browser_language",
+        "browser_name",
+        "browser_online",
+        "browser_platform",
+        "browser_version",
+        "cookie_enabled",
+        "device_id",
+        "device_platform",
+        "partner_id",
+        "product_id",
+        "timezone_name",
+        "user_language"
+      ],
+      "bodyKeys": [],
+      "http": 200,
+      "verificationRequired": false,
+      "systemError": false,
+      "businessCode": 0,
+      "responseSha256": "077aa84ec058d4f1af0e3b566fde8dc6d835b22a7eb503a018b74c5683e7ea9d",
+      "status": "observed",
+      "fields": {
+        "$": {
+          "object": 1
+        },
+        "$.code": {
+          "number": 1
+        },
+        "$.data": {
+          "object": 1
+        },
+        "$.data.product_campaign_detail": {
+          "array": 1
+        },
+        "$.data.product_campaign_detail[]": {
+          "object": 1
+        },
+        "$.data.product_campaign_detail[].campaign": {
+          "object": 1
+        },
+        "$.data.product_campaign_detail[].campaign.campaign_id": {
+          "string": 1
+        },
+        "$.data.product_campaign_detail[].campaign.commission": {
+          "string": 1
+        },
+        "$.data.product_campaign_detail[].campaign.crs_campaign_type": {
+          "number": 1
+        },
+        "$.data.product_campaign_detail[].campaign.name": {
+          "string": 1
+        },
+        "$.data.product_campaign_detail[].campaign.promotion_end_time": {
+          "string": 1
+        },
+        "$.data.product_campaign_detail[].campaign.promotion_start_time": {
+          "string": 1
+        },
+        "$.data.product_campaign_detail[].is_free_sample": {
+          "boolean": 1
+        },
+        "$.data.product_campaign_detail[].is_selected": {
+          "boolean": 1
+        },
+        "$.data.product_campaign_detail[].open_collab_ads_rate": {
+          "string": 1
+        },
+        "$.data.product_campaign_detail[].open_collab_rate": {
+          "string": 1
+        },
+        "$.data.total": {
+          "number": 1
+        },
+        "$.msg": {
+          "string": 1
+        }
+      },
+      "evidenceRun": "supply-detail.json"
+    },
+    {
+      "market": "it",
+      "account": "acc6",
+      "name": "categories",
+      "method": "POST",
+      "path": "/api/v1/affiliate/lux/product/category/childrenv2",
+      "observedAt": "2026-09-13T03:41:36.466654+00:00",
+      "scope": "one page, not full dataset",
+      "queryKeys": [
+        "aid",
+        "app_name",
+        "browser_language",
+        "browser_name",
+        "browser_online",
+        "browser_platform",
+        "browser_version",
+        "cookie_enabled",
+        "device_id",
+        "device_platform",
+        "partner_id",
+        "timezone_name",
+        "user_language"
+      ],
+      "bodyKeys": [
+        "category_id",
+        "status_param"
+      ],
+      "http": 200,
+      "verificationRequired": true,
+      "systemError": true,
+      "businessCode": 10000,
+      "responseSha256": "466ad6ed258f39d7837128f21621b772d40495135207bfe406f9a273bbb81db2",
+      "status": "blocked",
+      "evidenceRun": "supply-detail.json"
+    },
+    {
+      "market": "it",
+      "account": "acc6",
+      "name": "im_cards",
+      "method": "GET",
+      "path": "/api/v1/affiliate/partner/im/product_list/list",
+      "observedAt": "2026-09-13T03:42:54.572441+00:00",
+      "scope": "one page, not full dataset",
+      "queryKeys": [
+        "aid",
+        "app_name",
+        "browser_language",
+        "browser_name",
+        "browser_online",
+        "browser_platform",
+        "browser_version",
+        "cookie_enabled",
+        "cur_page",
+        "device_id",
+        "device_platform",
+        "key_word",
+        "page_size",
+        "partner_id",
+        "search_type",
+        "timezone_name",
+        "user_language",
+        "version"
+      ],
+      "bodyKeys": [],
+      "http": 200,
+      "verificationRequired": false,
+      "systemError": false,
+      "businessCode": 0,
+      "responseSha256": "963d77f200af9309715ab0ce9c2951c2d47e769b66227ff8106fb9073b3ede2e",
+      "status": "observed",
+      "fields": {
+        "$": {
+          "object": 1
+        },
+        "$.code": {
+          "number": 1
+        },
+        "$.data": {
+          "object": 1
+        },
+        "$.data.list": {
+          "array": 1
+        },
+        "$.data.list[]": {
+          "object": 1
+        },
+        "$.data.list[].campaign_id": {
+          "string": 1
+        },
+        "$.data.list[].campaign_products": {
+          "array": 1
+        },
+        "$.data.list[].campaign_products[]": {
+          "object": 1
+        },
+        "$.data.list[].campaign_products[].creator_commission_percent": {
+          "string": 1
+        },
+        "$.data.list[].campaign_products[].creator_earn_amount": {
+          "string": 1
+        },
+        "$.data.list[].campaign_products[].product_id": {
+          "string": 1
+        },
+        "$.data.list[].campaign_products[].product_name": {
+          "string": 1
+        },
+        "$.data.list[].campaign_products[].product_price": {
+          "object": 1
+        },
+        "$.data.list[].campaign_products[].product_price.max_price": {
+          "string": 1
+        },
+        "$.data.list[].campaign_products[].product_price.min_price": {
+          "string": 1
+        },
+        "$.data.list[].campaign_products[].product_sales": {
+          "string": 1
+        },
+        "$.data.list[].campaign_products[].product_thumbnail": {
+          "object": 1
+        },
+        "$.data.list[].campaign_products[].product_thumbnail.uri": {
+          "string": 1
+        },
+        "$.data.list[].campaign_products[].product_thumbnail.url_list": {
+          "array": 1
+        },
+        "$.data.list[].campaign_products[].product_thumbnail.url_list[]": {
+          "string": 2
+        },
+        "$.data.list[].campaign_products[].stock": {
+          "string": 1
+        },
+        "$.data.list[].campaign_products[].total_commission_percent": {
+          "null": 1
+        },
+        "$.data.list[].product_list_id": {
+          "string": 1
+        },
+        "$.data.list[].product_list_name": {
+          "string": 1
+        },
+        "$.data.list[].total_num": {
+          "number": 1
+        },
+        "$.data.list[].url": {
+          "string": 1
+        },
+        "$.data.total": {
+          "number": 1
+        },
+        "$.msg": {
+          "string": 1
+        }
+      },
+      "evidenceRun": "im-card-specific.json"
+    },
+    {
+      "market": "mx",
+      "account": "acc6",
+      "name": "relations",
+      "method": "GET",
+      "path": "/api/v1/affiliate/partner/relation/list",
+      "observedAt": "2026-09-13T03:42:57.126882+00:00",
+      "scope": "one page, not full dataset",
+      "queryKeys": [
+        "aid",
+        "app_name",
+        "browser_language",
+        "browser_name",
+        "browser_online",
+        "browser_platform",
+        "browser_version",
+        "cookie_enabled",
+        "cur_page",
+        "device_id",
+        "device_platform",
+        "page_size",
+        "partner_id",
+        "related_biz_types",
+        "relation_tag",
+        "status",
+        "timezone_name",
+        "user_language"
+      ],
+      "bodyKeys": [],
+      "http": 200,
+      "verificationRequired": false,
+      "systemError": false,
+      "businessCode": 0,
+      "responseSha256": "f8e139e7aa00c029be3263ddafdfede128369a28740a9fa1a429c976ec384a18",
+      "status": "observed",
+      "fields": {
+        "$": {
+          "object": 1
+        },
+        "$.code": {
+          "number": 1
+        },
+        "$.data": {
+          "object": 1
+        },
+        "$.data.creator_raise_relation_count": {
+          "number": 1
+        },
+        "$.data.has_more": {
+          "boolean": 1
+        },
+        "$.data.partner_raise_relation_count": {
+          "number": 1
+        },
+        "$.data.status_count": {
+          "object": 1
+        },
+        "$.data.status_count.all": {
+          "number": 1
+        },
+        "$.data.status_count.binding_failed_expired": {
+          "number": 1
+        },
+        "$.data.status_count.binding_failed_reject": {
+          "number": 1
+        },
+        "$.data.status_count.bound": {
+          "number": 1
+        },
+        "$.data.status_count.pending": {
+          "number": 1
+        },
+        "$.data.status_count.unbinding": {
+          "number": 1
+        },
+        "$.data.status_count.unbound": {
+          "number": 1
+        },
+        "$.data.status_count.unbound_expired": {
+          "number": 1
+        },
+        "$.data.status_count.unbound_partially_bind": {
+          "number": 1
+        },
+        "$.data.status_count.unbound_unlink": {
+          "number": 1
+        },
+        "$.data.total_num": {
+          "number": 1
+        },
+        "$.msg": {
+          "string": 1
+        }
+      },
+      "evidenceRun": "mx-relations.json"
+    },
+    {
+      "path": "/api/v1/affiliate/partner/im/collaboration/get",
+      "method": "GET",
+      "queryKeys": [
+        "aid",
+        "app_name",
+        "browser_language",
+        "browser_name",
+        "browser_online",
+        "browser_platform",
+        "browser_version",
+        "cookie_enabled",
+        "creator_id",
+        "device_id",
+        "device_platform",
+        "partner_id",
+        "timezone_name",
+        "user_language"
+      ],
+      "bodyKeys": [],
+      "observedAt": "2026-09-13T03:48:18.090391+00:00",
+      "http": 200,
+      "businessCode": 0,
+      "verificationRequired": false,
+      "responseSha256": "3bc1d5003bf8a658e8f2d90af10b8c23f7514568a615147cfd5ffc23544861a8",
+      "status": "observed",
+      "fields": {
+        "$": {
+          "object": 1
+        },
+        "$.code": {
+          "number": 1
+        },
+        "$.collaboration_type": {
+          "array": 1
+        },
+        "$.collaboration_type[]": {
+          "number": 1
+        },
+        "$.has_permission": {
+          "boolean": 1
+        },
+        "$.msg": {
+          "string": 1
+        }
+      },
+      "market": "mx",
+      "account": "acc1",
+      "evidenceRun": "mx-im-context.json"
+    },
+    {
+      "path": "/api/v1/affiliate/partner/im/collaboration/get",
+      "method": "GET",
+      "queryKeys": [
+        "aid",
+        "app_name",
+        "browser_language",
+        "browser_name",
+        "browser_online",
+        "browser_platform",
+        "browser_version",
+        "cookie_enabled",
+        "creator_id",
+        "device_id",
+        "device_platform",
+        "partner_id",
+        "timezone_name",
+        "user_language"
+      ],
+      "bodyKeys": [],
+      "observedAt": "2026-09-13T03:48:20.891085+00:00",
+      "http": 200,
+      "businessCode": 0,
+      "verificationRequired": false,
+      "responseSha256": "3bc1d5003bf8a658e8f2d90af10b8c23f7514568a615147cfd5ffc23544861a8",
+      "status": "observed",
+      "fields": {
+        "$": {
+          "object": 1
+        },
+        "$.code": {
+          "number": 1
+        },
+        "$.collaboration_type": {
+          "array": 1
+        },
+        "$.collaboration_type[]": {
+          "number": 1
+        },
+        "$.has_permission": {
+          "boolean": 1
+        },
+        "$.msg": {
+          "string": 1
+        }
+      },
+      "market": "mx",
+      "account": "acc1",
+      "evidenceRun": "mx-im-context.json"
+    },
+    {
+      "path": "/api/v1/affiliate/partner/im/collaboration/get",
+      "method": "GET",
+      "queryKeys": [
+        "aid",
+        "app_name",
+        "browser_language",
+        "browser_name",
+        "browser_online",
+        "browser_platform",
+        "browser_version",
+        "cookie_enabled",
+        "creator_id",
+        "device_id",
+        "device_platform",
+        "partner_id",
+        "timezone_name",
+        "user_language"
+      ],
+      "bodyKeys": [],
+      "observedAt": "2026-09-13T03:48:23.468053+00:00",
+      "http": 200,
+      "businessCode": 0,
+      "verificationRequired": false,
+      "responseSha256": "3bc1d5003bf8a658e8f2d90af10b8c23f7514568a615147cfd5ffc23544861a8",
+      "status": "observed",
+      "fields": {
+        "$": {
+          "object": 1
+        },
+        "$.code": {
+          "number": 1
+        },
+        "$.collaboration_type": {
+          "array": 1
+        },
+        "$.collaboration_type[]": {
+          "number": 1
+        },
+        "$.has_permission": {
+          "boolean": 1
+        },
+        "$.msg": {
+          "string": 1
+        }
+      },
+      "market": "mx",
+      "account": "acc1",
+      "evidenceRun": "mx-im-context.json"
+    },
+    {
+      "path": "/api/v1/affiliate/partner/im/filter/creator/mget",
+      "method": "POST",
+      "queryKeys": [
+        "aid",
+        "app_name",
+        "browser_language",
+        "browser_name",
+        "browser_online",
+        "browser_platform",
+        "browser_version",
+        "cookie_enabled",
+        "device_id",
+        "device_platform",
+        "partner_id",
+        "timezone_name",
+        "user_language"
+      ],
+      "bodyKeys": [
+        "creator_ids"
+      ],
+      "observedAt": "2026-09-13T03:48:25.042709+00:00",
+      "http": 200,
+      "businessCode": 0,
+      "verificationRequired": false,
+      "responseSha256": "5ad235c89489f3a14c8d3778e1fe8857ff136eef30543631fa80c4f416529f00",
+      "status": "observed",
+      "fields": {
+        "$": {
+          "object": 1
+        },
+        "$.code": {
+          "number": 1
+        },
+        "$.data": {
+          "array": 1
+        },
+        "$.data[]": {
+          "object": 3
+        },
+        "$.data[].avatar": {
+          "object": 3
+        },
+        "$.data[].avatar.is_authorized": {
+          "boolean": 3
+        },
+        "$.data[].avatar.status": {
+          "number": 3
+        },
+        "$.data[].avatar.value": {
+          "object": 3
+        },
+        "$.data[].avatar.value.thumb_url_list": {
+          "array": 3
+        },
+        "$.data[].avatar.value.thumb_url_list[]": {
+          "string": 3
+        },
+        "$.data[].avatar.value.url_list": {
+          "array": 3
+        },
+        "$.data[].avatar.value.url_list[]": {
+          "string": 3
+        },
+        "$.data[].conversation_id": {
+          "string": 3
+        },
+        "$.data[].creator_im_id": {
+          "string": 3
+        },
+        "$.data[].creator_oec_id": {
+          "string": 3
+        },
+        "$.data[].creator_type": {
+          "array": 3
+        },
+        "$.data[].creator_type[]": {
+          "number": 3
+        },
+        "$.data[].handle": {
+          "object": 3
+        },
+        "$.data[].handle.is_authorized": {
+          "boolean": 3
+        },
+        "$.data[].handle.status": {
+          "number": 3
+        },
+        "$.data[].handle.value": {
+          "string": 3
+        },
+        "$.data[].nickname": {
+          "object": 3
+        },
+        "$.data[].nickname.is_authorized": {
+          "boolean": 3
+        },
+        "$.data[].nickname.status": {
+          "number": 3
+        },
+        "$.data[].nickname.value": {
+          "string": 3
+        },
+        "$.msg": {
+          "string": 1
+        }
+      },
+      "market": "mx",
+      "account": "acc1",
+      "evidenceRun": "mx-im-context.json"
     }
   ],
   "rawResponsesStored": false,
@@ -1868,6 +2707,22 @@
     },
     {
       "market": "br",
+      "unchanged": true
+    },
+    {
+      "market": "it",
+      "unchanged": true
+    },
+    {
+      "market": "it",
+      "unchanged": true
+    },
+    {
+      "market": "mx",
+      "unchanged": true
+    },
+    {
+      "market": "mx",
       "unchanged": true
     }
   ]

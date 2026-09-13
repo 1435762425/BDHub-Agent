@@ -4,7 +4,7 @@
 
 | 发现 | 实际依据 | 旧系统是否已利用 | 应用方式与限制 |
 |---|---|---|---|
-| 样品关联提供OEC×PID×橱窗布尔 | 本轮MX sample_records中creator_info.oec_id、product_info.product_id、is_product_in_showcase | 旧parse已映射showcase_added，不是新发现接口；新二发信号层尚未复用 | 为样品范围达人补另一条采用证据；不称全体实时橱窗或本次TapLink精确采用 |
+| 样品服务记录包含OEC×PID×橱窗布尔 | 本轮MX sample_records中creator_info.oec_id、product_info.product_id、is_product_in_showcase | 旧parse已映射showcase_added；仅属于可见样品记录的上下文 | 仅查询可见样品服务状态；用户纠正：不能证明历史样品来自我们，也不能作为二发采用依据 |
 | 商家联系信息与活动联系人分开 | product_info.seller_contact_info与campaign_info.contact_info同时返回 | 旧样品safe_snapshot未保留完整联系路径 | 对应用户“联系商家补样/损坏”场景；先核实角色，仅暴露必要入口 |
 | 商家brief和偏好可从响应取得 | seller_campaign_extra.creator_preference、objective、exclusive，样品记录含category_setting/content_format/content_style/notes | 旧页面早有观察，当前样品归一化/货盘投影未完整保存 | 避免Agent猜合作要求；用户已说明形式不作主排序，不能以新字段擅增硬筛 |
 | 普通佣金之外还有ads点位 | selected/member/sample出现open_collab_ads_commission_percent、total_ads_commission_percent | 当前商品/卡事实投影主要取creator/plan/total | 分开存为候选业务事实，不自动加到总佣金或回答Boost |
@@ -17,7 +17,7 @@
 
 此前本任务MX3会话10条系统通知证据位于新var/mx-showcase-review-20260913/report.json。明确type=notification、sender_role=3、稳定starling key，样本s:is_stranger=false；已解码扩展未见PID，field14未解释。不把最近发送商品卡当采用PID。
 
-后续对照应读取同一关系通知前后的消息/会话状态，并与回复、TAP或样品橱窗关联交叉验证。只读调查无法证明发送限额已解除的所有条件，不通过反复发送来试额度；准确重置规则还需官方界面/错误合同证据。
+后续对照应读取同一关系通知前后的消息/会话状态，并与回复、本机构TAP关联交叉验证，不混入样品来源推断。只读调查无法证明发送限额已解除的所有条件，不通过反复发送来试额度；准确重置规则还需官方界面/错误合同证据。
 
 ## 已知缺口与最小下一步
 
@@ -41,3 +41,8 @@
 源码观察、历史UI、当前远端样本分别标记。原始权限、秘钥、Cookie、完整私信和联系方式不放进长期说明文档；字段字典记录路径、类型、样本范围和时间。需要业务值例子时使用合成占位，保留准确字段单位，不把模拟数据标实测。
 
 字段首次看见后先判断能否改变具体业务决定，再决定是否进数据模型；不因字段多就全部装进Agent上下文。每次协议变化保存差异与新样本，保留原证据而非覆盖昨日事实。
+
+
+## 本次续查更新
+
+新取得MX im/collaboration/get与mget响应、IT列表/高机会/方案/IM卡及MX关系列表。发现历史网页SDK283条候选，与已审查34条接口分开登记。IM剩余额度/重置仍未知；不因存在has_permission就宣布已经解决。IT类目树code10000保留失败证据。普通ShareLink GET实际为创建动作，已修正此前POST方法记录。样品采用推论已撤销，参见主手册纠正段。

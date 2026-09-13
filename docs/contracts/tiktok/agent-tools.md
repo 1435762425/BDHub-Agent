@@ -30,14 +30,14 @@
 
 | 工具建议 | 输入与返回 | 真实底座/本轮证据 | 允许用途与失败处理 | 接入顺序 |
 |---|---|---|---|---|
-| read_relationship | 宿主固定关系；返回回复/积极/拒绝/人工控制与来源 | 旧IM/状态库；新局部关系库 | 判断当前服务，不自动解除拒联；版本变化取消旧提案 | P0 |
+| read_relationship | 宿主固定关系；返回回复/积极/拒绝/人工控制与来源 | 旧IM/状态库；MX合作类型/has_permission新读取已验；新统一关系库未接 | 判断当前服务，不自动解除拒联；版本变化取消旧提案 | P0 |
 | read_messages | 关系内游标/必要数量；原话、发送方、时间、附件引用 | 旧IM库、203/608/301；此前MX/IT读取已验 | 理解“上次那款”；查不到历史不编造；分页覆盖明确 | P0 |
 | resolve_product_reference | 当前卡片/消息引用、候选商品；精确匹配或歧义 | PID卡绑定和本方发送记录 | 多候选则向达人澄清，绝不相似标题直接绑PID | P0 |
 | read_offer | 当前offerRef；名称短名、当前达人佣金/期限/库存/状态 | 活动/已选/成员；本轮三市场货盘、IT成员读取 | 解释当前可给条件；内部佣金不进回复上下文；字段缺失不承诺 | P0 |
 | read_card_binding | offerRef；PID/list/wire Campaign/来源Campaign和核验时间 | im/product_list/list＋members；IT既有证据及本轮复读成员 | 证明卡与方案一致；缺卡只返回缺口，不能暗建链接 | P0 |
 | read_sample_status | 当前关系+PID；申请/审批方/状态/覆盖范围 | sample/records/list；本轮MX已发货单页 | 告知已知事实；无记录不等于从未申请；IT/BR未验不开放 | P0 |
 | read_seller_contact_route | 当前商品/样品ref；角色已核验的商家联系路径 | 本轮MX sample product_info.seller_contact_info实际存在 | 用完/损坏引导商家；联系信息角色不明返回待核对；不能默认公开私人资料 | P0 |
-| read_adoption_evidence | 关系、PID和日期；IM通知/样品橱窗/TAP证据分列 | IM此前10通知；MX样品布尔/OEC/PID本轮已验；TAP旧合同 | 可标积极/已添加证据；通知无PID不猜，样品部分覆盖不冒称全量 | P0 |
+| read_adoption_evidence | 关系、PID和日期；IM通知与本机构TAP证据分列 | IM此前10通知；TAP旧合同；排除样品橱窗作为二发采用依据 | IM通知可记积极；TAP核对本机构相关PID；不借样品记录判断二发链接采用 | P0 |
 | read_creator_profile | 绑定OEC；具名指标、窗口、类目与观察时间 | 已有Find/Profile；此前IT实测，当前默认策略有文档漂移 | 排序/理解已有事实；不以旧指标假装当前或缺值淘汰 | P1 |
 | read_content_evidence | 当前关系+PID+窗口；视频/直播标识及归属 | 样品is_posted/计数可用；TAP内容联合合同未接 | 计数不当video_id；无完整覆盖不能答“你没发” | P1，先补合同 |
 | read_tap_metrics | 范围/窗口；机构归属GMV、订单和报告时点 | 旧report导出/解析/日事实 | 回答有证据表现；不把关联GMV当因果增量；新报表同步独立任务 | P1 |
