@@ -197,9 +197,10 @@ class CatalogClean:
         return dict(row)
 
     def mark(self, intent_id, state, *, receipt=None, readback=None, now=None):
+        """Advance one delete intent. A verified deletion is terminal and never downgraded."""
         now = now if now is not None else time.time()
         with self.db:
-            self.db.execute('UPDATE catalog_clean_intent SET state=?,receipt=COALESCE(?,receipt),readback=COALESCE(?,readback),updated=? WHERE id=?',
+            self.db.execute('UPDATE catalog_clean_intent SET state=?,receipt=COALESCE(?,receipt),readback=COALESCE(?,readback),updated=? WHERE id=? AND state<>"verified"',
                             (state, encoded(receipt) if receipt is not None else None,
                              encoded(readback) if readback is not None else None, now, intent_id))
 

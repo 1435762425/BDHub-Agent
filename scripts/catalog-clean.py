@@ -171,7 +171,10 @@ def step_delete(clean, report, max_deletes=None):
         candidates = candidates[:max_deletes]
     report['deleteCandidates'] = len(candidates)
     work = []
+    done = {r[0] for r in clean.db.execute("SELECT list_id FROM catalog_clean_intent WHERE run_id=? AND state='verified'", (run_id,))}
     for item in candidates:
+        if str(item['list_id']) in done:
+            continue  # already verified deleted: never re-check or re-delete it
         try:
             work.append((item, clean.freeze_delete(run_id, item['list_id'])))
         except Exception as error:
@@ -214,7 +217,10 @@ def step_delete(clean, report, max_deletes=None):
                 except Exception as error:
                     code = str(error) if isinstance(error, ValueError) else f'{type(error).__name__}:{str(error)[:60]}'
                     try:
-                        clean.mark(intent['id'], 'unknown', readback={'error': code})
+                        # No receipt means nothing was submitted: back to the queue, not unknown.
+                        current = clean.intent(intent['id'])
+                        submitted = current['state'] in ('submitted', 'receipt_saved') or current.get('receipt')
+                        clean.mark(intent['id'], 'unknown' if submitted else 'prepared', readback={'error': code})
                     except Exception:
                         pass
                     blocked.append({'list_id': list_id, 'error': code})
@@ -235,14 +241,18 @@ def verify_deleted(clean, read, report):
     present = {str(r['list_id']) for r in rows}
     states = {}
     for intent in clean.pending_deletes(run_id):
-        if intent['state'] not in ('receipt_saved', 'submitted'):
+        if intent['state'] not in ('receipt_saved', 'submitted', 'unknown'):
             continue
         if intent['list_id'] not in present:
             clean.mark(intent['id'], 'verified', readback={'reason': '平台回查确认已删除'})
             states['verified'] = states.get('verified', 0) + 1
-        else:
+        elif intent.get('receipt'):
+            # A submitted delete whose list survives needs a human look, never an automatic retry.
             clean.mark(intent['id'], 'unknown', readback={'reason': '删除结果待核验，不自动重试'})
             states['delete_unknown'] = states.get('delete_unknown', 0) + 1
+        else:
+            clean.mark(intent['id'], 'prepared', readback={'reason': '平台仍存在，未提交过删除，可重试'})
+            states['requeued'] = states.get('requeued', 0) + 1
     report['verifyStates'] = states
     return states
 
