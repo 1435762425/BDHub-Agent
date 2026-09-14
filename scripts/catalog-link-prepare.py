@@ -38,8 +38,12 @@ def read_selected_pool(transport,max_pages=120):
     if total is None or len(rows)!=total:raise ValueError('selected_pool_incomplete')
     return {'total':total,'pages':page,'rows':rows}
 
-def live_plans(transport,prep,pids,pool):
-    """One eligible live selected plan per PID; campaign binding comes from the platform, not the ledger."""
+def live_plans(transport,prep,pids,pool,diag=None):
+    """One eligible live selected plan per PID; campaign binding comes from the platform, not the ledger.
+
+    ``diag`` (optional) receives a precise per-PID reason, so "no plan" is never reported
+    as one undifferentiated read failure.
+    """
     listing={}
     for start in range(0,len(pids),15):
         group=pids[start:start+15]
@@ -52,16 +56,23 @@ def live_plans(transport,prep,pids,pool):
             row['managementType']='full_managed'
             row['managementEvidenceRef']='opportunity_global_only:'+SCOPE['sourceRun']
             if row['product_id'] in pids:listing[row['product_id']]=row
+    if diag is not None:
+        for pid in pids:diag[pid]='selected_plan_missing'
     plans={}
     for raw in pool['rows']:
         cp=raw.get('campaign_product') or {};ci=raw.get('campaign_info') or {}
         pid=str(cp.get('product_id'))
         if pid not in pids or str(ci.get('crs_campaign_type')) not in ('8','9'):continue
+        if diag is not None:diag[pid]='listing_read_unresolved'
         row=listing.get(pid)
-        if not row or not assess(row)['eligible']:continue
+        if not row:continue
+        if diag is not None:diag[pid]='product_no_longer_eligible'
+        if not assess(row)['eligible']:continue
+        if diag is not None:diag[pid]='plan_terms_unresolved'
         try:offer=new_offer(row,pid,str(ci.get('campaign_id')),'selected',policy=prep.policy)
         except ValueError:continue
         plans.setdefault(pid,[]).append(offer)
+        if diag is not None:diag[pid]=None
     # One live plan per PID: highest creator share, then later expiry, then campaign id. Bands never mix.
     return {pid:max(rows,key=lambda o:(Decimal(o['creatorPercent']),o['campaignId'])) for pid,rows in plans.items()}
 
@@ -222,19 +233,23 @@ def step_reconcile(prep,inv,run_id,report,limit=None):
     """
     rows=[dict(r) for r in prep.db.execute("SELECT * FROM catalog_prepare_item WHERE run_id=? AND state NOT IN ('retired','ready')",(run_id,))]
     if limit:rows=rows[:limit]
-    report['reconcileItems']=len(rows)
-    with opportunity_reader(report,wait_seconds=60,account_name='acc9') as transport:
-        pool=pool_cache(report)
-        if pool is None:
-            pool=read_selected_pool(transport);pool['readAt']=time.time()
-            (ROOT/'var/catalog-selected-pool-cache.json').write_text(json.dumps(pool,ensure_ascii=False))
-        report['selectedPoolTotal']=pool['total']
-        pids=[r['pid'] for r in rows];offers={}
-        for start in range(0,len(pids),15):
-            try:offers|=live_plans(transport,prep,pids[start:start+15],pool)
-            except Exception as error:
-                report.setdefault('reconcilePlanErrors',[]).append(str(error)[:60])
-    return reconcile_from_inventory(prep,inv,rows,offers)
+    # A product with no card can never be reused, so it needs no live plan read at all:
+    # only card-bearing PIDs need current commercial facts. Cuts the plan reads by ~2/3.
+    pids=sorted({r['pid'] for r in rows if inv.members_for_pid(r['pid'])})
+    report['reconcileItems']=len(rows);report['reconcileWithCards']=len(pids)
+    offers={};diag={}
+    if pids:
+        with opportunity_reader(report,wait_seconds=60,account_name='acc9') as transport:
+            pool=pool_cache(report)
+            if pool is None:
+                pool=read_selected_pool(transport);pool['readAt']=time.time()
+                (ROOT/'var/catalog-selected-pool-cache.json').write_text(json.dumps(pool,ensure_ascii=False))
+            report['selectedPoolTotal']=pool['total']
+            for start in range(0,len(pids),15):
+                try:offers|=live_plans(transport,prep,pids[start:start+15],pool,diag)
+                except Exception as error:
+                    report.setdefault('reconcilePlanErrors',[]).append(str(error)[:60])
+    return reconcile_from_inventory(prep,inv,rows,offers,diag)
 
 def create_spec(prep,run_id,offer,short_name):
     campaign=offer['campaignId'];pid=offer['pid']
