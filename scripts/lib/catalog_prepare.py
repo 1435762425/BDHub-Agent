@@ -270,14 +270,27 @@ def card_facts(*,list_id,campaign_id,wire,product,member,listing,policy):
             'stock':str(stock) if stock is not None else None,'previouslyUsed':False,
             'listName':str(product.get('product_list_name') or '')}
 
+def list_rows(data,count_key,list_key):
+    """Rows of a list response, or None when the shape is unusable.
+
+    A zero count with the list omitted is genuinely empty: same-account lanes bypass the
+    transport's own normalisation, so this has to be explicit instead of assumed.
+    """
+    if not isinstance(data,dict):return None
+    count=data.get(count_key);rows=data.get(list_key)
+    if type(count) is not int or count<0:return None
+    if rows is None and count==0:return []
+    return rows if isinstance(rows,list) else None
+
 def search_cards(read,pid):
     """Complete IM card search by PID. Incomplete pagination is never treated as absence."""
     seen={};total=None
     for page in range(1,6):
         body,sha=read(CARD,{'cur_page':page,'page_size':20,'version':1,'search_type':2,'key_word':str(pid)})
-        data=body.get('data');n=data.get('total') if isinstance(data,dict) else None
-        rows=data.get('list') if isinstance(data,dict) else None
-        if type(n) is not int or n<0 or not isinstance(rows,list):raise ValueError('card_search_incomplete')
+        data=body.get('data')
+        if not isinstance(data,dict):raise ValueError('card_search_incomplete')
+        n=data.get('total');rows=list_rows(data,'total','list')
+        if type(n) is not int or n<0 or rows is None:raise ValueError('card_search_incomplete')
         if total is not None and total!=n:raise ValueError('card_search_incomplete')
         total=n
         for row in rows:
@@ -311,8 +324,8 @@ def classify_pid(pid,offer,read,policy):
     best=None;observed=[]
     for lid,sha,row,product in matched:
         body,members_sha=read(MEMBERS,{'list_id':lid,'source':2 if wire=='0' else 1})
-        data=body.get('data');rows=data.get('campaign_products') if isinstance(data,dict) else None
-        if not isinstance(rows,list) or data.get('total_num')!=len(rows):raise ValueError('card_members_incomplete')
+        data=body.get('data');rows=list_rows(data,'total_num','campaign_products')
+        if rows is None or data.get('total_num')!=len(rows):raise ValueError('card_members_incomplete')
         member=next((p for p in rows if str(p.get('product_id'))==str(pid) and (str(p.get('campaign_id'))==wanted or wire!='0' and p.get('campaign_id') is None)),None)
         if member is None:
             observed.append({'listId':lid,'reusable':False,'reason':'link_member_binding_missing'});continue
@@ -364,8 +377,8 @@ def read_members(read,list_id,source='2'):
         if not isinstance(data,dict) or type(data.get('total_num')) is not int or data['total_num']<0:raise ValueError('taplink_members_malformed')
         if total is not None and total!=data['total_num']:raise ValueError('taplink_members_changed')
         total=data['total_num']
-        batch=data.get('campaign_products')
-        if not isinstance(batch,list):raise ValueError('taplink_members_malformed')
+        batch=list_rows(data,'total_num','campaign_products')
+        if batch is None:raise ValueError('taplink_members_malformed')
         for m in batch:
             pid=str(m.get('product_id') or '')
             if not pid.isdigit() or (list_id,pid) in seen:raise ValueError('taplink_members_incomplete')

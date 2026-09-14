@@ -6,7 +6,7 @@ from decimal import Decimal
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1];sys.dont_write_bytecode=True;sys.path.insert(0,str(ROOT/'scripts'))
 from lib.catalog_links import CatalogLinks,new_commission
-from lib.catalog_prepare import CatalogPreparation,READ_EXTRA,MEMBERS,new_offer,classify_pid,search_cards,scan_lists,read_members,member_facts,TaplinkInventory,reconcile_from_inventory
+from lib.catalog_prepare import CatalogPreparation,READ_EXTRA,MEMBERS,list_rows,new_offer,classify_pid,search_cards,scan_lists,read_members,member_facts,TaplinkInventory,reconcile_from_inventory
 from lib.global_selection import selected_rows,assess
 from lib.global_source import clean_product
 from lib.global_source_transport import opportunity_reader,opportunity_card_creator_batch,CREATE
@@ -353,9 +353,8 @@ def verify_created_card(read,intent,receipt):
     if not list_id.isdigit():raise ValueError('catalog_receipt_list_missing')
     body,sha=read(MEMBERS,{'list_id':list_id,'source':2})
     data=body.get('data') if isinstance(body,dict) else None
-    if not isinstance(data,dict) or type(data.get('total_num')) is not int:raise ValueError('card_members_incomplete')
-    rows=data.get('campaign_products')
-    if not isinstance(rows,list) or data['total_num']!=len(rows):raise ValueError('card_members_incomplete')
+    rows=list_rows(data,'total_num','campaign_products')
+    if rows is None or data.get('total_num')!=len(rows):raise ValueError('card_members_incomplete')
     wanted=str(spec['campaignId']);pid=str(spec['pid'])
     member=next((p for p in rows if str(p.get('product_id'))==pid and str(p.get('campaign_id'))==wanted),None)
     if member is None:return None
