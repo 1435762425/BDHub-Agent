@@ -390,7 +390,11 @@ class TaplinkInventory:
     def save_list(self,row,source='2',campaign_id='0',now=None):
         now=now if now is not None else time.time()
         with self.db:
-            self.db.execute('INSERT OR REPLACE INTO catalog_tap_list VALUES(?,?,?,?,?,?,?,?,NULL)',
+            # Upsert must not clear members_at, otherwise a re-scan loses the resume marker.
+            self.db.execute('''INSERT INTO catalog_tap_list(list_id,source,campaign_id,name,url,product_total,platform_updated_at,observed,members_at)
+VALUES(?,?,?,?,?,?,?,?,NULL)
+ON CONFLICT(list_id) DO UPDATE SET source=excluded.source,campaign_id=excluded.campaign_id,name=excluded.name,
+url=excluded.url,product_total=excluded.product_total,platform_updated_at=excluded.platform_updated_at,observed=excluded.observed''',
                 (str(row['list_id']),str(source),str(campaign_id),row.get('name'),row.get('url'),row.get('product_total'),row.get('platform_updated_at'),now))
     def save_members(self,list_id,list_name,members,now=None):
         now=now if now is not None else time.time()

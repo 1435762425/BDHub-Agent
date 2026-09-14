@@ -177,10 +177,10 @@ def step_inventory(report,lanes=1,qps=3,limit=None):
             todo=inv.lists_pending_members()
             if limit is not None:todo=todo[:limit]
             report['inventoryPending']=len(todo)
-            lane_transports=[];results=[]
+            lane_transports=[]
             try:
                 if lanes>1 and len(todo)>1:
-                    from concurrent.futures import ThreadPoolExecutor
+                    from concurrent.futures import ThreadPoolExecutor,as_completed
                     from lib.cohort_find import SharedPacer
                     pacer=SharedPacer(qps)
                     lane_transports=[transport]+[transport.fork_lane(pacer.acquire) for _ in range(lanes-1)]
@@ -189,22 +189,27 @@ def step_inventory(report,lanes=1,qps=3,limit=None):
                         try:return row,read_members(lane_reads[index%lanes],row['list_id']),None
                         except Exception as error:return row,None,error
                     with ThreadPoolExecutor(max_workers=lanes) as executor:
-                        results=[f.result() for f in [executor.submit(fetch,i,row) for i,row in enumerate(todo)]]
+                        # Persist as each list completes: a crash must not lose finished work.
+                        for future in as_completed([executor.submit(fetch,i,row) for i,row in enumerate(todo)]):
+                            row,members,error=future.result()
+                            if error is not None:
+                                code=str(error)[:40] if isinstance(error,ValueError) else 'taplink_members_unresolved'
+                                states[code]=states.get(code,0)+1;continue
+                            inv.save_members(row['list_id'],row['name'],members)
+                            states['read']=states.get('read',0)+1
                 else:
                     base=reader(transport)
                     for row in todo:
-                        try:results.append((row,read_members(base,row['list_id']),None))
-                        except Exception as error:results.append((row,None,error))
+                        try:members=read_members(base,row['list_id'])
+                        except Exception as error:
+                            code=str(error)[:40] if isinstance(error,ValueError) else 'taplink_members_unresolved'
+                            states[code]=states.get(code,0)+1;continue
+                        inv.save_members(row['list_id'],row['name'],members)
+                        states['read']=states.get('read',0)+1
             finally:
                 for on in lane_transports[1:]:
                     try:on.session.close()
                     except Exception:pass
-            for row,members,error in results:
-                if error is not None:
-                    states[str(error)[:40] if isinstance(error,ValueError) else 'taplink_members_unresolved']=states.get(str(error)[:40] if isinstance(error,ValueError) else 'taplink_members_unresolved',0)+1
-                    continue
-                inv.save_members(row['list_id'],row['name'],members)
-                states['read']=states.get('read',0)+1
         report['inventory']=inv.summary();report['inventoryStates']=states
     finally:inv.close()
     return {'lists':report.get('inventoryLists'),'states':states}
