@@ -1,7 +1,7 @@
 import sys,unittest,tempfile,json,sqlite3
 from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'scripts'))
-from lib.global_selection import sales,assess,choose_campaign,Selection,observations,selected_rows
+from lib.global_selection import sales,assess,choose_campaign,Selection,observations,selected_rows,retryable_verification_rejection
 class SelectionTests(unittest.TestCase):
  def test_inclusive_sales_and_percentage_point_boundary(self):
   p={'sales':'300 已售','product_rating':4,'commission_rate':'1200','open_collab_rate':'1000'}
@@ -32,4 +32,13 @@ class SelectionTests(unittest.TestCase):
   class Remote:
    def selected_page(self,*_,**__):return {'total':1,'items':[{'campaign_product':{'product_id':'wrong'},'campaign_info':{'campaign_id':'c'}}]}
   with self.assertRaises(ValueError):selected_rows(Remote(),['wanted'])
+ def test_only_proven_verification_rejection_can_continue(self):
+  r={'http':200,'code':10000,'verification':True,'ambiguous':False};i={'pid':'p','state':'result_unknown','payload':{'receipt':r}}
+  fresh={'product_id':'p','fs_is_selected':False,'sales':'300 已售','product_rating':4,'commission_rate':'1200','open_collab_rate':'1000'}
+  self.assertTrue(retryable_verification_rejection(i,set(),fresh))
+  self.assertFalse(retryable_verification_rejection(i,{'p'},fresh))
+  self.assertFalse(retryable_verification_rejection(i,set(),fresh|{'fs_is_selected':True}))
+  for key,value in [('code',0),('http',0),('ambiguous',True),('verification',False)]:
+   self.assertFalse(retryable_verification_rejection(i|{'payload':{'receipt':r|{key:value}}},set(),fresh))
+  self.assertFalse(retryable_verification_rejection(i|{'payload':{'receipt':r,'priorAttempts':[{},{}]}},set(),fresh))
 if __name__=='__main__':unittest.main()

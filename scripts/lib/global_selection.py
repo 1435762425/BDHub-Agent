@@ -1,5 +1,6 @@
 """Frozen full-managed intake rules and durable single-submit selection receipts."""
 import json,re,sqlite3,time
+from contextlib import closing
 from decimal import Decimal,InvalidOperation
 from pathlib import Path
 from lib.second_cycle import encoded,digest
@@ -46,7 +47,7 @@ class Selection:
         self.db.executescript('''CREATE TABLE IF NOT EXISTS intake_run(id TEXT PRIMARY KEY,rules TEXT NOT NULL,source_run TEXT NOT NULL,created REAL NOT NULL);
         CREATE TABLE IF NOT EXISTS intake_item(run_id TEXT NOT NULL,pid TEXT NOT NULL,state TEXT NOT NULL,payload TEXT NOT NULL,updated REAL NOT NULL,PRIMARY KEY(run_id,pid));''')
     def prepare(self):
-        with sqlite3.connect((self.root/'var/global-source.sqlite').as_uri()+'?mode=ro',uri=True) as c:
+        with closing(sqlite3.connect((self.root/'var/global-source.sqlite').as_uri()+'?mode=ro',uri=True)) as c:
             source=c.execute("SELECT r.id,r.scope FROM global_source_head h JOIN global_source_run r ON r.id=h.run_id WHERE json_extract(r.scope,'$.market')='it'").fetchall()
             if len(source)!=1:raise ValueError('source_scope_ambiguous')
             rid,scope=source[0]
@@ -65,10 +66,11 @@ class Selection:
         with self.db:self.db.execute('UPDATE intake_item SET state=?,payload=?,updated=? WHERE run_id=? AND pid=?',(state,encoded(payload),time.time(),item['run_id'],item['pid']))
         item.update(state=state,payload=payload)
     def begin(self,item,campaign):
+        facts=item['payload']|{'campaign':campaign,'attemptedAt':time.time(),'notDispatched':False}
         with self.db:
-            changed=self.db.execute("UPDATE intake_item SET state='submitting',payload=?,updated=? WHERE run_id=? AND pid=? AND state='pending'",(encoded(item['payload']|{'campaign':campaign,'attemptedAt':time.time()}),time.time(),item['run_id'],item['pid'])).rowcount
+            changed=self.db.execute("UPDATE intake_item SET state='submitting',payload=?,updated=? WHERE run_id=? AND pid=? AND state='pending'",(encoded(facts),time.time(),item['run_id'],item['pid'])).rowcount
             if changed!=1:raise ValueError('selection_already_attempted')
-        item.update(state='submitting',payload=item['payload']|{'campaign':campaign})
+        item.update(state='submitting',payload=facts)
     def status(self,id):return dict(self.db.execute('SELECT state,count(*) FROM intake_item WHERE run_id=? GROUP BY state',(id,)).fetchall())
 
 def selected_rows(t,pids):
@@ -89,9 +91,42 @@ def observations(folder,source_run):
     """Read verified intake observations without rewriting source snapshots."""
     path=Path(folder)/'global-selection.sqlite'
     if not path.exists():return None,{}
-    with sqlite3.connect(path.resolve().as_uri()+'?mode=ro',uri=True) as c:
+    with closing(sqlite3.connect(path.resolve().as_uri()+'?mode=ro',uri=True)) as c:
         run=c.execute('SELECT id,rules FROM intake_run WHERE source_run=? ORDER BY created DESC LIMIT 1',(source_run,)).fetchone()
         if not run:return None,{}
         rows=c.execute('SELECT pid,state,updated FROM intake_item WHERE run_id=?',(run[0],)).fetchall()
     from collections import Counter
-    return {'id':run[0],'rules':json.loads(run[1]),'total':len(rows),'states':dict(Counter(r[1] for r in rows)),'updatedAt':max((r[2] for r in rows),default=None)}, {r[0]:{'state':r[1],'observedAt':r[2]} for r in rows}
+    summary={'id':run[0],'rules':json.loads(run[1]),'total':len(rows),'states':dict(Counter(r[1] for r in rows)),'updatedAt':max((r[2] for r in rows),default=None)}
+    status=Path(folder)/'global-selection-status.json'
+    if status.exists():
+        report=json.loads(status.read_text())
+        if report.get('id')==run[0] and report.get('mode')=='same_account_parallel':summary['performance']={k:report.get(k) for k in ('confirmedPerMinute','configuredQps','lanes','confirmedThisRun','elapsedSeconds','stageMetrics')}
+    return summary, {r[0]:{'state':r[1],'observedAt':r[2]} for r in rows}
+
+def retryable_verification_rejection(item,present,fresh):
+    r=item['payload'].get('receipt') or {}
+    return (item['state']=='result_unknown' and r.get('http')==200 and r.get('code')==10000
+            and r.get('verification') is True and r.get('ambiguous') is False
+            and item['pid'] not in present and fresh.get('product_id')==item['pid']
+            and fresh.get('fs_is_selected') is False and assess(fresh)['eligible']
+            and len(item['payload'].get('priorAttempts',[]))<2)
+
+def reconcile_verification_rejections(ledger,id,t,*,pids=None,limit=600):
+    """Only explicit verification rejections with two current non-selection proofs can continue."""
+    from lib.global_source import clean_product
+    items=[i for i in ledger.items(id) if i['state']=='result_unknown' and i['payload'].get('receipt',{}).get('code')==10000 and (pids is None or i['pid'] in pids)][:limit]
+    if not items:return []
+    pids=[i['pid'] for i in items];present={str(r['campaign_product']['product_id']) for r in selected_rows(t,pids)};fresh={}
+    for start in range(0,len(pids),15):
+        targets=pids[start:start+15];page=t.opportunity_page(1,global_only=True,pids=targets)
+        if page['has_more'] or any(p['product_id'] not in targets for p in page['products']):raise ValueError('rejection_verification_scope_invalid')
+        for p in page['products']:fresh[p['product_id']]=clean_product(p)
+    accepted=[]
+    for item in items:
+        if retryable_verification_rejection(item,present,fresh.get(item['pid'],{})):
+            t.allow_verified_nonselection(item['pid'],item['payload']['receipt'],fresh[item['pid']],True)
+            prior=item['payload'].copy();history=prior.pop('priorAttempts',[])
+            history=history+[{'payload':prior,'outcome':'verified_not_selected','verifiedAt':time.time(),'evidence':{'selectedPoolAbsent':True,'freshListing':fresh[item['pid']]}}]
+            ledger.update(item,'pending',priorAttempts=history,receipt=None,platformVerification=None,notDispatched=True)
+            accepted.append(item)
+    return accepted

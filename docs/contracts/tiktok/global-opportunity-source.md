@@ -33,7 +33,7 @@ PID、标题、价格区间与币种文本、列表活动ID、平台总佣金、
 
 1. `GET /api/v1/affiliate/partner/product/opportunity_product/campaign_detail?product_id=<PID>`返回product_campaign_detail。
 2. 当前方案按详情内campaign.campaign_id、crs_campaign_type、commission、promotion_start_time、promotion_end_time，以及外层open_collab_rate/is_selected读取。全托方案详情可返回type9，不能因为列表筛选写[8]就丢弃type9。
-3. **列表campaign_id与详情当前campaign_id在实测中不同。** 列表ID仅保留为来源观察，不能用它替代选入/建链的实际活动绑定。
+3. **列表campaign_id与详情当前campaign_id在实测中不同。** 2026-09-14批量选入进一步核验：旧版原生快速路径可将当前列表ID作为选入请求引用，已选回查取得实际type8/9活动绑定。列表引用不能直接用作TapLink实际绑定。见[销量300件选入](../../implementation/global-selection-sales300.md)。
 4. 已选池按精确product_ids查询，实际campaign_info与详情当前活动取交集，再从campaign_product取得库存、状态、公开/总佣金等。没有匹配记录就保留“需要选入或继续核验”，本轮不自动执行选入。
 5. 佣金沿新项目已采用的旧版分配规则计算并标为拟方案，不冒充已经应用到TapLink的达人佣金。全托取消库存数量门槛，期限>45天及佣金优势等仍按当前规则判断。
 

@@ -48,11 +48,22 @@ def _opportunity_transport(report,*,stopped=lambda:False,extra_read_endpoints=fr
     class Scoped(CommerceTransport):
         WRITE_ENDPOINTS=frozenset({(SELECT,'POST')}) if selection_scope is not None else frozenset()
         READ_ENDPOINTS=frozenset({(LIST,'POST'),(DETAIL,'GET'),(CATEGORY,'POST'),(SELECTED,'POST')})|frozenset(extra_read_endpoints)
+        def fork_lane(self,pace):
+            if selection_scope is None:raise ValueError('selection_lane_requires_scope')
+            lane=Scoped(identity,account,allow_write=True);lane.copy_session_from(self);lane._pace=pace;lane.check_stop=check;lane._batch_lane=True
+            return lane
+        def allow_verified_nonselection(self,pid,receipt,fresh,absent):
+            if selection_scope is None or absent is not True or fresh.get('product_id')!=pid or fresh.get('fs_is_selected') is not False or receipt.get('http')!=200 or receipt.get('code')!=10000 or receipt.get('verification') is not True or receipt.get('ambiguous') is not False:raise ValueError('nonselection_proof_required')
+            consumed.discard(pid)
         def _xhr(self,**kwargs):
             if kwargs.get('write'):
                 body=kwargs.get('payload') or {};pid=body.get('product_id');cid=body.get('campaign_id')
                 if selection_scope is None or kwargs.get('path')!=SELECT or kwargs.get('method')!='POST' or set(body)!={'product_id','campaign_id'} or not cid or selection_scope.get(pid)!=cid or pid in consumed:raise ValueError('selection_write_outside_intent')
                 consumed.add(pid);report['platformWrites']+=1
+            if getattr(self,'_batch_lane',False) and not kwargs.get('write'):
+                # Concurrent reads return challenges to the coordinator; no parallel verification.
+                self._verification_header=''
+                return super(CommerceTransport,self)._xhr(**kwargs)
             return super()._xhr(**kwargs)
     report.update(scope=binding,platformWrites=0,oldDatabaseWrites=0,identityFileWrites=0)
     with guard.readonly_guard(account,wait_seconds=15):
@@ -66,4 +77,4 @@ def _opportunity_transport(report,*,stopped=lambda:False,extra_read_endpoints=fr
             check();yield transport
         finally:
             transport.session.close();report.update(identityFileUnchanged=hashlib.sha256(path.read_bytes()).hexdigest()==before,
-                verificationAttempts=transport.verification_attempts,verificationSuccesses=transport.verification_successes)
+                verificationAttempts=transport.verification_attempts+report.get('laneVerificationAttempts',0),verificationSuccesses=transport.verification_successes+report.get('laneVerificationSuccesses',0))

@@ -11,7 +11,7 @@ def stop(*_):
     global STOP
     STOP=True
 def main():
-    p=argparse.ArgumentParser();p.add_argument('action',choices=['prepare','execute','verify','status']);p.add_argument('--limit',type=int,default=600);a=p.parse_args()
+    p=argparse.ArgumentParser();p.add_argument('action',choices=['prepare','execute','execute-fast','execute-serial','verify','status']);p.add_argument('--limit',type=int,default=600);p.add_argument('--native-listing',action='store_true');p.add_argument('--reconcile-rejections',action='store_true');a=p.parse_args()
     if not 1<=a.limit<=600:p.error('limit 1..600')
     signal.signal(signal.SIGTERM,stop);signal.signal(signal.SIGINT,stop)
     with (ROOT/'var/global-selection.lock').open('a') as lock:
@@ -20,12 +20,30 @@ def main():
         def save():
             report.update(states=ledger.status(id),elapsedSeconds=round(time.time()-report['started'],2));tmp=path.with_suffix('.tmp');tmp.write_text(json.dumps(report,ensure_ascii=False,indent=2));tmp.replace(path)
             print(json.dumps({'id':id,'states':report['states'],'elapsedSeconds':report['elapsedSeconds'],'error':report.get('error')}),flush=True)
+        if a.action=='status':
+            print(json.dumps({'id':id,'states':ledger.status(id)}));ledger.db.close();return
+        counts=ledger.status(id)
+        if a.action.startswith('execute') and counts and set(counts)<={'confirmed','already_selected','filtered'}:
+            print(json.dumps({'id':id,'states':counts,'alreadyComplete':True}));ledger.db.close();return
         save()
-        if a.action in ('prepare','status'):return
-        scope={};pending=[i for i in ledger.items(id) if i['state'] in (('pending',) if a.action=='execute' else ('submitting','result_unknown'))][:a.limit]
+        if a.action=='prepare':ledger.db.close();return
+        scope={};pending=[i for i in ledger.items(id) if i['state'] in (('pending',) if a.action in ('execute','execute-fast','execute-serial') else ('submitting','awaiting_verification','result_unknown'))][:a.limit]
         current=None
         try:
             with opportunity_selector(report,scope,stopped=lambda:STOP) as t:
+                if a.action in ('execute','execute-fast'):
+                    from lib.global_selection_fast import run
+                    if a.reconcile_rejections or a.action=='execute':
+                        from lib.global_selection import reconcile_verification_rejections
+                        pending+=reconcile_verification_rejections(ledger,id,t,limit=max(0,a.limit-len(pending)))
+                    operation_pids={i['pid'] for i in pending}
+                    run(ledger,id,t,scope,pending,report,save,lambda:STOP,native_listing=a.native_listing or a.action=='execute')
+                    if a.reconcile_rejections or a.action=='execute':
+                        for _ in range(2):
+                            pending=reconcile_verification_rejections(ledger,id,t,pids=operation_pids)
+                            if not pending:break
+                            run(ledger,id,t,scope,pending,report,save,lambda:STOP,native_listing=a.native_listing or a.action=='execute')
+                    return
                 def verify(items):
                     if not items:return
                     rows=selected_rows(t,[i['pid'] for i in items]);matched={}
