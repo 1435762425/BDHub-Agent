@@ -15,6 +15,12 @@ SPEC.loader.exec_module(probe)
 
 
 class ProfileProbeTests(unittest.TestCase):
+    def test_readiness_canary_never_overrides_pauses_or_pool_exclusion(self):
+        ready={'manual_paused':False,'market_paused':False,'blockers':[{'code':'unchecked'}]}
+        self.assertTrue(probe.permits_readiness_canary(ready,True,True,[{}],None))
+        self.assertFalse(probe.permits_readiness_canary(ready,False,True,[{}],None))
+        for change in ({'manual_paused':True},{'market_paused':True},{'blockers':[{'code':'not_in_account_pool'}]}):
+            self.assertFalse(probe.permits_readiness_canary(ready|change,True,True,[{}],None,stress=True))
     def test_verification_header_overrides_success_looking_status(self):
         result = probe.classify_response(200, {"bdturing-verify": "opaque", "x-tt-system-error": "3"}, {"code": 0})
         self.assertFalse(result["allowed"])

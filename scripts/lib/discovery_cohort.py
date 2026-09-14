@@ -15,7 +15,8 @@ def slice_report(report,item):
         value['status']='completed';value.pop('reason',None)
     return value
 
-def run_cohort(worker,limit=20):
+def run_cohort(worker,limit=20,lanes=3):
+    if type(lanes) is not int or lanes not in (3,6,9):raise CreatorDiscoveryError("invalid_request")
     store=worker.store;store.heartbeat(worker.owner)
     path=store.var_dir/'second-cycle.sqlite'
     if not path.exists():return None
@@ -34,7 +35,7 @@ def run_cohort(worker,limit=20):
             folder.mkdir(parents=True,exist_ok=True,mode=0o700)
             with target_file.open('x') as f:
                 target_file.chmod(0o600)
-                json.dump({'market':'it','identityOnly':True,'cohortId':group['id'],'targets':[{'ref':i['id'],'handle':i['handle'],'externalId':i['id']} for i in items]},f)
+                json.dump({'market':'it','identityOnly':True,'cohortId':group['id'],'httpLanes':lanes,'targets':[{'ref':i['id'],'handle':i['handle'],'externalId':i['id']} for i in items]},f)
             worker.executor(target_file,output)
             report=worker._final(output/'report.private.json')
         if report:
@@ -52,7 +53,7 @@ def run_cohort(worker,limit=20):
             if not evidence.exists():evidence.write_text(payload);evidence.chmod(0o600)
             worker._settle(item,part)
         with store.transaction():store._db.execute("UPDATE discovery_cohort SET state='completed' WHERE id=?",(group['id'],))
-        return {'id':group['id'],'targets':len(items),'seconds':round(time.monotonic()-started,3),'report':str(output/'report.private.json')}
+        return {'id':group['id'],'recovered':bool(group.get('recovering')),'targets':len(items),'seconds':round(time.monotonic()-started,3),'report':str(output/'report.private.json')}
     except BaseException:
         # Keep cohort ownership/evidence for recovery; the probe supervisor closes its child.
         raise

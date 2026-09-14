@@ -39,3 +39,5 @@
 当前首个正式任务：`batch-19e1044b23d017f1f553a2ecac0d`，IT，1000＋100，用户“现在开始”授权立即准备。运行记录见[立即准备](docs/implementation/batch-1000-immediate-start.md)，不要重复创建同一批。
 
 身份批次提速已启用：`creator-profile-refresh.py worker --interval 1 --cohort-size 20`，最多20人共享会话、3条同账号HTTP通道、总3 QPS。需要同时加载新准备/身份模块；旧单活跃索引已换为受事务控制的同拥有者分组。见[提速实测](docs/implementation/batch-preparation-speed-5x.md)，7.19倍指候选增长，不是全批最终总耗时。
+
+用户已授权的单号/多号短时压测见[测试结果](docs/implementation/identity-single-multi-stress.md)。隔离stress manifest可用5/8/12 QPS，生产默认仍3 QPS；单号短测最高约2.06倍，五号出现超时，不把短测或参考样本吞吐当作长期/新增候选速度。

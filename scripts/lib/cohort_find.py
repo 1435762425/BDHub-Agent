@@ -9,10 +9,12 @@ class SharedPacer:
   with self.lock:
    time.sleep(max(0,self.last+self.interval-time.monotonic()));self.last=time.monotonic();self.starts.append(self.last)
 
-def run_find_cohort(probe,child,identity,scratch,targets,client,report,save,classify,summarize,collect,allowed):
- lock=threading.RLock();stop=threading.Event();work=queue.Queue();clients=[client];pacer=SharedPacer(3)
+def run_find_cohort(probe,child,identity,scratch,targets,client,report,save,classify,summarize,collect,allowed,lanes=3,qps=3):
+ if type(qps) is not int or qps not in (3,5,8,12):raise ValueError('invalid_cohort_qps')
+ if type(lanes) is not int or lanes not in (3,6,9):raise ValueError('invalid_cohort_lanes')
+ lock=threading.RLock();stop=threading.Event();work=queue.Queue();clients=[client];pacer=SharedPacer(qps)
  try:
-  for _ in range(2):
+  for _ in range(lanes-1):
    c=probe.PureHttpPartnerClient(client.config,identity,scratch)
    c.business_retries=client.business_retries;c.captcha_attempts=client.captcha_attempts
    child._configure_market_transport(c,identity);clients.append(c)
@@ -24,7 +26,7 @@ def run_find_cohort(probe,child,identity,scratch,targets,client,report,save,clas
  for t in targets:
   row={'targetRef':t['ref'],'externalId':t['externalId'],'inputKind':'handle_discovery','requestedHandle':t['handle'],'requestedOecId':None,'profiles':[]}
   rows.append(row);work.put((t,row))
- report['targets']=rows;report['httpLanes']=3;report['qps']=3
+ report['targets']=rows;report['httpLanes']=lanes;report['qps']=qps
  def persist():
   totals={}
   for c in clients:
@@ -40,7 +42,13 @@ def run_find_cohort(probe,child,identity,scratch,targets,client,report,save,clas
     continue
    entry={'targetRef':t['ref'],'stage':'find','profileTypes':None,'status':'inflight','attempts':[],'verificationAttempts':[]};start=time.monotonic()
    with lock:report['requests'].append(entry);persist()
-   original=c._signed_post_once;solve=c._solve_captcha
+   original=c._signed_post_once;solve=c._solve_captcha;http_post=c.session.post
+   def network_post(*args,**kwargs):
+    before=time.monotonic()
+    try:return http_post(*args,**kwargs)
+    finally:
+     with lock:entry['networkMs']=entry.get('networkMs',0)+round((time.monotonic()-before)*1000,1)
+   c.session.post=network_post
    def signed(stage,body):
     response,payload=original(stage,body)
     with lock:entry['attempts'].append({k:v for k,v in classify(response.status_code,response.headers,payload).items() if k!='allowed'});persist()
@@ -73,10 +81,12 @@ def run_find_cohort(probe,child,identity,scratch,targets,client,report,save,clas
      persist()
    except Exception as e:
     with lock:
-     entry.update(status='error',errorType=type(e).__name__,durationMs=round((time.monotonic()-start)*1000,1));report.update(status='blocked',reason='request_or_signer_error');stop.set();persist()
-   finally:c._signed_post_once=original;c._solve_captcha=solve
+     entry.update(status='error',errorType=type(e).__name__,errorCategory=('tls_certificate' if 'certificate verify failed' in str(e).lower() else 'tls_eof' if 'eof' in str(e).lower() else 'timeout' if 'timeout' in str(e).lower() or 'timed out' in str(e).lower() else 'transport_or_signer'),durationMs=round((time.monotonic()-start)*1000,1));report.update(status='blocked',reason='request_or_signer_error');stop.set();persist()
+   finally:
+    c._signed_post_once=original;c._solve_captcha=solve;c.session.post=http_post
+    with lock:entry['clientAndPacingMs']=round(max(0,entry.get('durationMs',0)-entry.get('networkMs',0)),1)
  try:
-  with ThreadPoolExecutor(max_workers=3) as executor:
+  with ThreadPoolExecutor(max_workers=lanes) as executor:
    futures=[executor.submit(lane,c) for c in clients]
    for f in futures:f.result()
   with lock:persist();client.cohort_counters=dict(report['counters'])

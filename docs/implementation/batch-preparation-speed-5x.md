@@ -39,3 +39,5 @@
 真实运行命令：`scripts/creator-profile-refresh.py worker --interval 1 --cohort-size 20`。准备与收信继续运行，AI回复仍暂停。
 
 证据：`var/batch-preparation-speed-baseline.json`、`var/batch-preparation-speed-result.json`及其带时间戳副本；逐组原始报告在`var/creator-discovery/cohorts/`。这些是新项目私有运行证据，不写旧系统。
+
+后续进一步提速探索：[单号提频与多号并行](identity-single-multi-stress.md)，单号参考读取短测2.06倍、多号超时，尚未证明再提升5倍。

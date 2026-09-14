@@ -141,6 +141,11 @@ def readonly_guard(account, *, wait_seconds=0):
         os.close(fd)
 
 
+def permits_readiness_canary(ready,enabled,identity_only,targets,cohort,stress=False):
+    return bool(enabled is True and identity_only and (len(targets)==1 or stress) and not cohort and ready
+                and not ready.get('manual_paused') and not ready.get('market_paused')
+                and ready.get('blockers') and all(b.get('code')=='unchecked' for b in ready['blockers']))
+
 def network_child(account_name: str, target_file: Path, output: Path) -> int:
     def expired(*_):
         raise ProbeDeadline("whole_probe_deadline")
@@ -166,6 +171,16 @@ def network_child(account_name: str, target_file: Path, output: Path) -> int:
     identity_only=target_input.get("identityOnly",False)
     targets = [normalize_target(t) for t in target_input["targets"]]
     cohort=target_input.get('cohortId')
+    stress=target_input.get('stressRun') is not None;stress_folder=None;stress_fingerprint=None;rate=3
+    if stress:
+        from lib.identity_stress import stress_case
+        stress_folder,case,stress_fingerprint=stress_case(ROOT,target_input,account_name)
+        rate=case['qps'];target_input['httpLanes']=case['lanes']
+    lanes=target_input.get('httpLanes',3)
+    canary=target_input.get('readinessCanary',False)
+    if type(canary) is not bool:raise ValueError('invalid_canary_mode')
+    if type(lanes) is not int or lanes not in (3,6,9):raise ValueError('invalid_cohort_lanes')
+    if not cohort and not stress and lanes!=3:raise ValueError('cohort_required')
     if cohort:
         import sqlite3,re
         if not identity_only or not isinstance(cohort,str) or not re.fullmatch(r'discovery_cohort_[a-f0-9]{32}',cohort):raise ValueError('invalid_cohort')
@@ -174,12 +189,13 @@ def network_child(account_name: str, target_file: Path, output: Path) -> int:
             if not row:raise ValueError('cohort_not_active')
             registered={r['id']:r for r in json.loads(row[0])}
             if len(targets)!=len(registered) or {t['ref'] for t in targets}!=set(registered) or any(t['ref'] not in registered or t['handle']!=registered[t['ref']]['handle'] or t['externalId']!=t['ref'] for t in targets):raise ValueError('cohort_scope_mismatch')
-    if not 1 <= len(targets) <= (20 if cohort else 3):
+    if not 1 <= len(targets) <= (40 if stress else 20 if cohort else 3):
         raise ValueError("bounded_target_count")
     report = {"schema": "bdhub.italy-profile-probe.v3", "market": "it", "account": account_name,
               "startedAt": datetime.now(timezone.utc).isoformat(), "mode": "live_readonly_profile", "requests": [], "targets": [],
-              "qps": 3 if cohort else 1, "businessRetries": 2, "captchaAttempts": 3, "verificationMode": "existing_market_aware_http_pipeline",
+              "qps": rate if stress else 3 if cohort else 1, "businessRetries": 2, "captchaAttempts": 3, "verificationMode": "existing_market_aware_http_pipeline",
               "oldDatabaseWrites": 0, "realSends": 0, "status": "starting", "identityOnly": identity_only}
+    if stress:report.update(stressRun=target_input['stressRun'],stressCase=target_input['stressCase'],mode='live_readonly_identity_stress')
     report_file = output / "report.private.json"
     save = lambda: write_json(report_file, report)
     save()
@@ -187,9 +203,10 @@ def network_child(account_name: str, target_file: Path, output: Path) -> int:
     probe = None
     try:
         ready = next((r for r in get_readiness()["accounts"] if r["name"] == account_name), None)
-        if not ready or ready.get("startable") is not True:
+        if (not ready or ready.get("startable") is not True) and not permits_readiness_canary(ready,canary or stress,identity_only,targets,cohort,stress=stress):
             report.update(status="blocked", reason="account_not_startable")
             return 2
+        report['readinessCanary']=canary
         cfg = config.load()
         prepared, unavailable = worker.prepare_collection_accounts(cfg, config.load_accounts(cfg), market="it", requested_names=[account_name])
         if not prepared:
@@ -198,11 +215,12 @@ def network_child(account_name: str, target_file: Path, output: Path) -> int:
         selected = prepared[0]
         identity_file = Path(selected.account.headers_json)
         before_identity = hashlib.sha256(identity_file.read_bytes()).hexdigest()
+        if stress and before_identity!=stress_fingerprint:raise ValueError('stress_identity_changed')
         runtime = worker.validate_runtime(worker._DEFAULT_RUNTIME)
         report["transport"] = {"host": selected.identity["api_host"], "signerRegion": selected.identity["signer_region"], "marketCode": 8, "aid": selected.identity["aid"], "runtimeManifestValidated": True}
         report["coordination"] = "Existing canonical guard locked read-only for this short probe; other lease acquisition may briefly wait. No lease file created."
         save()
-        with (readonly_guard(selected.account,wait_seconds=15) if cohort else readonly_guard(selected.account)):
+        with (readonly_guard(selected.account,wait_seconds=15) if cohort or stress else readonly_guard(selected.account)):
             try:
                 if hashlib.sha256(identity_file.read_bytes()).hexdigest() != before_identity:
                     report.update(status="blocked", reason="identity_changed_before_guard")
@@ -215,7 +233,7 @@ def network_child(account_name: str, target_file: Path, output: Path) -> int:
                     return 2
                 with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
                     probe = child._load_runtime(runtime)
-                    client = initialize_client(probe, child, selected.identity, scratch,qps=3.0 if cohort else 1.0)
+                    client = initialize_client(probe, child, selected.identity, scratch,qps=3.0 if cohort or stress else 1.0)
                 report.update(businessRetries=client.business_retries, captchaAttempts=client.captcha_attempts)
 
                 def request(stage: str, body: dict, target_ref: str):
@@ -274,16 +292,17 @@ def network_child(account_name: str, target_file: Path, output: Path) -> int:
                         report["counters"] = collect_counters(client)
                         save()
 
-                if cohort:
+                if cohort or stress:
                     from lib.cohort_find import run_find_cohort
                     def allowed(ref):
                         if worker.scheduled_relogin_svc.maintenance_due(selected.account,initialize=False,ignore_retry_throttle=True) or backoff_snapshot(selected.identity,'it')['open']:return False
+                        if stress:return not (stress_folder/'STOP').exists()
                         with closing(sqlite3.connect((VAR/'creator-discovery.sqlite').resolve().as_uri()+'?mode=ro',uri=True)) as db:
                             live=db.execute("SELECT i.status,b.status FROM discovery_item i JOIN discovery_batch b ON b.id=i.batch_id WHERE i.id=?",(ref,)).fetchone()
                         return bool(live and live[0]=='running' and live[1]!='paused')
                     with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
-                        run_find_cohort(probe,child,selected.identity,scratch,targets,client,report,save,classify_response,summarize_profile,collect_counters,allowed)
-                for target in ([] if cohort else targets):
+                        run_find_cohort(probe,child,selected.identity,scratch,targets,client,report,save,classify_response,summarize_profile,collect_counters,allowed,lanes=lanes,qps=rate if stress else 3)
+                for target in ([] if cohort or stress else targets):
                     handle, oec = target["handle"], target["oecId"]
                     result = {"targetRef": target["ref"], "inputKind": target["inputKind"], "requestedHandle": handle,
                               "requestedOecId": oec, "auditHandle": target["auditHandle"], "externalId": target["externalId"],

@@ -51,6 +51,7 @@ def main():
     worker = commands.add_parser("worker")
     worker.add_argument("--once", action="store_true")
     worker.add_argument("--cohort-size",type=int,choices=(1,10,20),default=1)
+    worker.add_argument("--cohort-lanes",type=int,choices=(3,6,9),default=3)
     worker.add_argument("--interval", type=float, default=5)
     args = parser.parse_args()
     try:
@@ -78,7 +79,7 @@ def main():
                         cohort_result=None
                         if args.cohort_size>1:
                             from lib.discovery_cohort import run_cohort
-                            cohort_result=run_cohort(discovery,args.cohort_size)
+                            cohort_result=run_cohort(discovery,args.cohort_size,lanes=args.cohort_lanes)
                         discovered = None if cohort_result else discovery.run_once()
                         cycle_result = reconcile_cycle(store.var_dir,discovery_store)
                         if refreshed is not None or discovered is not None or cohort_result is not None or args.once:
