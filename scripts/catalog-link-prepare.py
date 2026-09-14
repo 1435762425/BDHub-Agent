@@ -167,6 +167,23 @@ def step_read(prep,run_id,limit,report,lanes=1,qps=3):
                 states[outcome['state']]=states.get(outcome['state'],0)+1
     return {'claimed':len(claimed),'states':states}
 
+def fresh_offers(transport,prep,pids,now=None):
+    """Current global-only plan rows for the given PIDs; the campaign binding comes from the intent.
+
+    Used to re-validate a frozen plan immediately before creating, so a platform-side change is
+    caught instead of silently creating a link on stale commercial terms.
+    """
+    pids=list(pids);listing={}
+    for start in range(0,len(pids),15):
+        page=transport.opportunity_page(1,global_only=True,pids=pids[start:start+15])
+        if page['has_more']:raise ValueError('listing_scope_invalid')
+        for p in page['products']:
+            row=clean_product(p)
+            row['managementType']='full_managed'
+            row['managementEvidenceRef']='opportunity_global_only:'+SCOPE['sourceRun']
+            if row['product_id'] in pids:listing[row['product_id']]=row
+    return {pid:listing[pid] for pid in pids if pid in listing and assess(listing[pid])['eligible']}
+
 def step_inventory(report,lanes=1,qps=3,limit=None):
     """Enumerate every TapLink once (lists + members). Read-only: no create, no delete.
 
@@ -324,7 +341,10 @@ def step_create(prep,run_id,limit,report):
                     body=transport.require_read(r);return body,digest(body)
                 fresh=fresh_offers(transport,prep,[pid],time.time()).get(pid)
                 if not fresh:raise ValueError('product_no_longer_eligible')
-                if any(str(fresh.get(k))!=str(intent['spec']['offer'].get(k)) for k in ('campaignId','creatorPercent','totalPercent','publicPercent')):raise ValueError('commercial_facts_changed')
+                # The campaign binding comes from the frozen intent; only the commercial facts
+                # are re-read, so a plan edited on the platform can never be created silently.
+                current=new_offer(fresh,pid,intent['spec']['campaignId'],'selected',policy=prep.policy)
+                if any(str(current.get(k))!=str(intent['spec']['offer'].get(k)) for k in ('campaignId','creatorPercent','totalPercent','publicPercent')):raise ValueError('commercial_facts_changed')
                 total,_=search_cards(read,pid)
                 if total!=0:raise ValueError('existing_links_preserved_no_creation')
                 ledger.begin(intent['id'],'acc9');prep.mark_progress(run_id,pid,cid,src,'submitted')
