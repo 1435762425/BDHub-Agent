@@ -301,7 +301,7 @@ def step_verify(prep,report,limit=None):
     An intent whose POST returned but whose card could not be confirmed stays in the ledger
     with its receipt; reading it back is the only correct way to resolve it.
     """
-    rows=[dict(r) for r in prep.db.execute("SELECT * FROM catalog_prepare_item WHERE state='unknown' AND intent_id IS NOT NULL ORDER BY updated LIMIT ?",(limit or 500,))]
+    rows=[dict(r) for r in prep.db.execute("SELECT * FROM catalog_prepare_item WHERE state IN ('unknown','submitted') AND intent_id IS NOT NULL ORDER BY updated LIMIT ?",(limit or 500,))]
     report['verifyItems']=len(rows);states={}
     if not rows:return states
     ledger=CatalogLinks(ROOT)
@@ -493,11 +493,11 @@ def step_create(prep,run_id,limit,report,pace=0.0,lanes=1,qps=5):
                     card=fut.result()
                     if not card:raise ValueError('created_card_not_verified')
                     ledger.confirm(pintent['id'],card)
-                    prep.mark_progress(pintent['run_id'],ppid,pcid,psrc,'ready',card=card)
+                    prep.mark_progress(pitem['run_id'],ppid,pcid,psrc,'ready',card=card)
                     created.append({'pid':ppid,'state':'verified','listId':card['listId'],'creatorPercent':card['creatorPercent'],'seconds':round(time.time()-pt0,2)})
                 except Exception as error:
                     code=str(error) if isinstance(error,ValueError) else f'{type(error).__name__}:{str(error)[:80]}'
-                    try:prep.mark_progress(pintent['run_id'],ppid,pcid,psrc,'unknown',error=code)
+                    try:prep.mark_progress(pitem['run_id'],ppid,pcid,psrc,'unknown',error=code)
                     except Exception:pass
                     blocked.append({'pid':ppid,'error':code,'seconds':round(time.time()-pt0,2)})
             t=time.time()
