@@ -422,3 +422,50 @@ url=excluded.url,product_total=excluded.product_total,platform_updated_at=exclud
         members=self.db.execute('SELECT count(*),count(DISTINCT pid) FROM catalog_tap_member').fetchone()
         return {'lists':lists[0],'declaredProducts':lists[1],'membersRead':lists[2],'members':members[0],'coveredPids':members[1],
                 'observedAt':self.db.execute('SELECT max(observed) FROM catalog_tap_list').fetchone()[0]}
+
+def reconcile_from_inventory(prep,inv,items,offers,now=None):
+    """Judge each queued plan against the cached inventory instead of one search per PID.
+
+    Candidate cards and member facts come from the account-wide inventory; only the
+    product plan (listing) still needs a live read. Rules are unchanged: the same
+    assess_existing call decides reuse.
+    """
+    now=now if now is not None else time.time()
+    policy=prep.policy
+    states={}
+    for it in items:
+        pid=str(it['pid']);cid=str(it['campaign_id']);src=it['catalog_source'];run_id=it['run_id']
+        offer=offers.get(pid)
+        if not offer or str(offer['campaignId'])!=cid:
+            code='selected_campaign_changed' if offer else 'listing_read_unresolved'
+            with prep.db:
+                prep.db.execute("UPDATE catalog_prepare_item SET state='read_incomplete',error=?,lease_until=0,updated=? WHERE run_id=? AND pid=? AND campaign_id=? AND catalog_source=?",(code,now,run_id,pid,cid,src))
+            states['read_incomplete']=states.get('read_incomplete',0)+1;continue
+        stats=offer.get('stats') or {};total=stats.get('totalRaw');public_plan=stats.get('publicRaw')
+        merged={'managementType':offer.get('managementType') or 'full_managed','managementEvidenceRef':offer.get('managementEvidenceRef') or 'catalog-prepare:full_managed_source'}
+        observed=[];best=None
+        for m in inv.members_for_pid(pid):
+            if str(m.get('member_campaign_id') or '')!=cid:continue
+            fact={'listId':str(m['list_id']),'listName':str(m.get('list_name') or ''),'pid':pid,'campaignId':cid,
+                  'creatorRaw':m.get('creator_percent'),'publicRaw':m.get('public_percent') or public_plan,'totalRaw':total,
+                  'platformValid':str(m.get('product_status'))=='2',
+                  'productEligible':not m.get('governed') and unavailable_allowed(m.get('unavailable_type'),merged),
+                  'stock':m.get('stock'),'previouslyUsed':False}
+            ok,reason=assess_existing(fact,policy)
+            observed.append(fact|{'reusable':ok,'reason':reason})
+            if ok and (best is None or (fact['creatorRaw'] and Decimal(fact['creatorRaw'])>Decimal(best['creatorRaw']))):best=fact
+        state='reuse' if best else ('review' if observed else 'missing')
+        plan_listing={'product_id':pid,'title':offer.get('title'),'creatorPercent':offer.get('creatorPercent'),
+                      'publicPercent':offer.get('publicPercent'),'totalPercent':offer.get('totalPercent'),
+                      'agencyPercent':offer.get('agencyPercent'),'managementType':offer.get('managementType'),
+                      'managementEvidenceRef':offer.get('managementEvidenceRef')}
+        with prep.db:
+            prep.db.execute("UPDATE catalog_prepare_item SET state=?,attempts=attempts+1,lease_until=0,error=NULL,blocker=?,title=?,creator_percent=?,public_percent=?,total_percent=?,listing=?,read_at=?,updated=? WHERE run_id=? AND pid=? AND campaign_id=? AND catalog_source=?",
+                (state,'existing_links_require_review' if state=='review' else None,str(offer.get('title') or '')[:500],
+                 offer.get('creatorPercent'),offer.get('publicPercent'),offer.get('totalPercent'),encoded(plan_listing),now,now,run_id,pid,cid,src))
+            prep.db.execute('DELETE FROM catalog_prepare_reuse WHERE run_id=? AND pid=? AND campaign_id=? AND catalog_source=?',(run_id,pid,cid,src))
+            for c in observed:
+                prep.db.execute('INSERT OR REPLACE INTO catalog_prepare_reuse VALUES(?,?,?,?,?,?,?,?,?,?)',
+                    (run_id,pid,cid,src,c['listId'],c['creatorRaw'],c['publicRaw'],1 if c['reusable'] else 0,c['reason'],now))
+        states[state]=states.get(state,0)+1
+    return states

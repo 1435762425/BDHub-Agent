@@ -6,7 +6,7 @@ from decimal import Decimal
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1];sys.dont_write_bytecode=True;sys.path.insert(0,str(ROOT/'scripts'))
 from lib.catalog_links import CatalogLinks,new_commission
-from lib.catalog_prepare import CatalogPreparation,READ_EXTRA,new_offer,classify_pid,search_cards,scan_lists,read_members,member_facts,TaplinkInventory
+from lib.catalog_prepare import CatalogPreparation,READ_EXTRA,new_offer,classify_pid,search_cards,scan_lists,read_members,member_facts,TaplinkInventory,reconcile_from_inventory
 from lib.global_selection import selected_rows,assess
 from lib.global_source import clean_product
 from lib.global_source_transport import opportunity_reader,opportunity_card_creator,CREATE
@@ -214,6 +214,28 @@ def step_inventory(report,lanes=1,qps=3,limit=None):
     finally:inv.close()
     return {'lists':report.get('inventoryLists'),'states':states}
 
+def step_reconcile(prep,inv,run_id,report,limit=None):
+    """Judge every queued plan from the cached inventory plus one live plan read.
+
+    Replaces the per-PID card search: the inventory already holds which cards exist and
+    their member facts, so only the product plan still needs a platform read.
+    """
+    rows=[dict(r) for r in prep.db.execute("SELECT * FROM catalog_prepare_item WHERE run_id=? AND state NOT IN ('retired','ready')",(run_id,))]
+    if limit:rows=rows[:limit]
+    report['reconcileItems']=len(rows)
+    with opportunity_reader(report,wait_seconds=60,account_name='acc9') as transport:
+        pool=pool_cache(report)
+        if pool is None:
+            pool=read_selected_pool(transport);pool['readAt']=time.time()
+            (ROOT/'var/catalog-selected-pool-cache.json').write_text(json.dumps(pool,ensure_ascii=False))
+        report['selectedPoolTotal']=pool['total']
+        pids=[r['pid'] for r in rows];offers={}
+        for start in range(0,len(pids),15):
+            try:offers|=live_plans(transport,prep,pids[start:start+15],pool)
+            except Exception as error:
+                report.setdefault('reconcilePlanErrors',[]).append(str(error)[:60])
+    return reconcile_from_inventory(prep,inv,rows,offers)
+
 def create_spec(prep,run_id,offer,short_name):
     campaign=offer['campaignId'];pid=offer['pid']
     tail=digest([pid,campaign,offer['creatorPercent']])[:6]
@@ -334,10 +356,11 @@ def status_view():
     finally:prep.close()
 
 def main():
-    p=argparse.ArgumentParser(description=__doc__);p.add_argument('action',nargs='?',choices=['status','seed','read','create','inventory'])
+    p=argparse.ArgumentParser(description=__doc__);p.add_argument('action',nargs='?',choices=['status','seed','read','create','inventory','reconcile'])
     p.add_argument('--status-links',action='store_true',help='read-only coverage view for the product page')
     p.add_argument('--report',type=Path);p.add_argument('--pids');p.add_argument('--limit',type=int,default=15);p.add_argument('--max-creates',type=int,default=0)
     p.add_argument('--lists',type=int,default=0,help='inventory: max lists to read members for (0=all pending)')
+    p.add_argument('--items',type=int,default=0,help='reconcile: max queued plans to judge (0=all)')
     p.add_argument('--scope',choices=['intake','pool'],default='intake',
                    help='seed universe: intake=durable full-managed selection only; pool=every live selected plan')
     p.add_argument('--lanes',type=int,default=1,choices=[1,3,6,9],help='same-account read lanes')
@@ -391,6 +414,10 @@ def main():
         report['retired']=prep.retire_mismatched_bindings(run_id)
     elif a.action=='inventory':
         report['inventoryResult']=step_inventory(report,lanes=a.lanes,qps=a.qps,limit=(a.lists or None))
+    elif a.action=='reconcile':
+        inv=TaplinkInventory(ROOT)
+        try:report['reconcile']=step_reconcile(prep,inv,run_id,report,limit=(a.items or None))
+        finally:inv.close()
     elif a.action=='create':
         report['create']=step_create(prep,run_id,a.max_creates,report)
     report['summary']=prep.summary(run_id);report['elapsedSeconds']=round(time.time()-report['startedAt'],2)
