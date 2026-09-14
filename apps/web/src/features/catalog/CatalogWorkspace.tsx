@@ -1,8 +1,9 @@
 "use client";
 import Link from "next/link";
 import {useEffect,useRef,useState} from "react";
-import {Button,Card,Input,Notice,PageHeading,Pill} from "../bdhub/ui";
+import {Button,Card,Field,Input,Notice,PageHeading,Pill} from "../bdhub/ui";
 import type {CatalogLinkStatus,GlobalStatus} from "../../server/global-source/bridge";
+import type {LinkNamingConfig,LinkNamingState} from "../../server/link-naming/bridge";
 const states:Record<string,string>={collecting:"采集中",completed:"查询范围已采完",partial:"覆盖尚不完整",blocked:"等待处理"};
 const linkStates:Record<string,string>={pending:"待检查",reading:"查询中",read_incomplete:"查询不完整",missing:"确认缺链",prepared:"已冻结建链意图",submitted:"已提交待回查",unknown:"结果未知待核验",reuse:"可复用旧链",review:"旧链待处理",ready:"链接已核验",retired:"已被新活动绑定取代"};
 const linkReasons:Record<string,string>={card_search_incomplete:"商品卡查询不完整，不作为缺链",card_read_unresolved:"商品卡读取未完成",card_members_incomplete:"成员回查不完整",existing_links_require_review:"已有链接但不满足当前复用条件",existing_links_other_campaign:"已有卡片属于其他活动，不新建",product_no_longer_eligible:"商品当前不再符合初筛",selected_campaign_changed:"活动绑定已变化，需按当前活动重查",catalog_link_creation_pending:"等待建链",catalog_link_creation_unresolved:"建链结果未知，按原意图回查",catalog_link_requires_review:"旧链需人工核对",catalog_link_terms_changed:"分佣与已核验链接不一致，需重新准备",catalog_link_not_prepared:"尚未进入链接准备",link_creator_not_above_public:"旧链达人佣金未高于公开佣金",link_agency_below_minimum:"旧链机构收益不足1个百分点",link_not_platform_valid:"旧链当前平台无效",link_product_not_eligible:"旧链商品当前不满足资格"};
@@ -14,6 +15,10 @@ export default function CatalogWorkspace(){
  const [links,setLinks]=useState<CatalogLinkStatus|null>(null),[linksError,setLinksError]=useState(false);
  useEffect(()=>{const controller=new AbortController();let timer:ReturnType<typeof setTimeout>;const poll=async()=>{try{const r=await fetch(`/api/global-source?offset=${offset}&q=${encodeURIComponent(query)}`,{signal:controller.signal,cache:"no-store"});if(!r.ok)throw Error();const v=await r.json();if(!controller.signal.aborted){setData(v);setError(false);}}catch{if(!controller.signal.aborted)setError(true);}finally{if(!controller.signal.aborted)timer=setTimeout(poll,10000);}};void poll();return()=>{controller.abort();clearTimeout(timer);};},[offset,query,revision]);
  useEffect(()=>{const controller=new AbortController();let timer:ReturnType<typeof setTimeout>;const poll=async()=>{try{const r=await fetch("/api/global-source?links=1",{signal:controller.signal,cache:"no-store"});if(!r.ok)throw Error();const v=await r.json();if(!controller.signal.aborted){setLinks(v);setLinksError(false);}}catch{if(!controller.signal.aborted)setLinksError(true);}finally{if(!controller.signal.aborted)timer=setTimeout(poll,30000);}};void poll();return()=>{controller.abort();clearTimeout(timer);};},[]);
+ const [naming,setNaming]=useState<LinkNamingState|null>(null),[namingDraft,setNamingDraft]=useState<LinkNamingConfig|null>(null);
+ const [namingBusy,setNamingBusy]=useState(false),[namingMessage,setNamingMessage]=useState<string|null>(null);
+ useEffect(()=>{const controller=new AbortController();void(async()=>{try{const r=await fetch("/api/link-naming",{signal:controller.signal,cache:"no-store"});if(!r.ok)throw Error();const v:LinkNamingState=await r.json();if(!controller.signal.aborted){setNaming(v);setNamingDraft(v.config);}}catch{if(!controller.signal.aborted)setNaming(null);}})();return()=>controller.abort();},[]);
+ async function namingAction(action:"preview"|"save"){if(!namingDraft)return;setNamingBusy(true);setNamingMessage(null);try{const r=await fetch("/api/link-naming",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action,config:namingDraft})});const v=await r.json();if(!r.ok){setNamingMessage(action==="save"?"保存被拒绝：模板未通过校验（检查占位符与数值范围）。":"预览失败，请检查模板占位符。");return;}setNaming(v);setNamingDraft(v.config);setNamingMessage(action==="save"?"命名模板已保存。之后新建的链接使用新模板；已冻结的建链意图与已有链接保持原名。":"预览已按当前输入更新。");}catch{setNamingMessage("暂时无法读取或保存命名设置。");}finally{setNamingBusy(false);}}
  return <div className="space-y-5"><PageHeading title="货盘" description="高机会商品 · 仅全球销售商品。先发现商品，再核验可推广方案。" action={<Button onClick={()=>void sync()} disabled={syncing}>{syncing?"提交中…":data?.state==="collecting"?"检查并续采":"同步全托来源"}</Button>}/>
  {error&&<Notice tone="warning">暂时无法读取最新货盘状态，已有记录保留。</Notice>}
  <Card title="意大利 · 全托主力来源" action={<Pill tone={data?.published?"success":data?.state==="blocked"?"warning":"brand"}>{data?.state?states[data.state]:"读取中"}</Pill>}><div className="space-y-4 p-5"><div className="grid grid-cols-2 gap-4 lg:grid-cols-4">{[["已采集去重商品",data?.products],["本查询报告数量",data?.reportedTotal],["采集时未选",data?.listedUnselectedProducts],["已核对活动详情",data?.detailProducts]].map(([label,value])=><div key={String(label)} className="rounded-xl bg-gray-50 p-4 dark:bg-gray-800"><p className="text-xs text-gray-500">{label}</p><p className="mt-2 text-2xl font-semibold">{value==null?"—":Number(value).toLocaleString()}</p></div>)}</div>
@@ -38,6 +43,23 @@ export default function CatalogWorkspace(){
  {links.items&&links.items.length>0&&<div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead className="border-b border-gray-200 text-xs text-gray-500 dark:border-gray-700"><tr>{["商品","活动","当前状态","达人／公开佣金"].map(label=><th key={label} className="whitespace-nowrap px-3 py-3 font-medium">{label}</th>)}</tr></thead><tbody>{links.items.map(i=><tr key={`${i.pid}-${i.campaignId}`} className="border-b border-gray-100 dark:border-gray-800"><td className="min-w-48 max-w-md px-3 py-3"><p className="line-clamp-1" title={i.title}>{i.title||"—"}</p><p className="mt-1 font-mono text-xs text-gray-400">{i.pid}</p></td><td className="px-3 py-3 font-mono text-xs">{i.campaignId}</td><td className="whitespace-nowrap px-3 py-3"><Pill tone={i.state==="ready"?"success":i.state==="read_incomplete"||i.state==="review"?"warning":"brand"}>{linkStates[i.state]??i.state}</Pill>{i.error&&<p className="mt-1 text-xs text-gray-500">{linkReasons[i.error]??i.error}</p>}{i.blocker&&<p className="mt-1 text-xs text-gray-500">{linkReasons[i.blocker]??i.blocker}</p>}</td><td className="whitespace-nowrap px-3 py-3">{i.creatorPercent?`${i.creatorPercent}%`:"—"} / {i.publicPercent?`${i.publicPercent}%`:"—"}</td></tr>)}</tbody></table></div>}
  </>}
  <p className="text-xs text-gray-400">链接只证明当前可推广方案存在，不授予消息发送权限；发送与自动回复仍为暂停。</p>
+ </div></Card>
+ <Card title="新建链接命名" subtitle="只影响之后新建的 TapLink。名字不参与建链去重，改模板不会重复建链；已冻结的建链意图与已有链接保持原名。"><div className="space-y-4 p-5">
+ {!namingDraft&&<p className="text-sm text-gray-500">暂时无法读取命名设置，已有链接不受影响。</p>}
+ {namingDraft&&<>
+ <div className="grid gap-4 lg:grid-cols-2">
+ <Field label="命名模板" hint="平台卡名上限 50 字；超长时按词逐级裁短短名。"><Input value={namingDraft.template} maxLength={120} onChange={e=>setNamingDraft({...namingDraft,template:e.target.value})}/></Field>
+ <div className="grid grid-cols-3 gap-3">
+ <Field label="指纹长度"><Input type="number" min={4} max={12} value={namingDraft.tailLength} onChange={e=>setNamingDraft({...namingDraft,tailLength:Number(e.target.value)})}/></Field>
+ <Field label="总长上限"><Input type="number" min={10} max={50} value={namingDraft.maxLength} onChange={e=>setNamingDraft({...namingDraft,maxLength:Number(e.target.value)})}/></Field>
+ <Field label="短名上限"><Input type="number" min={1} max={40} value={namingDraft.shortNameMaxLength} onChange={e=>setNamingDraft({...namingDraft,shortNameMaxLength:Number(e.target.value)})}/></Field>
+ </div></div>
+ <p className="text-xs text-gray-500">可用占位符：{naming?.placeholders.join("、")??"—"}。指纹由 PID、活动与达人佣金确定性生成，用于防重复与核对。</p>
+ <div className="flex gap-2"><Button size="sm" variant="outline" disabled={namingBusy} onClick={()=>void namingAction("preview")}>预览</Button><Button size="sm" disabled={namingBusy} onClick={()=>void namingAction("save")}>{namingBusy?"处理中…":"保存模板"}</Button></div>
+ {namingMessage&&<Notice tone="info">{namingMessage}</Notice>}
+ {naming?.preview&&naming.preview.length>0&&<div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead className="border-b border-gray-200 text-xs text-gray-500 dark:border-gray-700"><tr>{["商品短名","达人佣金","渲染后的卡名","字数"].map(label=><th key={label} className="whitespace-nowrap px-3 py-3 font-medium">{label}</th>)}</tr></thead><tbody>{naming.preview.map(row=><tr key={row.pid} className="border-b border-gray-100 dark:border-gray-800"><td className="px-3 py-3">{row.shortName??"—"}</td><td className="whitespace-nowrap px-3 py-3">{row.creatorPercent}%</td><td className="px-3 py-3 font-mono text-xs">{row.name??<span className="text-warning-600">{row.error}</span>}</td><td className={`whitespace-nowrap px-3 py-3 ${row.length>row.limit?"text-warning-600":""}`}>{row.length}/{row.limit}</td></tr>)}</tbody></table></div>}
+ <p className="text-xs text-gray-400">预览取自当前真正在等待建链的商品，不是示例数据。</p>
+ </>}
  </div></Card>
  <Notice>商品选入、TapLink 创建和发送分别记录结果。这里展示来源与只读核验，不会因同步货盘自动发消息。平台展示总佣金不能当作达人实际可得佣金。</Notice>
  <Link href="/workspace?mode=second-live" className="inline-block text-sm text-brand-500">进入二发批次准备 →</Link>

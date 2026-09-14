@@ -1,0 +1,7 @@
+{
+  "version": "link-naming-v1",
+  "template": "BJN {short_name} {creator_percent}% {tail}",
+  "tailLength": 6,
+  "maxLength": 50,
+  "shortNameMaxLength": 30
+}

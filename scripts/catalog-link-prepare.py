@@ -233,10 +233,10 @@ def step_reconcile(prep,inv,run_id,report,limit=None):
     """
     rows=[dict(r) for r in prep.db.execute("SELECT * FROM catalog_prepare_item WHERE run_id=? AND state NOT IN ('retired','ready')",(run_id,))]
     if limit:rows=rows[:limit]
-    # A product with no card can never be reused, so it needs no live plan read at all:
-    # only card-bearing PIDs need current commercial facts. Cuts the plan reads by ~2/3.
-    pids=sorted({r['pid'] for r in rows if inv.members_for_pid(r['pid'])})
-    report['reconcileItems']=len(rows);report['reconcileWithCards']=len(pids)
+    # Plans are read for every queued PID, including card-less ones: creation needs the frozen
+    # commission split, and a plan read is one request per 15 PIDs, far cheaper than a search.
+    pids=sorted({r['pid'] for r in rows})
+    report['reconcileItems']=len(rows);report['reconcilePlans']=len(pids)
     offers={};diag={}
     if pids:
         with opportunity_reader(report,wait_seconds=60,account_name='acc9') as transport:
@@ -251,32 +251,33 @@ def step_reconcile(prep,inv,run_id,report,limit=None):
                     report.setdefault('reconcilePlanErrors',[]).append(str(error)[:60])
     return reconcile_from_inventory(prep,inv,rows,offers,diag)
 
-def create_spec(prep,run_id,offer,short_name):
+def create_spec(prep,run_id,offer,short_name,naming=None):
+    """Freeze one creation intent. The name comes from the frontend-controllable naming config."""
+    from lib.link_naming import load as load_naming,fingerprint as naming_fingerprint,name_for
+    naming=naming or load_naming(ROOT)
     campaign=offer['campaignId'];pid=offer['pid']
-    tail=digest([pid,campaign,offer['creatorPercent']])[:6]
-    while True:
-        name=f"BJN {short_name} {offer['creatorPercent']}% "+tail
-        if len(name)<=50:break
-        short_name=short_name.rsplit(' ',1)[0] if ' ' in short_name else short_name[:-1]
-        if not short_name:raise ValueError('catalog_prepare_name_invalid')
+    rendered=name_for(ROOT,pid=pid,campaign=campaign,creator_percent=offer['creatorPercent'],
+                      short_name=short_name,public_percent=offer.get('publicPercent'),
+                      total_percent=offer.get('totalPercent'),market='it',config=naming)
+    name=rendered['name']
     from bdhub.send.taplink.protocol import create_payload
     payload=create_payload(pid=pid,campaign_id=campaign,creator_pct=offer['creatorPercent'],name=name,route='selected')
     return {'market':'it','account':'acc9','route':'selected','purpose':'catalog_batch_link','sourceRun':run_id,'pid':pid,'campaignId':campaign,
-            'creatorPercent':offer['creatorPercent'],'listName':name,'shortName':short_name,'policyFingerprint':digest(prep.policy),'searchTotal':0,
+            'creatorPercent':offer['creatorPercent'],'listName':name,'shortName':rendered['shortName'],'policyFingerprint':digest(prep.policy),'searchTotal':0,
+            'namingVersion':naming['version'],'namingFingerprint':naming_fingerprint(naming),
             'offer':plan_bounds(offer)|{'observedAt':time.time()},'payload':payload,'preparedAt':time.time()}
 
 def short_name_for(pid,title):
-    with closing(sqlite3.connect((ROOT/'var/second-cycle.sqlite').as_uri()+'?mode=ro',uri=True)) as db:
-        db.execute('BEGIN')
-        row=db.execute("SELECT payload FROM cycle_product_name WHERE id=?",(digest(['product-short-name-v1','it-IT',str(pid),title]),)).fetchone()
-    if row:
-        value=json.loads(row[0]).get('shortNameIt')
-        if isinstance(value,str) and 1<=len(value)<=30:return value
-    cleaned=' '.join(str(title).split())
-    return (cleaned[:30].rsplit(' ',1)[0] if len(cleaned)>30 and ' ' in cleaned[:31] else cleaned[:30]) or str(pid)
+    # Shared with the naming preview so what the operator sees is what gets created.
+    from lib.link_naming import short_name_for as cached_short_name
+    return cached_short_name(ROOT,pid,title)
 
 def step_create(prep,run_id,limit,report):
     created=[];blocked=[]
+    # Pin the naming config once per run: a template edited mid-run must not split the batch.
+    from lib.link_naming import load as load_naming
+    naming=load_naming(ROOT)
+    report['namingVersion']=naming['version']
     for _ in range(limit):
         item=prep.claim_create(run_id)
         if not item:break
@@ -287,7 +288,7 @@ def step_create(prep,run_id,limit,report):
             if item['state']=='missing':
                 offer=listing|{'pid':pid,'campaignId':cid,'catalogSource':src}
                 if not offer.get('creatorPercent'):raise ValueError('catalog_prepare_offer_missing')
-                planned=create_spec(prep,run_id,offer,short_name_for(pid,offer.get('title','')))
+                planned=create_spec(prep,run_id,offer,short_name_for(pid,offer.get('title','')),naming)
                 intent=prep.freeze(run_id,pid,cid,src,planned)
             else:
                 intent=ledger.get(item['intent_id'])
