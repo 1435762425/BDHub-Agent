@@ -1,0 +1,43 @@
+# vendor/bdhub 的运行配置模板（I3 第一步）
+#
+# 用途：让搬入的旧协议层在没有旧仓库的情况下也能加载。
+# 复制到 vendor/config.yaml 后即可 —— vendor/bdhub/config.py 把包的上两级当作 ROOT，
+# 所有相对路径都以本文件所在目录（即 vendor/）为基准解析。
+#
+# 与旧仓库 config.yaml 的区别：
+#   - 不含任何凭据：没有 Cookie、没有账号口令、没有 API key。secrets/ 由新项目自建。
+#   - db 段只是满足旧包的加载契约；新项目生产路径使用 var/*.sqlite，不连 PostgreSQL，
+#     只有旧 hub.repo/engine 路径才会真正连接（生产路径不调用它们）。
+#   - reply.api_key 必须保持为空：AI 自动回复当前由用户暂停。
+
+auth:
+  # 指向新项目自己的凭据文件（不入 Git）。不要复制旧仓库的 secrets/headers.json。
+  headers_json: secrets/headers.json
+  # 我方 partner_id；各市场的 default_partner_id 会覆盖它（见 bdhub/hub/markets.py）
+  partner_id: ""
+
+paths:
+  leads_xlsx: data/leads/leads.xlsx
+  leads_handle_column: handle
+  cache_dir: data/cache/raw
+  output_xlsx: data/output/creators.xlsx
+
+enrich:
+  request_interval_seconds: 1.5
+  rate_limit_sleep_base: 60
+  max_retry: 3
+  find_page_size: 12
+  refresh_days: 30
+  concurrency: 2
+  qps: 2
+
+db:
+  # 占位连接串，不会被生产路径使用。
+  url: "postgresql+psycopg://unused:unused@127.0.0.1:5432/unused"
+
+reply:
+  # 空 = 关闭。AI 自动回复处于用户暂停状态，不得在此填写 key 启用。
+  api_key: ""
+
+# 当前生产市场（仅 hub.markets 中已注册的市场可调度）
+market: it

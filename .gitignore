@@ -10,6 +10,9 @@ private-data/
 *.log
 __pycache__/
 *.pyc
+# vendored legacy layer: real runtime config stays local (template is committed)
+/vendor/config.yaml
+/vendor/data/
 .venv/
 node_modules/
 dist/
