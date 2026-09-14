@@ -291,6 +291,47 @@ def step_reconcile(prep,inv,run_id,report,limit=None):
                     report.setdefault('reconcilePlanErrors',[]).append(str(error)[:60])
     return reconcile_from_inventory(prep,inv,rows,offers,diag)
 
+def step_verify(prep,report,limit=None):
+    """Read back intents that already reached the platform. Never creates, never deletes.
+
+    An intent whose POST returned but whose card could not be confirmed stays in the ledger
+    with its receipt; reading it back is the only correct way to resolve it.
+    """
+    rows=[dict(r) for r in prep.db.execute("SELECT * FROM catalog_prepare_item WHERE state='unknown' AND intent_id IS NOT NULL ORDER BY updated LIMIT ?",(limit or 500,))]
+    report['verifyItems']=len(rows);states={}
+    if not rows:return states
+    ledger=CatalogLinks(ROOT)
+    try:
+        with opportunity_reader(report,extra_read_endpoints=READ_EXTRA,wait_seconds=60,account_name='acc9') as transport:
+            def read(path,extra):
+                r=transport._xhr(method='GET',path=path,params=transport._params()|extra,payload=None,write=False)
+                body=transport.require_read(r);return body,digest(body)
+            for item in rows:
+                pid,cid,src=item['pid'],item['campaign_id'],item['catalog_source']
+                intent=ledger.get(item['intent_id'])
+                if intent['state']=='verified':
+                    prep.mark_progress(item['run_id'],pid,cid,src,'ready',card=intent['readback'])
+                    states['already_verified']=states.get('already_verified',0)+1;continue
+                receipt=intent.get('receipt') or {}
+                try:
+                    card=None
+                    for delay in (0,1,3):
+                        if delay:time.sleep(delay)
+                        card=inspection.inspect_card(intent['spec']['offer'],read,expected_list_id=receipt.get('list_id'),expected_name=intent['spec']['listName'])
+                        if card['state']=='verified_read_only':break
+                    if not card or card['state']!='verified_read_only':raise ValueError('created_card_not_verified')
+                    card.update(readAccount='acc9')
+                    ledger.confirm(intent['id'],card)
+                    prep.mark_progress(item['run_id'],pid,cid,src,'ready',card=card)
+                    states['verified']=states.get('verified',0)+1
+                except Exception as error:
+                    # Still unresolved: stay unknown, keep the receipt, never re-create.
+                    code=str(error) if isinstance(error,ValueError) else f'{type(error).__name__}:{str(error)[:60]}'
+                    prep.mark_progress(item['run_id'],pid,cid,src,'unknown',error=code)
+                    states['still_unknown']=states.get('still_unknown',0)+1
+    finally:ledger.db.close()
+    return states
+
 def create_spec(prep,run_id,offer,short_name,naming=None):
     """Freeze one creation intent. The name comes from the frontend-controllable naming config."""
     from lib.link_naming import load as load_naming,fingerprint as naming_fingerprint,name_for
@@ -349,6 +390,8 @@ def step_create(prep,run_id,limit,report):
                 if total!=0:raise ValueError('existing_links_preserved_no_creation')
                 ledger.begin(intent['id'],'acc9');prep.mark_progress(run_id,pid,cid,src,'submitted')
                 r=transport._xhr(method='POST',path=CREATE,params=transport._params(),payload=intent['spec']['payload'],write=True)
+                # The per-transport counter is reset on every creation, so count here instead.
+                report['createWrites']=report.get('createWrites',0)+1
                 report.setdefault('nativeReceipts',[]).append({'pid':pid,'http':r.http_status,'code':r.code if type(r.code) is int else None,'verification':r.has_turing,'ambiguous':r.ambiguous})
                 if r.has_turing and getattr(transport,'_verification_header',''):
                     transport._solve_verification(transport._verification_header);transport.verification_successes+=1
@@ -415,7 +458,7 @@ def status_view():
     finally:prep.close()
 
 def main():
-    p=argparse.ArgumentParser(description=__doc__);p.add_argument('action',nargs='?',choices=['status','seed','read','create','inventory','reconcile'])
+    p=argparse.ArgumentParser(description=__doc__);p.add_argument('action',nargs='?',choices=['status','seed','read','create','inventory','reconcile','verify'])
     p.add_argument('--status-links',action='store_true',help='read-only coverage view for the product page')
     p.add_argument('--report',type=Path);p.add_argument('--pids');p.add_argument('--limit',type=int,default=15);p.add_argument('--max-creates',type=int,default=0)
     p.add_argument('--lists',type=int,default=0,help='inventory: max lists to read members for (0=all pending)')
@@ -479,6 +522,9 @@ def main():
         finally:inv.close()
     elif a.action=='create':
         report['create']=step_create(prep,run_id,a.max_creates,report)
+        report['platformWrites']=report.get('createWrites',0)
+    elif a.action=='verify':
+        report['verify']=step_verify(prep,report,limit=(a.items or None))
     report['summary']=prep.summary(run_id);report['elapsedSeconds']=round(time.time()-report['startedAt'],2)
     report['state']=report.get('state') or 'completed'
     output.write_text(json.dumps(report,ensure_ascii=False,indent=2)+'\n');prep.close()
