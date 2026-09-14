@@ -13,7 +13,11 @@ def validate_config(value):
         if pair.get('credentialAuthority')!='legacy_readonly' or pair.get('maintenanceExecutor')!='legacy_lifecycle':raise ValueError('credential_handoff_not_implemented')
         if pair.get('automaticRoleSwitchEnabled') is not False:raise ValueError('automatic_role_switch_not_implemented')
         used.update(accounts)
-    if value.get('lifecycle',{}).get('enableNewMaintenanceWorker') is not False:raise ValueError('duplicate_maintenance_executor_forbidden')
+    lifecycle=value.get('lifecycle',{})
+    if lifecycle.get('enableNewMaintenanceWorker') is not False:raise ValueError('duplicate_maintenance_executor_forbidden')
+    if lifecycle.get('healthPollMinutes') is not None or lifecycle.get('deepCheckHours') is not None:raise ValueError('periodic_health_checks_disabled')
+    if lifecycle.get('standbyEarlyMaintenanceHours')!=0:raise ValueError('early_maintenance_disabled')
+    if any(type(lifecycle.get(k)) is not int or lifecycle[k]<=0 for k in ('identityRefreshHours','loginMaintenanceHours')):raise ValueError('maintenance_interval_invalid')
     return value
 
 def load_config(root):return validate_config(json.loads((Path(root)/'config/market-accounts.json').read_text()))
@@ -31,11 +35,14 @@ def evidence_summary(root,pair,market='it'):
         'concurrentReadSeconds':evidence.get('independentGuardsOverlapSeconds'),
         'accounts':{r['account']:{'checkedAt':r['startedAt'],'capabilities':r['capabilities'],'tokenHasExplicitExpiry':bool(r.get('tokenExpiryFields'))} for r in rows}}
 
-def maintenance_plan(*,now,last_success,role,active_writes,other_maintaining):
+def maintenance_plan(*,now,last_success,role,active_writes,other_maintaining,policy,operation='login'):
     """Pure proposed lifecycle policy, not an enabled maintenance worker."""
+    if operation not in ('login','identity_refresh'):raise ValueError('maintenance_operation_invalid')
     if last_success is None:return {'decision':'verify_baseline','execute':False}
-    hard_due=last_success+48*3600;soft_due=hard_due-(2*3600 if role=='supply' else 0)
-    if now<soft_due:return {'decision':'not_due','nextDue':soft_due,'hardDue':hard_due,'execute':False}
+    interval=policy['loginMaintenanceHours' if operation=='login' else 'identityRefreshHours']
+    if type(interval) is not int or interval<=0:raise ValueError('maintenance_interval_invalid')
+    hard_due=last_success+interval*3600
+    if now<hard_due:return {'decision':'not_due','nextDue':hard_due,'hardDue':hard_due,'execute':False}
     if active_writes:return {'decision':'drain_inflight','hardDue':hard_due,'execute':False}
     if other_maintaining:return {'decision':'wait_maintenance_slot','hardDue':hard_due,'execute':False}
     return {'decision':'maintenance_ready','hardDue':hard_due,'execute':False}

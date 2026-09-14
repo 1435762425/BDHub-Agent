@@ -12,11 +12,11 @@
     }
   },
   "lifecycle": {
-    "healthPollMinutes": 5,
-    "deepCheckHours": 6,
-    "identityRefreshHours": 24,
-    "loginMaintenanceHours": 48,
-    "standbyEarlyMaintenanceHours": 2,
+    "healthPollMinutes": null,
+    "deepCheckHours": null,
+    "identityRefreshHours": 48,
+    "loginMaintenanceHours": 72,
+    "standbyEarlyMaintenanceHours": 0,
     "globalLoginConcurrency": 1,
     "enableNewMaintenanceWorker": false
   }

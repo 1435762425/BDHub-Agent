@@ -15,11 +15,19 @@ class AccountPolicyTests(unittest.TestCase):
   c=self.config();c['markets']['it']['automaticRoleSwitchEnabled']=True
   with self.assertRaises(ValueError):validate_config(c)
  def test_maintenance_due_uses_login_success_and_drains_writes(self):
-  args=dict(last_success=100,role='supply',active_writes=0,other_maintaining=False)
-  self.assertEqual(maintenance_plan(now=100+46*3600-1,**args)['decision'],'not_due')
-  self.assertEqual(maintenance_plan(now=100+46*3600,**args)['decision'],'maintenance_ready')
-  self.assertEqual(maintenance_plan(now=100+48*3600,**(args|{'active_writes':1}))['decision'],'drain_inflight')
-  self.assertEqual(maintenance_plan(now=100+48*3600,**(args|{'other_maintaining':True}))['decision'],'wait_maintenance_slot')
+  args=dict(last_success=100,role='supply',active_writes=0,other_maintaining=False,policy=self.config()['lifecycle'])
+  for role in ('supply','communications'):
+   self.assertEqual(maintenance_plan(now=100+72*3600-1,**(args|{'role':role}))['decision'],'not_due')
+   self.assertEqual(maintenance_plan(now=100+72*3600,**(args|{'role':role}))['decision'],'maintenance_ready')
+  self.assertEqual(maintenance_plan(now=100+72*3600,**(args|{'active_writes':1}))['decision'],'drain_inflight')
+  self.assertEqual(maintenance_plan(now=100+72*3600,**(args|{'other_maintaining':True}))['decision'],'wait_maintenance_slot')
+  self.assertEqual(maintenance_plan(now=100+48*3600-1,operation='identity_refresh',**args)['decision'],'not_due')
+  self.assertEqual(maintenance_plan(now=100+48*3600,operation='identity_refresh',**args)['decision'],'maintenance_ready')
+ def test_periodic_checks_and_early_login_stay_disabled(self):
+  c=self.config();self.assertIsNone(c['lifecycle']['healthPollMinutes']);self.assertIsNone(c['lifecycle']['deepCheckHours'])
+  for key,value in [('healthPollMinutes',5),('deepCheckHours',6),('standbyEarlyMaintenanceHours',2)]:
+   changed=copy.deepcopy(c);changed['lifecycle'][key]=value
+   with self.assertRaises(ValueError):validate_config(changed)
  def test_routing_obeys_capability_pause_and_unknown_affinity(self):
   pair=self.config()['markets']['it'];states={'acc6':{'health':'healthy','busy':False,'capabilities':{'send':'verified'}},'acc9':{'health':'healthy','busy':False,'capabilities':{'catalog_read':'verified'}}}
   self.assertEqual(route_proposal(pair,'catalog_read',states)['account'],'acc9')
