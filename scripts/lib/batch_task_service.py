@@ -72,9 +72,13 @@ class TaskService:
             'preparation':json.loads(r['report']) if r and r['report'] else None,
             'sourcePreparation':self.source_status(id),
             'preparationSpeed':self.preparation_speed(id),
+            'stabilityTest':self.stability_status(id),
             'checkedAt':r['checked'] if r else None,'nextCheckAt':r['next_run'] if r else None,
             'policy':json.loads(policy[0]) if policy else None,'executionConnected':False,
             'events':[dict(e)|{'payload':json.loads(e['payload'])} for e in self.db.execute('SELECT kind,payload,at FROM batch_event WHERE task_id=? ORDER BY id DESC LIMIT 12',(id,))]}
+    def stability_status(self,id):
+        from lib.identity_soak import status
+        return status(self,id)
     def preparation_speed(self,id):
         end=self.db.execute("SELECT at,payload FROM batch_event WHERE task_id=? AND kind='preparation_observed' AND json_extract(payload,'$.candidates') IS NOT NULL ORDER BY id DESC LIMIT 1",(id,)).fetchone()
         if not end:return None
@@ -117,8 +121,11 @@ class TaskService:
             report,members=read(t['spec'])
             from lib.batch_materials import apply_materials
             report,members=apply_materials(self,t['id'],report,members)
-            preparation_gate(t['spec']['target'],members)
+            preparation_gate(t['spec']['target'],members,reserve=t['spec']['reserve'])
             if len(members)>t['spec']['target']+t['spec']['reserve'] or any((m.get('institution'),m.get('market'))!=(t['spec']['institution'],t['spec']['market']) or not in_scope(t['spec'],m) for m in members):raise BatchError('member_scope_mismatch')
+            soak_status=self.stability_status(t['id'])
+            if soak_status and soak_status.get('sourceQuotaExhausted'):report['blockers'].append('kalodata_daily_quota_exhausted')
+            if soak_status and soak_status['state']=='attention':report['blockers'].append('identity_soak_attention')
             report['membershipHash']=digest(members)
         except Exception:
             report={'state':'waiting_data','blockers':['local_source_unavailable'],'executionAllowed':False};members=None
@@ -138,6 +145,10 @@ class TaskService:
             if previous!=encoded(report):
                 self.db.execute('UPDATE batch_task SET revision=revision+1 WHERE id=?',(t['id'],))
                 self.tasks.event(t['id'],'preparation_observed',{'state':report['state'],'candidates':report.get('candidates',0),'blockers':report['blockers']})
+        if members is not None and self.db.execute("SELECT 1 FROM sqlite_master WHERE name='identity_soak_run'").fetchone():
+            from lib.identity_soak import IdentitySoak
+            soak=IdentitySoak(self)
+            for row in self.db.execute("SELECT id FROM identity_soak_run WHERE task_id=? AND state='active'",(t['id'],)).fetchall():soak.checkpoint(row[0],members)
         if report.get('state')=='ready' and self.tasks.get(t['id'])['state']=='preparing':self.tasks.freeze(t['id'])
         return True
 
@@ -158,9 +169,19 @@ def read_local_preparation(root,spec):
         consumed={(r[0],r[1],r[2]) for r in store.db.execute("SELECT creator_id,pid,source_id FROM cycle_delivery WHERE plan_id=? AND state IN ('ready','running','unknown','confirmed','partial_delivery')",(p,))}
         active={r[0] for r in store.db.execute("SELECT creator_id FROM cycle_delivery WHERE plan_id=? AND state IN ('ready','running','unknown','partial_delivery')",(p,))}
         identities={(r[0],r[1]) for r in ids.execute('SELECT creator_id,oec_id FROM creator_identity WHERE market=? AND handle_conflict=0',(spec['market'],))}
+        base_oecs=set();soak_allowed=None
+        task_path=root/'var/batch-tasks.sqlite'
+        if task_path.exists():
+            with closing(sqlite3.connect(task_path.as_uri()+'?mode=ro',uri=True)) as control:
+                if control.execute("SELECT 1 FROM sqlite_master WHERE name='identity_soak_run'").fetchone():
+                    run=control.execute("SELECT s.id FROM identity_soak_run s JOIN batch_task t ON t.id=s.task_id WHERE json_extract(t.spec,'$.institution')=? AND json_extract(t.spec,'$.market')=? ORDER BY s.started DESC LIMIT 1",(spec['institution'],spec['market'])).fetchone()
+                    if run:
+                        base_oecs={r[0] for r in control.execute("SELECT oec FROM identity_soak_member WHERE run_id=? AND role='baseline'",(run[0],))}
+                        soak_allowed=base_oecs|{r[0] for r in control.execute('SELECT oec FROM identity_soak_proof WHERE run_id=?',(run[0],))}
         people={}
         for row in store.db.execute('SELECT r.creator_id,r.oec,e.source_id,e.payload FROM cycle_identity_resolution r JOIN source_edge e USING(plan_id,source_id) WHERE r.plan_id=?',(p,)):
             edge=json.loads(row['payload']);creator=row['creator_id']
+            if soak_allowed is not None and row['oec'] not in soak_allowed:continue
             if creator not in eligible or creator in active or (creator,row['oec']) not in identities:continue
             if edge.get('sourceKind')!='kalodata_http' or (creator,edge['pid'],row['source_id']) in consumed:continue
             for o in offers.get(edge['pid'],[]):
@@ -171,7 +192,7 @@ def read_local_preparation(root,spec):
                    'checks':dict(source=True,identity=True,relationship=True,offer=True,name=bool(name),taplink=False),'cardLocated':located,'livePreparationVerified':False}
                 rank=(int(bool(name))+int(located),edge.get('windowEnd',''),edge.get('units',0),o['offerKey'])
                 if row['oec'] not in people or rank>people[row['oec']][0]:people[row['oec']]=(rank,m)
-        required=spec['target']+spec['reserve'];selected=[x[1] for x in sorted(people.values(),key=lambda x:(x[0],x[1]['oec']),reverse=True)[:required]]
+        required=spec['target']+spec['reserve'];selected=[x[1] for x in sorted(people.values(),key=lambda x:(x[1]['oec'] in base_oecs,x[0],x[1]['oec']),reverse=True)[:required]]
         groups={m['materialKey']:m for m in selected}
         for i,m in enumerate(selected):m['role']='formal' if i<spec['target'] else 'reserve'
         named=sum(m['checks']['name'] for m in selected);located=sum(m['cardLocated'] for m in selected)

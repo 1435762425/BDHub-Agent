@@ -37,7 +37,7 @@ def apply_materials(service,id,report,members):
   j=jobs.get(m['materialKey'])
   if j and j['state']=='ready' and digest(json.loads(j['offer']))==m['offerFingerprint']:
    m['cardObservation']=json.loads(j['card']);m['checks']['taplink']=True;m['livePreparationVerified']=True
- gate=preparation_gate(report['target'],members)
+ gate=preparation_gate(report['target'],members,reserve=report.get('reserve'))
  report=report|{'verifiedReady':gate['ready'],'state':'ready' if gate['complete'] else 'preparing','blockers':[b for b in report['blockers'] if b!='task_taplink_adapter_pending']}
  missing={m['materialKey'] for m in members if not m['checks']['taplink']}
  if missing:report['blockers'].append('task_materials_pending')

@@ -21,6 +21,7 @@ def kalodata_provider(root):
 def advance_sources(service,task,root,provider_factory=kalodata_provider):
  root=Path(root);queue=BatchSources(service);id=task['id']
  if not queue.permitted(id):return
+ queue.release_due_quota(id)
  report,_=read_local_preparation(root,task['spec'])
  with CycleStore(root/'var/second-cycle.sqlite') as cycle:
   plan=cycle.db.execute('SELECT id FROM plan WHERE institution=? AND market=?',(task['spec']['institution'],task['spec']['market'])).fetchone()

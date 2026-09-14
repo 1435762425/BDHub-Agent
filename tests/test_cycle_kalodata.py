@@ -16,6 +16,10 @@ class WorkerTests(unittest.TestCase):
   p=Provider();r=KalodataWorker(self.s,p).once(self.p);self.assertEqual(r['status'],'completed');self.assertEqual(r['addedEdges'],1)
   e=json.loads(self.s.db.execute('SELECT payload FROM source_edge').fetchone()[0]);self.assertIsNone(e['oec']);self.assertIsNone(e['creatorId']);self.assertEqual(e['sourceHandle'],'someone');self.assertEqual(self.s.status(self.p)['relationships'],0)
   self.assertEqual(p.payload['startDate'],'2026-08-31');self.assertEqual(p.payload['endDate'],'2026-09-13')
+ def test_zero_sales_rows_are_retained_before_eligibility_decision(self):
+  p=Provider([{'id':'zero','handle':'zero.creator','sale':0,'followers':1000,'unused':'not retained'}]);KalodataWorker(self.s,p).once(self.p)
+  receipt=json.loads(self.s.db.execute('SELECT payload FROM cycle_source_receipt').fetchone()[0])
+  self.assertEqual(receipt['sourceRows'][0]['sale'],0);self.assertNotIn('unused',receipt['sourceRows'][0]);self.assertEqual(receipt['edges'],[])
  def test_sale_parsing(self):
   self.assertEqual(sales('1.2k'),1200);self.assertIsNone(sales(True));self.assertIsNone(sales('NaN'));self.assertIsNone(sales('0.5'))
  def test_replay_completed_does_not_request_again(self):

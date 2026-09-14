@@ -16,12 +16,14 @@ from lib.second_cycle import digest,encoded
 class BatchError(ValueError):pass
 
 def normalize_spec(value):
-    if not isinstance(value,dict) or set(value)-{'institution','market','target','startTime','endTime','startDate','productScope','replyAfterSending','prepareNow'}:
+    if not isinstance(value,dict) or set(value)-{'institution','market','target','startTime','endTime','startDate','productScope','replyAfterSending','prepareNow','reserve'}:
         raise BatchError('invalid_task_spec')
     institution=value.get('institution');market=value.get('market');target=value.get('target')
     if not isinstance(institution,str) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.:-]{0,119}',institution):raise BatchError('institution_required')
     if market not in ('it','mx','br'):raise BatchError('market_required')
     if type(target) is not int or not 1<=target<=100000:raise BatchError('numeric_target_required')
+    reserve=value.get('reserve',math.ceil(target/10))
+    if type(reserve) is not int or not 0<=reserve<=target:raise BatchError('invalid_reserve')
     start=value.get('startTime');end=value.get('endTime')
     prepare=value.get('prepareNow',False)
     if type(prepare) is not bool:raise BatchError('invalid_prepare_mode')
@@ -40,7 +42,7 @@ def normalize_spec(value):
         except (ValueError,TypeError):raise BatchError('invalid_start_date')
     reply=value.get('replyAfterSending',False)
     if type(reply) is not bool:raise BatchError('invalid_reply_policy')
-    return {'institution':institution,'market':market,'target':target,'reserve':math.ceil(target/10),'timezone':'Asia/Shanghai',
+    return {'institution':institution,'market':market,'target':target,'reserve':reserve,'timezone':'Asia/Shanghai',
             'startTime':start,'endTime':end,'startDate':start_date,'productScope':{'kind':scope['kind'],'values':sorted(set(values))},'replyAfterSending':reply,**({'prepareNow':True} if prepare else {})}
 
 def in_window(spec,at):
@@ -51,9 +53,11 @@ def in_window(spec,at):
     anchor=local.date()-timedelta(days=1) if cross and current<end else local.date()
     return active and (not spec.get('startDate') or anchor>=date.fromisoformat(spec['startDate']))
 
-def preparation_gate(target,members,*,partial_override=False):
+def preparation_gate(target,members,*,partial_override=False,reserve=None):
     """Adapters supply verified stage evidence, not task-created placeholder success."""
     if type(target) is not int or target<=0:raise BatchError('numeric_target_required')
+    reserve=math.ceil(target/10) if reserve is None else reserve
+    if type(reserve) is not int or not 0<=reserve<=target:raise BatchError('invalid_reserve')
     seen=set();ready=[];issues={};materials=set()
     for row in members:
         oec=row.get('oec')
@@ -65,7 +69,7 @@ def preparation_gate(target,members,*,partial_override=False):
         if not row.get('materialKey'):missing.append('material_binding')
         for k in missing:issues[k]=issues.get(k,0)+1
         if not missing:ready.append(oec);materials.add(row['materialKey'])
-    required=target+math.ceil(target/10)
+    required=target+reserve
     return {'required':required,'ready':len(ready),'missing':max(0,required-len(ready)),'issues':issues,
             'materialGroups':len(materials),'complete':len(ready)>=required,
             'mayEnterSendStage':len(ready)>=required or bool(partial_override and ready),
@@ -111,7 +115,7 @@ class BatchTasks:
             if (member.get('institution'),member.get('market'))!=(spec['institution'],spec['market']):raise BatchError('member_scope_mismatch')
             scope=spec['productScope'];field={'pids':'pid','categories':'categoryId','campaigns':'campaignId'}.get(scope['kind'])
             if field and member.get(field) not in scope['values']:raise BatchError('member_outside_product_scope')
-            preparation_gate(task['spec']['target'],[member])
+            preparation_gate(task['spec']['target'],[member],reserve=task['spec']['reserve'])
             previous=self.db.execute('SELECT payload FROM batch_member WHERE task_id=? AND oec=?',(id,member['oec'])).fetchone()
             if previous and previous[0]==encoded(member):return
             if previous and expected_revision!=task['revision']:raise BatchError('member_conflict')
@@ -120,7 +124,7 @@ class BatchTasks:
             self.event(id,'member_prepared' if not previous else 'member_preparation_updated',{'oec':member['oec'],'previousHash':digest(json.loads(previous[0])) if previous else None,'currentHash':digest(member)})
     def readiness(self,id):
         task=self.get(id);rows=[json.loads(r[0]) for r in self.db.execute('SELECT payload FROM batch_member WHERE task_id=?',(id,))]
-        return preparation_gate(task['spec']['target'],rows,partial_override=bool(task['partial_override']))
+        return preparation_gate(task['spec']['target'],rows,partial_override=bool(task['partial_override']),reserve=task['spec']['reserve'])
     def freeze(self,id):
         with self.tx():
             task=self.get(id)

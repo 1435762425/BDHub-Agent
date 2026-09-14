@@ -15,9 +15,17 @@ def slice_report(report,item):
         value['status']='completed';value.pop('reason',None)
     return value
 
-def run_cohort(worker,limit=20,lanes=3):
+def run_cohort(worker,limit=20,lanes=3,soak_id=None):
     if type(lanes) is not int or lanes not in (3,6,9):raise CreatorDiscoveryError("invalid_request")
     store=worker.store;store.heartbeat(worker.owner)
+    soak=None;service=None
+    if soak_id:
+        from lib.batch_task_service import TaskService
+        from lib.identity_soak import IdentitySoak
+        service=TaskService(store.var_dir/'batch-tasks.sqlite');soak=IdentitySoak(service)
+        if not soak.allowed(soak_id):
+            state=soak.config(soak_id)['state'];service.close();return {'soakState':state,'targets':0}
+        lanes=9
     path=store.var_dir/'second-cycle.sqlite'
     if not path.exists():return None
     group=store.recover_cohort(worker.owner)
@@ -25,8 +33,15 @@ def run_cohort(worker,limit=20,lanes=3):
         with closing(sqlite3.connect(path.resolve().as_uri()+'?mode=ro',uri=True)) as db:
             if not db.execute("SELECT 1 FROM sqlite_master WHERE name='cycle_identity_outbox'").fetchone():return None
             batches=[r[0] for r in db.execute("SELECT o.batch_id FROM cycle_identity_outbox o JOIN plan p ON p.id=o.plan_id WHERE p.state='active' AND p.market='it' AND o.batch_id IS NOT NULL AND o.settled=0")]
+        if soak_id:
+            boxes=[r[0] for r in service.db.execute('SELECT outbox_id FROM batch_source_identity WHERE task_id=?',(soak.config(soak_id)['task_id'],))]
+            with closing(sqlite3.connect(path.resolve().as_uri()+'?mode=ro',uri=True)) as db:
+                scoped={r[0] for r in db.execute('SELECT batch_id FROM cycle_identity_outbox WHERE id IN (SELECT value FROM json_each(?))',(_json(boxes),))}
+            batches=[b for b in batches if b in scoped]
         group=store.claim_cohort(worker.owner,batches,limit)
-    if not group:return None
+    if not group:
+        if service:service.close()
+        return {'soakState':'waiting_supply','targets':0} if soak_id else None
     folder=store.output_root/'cohorts'/group['id'];output=folder/'output';target_file=folder/'targets.private.json'
     started=time.monotonic();items=group['items']
     try:
@@ -35,7 +50,7 @@ def run_cohort(worker,limit=20,lanes=3):
             folder.mkdir(parents=True,exist_ok=True,mode=0o700)
             with target_file.open('x') as f:
                 target_file.chmod(0o600)
-                json.dump({'market':'it','identityOnly':True,'cohortId':group['id'],'httpLanes':lanes,'targets':[{'ref':i['id'],'handle':i['handle'],'externalId':i['id']} for i in items]},f)
+                json.dump({'market':'it','identityOnly':True,'cohortId':group['id'],'httpLanes':lanes,**({'soakRun':soak_id} if soak_id else {}),'targets':[{'ref':i['id'],'handle':i['handle'],'externalId':i['id']} for i in items]},f)
             worker.executor(target_file,output)
             report=worker._final(output/'report.private.json')
         if report:
@@ -52,8 +67,19 @@ def run_cohort(worker,limit=20,lanes=3):
             if evidence.exists() and evidence.read_text()!=payload:raise CreatorDiscoveryError('probe_report_invalid')
             if not evidence.exists():evidence.write_text(payload);evidence.chmod(0o600)
             worker._settle(item,part)
+        if soak_id and report is None and target_file.exists() and json.loads(target_file.read_text()).get('soakRun')==soak_id:
+            incomplete=json.loads((output/'report.private.json').read_text()) if (output/'report.private.json').exists() else {}
+            soak.record(soak_id,group['id'],{**incomplete,'soakRun':soak_id,'account':'acc6','qps':12,'status':'incomplete'},[])
+        if soak_id and report and report.get('soakRun')==soak_id:
+            confirmed=[]
+            for item in items:
+                r=store._db.execute('SELECT status,oec_id FROM discovery_item WHERE id=?',(item['id'],)).fetchone()
+                if r['status']=='completed' and r['oec_id']:confirmed.append(r['oec_id'])
+            soak.record(soak_id,group['id'],report,confirmed)
         with store.transaction():store._db.execute("UPDATE discovery_cohort SET state='completed' WHERE id=?",(group['id'],))
         return {'id':group['id'],'recovered':bool(group.get('recovering')),'targets':len(items),'seconds':round(time.monotonic()-started,3),'report':str(output/'report.private.json')}
     except BaseException:
         # Keep cohort ownership/evidence for recovery; the probe supervisor closes its child.
         raise
+    finally:
+        if service:service.close()

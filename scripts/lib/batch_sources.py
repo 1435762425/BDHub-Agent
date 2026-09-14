@@ -25,6 +25,7 @@ class BatchSources:
   if initialize:self.db.executescript(SCHEMA)
  def permitted(self,id):
   task=self.tasks.get(id);row=self.db.execute('SELECT payload FROM batch_policy WHERE task_id=?',(id,)).fetchone()
+  if self.db.execute("SELECT 1 FROM sqlite_master WHERE name='identity_soak_run'").fetchone() and self.db.execute("SELECT 1 FROM identity_soak_run WHERE task_id=? AND state='attention'",(id,)).fetchone():return False
   return task['state']=='preparing' and row and json.loads(row[0]).get('authorizationScope')==AUTHORIZED
  def plan(self,id,offers,candidate_count,*,expected_per_pid=10,max_pages=2,pending_identity_count=0,previously_queried_pids=frozenset()):
   from lib.batch_task_service import in_scope
@@ -53,6 +54,10 @@ class BatchSources:
     self.db.execute('INSERT INTO batch_source_job(id,task_id,pid,offer) VALUES(?,?,?,?)',(job,id,o['pid'],encoded(o)))
    if chosen:self.tasks.event(id,'source_batch_planned',{'pids':len(chosen),'requiredCreators':spec['target']+spec['reserve'],'candidateGap':deficit,'estimatedCreatorsPerPid':config['expected_per_pid']})
    return {'created':len(chosen),'plannedPidCount':pending+len(chosen),'unplannedEstimate':max(0,needed-len(chosen))*config['expected_per_pid'],'candidateGap':deficit,'pendingIdentityCandidates':pending_identity_count}
+ def release_due_quota(self,id):
+  with self.tasks.tx():
+   if not self.permitted(id):return 0
+   return self.db.execute("UPDATE batch_source_job SET state='queued',error=NULL WHERE task_id=? AND state='blocked' AND error='kalodata_daily_quota_exhausted' AND next_attempt<=?",(id,self.tasks.clock())).rowcount
  def claim(self,id):
   with self.tasks.tx():
    if not self.permitted(id):return None
@@ -95,12 +100,12 @@ class BatchSources:
    return {'status':'page_saved','networkRequests':calls,'addedEdges':len(edges),'coverage':receipt['coverage']}
   except Exception as error:
    code=str(error) if isinstance(error,CycleError) else 'kalodata_read_failed'
-   fatal=code in ('kalodata_auth_required','kalodata_business_rejected','kalodata_repeated_page','kalodata_rows_invalid','kalodata_page_bound')
+   fatal=code in ('kalodata_daily_quota_exhausted','kalodata_auth_required','kalodata_business_rejected','kalodata_repeated_page','kalodata_rows_invalid','kalodata_page_bound')
    if not fatal:code='kalodata_read_failed' if code!='lease_lost' else code
    with self.tasks.tx():
     row=self.db.execute('SELECT * FROM batch_source_job WHERE id=?',(claim['id'],)).fetchone()
     if row and row['state']=='running' and row['fence']==claim['fence']:
-     self.db.execute('UPDATE batch_source_job SET state=?,error=?,lease_until=0,next_attempt=? WHERE id=?',('blocked' if fatal else 'queued',code,self.tasks.clock()+60,claim['id']))
+     self.db.execute('UPDATE batch_source_job SET state=?,error=?,lease_until=0,next_attempt=? WHERE id=?',('blocked' if fatal else 'queued',code,self.tasks.clock()+(86400 if code=='kalodata_daily_quota_exhausted' else 60),claim['id']))
    return {'status':'blocked' if fatal else 'retry_wait','error':code,'networkRequests':calls}
  def edges(self,id):
   return [e for row in self.db.execute('SELECT p.payload FROM batch_source_page p JOIN batch_source_job j ON j.id=p.job_id WHERE j.task_id=? AND p.imported=1',(id,)) for e in json.loads(row[0])['edges']]

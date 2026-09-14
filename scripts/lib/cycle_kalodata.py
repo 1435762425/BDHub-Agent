@@ -6,6 +6,14 @@ from lib.second_cycle import CycleError,digest,encoded
 PATH='/product/detail/creator/queryList'
 HANDLE=re.compile(r'[a-z0-9_.]{1,24}\Z')
 
+def quota_exhausted(body):
+ if not isinstance(body,dict) or body.get('success') is True:return False
+ message=body.get('message')
+ if isinstance(message,str):
+  try:message=json.loads(message)
+  except ValueError:return False
+ return isinstance(message,dict) and message.get('cause')=='DETAIL.ACCESS_TIMES'
+
 def sales(v):
  if v is None or isinstance(v,bool):return None
  s=str(v).strip().replace(',','');m=re.fullmatch(r'(\d+(?:\.\d+)?)\s*([kKmM万]?)',s)
@@ -14,6 +22,7 @@ def sales(v):
  return int(d) if d==d.to_integral_value() and 0<=d<=9007199254740991 else None
 
 def parse_page(body,claim,at,*,max_pages=2):
+ if quota_exhausted(body):raise CycleError('kalodata_daily_quota_exhausted')
  if not isinstance(body,dict) or body.get('success') is not True:raise CycleError('kalodata_business_rejected')
  rows=body.get('data')
  if isinstance(rows,dict):rows=next((rows[k] for k in ('items','list','records','rows') if isinstance(rows.get(k),list)),None)
@@ -37,7 +46,8 @@ def parse_page(body,claim,at,*,max_pages=2):
                 'liveRevenueRaw':str(row['live_revenue'])[:80] if isinstance(row.get('live_revenue'),(str,int,float)) else None,
                 'videoRevenueRaw':str(row['video_revenue'])[:80] if isinstance(row.get('video_revenue'),(str,int,float)) else None,'historicalOwnership':'unverified','sourceKind':'kalodata_http'})
  done=len(rows)<50 or page>=max_pages
- return {'edges':edges,'nextCursor':'' if done else str(page+1),'done':done,'coverage':'page_cap' if len(rows)==50 and page>=max_pages else 'short_page' if len(rows)<50 else 'more_possible','rowsReceived':len(rows),'rowsFingerprint':digest(rows),'skipped':skipped,'page':page,'maxPages':max_pages}
+ source_rows=[{k:row[k] for k in ('id','handle','nickname','sale','revenue','video_revenue','live_revenue','followers') if k in row} for row in rows]
+ return {'sourceRows':source_rows,'edges':edges,'nextCursor':'' if done else str(page+1),'done':done,'coverage':'page_cap' if len(rows)==50 and page>=max_pages else 'short_page' if len(rows)<50 else 'more_possible','rowsReceived':len(rows),'rowsFingerprint':digest(rows),'skipped':skipped,'page':page,'maxPages':max_pages}
 
 class KalodataWorker:
  def __init__(self,store,provider,owner='kalodata-local-worker',max_pages=2):
@@ -72,7 +82,7 @@ class KalodataWorker:
    return {'status':'completed' if receipt['done'] else 'checkpointed','jobId':claim['id'],'page':receipt['page'],'addedEdges':len(edges),'coverage':receipt['coverage'],'networkRequests':calls}
   except Exception as error:
    code=str(error) if isinstance(error,CycleError) else 'kalodata_read_failed'
-   if code not in {'kalodata_scope_changed','kalodata_auth_required','kalodata_repeated_page','kalodata_business_rejected','kalodata_rows_invalid','kalodata_page_bound','lease_lost','plan_paused','catalog_changed','cursor_changed','page_scope_mismatch'}:code='kalodata_read_failed'
+   if code not in {'kalodata_daily_quota_exhausted','kalodata_scope_changed','kalodata_auth_required','kalodata_repeated_page','kalodata_business_rejected','kalodata_rows_invalid','kalodata_page_bound','lease_lost','plan_paused','catalog_changed','cursor_changed','page_scope_mismatch'}:code='kalodata_read_failed'
    with self.store.tx():
     r=self.store.db.execute('SELECT * FROM source_job WHERE id=?',(claim['id'],)).fetchone()
     if r['owner']==claim['owner'] and r['fence']==claim['fence'] and r['state']=='running':

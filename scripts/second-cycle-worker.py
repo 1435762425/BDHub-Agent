@@ -6,7 +6,7 @@ from datetime import date,timedelta
 ROOT=Path(__file__).resolve().parents[1];LEGACY=ROOT.parent/'01-BDSystem-V2'
 sys.dont_write_bytecode=True;sys.path.insert(0,str(LEGACY));sys.path.insert(0,str(ROOT/'scripts'))
 from lib.second_cycle import CycleStore,CycleError
-from lib.cycle_kalodata import KalodataWorker,PATH
+from lib.cycle_kalodata import KalodataWorker,PATH,quota_exhausted
 
 class HttpProvider:
  def __enter__(self):
@@ -36,6 +36,7 @@ class HttpProvider:
     value=data.get(key);item[key]=value if type(value) is int or isinstance(value,str) and re.fullmatch(r'[A-Za-z0-9_.:-]{1,64}',value) else None
    if data.get('success') is not True:item['message']=business_message(data.get('message'))
   self.diagnostics.append(item)
+  if quota_exhausted(data):raise CycleError('kalodata_daily_quota_exhausted')
   if r.status_code in (401,403):raise CycleError('kalodata_auth_required')
   if r.status_code!=200:raise CycleError('kalodata_business_rejected')
   if not isinstance(data,dict) or data.get('success') is not True:raise CycleError('kalodata_business_rejected')

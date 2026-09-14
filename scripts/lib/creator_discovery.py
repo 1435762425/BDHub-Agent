@@ -246,7 +246,7 @@ class CreatorDiscoveryStore:
         with self._lock:
             return any(_alive(r[0]) for r in self._db.execute("SELECT pid FROM discovery_heartbeat WHERE seen_at>=?", (self.now() - 30,)))
 
-    def _next_items(self,limit,batch_ids=None):
+    def _next_items(self,limit,batch_ids=None,distinct=False):
         # Unknown handles grow the creator pool first; this only changes
         # queue order, never substitutes cached identity for exact Find.
         known=[]; identity_path=self.var_dir/'creator-identities.sqlite'
@@ -254,6 +254,12 @@ class CreatorDiscoveryStore:
             with closing(sqlite3.connect(identity_path.resolve().as_uri()+'?mode=ro',uri=True)) as identities:
                 if identities.execute("SELECT 1 FROM sqlite_master WHERE name='creator_identity'").fetchone():
                     known=[r[0] for r in identities.execute("SELECT current_handle FROM creator_identity WHERE market='it' AND current_handle IS NOT NULL AND handle_conflict=0")]
+        if distinct:
+            return self._db.execute("""WITH candidates AS (
+              SELECT i.*,b.created_at queue_created,CASE WHEN b.source_label='Kalodata 二发线索身份解析' THEN CASE WHEN i.handle IN (SELECT value FROM json_each(?)) THEN 2 WHEN EXISTS(SELECT 1 FROM discovery_item old WHERE old.handle=i.handle AND old.id<>i.id AND old.status IN ('completed','unresolved')) THEN 1 ELSE 0 END ELSE 0 END queue_priority
+              FROM discovery_item i JOIN discovery_batch b ON b.id=i.batch_id WHERE i.status='queued' AND b.status IN ('queued','running') AND i.retry_at<=? AND (? IS NULL OR b.id IN (SELECT value FROM json_each(?)))
+            ), unique_handles AS (SELECT *,row_number() OVER(PARTITION BY handle ORDER BY queue_priority,queue_created,batch_id,row_index) occurrence FROM candidates)
+            SELECT * FROM unique_handles WHERE occurrence=1 ORDER BY queue_priority,queue_created,batch_id,row_index LIMIT ?""",(_json(known),self.now(),_json(batch_ids) if batch_ids is not None else None,_json(batch_ids) if batch_ids is not None else None,limit)).fetchall()
         return self._db.execute("""SELECT i.* FROM discovery_item i JOIN discovery_batch b ON b.id=i.batch_id
             WHERE i.status='queued' AND b.status IN ('queued','running') AND i.retry_at<=? AND (? IS NULL OR b.id IN (SELECT value FROM json_each(?)))
             ORDER BY CASE WHEN b.source_label='Kalodata 二发线索身份解析' THEN CASE WHEN i.handle IN (SELECT value FROM json_each(?)) THEN 2 WHEN EXISTS(SELECT 1 FROM discovery_item old WHERE old.handle=i.handle AND old.id<>i.id AND old.status IN ('completed','unresolved')) THEN 1 ELSE 0 END ELSE 0 END,b.created_at,b.id,i.row_index LIMIT ?""",(self.now(),_json(batch_ids) if batch_ids is not None else None,_json(batch_ids) if batch_ids is not None else None,_json(known),limit)).fetchall()
@@ -281,7 +287,7 @@ class CreatorDiscoveryStore:
         if type(limit) is not int or not 1<=limit<=20:raise CreatorDiscoveryError('invalid_request')
         with self.transaction():
             if self._db.execute("SELECT 1 FROM discovery_item WHERE status='running'").fetchone():return None
-            candidates=self._next_items(limit*3,batch_ids);items=[];handles=set()
+            candidates=self._next_items(limit,batch_ids,distinct=True);items=[];handles=set()
             for row in candidates:
                 if row['handle'] in handles:continue
                 handles.add(row['handle']);items.append(dict(row))

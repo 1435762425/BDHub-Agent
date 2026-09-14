@@ -36,8 +36,10 @@
 - 最新真实发送与素材记录：[B.15](docs/implementation/second-cycle-throughput-20-v1.md)、[B.16](docs/implementation/second-cycle-supply-repair-v1.md)。数字为历史快照。
 - 早期阶段入口归档：[docs/implementation/stage-index-before-batches-20260913.md](docs/implementation/stage-index-before-batches-20260913.md)。仅在追溯时读，不从历史“不真实发送/允许回复”等描述推导当前权限。
 
-当前首个正式任务：`batch-19e1044b23d017f1f553a2ecac0d`，IT，1000＋100，用户“现在开始”授权立即准备。运行记录见[立即准备](docs/implementation/batch-1000-immediate-start.md)，不要重复创建同一批。
+当前首个正式任务：`batch-19e1044b23d017f1f553a2ecac0d`，IT，初始1000＋100，现已按用户新指令扩为2000＋100（总2100），见下方12 QPS验证入口。用户“现在开始”授权立即准备。运行记录见[立即准备](docs/implementation/batch-1000-immediate-start.md)，不要重复创建同一批。
 
-身份批次提速已启用：`creator-profile-refresh.py worker --interval 1 --cohort-size 20`，最多20人共享会话、3条同账号HTTP通道、总3 QPS。需要同时加载新准备/身份模块；旧单活跃索引已换为受事务控制的同拥有者分组。见[提速实测](docs/implementation/batch-preparation-speed-5x.md)，7.19倍指候选增长，不是全批最终总耗时。
+普通身份任务的默认提速配置：`creator-profile-refresh.py worker --interval 1 --cohort-size 20`，最多20人共享会话、3条同账号HTTP通道、总3 QPS。需要同时加载新准备/身份模块；旧单活跃索引已换为受事务控制的同拥有者分组。见[提速实测](docs/implementation/batch-preparation-speed-5x.md)，7.19倍指候选增长，不是全批最终总耗时。
 
 用户已授权的单号/多号短时压测见[测试结果](docs/implementation/identity-single-multi-stress.md)。隔离stress manifest可用5/8/12 QPS，生产默认仍3 QPS；单号短测最高约2.06倍，五号出现超时，不把短测或参考样本吞吐当作长期/新增候选速度。
+
+当前用户已批准[ACC6单账号12 QPS新增1000长测](docs/implementation/identity-12qps-extra1000.md)：原任务现为2000正式＋100候补，总2100；运行id `soak-73927dcc9d1804d75364e6d2f546`。仅带此有效运行的身份cohort使用12 QPS，不启用多账号/发送/AI回复。Kalodata新详情日额度已用完，但旧查询缓存实测可读；先恢复已有数据。零销量是否纳入候选正在等用户确认，不擅自当合格。

@@ -50,6 +50,7 @@ def main():
     commands.add_parser("list")
     worker = commands.add_parser("worker")
     worker.add_argument("--once", action="store_true")
+    worker.add_argument("--soak-run")
     worker.add_argument("--cohort-size",type=int,choices=(1,10,20),default=1)
     worker.add_argument("--cohort-lanes",type=int,choices=(3,6,9),default=3)
     worker.add_argument("--interval", type=float, default=5)
@@ -79,14 +80,14 @@ def main():
                         cohort_result=None
                         if args.cohort_size>1:
                             from lib.discovery_cohort import run_cohort
-                            cohort_result=run_cohort(discovery,args.cohort_size,lanes=args.cohort_lanes)
+                            cohort_result=run_cohort(discovery,args.cohort_size,lanes=args.cohort_lanes,soak_id=args.soak_run)
                         discovered = None if cohort_result else discovery.run_once()
                         cycle_result = reconcile_cycle(store.var_dir,discovery_store)
                         if refreshed is not None or discovered is not None or cohort_result is not None or args.once:
                             print(json.dumps({"refresh": refreshed, **({"cohort":cohort_result} if cohort_result else {}), "discovery": discovered["batch"] if discovered else None,**({"cycleIdentity":cycle_result} if cycle_result is not None else {})}), flush=True)
-                        if args.once:
+                        if args.once or cohort_result and cohort_result.get('soakState') in ('completed','attention'):
                             break
-                        time.sleep(args.interval)
+                        time.sleep(15 if args.soak_run and cohort_result and cohort_result.get('targets')==0 else args.interval)
         return 0
     except ProfileRefreshError as error:
         print(json.dumps({"error": {"code": error.code, "message": error.code, "status": error.status}}))

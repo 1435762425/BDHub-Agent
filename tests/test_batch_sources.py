@@ -18,6 +18,13 @@ class SourceTests(unittest.TestCase):
   self.spec={'institution':'bjn-local-research','market':'it','target':3000,'startDate':'2026-09-15','startTime':'22:00','endTime':'01:00'}
   card=self.s.preview(self.spec);self.id=self.s.confirm(card['token'],'one')['id'];self.offers=[offer(str(1729480033890900000+i),title='Cuscino',campaignId='2') for i in range(1000)]
  def tearDown(self):self.s.close();self.tmp.cleanup()
+ def test_daily_quota_is_separate_from_tiktok_limits(self):
+  from lib.cycle_kalodata import quota_exhausted
+  self.assertTrue(quota_exhausted({'success':False,'message':'{"cause":"DETAIL.ACCESS_TIMES"}'}))
+  self.assertFalse(quota_exhausted({'success':True,'message':'{"cause":"DETAIL.ACCESS_TIMES"}'}))
+  self.q.plan(self.id,self.offers[:1],0);r=self.q.once(self.id,Provider(error='kalodata_daily_quota_exhausted'),lambda e:None)
+  self.assertEqual(r['status'],'blocked');self.assertIn('kalodata_daily_quota_exhausted',self.q.status(self.id)['errors'])
+  self.assertEqual(self.q.release_due_quota(self.id),0);self.now+=86400;self.assertEqual(self.q.release_due_quota(self.id),1)
  def test_pending_supply_deduplicates_and_excludes_already_known_people(self):
   edges=[{'sourceId':str(i),'sourceHandle':h} for i,h in enumerate(['known','new','new','done','miss'])]
   self.assertEqual(pending_new_handles(edges,{'3'},{'4'},{'known'}),{'new'})

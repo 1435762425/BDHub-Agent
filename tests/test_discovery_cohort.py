@@ -31,6 +31,13 @@ class CohortTests(unittest.TestCase):
   g=self.store.claim_cohort('one',[self.batch],10);self.assertEqual(len(g['items']),10)
   self.assertIsNone(self.store.claim('two'));self.assertIsNone(self.store.claim_cohort('two',[self.batch]))
   self.assertIsNone(self.store.recover_cohort('two'))
+ def test_duplicate_prefix_does_not_shrink_a_full_cohort(self):
+  batches=[]
+  for i in range(70):
+   label='older'+str(i);v=preview('it',label,'duplicate');batches.append(self.store.submit('it',label,'duplicate',v['previewHash'],'dup'+str(i))['id'])
+  self.store.now=lambda:T0+100
+  text='\n'.join('unique'+str(i) for i in range(19));v=preview('it','new',text);batches.append(self.store.submit('it','new',text,v['previewHash'],'unique')['id'])
+  group=self.store.claim_cohort('worker',batches,20);self.assertEqual(len(group['items']),20);self.assertEqual(len({i['handle'] for i in group['items']}),20)
  def test_recovery_replays_saved_group_without_network(self):
   old=self.store.claim_cohort('old',[self.batch],10)
   folder=self.store.output_root/'cohorts'/old['id'];folder.mkdir(parents=True);file=folder/'targets.private.json'
