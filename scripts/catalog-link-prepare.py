@@ -471,6 +471,35 @@ def step_create(prep,run_id,limit,report,pace=0.0,lanes=1,qps=5):
                     try:on.session.close()
                     except Exception:pass
             report.setdefault('phaseSeconds',{})['searches']=round(time.time()-t,2)
+            # Readback runs on its own lane so it can overlap the next creation.
+            rb_lane=transport.fork_lane(lambda:None)
+            rb_read=reader(rb_lane)
+            rb_pool=ThreadPoolExecutor(max_workers=1)
+            def rb_lane_close():
+                try:rb_lane.session.close()
+                except Exception:pass
+            def readback_once(target_intent,target_receipt):
+                for delay in (0,1,2):
+                    if delay:time.sleep(delay)
+                    try:card=verify_created_card(rb_read,target_intent,target_receipt)
+                    except Exception:card=None
+                    if card:return card
+                return None
+            pending=None
+            def finalize(entry):
+                pitem,pintent,preceipt,fut,pt0=entry
+                ppid,pcid,psrc=pitem['pid'],pitem['campaign_id'],pitem['catalog_source']
+                try:
+                    card=fut.result()
+                    if not card:raise ValueError('created_card_not_verified')
+                    ledger.confirm(pintent['id'],card)
+                    prep.mark_progress(pintent['run_id'],ppid,pcid,psrc,'ready',card=card)
+                    created.append({'pid':ppid,'state':'verified','listId':card['listId'],'creatorPercent':card['creatorPercent'],'seconds':round(time.time()-pt0,2)})
+                except Exception as error:
+                    code=str(error) if isinstance(error,ValueError) else f'{type(error).__name__}:{str(error)[:80]}'
+                    try:prep.mark_progress(pintent['run_id'],ppid,pcid,psrc,'unknown',error=code)
+                    except Exception:pass
+                    blocked.append({'pid':ppid,'error':code,'seconds':round(time.time()-pt0,2)})
             t=time.time()
             for item,intent in work:
                 t0=time.time()
@@ -495,16 +524,12 @@ def step_create(prep,run_id,limit,report,pace=0.0,lanes=1,qps=5):
                         created.append({'pid':pid,'state':'unknown_readback_pending','seconds':round(time.time()-t0,2)});continue
                     from bdhub.send.taplink.protocol import creation_receipt
                     body=transport.require_read(r);receipt=creation_receipt(body);receipt['responseHash']=digest(body);ledger.receipt(intent['id'],receipt)
-                    # The receipt already carries list_id, so verify by reading that list directly
-                    # instead of searching all pages again.
-                    card=None
-                    for delay in (0,1,2):
-                        if delay:time.sleep(delay)
-                        card=verify_created_card(read,intent,receipt)
-                        if card:break
-                    if not card:raise ValueError('created_card_not_verified')
-                    ledger.confirm(intent['id'],card);prep.mark_progress(run_id,pid,cid,src,'ready',card=card)
-                    created.append({'pid':pid,'state':'verified','listId':card['listId'],'creatorPercent':card['creatorPercent'],'seconds':round(time.time()-t0,2)})
+                    # The receipt already carries list_id. Read that list back on its own lane and
+                    # do NOT wait here: the readback of this product overlaps the next write, so the
+                    # write loop is limited by one write per product instead of write+readback.
+                    previous=pending
+                    pending=(item,intent,receipt,rb_pool.submit(readback_once,intent,receipt),t0)
+                    if previous is not None:finalize(previous)
                 except Exception as error:
                     code=str(error) if isinstance(error,ValueError) else f'{type(error).__name__}:{str(error)[:80]}'
                     try:attempted=ledger.get(intent['id'])['state'] in ('submitted','receipt_saved','unknown')
@@ -517,6 +542,8 @@ def step_create(prep,run_id,limit,report,pace=0.0,lanes=1,qps=5):
                     prep.release(run_id,pid,cid,src)
                 timings.append(round(time.time()-t0,2))
                 if pace:time.sleep(pace)
+            if pending is not None:finalize(pending)
+            rb_lane_close()
             report.setdefault('phaseSeconds',{})['writesAndReadback']=round(time.time()-t,2)
     finally:
         try:ledger.db.close()
