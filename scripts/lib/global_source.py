@@ -59,6 +59,7 @@ CREATE TABLE IF NOT EXISTS global_source_attempt(id INTEGER PRIMARY KEY AUTOINCR
 '''
 class GlobalSources:
     def __init__(self,path,*,clock=time.time,readonly=False):
+        self.path=path
         self.clock=clock;self.db=sqlite3.connect(path.resolve().as_uri()+'?mode=ro' if readonly else path,uri=readonly,timeout=10,isolation_level=None);self.db.row_factory=sqlite3.Row
         if not readonly:
             self.db.executescript(SCHEMA)
@@ -164,7 +165,10 @@ class GlobalSources:
             for old in json.loads(row['stock']) if row['stock'] else []:
                 current=mark_full_managed(old,'global-source:'+id+':'+row['pid']+':'+row['fingerprint']);current['assessment']=assess_offer(current,self.clock());offers.append(current)
             items.append({'pid':row['pid'],'title':str(product.get('title') or row['pid']),'listedSelected':product.get('fs_is_selected'),'totalCommissionRaw':product.get('commission_rate'),'publicCommissionRaw':product.get('open_collab_rate'),'observedAt':row['observed'],'detailsChecked':row['details'] is not None,'stockChecked':row['stock'] is not None,'conditionsChecked':row['stock'] is not None,'stockRequired':False,'selectedOffers':offers})
-        return status|{'displayRunId':id,'displayIsComplete':id==(status.get('activePublished') or {}).get('id'),'items':items,'totalMatches':total,'offset':offset,'limit':limit}
+        from lib.global_selection import observations
+        intake,selection=observations(self.path.parent,id)
+        for item in items:item['selectionObservation']=selection.get(item['pid'])
+        return status|{'selectionBatch':intake,'displayRunId':id,'displayIsComplete':id==(status.get('activePublished') or {}).get('id'),'items':items,'totalMatches':total,'offset':offset,'limit':limit}
     def status(self,id=None):
         if id is None:
             row=self.db.execute('SELECT id FROM global_source_run ORDER BY created DESC LIMIT 1').fetchone()
