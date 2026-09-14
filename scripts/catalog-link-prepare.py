@@ -396,7 +396,7 @@ def short_name_for(pid,title):
     from lib.link_naming import short_name_for as cached_short_name
     return cached_short_name(ROOT,pid,title)
 
-def step_create(prep,run_id,limit,report,pace=0.0):
+def step_create(prep,run_id,limit,report,pace=0.0,lanes=1,qps=5):
     """Freeze a batch locally, then create it under ONE account session.
 
     Establishing the ACC9 session (profile lock, cookies, signer) is the dominant fixed cost of
@@ -438,23 +438,53 @@ def step_create(prep,run_id,limit,report,pace=0.0):
                 prep.release(run_id,pid,cid,src)
         report['createFrozen']=len(work)
         if not work:return {'created':created,'blocked':blocked,'timings':timings,'paceSeconds':pace}
-        # Phase 2: one session, many frozen writes.
+        # Phase 2: one session. Every read is done up front in batch/parallel, so the write
+        # loop is left with exactly two serial requests per product (write + member readback).
         payloads={str(intent['spec']['pid']):intent['spec']['payload'] for _,intent in work}
         with opportunity_card_creator_batch(report,payloads,stopped=lambda:False,wait_seconds=60) as transport:
-            def read(path,extra):
-                r=transport._xhr(method='GET',path=path,params=transport._params()|extra,payload=None,write=False)
-                body=transport.require_read(r);return body,digest(body)
+            def reader(on):
+                def read(path,extra):
+                    r=on._xhr(method='GET',path=path,params=on._params()|extra,payload=None,write=False)
+                    body=on.require_read(r);return body,digest(body)
+                return read
+            read=reader(transport)
+            pids=[str(intent['spec']['pid']) for _,intent in work]
+            t=time.time()
+            fresh_all=fresh_offers(transport,prep,pids,time.time())
+            report.setdefault('phaseSeconds',{})['plans']=round(time.time()-t,2)
+            # Card pre-search for the whole batch across read lanes: a product that already has a
+            # card is blocked before any write, and the write loop keeps no search of its own.
+            t=time.time();totals={}
+            from concurrent.futures import ThreadPoolExecutor
+            from lib.cohort_find import SharedPacer
+            pacer=SharedPacer(qps)
+            lane_transports=[transport]+[transport.fork_lane(pacer.acquire) for _ in range(max(0,lanes-1))]
+            try:
+                lane_reads=[read]+[reader(on) for on in lane_transports[1:]]
+                def look(index,pid):
+                    try:return pid,search_cards(lane_reads[index%max(1,lanes)],pid)[0],None
+                    except Exception as error:return pid,None,error
+                with ThreadPoolExecutor(max_workers=max(1,lanes)) as executor:
+                    for pid,total,error in (f.result() for f in [executor.submit(look,i,p) for i,p in enumerate(pids)]):
+                        if error is None:totals[pid]=total
+            finally:
+                for on in lane_transports[1:]:
+                    try:on.session.close()
+                    except Exception:pass
+            report.setdefault('phaseSeconds',{})['searches']=round(time.time()-t,2)
+            t=time.time()
             for item,intent in work:
                 t0=time.time()
                 pid,cid,src=item['pid'],item['campaign_id'],item['catalog_source']
                 try:
-                    fresh=fresh_offers(transport,prep,[pid],time.time()).get(pid)
+                    fresh=fresh_all.get(pid)
                     if not fresh:raise ValueError('product_no_longer_eligible')
                     # The campaign binding comes from the frozen intent; only the commercial facts
                     # are re-read, so a plan edited on the platform can never be created silently.
                     current=new_offer(fresh,pid,intent['spec']['campaignId'],'selected',policy=prep.policy)
                     if any(str(current.get(k))!=str(intent['spec']['offer'].get(k)) for k in ('campaignId','creatorPercent','totalPercent','publicPercent')):raise ValueError('commercial_facts_changed')
-                    total,_=search_cards(read,pid)
+                    total=totals.get(pid)
+                    if total is None:raise ValueError('card_search_unresolved')
                     if total!=0:raise ValueError('existing_links_preserved_no_creation')
                     ledger.begin(intent['id'],'acc9');prep.mark_progress(run_id,pid,cid,src,'submitted')
                     r=transport._xhr(method='POST',path=CREATE,params=transport._params(),payload=intent['spec']['payload'],write=True)
@@ -488,6 +518,7 @@ def step_create(prep,run_id,limit,report,pace=0.0):
                     prep.release(run_id,pid,cid,src)
                 timings.append(round(time.time()-t0,2))
                 if pace:time.sleep(pace)
+            report.setdefault('phaseSeconds',{})['writesAndReadback']=round(time.time()-t,2)
     finally:
         try:ledger.db.close()
         except Exception:pass
@@ -592,7 +623,7 @@ def main():
         try:report['reconcile']=step_reconcile(prep,inv,run_id,report,limit=(a.items or None))
         finally:inv.close()
     elif a.action=='create':
-        report['create']=step_create(prep,run_id,a.max_creates,report)
+        report['create']=step_create(prep,run_id,a.max_creates,report,lanes=a.lanes,qps=a.qps)
         report['platformWrites']=report.get('createWrites',0)
     elif a.action=='verify':
         report['verify']=step_verify(prep,report,limit=(a.items or None))
