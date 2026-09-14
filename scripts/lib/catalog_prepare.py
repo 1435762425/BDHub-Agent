@@ -466,10 +466,21 @@ def reconcile_from_inventory(prep,inv,items,offers,diag=None,now=None):
         pid=str(it['pid']);cid=str(it['campaign_id']);src=it['catalog_source'];run_id=it['run_id']
         members=inv.members_for_pid(pid)
         matching=[m for m in members if str(m.get('member_campaign_id') or '')==cid]
-        offer=offers.get(pid) if matching else None
+        # The plan is independent of the card: a card-less product still needs its plan to be
+        # creatable, so never gate the plan lookup on whether a card exists.
+        offer=offers.get(pid)
         observed=[];best=None;blocker=None;error=None
         if not members:
-            state='missing'
+            # "missing" means "no card AND a readable plan", i.e. this product can actually be
+            # given a link. Without a plan there is nothing to create, so report the real reason.
+            if offer:
+                state='missing'
+            else:
+                reason=diag.get(pid) or 'listing_read_unresolved'
+                if reason=='product_no_longer_eligible':
+                    state='review';blocker=reason
+                else:
+                    state='read_incomplete';error=reason
         elif not matching:
             state='review';blocker='existing_links_other_campaign'
         elif not offer:
@@ -492,10 +503,23 @@ def reconcile_from_inventory(prep,inv,items,offers,diag=None,now=None):
                 if ok and (best is None or (fact['creatorRaw'] and Decimal(fact['creatorRaw'])>Decimal(best['creatorRaw']))):best=fact
             state='reuse' if best else 'review'
             if state=='review':blocker='existing_links_require_review'
-        fields=(state,blocker,error,now)
+        # Always persist the plan facts when the plan was read: creation needs the commission
+        # split, so a card-less product must still carry its plan.
+        plan={}
+        if offer:
+            plan={'title':str(offer.get('title') or '')[:500],'creatorPercent':offer.get('creatorPercent'),
+                  'publicPercent':offer.get('publicPercent'),'totalPercent':offer.get('totalPercent'),
+                  'listing':encoded({'product_id':pid,'title':offer.get('title'),'creatorPercent':offer.get('creatorPercent'),
+                                     'publicPercent':offer.get('publicPercent'),'totalPercent':offer.get('totalPercent'),
+                                     'agencyPercent':offer.get('agencyPercent'),'managementType':offer.get('managementType'),
+                                     'managementEvidenceRef':offer.get('managementEvidenceRef')})}
         with prep.db:
-            prep.db.execute("UPDATE catalog_prepare_item SET state=?,blocker=?,error=?,attempts=attempts+1,lease_until=0,read_at=?,updated=? WHERE run_id=? AND pid=? AND campaign_id=? AND catalog_source=?",
-                (state,blocker,error,now,now,run_id,pid,cid,src))
+            if plan:
+                prep.db.execute("UPDATE catalog_prepare_item SET state=?,blocker=?,error=?,attempts=attempts+1,lease_until=0,read_at=?,updated=?,title=?,creator_percent=?,public_percent=?,total_percent=?,listing=? WHERE run_id=? AND pid=? AND campaign_id=? AND catalog_source=?",
+                    (state,blocker,error,now,now,plan['title'],plan['creatorPercent'],plan['publicPercent'],plan['totalPercent'],plan['listing'],run_id,pid,cid,src))
+            else:
+                prep.db.execute("UPDATE catalog_prepare_item SET state=?,blocker=?,error=?,attempts=attempts+1,lease_until=0,read_at=?,updated=? WHERE run_id=? AND pid=? AND campaign_id=? AND catalog_source=?",
+                    (state,blocker,error,now,now,run_id,pid,cid,src))
             prep.db.execute('DELETE FROM catalog_prepare_reuse WHERE run_id=? AND pid=? AND campaign_id=? AND catalog_source=?',(run_id,pid,cid,src))
             for c in observed:
                 prep.db.execute('INSERT OR REPLACE INTO catalog_prepare_reuse VALUES(?,?,?,?,?,?,?,?,?,?)',

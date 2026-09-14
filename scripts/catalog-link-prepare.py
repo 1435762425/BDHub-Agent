@@ -225,28 +225,51 @@ def step_inventory(report,lanes=1,qps=3,limit=None):
     finally:inv.close()
     return {'lists':report.get('inventoryLists'),'states':states}
 
-def step_reconcile(prep,inv,run_id,report,limit=None):
-    """Judge every queued plan from the cached inventory plus one live plan read.
+def stored_offer(item):
+    """Rebuild the plan facts already stored on the ledger row, if any.
 
-    Replaces the per-PID card search: the inventory already holds which cards exist and
-    their member facts, so only the product plan still needs a platform read.
+    A mass re-read of every plan is both slow and unreliable, so the reconcile reuses
+    what it already knows and only reads plans it has never seen. Creation still
+    re-validates the live facts before writing anything.
+    """
+    data=json.loads(item['listing']) if item.get('listing') else None
+    if not data or not data.get('creatorPercent'):return None
+    def raw(value):
+        if value in (None,''):return None
+        try:return str(int(Decimal(str(value))*100))
+        except Exception:return None
+    return {'pid':str(item['pid']),'campaignId':str(item['campaign_id']),'catalogSource':item['catalog_source'],
+            'title':data.get('title'),'creatorPercent':data.get('creatorPercent'),
+            'publicPercent':data.get('publicPercent'),'totalPercent':data.get('totalPercent'),
+            'agencyPercent':data.get('agencyPercent'),'managementType':data.get('managementType'),
+            'managementEvidenceRef':data.get('managementEvidenceRef'),'planSource':'stored',
+            'stats':{'totalRaw':raw(data.get('totalPercent')),'publicRaw':raw(data.get('publicPercent')),
+                     'creatorRaw':raw(data.get('creatorPercent')),'agencyRaw':raw(data.get('agencyPercent'))}}
+
+def step_reconcile(prep,inv,run_id,report,limit=None):
+    """Judge every queued plan from the cached inventory plus the plan facts.
+
+    Live plans are read only for rows that never had one: re-reading all of them is slow
+    and the platform starts returning empty pages under a long uninterrupted run.
     """
     rows=[dict(r) for r in prep.db.execute("SELECT * FROM catalog_prepare_item WHERE run_id=? AND state NOT IN ('retired','ready')",(run_id,))]
     if limit:rows=rows[:limit]
-    # Plans are read for every queued PID, including card-less ones: creation needs the frozen
-    # commission split, and a plan read is one request per 15 PIDs, far cheaper than a search.
-    pids=sorted({r['pid'] for r in rows})
-    report['reconcileItems']=len(rows);report['reconcilePlans']=len(pids)
-    offers={};diag={}
-    if pids:
+    offers={}
+    for item in rows:
+        cached=stored_offer(item)
+        if cached:offers[str(item['pid'])]=cached
+    todo=sorted({str(r['pid']) for r in rows if str(r['pid']) not in offers})
+    report['reconcileItems']=len(rows);report['reconcileFromStored']=len(offers);report['reconcilePlansToRead']=len(todo)
+    diag={}
+    if todo:
         with opportunity_reader(report,wait_seconds=60,account_name='acc9') as transport:
             pool=pool_cache(report)
             if pool is None:
                 pool=read_selected_pool(transport);pool['readAt']=time.time()
                 (ROOT/'var/catalog-selected-pool-cache.json').write_text(json.dumps(pool,ensure_ascii=False))
             report['selectedPoolTotal']=pool['total']
-            for start in range(0,len(pids),15):
-                try:offers|=live_plans(transport,prep,pids[start:start+15],pool,diag)
+            for start in range(0,len(todo),15):
+                try:offers|=live_plans(transport,prep,todo[start:start+15],pool,diag)
                 except Exception as error:
                     report.setdefault('reconcilePlanErrors',[]).append(str(error)[:60])
     return reconcile_from_inventory(prep,inv,rows,offers,diag)
