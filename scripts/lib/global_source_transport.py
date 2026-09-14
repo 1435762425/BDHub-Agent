@@ -38,6 +38,24 @@ def opportunity_card_creator(report,payload,*,stopped=lambda:False,wait_seconds=
     with _opportunity_transport(report,stopped=stopped,extra_read_endpoints=reads,creation_scope=deepcopy(payload),account_name='acc9',wait_seconds=wait_seconds) as t:yield t
 
 @contextmanager
+def opportunity_card_creator_batch(report,payloads,*,stopped=lambda:False,wait_seconds=15):
+    """Many frozen product-list requests on ACC9 under ONE account guard.
+
+    Establishing the account session (profile lock, cookies, signer) is the dominant fixed
+    cost of a creation, so a batch shares it. Safety is unchanged: each write must match a
+    frozen payload exactly and each product may be written at most once per session.
+    """
+    from lib.market_accounts import catalog_read_account
+    from copy import deepcopy
+    if catalog_read_account(ROOT,'acc9')!='acc9' or not isinstance(payloads,dict) or not payloads:raise ValueError('card_batch_scope_invalid')
+    frozen={}
+    for pid,payload in payloads.items():
+        if not isinstance(payload,dict) or len(payload.get('items',[]))!=1 or str(payload['items'][0].get('product_id'))!=str(pid):raise ValueError('card_batch_scope_invalid')
+        frozen[str(pid)]=deepcopy(payload)
+    reads={('/api/v1/affiliate/partner/im/product_list/list','GET'),('/api/v1/affiliate/partner/campaign/product_list/products','GET')}
+    with _opportunity_transport(report,stopped=stopped,extra_read_endpoints=reads,creation_scope=frozen,account_name='acc9',wait_seconds=wait_seconds) as t:yield t
+
+@contextmanager
 def _opportunity_transport(report,*,stopped=lambda:False,extra_read_endpoints=frozenset(),selection_scope=None,creation_scope=None,account_name='acc6',wait_seconds=15):
     if type(wait_seconds) not in (int,float) or not 0<=wait_seconds<=60:raise ValueError('invalid_guard_wait')
     # campaign/product_list/list is the read-only TapLink inventory (lists all cards for a
@@ -70,7 +88,7 @@ def _opportunity_transport(report,*,stopped=lambda:False,extra_read_endpoints=fr
     if selection_scope is not None:
         from bdhub.hub.markets import require_capability
         require_capability('it','product_select')
-    consumed=set();creation_used=[False]
+    consumed=set();creation_used=set()
     class Scoped(CommerceTransport):
         WRITE_ENDPOINTS=frozenset({(CREATE,'POST')}) if creation_scope is not None else frozenset({(SELECT,'POST')}) if selection_scope is not None else frozenset()
         READ_ENDPOINTS=frozenset({(LIST,'POST'),(DETAIL,'GET'),(CATEGORY,'POST'),(SELECTED,'POST')})|frozenset(extra_read_endpoints)
@@ -86,12 +104,26 @@ def _opportunity_transport(report,*,stopped=lambda:False,extra_read_endpoints=fr
         def _xhr(self,**kwargs):
             if kwargs.get('write'):
                 if creation_scope is not None:
-                    if creation_used[0] or kwargs.get('path')!=CREATE or kwargs.get('method')!='POST' or kwargs.get('payload')!=creation_scope:raise ValueError('card_write_outside_intent')
-                    creation_used[0]=True;report['platformWrites']+=1
+                    body=kwargs.get('payload') or {}
+                    if kwargs.get('path')!=CREATE or kwargs.get('method')!='POST':raise ValueError('card_write_outside_intent')
+                    if 'items' in creation_scope:
+                        # Single frozen request (canary): exactly one write, byte-identical.
+                        if creation_used or body!=creation_scope:raise ValueError('card_write_outside_intent')
+                        creation_used.add('*')
+                    else:
+                        # Batch: every write must equal the frozen request of its own product,
+                        # and each product may be written at most once in this session.
+                        items=body.get('items') or []
+                        pid=str(items[0].get('product_id')) if len(items)==1 else ''
+                        expected=creation_scope.get(pid)
+                        if not expected or pid in creation_used or body!=expected:raise ValueError('card_write_outside_intent')
+                        creation_used.add(pid)
+                    report['platformWrites']=report.get('platformWrites',0)+1
+                    report['createWrites']=report.get('createWrites',0)+1
                     return super()._xhr(**kwargs)
                 body=kwargs.get('payload') or {};pid=body.get('product_id');cid=body.get('campaign_id')
                 if selection_scope is None or kwargs.get('path')!=SELECT or kwargs.get('method')!='POST' or set(body)!={'product_id','campaign_id'} or not cid or selection_scope.get(pid)!=cid or pid in consumed:raise ValueError('selection_write_outside_intent')
-                consumed.add(pid);report['platformWrites']+=1
+                consumed.add(pid);report['platformWrites']=report.get('platformWrites',0)+1
             if getattr(self,'_batch_lane',False) and not kwargs.get('write'):
                 # Concurrent reads return challenges to the coordinator; no parallel verification.
                 self._verification_header=''

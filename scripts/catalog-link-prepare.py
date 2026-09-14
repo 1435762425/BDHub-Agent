@@ -6,11 +6,11 @@ from decimal import Decimal
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1];sys.dont_write_bytecode=True;sys.path.insert(0,str(ROOT/'scripts'))
 from lib.catalog_links import CatalogLinks,new_commission
-from lib.catalog_prepare import CatalogPreparation,READ_EXTRA,new_offer,classify_pid,search_cards,scan_lists,read_members,member_facts,TaplinkInventory,reconcile_from_inventory
+from lib.catalog_prepare import CatalogPreparation,READ_EXTRA,MEMBERS,new_offer,classify_pid,search_cards,scan_lists,read_members,member_facts,TaplinkInventory,reconcile_from_inventory
 from lib.global_selection import selected_rows,assess
 from lib.global_source import clean_product
-from lib.global_source_transport import opportunity_reader,opportunity_card_creator,CREATE
-from lib.product_stock_policy import full_managed,mark_full_managed
+from lib.global_source_transport import opportunity_reader,opportunity_card_creator_batch,CREATE
+from lib.product_stock_policy import full_managed,mark_full_managed,require_stock,unavailable_allowed
 from lib.second_cycle import digest
 spec=importlib.util.spec_from_file_location('catalog_card_inspection',ROOT/'scripts/prepare-cycle-materials.py');inspection=importlib.util.module_from_spec(spec);spec.loader.exec_module(inspection)
 SCOPE={'market':'it','account':'acc9','institution':'bjn-local-research','sourceRun':'it-global-20260914','route':'selected'}
@@ -342,6 +342,39 @@ def step_verify(prep,report,limit=None):
     finally:ledger.db.close()
     return states
 
+def verify_created_card(read,intent,receipt):
+    """Read back a just-created card by its receipt list_id. Returns the card, or None.
+
+    Cheaper than a full search: the receipt already names the list to read, and the frozen
+    intent says exactly what that card must contain.
+    """
+    spec=intent['spec'];offer=spec['offer']
+    list_id=str(receipt.get('list_id') or '')
+    if not list_id.isdigit():raise ValueError('catalog_receipt_list_missing')
+    body,sha=read(MEMBERS,{'list_id':list_id,'source':2})
+    data=body.get('data') if isinstance(body,dict) else None
+    if not isinstance(data,dict) or type(data.get('total_num')) is not int:raise ValueError('card_members_incomplete')
+    rows=data.get('campaign_products')
+    if not isinstance(rows,list) or data['total_num']!=len(rows):raise ValueError('card_members_incomplete')
+    wanted=str(spec['campaignId']);pid=str(spec['pid'])
+    member=next((p for p in rows if str(p.get('product_id'))==pid and str(p.get('campaign_id'))==wanted),None)
+    if member is None:return None
+    raw=member.get('creator_commission_percent')
+    if raw is None:return None
+    rate=Decimal(str(raw))/100
+    if rate!=Decimal(str(spec['creatorPercent'])):return None
+    if str(member.get('product_status'))!='2' or member.get('is_under_governed') is True:return None
+    merged=offer|{'managementType':offer.get('managementType') or 'full_managed','managementEvidenceRef':offer.get('managementEvidenceRef') or 'catalog-prepare:full_managed_source'}
+    if not unavailable_allowed(member.get('unavailable_type'),merged):return None
+    needs_stock=require_stock(merged)
+    if needs_stock and (member.get('stock') is None or Decimal(str(member.get('stock')))<=100):return None
+    public=member.get('plan_commission_percent')
+    return {'state':'verified_read_only','pid':pid,'verifiedListName':spec['listName'],'listName':spec['listName'],
+            'campaignName':'','stock':str(member.get('stock')) if needs_stock else None,'stockRequired':needs_stock,
+            'publicPercent':format(Decimal(str(public))/100,'f') if public is not None else None,
+            'listId':list_id,'wireCampaignId':'0','sourceCampaignId':wanted,'creatorPercent':format(rate,'f'),
+            'checkedAt':time.time(),'evidenceRefs':[sha],'executionAllowed':False,'readAccount':'acc9'}
+
 def create_spec(prep,run_id,offer,short_name,naming=None):
     """Freeze one creation intent. The name comes from the frontend-controllable naming config."""
     from lib.link_naming import load as load_naming,fingerprint as naming_fingerprint,name_for
@@ -363,74 +396,102 @@ def short_name_for(pid,title):
     from lib.link_naming import short_name_for as cached_short_name
     return cached_short_name(ROOT,pid,title)
 
-def step_create(prep,run_id,limit,report):
-    created=[];blocked=[]
+def step_create(prep,run_id,limit,report,pace=0.0):
+    """Freeze a batch locally, then create it under ONE account session.
+
+    Establishing the ACC9 session (profile lock, cookies, signer) is the dominant fixed cost of
+    a creation, so a batch shares one session. Safety is unchanged: every write must equal the
+    frozen request of its own product, and each product is written at most once per session.
+    """
+    created=[];blocked=[];timings=[]
     # Pin the naming config once per run: a template edited mid-run must not split the batch.
     from lib.link_naming import load as load_naming
     naming=load_naming(ROOT)
     report['namingVersion']=naming['version']
-    for _ in range(limit):
-        item=prep.claim_create(run_id)
-        if not item:break
-        pid,cid,src=item['pid'],item['campaign_id'],item['catalog_source']
-        ledger=CatalogLinks(ROOT);intent=None
-        try:
-            listing=item['listing'] or {}
-            if item['state']=='missing':
-                offer=listing|{'pid':pid,'campaignId':cid,'catalogSource':src}
-                if not offer.get('creatorPercent'):raise ValueError('catalog_prepare_offer_missing')
-                planned=create_spec(prep,run_id,offer,short_name_for(pid,offer.get('title','')),naming)
-                intent=prep.freeze(run_id,pid,cid,src,planned)
-            else:
-                intent=ledger.get(item['intent_id'])
-            if intent['state']=='verified':
-                prep.mark_progress(run_id,pid,cid,src,'ready',card=intent['readback']);created.append({'pid':pid,'state':'already_verified'});continue
-            if intent['state']!='prepared':raise ValueError('catalog_intent_requires_verification')
-            with opportunity_card_creator(report,intent['spec']['payload'],stopped=lambda:False,wait_seconds=60) as transport:
-                def read(path,extra):
-                    r=transport._xhr(method='GET',path=path,params=transport._params()|extra,payload=None,write=False)
-                    body=transport.require_read(r);return body,digest(body)
-                fresh=fresh_offers(transport,prep,[pid],time.time()).get(pid)
-                if not fresh:raise ValueError('product_no_longer_eligible')
-                # The campaign binding comes from the frozen intent; only the commercial facts
-                # are re-read, so a plan edited on the platform can never be created silently.
-                current=new_offer(fresh,pid,intent['spec']['campaignId'],'selected',policy=prep.policy)
-                if any(str(current.get(k))!=str(intent['spec']['offer'].get(k)) for k in ('campaignId','creatorPercent','totalPercent','publicPercent')):raise ValueError('commercial_facts_changed')
-                total,_=search_cards(read,pid)
-                if total!=0:raise ValueError('existing_links_preserved_no_creation')
-                ledger.begin(intent['id'],'acc9');prep.mark_progress(run_id,pid,cid,src,'submitted')
-                r=transport._xhr(method='POST',path=CREATE,params=transport._params(),payload=intent['spec']['payload'],write=True)
-                # The per-transport counter is reset on every creation, so count here instead.
-                report['createWrites']=report.get('createWrites',0)+1
-                report.setdefault('nativeReceipts',[]).append({'pid':pid,'http':r.http_status,'code':r.code if type(r.code) is int else None,'verification':r.has_turing,'ambiguous':r.ambiguous})
-                if r.has_turing and getattr(transport,'_verification_header',''):
-                    transport._solve_verification(transport._verification_header);transport.verification_successes+=1
-                    ledger.unknown(intent['id'],'verification_required_readback_pending')
-                    prep.mark_progress(run_id,pid,cid,src,'unknown',error='verification_required_readback_pending')
-                    created.append({'pid':pid,'state':'unknown_readback_pending'});continue
-                from bdhub.send.taplink.protocol import creation_receipt
-                body=transport.require_read(r);receipt=creation_receipt(body);receipt['responseHash']=digest(body);ledger.receipt(intent['id'],receipt)
-                card=None
-                for delay in (0,1,3):
-                    if delay:time.sleep(delay)
-                    card=inspection.inspect_card(intent['spec']['offer'],read,expected_list_id=receipt.get('list_id'),expected_name=intent['spec']['listName'])
-                    if card['state']=='verified_read_only':break
-                if not card or card['state']!='verified_read_only':raise ValueError('created_card_not_verified')
-                card.update(readAccount='acc9')
-                ledger.confirm(intent['id'],card);prep.mark_progress(run_id,pid,cid,src,'ready',card=card)
-                created.append({'pid':pid,'state':'verified','listId':card['listId'],'creatorPercent':card['creatorPercent']})
-        except Exception as error:
-            code=str(error) if isinstance(error,ValueError) else type(error).__name__
-            try:attempted=bool(intent) and ledger.get(intent['id'])['state'] in ('submitted','receipt_saved','unknown')
-            except Exception:attempted=False
-            # Never lose the failure: an attempted write stays for readback, an untouched plan returns to the queue.
-            try:prep.mark_progress(run_id,pid,cid,src,'unknown' if attempted else 'missing',error=code)
-            except Exception:pass
-            blocked.append({'pid':pid,'error':code})
-        finally:
-            try:ledger.db.close()
-            finally:prep.release(run_id,pid,cid,src)
-    return {'created':created,'blocked':blocked}
+    ledger=CatalogLinks(ROOT)
+    work=[]
+    try:
+        # Phase 1: local only. Claim and freeze; nothing here touches the platform.
+        for _ in range(limit):
+            item=prep.claim_create(run_id)
+            if not item:break
+            pid,cid,src=item['pid'],item['campaign_id'],item['catalog_source']
+            try:
+                listing=item['listing'] or {}
+                if item['state']=='missing':
+                    offer=listing|{'pid':pid,'campaignId':cid,'catalogSource':src}
+                    if not offer.get('creatorPercent'):raise ValueError('catalog_prepare_offer_missing')
+                    planned=create_spec(prep,run_id,offer,short_name_for(pid,offer.get('title','')),naming)
+                    intent=prep.freeze(run_id,pid,cid,src,planned)
+                else:
+                    intent=ledger.get(item['intent_id'])
+                if intent['state']=='verified':
+                    prep.mark_progress(run_id,pid,cid,src,'ready',card=intent['readback'])
+                    created.append({'pid':pid,'state':'already_verified','seconds':0.0});continue
+                if intent['state']!='prepared':raise ValueError('catalog_intent_requires_verification')
+                work.append((item,intent))
+            except Exception as error:
+                code=str(error) if isinstance(error,ValueError) else f'{type(error).__name__}:{str(error)[:80]}'
+                try:prep.mark_progress(run_id,pid,cid,src,'missing',error=code)
+                except Exception:pass
+                blocked.append({'pid':pid,'error':code,'seconds':0.0})
+                prep.release(run_id,pid,cid,src)
+        report['createFrozen']=len(work)
+        if not work:return {'created':created,'blocked':blocked,'timings':timings,'paceSeconds':pace}
+        # Phase 2: one session, many frozen writes.
+        payloads={str(intent['spec']['pid']):intent['spec']['payload'] for _,intent in work}
+        with opportunity_card_creator_batch(report,payloads,stopped=lambda:False,wait_seconds=60) as transport:
+            def read(path,extra):
+                r=transport._xhr(method='GET',path=path,params=transport._params()|extra,payload=None,write=False)
+                body=transport.require_read(r);return body,digest(body)
+            for item,intent in work:
+                t0=time.time()
+                pid,cid,src=item['pid'],item['campaign_id'],item['catalog_source']
+                try:
+                    fresh=fresh_offers(transport,prep,[pid],time.time()).get(pid)
+                    if not fresh:raise ValueError('product_no_longer_eligible')
+                    # The campaign binding comes from the frozen intent; only the commercial facts
+                    # are re-read, so a plan edited on the platform can never be created silently.
+                    current=new_offer(fresh,pid,intent['spec']['campaignId'],'selected',policy=prep.policy)
+                    if any(str(current.get(k))!=str(intent['spec']['offer'].get(k)) for k in ('campaignId','creatorPercent','totalPercent','publicPercent')):raise ValueError('commercial_facts_changed')
+                    total,_=search_cards(read,pid)
+                    if total!=0:raise ValueError('existing_links_preserved_no_creation')
+                    ledger.begin(intent['id'],'acc9');prep.mark_progress(run_id,pid,cid,src,'submitted')
+                    r=transport._xhr(method='POST',path=CREATE,params=transport._params(),payload=intent['spec']['payload'],write=True)
+                    report.setdefault('nativeReceipts',[]).append({'pid':pid,'http':r.http_status,'code':r.code if type(r.code) is int else None,'verification':r.has_turing,'ambiguous':r.ambiguous})
+                    if r.has_turing and getattr(transport,'_verification_header',''):
+                        transport._solve_verification(transport._verification_header);transport.verification_successes+=1
+                        ledger.unknown(intent['id'],'verification_required_readback_pending')
+                        prep.mark_progress(run_id,pid,cid,src,'unknown',error='verification_required_readback_pending')
+                        created.append({'pid':pid,'state':'unknown_readback_pending','seconds':round(time.time()-t0,2)});continue
+                    from bdhub.send.taplink.protocol import creation_receipt
+                    body=transport.require_read(r);receipt=creation_receipt(body);receipt['responseHash']=digest(body);ledger.receipt(intent['id'],receipt)
+                    # The receipt already carries list_id, so verify by reading that list directly
+                    # instead of searching all pages again.
+                    card=None
+                    for delay in (0,1,2):
+                        if delay:time.sleep(delay)
+                        card=verify_created_card(read,intent,receipt)
+                        if card:break
+                    if not card:raise ValueError('created_card_not_verified')
+                    ledger.confirm(intent['id'],card);prep.mark_progress(run_id,pid,cid,src,'ready',card=card)
+                    created.append({'pid':pid,'state':'verified','listId':card['listId'],'creatorPercent':card['creatorPercent'],'seconds':round(time.time()-t0,2)})
+                except Exception as error:
+                    code=str(error) if isinstance(error,ValueError) else f'{type(error).__name__}:{str(error)[:80]}'
+                    try:attempted=ledger.get(intent['id'])['state'] in ('submitted','receipt_saved','unknown')
+                    except Exception:attempted=False
+                    # Never lose the failure: an attempted write stays for readback, an untouched plan returns to the queue.
+                    try:prep.mark_progress(run_id,pid,cid,src,'unknown' if attempted else 'missing',error=code)
+                    except Exception:pass
+                    blocked.append({'pid':pid,'error':code,'seconds':round(time.time()-t0,2)})
+                finally:
+                    prep.release(run_id,pid,cid,src)
+                timings.append(round(time.time()-t0,2))
+                if pace:time.sleep(pace)
+    finally:
+        try:ledger.db.close()
+        except Exception:pass
+    return {'created':created,'blocked':blocked,'timings':timings,'paceSeconds':pace}
 
 def selection_items(pids=None):
     """Confirmed full-managed selections from the durable intake ledger."""
