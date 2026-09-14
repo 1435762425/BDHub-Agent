@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "markets": {
+    "it": {
+      "accounts": ["acc6", "acc9"],
+      "roles": {"communications": "acc6", "supply": "acc9"},
+      "assignmentState": "registered_pending_worker_migration",
+      "validationEvidence": "var/italy-account-pair-20260914-v2.json",
+      "credentialAuthority": "legacy_readonly",
+      "maintenanceExecutor": "legacy_lifecycle",
+      "automaticRoleSwitchEnabled": false
+    }
+  },
+  "lifecycle": {
+    "healthPollMinutes": 5,
+    "deepCheckHours": 6,
+    "identityRefreshHours": 24,
+    "loginMaintenanceHours": 48,
+    "standbyEarlyMaintenanceHours": 2,
+    "globalLoginConcurrency": 1,
+    "enableNewMaintenanceWorker": false
+  }
+}
