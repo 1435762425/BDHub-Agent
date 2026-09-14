@@ -22,7 +22,7 @@ import sys
 import tempfile
 import time
 import urllib.request
-from contextlib import contextmanager, redirect_stdout, redirect_stderr
+from contextlib import closing, contextmanager, redirect_stdout, redirect_stderr
 from datetime import datetime, timezone
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -36,6 +36,7 @@ class ProbeDeadline(BaseException):
 
 
 def collect_counters(client) -> dict:
+    if getattr(client,'cohort_counters',None) is not None:return dict(client.cohort_counters)
     def count(value):
         return value if type(value) is int and value >= 0 else 0
     result = {key: count(getattr(client, key, 0)) for key in (
@@ -47,10 +48,10 @@ def collect_counters(client) -> dict:
     return result
 
 
-def initialize_client(probe, child, identity, scratch):
+def initialize_client(probe, child, identity, scratch, qps=1.0):
     child._configure_market_signer_runtime(probe, identity, scratch)
     child._configure_market_captcha_runtime(probe, identity, scratch)
-    client = probe.PureHttpPartnerClient({"partner_id": identity["partner_id"], "qps": 1.0,
+    client = probe.PureHttpPartnerClient({"partner_id": identity["partner_id"], "qps": qps,
         "profile_types": [1, 2, 6], "request_timeout_seconds": 15, "trust_env": True,
         "business_retries": 2, "captcha_attempts": 3}, identity, scratch)
     # Assign actual bounds explicitly: legacy constructors use `value or 3`.
@@ -164,11 +165,20 @@ def network_child(account_name: str, target_file: Path, output: Path) -> int:
     if type(target_input.get("identityOnly",False)) is not bool:raise ValueError("invalid_identity_mode")
     identity_only=target_input.get("identityOnly",False)
     targets = [normalize_target(t) for t in target_input["targets"]]
-    if not 1 <= len(targets) <= 3:
+    cohort=target_input.get('cohortId')
+    if cohort:
+        import sqlite3,re
+        if not identity_only or not isinstance(cohort,str) or not re.fullmatch(r'discovery_cohort_[a-f0-9]{32}',cohort):raise ValueError('invalid_cohort')
+        with closing(sqlite3.connect((VAR/'creator-discovery.sqlite').resolve().as_uri()+'?mode=ro',uri=True)) as db:
+            row=db.execute("SELECT payload FROM discovery_cohort WHERE id=? AND state='running'",(cohort,)).fetchone()
+            if not row:raise ValueError('cohort_not_active')
+            registered={r['id']:r for r in json.loads(row[0])}
+            if len(targets)!=len(registered) or {t['ref'] for t in targets}!=set(registered) or any(t['ref'] not in registered or t['handle']!=registered[t['ref']]['handle'] or t['externalId']!=t['ref'] for t in targets):raise ValueError('cohort_scope_mismatch')
+    if not 1 <= len(targets) <= (20 if cohort else 3):
         raise ValueError("bounded_target_count")
     report = {"schema": "bdhub.italy-profile-probe.v3", "market": "it", "account": account_name,
               "startedAt": datetime.now(timezone.utc).isoformat(), "mode": "live_readonly_profile", "requests": [], "targets": [],
-              "qps": 1, "businessRetries": 2, "captchaAttempts": 3, "verificationMode": "existing_market_aware_http_pipeline",
+              "qps": 3 if cohort else 1, "businessRetries": 2, "captchaAttempts": 3, "verificationMode": "existing_market_aware_http_pipeline",
               "oldDatabaseWrites": 0, "realSends": 0, "status": "starting", "identityOnly": identity_only}
     report_file = output / "report.private.json"
     save = lambda: write_json(report_file, report)
@@ -192,7 +202,7 @@ def network_child(account_name: str, target_file: Path, output: Path) -> int:
         report["transport"] = {"host": selected.identity["api_host"], "signerRegion": selected.identity["signer_region"], "marketCode": 8, "aid": selected.identity["aid"], "runtimeManifestValidated": True}
         report["coordination"] = "Existing canonical guard locked read-only for this short probe; other lease acquisition may briefly wait. No lease file created."
         save()
-        with readonly_guard(selected.account):
+        with (readonly_guard(selected.account,wait_seconds=15) if cohort else readonly_guard(selected.account)):
             try:
                 if hashlib.sha256(identity_file.read_bytes()).hexdigest() != before_identity:
                     report.update(status="blocked", reason="identity_changed_before_guard")
@@ -205,7 +215,7 @@ def network_child(account_name: str, target_file: Path, output: Path) -> int:
                     return 2
                 with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
                     probe = child._load_runtime(runtime)
-                    client = initialize_client(probe, child, selected.identity, scratch)
+                    client = initialize_client(probe, child, selected.identity, scratch,qps=3.0 if cohort else 1.0)
                 report.update(businessRetries=client.business_retries, captchaAttempts=client.captcha_attempts)
 
                 def request(stage: str, body: dict, target_ref: str):
@@ -264,7 +274,16 @@ def network_child(account_name: str, target_file: Path, output: Path) -> int:
                         report["counters"] = collect_counters(client)
                         save()
 
-                for target in targets:
+                if cohort:
+                    from lib.cohort_find import run_find_cohort
+                    def allowed(ref):
+                        if worker.scheduled_relogin_svc.maintenance_due(selected.account,initialize=False,ignore_retry_throttle=True) or backoff_snapshot(selected.identity,'it')['open']:return False
+                        with closing(sqlite3.connect((VAR/'creator-discovery.sqlite').resolve().as_uri()+'?mode=ro',uri=True)) as db:
+                            live=db.execute("SELECT i.status,b.status FROM discovery_item i JOIN discovery_batch b ON b.id=i.batch_id WHERE i.id=?",(ref,)).fetchone()
+                        return bool(live and live[0]=='running' and live[1]!='paused')
+                    with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+                        run_find_cohort(probe,child,selected.identity,scratch,targets,client,report,save,classify_response,summarize_profile,collect_counters,allowed)
+                for target in ([] if cohort else targets):
                     handle, oec = target["handle"], target["oecId"]
                     result = {"targetRef": target["ref"], "inputKind": target["inputKind"], "requestedHandle": handle,
                               "requestedOecId": oec, "auditHandle": target["auditHandle"], "externalId": target["externalId"],
@@ -345,7 +364,7 @@ def network_child(account_name: str, target_file: Path, output: Path) -> int:
                 if report["status"] not in {"blocked", "bounded_timeout"}:
                     report["status"] = "completed"
                 report["identityFileUnchanged"] = hashlib.sha256(identity_file.read_bytes()).hexdigest() == before_identity
-                report["businessRequests"] = client.request_count
+                report["businessRequests"] = collect_counters(client).get("request_count",0)
                 report["sdkBootstrapSeparate"] = True
                 save()
             finally:

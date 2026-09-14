@@ -71,9 +71,17 @@ class TaskService:
         return {k:t[k] for k in ('id','spec','state','priority','revision','created')}|{
             'preparation':json.loads(r['report']) if r and r['report'] else None,
             'sourcePreparation':self.source_status(id),
+            'preparationSpeed':self.preparation_speed(id),
             'checkedAt':r['checked'] if r else None,'nextCheckAt':r['next_run'] if r else None,
             'policy':json.loads(policy[0]) if policy else None,'executionConnected':False,
             'events':[dict(e)|{'payload':json.loads(e['payload'])} for e in self.db.execute('SELECT kind,payload,at FROM batch_event WHERE task_id=? ORDER BY id DESC LIMIT 12',(id,))]}
+    def preparation_speed(self,id):
+        end=self.db.execute("SELECT at,payload FROM batch_event WHERE task_id=? AND kind='preparation_observed' AND json_extract(payload,'$.candidates') IS NOT NULL ORDER BY id DESC LIMIT 1",(id,)).fetchone()
+        if not end:return None
+        start=self.db.execute("SELECT at,payload FROM batch_event WHERE task_id=? AND kind='preparation_observed' AND json_extract(payload,'$.candidates') IS NOT NULL AND at<=? ORDER BY id DESC LIMIT 1",(id,self.tasks.clock()-300)).fetchone()
+        if not start:start=self.db.execute("SELECT at,payload FROM batch_event WHERE task_id=? AND kind='preparation_observed' AND json_extract(payload,'$.candidates') IS NOT NULL ORDER BY id LIMIT 1",(id,)).fetchone()
+        seconds=self.tasks.clock()-max(start['at'],self.tasks.clock()-300);delta=json.loads(end['payload'])['candidates']-json.loads(start['payload'])['candidates']
+        return {'windowSeconds':round(seconds,1),'netCandidates':delta,'perMinute':round(delta*60/seconds,2) if seconds>0 else 0,'observedAt':self.tasks.clock()}
     def source_status(self,id):
         if not self.db.execute("SELECT 1 FROM sqlite_master WHERE name='batch_source_job'").fetchone():return None
         from lib.batch_sources import BatchSources
@@ -124,6 +132,7 @@ class TaskService:
                 for m in members:
                     self.db.execute('INSERT INTO batch_member VALUES(?,?,?,?)',(t['id'],m['oec'],m['materialKey'],encoded(m)))
             delay=30
+            if report.get('candidateGap')==0 and report.get('materialJobs',{}).get('pending') and not any('unresolved' in b or 'changed' in b for b in report.get('blockers',[])):delay=2
             if self.db.execute("SELECT 1 FROM sqlite_master WHERE name='batch_source_job'").fetchone() and self.db.execute("SELECT 1 FROM batch_source_job WHERE task_id=? AND state='queued' AND next_attempt<=?",(t['id'],self.tasks.clock())).fetchone() and not self.db.execute("SELECT 1 FROM batch_source_job WHERE task_id=? AND state='blocked'",(t['id'],)).fetchone():delay=2
             self.db.execute('UPDATE batch_preparation_run SET report=?,checked=?,next_run=? WHERE task_id=?',(encoded(report),self.tasks.clock(),self.tasks.clock()+delay,t['id']))
             if previous!=encoded(report):

@@ -50,6 +50,7 @@ def main():
     commands.add_parser("list")
     worker = commands.add_parser("worker")
     worker.add_argument("--once", action="store_true")
+    worker.add_argument("--cohort-size",type=int,choices=(1,10,20),default=1)
     worker.add_argument("--interval", type=float, default=5)
     args = parser.parse_args()
     try:
@@ -74,10 +75,14 @@ def main():
                         # Both lanes use ACC6 and run sequentially. Each round
                         # takes at most one refresh and one discovery item.
                         refreshed = runner.run_once()
-                        discovered = discovery.run_once()
+                        cohort_result=None
+                        if args.cohort_size>1:
+                            from lib.discovery_cohort import run_cohort
+                            cohort_result=run_cohort(discovery,args.cohort_size)
+                        discovered = None if cohort_result else discovery.run_once()
                         cycle_result = reconcile_cycle(store.var_dir,discovery_store)
-                        if refreshed is not None or discovered is not None or args.once:
-                            print(json.dumps({"refresh": refreshed, "discovery": discovered["batch"] if discovered else None,**({"cycleIdentity":cycle_result} if cycle_result is not None else {})}), flush=True)
+                        if refreshed is not None or discovered is not None or cohort_result is not None or args.once:
+                            print(json.dumps({"refresh": refreshed, **({"cohort":cohort_result} if cohort_result else {}), "discovery": discovered["batch"] if discovered else None,**({"cycleIdentity":cycle_result} if cycle_result is not None else {})}), flush=True)
                         if args.once:
                             break
                         time.sleep(args.interval)

@@ -98,7 +98,9 @@ CREATE TABLE IF NOT EXISTS discovery_item(
  handle TEXT,status TEXT NOT NULL,reason TEXT,duplicate_of INTEGER,creator_id TEXT,oec_id TEXT,outcome TEXT,
  started_at TEXT,finished_at TEXT,request_count INTEGER DEFAULT 0,lease_owner TEXT,lease_pid INTEGER,lease_until REAL,
  UNIQUE(batch_id,row_index));
-CREATE UNIQUE INDEX IF NOT EXISTS discovery_one_active_item ON discovery_item((1)) WHERE status='running';
+DROP INDEX IF EXISTS discovery_one_active_item;
+CREATE INDEX IF NOT EXISTS discovery_running_items ON discovery_item(status,lease_owner);
+CREATE TABLE IF NOT EXISTS discovery_cohort(id TEXT PRIMARY KEY,owner TEXT NOT NULL,payload TEXT NOT NULL,state TEXT NOT NULL,created REAL NOT NULL);
 CREATE INDEX IF NOT EXISTS discovery_item_queue ON discovery_item(batch_id,status,row_index);
 CREATE TABLE IF NOT EXISTS discovery_request(request_id TEXT PRIMARY KEY,fingerprint TEXT NOT NULL,batch_id TEXT NOT NULL REFERENCES discovery_batch(id));
 CREATE TABLE IF NOT EXISTS discovery_heartbeat(owner TEXT PRIMARY KEY,pid INTEGER NOT NULL,seen_at REAL NOT NULL);
@@ -244,6 +246,18 @@ class CreatorDiscoveryStore:
         with self._lock:
             return any(_alive(r[0]) for r in self._db.execute("SELECT pid FROM discovery_heartbeat WHERE seen_at>=?", (self.now() - 30,)))
 
+    def _next_items(self,limit,batch_ids=None):
+        # Unknown handles grow the creator pool first; this only changes
+        # queue order, never substitutes cached identity for exact Find.
+        known=[]; identity_path=self.var_dir/'creator-identities.sqlite'
+        if identity_path.exists():
+            with closing(sqlite3.connect(identity_path.resolve().as_uri()+'?mode=ro',uri=True)) as identities:
+                if identities.execute("SELECT 1 FROM sqlite_master WHERE name='creator_identity'").fetchone():
+                    known=[r[0] for r in identities.execute("SELECT current_handle FROM creator_identity WHERE market='it' AND current_handle IS NOT NULL AND handle_conflict=0")]
+        return self._db.execute("""SELECT i.* FROM discovery_item i JOIN discovery_batch b ON b.id=i.batch_id
+            WHERE i.status='queued' AND b.status IN ('queued','running') AND i.retry_at<=? AND (? IS NULL OR b.id IN (SELECT value FROM json_each(?)))
+            ORDER BY CASE WHEN b.source_label='Kalodata 二发线索身份解析' THEN CASE WHEN i.handle IN (SELECT value FROM json_each(?)) THEN 2 WHEN EXISTS(SELECT 1 FROM discovery_item old WHERE old.handle=i.handle AND old.id<>i.id AND old.status IN ('completed','unresolved')) THEN 1 ELSE 0 END ELSE 0 END,b.created_at,b.id,i.row_index LIMIT ?""",(self.now(),_json(batch_ids) if batch_ids is not None else None,_json(batch_ids) if batch_ids is not None else None,_json(known),limit)).fetchall()
+
     def claim(self, owner, *, recovery=False):
         with self.transaction():
             running = self._db.execute("SELECT * FROM discovery_item WHERE status='running' LIMIT 1").fetchone()
@@ -254,22 +268,44 @@ class CreatorDiscoveryStore:
             else:
                 if running:
                     return None
-                # Unknown handles grow the creator pool first; this only changes
-                # queue order, never substitutes cached identity for exact Find.
-                known=[]; identity_path=self.var_dir/'creator-identities.sqlite'
-                if identity_path.exists():
-                    with closing(sqlite3.connect(identity_path.resolve().as_uri()+'?mode=ro',uri=True)) as identities:
-                        if identities.execute("SELECT 1 FROM sqlite_master WHERE name='creator_identity'").fetchone():
-                            known=[r[0] for r in identities.execute("SELECT current_handle FROM creator_identity WHERE market='it' AND current_handle IS NOT NULL AND handle_conflict=0")]
-                row = self._db.execute("""SELECT i.* FROM discovery_item i JOIN discovery_batch b ON b.id=i.batch_id
-                    WHERE i.status='queued' AND b.status IN ('queued','running') AND i.retry_at<=?
-                    ORDER BY CASE WHEN b.source_label='Kalodata 二发线索身份解析' THEN CASE WHEN i.handle IN (SELECT value FROM json_each(?)) THEN 2 WHEN EXISTS(SELECT 1 FROM discovery_item old WHERE old.handle=i.handle AND old.id<>i.id AND old.status IN ('completed','unresolved')) THEN 1 ELSE 0 END ELSE 0 END,b.created_at,b.id,i.row_index LIMIT 1""",(self.now(),_json(known))).fetchone()
+                candidates=self._next_items(1)
+                row=candidates[0] if candidates else None
                 if row is None:
                     return None
                 self._db.execute("UPDATE discovery_batch SET status='running',started_at=COALESCE(started_at,?) WHERE id=?", (_iso(self.now()), row["batch_id"]))
             self._db.execute("UPDATE discovery_item SET status='running',started_at=COALESCE(started_at,?),request_count=NULL,lease_owner=?,lease_pid=?,lease_until=? WHERE id=?",
                              (_iso(self.now()), owner, os.getpid(), self.now() + LEASE_SECONDS, row["id"]))
             return dict(self._db.execute("SELECT * FROM discovery_item WHERE id=?", (row["id"],)).fetchone())
+
+    def claim_cohort(self,owner,batch_ids,limit=20):
+        if type(limit) is not int or not 1<=limit<=20:raise CreatorDiscoveryError('invalid_request')
+        with self.transaction():
+            if self._db.execute("SELECT 1 FROM discovery_item WHERE status='running'").fetchone():return None
+            candidates=self._next_items(limit*3,batch_ids);items=[];handles=set()
+            for row in candidates:
+                if row['handle'] in handles:continue
+                handles.add(row['handle']);items.append(dict(row))
+                if len(items)==limit:break
+            if not items:return None
+            for item in items:
+                self._db.execute("UPDATE discovery_item SET status='running',started_at=COALESCE(started_at,?),request_count=NULL,lease_owner=?,lease_pid=?,lease_until=? WHERE id=?",(_iso(self.now()),owner,os.getpid(),self.now()+LEASE_SECONDS,item['id']))
+                self._db.execute("UPDATE discovery_batch SET status='running',started_at=COALESCE(started_at,?) WHERE id=?",(_iso(self.now()),item['batch_id']))
+            cid='discovery_cohort_'+uuid.uuid4().hex
+            self._db.execute("INSERT INTO discovery_cohort VALUES(?,?,?,'running',?)",(cid,owner,_json(items),self.now()))
+            return {'id':cid,'items':items}
+
+    def recover_cohort(self,owner):
+        with self.transaction():
+            for row in self._db.execute("SELECT * FROM discovery_cohort WHERE state='running' ORDER BY created").fetchall():
+                items=json.loads(row['payload']);active=[]
+                for item in items:
+                    live=self._db.execute('SELECT * FROM discovery_item WHERE id=?',(item['id'],)).fetchone()
+                    if live['status']=='running':active.append(live)
+                if any(x['lease_until']>self.now() and _alive(x['lease_pid']) for x in active):return None
+                for item in active:self._db.execute('UPDATE discovery_item SET lease_owner=?,lease_pid=?,lease_until=? WHERE id=?',(owner,os.getpid(),self.now()+LEASE_SECONDS,item['id']))
+                self._db.execute('UPDATE discovery_cohort SET owner=? WHERE id=?',(owner,row['id']))
+                return {'id':row['id'],'items':items,'recovering':True}
+            return None
 
     @contextmanager
     def hold_lease(self, item, owner):

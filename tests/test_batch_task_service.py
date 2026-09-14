@@ -17,6 +17,12 @@ class TaskServiceTests(unittest.TestCase):
  def create(self,key='one',**changes):
   p=self.s.preview(self.spec|changes);return self.s.confirm(p['token'],key)
  def sample(self,spec):return ({'state':'waiting_adapters','candidates':1,'blockers':['task_taplink_adapter_pending'],'executionAllowed':False},[{'oec':'123','institution':spec['institution'],'market':spec['market'],'pid':'1729480033890900437','materialKey':'card1','checks':dict(source=True,identity=True,relationship=True,offer=True,name=True,taplink=False)}])
+ def test_speed_decays_to_zero_after_no_candidate_growth(self):
+  t=self.create()
+  self.s.tasks.event(t['id'],'preparation_observed',{'candidates':10})
+  self.now+=60;self.s.tasks.event(t['id'],'preparation_observed',{'candidates':30})
+  self.assertEqual(self.s.preparation_speed(t['id'])['perMinute'],20)
+  self.now+=360;self.assertEqual(self.s.preparation_speed(t['id'])['perMinute'],0)
  def test_preview_does_not_create_task_and_requires_actual_date_scope(self):
   p=self.s.preview(self.spec);self.assertEqual(p['spec']['reserve'],300);self.assertEqual(self.s.listing()['tasks'],[])
   self.assertFalse(p['policy']['fullManagedStockRequired']);self.assertFalse(p['executionConnected'])
