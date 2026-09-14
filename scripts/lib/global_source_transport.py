@@ -40,7 +40,9 @@ def opportunity_card_creator(report,payload,*,stopped=lambda:False,wait_seconds=
 @contextmanager
 def _opportunity_transport(report,*,stopped=lambda:False,extra_read_endpoints=frozenset(),selection_scope=None,creation_scope=None,account_name='acc6',wait_seconds=15):
     if type(wait_seconds) not in (int,float) or not 0<=wait_seconds<=60:raise ValueError('invalid_guard_wait')
-    allowed_extra={('/api/v1/affiliate/partner/im/product_list/list','GET'),('/api/v1/affiliate/partner/campaign/product_list/products','GET'),('/api/v1/affiliate/partner/campaign/list','GET'),('/api/v1/affiliate/partner/campaign/product/list','GET')}
+    # campaign/product_list/list is the read-only TapLink inventory (lists all cards for a
+    # campaign+source in pages), used to avoid one search per PID. It never writes.
+    allowed_extra={('/api/v1/affiliate/partner/im/product_list/list','GET'),('/api/v1/affiliate/partner/campaign/product_list/products','GET'),('/api/v1/affiliate/partner/campaign/product_list/list','GET'),('/api/v1/affiliate/partner/campaign/list','GET'),('/api/v1/affiliate/partner/campaign/product/list','GET')}
     if not set(extra_read_endpoints)<=allowed_extra:raise ValueError('source_read_endpoint_forbidden')
     sys.dont_write_bytecode=True
     if str(LEGACY) not in sys.path:sys.path.insert(0,str(LEGACY))
@@ -73,8 +75,10 @@ def _opportunity_transport(report,*,stopped=lambda:False,extra_read_endpoints=fr
         WRITE_ENDPOINTS=frozenset({(CREATE,'POST')}) if creation_scope is not None else frozenset({(SELECT,'POST')}) if selection_scope is not None else frozenset()
         READ_ENDPOINTS=frozenset({(LIST,'POST'),(DETAIL,'GET'),(CATEGORY,'POST'),(SELECTED,'POST')})|frozenset(extra_read_endpoints)
         def fork_lane(self,pace):
-            if selection_scope is None:raise ValueError('selection_lane_requires_scope')
-            lane=Scoped(identity,account,allow_write=True);lane.copy_session_from(self);lane._pace=pace;lane.check_stop=check;lane._batch_lane=True
+            # Read-only tasks may fork lanes too; writes stay blocked because WRITE_ENDPOINTS
+            # is empty and Scoped._xhr rejects any write when no scope was declared.
+            lane=Scoped(identity,account,allow_write=selection_scope is not None or creation_scope is not None)
+            lane.copy_session_from(self);lane._pace=pace;lane.check_stop=check;lane._batch_lane=True
             return lane
         def allow_verified_nonselection(self,pid,receipt,fresh,absent):
             if selection_scope is None or absent is not True or fresh.get('product_id')!=pid or fresh.get('fs_is_selected') is not False or receipt.get('http')!=200 or receipt.get('code')!=10000 or receipt.get('verification') is not True or receipt.get('ambiguous') is not False:raise ValueError('nonselection_proof_required')

@@ -77,16 +77,20 @@ def pool_cache(report,path=None):
             return cached
     return None
 
-def step_read(prep,run_id,limit,report):
+def step_read(prep,run_id,limit,report,lanes=1,qps=3):
     claimed=prep.claim_read(run_id,limit=limit)
     if not claimed:return {'claimed':0,'states':{}}
     by_pid={}
     for it in claimed:by_pid.setdefault(it['pid'],[]).append(it)
     states={}
     with opportunity_reader(report,extra_read_endpoints=READ_EXTRA,wait_seconds=60,account_name='acc9') as transport:
-        def read(path,extra):
-            r=transport._xhr(method='GET',path=path,params=transport._params()|extra,payload=None,write=False)
-            body=transport.require_read(r);return body,digest(body)
+        def reader(on):
+            # One read function per HTTP lane; lanes share the account guard and one pacer.
+            def read(path,extra):
+                r=on._xhr(method='GET',path=path,params=on._params()|extra,payload=None,write=False)
+                body=on.require_read(r);return body,digest(body)
+            return read
+        read=reader(transport)
         try:
             pool=pool_cache(report)
             if pool is None:
@@ -107,19 +111,43 @@ def step_read(prep,run_id,limit,report):
                 for pid in group:
                     for it in by_pid[pid]:prep.apply_read(run_id,it['pid'],it['campaign_id'],it['catalog_source'],{'state':'read_incomplete','error':code})
                     states['read_incomplete']=states.get('read_incomplete',0)+len(by_pid[pid])
-        for pid,items in by_pid.items():
-            if pid not in group_offers:continue
+        targets=[(pid,items) for pid,items in by_pid.items() if pid in group_offers]
+        # Classification is network-bound and dominates the run. Fan it across same-account
+        # lanes, but apply every ledger write on this thread: one connection, one writer.
+        outcomes=[];lane_transports=[]
+        try:
+            if lanes>1 and len(targets)>1:
+                from concurrent.futures import ThreadPoolExecutor
+                from lib.cohort_find import SharedPacer
+                pacer=SharedPacer(qps)
+                lane_transports=[transport]+[transport.fork_lane(pacer.acquire) for _ in range(lanes-1)]
+                lane_reads=[read]+[reader(on) for on in lane_transports[1:]]
+                def classify(index,pid):
+                    try:return classify_pid(pid,group_offers[pid],lane_reads[index%lanes],prep.policy),None
+                    except Exception as error:return None,error
+                with ThreadPoolExecutor(max_workers=lanes) as executor:
+                    outcomes=[f.result() for f in [executor.submit(classify,i,pid) for i,(pid,_) in enumerate(targets)]]
+            else:
+                for pid,_ in targets:
+                    try:outcomes.append((classify_pid(pid,group_offers[pid],read,prep.policy),None))
+                    except Exception as error:outcomes.append((None,error))
+        finally:
+            for on in lane_transports[1:]:
+                try:on.session.close()
+                except Exception:pass
+        report['readLanes']=lanes if lanes>1 else 1
+        for (pid,items),(outcome,error) in zip(targets,outcomes):
+            offer=group_offers[pid]
             for it in items:
-                offer=group_offers[pid]
                 if offer['campaignId']!=it['campaign_id']:
                     # The live platform binding is authoritative; the stale row is retired explicitly.
                     prep.apply_read(run_id,it['pid'],it['campaign_id'],it['catalog_source'],{'state':'read_incomplete','error':'selected_campaign_changed'})
                     states['read_incomplete']=states.get('read_incomplete',0)+1;continue
-                try:outcome=classify_pid(pid,offer,read,prep.policy)
-                except Exception as error:
+                if error is not None:
                     code=str(error) if isinstance(error,ValueError) else 'card_read_unresolved'
                     prep.apply_read(run_id,it['pid'],it['campaign_id'],it['catalog_source'],{'state':'read_incomplete','error':code,'listing':offer['listing']})
                     states['read_incomplete']=states.get('read_incomplete',0)+1;continue
+                outcome=dict(outcome)
                 outcome['listing']={'product_id':pid,'title':offer['title'],'creatorPercent':offer['creatorPercent'],'publicPercent':offer['publicPercent'],'totalPercent':offer['totalPercent'],'agencyPercent':offer['agencyPercent'],'planFingerprint':plan_bounds(offer)['planFingerprint'],'managementType':offer.get('managementType'),'managementEvidenceRef':offer.get('managementEvidenceRef')}
                 outcome['card']={'state':'existing_links_observed','total':outcome['total']}
                 prep.apply_read(run_id,it['pid'],it['campaign_id'],it['catalog_source'],outcome)
@@ -251,6 +279,8 @@ def main():
     p.add_argument('--report',type=Path);p.add_argument('--pids');p.add_argument('--limit',type=int,default=15);p.add_argument('--max-creates',type=int,default=0)
     p.add_argument('--scope',choices=['intake','pool'],default='intake',
                    help='seed universe: intake=durable full-managed selection only; pool=every live selected plan')
+    p.add_argument('--lanes',type=int,default=1,choices=[1,3,6,9],help='same-account read lanes')
+    p.add_argument('--qps',type=int,default=3,choices=[3,5,8,12],help='aggregate request rate shared by all lanes')
     a=p.parse_args()
     if a.action=='status' or a.status_links:
         print(json.dumps(status_view(),ensure_ascii=False));return
@@ -296,7 +326,7 @@ def main():
             items=[{'pid':str((r.get('campaign_product') or {}).get('product_id')),'campaignId':str((r.get('campaign_info') or {}).get('campaign_id')),'catalogSource':'selected'}
                    for r in pool['rows'] if str((r.get('campaign_product') or {}).get('product_id')) in wanted and str((r.get('campaign_info') or {}).get('crs_campaign_type')) in ('8','9')]
             report['selectedPoolTotal']=pool['total'];report['seeded']=prep.seed(run_id,items,s)
-        report['read']=step_read(prep,run_id,a.limit,report)
+        report['read']=step_read(prep,run_id,a.limit,report,lanes=a.lanes,qps=a.qps)
         report['retired']=prep.retire_mismatched_bindings(run_id)
     elif a.action=='create':
         report['create']=step_create(prep,run_id,a.max_creates,report)

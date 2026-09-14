@@ -19,13 +19,16 @@ def run(args,label,timeout=3000):
     return {'label':label,'report':str(report.relative_to(ROOT)),'exitCode':child.returncode,'elapsedSeconds':round(time.time()-started,1),
             'result':json.loads(out[-1]) if out else None,'stderr':(child.stderr or '')[-400:] or None}
 def main():
-    p=argparse.ArgumentParser();p.add_argument('--pids');p.add_argument('--limit',type=int,default=15);p.add_argument('--passes',type=int,default=80);p.add_argument('--creates',type=int,default=0)
+    p=argparse.ArgumentParser();p.add_argument('--pids');p.add_argument('--limit',type=int,default=15);p.add_argument('--passes',type=int,default=80);p.add_argument('--creates',type=int,default=0);p.add_argument('--seed',action='store_true')
+    p.add_argument('--lanes',type=int,default=1,choices=[1,3,6,9]);p.add_argument('--qps',type=int,default=3,choices=[3,5,8,12])
     p.add_argument('--report',type=Path,required=True);a=p.parse_args()
     out=a.report.resolve()
     if not out.is_relative_to(ROOT/'var') or out.exists():p.error('new report under var required')
-    steps=[run(['seed'],'seed')]
+    steps=[]
+    if a.seed:
+        steps.append(run(['seed'],'seed'))
     for i in range(a.passes):
-        r=run(['read','--limit',str(a.limit)]+(['--pids',a.pids] if a.pids else []),f'read-{i:02d}')
+        r=run(['read','--limit',str(a.limit),'--lanes',str(a.lanes),'--qps',str(a.qps)]+(['--pids',a.pids] if a.pids else []),f'read-{i:02d}')
         steps.append(r)
         states=(r.get('result') or {}).get('summary',{}).get('states',{})
         if (r.get('result') or {}).get('summary',{}).get('pendingCount',1)==0:break
