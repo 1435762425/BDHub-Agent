@@ -16,6 +16,11 @@ class BatchTests(unittest.TestCase):
  def fill(self,id):
   for i in range(3):self.s.record_member(id,self.member(i+1)|{'market':self.s.get(id)['spec']['market']})
   self.s.freeze(id)
+ def test_immediate_preparation_does_not_invent_a_send_window(self):
+  spec={'institution':'bjn','market':'it','target':1000,'prepareNow':True}
+  v=normalize_spec(spec);self.assertIsNone(v['startTime']);self.assertFalse(in_window(v,self.now))
+  id=self.s.create(spec,'immediate',digest(v))['id'];self.assertIn('outside_send_window',self.s.can_start(id)['reasons'])
+  with self.assertRaises(BatchError):normalize_spec(spec|{'startTime':'09:00','endTime':'18:00'})
  def test_large_fixed_goal_and_no_automatic_target(self):
   self.assertEqual(normalize_spec(self.spec|{'target':5000})['reserve'],500)
   for v in (None,'auto',True,0,1.5):

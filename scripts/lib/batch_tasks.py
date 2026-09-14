@@ -16,14 +16,17 @@ from lib.second_cycle import digest,encoded
 class BatchError(ValueError):pass
 
 def normalize_spec(value):
-    if not isinstance(value,dict) or set(value)-{'institution','market','target','startTime','endTime','startDate','productScope','replyAfterSending'}:
+    if not isinstance(value,dict) or set(value)-{'institution','market','target','startTime','endTime','startDate','productScope','replyAfterSending','prepareNow'}:
         raise BatchError('invalid_task_spec')
     institution=value.get('institution');market=value.get('market');target=value.get('target')
     if not isinstance(institution,str) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.:-]{0,119}',institution):raise BatchError('institution_required')
     if market not in ('it','mx','br'):raise BatchError('market_required')
     if type(target) is not int or not 1<=target<=100000:raise BatchError('numeric_target_required')
     start=value.get('startTime');end=value.get('endTime')
-    if any(not isinstance(t,str) or not re.fullmatch(r'(?:[01]\d|2[0-3]):[0-5]\d',t) for t in (start,end)) or start==end:raise BatchError('invalid_send_window')
+    prepare=value.get('prepareNow',False)
+    if type(prepare) is not bool:raise BatchError('invalid_prepare_mode')
+    if prepare and any(value.get(k) is not None for k in ('startTime','endTime','startDate')):raise BatchError('unexpected_send_schedule')
+    if not prepare and (any(not isinstance(t,str) or not re.fullmatch(r'(?:[01]\d|2[0-3]):[0-5]\d',t) for t in (start,end)) or start==end):raise BatchError('invalid_send_window')
     scope=value.get('productScope',{'kind':'all_eligible','values':[]})
     if not isinstance(scope,dict) or set(scope)!={'kind','values'} or scope['kind'] not in ('all_eligible','pids','categories','campaigns'):raise BatchError('invalid_product_scope')
     values=scope['values']
@@ -38,9 +41,10 @@ def normalize_spec(value):
     reply=value.get('replyAfterSending',False)
     if type(reply) is not bool:raise BatchError('invalid_reply_policy')
     return {'institution':institution,'market':market,'target':target,'reserve':math.ceil(target/10),'timezone':'Asia/Shanghai',
-            'startTime':start,'endTime':end,'startDate':start_date,'productScope':{'kind':scope['kind'],'values':sorted(set(values))},'replyAfterSending':reply}
+            'startTime':start,'endTime':end,'startDate':start_date,'productScope':{'kind':scope['kind'],'values':sorted(set(values))},'replyAfterSending':reply,**({'prepareNow':True} if prepare else {})}
 
 def in_window(spec,at):
+    if not spec.get('startTime') or not spec.get('endTime'):return False
     local=datetime.fromtimestamp(at,ZoneInfo('Asia/Shanghai'));current=local.strftime('%H:%M')
     start,end=spec['startTime'],spec['endTime'];cross=start>end
     active=start<=current<end if not cross else current>=start or current<end

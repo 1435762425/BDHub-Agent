@@ -5,7 +5,7 @@
 ## 当前需求与入口
 
 - 当前产品基线：[docs/PRD.md](docs/PRD.md)。批次架构、模块完成状态和实施顺序：[docs/architecture/batch-outreach-v2.md](docs/architecture/batch-outreach-v2.md)。这两份覆盖历史滚动备料、自动估算“发满”和同时发送/自动回复口径。
-- V1指定数字的二发任务，V2一发。机构×市场独立；IT/MX/BR，先TikTok IM，后WhatsApp。一次准备目标N＋约10%候补，TapLink材料必须齐备，才能按北京时间窗口分批发送、跨日续发。数量不足默认等待，只有用户明确部分放行才先发已就绪项。
+- V1指定数字的二发任务，V2一发。机构×市场独立；IT/MX/BR，先TikTok IM，后WhatsApp。一次准备目标N＋约10%候补；用户可选择立即备料、稍后设置发送时段，缺时段不挡备料但不能通过发送窗口。TapLink材料必须齐备，才能按北京时间窗口分批发送、跨日续发。数量不足默认等待，只有用户明确部分放行才先发已就绪项。
 - 去重达人卡＋文字全部回查成功计1；单卡、拒绝、未知另计。准备不占发送额度，候补不增加目标，未知先核验。
 - 全托商品已明确取消库存数量门槛：不要求库存字段、不以0/低于100阻塞，不为库存单独采集或先选入；普通/未证实全托商品保留原规则。平台下架/治理/失效与佣金、期限、绑定仍核验。详见[库存政策](docs/implementation/full-managed-no-stock-gate.md)。
 - 全托主力货盘只用“高机会商品→仅全球销售商品”自动发现；补齐并验收是上线硬条件。Campaign日全量；已选商品、源发现和TapLink维护分层更新，不能统一每日逐项重抓。
@@ -35,3 +35,5 @@
 - 新全量准备基础与UI预检：[B.17](docs/implementation/batch-preparation-foundation-v2.md)。预检始终不授权发送，不创建新任务。最新[任务级整批准备](docs/implementation/batch-task-preparation-v2.md)已接 Kalodata、身份、商品短名和已选/活动商品的 TapLink 准备；新卡范围 full_preparation_no_messages，不含消息发送/回复/清洗/未选商品选入。旧 local_preparation_only 卡不升级。未选全托自动选入与新任务发送仍待接通。
 - 最新真实发送与素材记录：[B.15](docs/implementation/second-cycle-throughput-20-v1.md)、[B.16](docs/implementation/second-cycle-supply-repair-v1.md)。数字为历史快照。
 - 早期阶段入口归档：[docs/implementation/stage-index-before-batches-20260913.md](docs/implementation/stage-index-before-batches-20260913.md)。仅在追溯时读，不从历史“不真实发送/允许回复”等描述推导当前权限。
+
+当前首个正式任务：`batch-19e1044b23d017f1f553a2ecac0d`，IT，1000＋100，用户“现在开始”授权立即准备。运行记录见[立即准备](docs/implementation/batch-1000-immediate-start.md)，不要重复创建同一批。

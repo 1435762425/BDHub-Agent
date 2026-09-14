@@ -39,7 +39,7 @@ class TaskService:
     def close(self):self.tasks.close()
     def preview(self,spec):
         value=normalize_spec(spec)
-        if not value['startDate']:raise BatchError('start_date_required')
+        if not value['startDate'] and not value.get('prepareNow'):raise BatchError('start_date_required')
         # Other markets remain visible in the product, but this preparation adapter
         # has only Italy evidence and Italian material support.
         if (value['institution'],value['market'])!=('bjn-local-research','it'):raise BatchError('scope_adapter_unavailable')
