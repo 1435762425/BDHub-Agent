@@ -13,6 +13,8 @@ class CardCreation:
   if not r:raise CycleError('creation_missing')
   return dict(r)
  def prepare(self,plan,offer,short_name):
+  from lib.catalog_links import catalog_owns_pid
+  if catalog_owns_pid(self.store.db,offer['pid']):raise CycleError('catalog_material_owns_pid')
   if not assess_offer(offer,self.store.clock())['eligible']:raise CycleError('offer_not_eligible')
   if offer.get('catalogSource') not in ('selected','campaign'):raise CycleError('creation_route_not_enabled')
   identifier='card-create-'+digest([plan,offer])[:32]
@@ -50,6 +52,8 @@ class CardCreation:
  def begin(self,i):
   with self.store.tx():
    row=self.get(i);p=self.store._plan(row['plan_id'])
+   from lib.catalog_links import catalog_owns_pid
+   if catalog_owns_pid(self.store.db,row['pid']):raise CycleError('catalog_material_owns_pid')
    if row['state']!='prepared':raise CycleError('creation_already_attempted')
    if p['state']!='active' or p['revision']!=row['plan_revision']:raise CycleError('plan_changed')
    if self.store.db.execute("SELECT 1 FROM cycle_card_creation WHERE plan_id=? AND id<>? AND state IN ('started','response_saved','unknown')",(row['plan_id'],i)).fetchone():raise CycleError('another_creation_unknown')

@@ -1,0 +1,9 @@
+{
+  "version": "commission-1-to-2-v1",
+  "agencyMinPoints": "1",
+  "agencyPreferredPoints": "2",
+  "newCreatorMinBoostPoints": "1",
+  "preserveExistingLinks": true,
+  "oldCreatorMustExceedPublic": true,
+  "oldLinkOrder": ["creatorCommissionDescending", "previouslyUsed"]
+}

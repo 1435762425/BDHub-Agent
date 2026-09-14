@@ -5,6 +5,7 @@ from datetime import datetime,timedelta
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1];sys.dont_write_bytecode=True;sys.path.insert(0,str(ROOT/'scripts'))
 from lib.market_accounts import load_config,evidence_summary
+from lib.catalog_links import canary_summary
 
 def status():
     data=load_config(ROOT);sys.path.insert(0,str(ROOT.parent/'01-BDSystem-V2'))
@@ -27,7 +28,7 @@ def status():
                     identityUpdatedAt=Path(a.headers_json).stat().st_mtime if Path(a.headers_json).exists() else None)
                 row['plannedLoginMaintenance']=(datetime.fromisoformat(row['lastLogin'])+timedelta(hours=data['lifecycle']['loginMaintenanceHours'])).isoformat() if row['lastLogin'] else None
             rows.append(row)
-        result.append({'market':market,'state':pair['assignmentState'],'accounts':rows,'pairEvidence':{k:v for k,v in evidence.items() if k!='accounts'},'maintenanceExecutor':pair['maintenanceExecutor'],'autoSwitchEnabled':False})
+        result.append({'market':market,'state':pair['assignmentState'],'accounts':rows,'pairEvidence':{k:v for k,v in evidence.items() if k!='accounts'},'linkCanary':canary_summary(ROOT,pair.get('linkCreationCanary')),'maintenanceExecutor':pair['maintenanceExecutor'],'autoSwitchEnabled':False})
     return {'markets':result,'lifecycle':data['lifecycle'],'checkedAt':time.time(),'executionEnabled':False,'realSends':0}
 
 if __name__=='__main__':print(json.dumps(status(),ensure_ascii=False))

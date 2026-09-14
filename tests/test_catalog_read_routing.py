@@ -20,4 +20,13 @@ class RoutingTests(unittest.TestCase):
   self.assertEqual(calls[0]['account_name'],'acc9');self.assertNotIn('selection_scope',calls[0])
   self.assertEqual(calls[1]['account_name'],'acc6');self.assertEqual(calls[1]['selection_scope'],{})
   self.assertEqual(resolver.call_count,1)
+ def test_card_canary_uses_acc9_and_copies_its_frozen_payload(self):
+  calls=[]
+  @contextmanager
+  def fake(report,**kwargs):calls.append(kwargs);yield object()
+  payload={'items':[{'product_id':'123'}],'name':'original'}
+  with patch.object(transport,'_opportunity_transport',fake),patch('lib.market_accounts.catalog_read_account',return_value='acc9'):
+   with transport.opportunity_card_creator({},payload):payload['name']='changed'
+  self.assertEqual(calls[0]['account_name'],'acc9');self.assertEqual(calls[0]['creation_scope']['name'],'original')
+  self.assertNotIn('selection_scope',calls[0])
 if __name__=='__main__':unittest.main()

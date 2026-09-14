@@ -15,7 +15,11 @@
       "credentialAuthority": "legacy_readonly",
       "maintenanceExecutor": "legacy_lifecycle",
       "automaticRoleSwitchEnabled": false,
-      "catalogRoutingEvidence": "var/catalog-read-routing-1789375843/summary.json"
+      "catalogRoutingEvidence": "var/catalog-read-routing-1789375843/summary.json",
+      "linkCreationCanary": {
+        "creation": "var/acc9-link-execute-20260914.json",
+        "senderReadback": "var/acc9-link-acc6-readback-20260914-v3.json"
+      }
     }
   },
   "lifecycle": {
