@@ -189,13 +189,25 @@ DROP TABLE catalog_prepare_reuse_old;''')
         if not row:return None
         card=json.loads(row['payload'])
         return card|{'contract':{'pid':str(pid),'campaignId':str(campaign_id),'catalogSource':catalog_source,'verifiedAt':row['observed_at']}}
+    def reused_link(self,pid,campaign_id,catalog_source):
+        """Consumer contract: best acceptable existing platform link for one plan, else None."""
+        row=self.db.execute("SELECT * FROM catalog_prepare_readback WHERE pid=? AND campaign_id=? AND catalog_source=? AND kind='reusedLink' ORDER BY observed_at DESC LIMIT 1",(str(pid),str(campaign_id),catalog_source)).fetchone()
+        if not row:return None
+        card=json.loads(row['payload'])
+        return card|{'contract':{'pid':str(pid),'campaignId':str(campaign_id),'catalogSource':catalog_source,'reusedAt':row['observed_at']}}
     def offer_status(self,offer):
         """Read-only view for one offer: ready | pending | blocked with a precise reason."""
         rows=self.db.execute("SELECT state,blocker,error,intent_id,updated FROM catalog_prepare_item WHERE pid=? AND campaign_id=? AND catalog_source=? ORDER BY updated DESC",(str(offer['pid']),str(offer.get('campaignId')),offer.get('catalogSource'))).fetchall()
         if not rows:return {'state':'unprepared','reason':'catalog_link_not_prepared'}
-        card=self.verified_link(offer['pid'],offer.get('campaignId'),offer.get('catalogSource'))
-        if card and card.get('creatorPercent')==offer.get('creatorPercent'):return {'state':'ready','card':card}
-        if card:return {'state':'blocked','reason':'catalog_link_terms_changed','cardCreatorPercent':card.get('creatorPercent')}
+        created=self.verified_link(offer['pid'],offer.get('campaignId'),offer.get('catalogSource'))
+        if created:
+            if created.get('creatorPercent')==offer.get('creatorPercent'):return {'state':'ready','card':created}
+            return {'state':'blocked','reason':'catalog_link_terms_changed','cardCreatorPercent':created.get('creatorPercent')}
+        # An existing platform link is reusable when the inventory reconcile accepted it under the
+        # confirmed rule (creator above public, agency at least one point); its creator share does
+        # not have to equal what a brand-new link would be given.
+        reused=self.reused_link(offer['pid'],offer.get('campaignId'),offer.get('catalogSource'))
+        if reused:return {'state':'ready','card':reused,'reused':True}
         best=rows[0]
         reason={'missing':'catalog_link_creation_pending','prepared':'catalog_link_creation_pending','submitted':'catalog_link_creation_unresolved','unknown':'catalog_link_creation_unresolved',
                 'reading':'catalog_link_lookup_running','pending':'catalog_link_lookup_pending','read_incomplete':'catalog_link_lookup_incomplete',
@@ -380,6 +392,20 @@ def member_facts(row,member,policy,listing=None):
             'productEligible':member.get('is_under_governed') is not True and unavailable_allowed(member.get('unavailable_type'),member),
             'stock':str(member.get('stock')) if member.get('stock') is not None else None,'previouslyUsed':False}
 
+def reused_card(fact,pid,campaign_id,catalog_source,now):
+    """Card-shaped record for a reused existing link, mirroring the created-card contract.
+
+    Kept under its own readback kind so an existing platform link is never conflated with a
+    link this project created and verified.
+    """
+    def pct(raw):return format(Decimal(str(raw))/100,'f') if raw not in (None,'') else None
+    return {'state':'verified_read_only','listId':str(fact['listId']),'listName':fact.get('listName') or '',
+            'verifiedListName':fact.get('listName') or '','pid':str(pid),'sourceCampaignId':str(campaign_id),
+            'wireCampaignId':'0' if catalog_source=='selected' else str(campaign_id),
+            'creatorPercent':pct(fact.get('creatorRaw')),'publicPercent':pct(fact.get('publicRaw')),
+            'stock':fact.get('stock'),'stockRequired':False,'campaignName':'','executionAllowed':False,
+            'readAccount':'acc9','checkedAt':now,'evidenceRefs':['catalog-inventory:'+str(fact['listId'])],'reused':True}
+
 class TaplinkInventory:
     """Account-wide TapLink inventory: list once, read members once, reuse many times."""
     def __init__(self,root):
@@ -474,5 +500,9 @@ def reconcile_from_inventory(prep,inv,items,offers,diag=None,now=None):
             for c in observed:
                 prep.db.execute('INSERT OR REPLACE INTO catalog_prepare_reuse VALUES(?,?,?,?,?,?,?,?,?,?)',
                     (run_id,pid,cid,src,c['listId'],c['creatorRaw'],c['publicRaw'],1 if c['reusable'] else 0,c['reason'],now))
+            prep.db.execute("DELETE FROM catalog_prepare_readback WHERE run_id=? AND pid=? AND campaign_id=? AND catalog_source=? AND kind='reusedLink'",(run_id,pid,cid,src))
+            if best:
+                prep.db.execute('INSERT OR REPLACE INTO catalog_prepare_readback VALUES(?,?,?,?,?,?,?)',
+                    (run_id,pid,cid,src,'reusedLink',encoded(reused_card(best,pid,cid,src,now)),now))
         states[state]=states.get(state,0)+1
     return states

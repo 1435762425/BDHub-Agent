@@ -132,13 +132,11 @@ def advance_materials(service,task,root,clock=None):
    for j,o in zip(pending,offers):
     if not queue.permitted(task['id']):return
     try:
-     verified=catalog.verified_link(o['pid'],o.get('campaignId'),o.get('catalogSource'))
-     if verified:
-      # Only the exact plan the ledger verified may satisfy this offer.
-      if verified.get('creatorPercent')==o.get('creatorPercent') and verified.get('verifiedListName') and str(verified.get('sourceCampaignId'))==str(o.get('campaignId')):
-       jobs.save(task['id'],j['material_key'],'ready',verified);continue
-      jobs.save(task['id'],j['material_key'],'waiting',error='catalog_link_terms_changed');continue
+     # One judgement path: offer_status applies the confirmed rule and accepts either a link this
+     # project created and verified or an acceptable existing platform link. A reused link's
+     # creator share need not equal what a brand-new link would be given.
      status=catalog.offer_status(o)
+     if status['state']=='ready':jobs.save(task['id'],j['material_key'],'ready',status['card']);continue
      jobs.save(task['id'],j['material_key'],'waiting',error=status.get('reason') or 'catalog_link_pending')
     except Exception:
      jobs.save(task['id'],j['material_key'],'waiting',error='catalog_link_read_unresolved')
