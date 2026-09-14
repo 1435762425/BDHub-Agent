@@ -115,7 +115,7 @@ def _opportunity_transport(report,*,stopped=lambda:False,extra_read_endpoints=fr
         def fork_lane(self,pace):
             # Read-only tasks may fork lanes too; writes stay blocked because WRITE_ENDPOINTS
             # is empty and Scoped._xhr rejects any write when no scope was declared.
-            lane=Scoped(identity,account,allow_write=selection_scope is not None or creation_scope is not None)
+            lane=Scoped(identity,account,allow_write=selection_scope is not None or creation_scope is not None or deletion_scope is not None)
             lane.copy_session_from(self);lane._pace=pace;lane.check_stop=check;lane._batch_lane=True
             return lane
         def allow_verified_nonselection(self,pid,receipt,fresh,absent):
@@ -128,9 +128,11 @@ def _opportunity_transport(report,*,stopped=lambda:False,extra_read_endpoints=fr
                     lid=str(body.get('list_id') or '')
                     if kwargs.get('path')!=DELETE or kwargs.get('method')!='POST' or body!=deletion_scope.get(lid) or lid in delete_used:raise ValueError('list_delete_outside_intent')
                     delete_used.add(lid)
+                    outcome=super()._xhr(**kwargs)
+                    # Counted only after the send: a rejected write is never a platform write.
                     report['platformWrites']=report.get('platformWrites',0)+1
                     report['deleteWrites']=report.get('deleteWrites',0)+1
-                    return super()._xhr(**kwargs)
+                    return outcome
                 if creation_scope is not None:
                     body=kwargs.get('payload') or {}
                     if kwargs.get('path')!=CREATE or kwargs.get('method')!='POST':raise ValueError('card_write_outside_intent')
@@ -146,9 +148,10 @@ def _opportunity_transport(report,*,stopped=lambda:False,extra_read_endpoints=fr
                         expected=creation_scope.get(pid)
                         if not expected or pid in creation_used or body!=expected:raise ValueError('card_write_outside_intent')
                         creation_used.add(pid)
+                    outcome=super()._xhr(**kwargs)
                     report['platformWrites']=report.get('platformWrites',0)+1
                     report['createWrites']=report.get('createWrites',0)+1
-                    return super()._xhr(**kwargs)
+                    return outcome
                 body=kwargs.get('payload') or {};pid=body.get('product_id');cid=body.get('campaign_id')
                 if selection_scope is None or kwargs.get('path')!=SELECT or kwargs.get('method')!='POST' or set(body)!={'product_id','campaign_id'} or not cid or selection_scope.get(pid)!=cid or pid in consumed:raise ValueError('selection_write_outside_intent')
                 consumed.add(pid);report['platformWrites']=report.get('platformWrites',0)+1
@@ -160,7 +163,7 @@ def _opportunity_transport(report,*,stopped=lambda:False,extra_read_endpoints=fr
     report.update(scope=binding,platformWrites=0,oldDatabaseWrites=0,identityFileWrites=0)
     with guard.readonly_guard(account,wait_seconds=wait_seconds):
         report['guardAcquiredAt']=time.time()
-        transport=Scoped(identity,account,allow_write=selection_scope is not None or creation_scope is not None)
+        transport=Scoped(identity,account,allow_write=selection_scope is not None or creation_scope is not None or deletion_scope is not None)
         def check():
             if stopped():raise ValueError('source_stopped')
             if scheduled_relogin.maintenance_due(account,initialize=False,ignore_retry_throttle=True):raise ValueError('source_maintenance_due')

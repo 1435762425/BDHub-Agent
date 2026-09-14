@@ -204,4 +204,5 @@ class CatalogClean:
                              encoded(readback) if readback is not None else None, now, intent_id))
 
     def pending_deletes(self, run_id):
-        return [dict(r) for r in self.db.execute("SELECT * FROM catalog_clean_intent WHERE run_id=? AND state IN ('prepared','submitted','unknown') ORDER BY list_id", (run_id,))]
+        # Receipt-saved intents are exactly the ones awaiting a delete readback.
+        return [dict(r) for r in self.db.execute("SELECT * FROM catalog_clean_intent WHERE run_id=? AND state IN ('prepared','submitted','receipt_saved','unknown') ORDER BY list_id", (run_id,))]
