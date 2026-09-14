@@ -109,6 +109,18 @@ class CreatorDiscoveryTests(unittest.TestCase):
         value = preview("it", "test source", text)
         return self.store.submit("it", "test source", text, value["previewHash"], request)
 
+    def test_batch_identity_prioritizes_unknown_handles_without_skipping_find(self):
+        self.identities.observe_profile('it','123','alice','2026-09-12T01:00:00Z','known-proof')
+        label='Kalodata 二发线索身份解析';v=preview('it',label,'alice\nnew.creator')
+        self.store.submit('it',label,'alice\nnew.creator',v['previewHash'],'batch-priority')
+        item=self.store.claim('worker');self.assertEqual(item['handle'],'new.creator')
+        self.assertEqual(self.store._db.execute("SELECT status FROM discovery_item WHERE handle='alice'").fetchone()[0],'queued')
+        self.assertIsNone(item['oec_id'])
+    def test_never_queried_handle_precedes_repeated_historical_misses(self):
+        old=self.submit('missing');self.store._db.execute("UPDATE discovery_item SET status='unresolved' WHERE batch_id=?",(old['id'],))
+        label='Kalodata 二发线索身份解析';v=preview('it',label,'missing\nbrand.new')
+        self.store.submit('it',label,'missing\nbrand.new',v['previewHash'],'retry-and-new')
+        self.assertEqual(self.store.claim('worker')['handle'],'brand.new')
     def test_zero_request_guard_busy_defers_without_blocking_batch(self):
         batch=self.submit();worker=CreatorDiscoveryWorker(self.store,executor=self.execute);item=self.store.claim(worker.owner)
         report={'schema':'bdhub.italy-profile-probe.v3','market':'it','account':'acc6','oldDatabaseWrites':0,'realSends':0,'targets':[],'requests':[],'errorType':'BlockingIOError','reason':'probe_initialization_or_validation_error'}

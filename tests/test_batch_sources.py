@@ -1,7 +1,7 @@
 import sys,tempfile,unittest,json
 from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'scripts'))
-from lib.batch_sources import BatchSources
+from lib.batch_sources import BatchSources,pending_new_handles
 from lib.batch_task_service import TaskService
 from lib.second_cycle import CycleError,encoded
 from test_second_cycle import offer,NOW
@@ -18,9 +18,20 @@ class SourceTests(unittest.TestCase):
   self.spec={'institution':'bjn-local-research','market':'it','target':3000,'startDate':'2026-09-15','startTime':'22:00','endTime':'01:00'}
   card=self.s.preview(self.spec);self.id=self.s.confirm(card['token'],'one')['id'];self.offers=[offer(str(1729480033890900000+i),title='Cuscino',campaignId='2') for i in range(1000)]
  def tearDown(self):self.s.close();self.tmp.cleanup()
+ def test_pending_supply_deduplicates_and_excludes_already_known_people(self):
+  edges=[{'sourceId':str(i),'sourceHandle':h} for i,h in enumerate(['known','new','new','done','miss'])]
+  self.assertEqual(pending_new_handles(edges,{'3'},{'4'},{'known'}),{'new'})
  def test_whole_goal_plans_330_pids_once_without_daily_quota_cap(self):
   r=self.q.plan(self.id,self.offers,0);self.assertEqual(r['created'],330);self.assertEqual(self.q.plan(self.id,self.offers,0)['created'],0)
   self.assertEqual(self.q.status(self.id)['dailyQuotaUsed'],0)
+ def test_waiting_pid_uses_actual_pending_people_not_ten_per_pid(self):
+  self.q.plan(self.id,self.offers,0)
+  self.s.db.execute("UPDATE batch_source_job SET state='awaiting_identity'")
+  r=self.q.plan(self.id,self.offers,0,pending_identity_count=12)
+  self.assertEqual(r['created'],329)
+ def test_unqueried_products_precede_legacy_queried_products(self):
+  self.q.plan(self.id,self.offers,3299,previously_queried_pids={self.offers[0]['pid']})
+  self.assertEqual(self.q.claim(self.id)['pid'],self.offers[1]['pid'])
  def test_5000_and_restricted_scope_not_silently_expanded(self):
   card=self.s.preview(self.spec|{'target':5000,'productScope':{'kind':'pids','values':[self.offers[0]['pid']]}});id=self.s.confirm(card['token'],'two')['id']
   r=self.q.plan(id,self.offers,0);self.assertEqual(r['created'],1);self.assertEqual(r['unplannedEstimate'],5490)

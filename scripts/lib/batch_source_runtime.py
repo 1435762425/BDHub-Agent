@@ -1,8 +1,8 @@
 """Real read-only HTTP and exact identity handoff for task-owned source jobs."""
-from contextlib import contextmanager
+from contextlib import contextmanager,closing
 from pathlib import Path
-import fcntl,importlib.util,json,sys
-from lib.batch_sources import BatchSources
+import fcntl,importlib.util,json,sys,sqlite3
+from lib.batch_sources import BatchSources,pending_new_handles
 from lib.batch_task_service import read_local_preparation
 from lib.second_cycle import CycleStore,CycleError,encoded
 from lib.creator_discovery import CreatorDiscoveryStore
@@ -46,7 +46,14 @@ def advance_sources(service,task,root,provider_factory=kalodata_provider):
     terminal={r[0] for r in cycle.db.execute("SELECT source_id FROM cycle_identity_resolution WHERE plan_id=? UNION SELECT source_id FROM cycle_identity_outcome WHERE plan_id=? AND status IN ('unresolved','blocked')",(plan,plan))}
     if edge_ids<=terminal:service.db.execute("UPDATE batch_source_job SET state='completed' WHERE id=? AND state='awaiting_identity'",(j[0],))
   report,_=read_local_preparation(root,task['spec'])
-  queue.plan(id,[o for _,o in cycle._offers(plan)],report['candidates'])
+  # Only actual unresolved distinct handles count as pending supply, never 10 per PID.
+  resolved={r[0] for r in cycle.db.execute('SELECT source_id FROM cycle_identity_resolution WHERE plan_id=?',(plan,))}
+  terminal={r[0] for r in cycle.db.execute("SELECT source_id FROM cycle_identity_outcome WHERE plan_id=? AND status IN ('unresolved','blocked')",(plan,))}
+  with closing(sqlite3.connect((root/'var/creator-identities.sqlite').as_uri()+'?mode=ro',uri=True)) as identities:
+   known_handles={r[0] for r in identities.execute('SELECT current_handle FROM creator_identity WHERE market=? AND handle_conflict=0',(task['spec']['market'],))}
+  pending_handles=pending_new_handles(queue.edges(id),resolved,terminal,known_handles)
+  prior_pids={r[0] for r in cycle.db.execute('SELECT DISTINCT pid FROM source_job WHERE plan_id=?',(plan,))}
+  queue.plan(id,[o for _,o in cycle._offers(plan)],report['candidates'],pending_identity_count=len(pending_handles),previously_queried_pids=prior_pids)
   if not report['candidateGap']:return
   states=queue.status(id)['states']
   if states.get('blocked') or not (states.get('queued') or states.get('running')):return

@@ -13,6 +13,12 @@ CREATE TABLE IF NOT EXISTS batch_source_page(job_id TEXT NOT NULL,cursor TEXT NO
 CREATE TABLE IF NOT EXISTS batch_source_identity(task_id TEXT NOT NULL,outbox_id TEXT NOT NULL,PRIMARY KEY(task_id,outbox_id));
 '''
 AUTHORIZED='full_preparation_no_messages'
+def pending_new_handles(edges,resolved,terminal,known_handles):
+ # Known identities are already counted or excluded by current relationship rules.
+ # They must not also inflate the estimate of new candidates waiting for Find.
+ done=resolved|terminal
+ return {e['sourceHandle'] for e in edges if e['sourceId'] not in done and e['sourceHandle'] not in known_handles}
+
 class BatchSources:
  def __init__(self,service,*,initialize=True):
   self.service=service;self.db=service.db;self.tasks=service.tasks
@@ -20,32 +26,33 @@ class BatchSources:
  def permitted(self,id):
   task=self.tasks.get(id);row=self.db.execute('SELECT payload FROM batch_policy WHERE task_id=?',(id,)).fetchone()
   return task['state']=='preparing' and row and json.loads(row[0]).get('authorizationScope')==AUTHORIZED
- def plan(self,id,offers,candidate_count,*,expected_per_pid=10,max_pages=2):
+ def plan(self,id,offers,candidate_count,*,expected_per_pid=10,max_pages=2,pending_identity_count=0,previously_queried_pids=frozenset()):
   from lib.batch_task_service import in_scope
   if type(candidate_count) is not int or candidate_count<0 or type(expected_per_pid) is not int or not 1<=expected_per_pid<=100 or type(max_pages) is not int or not 1<=max_pages<=20:raise CycleError('invalid_preparation_capacity')
+  if type(pending_identity_count) is not int or pending_identity_count<0:raise CycleError('invalid_preparation_capacity')
   with self.tasks.tx():
    if not self.permitted(id):return {'created':0,'reason':'task_preparation_not_authorized'}
    task=self.tasks.get(id);spec=task['spec']
    end=datetime.fromtimestamp(self.tasks.clock(),ZoneInfo('Asia/Shanghai')).date()-timedelta(days=2)
    self.db.execute('INSERT OR IGNORE INTO batch_source_plan VALUES(?,?,?,?,?)',(id,str(end-timedelta(days=13)),str(end),expected_per_pid,max_pages))
    config=dict(self.db.execute('SELECT * FROM batch_source_plan WHERE task_id=?',(id,)).fetchone())
-   pending=self.db.execute("SELECT count(*) FROM batch_source_job WHERE task_id=? AND state IN ('queued','running','awaiting_identity','blocked')",(id,)).fetchone()[0]
+   pending=self.db.execute("SELECT count(*) FROM batch_source_job WHERE task_id=? AND state IN ('queued','running','blocked')",(id,)).fetchone()[0]
    deficit=max(0,spec['target']+spec['reserve']-candidate_count)
    # Plan the whole missing target now. The estimate is not counted as a ready creator.
-   needed=max(0,math.ceil(deficit/config['expected_per_pid'])-pending)
+   needed=max(0,math.ceil(max(0,deficit-pending_identity_count)/config['expected_per_pid'])-pending)
    current={r[0] for r in self.db.execute('SELECT pid FROM batch_source_job WHERE task_id=?',(id,))}
    eligible={}
    for o in offers:
     if o['pid'] in current or not in_scope(spec,o) or not assess_offer(o,self.tasks.clock())['eligible']:continue
     prior=eligible.get(o['pid'])
     if prior is None or (Decimal(o['creatorPercent']),o['offerKey'])>(Decimal(prior['creatorPercent']),prior['offerKey']):eligible[o['pid']]=o
-   ranked=sorted(eligible.values(),key=lambda o:(not assess_offer(o,self.tasks.clock())['ratingPreferred'],o['pid']))
+   ranked=sorted(eligible.values(),key=lambda o:(o['pid'] in previously_queried_pids,not assess_offer(o,self.tasks.clock())['ratingPreferred'],o['pid']))
    chosen=ranked[:needed]
    for o in chosen:
     job='batch-source-'+digest([id,o['pid'],config['window_start'],config['window_end']])[:28]
     self.db.execute('INSERT INTO batch_source_job(id,task_id,pid,offer) VALUES(?,?,?,?)',(job,id,o['pid'],encoded(o)))
    if chosen:self.tasks.event(id,'source_batch_planned',{'pids':len(chosen),'requiredCreators':spec['target']+spec['reserve'],'candidateGap':deficit,'estimatedCreatorsPerPid':config['expected_per_pid']})
-   return {'created':len(chosen),'plannedPidCount':pending+len(chosen),'unplannedEstimate':max(0,needed-len(chosen))*config['expected_per_pid'],'candidateGap':deficit}
+   return {'created':len(chosen),'plannedPidCount':pending+len(chosen),'unplannedEstimate':max(0,needed-len(chosen))*config['expected_per_pid'],'candidateGap':deficit,'pendingIdentityCandidates':pending_identity_count}
  def claim(self,id):
   with self.tasks.tx():
    if not self.permitted(id):return None

@@ -254,8 +254,16 @@ class CreatorDiscoveryStore:
             else:
                 if running:
                     return None
+                # Unknown handles grow the creator pool first; this only changes
+                # queue order, never substitutes cached identity for exact Find.
+                known=[]; identity_path=self.var_dir/'creator-identities.sqlite'
+                if identity_path.exists():
+                    with closing(sqlite3.connect(identity_path.resolve().as_uri()+'?mode=ro',uri=True)) as identities:
+                        if identities.execute("SELECT 1 FROM sqlite_master WHERE name='creator_identity'").fetchone():
+                            known=[r[0] for r in identities.execute("SELECT current_handle FROM creator_identity WHERE market='it' AND current_handle IS NOT NULL AND handle_conflict=0")]
                 row = self._db.execute("""SELECT i.* FROM discovery_item i JOIN discovery_batch b ON b.id=i.batch_id
-                    WHERE i.status='queued' AND b.status IN ('queued','running') AND i.retry_at<=? ORDER BY b.created_at,b.id,i.row_index LIMIT 1""",(self.now(),)).fetchone()
+                    WHERE i.status='queued' AND b.status IN ('queued','running') AND i.retry_at<=?
+                    ORDER BY CASE WHEN b.source_label='Kalodata 二发线索身份解析' THEN CASE WHEN i.handle IN (SELECT value FROM json_each(?)) THEN 2 WHEN EXISTS(SELECT 1 FROM discovery_item old WHERE old.handle=i.handle AND old.id<>i.id AND old.status IN ('completed','unresolved')) THEN 1 ELSE 0 END ELSE 0 END,b.created_at,b.id,i.row_index LIMIT 1""",(self.now(),_json(known))).fetchone()
                 if row is None:
                     return None
                 self._db.execute("UPDATE discovery_batch SET status='running',started_at=COALESCE(started_at,?) WHERE id=?", (_iso(self.now()), row["batch_id"]))
