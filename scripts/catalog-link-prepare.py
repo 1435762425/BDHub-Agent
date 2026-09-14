@@ -84,9 +84,11 @@ def step_read(prep,run_id,limit,report,lanes=1,qps=3):
     for it in claimed:by_pid.setdefault(it['pid'],[]).append(it)
     states={}
     with opportunity_reader(report,extra_read_endpoints=READ_EXTRA,wait_seconds=60,account_name='acc9') as transport:
-        def reader(on):
-            # One read function per HTTP lane; lanes share the account guard and one pacer.
+        def reader(on,pace=None):
+            # One read function per HTTP lane. CommerceTransport never calls _pace, so the
+            # shared pacer has to be applied here; without it the lanes would burst unprotected.
             def read(path,extra):
+                if pace is not None:pace()
                 r=on._xhr(method='GET',path=path,params=on._params()|extra,payload=None,write=False)
                 body=on.require_read(r);return body,digest(body)
             return read
@@ -121,7 +123,7 @@ def step_read(prep,run_id,limit,report,lanes=1,qps=3):
                 from lib.cohort_find import SharedPacer
                 pacer=SharedPacer(qps)
                 lane_transports=[transport]+[transport.fork_lane(pacer.acquire) for _ in range(lanes-1)]
-                lane_reads=[read]+[reader(on) for on in lane_transports[1:]]
+                lane_reads=[reader(transport,pacer.acquire)]+[reader(on,pacer.acquire) for on in lane_transports[1:]]
                 def classify(index,pid):
                     try:return classify_pid(pid,group_offers[pid],lane_reads[index%lanes],prep.policy),None
                     except Exception as error:return None,error
