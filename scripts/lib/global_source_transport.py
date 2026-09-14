@@ -26,13 +26,16 @@ def opportunity_selector(report,selection_scope,*,stopped=lambda:False):
     with _opportunity_transport(report,stopped=stopped,selection_scope=selection_scope,account_name='acc6') as t:yield t
 
 @contextmanager
-def opportunity_card_creator(report,payload,*,stopped=lambda:False):
-    """One frozen product-list request on ACC9; no messages, selection, or automatic replay."""
+def opportunity_card_creator(report,payload,*,stopped=lambda:False,wait_seconds=15):
+    """One frozen product-list request on ACC9; no messages, selection, or automatic replay.
+
+    The wait only makes room for the shared account guard; it never retries a write.
+    """
     from lib.market_accounts import catalog_read_account
     from copy import deepcopy
     if catalog_read_account(ROOT,'acc9')!='acc9' or not isinstance(payload,dict) or len(payload.get('items',[]))!=1:raise ValueError('card_canary_scope_invalid')
     reads={('/api/v1/affiliate/partner/im/product_list/list','GET'),('/api/v1/affiliate/partner/campaign/product_list/products','GET')}
-    with _opportunity_transport(report,stopped=stopped,extra_read_endpoints=reads,creation_scope=deepcopy(payload),account_name='acc9') as t:yield t
+    with _opportunity_transport(report,stopped=stopped,extra_read_endpoints=reads,creation_scope=deepcopy(payload),account_name='acc9',wait_seconds=wait_seconds) as t:yield t
 
 @contextmanager
 def _opportunity_transport(report,*,stopped=lambda:False,extra_read_endpoints=frozenset(),selection_scope=None,creation_scope=None,account_name='acc6',wait_seconds=15):

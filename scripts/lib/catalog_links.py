@@ -53,8 +53,17 @@ class CatalogLinks:
             if not c.execute("SELECT 1 FROM sqlite_master WHERE name='cycle_card_creation'").fetchone():return False
             return bool(c.execute("SELECT 1 FROM cycle_card_creation WHERE pid=? AND state IN ('prepared','started','response_saved','unknown')",(pid,)).fetchone())
     def prepare(self,spec):
-        if spec.get('account')!='acc9' or spec.get('market')!='it' or spec.get('route')!='selected' or spec.get('purpose')!='acc9_single_card_canary':raise ValueError('catalog_link_canary_scope_invalid')
-        if type(spec.get('searchTotal')) is not int or spec['searchTotal']!=0 or self.legacy_conflict(spec['pid']):raise ValueError('existing_link_or_intent_requires_review')
+        """Freeze one creation intent. Purpose decides how strictly the spec is bound."""
+        purpose=spec.get('purpose')
+        if purpose=='acc9_single_card_canary':return self._freeze(spec,'catalog_link_canary_scope_invalid',canary=True)
+        if purpose!='catalog_batch_link':raise ValueError('catalog_link_purpose_invalid')
+        if not str(spec.get('campaignId','')).isdigit() or not str(spec.get('pid','')).isdigit() or not str(spec.get('sourceRun','')):raise ValueError('catalog_prepare_binding_invalid')
+        if not isinstance(spec.get('shortName'),str) or not 1<=len(spec['shortName'])<=30:raise ValueError('catalog_prepare_name_invalid')
+        return self._freeze(spec,'catalog_link_scope_invalid',canary=False)
+    def _freeze(self,spec,scope_error,*,canary):
+        if spec.get('account')!='acc9' or spec.get('market')!='it' or spec.get('route')!='selected':raise ValueError(scope_error)
+        if type(spec.get('searchTotal')) is not int or spec['searchTotal']!=0:raise ValueError('existing_links_preserved_requires_review' if not canary else 'existing_link_or_intent_requires_review')
+        if self.legacy_conflict(spec['pid']):raise ValueError('legacy_creation_in_progress' if not canary else 'existing_link_or_intent_requires_review')
         if spec.get('policyFingerprint')!=digest(self.policy):raise ValueError('catalog_policy_changed')
         rate=basis(Decimal(spec['creatorPercent'])*100)
         expected={'name':spec['listName'],'campaign_id':'0','source':2,'items':[{'product_id':spec['pid'],'campaign_id':spec['campaignId'],'creator_commission_rate':str(rate)}]}
