@@ -14,33 +14,33 @@ class IdentityBridge:
   self.store=store;self.discovery=discovery;self.identity_path=Path(identity_path);store.db.executescript(SCHEMA)
   if 'settled' not in {r[1] for r in store.db.execute('PRAGMA table_info(cycle_identity_outbox)')}:
    store.db.execute('ALTER TABLE cycle_identity_outbox ADD COLUMN settled INTEGER NOT NULL DEFAULT 0')
- def freeze(self,plan):
+ def freeze(self,plan,*,source_ids=None):
   with self.store.tx():
    if self.store._plan(plan)['market']!='it':raise CycleError('identity_market_not_enabled')
    if self.store._plan(plan)['state']!='active':raise CycleError('plan_paused')
-   rows=self.store.db.execute("SELECT e.source_id,e.payload FROM source_edge e LEFT JOIN cycle_identity_handoff h USING(plan_id,source_id) WHERE e.plan_id=? AND h.source_id IS NULL AND json_extract(e.payload,'$.sourceKind')='kalodata_http' AND json_extract(e.payload,'$.creatorId') IS NULL ORDER BY e.source_id LIMIT 500",(plan,)).fetchall()
+   rows=self.store.db.execute("SELECT e.source_id,e.payload FROM source_edge e LEFT JOIN cycle_identity_handoff h USING(plan_id,source_id) WHERE e.plan_id=? AND h.source_id IS NULL AND json_extract(e.payload,'$.sourceKind')='kalodata_http' AND json_extract(e.payload,'$.creatorId') IS NULL AND (? IS NULL OR e.source_id IN (SELECT value FROM json_each(?))) ORDER BY e.source_id LIMIT 500",(plan,encoded(source_ids) if source_ids is not None else None,encoded(source_ids) if source_ids is not None else None)).fetchall()
    if not rows:return None
    edges=[{'sourceId':r['source_id'],'handle':json.loads(r['payload'])['sourceHandle']} for r in rows]
    payload={'edges':edges,'handles':sorted(set(e['handle'] for e in edges))};oid='cycle-identity-'+digest([plan,payload])[:32]
    self.store.db.execute('INSERT INTO cycle_identity_outbox(id,plan_id,payload,batch_id) VALUES(?,?,?,NULL)',(oid,plan,encoded(payload)))
    for e in edges:self.store.db.execute('INSERT INTO cycle_identity_handoff VALUES(?,?,?)',(plan,e['sourceId'],oid))
    return oid
- def dispatch(self,plan):
+ def dispatch(self,plan,*,outbox_ids=None):
   if self.store._plan(plan)['market']!='it':raise CycleError('identity_market_not_enabled')
   result=[]
-  for row in self.store.db.execute('SELECT * FROM cycle_identity_outbox WHERE plan_id=? AND batch_id IS NULL ORDER BY rowid',(plan,)).fetchall():
+  for row in self.store.db.execute('SELECT * FROM cycle_identity_outbox WHERE plan_id=? AND batch_id IS NULL AND (? IS NULL OR id IN (SELECT value FROM json_each(?))) ORDER BY rowid',(plan,encoded(outbox_ids) if outbox_ids is not None else None,encoded(outbox_ids) if outbox_ids is not None else None)).fetchall():
    if self.store._plan(plan)['state']!='active':break
    payload=json.loads(row['payload']);text='\n'.join(payload['handles']);label='Kalodata 二发线索身份解析'
    v=preview('it',label,text);r=self.discovery.submit('it',label,text,v['previewHash'],row['id'])
    with self.store.tx():self.store.db.execute('UPDATE cycle_identity_outbox SET batch_id=? WHERE id=? AND batch_id IS NULL',(r['id'],row['id']))
    result.append(r['id'])
   return result
- def reconcile(self,plan):
+ def reconcile(self,plan,*,outbox_ids=None):
   if self.store._plan(plan)['market']!='it':raise CycleError('identity_market_not_enabled')
   bound=0;states={};finished=[]
   with closing(sqlite3.connect(self.identity_path.resolve().as_uri()+'?mode=ro',uri=True)) as identities, identities:
    identities.row_factory=sqlite3.Row
-   for box in self.store.db.execute('SELECT * FROM cycle_identity_outbox WHERE plan_id=? AND batch_id IS NOT NULL AND settled=0',(plan,)).fetchall():
+   for box in self.store.db.execute('SELECT * FROM cycle_identity_outbox WHERE plan_id=? AND batch_id IS NOT NULL AND settled=0 AND (? IS NULL OR id IN (SELECT value FROM json_each(?)))',(plan,encoded(outbox_ids) if outbox_ids is not None else None,encoded(outbox_ids) if outbox_ids is not None else None)).fetchall():
     detail=self.discovery.detail(box['batch_id']);states[box['batch_id']]=detail['batch']['counts']
     matched={r['handle']:r for r in detail['items']}
     if not detail['batch']['counts']['queued'] and not detail['batch']['counts']['running']:finished.append(box['id'])

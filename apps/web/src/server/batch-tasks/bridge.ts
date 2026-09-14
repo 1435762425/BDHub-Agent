@@ -6,7 +6,8 @@ export class TaskInputError extends Error {}
 export function taskCommand(body:unknown):Record<string,unknown>{
  if(!body||typeof body!=="object"||Array.isArray(body))throw new TaskInputError("invalid_request");
  const b=body as Record<string,unknown>;
- const shapes:Record<string,string[]>={list:["action"],preview:["action","spec"],confirm:["action","token","requestKey"],detail:["action","id"],pause:["action","id","revision"],resume:["action","id","revision"],priority:["action","id","revision","priority"]};
+ const shapes:Record<string,string[]>={list:["action"],preview:["action","spec"],confirm:["action","token","requestKey","authorizationScope"],detail:["action","id"],pause:["action","id","revision"],resume:["action","id","revision"],priority:["action","id","revision","priority"]};
+ if(b.action==="confirm"&&b.authorizationScope!=="full_preparation_no_messages")throw new TaskInputError("task_confirmation_scope_required");
  const keys=typeof b.action==="string"?shapes[b.action]:undefined;
  if(!keys||Object.keys(b).length!==keys.length||Object.keys(b).some(k=>!keys.includes(k)))throw new TaskInputError("invalid_request");
  for(const k of ["id","token","requestKey"])if(k in b&&(typeof b[k]!=="string"||!/^[A-Za-z0-9_.:-]{1,120}$/.test(b[k] as string)))throw new TaskInputError("invalid_request");

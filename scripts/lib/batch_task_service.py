@@ -1,7 +1,7 @@
 """Confirmed task cards and restartable local preparation reconciliation.
 
-The local adapter records reusable evidence and concrete missing stages. It does
-not submit platform actions or grant dispatch authority. Shared cycle data is RO.
+The local reader records reusable evidence; optional scoped preparation adapters
+handle HTTP, identity and materials. Dispatch authority remains disabled.
 """
 import json
 import sqlite3
@@ -13,8 +13,10 @@ from lib.cycle_materials import name_key, TEMPLATES
 
 POLICY = {
     'version': 'second-batch-20260914', 'templateVersion': 4,
-    'authorizationScope': 'local_preparation_only',
+    'authorizationScope': 'full_preparation_no_messages',
     'templates': TEMPLATES, 'fullManagedStockRequired': False,
+    'allowedPreparationActions':['kalodata_read','identity_read','product_names','card_read','card_create_for_selected_or_campaign'],
+    'sourceWindowDays':14, 'sourceLagDays':2, 'sourceMaxPagesPerPid':2,
     'ordinaryStockMinimumExclusive': 100, 'campaignDaysMinimumExclusive': 45,
     'preparation': 'whole_target_plus_reserve', 'counting': 'unique_oec_card_and_text_confirmed',
     'manualReplyPauseOverridesTask': True,
@@ -68,9 +70,14 @@ class TaskService:
         policy=self.db.execute('SELECT payload FROM batch_policy WHERE task_id=?',(id,)).fetchone()
         return {k:t[k] for k in ('id','spec','state','priority','revision','created')}|{
             'preparation':json.loads(r['report']) if r and r['report'] else None,
+            'sourcePreparation':self.source_status(id),
             'checkedAt':r['checked'] if r else None,'nextCheckAt':r['next_run'] if r else None,
             'policy':json.loads(policy[0]) if policy else None,'executionConnected':False,
             'events':[dict(e)|{'payload':json.loads(e['payload'])} for e in self.db.execute('SELECT kind,payload,at FROM batch_event WHERE task_id=? ORDER BY id DESC LIMIT 12',(id,))]}
+    def source_status(self,id):
+        if not self.db.execute("SELECT 1 FROM sqlite_master WHERE name='batch_source_job'").fetchone():return None
+        from lib.batch_sources import BatchSources
+        return BatchSources(self,initialize=False).status(id)
     def listing(self):
         rows=self.db.execute('SELECT id FROM batch_task ORDER BY priority DESC,created,id LIMIT 100').fetchall()
         h=self.db.execute('SELECT heartbeat FROM batch_worker WHERE singleton=1').fetchone()
@@ -79,21 +86,29 @@ class TaskService:
         with self.tasks.tx():
             t=self.tasks.get(id)
             if type(revision) is not int or revision!=t['revision']:raise BatchError('revision_conflict')
-            if action=='pause' and t['state']=='preparing':state='paused'
+            if action=='pause' and t['state'] in ('preparing','ready'):state='paused'
             elif action=='resume' and t['state']=='paused':state='preparing'
             elif action=='priority' and t['state'] in ('preparing','paused') and type(priority) is int and -100<=priority<=100:state=t['state']
             else:raise BatchError('invalid_task_control')
             self.db.execute('UPDATE batch_task SET state=?,priority=?,revision=revision+1 WHERE id=?',(state,priority if action=='priority' else t['priority'],id))
             self.db.execute('UPDATE batch_preparation_run SET next_run=0 WHERE task_id=?',(id,))
+            if action=='resume' and self.db.execute("SELECT 1 FROM sqlite_master WHERE name='batch_source_job'").fetchone():
+                self.db.execute("UPDATE batch_source_job SET state='queued',error=NULL,next_attempt=0 WHERE task_id=? AND state='blocked'",(id,))
             self.tasks.event(id,action,{'priority':priority} if action=='priority' else {})
         return self.detail(id)
-    def tick(self,read):
+    def heartbeat(self):
         self.db.execute('INSERT INTO batch_worker VALUES(1,?) ON CONFLICT(singleton) DO UPDATE SET heartbeat=excluded.heartbeat',(self.tasks.clock(),))
+    def tick(self,read,prepare=None):
+        self.heartbeat()
         row=self.db.execute("SELECT t.id FROM batch_task t JOIN batch_preparation_run r ON r.task_id=t.id WHERE t.state='preparing' AND r.next_run<=? ORDER BY t.priority DESC,t.created,t.id LIMIT 1",(self.tasks.clock(),)).fetchone()
         if not row:return False
         t=self.tasks.get(row[0])
         try:
+            if prepare:prepare(t)
+            if self.tasks.get(t['id'])['state']!='preparing':return True
             report,members=read(t['spec'])
+            from lib.batch_materials import apply_materials
+            report,members=apply_materials(self,t['id'],report,members)
             preparation_gate(t['spec']['target'],members)
             if len(members)>t['spec']['target']+t['spec']['reserve'] or any((m.get('institution'),m.get('market'))!=(t['spec']['institution'],t['spec']['market']) or not in_scope(t['spec'],m) for m in members):raise BatchError('member_scope_mismatch')
             report['membershipHash']=digest(members)
@@ -108,10 +123,13 @@ class TaskService:
                 self.db.execute('DELETE FROM batch_member WHERE task_id=?',(t['id'],))
                 for m in members:
                     self.db.execute('INSERT INTO batch_member VALUES(?,?,?,?)',(t['id'],m['oec'],m['materialKey'],encoded(m)))
-            self.db.execute('UPDATE batch_preparation_run SET report=?,checked=?,next_run=? WHERE task_id=?',(encoded(report),self.tasks.clock(),self.tasks.clock()+30,t['id']))
+            delay=30
+            if self.db.execute("SELECT 1 FROM sqlite_master WHERE name='batch_source_job'").fetchone() and self.db.execute("SELECT 1 FROM batch_source_job WHERE task_id=? AND state='queued' AND next_attempt<=?",(t['id'],self.tasks.clock())).fetchone() and not self.db.execute("SELECT 1 FROM batch_source_job WHERE task_id=? AND state='blocked'",(t['id'],)).fetchone():delay=2
+            self.db.execute('UPDATE batch_preparation_run SET report=?,checked=?,next_run=? WHERE task_id=?',(encoded(report),self.tasks.clock(),self.tasks.clock()+delay,t['id']))
             if previous!=encoded(report):
                 self.db.execute('UPDATE batch_task SET revision=revision+1 WHERE id=?',(t['id'],))
                 self.tasks.event(t['id'],'preparation_observed',{'state':report['state'],'candidates':report.get('candidates',0),'blockers':report['blockers']})
+        if report.get('state')=='ready' and self.tasks.get(t['id'])['state']=='preparing':self.tasks.freeze(t['id'])
         return True
 
 

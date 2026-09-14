@@ -9,7 +9,9 @@ SELECTED='/api/v1/affiliate/partner/product/pick_up/list'
 CATEGORY='/api/v1/affiliate/lux/product/category/childrenv2'
 
 @contextmanager
-def opportunity_reader(report,*,stopped=lambda:False):
+def opportunity_reader(report,*,stopped=lambda:False,extra_read_endpoints=frozenset()):
+    allowed_extra={('/api/v1/affiliate/partner/im/product_list/list','GET'),('/api/v1/affiliate/partner/campaign/product_list/products','GET'),('/api/v1/affiliate/partner/campaign/list','GET'),('/api/v1/affiliate/partner/campaign/product/list','GET')}
+    if not set(extra_read_endpoints)<=allowed_extra:raise ValueError('source_read_endpoint_forbidden')
     sys.dont_write_bytecode=True
     if str(LEGACY) not in sys.path:sys.path.insert(0,str(LEGACY))
     from bdhub import scheduled_relogin
@@ -28,7 +30,7 @@ def opportunity_reader(report,*,stopped=lambda:False):
     spec=importlib.util.spec_from_file_location('source_readonly_guard',ROOT/'scripts/probe-italy-profile.py');guard=importlib.util.module_from_spec(spec);spec.loader.exec_module(guard)
     class ReadOnly(CommerceTransport):
         WRITE_ENDPOINTS=frozenset()
-        READ_ENDPOINTS=frozenset({(LIST,'POST'),(DETAIL,'GET'),(CATEGORY,'POST'),(SELECTED,'POST')})
+        READ_ENDPOINTS=frozenset({(LIST,'POST'),(DETAIL,'GET'),(CATEGORY,'POST'),(SELECTED,'POST')})|frozenset(extra_read_endpoints)
     report.update(scope=binding,platformWrites=0,oldDatabaseWrites=0,identityFileWrites=0)
     with guard.readonly_guard(account,wait_seconds=15):
         transport=ReadOnly(identity,account,allow_write=False)

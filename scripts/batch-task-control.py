@@ -10,13 +10,15 @@ from lib.batch_tasks import BatchError
 def dispatch(service,body):
     if not isinstance(body,dict):raise BatchError('invalid_request')
     action=body.get('action')
-    keys={'list':{'action'},'preview':{'action','spec'},'confirm':{'action','token','requestKey'},'detail':{'action','id'},'pause':{'action','id','revision'},'resume':{'action','id','revision'},'priority':{'action','id','revision','priority'}}
+    keys={'list':{'action'},'preview':{'action','spec'},'confirm':{'action','token','requestKey','authorizationScope'},'detail':{'action','id'},'pause':{'action','id','revision'},'resume':{'action','id','revision'},'priority':{'action','id','revision','priority'}}
     if action not in keys or set(body)!=keys[action]:raise BatchError('invalid_request')
     for key in ('id','token','requestKey'):
         if key in body and (not isinstance(body[key],str) or not 1<=len(body[key])<=120):raise BatchError('invalid_request')
     if action=='list':return service.listing()
     if action=='preview':return service.preview(body['spec'])
-    if action=='confirm':return service.confirm(body['token'],body['requestKey'])
+    if action=='confirm':
+        if body['authorizationScope']!='full_preparation_no_messages':raise BatchError('task_confirmation_scope_required')
+        return service.confirm(body['token'],body['requestKey'])
     if action=='detail':return service.detail(body['id'])
     return service.control(body['id'],action,body['revision'],body.get('priority'))
 

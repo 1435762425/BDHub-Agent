@@ -21,6 +21,12 @@ class BridgeTests(unittest.TestCase):
  def test_freeze_and_submit_deduplicate_handles(self):
   self.assertIsNotNone(self.b.freeze(self.p));self.assertIsNone(self.b.freeze(self.p));self.b.dispatch(self.p);self.assertEqual(self.b.dispatch(self.p),[])
   self.assertEqual(self.d._db.execute('SELECT count(*) FROM discovery_item').fetchone()[0],1)
+ def test_task_scoped_handoff_does_not_dispatch_other_sources(self):
+  first=self.b.freeze(self.p,source_ids=['e1']);second=self.b.freeze(self.p,source_ids=['e2'])
+  self.b.dispatch(self.p,outbox_ids=[first])
+  self.assertEqual(self.s.db.execute('SELECT batch_id FROM cycle_identity_outbox WHERE id=?',(second,)).fetchone()[0],None)
+  self.assertEqual(json.loads(self.s.db.execute('SELECT payload FROM cycle_identity_outbox WHERE id=?',(first,)).fetchone()[0])['edges'][0]['sourceId'],'e1')
+  self.assertIsNone(self.b.freeze(self.p,source_ids=[]))
  def test_recover_submit_before_local_ack(self):
   self.b.freeze(self.p);old=self.d.submit
   def crash(*a):old(*a);raise KeyboardInterrupt()
