@@ -9,18 +9,23 @@ SELECTED='/api/v1/affiliate/partner/product/pick_up/list'
 CATEGORY='/api/v1/affiliate/lux/product/category/childrenv2'
 SELECT='/api/v1/affiliate/partner/product/pick_up/select'
 
+def is_account_busy(error):
+    return isinstance(error,BlockingIOError) or isinstance(error,RuntimeError) and str(error)=='account_in_use'
+
 @contextmanager
-def opportunity_reader(report,*,stopped=lambda:False,extra_read_endpoints=frozenset()):
-    with _opportunity_transport(report,stopped=stopped,extra_read_endpoints=extra_read_endpoints) as t:yield t
+def opportunity_reader(report,*,stopped=lambda:False,extra_read_endpoints=frozenset(),account_name=None):
+    from lib.market_accounts import catalog_read_account
+    account=catalog_read_account(ROOT,account_name)
+    with _opportunity_transport(report,stopped=stopped,extra_read_endpoints=extra_read_endpoints,account_name=account) as t:yield t
 
 @contextmanager
 def opportunity_selector(report,selection_scope,*,stopped=lambda:False):
     """Explicit PID/Campaign allowlist for user-authorized selection; never links or IM."""
     if not isinstance(selection_scope,dict):raise ValueError('selection_scope_required')
-    with _opportunity_transport(report,stopped=stopped,selection_scope=selection_scope) as t:yield t
+    with _opportunity_transport(report,stopped=stopped,selection_scope=selection_scope,account_name='acc6') as t:yield t
 
 @contextmanager
-def _opportunity_transport(report,*,stopped=lambda:False,extra_read_endpoints=frozenset(),selection_scope=None):
+def _opportunity_transport(report,*,stopped=lambda:False,extra_read_endpoints=frozenset(),selection_scope=None,account_name='acc6'):
     allowed_extra={('/api/v1/affiliate/partner/im/product_list/list','GET'),('/api/v1/affiliate/partner/campaign/product_list/products','GET'),('/api/v1/affiliate/partner/campaign/list','GET'),('/api/v1/affiliate/partner/campaign/product/list','GET')}
     if not set(extra_read_endpoints)<=allowed_extra:raise ValueError('source_read_endpoint_forbidden')
     sys.dont_write_bytecode=True
@@ -31,12 +36,13 @@ def _opportunity_transport(report,*,stopped=lambda:False,extra_read_endpoints=fr
     from bdhub.research.commerce_transport import CommerceTransport
     from lib.second_cycle import digest
     import json
-    cfg,account=account_for('it','acc6',check_maintenance=False)
+    if selection_scope is not None and account_name!='acc6':raise ValueError('selection_account_not_validated')
+    cfg,account=account_for('it',account_name,check_maintenance=False)
     identity=identity_for('it',account=account,cfg=cfg).require_product_search()
     if not identity.partner_id_is_own:raise ValueError('source_identity_not_own')
     saved=json.loads((ROOT/'var/cycle-catalog-it-20260913/selected.json').read_text())['scope']
-    binding={'market':'it','account':'acc6','institutionFingerprint':digest(str(identity.im_market_partner_id))}
-    if saved!=binding:raise ValueError('source_institution_changed')
+    binding={'market':'it','account':account_name,'institutionFingerprint':digest(str(identity.im_market_partner_id))}
+    if any(saved.get(k)!=binding[k] for k in ('market','institutionFingerprint')):raise ValueError('source_institution_changed')
     path=Path(account.headers_json);before=hashlib.sha256(path.read_bytes()).hexdigest()
     spec=importlib.util.spec_from_file_location('source_readonly_guard',ROOT/'scripts/probe-italy-profile.py');guard=importlib.util.module_from_spec(spec);spec.loader.exec_module(guard)
     from bdhub.send.sharelink.transport import PICK_UP_SELECT_PATH
@@ -67,6 +73,7 @@ def _opportunity_transport(report,*,stopped=lambda:False,extra_read_endpoints=fr
             return super()._xhr(**kwargs)
     report.update(scope=binding,platformWrites=0,oldDatabaseWrites=0,identityFileWrites=0)
     with guard.readonly_guard(account,wait_seconds=15):
+        report['guardAcquiredAt']=time.time()
         transport=Scoped(identity,account,allow_write=selection_scope is not None)
         def check():
             if stopped():raise ValueError('source_stopped')
@@ -76,5 +83,5 @@ def _opportunity_transport(report,*,stopped=lambda:False,extra_read_endpoints=fr
         try:
             check();yield transport
         finally:
-            transport.session.close();report.update(identityFileUnchanged=hashlib.sha256(path.read_bytes()).hexdigest()==before,
+            transport.session.close();report.update(guardReleasedAt=time.time(),identityFileUnchanged=hashlib.sha256(path.read_bytes()).hexdigest()==before,
                 verificationAttempts=transport.verification_attempts+report.get('laneVerificationAttempts',0),verificationSuccesses=transport.verification_successes+report.get('laneVerificationSuccesses',0))

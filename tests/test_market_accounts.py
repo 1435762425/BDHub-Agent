@@ -1,7 +1,7 @@
 import copy,json,sys,unittest,tempfile
 from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'scripts'))
-from lib.market_accounts import validate_config,maintenance_plan,route_proposal,evidence_summary
+from lib.market_accounts import validate_config,maintenance_plan,route_proposal,evidence_summary,catalog_read_account
 ROOT=Path(__file__).resolve().parents[1]
 class AccountPolicyTests(unittest.TestCase):
  def config(self):return json.loads((ROOT/'config/market-accounts.json').read_text())
@@ -45,4 +45,13 @@ class AccountPolicyTests(unittest.TestCase):
    self.assertEqual(evidence_summary(root,pair,'mx')['state'],'not_verified')
    report['independentGuardsOverlapSeconds']=0;path.write_text(json.dumps(report))
    self.assertEqual(evidence_summary(root,pair)['state'],'not_verified')
+ def test_catalog_routing_requires_evidence_and_preserves_pinned_actor(self):
+  with tempfile.TemporaryDirectory() as d:
+   root=Path(d);(root/'config').mkdir();(root/'var').mkdir();cfg=self.config();pair=cfg['markets']['it'];pair['validationEvidence']='var/proof.json'
+   (root/'config/market-accounts.json').write_text(json.dumps(cfg))
+   with self.assertRaises(ValueError):catalog_read_account(root)
+   proof={'passed':True,'sameInstitution':True,'sameMarket':True,'independentGuardsOverlapSeconds':1,'accounts':[{'account':a,'market':'it','state':'passed_readonly','identityFileUnchanged':True,'startedAt':1,'capabilities':{'catalog_read':'verified'}} for a in pair['accounts']]}
+   (root/'var/proof.json').write_text(json.dumps(proof))
+   self.assertEqual(catalog_read_account(root),'acc9');self.assertEqual(catalog_read_account(root,'acc6'),'acc6')
+   with self.assertRaises(ValueError):catalog_read_account(root,'acc11')
 if __name__=='__main__':unittest.main()

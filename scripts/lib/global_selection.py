@@ -51,7 +51,7 @@ class Selection:
             source=c.execute("SELECT r.id,r.scope FROM global_source_head h JOIN global_source_run r ON r.id=h.run_id WHERE json_extract(r.scope,'$.market')='it'").fetchall()
             if len(source)!=1:raise ValueError('source_scope_ambiguous')
             rid,scope=source[0]
-            if json.loads(scope)['account']!='acc6':raise ValueError('source_account_changed')
+            if json.loads(scope)['account'] not in ('acc6','acc9'):raise ValueError('source_account_changed')
             rows=[json.loads(r[0]) for r in c.execute('SELECT payload FROM global_source_product WHERE run_id=?',(rid,))]
         id='select-'+digest([rid,RULES,'user-300-inclusive'])[:24]
         with self.db:

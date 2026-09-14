@@ -22,6 +22,18 @@ def validate_config(value):
 
 def load_config(root):return validate_config(json.loads((Path(root)/'config/market-accounts.json').read_text()))
 
+def catalog_read_account(root,pinned=None):
+    pair=load_config(root)['markets']['it']
+    account=pinned or pair['roles']['supply']
+    if account not in pair['accounts']:raise ValueError('catalog_account_outside_assignment')
+    evidence=evidence_summary(root,pair,'it')
+    if evidence.get('state')!='verified_readonly' or evidence['accounts'].get(account,{}).get('capabilities',{}).get('catalog_read')!='verified':raise ValueError('catalog_account_not_verified')
+    return account
+
+def catalog_scope(root,account):
+    scope=json.loads((Path(root)/'var/cycle-catalog-it-20260913/selected.json').read_text())['scope']
+    return scope|{'account':account}
+
 def evidence_summary(root,pair,market='it'):
     path=(Path(root)/pair['validationEvidence']).resolve()
     if not path.is_relative_to((Path(root)/'var').resolve()):raise ValueError('evidence_path_invalid')

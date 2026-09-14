@@ -2,13 +2,20 @@
   "schemaVersion": 1,
   "markets": {
     "it": {
-      "accounts": ["acc6", "acc9"],
-      "roles": {"communications": "acc6", "supply": "acc9"},
-      "assignmentState": "registered_pending_worker_migration",
+      "accounts": [
+        "acc6",
+        "acc9"
+      ],
+      "roles": {
+        "communications": "acc6",
+        "supply": "acc9"
+      },
+      "assignmentState": "catalog_reads_enabled",
       "validationEvidence": "var/italy-account-pair-20260914-v2.json",
       "credentialAuthority": "legacy_readonly",
       "maintenanceExecutor": "legacy_lifecycle",
-      "automaticRoleSwitchEnabled": false
+      "automaticRoleSwitchEnabled": false,
+      "catalogRoutingEvidence": "var/catalog-read-routing-1789375843/summary.json"
     }
   },
   "lifecycle": {

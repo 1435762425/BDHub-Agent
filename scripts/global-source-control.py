@@ -4,6 +4,7 @@ import fcntl,hashlib,json,os,re,subprocess,sys,time
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1];sys.dont_write_bytecode=True;sys.path.insert(0,str(ROOT/'scripts'))
 from lib.global_source import GlobalSources
+from lib.market_accounts import catalog_read_account,catalog_scope
 
 def main():
  request=json.loads(sys.stdin.read(2049))
@@ -25,7 +26,7 @@ def main():
      if current:run_id=current['id']
      else:
       run_id='it-global-'+time.strftime('%Y%m%d')+'-'+hashlib.sha256(request['requestId'].encode()).hexdigest()[:20]
-      scope=json.loads((ROOT/'var/cycle-catalog-it-20260913/selected.json').read_text())['scope'];s.start(run_id,scope)
+      scope=catalog_scope(ROOT,catalog_read_account(ROOT));s.start(run_id,scope)
      fcntl.flock(worker_lock,fcntl.LOCK_UN)
      with (ROOT/'var/global-source-worker.log').open('a') as log:
       child=subprocess.Popen([str(ROOT.parent/'01-BDSystem-V2/.venv/bin/python'),str(ROOT/'scripts/collect-global-opportunity.py'),'--run-id',run_id,'--pages','15','--worker'],cwd=ROOT,stdin=subprocess.DEVNULL,stdout=log,stderr=subprocess.STDOUT,start_new_session=True,env={**os.environ,'PYTHONDONTWRITEBYTECODE':'1'})

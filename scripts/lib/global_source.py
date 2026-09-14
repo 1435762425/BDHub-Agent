@@ -13,6 +13,12 @@ SOURCE='opportunity_global_only'
 FILTER={'product_source':[],'campaign_type':[8],'label_type':[],'product_status':1}
 class GlobalSourceError(ValueError):pass
 
+def source_lineage_key(scope):
+    # Keep the original v1 source hash stable while actors move between the IT pair.
+    # Account is a reserved compatibility slot in this hash, not the executing actor;
+    # each immutable run.scope still records its real account.
+    return digest({**scope,'account':'acc6'})
+
 def list_request(page,total=None):
     if type(page) is not int or not 1<=page<=2000:raise GlobalSourceError('invalid_page')
     # Live-verified tail: 9990 offset + 10 rows stays inside the 10000-result window.
@@ -77,14 +83,14 @@ class GlobalSources:
         return dict(row)|{'scope':json.loads(row['scope'])}
     def start(self,id,scope):
         if not re.fullmatch(r'[A-Za-z0-9_-]{1,100}',id):raise GlobalSourceError('invalid_run_id')
-        if not isinstance(scope,dict) or set(scope)!={'market','account','institutionFingerprint'} or scope.get('market')!='it' or scope.get('account')!='acc6' or not re.fullmatch(r'[a-f0-9]{64}',scope.get('institutionFingerprint','')):raise GlobalSourceError('unsupported_source_scope')
+        if not isinstance(scope,dict) or set(scope)!={'market','account','institutionFingerprint'} or scope.get('market')!='it' or scope.get('account') not in ('acc6','acc9') or not re.fullmatch(r'[a-f0-9]{64}',scope.get('institutionFingerprint','')):raise GlobalSourceError('unsupported_source_scope')
         frozen={**scope,'source':SOURCE,'filter':FILTER,'pageSize':15}
         with self.tx():
             previous=self.db.execute('SELECT scope FROM global_source_run WHERE id=?',(id,)).fetchone()
             if previous:
                 if previous[0]!=encoded(frozen):raise GlobalSourceError('run_scope_changed')
-            elif self.db.execute("SELECT 1 FROM global_source_run WHERE scope_hash=? AND state='collecting'",(digest(frozen),)).fetchone():raise GlobalSourceError('scan_already_collecting')
-            else:self.db.execute("INSERT INTO global_source_run(id,scope,scope_hash,state,created,updated) VALUES(?,?,?,'collecting',?,?)",(id,encoded(frozen),digest(frozen),self.clock(),self.clock()))
+            elif self.db.execute("SELECT 1 FROM global_source_run WHERE scope_hash=? AND state='collecting'",(source_lineage_key(frozen),)).fetchone():raise GlobalSourceError('scan_already_collecting')
+            else:self.db.execute("INSERT INTO global_source_run(id,scope,scope_hash,state,created,updated) VALUES(?,?,?,'collecting',?,?)",(id,encoded(frozen),source_lineage_key(frozen),self.clock(),self.clock()))
         return self.get(id)
     def page(self,id,page,data,*,request_payload=None):
         if not isinstance(data,dict) or type(data.get('has_more')) is not bool or type(data.get('total')) is not int or data['total']<0 or not isinstance(data.get('products'),list):raise GlobalSourceError('page_shape_invalid')

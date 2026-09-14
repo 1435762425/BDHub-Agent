@@ -4,14 +4,19 @@ import argparse,fcntl,json,os,signal,sys,time
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1];sys.dont_write_bytecode=True;sys.path.insert(0,str(ROOT/'scripts'))
 from lib.global_source import GlobalSources,GlobalSourceError,list_request
-from lib.global_source_transport import opportunity_reader,LIST
+from lib.global_source_transport import opportunity_reader,LIST,is_account_busy
+from lib.market_accounts import catalog_read_account,catalog_scope
 STOP=False
 def stop(*_):
  global STOP;STOP=True
 
 def main():
- p=argparse.ArgumentParser();p.add_argument('--run-id',default='it-global-20260914');p.add_argument('--pages',type=int,default=15);p.add_argument('--worker',action='store_true');p.add_argument('--retry-boundary-tail',action='store_true');p.add_argument('--status',action='store_true');p.add_argument('--offset',type=int,default=0);p.add_argument('--query',default='');a=p.parse_args()
+ p=argparse.ArgumentParser();p.add_argument('--run-id',default='it-global-20260914');p.add_argument('--pages',type=int,default=15);p.add_argument('--worker',action='store_true');p.add_argument('--retry-boundary-tail',action='store_true');p.add_argument('--status',action='store_true');p.add_argument('--offset',type=int,default=0);p.add_argument('--query',default='');p.add_argument('--audit-store',type=Path);a=p.parse_args()
  db=ROOT/'var/global-source.sqlite'
+ if a.audit_store:
+  db=a.audit_store.resolve()
+  if not db.is_relative_to(ROOT/'var') or db.exists() or a.worker or a.status or a.pages>3 or a.retry_boundary_tail:p.error('audit requires a new var file and at most 3 pages')
+  db.parent.mkdir(parents=True,exist_ok=True)
  if a.status:
   if not db.exists():print(json.dumps({'available':False,'executionAllowed':False}));return
   s=GlobalSources(db,readonly=True)
@@ -20,11 +25,13 @@ def main():
   return
  if not 1<=a.pages<=40:p.error('pages must be 1..40 per account turn')
  signal.signal(signal.SIGTERM,stop);signal.signal(signal.SIGINT,stop)
- with (ROOT/'var/global-source-worker.lock').open('a') as lock:
+ with (db.with_suffix('.lock') if a.audit_store else ROOT/'var/global-source-worker.lock').open('a') as lock:
   fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
   s=GlobalSources(db)
   try:
-   scope=json.loads((ROOT/'var/cycle-catalog-it-20260913/selected.json').read_text())['scope'];s.start(a.run_id,scope)
+   previous=s.db.execute('SELECT scope FROM global_source_run WHERE id=?',(a.run_id,)).fetchone()
+   scope={k:json.loads(previous[0])[k] for k in ('market','account','institutionFingerprint')} if previous else catalog_scope(ROOT,catalog_read_account(ROOT))
+   s.start(a.run_id,scope)
    if a.retry_boundary_tail:
     previous=json.loads((ROOT/'var/global-source-runtime.json').read_text())
     if previous.get('status',{}).get('id')!=a.run_id:raise GlobalSourceError('boundary_run_mismatch')
@@ -34,7 +41,8 @@ def main():
     if state['state']!='collecting':break
     report={};busy=False
     try:
-     with opportunity_reader(report,stopped=lambda:STOP) as t:
+     with opportunity_reader(report,stopped=lambda:STOP,account_name=scope['account']) as t:
+      if report['scope']!=scope:raise GlobalSourceError('collector_actor_scope_mismatch')
       for _ in range(a.pages):
        if STOP:break
        state=s.get(a.run_id)
@@ -50,15 +58,16 @@ def main():
        s.page(a.run_id,page,t.require_read(r)['data'],request_payload=list_request(page,state['reported_total']))
      s.finish_session(a.run_id,report.get('identityFileUnchanged'))
     except Exception as e:
-     code=str(e) if isinstance(e,ValueError) else type(e).__name__;busy=code in ('BlockingIOError','account_in_use')
+     busy=is_account_busy(e)
+     code='account_busy' if busy else str(e) if isinstance(e,ValueError) else type(e).__name__
      if not busy and code!='source_stopped':s.blocked(a.run_id,code)
      report['error']='account_busy' if busy else code
-    current=s.status(a.run_id);report.update(status=current,at=time.time());(ROOT/'var/global-source-runtime.json').write_text(json.dumps(report,ensure_ascii=False,indent=2));print(json.dumps({'state':current['state'],'products':current['products'],'pages':current['pages'],'error':report.get('error')}),flush=True)
+    current=s.status(a.run_id);report.update(status=current,at=time.time());(db.with_suffix('.report.json') if a.audit_store else ROOT/'var/global-source-runtime.json').write_text(json.dumps(report,ensure_ascii=False,indent=2));print(json.dumps({'state':current['state'],'account':scope['account'],'products':current['products'],'pages':current['pages'],'error':report.get('error')}),flush=True)
     if not a.worker or current['state']!='collecting':break
     for _ in range(5 if busy else 2):
      if STOP:break
      time.sleep(1)
-   if s.status(a.run_id)['published']:
+   if s.status(a.run_id)['published'] and not a.audit_store:
     from lib.cycle_management import sync_full_managed
     sync_full_managed(ROOT/'var/second-cycle.sqlite',db,scope)
    print(json.dumps(s.status(a.run_id),ensure_ascii=False),flush=True)

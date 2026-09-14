@@ -16,7 +16,7 @@ def status():
         profiles=[str(Path(accounts[a].profile_dir).resolve()) for a in pair['accounts'] if a in accounts]
         if len(profiles)!=len(set(profiles)):raise ValueError('market_accounts_share_profile')
         for name in pair['accounts']:
-            row={'account':name,'role':next(r for r,a in pair['roles'].items() if a==name),'evidence':evidence['accounts'].get(name),'runtimeMigration':'pending'}
+            row={'account':name,'role':next(r for r,a in pair['roles'].items() if a==name),'evidence':evidence['accounts'].get(name),'runtimeMigration':'catalog_reads_enabled' if name==pair['roles']['supply'] and pair['assignmentState']=='catalog_reads_enabled' else 'pending'}
             a=accounts.get(name)
             if a is None:row.update(state='missing_config')
             else:

@@ -47,6 +47,19 @@ class SourceTests(unittest.TestCase):
   with self.assertRaises(GlobalSourceError):self.s.start('two',self.scope|{'market':'mx'})
  def test_only_one_active_query_per_scope(self):
   with self.assertRaisesRegex(GlobalSourceError,'already_collecting'):self.s.start('two',self.scope)
+  with self.assertRaisesRegex(GlobalSourceError,'already_collecting'):self.s.start('other_actor',self.scope|{'account':'acc9'})
+ def test_new_account_keeps_one_source_head_and_preserves_history(self):
+  self.s.page('one',1,page([1]));self.s.finish_session('one',True)
+  old_hash=self.s.get('one')['scope_hash'];old_payload=self.s.get('one')['scope']
+  self.now+=10;self.s.start('acc9_run',self.scope|{'account':'acc9'})
+  self.assertEqual(self.s.get('acc9_run')['scope_hash'],old_hash)
+  self.s.page('acc9_run',1,page([2],True,2));self.s.finish_session('acc9_run',True)
+  self.assertEqual(self.s.products()['displayRunId'],'one')
+  self.s.page('acc9_run',2,page([3],False,2));self.s.finish_session('acc9_run',True)
+  self.assertEqual(self.s.products()['displayRunId'],'acc9_run')
+  self.assertEqual(self.s.db.execute('SELECT count(*) FROM global_source_head').fetchone()[0],1)
+  self.assertEqual(self.s.get('one')['scope'],old_payload)
+  self.assertEqual(self.s.get('acc9_run')['scope']['account'],'acc9')
  def test_bad_page_atomic(self):
   for data in (page([1,1]),{'products':[product(1)],'has_more':'false','total':1},page([1],False,True)):
    with self.assertRaises(GlobalSourceError):self.s.page('one',1,data)
