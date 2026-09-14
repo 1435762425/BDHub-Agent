@@ -9,6 +9,8 @@ SELECTED='/api/v1/affiliate/partner/product/pick_up/list'
 CATEGORY='/api/v1/affiliate/lux/product/category/childrenv2'
 SELECT='/api/v1/affiliate/partner/product/pick_up/select'
 CREATE='/api/v1/affiliate/partner/campaign/product_list/create'
+DELETE='/api/v1/affiliate/partner/campaign/product_list/delete'
+LIST_INVENTORY='/api/v1/affiliate/partner/campaign/product_list/list'
 
 def is_account_busy(error):
     return isinstance(error,BlockingIOError) or isinstance(error,RuntimeError) and str(error)=='account_in_use'
@@ -56,11 +58,29 @@ def opportunity_card_creator_batch(report,payloads,*,stopped=lambda:False,wait_s
     with _opportunity_transport(report,stopped=stopped,extra_read_endpoints=reads,creation_scope=frozen,account_name='acc9',wait_seconds=wait_seconds) as t:yield t
 
 @contextmanager
-def _opportunity_transport(report,*,stopped=lambda:False,extra_read_endpoints=frozenset(),selection_scope=None,creation_scope=None,account_name='acc6',wait_seconds=15):
+def opportunity_list_deleter_batch(report,list_ids,*,stopped=lambda:False,wait_seconds=15):
+    """Frozen TapLink deletions on ACC9 under ONE account guard.
+
+    Mirrors the creation gate: every DELETE must be exactly {"list_id": <frozen id>} for a
+    list selected here, and each list may be deleted at most once per session.
+    """
+    from lib.market_accounts import catalog_read_account
+    if catalog_read_account(ROOT,'acc9')!='acc9':raise ValueError('list_delete_scope_invalid')
+    if not isinstance(list_ids,(list,set,tuple)) or not list_ids:raise ValueError('list_delete_scope_invalid')
+    frozen={}
+    for lid in list_ids:
+        lid=str(lid)
+        if not lid.isdigit():raise ValueError('list_delete_scope_invalid')
+        frozen[lid]={'list_id':lid}
+    reads={(LIST_INVENTORY,'GET'),('/api/v1/affiliate/partner/campaign/product_list/products','GET')}
+    with _opportunity_transport(report,stopped=stopped,extra_read_endpoints=reads,deletion_scope=frozen,account_name='acc9',wait_seconds=wait_seconds) as t:yield t
+
+@contextmanager
+def _opportunity_transport(report,*,stopped=lambda:False,extra_read_endpoints=frozenset(),selection_scope=None,creation_scope=None,deletion_scope=None,account_name='acc6',wait_seconds=15):
     if type(wait_seconds) not in (int,float) or not 0<=wait_seconds<=60:raise ValueError('invalid_guard_wait')
     # campaign/product_list/list is the read-only TapLink inventory (lists all cards for a
     # campaign+source in pages), used to avoid one search per PID. It never writes.
-    allowed_extra={('/api/v1/affiliate/partner/im/product_list/list','GET'),('/api/v1/affiliate/partner/campaign/product_list/products','GET'),('/api/v1/affiliate/partner/campaign/product_list/list','GET'),('/api/v1/affiliate/partner/campaign/list','GET'),('/api/v1/affiliate/partner/campaign/product/list','GET')}
+    allowed_extra={('/api/v1/affiliate/partner/im/product_list/list','GET'),('/api/v1/affiliate/partner/campaign/product_list/products','GET'),('/api/v1/affiliate/partner/campaign/product_list/list','GET'),(DELETE,'POST'),('/api/v1/affiliate/partner/campaign/list','GET'),('/api/v1/affiliate/partner/campaign/product/list','GET')}
     if not set(extra_read_endpoints)<=allowed_extra:raise ValueError('source_read_endpoint_forbidden')
     sys.dont_write_bytecode=True
     if str(LEGACY) not in sys.path:sys.path.insert(0,str(LEGACY))
@@ -88,9 +108,9 @@ def _opportunity_transport(report,*,stopped=lambda:False,extra_read_endpoints=fr
     if selection_scope is not None:
         from bdhub.hub.markets import require_capability
         require_capability('it','product_select')
-    consumed=set();creation_used=set()
+    consumed=set();creation_used=set();delete_used=set()
     class Scoped(CommerceTransport):
-        WRITE_ENDPOINTS=frozenset({(CREATE,'POST')}) if creation_scope is not None else frozenset({(SELECT,'POST')}) if selection_scope is not None else frozenset()
+        WRITE_ENDPOINTS=frozenset({(CREATE,'POST')}) if creation_scope is not None else frozenset({(DELETE,'POST')}) if deletion_scope is not None else frozenset({(SELECT,'POST')}) if selection_scope is not None else frozenset()
         READ_ENDPOINTS=frozenset({(LIST,'POST'),(DETAIL,'GET'),(CATEGORY,'POST'),(SELECTED,'POST')})|frozenset(extra_read_endpoints)
         def fork_lane(self,pace):
             # Read-only tasks may fork lanes too; writes stay blocked because WRITE_ENDPOINTS
@@ -103,6 +123,14 @@ def _opportunity_transport(report,*,stopped=lambda:False,extra_read_endpoints=fr
             consumed.discard(pid)
         def _xhr(self,**kwargs):
             if kwargs.get('write'):
+                if deletion_scope is not None:
+                    body=kwargs.get('payload') or {}
+                    lid=str(body.get('list_id') or '')
+                    if kwargs.get('path')!=DELETE or kwargs.get('method')!='POST' or body!=deletion_scope.get(lid) or lid in delete_used:raise ValueError('list_delete_outside_intent')
+                    delete_used.add(lid)
+                    report['platformWrites']=report.get('platformWrites',0)+1
+                    report['deleteWrites']=report.get('deleteWrites',0)+1
+                    return super()._xhr(**kwargs)
                 if creation_scope is not None:
                     body=kwargs.get('payload') or {}
                     if kwargs.get('path')!=CREATE or kwargs.get('method')!='POST':raise ValueError('card_write_outside_intent')
