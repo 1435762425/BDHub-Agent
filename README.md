@@ -6,7 +6,7 @@
 
 - [产品需求](docs/PRD.md)：最新逐轮确认规则，覆盖旧“发满估算”和滚动备料口径。
 - [批次架构与实施状态](docs/architecture/batch-outreach-v2.md)：TapLink在全量准备中的位置、任务对象、阶段、模块进度和验收。
-- [本机二发工作台](http://127.0.0.1:5198/workspace?mode=second-live)：真实准备容量预检、当前试验批次与速度曲线。
+- [本机二发工作台](http://127.0.0.1:5198/workspace?mode=second-live)：指定数量任务卡、可恢复的本地准备检查、当前试验批次与速度曲线。
 - [货盘](http://127.0.0.1:5198/catalog)：唯一全托发现源的真实列表、同步/续采和条件核验。
 - [达人库](http://127.0.0.1:5198/creators)：稳定OEC和已有画像；旧版经营能力承接仍在进行。
 
@@ -21,3 +21,5 @@
 旧研究入口归档在[历史README](docs/archive/README-before-batches-20260913.md)，不作为当前授权或功能状态。TailAdmin Free来源和许可见[来源说明](apps/web/TAILADMIN-SOURCE.json)、[第三方声明](apps/web/THIRD_PARTY_NOTICES.md)。
 
 主力源当前合同与进度：[B.18](docs/implementation/global-opportunity-source-v1.md)。
+
+最新任务创建实现：[任务卡与本地准备协调](docs/implementation/batch-task-cards-v1.md)。当前确认只启动本地检查，整批外部执行继续接入。

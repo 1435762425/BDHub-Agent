@@ -32,6 +32,6 @@
 - 具体回复、关系与样品口径：[docs/architecture/second-cycle-confirmed-policy.md](docs/architecture/second-cycle-confirmed-policy.md)，与最新PRD冲突时以PRD和用户当前指令为准。
 - 稳定身份：[docs/architecture/creator-identity-and-rename.md](docs/architecture/creator-identity-and-rename.md)。TikTok接口：[docs/contracts/tiktok/README.md](docs/contracts/tiktok/README.md)。旧能力：[docs/contracts/legacy-interface-inventory.md](docs/contracts/legacy-interface-inventory.md)。
 - 主力全托来源：[B.18](docs/implementation/global-opportunity-source-v1.md)；`/catalog`已接IT首轮10000 PID。来源查询完成不代表已选入/可发送，当前活动ID需详情核实；其他市场与完整任务联动待验收。
-- 新全量准备基础与UI预检：[B.17](docs/implementation/batch-preparation-foundation-v2.md)。预检始终不授权发送，不创建新任务；完整准备执行器仍待接通。
+- 新全量准备基础与UI预检：[B.17](docs/implementation/batch-preparation-foundation-v2.md)。预检始终不授权发送，不创建新任务。最新[任务卡与本地检查](docs/implementation/batch-task-cards-v1.md)已能保存任务；权限固定 local_preparation_only，外部采集/选入/建链/发送仍待接通，不从确认事件推导真实发送许可。
 - 最新真实发送与素材记录：[B.15](docs/implementation/second-cycle-throughput-20-v1.md)、[B.16](docs/implementation/second-cycle-supply-repair-v1.md)。数字为历史快照。
 - 早期阶段入口归档：[docs/implementation/stage-index-before-batches-20260913.md](docs/implementation/stage-index-before-batches-20260913.md)。仅在追溯时读，不从历史“不真实发送/允许回复”等描述推导当前权限。
