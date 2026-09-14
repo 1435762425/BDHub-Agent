@@ -249,6 +249,8 @@ def main():
     p=argparse.ArgumentParser(description=__doc__);p.add_argument('action',nargs='?',choices=['status','seed','read','create'])
     p.add_argument('--status-links',action='store_true',help='read-only coverage view for the product page')
     p.add_argument('--report',type=Path);p.add_argument('--pids');p.add_argument('--limit',type=int,default=15);p.add_argument('--max-creates',type=int,default=0)
+    p.add_argument('--scope',choices=['intake','pool'],default='intake',
+                   help='seed universe: intake=durable full-managed selection only; pool=every live selected plan')
     a=p.parse_args()
     if a.action=='status' or a.status_links:
         print(json.dumps(status_view(),ensure_ascii=False));return
@@ -261,15 +263,25 @@ def main():
     report={'action':a.action,'realSends':0,'platformWrites':0,'startedAt':time.time(),'scope':s,'runId':run_id}
     if a.action=='seed':
         wanted=set(a.pids.split(',')) if a.pids else None
-        confirmed={i['pid'] for i in selection_items(wanted)}
+        # intake keeps the original narrow universe (the durable full-managed selection ledger).
+        # pool covers every live selected plan, so already-verified links are reused instead of
+        # only creating links for the newly selected PIDs.
+        universe=None if a.scope=='pool' else {i['pid'] for i in selection_items(wanted)}
         with opportunity_reader(report,wait_seconds=60,account_name='acc9') as transport:
             pool=pool_cache(report)
             if pool is None:
                 pool=read_selected_pool(transport);pool['readAt']=time.time()
                 (ROOT/'var/catalog-selected-pool-cache.json').write_text(json.dumps(pool,ensure_ascii=False))
-        items=[{'pid':str((r.get('campaign_product') or {}).get('product_id')),'campaignId':str((r.get('campaign_info') or {}).get('campaign_id')),'catalogSource':'selected'}
-               for r in pool['rows'] if str((r.get('campaign_product') or {}).get('product_id')) in confirmed and str((r.get('campaign_info') or {}).get('crs_campaign_type')) in ('8','9')]
-        report['selectedPoolTotal']=pool['total'];report['candidates']=len(confirmed)
+        items=[]
+        for r in pool['rows']:
+            cp=r.get('campaign_product') or {};ci=r.get('campaign_info') or {}
+            pid=str(cp.get('product_id'))
+            if not pid.isdigit() or str(ci.get('crs_campaign_type')) not in ('8','9'):continue
+            if wanted is not None and pid not in wanted:continue
+            if universe is not None and pid not in universe:continue
+            items.append({'pid':pid,'campaignId':str(ci.get('campaign_id')),'catalogSource':'selected'})
+        report['selectedPoolTotal']=pool['total'];report['candidates']=len(universe) if universe is not None else pool['total']
+        report['scopeMode']=a.scope
         report['seeded']=prep.seed(run_id,items,s)
         report['retired']=prep.retire_mismatched_bindings(run_id)
     elif a.action=='read':
