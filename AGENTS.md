@@ -38,8 +38,10 @@
 
 当前首个正式任务：`batch-19e1044b23d017f1f553a2ecac0d`，IT，初始1000＋100，现已按用户新指令扩为2000＋100（总2100），见下方12 QPS验证入口。用户“现在开始”授权立即准备。运行记录见[立即准备](docs/implementation/batch-1000-immediate-start.md)，不要重复创建同一批。
 
-普通身份任务的默认提速配置：`creator-profile-refresh.py worker --interval 1 --cohort-size 20`，最多20人共享会话、3条同账号HTTP通道、总3 QPS。需要同时加载新准备/身份模块；旧单活跃索引已换为受事务控制的同拥有者分组。见[提速实测](docs/implementation/batch-preparation-speed-5x.md)，7.19倍指候选增长，不是全批最终总耗时。
+当前IT/ACC6二发身份准备已正式采用单账号12 QPS、9条HTTP通道、每组最多20人。普通cohort从`identity_runtime_policy`读取已通过且结果哈希匹配的验收；未获发布的账号/市场仍保留3 QPS默认值。不启用多账号、消息发送或AI回复。命令入口仍为`creator-profile-refresh.py worker --interval 1 --cohort-size 20`。12 QPS是请求速率上限，不是保证持续吞吐。
 
-用户已授权的单号/多号短时压测见[测试结果](docs/implementation/identity-single-multi-stress.md)。隔离stress manifest可用5/8/12 QPS，生产默认仍3 QPS；单号短测最高约2.06倍，五号出现超时，不把短测或参考样本吞吐当作长期/新增候选速度。
+已完成[500人真实线索上线验收](docs/implementation/identity-12qps-500-release.md)：500/500成功并精确匹配，零查询错误/限流/串配/未解决验证，9次验证全部解决，P95 6.5918秒，总354.73秒。验收`accept-ef6d3f880d256fe68deaab01818d`绑定正式策略；普通发布路径canary也已通过。测试复用真实正销量候选，不计为新增500人。
 
-当前用户已批准[ACC6单账号12 QPS新增1000长测](docs/implementation/identity-12qps-extra1000.md)：原任务现为2000正式＋100候补，总2100；运行id `soak-73927dcc9d1804d75364e6d2f546`。仅带此有效运行的身份cohort使用12 QPS，不启用多账号/发送/AI回复。Kalodata新详情日额度已用完，但旧查询缓存实测可读；先恢复已有数据。零销量是否纳入候选正在等用户确认，不擅自当合格。
+[ACC6新增1000扩容准备](docs/implementation/identity-12qps-extra1000.md)继续跟踪原任务2000正式＋100候补（总2100），运行`soak-73927dcc9d1804d75364e6d2f546`。扩容验证完成后常驻worker转入已发布配置；异常仍停。销量为0继续过滤，停止零销量/播放量分析；继续通过更多合格PID补来源，Kalodata新详情遇日额度耗尽时按已有调度等待，已有正销量数据可继续处理。
+
+固定验收标准：500人全部完成、查询及身份匹配均≥99%、零原生限流/串配/未解决验证，验证事件≤5%，P95≤10秒。短时单号/多号压测仅作[历史参考](docs/implementation/identity-single-multi-stress.md)，不扩大本次上线范围。

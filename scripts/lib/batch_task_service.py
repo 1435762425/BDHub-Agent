@@ -73,9 +73,13 @@ class TaskService:
             'sourcePreparation':self.source_status(id),
             'preparationSpeed':self.preparation_speed(id),
             'stabilityTest':self.stability_status(id),
+            'releaseValidation':self.release_status(id),
             'checkedAt':r['checked'] if r else None,'nextCheckAt':r['next_run'] if r else None,
             'policy':json.loads(policy[0]) if policy else None,'executionConnected':False,
             'events':[dict(e)|{'payload':json.loads(e['payload'])} for e in self.db.execute('SELECT kind,payload,at FROM batch_event WHERE task_id=? ORDER BY id DESC LIMIT 12',(id,))]}
+    def release_status(self,id):
+        from lib.identity_acceptance import acceptance_status
+        return acceptance_status(self,id)
     def stability_status(self,id):
         from lib.identity_soak import status
         return status(self,id)
@@ -174,7 +178,7 @@ def read_local_preparation(root,spec):
         if task_path.exists():
             with closing(sqlite3.connect(task_path.as_uri()+'?mode=ro',uri=True)) as control:
                 if control.execute("SELECT 1 FROM sqlite_master WHERE name='identity_soak_run'").fetchone():
-                    run=control.execute("SELECT s.id FROM identity_soak_run s JOIN batch_task t ON t.id=s.task_id WHERE json_extract(t.spec,'$.institution')=? AND json_extract(t.spec,'$.market')=? ORDER BY s.started DESC LIMIT 1",(spec['institution'],spec['market'])).fetchone()
+                    run=control.execute("SELECT s.id FROM identity_soak_run s JOIN batch_task t ON t.id=s.task_id WHERE s.state IN ('active','attention') AND json_extract(t.spec,'$.institution')=? AND json_extract(t.spec,'$.market')=? ORDER BY s.started DESC LIMIT 1",(spec['institution'],spec['market'])).fetchone()
                     if run:
                         base_oecs={r[0] for r in control.execute("SELECT oec FROM identity_soak_member WHERE run_id=? AND role='baseline'",(run[0],))}
                         soak_allowed=base_oecs|{r[0] for r in control.execute('SELECT oec FROM identity_soak_proof WHERE run_id=?',(run[0],))}

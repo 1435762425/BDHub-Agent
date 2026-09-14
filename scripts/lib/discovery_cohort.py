@@ -15,10 +15,14 @@ def slice_report(report,item):
         value['status']='completed';value.pop('reason',None)
     return value
 
-def run_cohort(worker,limit=20,lanes=3,soak_id=None):
+def run_cohort(worker,limit=20,lanes=3,soak_id=None,only_batch=None,use_production_policy=False):
     if type(lanes) is not int or lanes not in (3,6,9):raise CreatorDiscoveryError("invalid_request")
     store=worker.store;store.heartbeat(worker.owner)
-    soak=None;service=None
+    soak=None;service=None;published=None
+    if use_production_policy and not soak_id:
+        from lib.identity_acceptance import production_policy
+        published=production_policy(store.var_dir.parent)
+        if published['acceptanceId']:lanes=published['lanes']
     if soak_id:
         from lib.batch_task_service import TaskService
         from lib.identity_soak import IdentitySoak
@@ -38,6 +42,7 @@ def run_cohort(worker,limit=20,lanes=3,soak_id=None):
             with closing(sqlite3.connect(path.resolve().as_uri()+'?mode=ro',uri=True)) as db:
                 scoped={r[0] for r in db.execute('SELECT batch_id FROM cycle_identity_outbox WHERE id IN (SELECT value FROM json_each(?))',(_json(boxes),))}
             batches=[b for b in batches if b in scoped]
+        if only_batch:batches=[b for b in batches if b==only_batch]
         group=store.claim_cohort(worker.owner,batches,limit)
     if not group:
         if service:service.close()
@@ -50,7 +55,7 @@ def run_cohort(worker,limit=20,lanes=3,soak_id=None):
             folder.mkdir(parents=True,exist_ok=True,mode=0o700)
             with target_file.open('x') as f:
                 target_file.chmod(0o600)
-                json.dump({'market':'it','identityOnly':True,'cohortId':group['id'],'httpLanes':lanes,**({'soakRun':soak_id} if soak_id else {}),'targets':[{'ref':i['id'],'handle':i['handle'],'externalId':i['id']} for i in items]},f)
+                json.dump({'market':'it','identityOnly':True,'cohortId':group['id'],'httpLanes':lanes,**({'soakRun':soak_id} if soak_id else {}),**({'runtimeAcceptance':published['acceptanceId']} if published and published['acceptanceId'] else {}),'targets':[{'ref':i['id'],'handle':i['handle'],'externalId':i['id']} for i in items]},f)
             worker.executor(target_file,output)
             report=worker._final(output/'report.private.json')
         if report:

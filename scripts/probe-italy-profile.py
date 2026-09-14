@@ -181,6 +181,13 @@ def network_child(account_name: str, target_file: Path, output: Path) -> int:
         if stress or not cohort or not identity_only:raise ValueError('invalid_soak_mode')
         from lib.identity_soak import read_soak
         soak_config=read_soak(ROOT,soak,cohort,account_name,check_members=True);rate=soak_config['qps'];target_input['httpLanes']=soak_config['lanes']
+    runtime_acceptance=target_input.get('runtimeAcceptance')
+    if runtime_acceptance:
+        if stress or soak or not cohort:raise ValueError('invalid_runtime_policy_mode')
+        from lib.identity_acceptance import production_policy
+        policy=production_policy(ROOT,account_name)
+        if policy['acceptanceId']!=runtime_acceptance:raise ValueError('identity_rate_not_published')
+        rate=policy['qps'];target_input['httpLanes']=policy['lanes']
     lanes=target_input.get('httpLanes',3)
     canary=target_input.get('readinessCanary',False)
     if type(canary) is not bool:raise ValueError('invalid_canary_mode')
@@ -198,8 +205,9 @@ def network_child(account_name: str, target_file: Path, output: Path) -> int:
         raise ValueError("bounded_target_count")
     report = {"schema": "bdhub.italy-profile-probe.v3", "market": "it", "account": account_name,
               "startedAt": datetime.now(timezone.utc).isoformat(), "mode": "live_readonly_profile", "requests": [], "targets": [],
-              "qps": rate if stress or soak else 3 if cohort else 1, "businessRetries": 2, "captchaAttempts": 3, "verificationMode": "existing_market_aware_http_pipeline",
+              "qps": rate if stress or soak or runtime_acceptance else 3 if cohort else 1, "businessRetries": 2, "captchaAttempts": 3, "verificationMode": "existing_market_aware_http_pipeline",
               "oldDatabaseWrites": 0, "realSends": 0, "status": "starting", "identityOnly": identity_only}
+    if runtime_acceptance:report.update(runtimeAcceptance=runtime_acceptance)
     if soak:report.update(soakRun=soak,mode='live_identity_stability_validation')
     if stress:report.update(stressRun=target_input['stressRun'],stressCase=target_input['stressCase'],mode='live_readonly_identity_stress')
     report_file = output / "report.private.json"
@@ -310,7 +318,7 @@ def network_child(account_name: str, target_file: Path, output: Path) -> int:
                             live=db.execute("SELECT i.status,b.status FROM discovery_item i JOIN discovery_batch b ON b.id=i.batch_id WHERE i.id=?",(ref,)).fetchone()
                         return bool(live and live[0]=='running' and live[1]!='paused')
                     with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
-                        run_find_cohort(probe,child,selected.identity,scratch,targets,client,report,save,classify_response,summarize_profile,collect_counters,allowed,lanes=lanes,qps=rate if stress or soak else 3)
+                        run_find_cohort(probe,child,selected.identity,scratch,targets,client,report,save,classify_response,summarize_profile,collect_counters,allowed,lanes=lanes,qps=rate if stress or soak or runtime_acceptance else 3)
                 for target in ([] if cohort or stress else targets):
                     handle, oec = target["handle"], target["oecId"]
                     result = {"targetRef": target["ref"], "inputKind": target["inputKind"], "requestedHandle": handle,

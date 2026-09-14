@@ -80,13 +80,17 @@ def main():
                         cohort_result=None
                         if args.cohort_size>1:
                             from lib.discovery_cohort import run_cohort
-                            cohort_result=run_cohort(discovery,args.cohort_size,lanes=args.cohort_lanes,soak_id=args.soak_run)
+                            cohort_result=run_cohort(discovery,args.cohort_size,lanes=args.cohort_lanes,soak_id=args.soak_run,use_production_policy=True)
                         discovered = None if cohort_result else discovery.run_once()
                         cycle_result = reconcile_cycle(store.var_dir,discovery_store)
                         if refreshed is not None or discovered is not None or cohort_result is not None or args.once:
                             print(json.dumps({"refresh": refreshed, **({"cohort":cohort_result} if cohort_result else {}), "discovery": discovered["batch"] if discovered else None,**({"cycleIdentity":cycle_result} if cycle_result is not None else {})}), flush=True)
-                        if args.once or cohort_result and cohort_result.get('soakState') in ('completed','attention'):
-                            break
+                        if args.once or cohort_result and cohort_result.get('soakState')=='attention':break
+                        if cohort_result and cohort_result.get('soakState')=='completed':
+                            from lib.identity_acceptance import production_policy
+                            if production_policy(store.var_dir.parent)['acceptanceId']:
+                                args.soak_run=None
+                            else:break
                         time.sleep(15 if args.soak_run and cohort_result and cohort_result.get('targets')==0 else args.interval)
         return 0
     except ProfileRefreshError as error:
