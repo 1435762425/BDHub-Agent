@@ -3,7 +3,8 @@
 Catalog links are prepared at product level first: a task's TapLink material readiness
 depends on the PID plan, never on how many creators the roster has reached.
 """
-import importlib.util,json,subprocess,sys,time,uuid
+import importlib.util,json,sqlite3,subprocess,sys,time,uuid
+from contextlib import closing
 from pathlib import Path
 from lib.batch_sources import BatchSources
 from lib.batch_task_service import read_local_preparation
@@ -11,6 +12,7 @@ from lib.batch_materials import BatchMaterials
 from lib.second_cycle import CycleStore,CycleError,digest,assess_offer
 from lib.cycle_materials import Materials,name_key
 from lib.cycle_card_creation import CardCreation
+from lib.product_stock_policy import mark_full_managed
 
 def run_card_process(root,service,task_id,intent_id,action):
  queue=BatchSources(service)
@@ -26,6 +28,15 @@ def run_card_process(root,service,task_id,intent_id,action):
    except subprocess.TimeoutExpired:child.kill();child.wait()
    break
   time.sleep(.2)
+
+def full_managed_pids(root):
+ """PIDs proven full-managed by the official high-opportunity "global only" source run."""
+ path=Path(root)/'var/global-source.sqlite'
+ if not path.exists():return {}
+ with closing(sqlite3.connect(path.as_uri()+'?mode=ro',uri=True)) as db:
+  db.execute('BEGIN')
+  rows=db.execute("SELECT p.pid,r.id FROM global_source_product p JOIN global_source_run r ON r.id=p.run_id WHERE json_extract(r.scope,'$.source')='opportunity_global_only'").fetchall()
+ return {str(pid):'opportunity_global_only:'+str(run) for pid,run in rows}
 
 def plan_links(service,task,root,offers):
  """Register the task's product plans for link preparation; no roster and no platform write."""
@@ -76,7 +87,9 @@ def advance_links(service,task,root,clock=None):
   plan=store.db.execute('SELECT id FROM plan WHERE institution=? AND market=?',(task['spec']['institution'],task['spec']['market'])).fetchone()
   if not plan:return
   if store._plan(plan[0])['state']!='active':return
-  offers=[o for _,o in store._offers(plan[0]) if assess_offer(o,store.clock())['eligible']]
+  managed=full_managed_pids(root)
+  # Full-managed status comes from the official source evidence, not from a missing stock number.
+  offers=[mark_full_managed(o,managed[o['pid']]) if o['pid'] in managed else o for _,o in store._offers(plan[0]) if assess_offer(o,store.clock())['eligible']]
  plan_links(service,task,root,offers)
  refresh_link_states(service,task['id'],root)
 
