@@ -10,6 +10,7 @@ from lib.catalog_prepare import CatalogPreparation,READ_EXTRA,new_offer,classify
 from lib.global_selection import selected_rows,assess
 from lib.global_source import clean_product
 from lib.global_source_transport import opportunity_reader,opportunity_card_creator,CREATE
+from lib.product_stock_policy import full_managed,mark_full_managed
 from lib.second_cycle import digest
 spec=importlib.util.spec_from_file_location('catalog_card_inspection',ROOT/'scripts/prepare-cycle-materials.py');inspection=importlib.util.module_from_spec(spec);spec.loader.exec_module(inspection)
 SCOPE={'market':'it','account':'acc9','institution':'bjn-local-research','sourceRun':'it-global-20260914','route':'selected'}
@@ -22,6 +23,9 @@ def plan_bounds(offer):
     """Full binding used by creation, card inspection and the material consumer."""
     return {'pid':offer['pid'],'campaignId':offer['campaignId'],'catalogSource':offer['catalogSource'],'creatorPercent':offer['creatorPercent'],
             'publicPercent':offer['publicPercent'],'totalPercent':offer['totalPercent'],'agencyPercent':offer['agencyPercent'],'title':offer['title'],
+            # Carry the full-managed evidence: without it a verification would wrongly re-apply
+            # the stock quantity gate that the confirmed policy cancelled for full-managed items.
+            'managementType':offer.get('managementType'),'managementEvidenceRef':offer.get('managementEvidenceRef'),
             'planFingerprint':digest({k:offer.get(k) for k in ('pid','campaignId','catalogSource','creatorPercent','publicPercent','totalPercent')})}
 
 def read_selected_pool(transport,max_pages=120):
@@ -313,11 +317,17 @@ def step_verify(prep,report,limit=None):
                     prep.mark_progress(item['run_id'],pid,cid,src,'ready',card=intent['readback'])
                     states['already_verified']=states.get('already_verified',0)+1;continue
                 receipt=intent.get('receipt') or {}
+                # Intents frozen before the marker was carried still verify correctly: take the
+                # full-managed evidence from the ledger row so the stock gate stays cancelled.
+                listing=json.loads(item['listing']) if item.get('listing') else {}
+                offer=intent['spec']['offer']
+                if not full_managed(offer) and listing.get('managementEvidenceRef'):
+                    offer=mark_full_managed(offer,listing['managementEvidenceRef'])
                 try:
                     card=None
                     for delay in (0,1,3):
                         if delay:time.sleep(delay)
-                        card=inspection.inspect_card(intent['spec']['offer'],read,expected_list_id=receipt.get('list_id'),expected_name=intent['spec']['listName'])
+                        card=inspection.inspect_card(offer,read,expected_list_id=receipt.get('list_id'),expected_name=intent['spec']['listName'])
                         if card['state']=='verified_read_only':break
                     if not card or card['state']!='verified_read_only':raise ValueError('created_card_not_verified')
                     card.update(readAccount='acc9')
