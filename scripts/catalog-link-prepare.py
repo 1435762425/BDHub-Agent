@@ -6,7 +6,7 @@ from decimal import Decimal
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1];sys.dont_write_bytecode=True;sys.path.insert(0,str(ROOT/'scripts'))
 from lib.catalog_links import CatalogLinks,new_commission
-from lib.catalog_prepare import CatalogPreparation,READ_EXTRA,new_offer,classify_pid,search_cards
+from lib.catalog_prepare import CatalogPreparation,READ_EXTRA,new_offer,classify_pid,search_cards,scan_lists,read_members,member_facts,TaplinkInventory
 from lib.global_selection import selected_rows,assess
 from lib.global_source import clean_product
 from lib.global_source_transport import opportunity_reader,opportunity_card_creator,CREATE
@@ -156,6 +156,59 @@ def step_read(prep,run_id,limit,report,lanes=1,qps=3):
                 states[outcome['state']]=states.get(outcome['state'],0)+1
     return {'claimed':len(claimed),'states':states}
 
+def step_inventory(report,lanes=1,qps=3,limit=None):
+    """Enumerate every TapLink once (lists + members). Read-only: no create, no delete.
+
+    This is the shared base for both link reconciliation and link maintenance: the per-PID
+    search is replaced by one account-wide inventory that is reused for every later join.
+    """
+    inv=TaplinkInventory(ROOT);states={}
+    try:
+        with opportunity_reader(report,extra_read_endpoints=READ_EXTRA,wait_seconds=60,account_name='acc9') as transport:
+            def reader(on,pace=None):
+                def read(path,extra):
+                    if pace is not None:pace()
+                    r=on._xhr(method='GET',path=path,params=on._params()|extra,payload=None,write=False)
+                    body=on.require_read(r);return body,digest(body)
+                return read
+            total,rows=scan_lists(reader(transport))
+            report['inventoryLists']=total
+            for row in rows:inv.save_list(row)
+            todo=inv.lists_pending_members()
+            if limit is not None:todo=todo[:limit]
+            report['inventoryPending']=len(todo)
+            lane_transports=[];results=[]
+            try:
+                if lanes>1 and len(todo)>1:
+                    from concurrent.futures import ThreadPoolExecutor
+                    from lib.cohort_find import SharedPacer
+                    pacer=SharedPacer(qps)
+                    lane_transports=[transport]+[transport.fork_lane(pacer.acquire) for _ in range(lanes-1)]
+                    lane_reads=[reader(transport,pacer.acquire)]+[reader(on,pacer.acquire) for on in lane_transports[1:]]
+                    def fetch(index,row):
+                        try:return row,read_members(lane_reads[index%lanes],row['list_id']),None
+                        except Exception as error:return row,None,error
+                    with ThreadPoolExecutor(max_workers=lanes) as executor:
+                        results=[f.result() for f in [executor.submit(fetch,i,row) for i,row in enumerate(todo)]]
+                else:
+                    base=reader(transport)
+                    for row in todo:
+                        try:results.append((row,read_members(base,row['list_id']),None))
+                        except Exception as error:results.append((row,None,error))
+            finally:
+                for on in lane_transports[1:]:
+                    try:on.session.close()
+                    except Exception:pass
+            for row,members,error in results:
+                if error is not None:
+                    states[str(error)[:40] if isinstance(error,ValueError) else 'taplink_members_unresolved']=states.get(str(error)[:40] if isinstance(error,ValueError) else 'taplink_members_unresolved',0)+1
+                    continue
+                inv.save_members(row['list_id'],row['name'],members)
+                states['read']=states.get('read',0)+1
+        report['inventory']=inv.summary();report['inventoryStates']=states
+    finally:inv.close()
+    return {'lists':report.get('inventoryLists'),'states':states}
+
 def create_spec(prep,run_id,offer,short_name):
     campaign=offer['campaignId'];pid=offer['pid']
     tail=digest([pid,campaign,offer['creatorPercent']])[:6]
@@ -276,9 +329,10 @@ def status_view():
     finally:prep.close()
 
 def main():
-    p=argparse.ArgumentParser(description=__doc__);p.add_argument('action',nargs='?',choices=['status','seed','read','create'])
+    p=argparse.ArgumentParser(description=__doc__);p.add_argument('action',nargs='?',choices=['status','seed','read','create','inventory'])
     p.add_argument('--status-links',action='store_true',help='read-only coverage view for the product page')
     p.add_argument('--report',type=Path);p.add_argument('--pids');p.add_argument('--limit',type=int,default=15);p.add_argument('--max-creates',type=int,default=0)
+    p.add_argument('--lists',type=int,default=0,help='inventory: max lists to read members for (0=all pending)')
     p.add_argument('--scope',choices=['intake','pool'],default='intake',
                    help='seed universe: intake=durable full-managed selection only; pool=every live selected plan')
     p.add_argument('--lanes',type=int,default=1,choices=[1,3,6,9],help='same-account read lanes')
@@ -330,6 +384,8 @@ def main():
             report['selectedPoolTotal']=pool['total'];report['seeded']=prep.seed(run_id,items,s)
         report['read']=step_read(prep,run_id,a.limit,report,lanes=a.lanes,qps=a.qps)
         report['retired']=prep.retire_mismatched_bindings(run_id)
+    elif a.action=='inventory':
+        report['inventoryResult']=step_inventory(report,lanes=a.lanes,qps=a.qps,limit=(a.lists or None))
     elif a.action=='create':
         report['create']=step_create(prep,run_id,a.max_creates,report)
     report['summary']=prep.summary(run_id);report['elapsedSeconds']=round(time.time()-report['startedAt'],2)

@@ -13,7 +13,8 @@ from lib.product_stock_policy import require_stock,unavailable_allowed
 
 CARD='/api/v1/affiliate/partner/im/product_list/list'
 MEMBERS='/api/v1/affiliate/partner/campaign/product_list/products'
-READ_EXTRA={(CARD,'GET'),(MEMBERS,'GET')}
+LISTS='/api/v1/affiliate/partner/campaign/product_list/list'
+READ_EXTRA={(CARD,'GET'),(MEMBERS,'GET'),(LISTS,'GET')}
 
 SCHEMA='''
 CREATE TABLE IF NOT EXISTS catalog_prepare_run(id TEXT PRIMARY KEY,institution TEXT NOT NULL,market TEXT NOT NULL,source_run TEXT,scope TEXT NOT NULL,created REAL NOT NULL);
@@ -31,6 +32,14 @@ CREATE TABLE IF NOT EXISTS catalog_prepare_reuse(
 CREATE TABLE IF NOT EXISTS catalog_prepare_readback(
  run_id TEXT NOT NULL,pid TEXT NOT NULL,campaign_id TEXT NOT NULL,catalog_source TEXT NOT NULL,kind TEXT NOT NULL,
  payload TEXT NOT NULL,observed_at REAL NOT NULL,PRIMARY KEY(run_id,pid,campaign_id,catalog_source,kind));
+CREATE TABLE IF NOT EXISTS catalog_tap_list(
+ list_id TEXT PRIMARY KEY,source TEXT NOT NULL,campaign_id TEXT NOT NULL,name TEXT,url TEXT,
+ product_total INTEGER,platform_updated_at TEXT,observed REAL NOT NULL,members_at REAL);
+CREATE TABLE IF NOT EXISTS catalog_tap_member(
+ list_id TEXT NOT NULL,pid TEXT NOT NULL,member_campaign_id TEXT,creator_percent TEXT,public_percent TEXT,
+ product_status TEXT,governed INTEGER,unavailable_type TEXT,stock TEXT,list_name TEXT,
+ observed REAL NOT NULL,PRIMARY KEY(list_id,pid));
+CREATE INDEX IF NOT EXISTS catalog_tap_member_pid ON catalog_tap_member(pid);
 '''
 
 def percent_raw(value):
@@ -310,3 +319,102 @@ def classify_pid(pid,offer,read,policy):
         if ok and (best is None or Decimal(fact['creatorRaw'])>Decimal(best['creatorRaw'])):best=fact
     if best:return {'state':'reuse','total':total,'rates':sorted(set(rates)),'reuse':observed,'card':best,'listing':offer['listing']}
     return {'state':'review','total':total,'rates':sorted(set(rates)),'reuse':observed,'blocker':'existing_links_require_review','listing':offer['listing']}
+
+def scan_lists(read,source='2',campaign_id='0',page_size=100,max_pages=500):
+    """Every TapLink of one account route. Incomplete pagination is never treated as absence."""
+    rows=[];seen=set();total=None
+    for page in range(1,max_pages+1):
+        body,sha=read(LISTS,{'campaign_id':str(campaign_id),'source':str(source),'cur_page':page,'page_size':page_size})
+        data=body.get('data')
+        if not isinstance(data,dict) or type(data.get('total')) is not int or data['total']<0:raise ValueError('taplink_inventory_malformed')
+        if total is not None and total!=data['total']:raise ValueError('taplink_inventory_changed')
+        total=data['total']
+        batch=data.get('lists')
+        if not isinstance(batch,list):raise ValueError('taplink_inventory_malformed')
+        for raw in batch:
+            lid=str(raw.get('id') or '')
+            if not lid.isdigit() or lid in seen:raise ValueError('taplink_inventory_duplicate')
+            seen.add(lid)
+            rows.append({'list_id':lid,'name':str(raw.get('name') or ''),'url':str(raw.get('url') or ''),
+                         'product_total':raw.get('total'),'platform_updated_at':raw.get('update_time')})
+        if len(rows)==total:return total,rows
+        if not batch or len(batch)<page_size or len(rows)>total:raise ValueError('taplink_inventory_incomplete')
+    raise ValueError('taplink_inventory_limit')
+
+def read_members(read,list_id,source='2'):
+    """Every member of one TapLink, cursor-paginated. An incomplete read is never absence."""
+    rows=[];seen=set();cursor=None;total=None
+    for _ in range(101):
+        params={'list_id':str(list_id),'source':str(source)}
+        if cursor is not None:params['cursor']=cursor
+        body,sha=read(MEMBERS,params)
+        data=body.get('data')
+        if not isinstance(data,dict) or type(data.get('total_num')) is not int or data['total_num']<0:raise ValueError('taplink_members_malformed')
+        if total is not None and total!=data['total_num']:raise ValueError('taplink_members_changed')
+        total=data['total_num']
+        batch=data.get('campaign_products')
+        if not isinstance(batch,list):raise ValueError('taplink_members_malformed')
+        for m in batch:
+            pid=str(m.get('product_id') or '')
+            if not pid.isdigit() or (list_id,pid) in seen:raise ValueError('taplink_members_incomplete')
+            seen.add((list_id,pid));rows.append(m)
+        if len(rows)==total:return rows
+        nxt=data.get('next_cursor')
+        if not batch or cursor==nxt:raise ValueError('taplink_members_incomplete')
+        cursor=nxt
+    raise ValueError('taplink_members_limit')
+
+def member_facts(row,member,policy,listing=None):
+    """Observed facts of one inventory member, before the reuse rule is applied.
+
+    Commission/status come from the member; the total rate comes from the product plan,
+    because the card member does not carry it.
+    """
+    creator=percent_raw(member.get('creator_commission_percent'))
+    public=percent_raw(member.get('plan_commission_percent'))
+    total=percent_raw((listing or {}).get('commission_rate'))
+    return {'listId':str(row['list_id']),'listName':str(row.get('name') or ''),'pid':str(member.get('product_id') or ''),
+            'campaignId':str(member.get('campaign_id') or ''),'creatorRaw':str(creator) if creator is not None else None,
+            'publicRaw':str(public) if public is not None else None,'totalRaw':str(total) if total is not None else None,
+            'platformValid':member.get('product_status') is not None and str(member.get('product_status'))=='2',
+            'productEligible':member.get('is_under_governed') is not True and unavailable_allowed(member.get('unavailable_type'),member),
+            'stock':str(member.get('stock')) if member.get('stock') is not None else None,'previouslyUsed':False}
+
+class TaplinkInventory:
+    """Account-wide TapLink inventory: list once, read members once, reuse many times."""
+    def __init__(self,root):
+        self.root=Path(root)
+        self.db=sqlite3.connect(self.root/'var/catalog-links.sqlite',timeout=15);self.db.row_factory=sqlite3.Row
+        self.db.executescript(SCHEMA)
+    def close(self):self.db.close()
+    def save_list(self,row,source='2',campaign_id='0',now=None):
+        now=now if now is not None else time.time()
+        with self.db:
+            self.db.execute('INSERT OR REPLACE INTO catalog_tap_list VALUES(?,?,?,?,?,?,?,?,NULL)',
+                (str(row['list_id']),str(source),str(campaign_id),row.get('name'),row.get('url'),row.get('product_total'),row.get('platform_updated_at'),now))
+    def save_members(self,list_id,list_name,members,now=None):
+        now=now if now is not None else time.time()
+        with self.db:
+            self.db.execute('DELETE FROM catalog_tap_member WHERE list_id=?',(str(list_id),))
+            for m in members:
+                self.db.execute('INSERT OR REPLACE INTO catalog_tap_member VALUES(?,?,?,?,?,?,?,?,?,?,?)',
+                    (str(list_id),str(m.get('product_id') or ''),str(m.get('campaign_id') or '') or None,
+                     str(percent_raw(m.get('creator_commission_percent'))) if m.get('creator_commission_percent') is not None else None,
+                     str(percent_raw(m.get('plan_commission_percent'))) if m.get('plan_commission_percent') is not None else None,
+                     str(m.get('product_status')) if m.get('product_status') is not None else None,
+                     1 if m.get('is_under_governed') is True else 0,
+                     str(m.get('unavailable_type')) if m.get('unavailable_type') is not None else None,
+                     str(m.get('stock')) if m.get('stock') is not None else None,
+                     str(list_name or ''),now))
+            self.db.execute('UPDATE catalog_tap_list SET members_at=? WHERE list_id=?',(now,str(list_id)))
+    def lists_pending_members(self):
+        return [dict(r) for r in self.db.execute('SELECT * FROM catalog_tap_list WHERE members_at IS NULL ORDER BY list_id')]
+    def lists(self):
+        return [dict(r) for r in self.db.execute('SELECT * FROM catalog_tap_list ORDER BY list_id')]
+    def members_for_pid(self,pid):
+        return [dict(r) for r in self.db.execute('SELECT * FROM catalog_tap_member WHERE pid=? ORDER BY list_id',(str(pid),))]
+    def summary(self):
+        lists=self.db.execute('SELECT count(*),coalesce(sum(product_total),0),coalesce(sum(members_at IS NOT NULL),0) FROM catalog_tap_list').fetchone()
+        members=self.db.execute('SELECT count(*),count(DISTINCT pid) FROM catalog_tap_member').fetchone()
+        return {'lists':lists[0],'declaredProducts':lists[1],'membersRead':lists[2],'members':members[0],'coveredPids':members[1],
+                'observedAt':self.db.execute('SELECT max(observed) FROM catalog_tap_list').fetchone()[0]}
