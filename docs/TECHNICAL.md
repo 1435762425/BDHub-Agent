@@ -144,6 +144,8 @@ React 组件不能直接读写 SQLite、启动任意命令或实现资格规则�
 
 `lead_pool.py` 与 `/api/lead-pool` 已使用 `bdhub.lead-pool.v2`：业务只投影 `sendable / waiting / inactive`，`sent` 单列历史；内部原因仍用于排障。达人排序和达人内部 PID 选择统一使用 `sourceRank → units DESC → pid ASC`，同一达人只有一个可发送槽位。发送预览按池子顺序复检；冻结批次执行器按 `position_order` 消费，不再执行时重新挑选或补满。
 
+`/api/inbox` 一次返回监控状态、最近 14 个北京自然日和当前未结人工事项；`StatsCalendarPanel` 直接复用工作台唯一的 `useInboxMonitor()` controller，不增加请求或轮询。日历主指标为确认触达达人次、确认商品卡、实时达人回复和加橱窗；未确认卡片单独展示，不计入成功。bridge 与纯展示模型都会复核期间 totals 等于每日行求和、`today` 等于同日期行；不可用、空数据或恒等式不成立时不显示成业务 0。
+
 ### 5.5 Agent 与语义能力
 
 - `catalog_names.py`：批量商品短名；失败不自动无限重试。
@@ -258,7 +260,7 @@ pending → started/submitted → confirmed
 | `/api/lead-pool` | 发送池分层 |
 | `/api/send` | 发送预览、设置保存、冻结、明确 start/stop 和批次状态 |
 | `/api/reply-review` | 事件级样本、双模型影子分类、turn 标准动作和受控案件应用；无发送动作 |
-| `/api/inbox` | 收信 worker、今日/历史统计和待人工 |
+| `/api/inbox` | 收信 worker、今日/最近 14 日统计、统计日历和待人工 |
 | `/api/jobs` | 手动作业与定时意向 |
 
 `/flow-demo` 是纯前端业务沙盘：判断函数位于 `apps/web/src/features/demo/`，页面运行时不调用任何 `/api`、SQLite、CLI、平台或模型。PID 生命周期页内的数量是 2026-09-19 只读台账静态快照，达人案例为虚构数据；两者都不作为实时运行证据。页面只展示两条 TapLink 周期：Campaign 每日随来源核验、全托已选每周核验；两次刷新之间以上次成功结果为准，不做发送前远程预检，确认失效的链接进入清理。达人页必须说明每 PID 近 14 天最多 20 条、OECID 改名归并、统一 `sourceRank` 排序和三种业务结果，不能继续把佣金优先或六层内部枚举表现为现行规则。实测耗时必须注明样本、并发与非 SLA 边界；同时与 `schedulerReady=false`、作业开关关闭的当前运行事实分开。
