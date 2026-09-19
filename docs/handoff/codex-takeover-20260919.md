@@ -38,6 +38,7 @@ DeepSeek/Agent 已经把 9 月 14 日的“货盘批量备链”继续推进到�
 | 状态备份与恢复 | `3fbe6ff`（21 库在线备份、完整性清单、空目录恢复） |
 | 独立 Python 环境 | `c36240a`（全部 Web/worker 入口改用项目 `.venv`）、`1f599db`（完整版本锁） |
 | Vendor 协议运行时 | `4d4db3a`（强制 vendor 源码、旧配置只读引用、禁止代码混用） |
+| Web ESM 声明 | `a04c588`（消除 381 项 Node 测试的模块类型告警） |
 | 上一个已提交开发头 | `4cdb759`（`agent/p0-catalog-links`） |
 | 继承工作区固化提交 | `cd81dff` |
 | 继承标签 | `takeover-20260919-inherited` |
@@ -245,7 +246,7 @@ DeepSeek/Agent 已经把 9 月 14 日的“货盘批量备链”继续推进到�
 2026-09-20 本轮收尾验证：
 
 - Python：`1079` 项 `unittest` 通过，未关闭数据库 `ResourceWarning` 为 0。
-- Web：`381` 项 Node 测试通过。
+- Web：`381` 项 Node 测试通过，module type warning 已消除。
 - TypeScript：`npm run typecheck` 通过。
 - Next.js：`npm run build` 通过，14 个静态页面（含 `/flow-demo`）及当前 API 路由生成成功。
 - 文档：109 个 Markdown 文件的本地链接检查通过；`git diff --check` 通过。
