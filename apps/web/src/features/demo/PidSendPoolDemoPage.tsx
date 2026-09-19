@@ -2,7 +2,7 @@
 
 import {useMemo,useState} from "react";
 import {Card,Collapsible,Icon,Notice,PageHeading,Pill,Tabs} from "../bdhub/ui";
-import {BUSINESS_PHASES,DEMO_COUNTS,FLOW_STAGES,LOCKS,PID_SNAPSHOT,REFRESH_RULES,SCENARIOS,SIMPLE_POOL,poolReconciles,simpleScenario,type ScenarioKey} from "./pid-send-pool-demo";
+import {BUSINESS_PHASES,DEMO_COUNTS,FLOW_STAGES,LOCKS,PID_REFRESH_CLOCKS,PID_SNAPSHOT,REFRESH_RULES,SCENARIOS,SIMPLE_POOL,TAPLINK_VALIDITY_CHECKS,poolReconciles,simpleScenario,type ScenarioKey} from "./pid-send-pool-demo";
 
 type Tab="pid"|"people"|"details";
 type PhaseKey=(typeof BUSINESS_PHASES)[number]["key"];
@@ -51,10 +51,9 @@ function PidTree(){
     <div className="mx-auto max-w-lg rounded-2xl border-2 border-success-300 bg-success-50 p-5 text-center dark:border-success-900 dark:bg-success-900/10"><Pill tone="success">唯一前向结果</Pill><h3 className="mt-3 text-xl font-semibold">PID Material Ready</h3><p className="mt-2 text-sm text-gray-500">当前合格 Offer + 已在平台池 + 精确可用 TapLink。只有这里的 PID 才能去查达人线索。</p></div>
    </div>
   </div></Card>
-  <Card title="刷新不是新状态，而是把 PID 送回前面的判断" subtitle="来源、活动和佣金都会变化；刷新后沿同一棵树重新走"><div className="grid gap-4 p-5 lg:grid-cols-3">
-   <TreeOutcome title="来源刷新" detail="全托重新采集、Campaign 每日完整刷新 → 回到问题 1，重新判断当前资格。" tone="neutral"/>
-   <TreeOutcome title="方案刷新" detail="活动、期限或佣金变化 → 回到问题 3；旧链接保留，必要时创建新卡。" tone="neutral"/>
-   <TreeOutcome title="链接库存刷新" detail="读取全部列表和成员 → 有效继续用，未知转核验，失效进入独立清理流程。" tone="neutral"/>
+  <Card title="刷新只有四个时钟" subtitle="刷新不是新状态；每次刷新只是把 PID 送回资格或链接判断"><div className="p-5">
+   <div className="grid gap-4 lg:grid-cols-2">{PID_REFRESH_CLOCKS.map(clock=><div key={clock.key} className="rounded-xl border border-gray-200 p-4 dark:border-gray-800"><div className="flex items-center justify-between gap-3"><p className="font-semibold text-gray-800 dark:text-gray-200">{clock.title}</p><Pill tone={clock.key==="action"?"brand":clock.key==="event"?"success":"neutral"}>{clock.cadence}</Pill></div><ul className="mt-3 space-y-2">{clock.items.map(item=><li key={item} className="flex gap-2 text-sm leading-6 text-gray-500"><span aria-hidden="true">•</span><span>{item}</span></li>)}</ul></div>)}</div>
+   <Notice tone="warning"><strong>当前运行事实：</strong>定时调度器尚未实现，现有作业开关全部关闭。页面中的“每日链接复读、24 小时查询门禁、每周清理”是待确认的目标周期，不代表后台已经在跑。</Notice>
   </div></Card>
   <Card title="TapLink 清理是旁路，不参与 PID 前向资格" subtitle={`当前只读库存 ${format(s.inventory.lists)} 张列表；历史清理快照扫描 ${format(s.historicalCleanup.scanned)} 张`}><div className="p-5">
    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -149,10 +148,20 @@ function Details(){return <div className="space-y-4">
   <Card title="全托商品"><div className="space-y-2 p-5 text-sm leading-6 text-gray-600 dark:text-gray-300">{["累计销量 ≥ 300（包含 300）","有评分时 ≥ 4.0；无评分允许","总佣金 − 公开佣金 ≥ 2 个百分点","库存不作为门槛","明确下架、治理或失效仍然拦截"].map(item=><p key={item} className="flex gap-2"><Icon name="check" className="mt-1 size-4 shrink-0 text-success-500"/>{item}</p>)}</div></Card>
   <Card title="Campaign 商品"><div className="space-y-2 p-5 text-sm leading-6 text-gray-600 dark:text-gray-300">{["活动必须 ACTIVE","剩余期限 > 45 天","普通商品库存 > 100","无额外条款才自动加入","达人佣金高于公开佣金"].map(item=><p key={item} className="flex gap-2"><Icon name="check" className="mt-1 size-4 shrink-0 text-success-500"/>{item}</p>)}</div></Card>
  </div></Collapsible>
- <Collapsible label="刷新周期"><div className="overflow-x-auto rounded-xl border border-gray-200 dark:border-gray-800"><table className="w-full text-left text-sm"><thead className="bg-gray-50 text-xs text-gray-500 dark:bg-gray-800/60"><tr>{["对象","什么时候刷新","如何触发","影响"].map(label=><th key={label} className="whitespace-nowrap px-4 py-3 font-medium">{label}</th>)}</tr></thead><tbody>{REFRESH_RULES.map(row=><tr key={row.object} className="border-t border-gray-100 align-top dark:border-gray-800"><td className="whitespace-nowrap px-4 py-3 font-medium">{row.object}</td><td className="min-w-40 px-4 py-3 text-gray-500">{row.cycle}</td><td className="min-w-40 px-4 py-3 text-gray-500">{row.mode} · {row.optional}</td><td className="min-w-64 px-4 py-3 text-gray-500">{row.effect}</td></tr>)}</tbody></table></div></Collapsible>
- <Collapsible label="TapLink 三层检验"><div className="grid gap-4 lg:grid-cols-3">{[
-  ["1 · 池子读取","本地台账","有精确 listId、来源、活动和当前佣金，才允许进入商品准备完成。"],["2 · 正式组批","平台只读","只复读本批 PID；变化项退出批次并显示原因。"],["3 · 逐条发送","最终权威","fresh_card 按冻结 listId 再读；不一致或 unknown 立即停止。"],
- ].map(([title,tag,text])=><Card key={title} title={title} action={<Pill tone="neutral">{tag}</Pill>}><p className="p-5 text-sm leading-6 text-gray-500">{text}</p></Card>)}</div></Collapsible>
+ <Collapsible label="刷新周期" defaultOpen><div className="space-y-4">
+  <Notice tone="warning"><strong>先区分规则与运行：</strong>“不可跳过”是业务门禁；“建议值”仍待确认。当前定时调度器未实现，所有定时开关均为关闭。</Notice>
+  <div className="overflow-x-auto rounded-xl border border-gray-200 dark:border-gray-800"><table className="w-full text-left text-sm"><thead className="bg-gray-50 text-xs text-gray-500 dark:bg-gray-800/60"><tr>{["对象","什么时候刷新","如何触发","影响"].map(label=><th key={label} className="whitespace-nowrap px-4 py-3 font-medium">{label}</th>)}</tr></thead><tbody>{REFRESH_RULES.map(row=><tr key={row.object} className="border-t border-gray-100 align-top dark:border-gray-800"><td className="whitespace-nowrap px-4 py-3 font-medium">{row.object}</td><td className="min-w-40 px-4 py-3 text-gray-500">{row.cycle}</td><td className="min-w-48 px-4 py-3 text-gray-500">{row.mode} · {row.optional}</td><td className="min-w-64 px-4 py-3 text-gray-500">{row.effect}</td></tr>)}</tbody></table></div>
+ </div></Collapsible>
+ <Collapsible label="怎样才算 TapLink 仍然有效" defaultOpen><div className="space-y-4">
+  <Notice><strong>Material Ready = 当前 Offer 合格 + 当前 TapLink 精确可用。</strong>卡还在，不等于商品仍能发；商品仍合格，也不等于旧卡还代表当前方案。</Notice>
+  <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">{TAPLINK_VALIDITY_CHECKS.map((check,index)=><div key={check.label} className="rounded-xl bg-gray-50 p-4 dark:bg-gray-800"><p className="text-xs font-semibold text-brand-500">{index+1} · {check.label}</p><p className="mt-2 text-sm leading-6 text-gray-500">{check.detail}</p></div>)}</div>
+  <div className="grid gap-4 lg:grid-cols-4">{[
+   ["动作后","立即回读","选入、加入、建卡或删除完成后，平台读回才算完成。"],
+   ["进入达人查询","鲜度门禁","建议最后平台核验不超过 24 小时；过期就先等待复读。"],
+   ["正式组批","批次复读","只复读本批 PID；变化项退出批次，其他 PID 不受影响。"],
+   ["逐条发送","最终权威","fresh_card 按冻结 listId 现场复读；不一致或 unknown 立即停止。"],
+  ].map(([title,tag,text])=><Card key={title} title={title} action={<Pill tone="neutral">{tag}</Pill>}><p className="p-5 text-sm leading-6 text-gray-500">{text}</p></Card>)}</div>
+ </div></Collapsible>
  <Collapsible label="技术锁与恢复保障"><div className="grid gap-3 md:grid-cols-2">{LOCKS.map(lock=><div key={lock.name} className="rounded-xl border border-gray-200 p-4 dark:border-gray-800"><div className="flex items-center gap-2"><Icon name="lock" className="size-4 text-brand-500"/><p className="font-semibold text-gray-800 dark:text-gray-200">{lock.name}</p></div><p className="mt-2 text-xs text-brand-600 dark:text-brand-300">{lock.scope} · {lock.when}</p><p className="mt-2 text-sm leading-6 text-gray-500">{lock.protects}</p></div>)}</div></Collapsible>
  <Collapsible label="内部完整步骤（开发视角）"><div className="grid gap-3 md:grid-cols-2">{FLOW_STAGES.map(stage=><div key={stage.key} className="rounded-xl bg-gray-50 p-4 dark:bg-gray-800"><div className="flex items-center gap-2"><span className="text-xs font-semibold text-brand-500">{stage.index}</span><p className="font-semibold">{stage.title}</p></div><p className="mt-2 text-xs leading-5 text-gray-500">{stage.rule}</p></div>)}</div></Collapsible>
  </div>}

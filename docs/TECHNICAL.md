@@ -222,7 +222,7 @@ pending → started/submitted → confirmed
 | `/api/inbox` | 收信 worker、今日/历史统计和待人工 |
 | `/api/jobs` | 手动作业与定时意向 |
 
-`/flow-demo` 是纯前端业务沙盘：判断函数位于 `apps/web/src/features/demo/`，页面运行时不调用任何 `/api`、SQLite、CLI、平台或模型。PID 生命周期页内的数量是 2026-09-19 只读台账静态快照，达人案例为虚构数据；两者都不作为实时运行证据。
+`/flow-demo` 是纯前端业务沙盘：判断函数位于 `apps/web/src/features/demo/`，页面运行时不调用任何 `/api`、SQLite、CLI、平台或模型。PID 生命周期页内的数量是 2026-09-19 只读台账静态快照，达人案例为虚构数据；两者都不作为实时运行证据。页面把刷新分为事实变化、日常巡检、动作前强校验和独立清理四个时钟；建议周期必须标明“待确认”，并与 `schedulerReady=false`、作业开关关闭的当前运行事实分开。
 
 ## 9. 账号与外部系统
 

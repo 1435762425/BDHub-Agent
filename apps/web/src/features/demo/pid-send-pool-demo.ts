@@ -46,12 +46,30 @@ export const REFRESH_RULES=[
  {object:"全托商品源",mode:"手动主动采集",optional:"可选定时",cycle:"默认不开；运营按需启动",effect:"生成完整新快照，旧完整快照在中断时继续生效"},
  {object:"Campaign 商品",mode:"完整刷新",optional:"手动 + 可选定时",cycle:"设计值每日一次",effect:"活动失效后相关未发送位置退出可发范围"},
  {object:"商品筛选",mode:"确定性重算",optional:"自动",cycle:"新快照或规则版本变化",effect:"只改变当前资格，不删除历史线索"},
- {object:"TapLink",mode:"三层核验",optional:"自动读 / 写需动作",cycle:"材料准备、组批前、发送前",effect:"必须锁定 PID、来源、活动、佣金和 listId"},
+ {object:"TapLink 日常维护",mode:"当前材料增量复读",optional:"建议值，尚未启用",cycle:"建议每日一次",effect:"提前发现下架、治理、活动、库存、佣金或卡片成员变化"},
+ {object:"TapLink 查询门禁",mode:"按 PID 平台复读",optional:"建议值，待确认",cycle:"进入达人查询前证明不超过 24 小时",effect:"证据过期先降为等待核验，不继续查询新达人"},
+ {object:"TapLink 动作门禁",mode:"平台强校验",optional:"不可跳过",cycle:"选入/加入/建卡后立刻；组批前；每次发送前",effect:"锁定 PID、来源、活动、佣金和 listId；不一致立即退出当前动作"},
+ {object:"链接健康清理",mode:"完整库存扫描",optional:"建议值，待确认",cycle:"建议每周一次，或容量告警时手动触发",effect:"只形成独立清理范围，不影响主流程保留旧卡"},
  {object:"Kalodata 线索",mode:"到期队列",optional:"手动启动",cycle:"首次一次，之后 7 天",effect:"未到期 PID 不为凑数量重复查询"},
  {object:"OECID",mode:"达人级判定",optional:"手动启动",cycle:"Find 一次；画像按需/48h",effect:"搜索不到不自动重试，不伪造身份"},
  {object:"发送池",mode:"读时重算",optional:"无后台轮询",cycle:"每次读取",effect:"时间、关系、商品与材料变化即时改变分层"},
  {object:"正式批次",mode:"冻结快照",optional:"用户启动",cycle:"每个批次一次",effect:"冻结 source/campaign/rate/listId/规则版本"},
 ];
+
+export const PID_REFRESH_CLOCKS=[
+ {key:"event",title:"事实变化后立即刷新",cadence:"每次动作",items:["选入 / 加入 Campaign 后立即回读","创建或删除 TapLink 后立即回读","Offer 或分佣规则变化后立即重算"]},
+ {key:"periodic",title:"日常巡检",cadence:"每天",items:["Campaign 每日完整刷新","建议：当前材料链接每日增量复读","全托当前仍由运营手动采集；定时开关未启用"]},
+ {key:"action",title:"真正使用前强校验",cadence:"每次使用",items:["进入达人查询：建议链接证据 ≤ 24 小时","正式组批：只复读本批 PID","逐条发送：fresh_card 按冻结 listId 现场复读"]},
+ {key:"cleanup",title:"独立健康清理",cadence:"建议每周",items:["完整读取链接列表与成员","只把整条失效且证据明确的卡放进清理范围","容量告警可提前手动触发；主流程从不自动删旧卡"]},
+] as const;
+
+export const TAPLINK_VALIDITY_CHECKS=[
+ {label:"当前方案",detail:"商品仍可用；Campaign 仍 ACTIVE、剩余 >45 天且库存 >100；当前佣金规则仍通过。"},
+ {label:"列表身份",detail:"发送账号在正确市场能看到冻结的 listId；列表未删除、未禁用。"},
+ {label:"成员绑定",detail:"列表中恰好存在这个 PID，来源与 Campaign 绑定匹配当前 Offer。"},
+ {label:"商业条件",detail:"卡上达人佣金等于当前方案，并且仍高于当前公开佣金。"},
+ {label:"健康事实",detail:"product_status 可用、未被治理，unavailable_type 可接受，且没有未解决的 unknown。"},
+] as const;
 
 export const LOCKS=[
  {name:"来源快照锁",scope:"PID 快照",when:"采集完成切换 head",protects:"中断页、重复页或数量不一致不能冒充完整货盘"},

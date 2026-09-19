@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import {BUSINESS_PHASES,DEMO_COUNTS,FLOW_STAGES,PID_SNAPSHOT,SCENARIOS,SIMPLE_POOL,evaluateScenario,poolReconciles,simpleScenario} from "../src/features/demo/pid-send-pool-demo.ts";
+import {BUSINESS_PHASES,DEMO_COUNTS,FLOW_STAGES,PID_REFRESH_CLOCKS,PID_SNAPSHOT,REFRESH_RULES,SCENARIOS,SIMPLE_POOL,TAPLINK_VALIDITY_CHECKS,evaluateScenario,poolReconciles,simpleScenario} from "../src/features/demo/pid-send-pool-demo.ts";
 
 const scenario=key=>SCENARIOS.find(item=>item.key===key);
 
@@ -73,4 +73,17 @@ test("campaign expiry is dynamic and an open reply freezes the creator rather th
  assert.equal(scenario("product_invalid").campaignDays,44);
  assert.deepEqual([expired.product,expired.send],[false,false]);
  assert.deepEqual([reply.product,reply.creator,reply.send],[true,true,false]);
+});
+
+test("refresh guidance separates event periodic action and cleanup clocks",()=>{
+ assert.deepEqual(PID_REFRESH_CLOCKS.map(item=>item.key),["event","periodic","action","cleanup"]);
+ assert.match(PID_REFRESH_CLOCKS.find(item=>item.key==="action")?.items.join(" ")??"",/fresh_card/);
+ assert.match(REFRESH_RULES.find(item=>item.object==="TapLink 查询门禁")?.cycle??"",/24 小时/);
+ assert.match(REFRESH_RULES.find(item=>item.object==="链接健康清理")?.cycle??"",/每周/);
+});
+
+test("TapLink validity requires both current offer and exact platform binding facts",()=>{
+ assert.deepEqual(TAPLINK_VALIDITY_CHECKS.map(item=>item.label),["当前方案","列表身份","成员绑定","商业条件","健康事实"]);
+ assert.match(TAPLINK_VALIDITY_CHECKS.map(item=>item.detail).join(" "),/listId/);
+ assert.match(TAPLINK_VALIDITY_CHECKS.map(item=>item.detail).join(" "),/unknown/);
 });
