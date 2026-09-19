@@ -21,7 +21,6 @@ def command(stage,run,target):
   report=ROOT/'var/cycle-scheduler'/f'{stage}-{time.strftime("%Y%m%d",time.gmtime())}.json'
   return [PYTHON,str(ROOT/'scripts/sync-cycle-catalog.py'),'--source',source,'--run',str(report),'--max-requests','5'],report
  if stage=='kalodata':return [PYTHON,str(ROOT/'scripts/second-cycle-worker.py'),'--prepare-target',str(target),'--max-pids','5','--max-steps','10','--report',str(report)],report
- if stage=='reply_facts':return [PYTHON,str(ROOT/'scripts/query-cycle-reply-facts.py'),'--process-due'],None
  if stage=='identity_reconcile':return [PYTHON,str(ROOT/'scripts/second-cycle-identities.py'),'reconcile'],None
  if stage=='materials_check':return [PYTHON,str(ROOT/'scripts/advance-cycle-materials.py'),'--max-cards','3','--report',str(report)],report
  raise ValueError('unknown_stage')
@@ -35,7 +34,7 @@ def main():
  with (out/'worker.lock').open('a') as lock,CycleStore(ROOT/'var/second-cycle.sqlite') as store:
   fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB);plan=store.db.execute("SELECT id FROM plan WHERE market='it' AND institution='bjn-local-research'").fetchone()[0];s=Scheduler(store);s.initialize(plan)
   # After an unclean shutdown require process inspection instead of silently duplicating a reader.
-  if store.db.execute("SELECT 1 FROM cycle_schedule WHERE plan_id=? AND state='running'",(plan,)).fetchone():raise SystemExit('interrupted_stage_needs_process_check')
+  if s.has_running(plan):raise SystemExit('interrupted_stage_needs_process_check')
   while not STOP:
    active=store.db.execute("SELECT 1 FROM sqlite_master WHERE name='cycle_delivery'").fetchone() and store.db.execute("SELECT 1 FROM cycle_delivery WHERE plan_id=? AND state IN ('ready','running','unknown') AND expires>?",(plan,time.time())).fetchone()
    job=None if (out/'pause').exists() else s.claim(plan,('catalog_selected','catalog_campaign') if active else ())

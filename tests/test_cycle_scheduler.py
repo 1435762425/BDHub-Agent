@@ -2,7 +2,7 @@ import sys,unittest,tempfile
 from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'scripts'))
 from lib.second_cycle import CycleStore,CycleError
-from lib.cycle_scheduler import Scheduler,PERIODS
+from lib.cycle_scheduler import Scheduler,PERIODS,schedule_status
 class SchedulerTests(unittest.TestCase):
  def setUp(self):
   self.t=tempfile.TemporaryDirectory();self.now=1000;self.s=CycleStore(Path(self.t.name)/'db',lambda:self.now);self.p=self.s.plan('test','it');self.q=Scheduler(self.s);self.q.initialize(self.p)
@@ -20,7 +20,12 @@ class SchedulerTests(unittest.TestCase):
   j=self.q.claim(self.p);self.q.complete(self.p,j['stage'],j['run_id'],True,{'checkpointed':True})
   r=self.s.db.execute('SELECT due,failures FROM cycle_schedule WHERE stage=?',(j['stage'],)).fetchone();self.assertEqual(tuple(r),(1045,0))
  def test_sending_blocks_catalog_but_allows_replenishment(self):
-  j=self.q.claim(self.p,('catalog_selected','catalog_campaign','materials_check'));self.assertIn(j['stage'],('kalodata','identity_reconcile','reply_facts'))
+  j=self.q.claim(self.p,('catalog_selected','catalog_campaign','materials_check'));self.assertIn(j['stage'],('kalodata','identity_reconcile'))
+ def test_retired_reply_facts_row_is_preserved_but_never_claimed_or_shown(self):
+  self.s.db.execute("INSERT INTO cycle_schedule(plan_id,stage,period,due,state) VALUES(?,?,60,?,'running')",(self.p,'reply_facts',self.now-1))
+  self.assertFalse(self.q.has_running(self.p))
+  self.assertNotEqual(self.q.claim(self.p)['stage'],'reply_facts')
+  self.assertNotIn('reply_facts',[row['stage'] for row in schedule_status(self.s,self.p)])
  def test_pause_does_not_dispatch(self):
   self.s.control(self.p,'pause',1,'paused');self.assertIsNone(self.q.claim(self.p))
  def test_initialization_does_not_reset_due_or_failures(self):
