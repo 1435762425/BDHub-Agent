@@ -4,6 +4,7 @@ import sqlite3
 import sys
 import tempfile
 import unittest
+from contextlib import closing
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -22,7 +23,7 @@ def fixture(folder, *, eligible=None, linked=None, products=None):
     products = products or {}
     var = Path(folder) / 'var'
     var.mkdir(parents=True, exist_ok=True)
-    with sqlite3.connect(var / 'global-source.sqlite') as conn:
+    with closing(sqlite3.connect(var / 'global-source.sqlite')) as conn, conn:
         conn.executescript('CREATE TABLE global_source_screen_run(run_id TEXT,source_run TEXT,updated REAL);'
                            'CREATE TABLE global_source_screen(run_id TEXT,pid TEXT,state TEXT);'
                            'CREATE TABLE global_source_product(run_id TEXT,pid TEXT,payload TEXT);')
@@ -35,7 +36,7 @@ def fixture(folder, *, eligible=None, linked=None, products=None):
         conn.commit()
     sqlite3.connect(var / 'catalog-links.sqlite').close()
     apply_database(folder,'catalog-links')
-    with sqlite3.connect(var / 'catalog-links.sqlite') as conn:
+    with closing(sqlite3.connect(var / 'catalog-links.sqlite')) as conn, conn:
         for pid,state in (linked or {}).items():
             conn.execute("INSERT INTO catalog_current_binding VALUES('it','selected',?,'1','f',?,'commission-1-to-2-v1','link-naming-v1','13','name','{}',NULL,?,1,1)",
                          (pid,'list-'+pid,state))
@@ -44,7 +45,7 @@ def fixture(folder, *, eligible=None, linked=None, products=None):
 def campaign_fixture(folder, *, chosen=None, sales=None, with_sales=True):
     """非全托的池子账本 ＋ 一份带了 sales 的快照（队列排序要用）。"""
     var = Path(folder) / 'var'
-    with sqlite3.connect(var / 'campaign-screen.sqlite') as conn:
+    with closing(sqlite3.connect(var / 'campaign-screen.sqlite')) as conn, conn:
         conn.executescript('CREATE TABLE campaign_pool_run(run_id TEXT,source TEXT,source_snapshot TEXT,'
                            'created REAL,counts TEXT);'
                            'CREATE TABLE campaign_pool_item(run_id TEXT,pid TEXT,state TEXT,campaign_id TEXT);')
@@ -52,7 +53,7 @@ def campaign_fixture(folder, *, chosen=None, sales=None, with_sales=True):
         for index, pid in enumerate(chosen or []):
             conn.execute("INSERT INTO campaign_pool_item VALUES('p1',?,'chosen','900')", (pid,))
         conn.commit()
-    with sqlite3.connect(var / 'second-cycle.sqlite') as conn:
+    with closing(sqlite3.connect(var / 'second-cycle.sqlite')) as conn, conn:
         conn.executescript('CREATE TABLE plan(id TEXT,institution TEXT,market TEXT,state TEXT);'
                            'CREATE TABLE catalog(id TEXT PRIMARY KEY,plan_id TEXT,source TEXT,observed REAL,state TEXT,payload TEXT);'
                            'CREATE TABLE catalog_head(plan_id TEXT,source TEXT,snapshot_id TEXT,PRIMARY KEY(plan_id,source));')
@@ -199,7 +200,7 @@ class JobStores(unittest.TestCase):
         var = Path(folder) / 'var'
         var.mkdir(parents=True, exist_ok=True)
         db = var / ('second-cycle.sqlite' if table == 'source_job' else 'batch-tasks.sqlite')
-        with sqlite3.connect(db) as conn:
+        with closing(sqlite3.connect(db)) as conn, conn:
             conn.execute(f'CREATE TABLE {table}(pid TEXT,state TEXT)')
             conn.executemany(f'INSERT INTO {table} VALUES(?,?)', rows)
             conn.commit()
@@ -365,7 +366,7 @@ class BothChannels(unittest.TestCase):
             fixture(folder, eligible=[], linked={})
             campaign_fixture(folder, chosen=['1729474628908391280'], sales={'1729474628908391280': 777})
             # 给它一条可用链接：这是进队列的前提（先备链再找达人）
-            with sqlite3.connect(Path(folder) / 'var/catalog-links.sqlite') as conn:
+            with closing(sqlite3.connect(Path(folder) / 'var/catalog-links.sqlite')) as conn, conn:
                 conn.execute("INSERT INTO catalog_current_binding VALUES('it','campaign','1729474628908391280','900','f','9','commission-1-to-2-v1','link-naming-v1','13','name','{}',NULL,'active',1,1)")
             products = eligible_products(folder)
             self.assertIn('1729474628908391280', products)
@@ -380,7 +381,7 @@ class BothChannels(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             fixture(folder, eligible=[], linked={})
             campaign_fixture(folder, chosen=['1729474628908391280'], with_sales=False)
-            with sqlite3.connect(Path(folder) / 'var/catalog-links.sqlite') as conn:
+            with closing(sqlite3.connect(Path(folder) / 'var/catalog-links.sqlite')) as conn, conn:
                 conn.execute("INSERT INTO catalog_current_binding VALUES('it','campaign','1729474628908391280','900','f','9','commission-1-to-2-v1','link-naming-v1','13','name','{}',NULL,'active',1,1)")
             built = build(folder)
             # 没有销量就按 0 排序，但必须**如实标记**，不能假装有数据。

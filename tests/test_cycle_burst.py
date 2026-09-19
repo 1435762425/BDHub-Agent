@@ -186,7 +186,7 @@ class FrozenCohortTests(unittest.TestCase):
 
  def test_changed_binding_marks_items_stale_without_platform_calls(self):
   with self.fixture() as (root,db,plan,calls,auths):
-   with sqlite3.connect(root/'var/catalog-links.sqlite') as links:
+   with closing(sqlite3.connect(root/'var/catalog-links.sqlite')) as links,links:
     links.execute("UPDATE catalog_current_binding SET list_id='999'")
    result=M.run_cohort('frozen',lanes=2)
    self.assertEqual(calls,[])

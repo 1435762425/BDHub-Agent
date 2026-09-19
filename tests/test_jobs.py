@@ -3,6 +3,7 @@ import json
 import sys
 import tempfile
 import unittest
+from contextlib import closing
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -95,7 +96,7 @@ class Reporting(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             var = Path(folder) / 'var'
             var.mkdir(parents=True)
-            with sqlite3.connect(var / 'global-source.sqlite') as conn:
+            with closing(sqlite3.connect(var / 'global-source.sqlite')) as conn,conn:
                 conn.execute('CREATE TABLE global_source_run(id TEXT, updated REAL)')
                 conn.execute("INSERT INTO global_source_run VALUES('r',1789318884.0)")
                 conn.commit()

@@ -4,6 +4,7 @@ import json
 import sys
 import tempfile
 import unittest
+from contextlib import closing
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -17,7 +18,7 @@ NOW = 1_800_000_000.0
 def fixture(folder, positions, relationships, deliveries=(), cases=()):
     var = Path(folder) / 'var'
     var.mkdir(parents=True, exist_ok=True)
-    with sqlite3.connect(var / 'second-cycle.sqlite') as conn:
+    with closing(sqlite3.connect(var / 'second-cycle.sqlite')) as conn, conn:
         conn.executescript('''
             CREATE TABLE source_edge(plan_id TEXT,source_id TEXT,payload TEXT);
             CREATE TABLE cycle_identity_resolution(plan_id TEXT,source_id TEXT,creator_id TEXT);
@@ -28,7 +29,7 @@ def fixture(folder, positions, relationships, deliveries=(), cases=()):
             CREATE TABLE service_case(plan_id TEXT,creator_id TEXT,state TEXT,updated REAL);''')
         conn.commit()
     apply_database(folder,'second-cycle')
-    with sqlite3.connect(var / 'second-cycle.sqlite') as conn:
+    with closing(sqlite3.connect(var / 'second-cycle.sqlite')) as conn, conn:
         grouped={}
         for index, (creator, pid, rank) in enumerate(positions):
             sid = f's{index}'
@@ -87,7 +88,7 @@ class Layers(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             low='1'*19;high='2'*19
             fixture(folder,[('a',low,1),('a',high,1)],[('a',0,'auto',0)])
-            with sqlite3.connect(Path(folder)/'var/second-cycle.sqlite') as db:
+            with closing(sqlite3.connect(Path(folder)/'var/second-cycle.sqlite')) as db, db:
                 db.execute("UPDATE source_edge_index SET units=5 WHERE pid=?",(low,))
                 db.execute("UPDATE source_edge_index SET units=20 WHERE pid=?",(high,))
             state=pool(folder,now=NOW)
@@ -176,7 +177,7 @@ class Partition(unittest.TestCase):
             fixture(folder,[('a',active,1),('a',inactive,2),('b',inactive,1)],
                     [('a',0,'auto',0),('b',0,'auto',0)])
             path=Path(folder)/'var/second-cycle.sqlite'
-            with sqlite3.connect(path) as db:
+            with closing(sqlite3.connect(path)) as db, db:
                 db.executescript('CREATE TABLE plan(id TEXT,institution TEXT,market TEXT);'
                                  'CREATE TABLE catalog(id TEXT PRIMARY KEY,plan_id TEXT,source TEXT,observed REAL,state TEXT,payload TEXT);'
                                  'CREATE TABLE catalog_head(plan_id TEXT,source TEXT,snapshot_id TEXT);')

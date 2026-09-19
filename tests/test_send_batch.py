@@ -5,6 +5,7 @@ import sys
 import tempfile
 import time
 import unittest
+from contextlib import closing
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -65,7 +66,7 @@ def capacity_fixture(folder, *, reserved=0, delivered=0):
     root = Path(folder)
     var = root / 'var'
     var.mkdir(parents=True, exist_ok=True)
-    with sqlite3.connect(var / 'second-cycle.sqlite') as conn:
+    with closing(sqlite3.connect(var / 'second-cycle.sqlite')) as conn, conn:
         conn.executescript('''
             CREATE TABLE plan(id TEXT,institution TEXT,market TEXT,state TEXT);
             CREATE TABLE cycle_contact_reservation(plan_id TEXT,oec TEXT,reserved REAL);
@@ -82,7 +83,7 @@ def capacity_fixture(folder, *, reserved=0, delivered=0):
                          (f'd{index}', 'card', 'confirmed', NOON - 120))
         conn.commit()
     # 身份库也要在：`preview` 会只读地拿"当前 handle"，缺文件会直接报打不开。
-    with sqlite3.connect(var / 'creator-identities.sqlite') as identities:
+    with closing(sqlite3.connect(var / 'creator-identities.sqlite')) as identities, identities:
         identities.execute('CREATE TABLE IF NOT EXISTS creator_identity('
                            'creator_id TEXT,oec_id TEXT,market TEXT,current_handle TEXT,handle_conflict INTEGER)')
         identities.commit()
@@ -101,7 +102,7 @@ class Capacity(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             root = capacity_fixture(folder, delivered=2)
             var = root / 'var'
-            with sqlite3.connect(var / 'second-cycle.sqlite') as conn:
+            with closing(sqlite3.connect(var / 'second-cycle.sqlite')) as conn, conn:
                 conn.execute('UPDATE cycle_delivery_part SET started=?', (NOON - 90000,))
                 conn.commit()
             self.assertEqual(capacity(root, now=NOON)['used'], 0)
@@ -218,7 +219,7 @@ class FrozenBatch(unittest.TestCase):
         self.assertEqual(batch['batchId'], duplicate['batchId'])
         self.assertEqual(batch['previewHash'], shown['previewHash'])
         self.assertEqual((batch['target'],batch['attempted'],batch['reserveTotal']), (1,1,1))
-        with sqlite3.connect(self.root / 'var/second-cycle.sqlite') as db:
+        with closing(sqlite3.connect(self.root / 'var/second-cycle.sqlite')) as db, db:
             rows = list(db.execute('SELECT position_order,creator_id,pid,candidate_json,candidate_hash '
                                    'FROM cycle_bulk_candidate ORDER BY position_order'))
             self.assertEqual([(row[0], row[1], row[2]) for row in rows],
@@ -236,7 +237,7 @@ class FrozenBatch(unittest.TestCase):
         with self.assertRaisesRegex(CycleError, 'preview_conflict'):
             freeze_batch(self.root, 'request-0002', shown['previewHash'], now=NOON,
                          pool_reader=self.pool_reader, chooser=self.chooser)
-        with sqlite3.connect(self.root / 'var/second-cycle.sqlite') as db:
+        with closing(sqlite3.connect(self.root / 'var/second-cycle.sqlite')) as db, db:
             self.assertEqual(db.execute('SELECT count(*) FROM cycle_bulk_freeze').fetchone()[0], 0)
 
     def test_freeze_requires_the_full_target_and_ten_percent_reserve(self):
@@ -250,7 +251,7 @@ class FrozenBatch(unittest.TestCase):
 
     def test_definite_failure_promotes_one_frozen_reserve_but_unknown_does_not(self):
         batch,_=self.freeze('request-0005')
-        with sqlite3.connect(self.root/'var/second-cycle.sqlite') as db:
+        with closing(sqlite3.connect(self.root/'var/second-cycle.sqlite')) as db, db:
             db.row_factory=sqlite3.Row
             db.execute("UPDATE cycle_bulk SET state='running' WHERE id=?",(batch['batchId'],))
             db.execute("UPDATE cycle_bulk_freeze SET state='running' WHERE batch_id=?",(batch['batchId'],))
@@ -260,7 +261,7 @@ class FrozenBatch(unittest.TestCase):
         from lib.second_cycle import CycleStore
         with CycleStore(self.root/'var/second-cycle.sqlite') as store:
             self.assertEqual(promote_reserves(store,batch['batchId']),0)
-        with sqlite3.connect(self.root/'var/second-cycle.sqlite') as db:
+        with closing(sqlite3.connect(self.root/'var/second-cycle.sqlite')) as db, db:
             db.execute("UPDATE cycle_bulk_item SET state='recipient_limit' WHERE batch_id=?",(batch['batchId'],))
             db.execute("UPDATE cycle_delivery SET state='cancelled' WHERE id='unknown-delivery'")
             db.commit()

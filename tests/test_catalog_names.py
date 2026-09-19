@@ -4,6 +4,7 @@ import sqlite3
 import sys
 import tempfile
 import unittest
+from contextlib import closing
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -14,13 +15,13 @@ from lib.catalog_names import cached_pids, gap, prepare, scope  # noqa: E402
 def fixture(folder, products, names):
     var = Path(folder) / 'var'
     var.mkdir(parents=True, exist_ok=True)
-    with sqlite3.connect(var / 'catalog-links.sqlite') as conn:
+    with closing(sqlite3.connect(var / 'catalog-links.sqlite')) as conn, conn:
         conn.execute('CREATE TABLE catalog_prepare_item(pid TEXT,state TEXT,listing TEXT)')
         conn.executemany('INSERT INTO catalog_prepare_item VALUES(?,?,?)',
                          [(pid, state, json.dumps({'title': title, 'product_id': pid}))
                           for pid, state, title in products])
         conn.commit()
-    with sqlite3.connect(var / 'second-cycle.sqlite') as conn:
+    with closing(sqlite3.connect(var / 'second-cycle.sqlite')) as conn, conn:
         conn.execute('CREATE TABLE cycle_product_name(id TEXT PRIMARY KEY,pid TEXT,locale TEXT,'
                      'source_title TEXT,payload TEXT,job_id TEXT)')
         conn.executemany('INSERT INTO cycle_product_name VALUES(?,?,?,?,?,?)',

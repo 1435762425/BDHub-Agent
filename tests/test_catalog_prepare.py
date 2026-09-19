@@ -160,7 +160,7 @@ class BatchLinkTests(unittest.TestCase):
         self.assertEqual(item['intent_id'],intent['id']);self.assertIn(item['state'],('missing','prepared'))
         self.prep.mark_progress(self.run,pid,cid,'selected','submitted')
         self.prep.mark_progress(self.run,pid,cid,'selected','unknown',error='card_read_unresolved')
-        self.prep=CatalogPreparation(self.root)  # restart
+        self.prep.close();self.prep=CatalogPreparation(self.root)  # restart
         item=self.prep.claim_create(self.run)
         self.assertEqual(item['state'],'unknown');self.assertEqual(item['intent_id'],intent['id'])
         self.assertEqual(self.prep.offer_status(self.offer)['reason'],'card_read_unresolved')

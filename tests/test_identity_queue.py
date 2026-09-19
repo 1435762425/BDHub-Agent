@@ -4,6 +4,7 @@ import sqlite3
 import sys
 import tempfile
 import unittest
+from contextlib import closing
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -18,7 +19,7 @@ def fixture(folder, *, edges, resolved, unresolved, queued, blocked, handles=Non
     var = Path(folder) / 'var'
     var.mkdir(parents=True, exist_ok=True)
     handles = handles or {}
-    with sqlite3.connect(var / 'second-cycle.sqlite') as conn:
+    with closing(sqlite3.connect(var / 'second-cycle.sqlite')) as conn, conn:
         conn.executescript('''
             CREATE TABLE plan(id TEXT,institution TEXT,market TEXT,state TEXT);
             CREATE TABLE source_edge(plan_id TEXT,source_id TEXT,payload TEXT,PRIMARY KEY(plan_id,source_id));
@@ -144,7 +145,7 @@ class ByCreator(unittest.TestCase):
     def fixture(self, folder):
         var = Path(folder) / 'var'
         var.mkdir(parents=True, exist_ok=True)
-        with sqlite3.connect(var / 'second-cycle.sqlite') as conn:
+        with closing(sqlite3.connect(var / 'second-cycle.sqlite')) as conn, conn:
             conn.executescript('''
                 CREATE TABLE plan(id TEXT,institution TEXT,market TEXT,state TEXT);
                 CREATE TABLE source_edge(plan_id TEXT,source_id TEXT,payload TEXT);
@@ -196,13 +197,13 @@ class ByCreator(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             self.fixture(folder)
             var = Path(folder) / 'var'
-            with sqlite3.connect(var / 'second-cycle.sqlite') as conn:
+            with closing(sqlite3.connect(var / 'second-cycle.sqlite')) as conn, conn:
                 conn.execute('INSERT INTO source_edge VALUES(?,?,?)', ('p', 's10', json.dumps(
                     {'sourceKind': 'kalodata_http', 'sourceHandle': 'c6', 'pid': 'prod-s10'})))
                 conn.execute("INSERT INTO cycle_identity_outcome VALUES('p','s10','blocked')")
                 conn.commit()
             # 原因来自名单库：被挡住的那条 item 记着为什么没成。
-            with sqlite3.connect(var / 'creator-discovery.sqlite') as items:
+            with closing(sqlite3.connect(var / 'creator-discovery.sqlite')) as items, items:
                 items.execute('CREATE TABLE discovery_item(id TEXT,handle TEXT,status TEXT,reason TEXT,attempt_no INTEGER)')
                 items.execute("INSERT INTO discovery_item VALUES('i1','c6','blocked','request_or_signer_error',1)")
                 items.commit()

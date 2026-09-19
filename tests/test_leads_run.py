@@ -5,6 +5,7 @@ import sqlite3
 import sys
 import tempfile
 import unittest
+from contextlib import closing
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -59,7 +60,7 @@ def factory(provider):
 def fixture(folder, pids, *, body=None, campaign='7600438925614876449'):
     var = Path(folder) / 'var'
     var.mkdir(parents=True, exist_ok=True)
-    with sqlite3.connect(var / 'global-source.sqlite') as conn:
+    with closing(sqlite3.connect(var / 'global-source.sqlite')) as conn, conn:
         conn.executescript('CREATE TABLE global_source_screen_run(run_id TEXT,source_run TEXT,updated REAL);'
                            'CREATE TABLE global_source_screen(run_id TEXT,pid TEXT,state TEXT);'
                            'CREATE TABLE global_source_product(run_id TEXT,pid TEXT,payload TEXT);')
@@ -70,11 +71,11 @@ def fixture(folder, pids, *, body=None, campaign='7600438925614876449'):
                          ('r1', pid, json.dumps({'product_id': pid, 'title': f't-{pid}', 'sales': '900 已售'})))
         conn.commit()
     sqlite3.connect(var / 'catalog-links.sqlite').close();apply_database(folder,'catalog-links')
-    with sqlite3.connect(var / 'catalog-links.sqlite') as conn:
+    with closing(sqlite3.connect(var / 'catalog-links.sqlite')) as conn, conn:
         for pid in pids:
             conn.execute("INSERT INTO catalog_current_binding VALUES('it','selected',?,?,?,'9','commission-1-to-2-v1','link-naming-v1','13','name','{}',NULL,'active',1,1)",
                          (pid,campaign,'f-'+pid))
-    with sqlite3.connect(var / 'second-cycle.sqlite') as conn:
+    with closing(sqlite3.connect(var / 'second-cycle.sqlite')) as conn, conn:
         conn.executescript("CREATE TABLE plan(id TEXT,institution TEXT,market TEXT);"
                            "CREATE TABLE source_edge(plan_id TEXT,source_id TEXT,payload TEXT,PRIMARY KEY(plan_id,source_id));")
         conn.execute("INSERT INTO plan VALUES('plan-it','bjn-local-research','it')")
@@ -162,7 +163,7 @@ class Execution(unittest.TestCase):
                 self.assertEqual(ledger.attempts(), {})
             finally:
                 ledger.close()
-            with sqlite3.connect(Path(folder) / 'var/second-cycle.sqlite') as conn:
+            with closing(sqlite3.connect(Path(folder) / 'var/second-cycle.sqlite')) as conn, conn:
                 self.assertEqual(conn.execute('SELECT count(*) FROM source_edge').fetchone()[0], 2)
             # The products leave the first-time queue.
             self.assertEqual(build(folder, now=1000.0)['firstTime'], [])

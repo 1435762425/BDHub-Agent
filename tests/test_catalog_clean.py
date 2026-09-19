@@ -4,6 +4,7 @@ import sqlite3
 import sys
 import tempfile
 import unittest
+from contextlib import closing
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -93,7 +94,7 @@ class UsedLinks(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             var = Path(tmp) / 'var'
             var.mkdir(parents=True)
-            with sqlite3.connect(var / 'second-cycle.sqlite') as db:
+            with closing(sqlite3.connect(var / 'second-cycle.sqlite')) as db,db:
                 db.execute('CREATE TABLE cycle_delivery(id TEXT PRIMARY KEY,snapshot TEXT)')
                 db.execute('INSERT INTO cycle_delivery VALUES(?,?)', ('d1', json.dumps({'card': {'listId': '8650745929916717846'}})))
                 db.execute('INSERT INTO cycle_delivery VALUES(?,?)', ('d2', json.dumps({'card': {}})))

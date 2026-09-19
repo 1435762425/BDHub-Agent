@@ -4,6 +4,7 @@ import sqlite3
 import sys
 import tempfile
 import unittest
+from contextlib import closing
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -40,7 +41,7 @@ def fixture(folder, *, name_pid=None, card=None, state='ready', readback=None, r
     sqlite3.connect(var / 'catalog-links.sqlite').close()
     apply_database(root,'catalog-links')
     if card is not None or readback is not None or reuse is not None:
-        with sqlite3.connect(var / 'catalog-links.sqlite') as links:
+        with closing(sqlite3.connect(var / 'catalog-links.sqlite')) as links, links:
             links.execute('CREATE TABLE catalog_prepare_item(pid TEXT,campaign_id TEXT,creator_percent TEXT,'
                           'state TEXT,card TEXT,updated REAL)')
             links.execute('CREATE TABLE catalog_prepare_readback(pid TEXT,campaign_id TEXT,kind TEXT,'
@@ -166,7 +167,7 @@ class LedgerCardSources(unittest.TestCase):
         """同一个 pid 有多行时，只看最新一行会平白丢掉有真卡的那一行。"""
         with tempfile.TemporaryDirectory() as folder:
             store = fixture(folder, card=card_payload())
-            with sqlite3.connect(Path(folder) / 'var/catalog-links.sqlite') as links:
+            with closing(sqlite3.connect(Path(folder) / 'var/catalog-links.sqlite')) as links, links:
                 links.execute('INSERT INTO catalog_prepare_item VALUES(?,?,?,?,?,?)',
                               (OFFER['pid'], OFFER['campaignId'], OFFER['creatorPercent'], 'ready',
                                json.dumps({'state': 'existing_links_observed', 'total': 1}), 9.0))
@@ -247,7 +248,7 @@ class CardRateGap(unittest.TestCase):
     def _store_with_ledger(self, folder, card_percent):
         store = catalog_fixture(folder)
         var = Path(folder) / 'var'
-        with sqlite3.connect(var / 'catalog-links.sqlite') as links:
+        with closing(sqlite3.connect(var / 'catalog-links.sqlite')) as links, links:
             links.execute('CREATE TABLE catalog_prepare_item(pid TEXT,campaign_id TEXT,creator_percent TEXT,'
                           'state TEXT,card TEXT,updated REAL)')
             links.execute('CREATE TABLE catalog_prepare_readback(pid TEXT,campaign_id TEXT,kind TEXT,'

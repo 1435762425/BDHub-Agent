@@ -1,4 +1,5 @@
 import json,sqlite3,sys,tempfile,unittest
+from contextlib import closing
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1];sys.path.insert(0,str(ROOT/'scripts'))
 from lib.lead_selection import backfill_receipts,publish_query,select_top_leads  # noqa: E402
@@ -12,7 +13,7 @@ def edge(index,*,creator=None,units=None,pid='1'):
 class LeadSelectionTests(unittest.TestCase):
  def setUp(self):
   self.temp=tempfile.TemporaryDirectory();self.root=Path(self.temp.name);(self.root/'var').mkdir()
-  with sqlite3.connect(self.root/'var/second-cycle.sqlite') as db:
+  with closing(sqlite3.connect(self.root/'var/second-cycle.sqlite')) as db,db:
    db.execute('CREATE TABLE source_edge(plan_id TEXT,source_id TEXT,payload TEXT,PRIMARY KEY(plan_id,source_id))')
    db.execute('CREATE TABLE plan(id TEXT,institution TEXT,market TEXT)')
    db.execute("INSERT INTO plan VALUES('p','bjn-local-research','it')")
@@ -29,7 +30,7 @@ class LeadSelectionTests(unittest.TestCase):
   result=publish_query(self.root,plan_id='p',query_id='q',pid='1',edges=rows,
                        receipt_fingerprints=['page-1'],at=10)
   self.assertEqual((result['rawPositive'],result['selected']),(25,20))
-  with sqlite3.connect(self.root/'var/second-cycle.sqlite') as db:
+  with closing(sqlite3.connect(self.root/'var/second-cycle.sqlite')) as db,db:
    self.assertEqual(db.execute('SELECT count(*) FROM source_edge').fetchone()[0],25)
    self.assertEqual(db.execute('SELECT count(*) FROM source_edge_index').fetchone()[0],25)
    self.assertEqual(db.execute('SELECT count(*) FROM lead_query_selection').fetchone()[0],20)
@@ -41,7 +42,7 @@ class LeadSelectionTests(unittest.TestCase):
   with self.assertRaisesRegex(ValueError,'lead_publication_conflict'):
    publish_query(self.root,plan_id='p',query_id='q',pid='1',edges=[edge(2)],receipt_fingerprints=['b'])
  def test_backfill_checks_then_publishes_existing_receipts_without_platform_writes(self):
-  with sqlite3.connect(self.root/'var/kalodata-leads.sqlite') as db:
+  with closing(sqlite3.connect(self.root/'var/kalodata-leads.sqlite')) as db,db:
    db.executescript('CREATE TABLE leads_page(pid TEXT,cursor TEXT,payload TEXT);'
                     'CREATE TABLE leads_query(pid TEXT,window_end TEXT);')
    receipt={'edges':[edge(i) for i in range(1,26)],'rowsFingerprint':'page-1'}
@@ -49,11 +50,11 @@ class LeadSelectionTests(unittest.TestCase):
    db.execute('INSERT INTO leads_query VALUES(?,?)',('1','2026-09-14'))
   checked=backfill_receipts(self.root,apply=False,at=10)
   self.assertEqual((checked['pids'],checked['selected'],checked['platformWrites']),(1,20,0))
-  with sqlite3.connect(self.root/'var/second-cycle.sqlite') as db:
+  with closing(sqlite3.connect(self.root/'var/second-cycle.sqlite')) as db,db:
    self.assertEqual(db.execute('SELECT count(*) FROM lead_query_head').fetchone()[0],0)
   applied=backfill_receipts(self.root,apply=True,at=10)
   self.assertEqual((applied['pids'],applied['selected'],applied['platformWrites']),(1,20,0))
-  with sqlite3.connect(self.root/'var/second-cycle.sqlite') as db:
+  with closing(sqlite3.connect(self.root/'var/second-cycle.sqlite')) as db,db:
    self.assertEqual(db.execute('SELECT count(*) FROM lead_query_selection').fetchone()[0],20)
 
 if __name__=='__main__':unittest.main()

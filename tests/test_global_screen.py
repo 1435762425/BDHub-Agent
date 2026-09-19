@@ -195,7 +195,7 @@ class LiveSelectionState(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             var = Path(folder) / 'var'
             var.mkdir(parents=True, exist_ok=True)
-            with sql.connect(var / 'global-selection.sqlite') as conn:
+            with closing(sql.connect(var / 'global-selection.sqlite')) as conn,conn:
                 conn.execute('CREATE TABLE intake_item(run_id TEXT,pid TEXT,state TEXT)')
                 conn.executemany('INSERT INTO intake_item VALUES(?,?,?)',
                                  [('r', 'a', 'confirmed'), ('r', 'b', 'already_selected'),

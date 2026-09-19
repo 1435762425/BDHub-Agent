@@ -4,6 +4,7 @@ import sqlite3
 import sys
 import tempfile
 import unittest
+from contextlib import closing
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -22,7 +23,7 @@ def at(day, hour, minute=0, second=0):
 def fixture(folder):
     var = Path(folder) / 'var'
     var.mkdir(parents=True, exist_ok=True)
-    with sqlite3.connect(var / 'second-cycle.sqlite') as conn:
+    with closing(sqlite3.connect(var / 'second-cycle.sqlite')) as conn, conn:
         conn.executescript('''
             CREATE TABLE cycle_delivery(id TEXT,plan_id TEXT,creator_id TEXT,oec TEXT,pid TEXT,
                                         snapshot TEXT,state TEXT);
@@ -77,7 +78,7 @@ def fixture(folder):
         conn.execute('INSERT INTO service_case VALUES(?,?,?,?,?,?)',
                      ('case2', 'p', 'reply_creator', 'sample_request', 'resolved', at(15, 13)))
         conn.commit()
-    with sqlite3.connect(var / 'creator-identities.sqlite') as conn:
+    with closing(sqlite3.connect(var / 'creator-identities.sqlite')) as conn, conn:
         conn.execute('CREATE TABLE creator_identity(creator_id TEXT,market TEXT,oec_id TEXT,current_handle TEXT)')
         conn.execute('INSERT INTO creator_identity VALUES(?,?,?,?)', ('c2', 'it', 'oec1', 'current_c2'))
         conn.execute('INSERT INTO creator_identity VALUES(?,?,?,?)', ('reply_creator', 'it', 'oec', 'current_reply'))

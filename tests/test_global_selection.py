@@ -1,4 +1,5 @@
 import sqlite3
+from contextlib import closing
 import sys
 import tempfile,unittest,tempfile,json,sqlite3
 from pathlib import Path
@@ -58,7 +59,7 @@ class PrepareSkipsSettled(unittest.TestCase):
         root = Path(folder)
         (root / 'config').mkdir(parents=True, exist_ok=True)
         (root / 'var').mkdir(parents=True, exist_ok=True)
-        with sqlite3.connect(root / 'var/global-source.sqlite') as conn:
+        with closing(sqlite3.connect(root / 'var/global-source.sqlite')) as conn,conn:
             conn.executescript('CREATE TABLE global_source_head(scope_hash TEXT,run_id TEXT);'
                                'CREATE TABLE global_source_run(id TEXT,scope TEXT);'
                                'CREATE TABLE global_source_product(run_id TEXT,pid TEXT,payload TEXT);')

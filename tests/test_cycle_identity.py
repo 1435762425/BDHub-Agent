@@ -1,4 +1,5 @@
 import sys,tempfile,unittest,sqlite3,json
+from contextlib import closing
 from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'scripts'))
 from lib.second_cycle import CycleStore,CycleError
@@ -9,7 +10,7 @@ class BridgeTests(unittest.TestCase):
  def setUp(self):
   self.t=tempfile.TemporaryDirectory();self.root=Path(self.t.name);self.s=CycleStore(self.root/'second-cycle.sqlite',lambda:NOW);self.p=self.s.plan('test','it')
   self.d=CreatorDiscoveryStore(self.root);self.ids=self.root/'creator-identities.sqlite'
-  with sqlite3.connect(self.ids) as c:c.execute('CREATE TABLE identity_observation(creator_id TEXT,market TEXT,oec_id TEXT,evidence_ref TEXT)')
+  with closing(sqlite3.connect(self.ids)) as c,c:c.execute('CREATE TABLE identity_observation(creator_id TEXT,market TEXT,oec_id TEXT,evidence_ref TEXT)')
   self.b=IdentityBridge(self.s,self.d,self.ids)
   self.s.publish(self.p,'source',NOW,[offer(),offer('2')]);self.s.import_edges(self.p,[edge(person=None,sourceKind='kalodata_http',sourceHandle='hello'),edge('2',person=None,source='e2',sourceKind='kalodata_http',sourceHandle='hello')])
  def tearDown(self):self.s.close();self.d.close();self.t.cleanup()
@@ -17,7 +18,7 @@ class BridgeTests(unittest.TestCase):
   batch=self.s.db.execute('SELECT batch_id FROM cycle_identity_outbox').fetchone()[0];item=self.d.detail(batch)['items'][0]
   with self.d.transaction():self.d._db.execute("UPDATE discovery_item SET status='completed',creator_id='c1',oec_id='123',outcome='created' WHERE id=?",(item['id'],))
   if proof:
-   with sqlite3.connect(self.ids) as c:c.execute('INSERT INTO identity_observation VALUES(?,?,?,?)',('c1','it','123','creator-discovery:'+item['id']+':'+('a'*64)+':discovery-result'))
+   with closing(sqlite3.connect(self.ids)) as c,c:c.execute('INSERT INTO identity_observation VALUES(?,?,?,?)',('c1','it','123','creator-discovery:'+item['id']+':'+('a'*64)+':discovery-result'))
  def test_freeze_and_submit_deduplicate_handles(self):
   self.assertIsNotNone(self.b.freeze(self.p));self.assertIsNone(self.b.freeze(self.p));self.b.dispatch(self.p);self.assertEqual(self.b.dispatch(self.p),[])
   self.assertEqual(self.d._db.execute('SELECT count(*) FROM discovery_item').fetchone()[0],1)

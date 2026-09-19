@@ -236,7 +236,7 @@ class Validation(unittest.TestCase):
             preview(folder, transport=context(fake), clock=lambda: NOW, job_id='job-1')
             apply(folder, campaign_ids=[A], email='a@b.com', confirm=True,
                   transport=context(fake), clock=lambda: NOW, job_id='job-1')
-            with sqlite3.connect(Path(folder) / 'var/campaign-join.sqlite') as conn:
+            with contextlib.closing(sqlite3.connect(Path(folder) / 'var/campaign-join.sqlite')) as conn:
                 row = conn.execute('SELECT state,write_attempted FROM campaign_join_item').fetchone()
             self.assertEqual(row[0], 'joined')
             self.assertEqual(row[1], 1)

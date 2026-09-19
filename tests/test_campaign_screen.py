@@ -4,6 +4,7 @@ import sqlite3
 import sys
 import tempfile
 import unittest
+from contextlib import closing
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -31,7 +32,7 @@ def offer(pid='1' * 19, campaign='900', *, total='15', public='12', stock='101',
 def fixture(folder, offers, *, source='campaign'):
     var = Path(folder) / 'var'
     var.mkdir(parents=True, exist_ok=True)
-    with sqlite3.connect(var / 'second-cycle.sqlite') as conn:
+    with closing(sqlite3.connect(var / 'second-cycle.sqlite')) as conn, conn:
         conn.executescript('''
             CREATE TABLE plan(id TEXT,institution TEXT,market TEXT,state TEXT);
             CREATE TABLE catalog(id TEXT PRIMARY KEY,plan_id TEXT,source TEXT,observed REAL,state TEXT,payload TEXT);
@@ -192,7 +193,7 @@ class Recorded(unittest.TestCase):
             self.assertEqual(saved['poolCounts'], {'chosen': 1, 'held': 1})
             # Recording twice replaces the run instead of duplicating rows.
             record(folder, built, clock=lambda: 1001.0)
-            with sqlite3.connect(Path(folder) / 'var/campaign-screen.sqlite') as conn:
+            with closing(sqlite3.connect(Path(folder) / 'var/campaign-screen.sqlite')) as conn:
                 self.assertEqual(conn.execute('SELECT count(*) FROM campaign_screen').fetchone()[0], 2)
                 self.assertEqual(conn.execute('SELECT count(*) FROM campaign_pool_item').fetchone()[0], 2)
 

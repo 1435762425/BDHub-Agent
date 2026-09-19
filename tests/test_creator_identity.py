@@ -4,6 +4,7 @@ from pathlib import Path
 import sqlite3
 import tempfile
 import unittest
+from contextlib import closing
 
 
 SPEC = importlib.util.spec_from_file_location(
@@ -135,7 +136,7 @@ class CreatorIdentityTests(unittest.TestCase):
         self.assertFalse(pending["historicalCrossSourceIdentityProven"])
         self.assertEqual(self.store.find_handle_candidates("it", "creator.old"), [])
         self.assertIsNone(self.store.get_by_oec("it", OEC))
-        with sqlite3.connect(self.path) as database:
+        with closing(sqlite3.connect(self.path)) as database:
             self.assertEqual(database.execute("SELECT COUNT(*) FROM creator_identity").fetchone()[0], 0)
         with self.assertRaises(identity.IdentityConflict):
             self.lead(external_id="different-external-id")
@@ -198,7 +199,7 @@ class CreatorIdentityTests(unittest.TestCase):
             ids = list(executor.map(observe_from_connection, range(16)))
         self.assertEqual(len(set(ids)), 1)
         self.assertEqual(len(self.store.history("it", OEC)), 16)
-        with sqlite3.connect(self.path) as database:
+        with closing(sqlite3.connect(self.path)) as database:
             self.assertEqual(database.execute("SELECT COUNT(*) FROM creator_identity").fetchone()[0], 1)
 
     def test_concurrent_identical_event_is_persisted_once(self):
@@ -251,12 +252,12 @@ class CreatorIdentityTests(unittest.TestCase):
 
     def test_observation_sql_is_append_only_and_unrelated_database_is_rejected(self):
         self.observe()
-        with sqlite3.connect(self.path) as database:
+        with closing(sqlite3.connect(self.path)) as database,database:
             for sql in ("UPDATE identity_observation SET handle='wrong'", "DELETE FROM identity_observation"):
                 with self.subTest(sql=sql), self.assertRaises(sqlite3.IntegrityError):
                     database.execute(sql)
         unrelated = self.path.parent / "other.sqlite"
-        with sqlite3.connect(unrelated) as database:
+        with closing(sqlite3.connect(unrelated)) as database,database:
             database.execute("CREATE TABLE unrelated(value TEXT)")
         before = unrelated.read_bytes()
         with self.assertRaisesRegex(ValueError, "not a creator identity store"):
