@@ -45,7 +45,7 @@ export function useSendBatch():SendController{
    if(!r.ok){
     const problem=await r.json().catch(()=>({})) as {error?:string};
     if(r.status===409){await reload().catch(()=>{});setMessage("预览或批次状态已经变化，已保留现有批次并刷新页面，请重新核对。");return;}
-    setMessage(problem.error==="batch_empty"?"当前没有可冻结的位置。":"这个批次动作被拒绝，请刷新后再核对。");return;
+    setMessage(problem.error==="batch_empty"?"当前没有可冻结的位置。":problem.error==="full_preparation_required"?"正式目标和 10% 候补尚未备齐，不能冻结；原目标不会被缩小。":"这个批次动作被拒绝，请刷新后再核对。");return;
    }
    const value:SendState=await r.json();setData(value);setDraft(value.config);setMessage(success);
   }catch{setMessage("暂时无法完成这个批次动作。");}

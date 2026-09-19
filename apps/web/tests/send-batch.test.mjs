@@ -9,14 +9,16 @@ const sample={handle:'nuvolablu4',pid:'1729571380453480878',name:'questi orecchi
  creatorPercent:'13',publicPercent:'12',campaignId:'7667413079080240918',catalogSource:'selected',unlocked:false};
 const hash='a'.repeat(64);
 const authorization={source:'current_user_request',scope:'pool_to_send',maxPeople:500,requestedPeople:500,
+ reservePeople:50,frozenPeople:550,reservePolicy:'ceil-10-percent-v1',
  widenLocalGate:false,sendWindow:null,institutionNewContactRollingCap:500,
  materialPolicy:'frozen-current-binding-v1',note:'只消费本批冻结位置'};
 
 const payload={available:true,
  config:{count:500,widen:false,windowEnabled:false,window:['09:00','24:00']},
- preview:{available:true,requested:500,sendable:500,positions:1769,readyAvailable:1769,
+ preview:{available:true,requested:500,reserveRequested:50,required:550,sendable:500,reserveReady:50,
+  frozenTotal:550,fullPreparation:true,positions:1769,readyAvailable:1769,
   samples:[sample],nameQuality:{缓存:476,取自卡名:24},
-  skipped:{missing_card:797,offer_not_in_current_catalog:217,relationship_blocked:7,beyond_requested_size:248},
+  skipped:{missing_card:797,offer_not_in_current_catalog:217,relationship_blocked:7,beyond_requested_size:198},
   capacity:{windowSeconds:86400,limit:500,used:0,remaining:500},
   window:{enabled:false,open:true,start:null,end:null},widen:false,previewHash:hash,authorization},
  pool:{counts:{positions:6980},layers:{ready:1769,queued:3378,cooling:1333,awaiting_reply:3,excluded:2,sent:495}},batch:null};
@@ -55,6 +57,9 @@ test('a batch that does not add up is refused instead of shown as real numbers',
  const swapped=structuredClone(payload);
  swapped.preview.sendable=499;
  assert.throws(()=>validateSendState(swapped),/invalid_send/);
+ const reserve=structuredClone(payload);
+ reserve.preview.reserveRequested=49;
+ assert.throws(()=>validateSendState(reserve),/invalid_send/);
 });
 
 test('a sample without the message text is still readable, not fatal',()=>{
@@ -79,14 +84,15 @@ test('an unknown pool layer or a bad sample is refused',()=>{
  assert.throws(()=>validateSendState(many),/invalid_send/);
 });
 
-test('only the three settings can be saved, and only the released sizes',()=>{
+test('an exact target from 1 to 2000 can be saved; presets are only shortcuts',()=>{
  assert.deepEqual(validateSendRequest({action:'save',config:{count:1000}}).config.count,1000);
  assert.deepEqual(validateSendRequest({action:'save',config:{count:500,widen:true,windowEnabled:true,
   window:['09:00','24:00']}}).config.window,['09:00','24:00']);
- // 600 是越界探测档：只在同时开着越界时才接受。
  assert.equal(validateSendRequest({action:'save',config:{count:600,widen:true}}).config.count,600);
- assert.throws(()=>validateSendRequest({action:'save',config:{count:600}}),/invalid_send_request/);
- assert.throws(()=>validateSendRequest({action:'save',config:{count:777}}),/invalid_send_request/);
+ assert.equal(validateSendRequest({action:'save',config:{count:600}}).config.count,600);
+ assert.equal(validateSendRequest({action:'save',config:{count:777}}).config.count,777);
+ assert.throws(()=>validateSendRequest({action:'save',config:{count:0}}),/invalid_send_request/);
+ assert.throws(()=>validateSendRequest({action:'save',config:{count:2001}}),/invalid_send_request/);
  assert.throws(()=>validateSendRequest({action:'save',config:{count:500,unknown:1}}),/invalid_send_request/);
  assert.throws(()=>validateSendRequest({action:'start',config:{count:500}}),/invalid_send_request/);
  assert.throws(()=>validateSendRequest({action:'save',config:{count:500},extra:1}),/invalid_send_request/);
@@ -110,7 +116,8 @@ test('freeze start and stop have exact explicit request shapes',()=>{
 test('a frozen batch response is validated and reconciles its item counts',()=>{
  const frozen=structuredClone(payload);
  frozen.batch={batchId:'send-batch-0001',requestId:'web-request-0001',previewHash:hash,revision:1,
-  state:'prepared',target:500,counts:{pending:500},config:payload.config,authorization,
+  state:'prepared',target:500,attempted:500,reserveTotal:50,reservePromoted:0,reserveRemaining:50,
+  counts:{pending:500},config:payload.config,authorization,
   authorizedAt:null,stopRequestedAt:null,createdAt:1789838000};
  assert.equal(validateSendState(frozen).batch.state,'prepared');
  frozen.batch.counts.pending=499;

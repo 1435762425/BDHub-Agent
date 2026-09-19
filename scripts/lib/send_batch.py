@@ -17,6 +17,7 @@
 2–3 条样例和总数。`freeze_batch()` 才落库；`start_batch()` 只登记明确授权，CLI 随后启动冻结批次 worker。
 """
 import json
+import math
 import re
 import time
 from contextlib import closing
@@ -33,6 +34,7 @@ NEW_CONTACT_WINDOW_SECONDS = 86400
 NEW_CONTACT_LIMIT = 500
 DEFAULT_WINDOW = ('09:00', '24:00')
 SAMPLE_SIZE = 3
+RESERVE_RATE = 0.10
 
 
 def _beijing(stamp):
@@ -195,12 +197,16 @@ def _preview(root, *, count=500, widen=False, window=None, now=None, clock=None,
         raise CycleError('invalid_send_count')
     window = _window_arg(window)
     stamp = clock() if clock is not None else (now if now is not None else time.time())
+    reserve_requested = math.ceil(count * RESERVE_RATE)
+    required = count + reserve_requested
     # 池子的可发层里，前面会堆着过不了复检的槽位（缺卡片核验/被关系控制挡住），所以**接着往下取**，
-    # 直到凑够这一批或把可发层走完；取过的槽位与跳过原因都要如实报出来。
-    read_pool = pool_reader or (lambda: pool(root, now=stamp, limit=min(4000, max(count * 4, count))))
+    # 直到凑够正式＋候补或把可发层走完；取过的槽位与跳过原因都要如实报出来。
+    read_pool = pool_reader or (lambda: pool(root, now=stamp, limit=min(4000, max(required * 4, required))))
     state = read_pool()
     if not state.get('available'):
-        return ({'available': False, 'requested': count, 'sendable': 0, 'samples': [], 'skipped': {},
+        return ({'available': False, 'requested': count, 'reserveRequested': reserve_requested,
+                 'required': required, 'sendable': 0, 'reserveReady': 0,
+                 'frozenTotal': 0, 'fullPreparation': False, 'samples': [], 'skipped': {},
                  'rateGap': {'same': 0, 'lower': 0, 'lowerByOne': 0, 'higher': 0, 'noCard': 0,
                              'examples': [], 'readable': False},
                  'capacity': None, 'window': window_state(window, stamp), 'widen': bool(widen),
@@ -224,43 +230,54 @@ def _preview(root, *, count=500, widen=False, window=None, now=None, clock=None,
     space = None if widen else (cap or {}).get('remaining')
     window_now = window_state(window, stamp)
     sendable = []
+    reserves = []
     for index, candidate in enumerate(candidates):
-        # 一批就是一批：凑够 `count` 条之后剩下的都不进这一批（池子里还留着，下次再发）。
-        if len(sendable) >= count:
+        # 前 N 位是正式成员，后 ceil(N×10%) 是冻结候补；再后面的才留在池子等下一批。
+        if index >= required:
             skipped.append({'sourceId': candidate['source']['sourceId'], 'reason': 'beyond_requested_size'})
             continue
-        if space is not None and len(sendable) >= space:
+        if index < count and space is not None and len(sendable) >= space:
             skipped.append({'sourceId': candidate['source']['sourceId'], 'reason': 'local_capacity_reached'})
             continue
-        sendable.append(candidate)
+        if index < count:
+            sendable.append(candidate)
+        else:
+            reserves.append(candidate)
     reasons = {}
     for row in skipped:
         reasons[row.get('reason') or 'unknown'] = reasons.get(row.get('reason') or 'unknown', 0) + 1
-    frozen = [_frozen_candidate(candidate) for candidate in sendable]
+    formal_frozen = [_frozen_candidate(candidate, 'formal') for candidate in sendable]
+    reserve_frozen = [_frozen_candidate(candidate, 'reserve') for candidate in reserves]
+    frozen = formal_frozen + reserve_frozen
     config = {'count': count, 'widen': bool(widen), 'windowEnabled': window is not None,
               'window': list(window or DEFAULT_WINDOW)}
-    authorization = _authorization(count, len(frozen), widen, window)
+    authorization = _authorization(count, len(formal_frozen), reserve_requested,
+                                   len(reserve_frozen), widen, window)
     preview_hash = _preview_hash(config, authorization, frozen)
-    return ({'available': True, 'requested': count, 'sendable': len(frozen),
+    return ({'available': True, 'requested': count, 'reserveRequested': reserve_requested, 'required': required,
+            'sendable': len(formal_frozen), 'reserveReady': len(reserve_frozen),
+            'frozenTotal': len(frozen),
+            'fullPreparation': len(formal_frozen) == count and len(reserve_frozen) == reserve_requested,
             'positions': len(positions), 'readyAvailable': (state.get('layers') or {}).get('ready', 0),
-            'samples': [_sample(c) for c in frozen[:SAMPLE_SIZE]],
+            'samples': [_sample(c) for c in formal_frozen[:SAMPLE_SIZE]],
             # 短名的**质量**（不是卡点）：缓存里没有就用卡名、再不行用标题兜底——不让它挡发送。
-            'nameQuality': _name_quality(sendable),
+            'nameQuality': _name_quality(sendable + reserves),
             'skipped': reasons, 'rateGap': rate_gap,
             'capacity': cap, 'window': window_now, 'widen': bool(widen),
             'previewHash': preview_hash, 'authorization': authorization}, frozen)
 
 
-def _frozen_candidate(candidate):
+def _frozen_candidate(candidate, role):
     """Freeze the actual card, text and all eligibility revisions shown in the preview."""
     from lib.cycle_materials import render
     frozen = json.loads(encoded(candidate))
+    frozen['batchRole'] = role
     frozen['message'] = render(frozen['name'], frozen['offer'], 'standard', frozen['handle'])
     return frozen
 
 
 def _preview_hash(config, authorization, candidates):
-    return digest({'schema': 'bdhub.send-preview.v2', 'config': config,
+    return digest({'schema': 'bdhub.send-preview.v3', 'config': config,
                    'authorization': authorization,
                    'candidates': [{'position': index, 'creatorId': row['creatorId'],
                                    'oec': row['oecId'], 'pid': str(row['pid']),
@@ -305,14 +322,16 @@ def _sample(candidate):
             'unlocked': bool(candidate.get('relationshipUnlocked'))}
 
 
-def _authorization(requested, max_people, widen, window):
+def _authorization(requested, max_people, reserve_requested, reserve_ready, widen, window):
     """写进 `cycle_bulk.authorization` 的显式授权：它决定这一批到底被允许做什么。"""
     return {'source': 'current_user_request', 'scope': 'pool_to_send', 'maxPeople': max_people,
             'requestedPeople': requested,
+            'reservePeople': reserve_requested, 'frozenPeople': max_people + reserve_ready,
+            'reservePolicy': 'ceil-10-percent-v1',
             'widenLocalGate': bool(widen), 'sendWindow': list(window) if window else None,
             'institutionNewContactRollingCap': NEW_CONTACT_LIMIT,
             'materialPolicy': 'frozen-current-binding-v1',
-            'note': '只消费本批冻结位置；越界探测时平台原始回执必须落账'}
+            'note': '正式目标之外只消费本批冻结候补；unknown不释放名额；越界探测时平台原始回执必须落账'}
 
 
 def _table_exists(db, name):
@@ -334,6 +353,11 @@ def _hash(value, code):
 def _batch_payload(db, row):
     counts = dict(db.execute('SELECT state,count(*) FROM cycle_bulk_item WHERE batch_id=? GROUP BY state',
                              (row['batch_id'],)))
+    goal = db.execute('SELECT target FROM cycle_bulk WHERE id=?', (row['batch_id'],)).fetchone()
+    target = goal[0] if goal else sum(counts.values())
+    candidate_total = db.execute('SELECT count(*) FROM cycle_bulk_candidate WHERE batch_id=?',
+                                 (row['batch_id'],)).fetchone()[0]
+    attempted = sum(counts.values())
     runtime = None
     if _table_exists(db, 'cycle_bulk_runtime'):
         running = db.execute('SELECT pid,seen,phase FROM cycle_bulk_runtime WHERE batch_id=?',
@@ -342,7 +366,10 @@ def _batch_payload(db, row):
             runtime = {'pid': running['pid'], 'seenAt': running['seen'], 'phase': running['phase']}
     return {'batchId': row['batch_id'], 'requestId': row['request_id'],
             'previewHash': row['preview_hash'], 'revision': row['revision'], 'state': row['state'],
-            'target': sum(counts.values()), 'counts': counts,
+            'target': target, 'attempted': attempted, 'counts': counts,
+            'reserveTotal': max(0, candidate_total - target),
+            'reservePromoted': max(0, attempted - target),
+            'reserveRemaining': max(0, candidate_total - attempted),
             'config': json.loads(row['config_json']),
             'authorization': json.loads(row['authorization_json']),
             'authorizedAt': row['authorized_at'], 'stopRequestedAt': row['stop_requested_at'],
@@ -385,6 +412,8 @@ def freeze_batch(root, request_id, expected_preview_hash, *, now=None, clock=Non
         raise CycleError('preview_conflict')
     if not candidates:
         raise CycleError('batch_empty')
+    if not preview_state.get('fullPreparation'):
+        raise CycleError('full_preparation_required')
     stamp = clock() if clock is not None else (now if now is not None else time.time())
     batch_id = 'send-' + digest([request_id, expected_preview_hash])[:24]
     from lib.catalog_binding import offer_fingerprint
@@ -405,7 +434,7 @@ def freeze_batch(root, request_id, expected_preview_hash, *, now=None, clock=Non
         plan = _plan(store)
         authorization = preview_state['authorization']
         store.db.execute("INSERT INTO cycle_bulk VALUES(?,?,?,?, 'prepared', ?)",
-                         (batch_id, plan, len(candidates), encoded(authorization), stamp))
+                         (batch_id, plan, config['count'], encoded(authorization), stamp))
         store.db.execute("INSERT INTO cycle_bulk_freeze(batch_id,request_id,preview_hash,config_json,"
                          "authorization_json,revision,state,created_at) VALUES(?,?,?,?,?,1,'prepared',?)",
                          (batch_id, request_id, expected_preview_hash, encoded(config),
@@ -418,9 +447,10 @@ def freeze_batch(root, request_id, expected_preview_hash, *, now=None, clock=Non
                               str(candidate['pid']), candidate['source']['sourceId'],
                               candidate['offer']['offerKey'], offer_fingerprint(candidate['offer']),
                               str(candidate['card']['listId']), candidate_json, candidate_hash))
-            store.db.execute("INSERT INTO cycle_bulk_item(batch_id,creator_id,handle,state) "
-                             "VALUES(?,?,?,'pending')",
-                             (batch_id, candidate['creatorId'], candidate['handle']))
+            if candidate.get('batchRole') == 'formal':
+                store.db.execute("INSERT INTO cycle_bulk_item(batch_id,creator_id,handle,state) "
+                                 "VALUES(?,?,?,'pending')",
+                                 (batch_id, candidate['creatorId'], candidate['handle']))
         row = store.db.execute('SELECT * FROM cycle_bulk_freeze WHERE batch_id=?', (batch_id,)).fetchone()
         return _batch_payload(store.db, row)
 
@@ -443,10 +473,16 @@ def start_batch(root, batch_id, expected_revision, *, confirmed=False, now=None,
             raise CycleError('revision_conflict')
         if row['state'] not in ('prepared', 'start_failed'):
             raise CycleError('batch_not_startable')
-        target = store.db.execute('SELECT count(*) FROM cycle_bulk_candidate WHERE batch_id=?',
+        target = store.db.execute('SELECT target FROM cycle_bulk WHERE id=?', (batch_id,)).fetchone()[0]
+        frozen = store.db.execute('SELECT count(*) FROM cycle_bulk_candidate WHERE batch_id=?',
                                   (batch_id,)).fetchone()[0]
-        if target <= 0 or target != store.db.execute('SELECT target FROM cycle_bulk WHERE id=?',
-                                                     (batch_id,)).fetchone()[0]:
+        formal = store.db.execute("SELECT count(*) FROM cycle_bulk_candidate WHERE batch_id=? AND "
+                                  "(json_extract(candidate_json,'$.batchRole')='formal' OR "
+                                  "(json_extract(candidate_json,'$.batchRole') IS NULL AND position_order<?))",
+                                  (batch_id, target)).fetchone()[0]
+        items = store.db.execute('SELECT count(*) FROM cycle_bulk_item WHERE batch_id=?',
+                                 (batch_id,)).fetchone()[0]
+        if target <= 0 or frozen < target or formal != target or items != target:
             raise CycleError('frozen_batch_incomplete')
         if store._plan(store.db.execute('SELECT plan_id FROM cycle_bulk WHERE id=?',
                                        (batch_id,)).fetchone()[0])['state'] != 'active':
@@ -456,6 +492,34 @@ def start_batch(root, batch_id, expected_revision, *, confirmed=False, now=None,
         store.db.execute("UPDATE cycle_bulk SET state='starting' WHERE id=?", (batch_id,))
         row = store.db.execute('SELECT * FROM cycle_bulk_freeze WHERE batch_id=?', (batch_id,)).fetchone()
         return _batch_payload(store.db, row) | {'duplicate': False}
+
+
+def promote_reserves(store, batch_id):
+    """Promote frozen reserves only after a formal member reached a definite non-contact terminal state."""
+    batch = store.db.execute('SELECT target,state FROM cycle_bulk WHERE id=?', (batch_id,)).fetchone()
+    if not batch or batch['state'] not in ('running', 'waiting_supply'):
+        return 0
+    unknown = store.db.execute("SELECT 1 FROM cycle_delivery d JOIN cycle_bulk_item i ON i.delivery_id=d.id "
+                               "WHERE i.batch_id=? AND d.state='unknown'", (batch_id,)).fetchone()
+    if unknown:
+        return 0
+    counts = dict(store.db.execute('SELECT state,count(*) FROM cycle_bulk_item WHERE batch_id=? GROUP BY state',
+                                   (batch_id,)))
+    succeeded = counts.get('confirmed', 0) + counts.get('contacted_inquiry', 0)
+    active = sum(counts.get(state, 0) for state in ('pending', 'preparing', 'sending'))
+    needed = max(0, batch['target'] - succeeded - active)
+    if not needed:
+        return 0
+    rows = store.db.execute("SELECT c.creator_id,c.candidate_json FROM cycle_bulk_candidate c "
+                            "WHERE c.batch_id=? AND json_extract(c.candidate_json,'$.batchRole')='reserve' "
+                            "AND NOT EXISTS(SELECT 1 FROM cycle_bulk_item i WHERE i.batch_id=c.batch_id "
+                            "AND i.creator_id=c.creator_id) ORDER BY c.position_order LIMIT ?",
+                            (batch_id, needed)).fetchall()
+    for row in rows:
+        candidate = json.loads(row['candidate_json'])
+        store.db.execute("INSERT INTO cycle_bulk_item(batch_id,creator_id,handle,state) "
+                         "VALUES(?,?,?,'pending')", (batch_id, row['creator_id'], candidate['handle']))
+    return len(rows)
 
 
 def mark_batch_running(root, batch_id):

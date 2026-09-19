@@ -5,7 +5,7 @@
  * 桥接层反过来 import 这个文件没有问题。
  */
 
-/** 只放行 500/1000 两档；`--widen` 时多一档 600（账号级日额度未知，先按它探）。 */
+/** 常用快捷档；实际目标允许 1–2000，600 是账号级日额度探测的快捷值。 */
 export const SEND_COUNTS=[500,1000];
 export const PROBE_COUNT=600;
 
@@ -20,17 +20,20 @@ export type SendSample={handle:string;pid:string;name:string;nameZh:string;nameS
 export type SendCapacity={windowSeconds:number;limit:number;used:number;remaining:number};
 export type SendWindow={enabled:boolean;open:boolean;start:string|null;end:string|null};
 export type SendAuthorization={source:"current_user_request";scope:"pool_to_send";maxPeople:number;
- requestedPeople:number;widenLocalGate:boolean;sendWindow:[string,string]|null;
+ requestedPeople:number;reservePeople:number;frozenPeople:number;widenLocalGate:boolean;sendWindow:[string,string]|null;
+ reservePolicy:"ceil-10-percent-v1"|"none";
  institutionNewContactRollingCap:number;materialPolicy:"frozen-current-binding-v1";note:string};
 /** 台账里的卡与**当前计划**的佣金差距：差 1 点的那批是旧卡（`🚀 Incentivo Boost` 那套名字）。 */
 export type SendRateGap={same:number;lower:number;lowerByOne:number;higher:number;noCard:number;
  examples:{pid:string;listName:string;cardPercent:string;planPercent:string;campaignId:string}[]};
-export type SendPreview={available:boolean;requested:number;sendable:number;positions:number;
+export type SendPreview={available:boolean;requested:number;reserveRequested:number;required:number;
+ sendable:number;reserveReady:number;frozenTotal:number;fullPreparation:boolean;positions:number;
  readyAvailable:number;samples:SendSample[];nameQuality:Record<string,number>;
  skipped:Record<string,number>;rateGap:SendRateGap;capacity:SendCapacity|null;window:SendWindow;widen:boolean;
  previewHash:string|null;authorization:SendAuthorization|null};
 export type SendBatch={batchId:string;requestId:string;previewHash:string;revision:number;state:string;
- target:number;counts:Record<string,number>;config:SendConfig;authorization:SendAuthorization;
+ target:number;attempted:number;reserveTotal:number;reservePromoted:number;reserveRemaining:number;
+ counts:Record<string,number>;config:SendConfig;authorization:SendAuthorization;
  authorizedAt:number|null;stopRequestedAt:number|null;createdAt:number;
  runtime:{pid:number|null;seenAt:number;phase:string}|null;workerPid?:number;duplicate?:boolean};
 export type SendState={available:boolean;config:SendConfig;preview:SendPreview;

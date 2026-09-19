@@ -32,7 +32,7 @@ export async function POST(request:Request){
  catch(error){
   const code=error instanceof Error?error.message:'send_batch_unavailable';
   if(conflicts.has(code))return Response.json({error:code},{status:409,headers});
-  if(['batch_empty','batch_not_startable','batch_not_stoppable','start_confirmation_required',
+  if(['batch_empty','full_preparation_required','batch_not_startable','batch_not_stoppable','start_confirmation_required',
       'batch_missing','frozen_batch_incomplete','plan_paused'].includes(code))
    return Response.json({error:code},{status:422,headers});
   return Response.json({error:'send_batch_unavailable'},{status:503,headers});

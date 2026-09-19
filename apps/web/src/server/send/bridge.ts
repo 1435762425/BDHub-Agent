@@ -120,7 +120,7 @@ function validateConfig(raw:unknown):SendConfig{
 function validateAuthorization(raw:unknown):SendAuthorization{
  if(!raw||typeof raw!=="object"||Array.isArray(raw))throw Error('invalid_send');
  const v=raw as Record<string,unknown>;
- const allowed=["source","scope","maxPeople","requestedPeople","widenLocalGate","sendWindow",
+ const allowed=["source","scope","maxPeople","requestedPeople","reservePeople","frozenPeople","reservePolicy","widenLocalGate","sendWindow",
   "institutionNewContactRollingCap","materialPolicy","note"];
  if(Object.keys(v).some(key=>!allowed.includes(key))||v.source!=="current_user_request"||
    v.scope!=="pool_to_send"||v.materialPolicy!=="frozen-current-binding-v1"||
@@ -130,8 +130,14 @@ function validateAuthorization(raw:unknown):SendAuthorization{
   if(!Array.isArray(v.sendWindow)||v.sendWindow.length!==2)throw Error('invalid_send');
   sendWindow=[text(v.sendWindow[0],5),text(v.sendWindow[1],5)];
  }
- return {source:v.source,scope:v.scope,maxPeople:int(v.maxPeople,'invalid_send',2000),
-  requestedPeople:int(v.requestedPeople,'invalid_send',2000),widenLocalGate:v.widenLocalGate,
+ const maxPeople=int(v.maxPeople,'invalid_send',2000);
+ const reservePeople=int(v.reservePeople??0,'invalid_send',200);
+ const frozenPeople=int(v.frozenPeople??maxPeople,'invalid_send',2200);
+ const reservePolicy=v.reservePolicy??(reservePeople?"ceil-10-percent-v1":"none");
+ if(frozenPeople!==maxPeople+reservePeople||(reservePolicy!=="ceil-10-percent-v1"&&reservePolicy!=="none")||
+   (reservePeople>0)!==(reservePolicy==="ceil-10-percent-v1"))throw Error('invalid_send');
+ return {source:v.source,scope:v.scope,maxPeople,
+  requestedPeople:int(v.requestedPeople,'invalid_send',2000),reservePeople,frozenPeople,reservePolicy,widenLocalGate:v.widenLocalGate,
   sendWindow,institutionNewContactRollingCap:int(v.institutionNewContactRollingCap,'invalid_send',2000),
   materialPolicy:v.materialPolicy,note:text(v.note,240)};
 }
@@ -150,14 +156,18 @@ function validateBatch(raw:unknown):SendBatch|null{
   runtime={pid:r.pid==null?null:int(r.pid,'invalid_send',2**31-1),
    seenAt:nullableNumber(r.seenAt)??0,phase:text(r.phase,64)};
  }
+ const target=int(v.target,'invalid_send',2000),attempted=int(v.attempted??v.target,'invalid_send',2200);
+ const reserveTotal=int(v.reserveTotal??0,'invalid_send',200),reservePromoted=int(v.reservePromoted??0,'invalid_send',200);
+ const reserveRemaining=int(v.reserveRemaining??reserveTotal-reservePromoted,'invalid_send',200);
  const out:SendBatch={batchId,requestId,previewHash:sha(v.previewHash),
-  revision:int(v.revision,'invalid_send',1000000),state,target:int(v.target,'invalid_send',2000),
+  revision:int(v.revision,'invalid_send',1000000),state,target,attempted,reserveTotal,reservePromoted,reserveRemaining,
   counts:counts(v.counts,'invalid_send'),config:validateConfig(v.config),
   authorization:validateAuthorization(v.authorization),authorizedAt:nullableNumber(v.authorizedAt),
   stopRequestedAt:nullableNumber(v.stopRequestedAt),createdAt:nullableNumber(v.createdAt)??0,runtime};
  if(v.workerPid!==undefined)out.workerPid=int(v.workerPid,'invalid_send',2**31-1);
  if(v.duplicate!==undefined){if(typeof v.duplicate!=="boolean")throw Error('invalid_send');out.duplicate=v.duplicate;}
- if(Object.values(out.counts).reduce((a,b)=>a+b,0)!==out.target)throw Error('invalid_send');
+ if(Object.values(out.counts).reduce((a,b)=>a+b,0)!==out.attempted||out.attempted!==out.target+out.reservePromoted||
+   out.reservePromoted+out.reserveRemaining!==out.reserveTotal)throw Error('invalid_send');
  return out;
 }
 
@@ -168,22 +178,32 @@ export function validateSendState(value:unknown):SendState{
  const raw=(v.preview??{}) as Record<string,unknown>;
  if(raw.available!==true){
   return {available:false,config,pool:{counts:{},layers:{}},
-   preview:{available:false,requested:int(raw.requested??0,'invalid_send'),sendable:0,samples:[],
+   preview:{available:false,requested:int(raw.requested??0,'invalid_send'),
+    reserveRequested:int(raw.reserveRequested??0,'invalid_send',200),required:int(raw.required??0,'invalid_send',2200),
+    sendable:0,reserveReady:0,frozenTotal:0,fullPreparation:false,samples:[],
     nameQuality:{},skipped:{},rateGap:validateRateGap(raw.rateGap),capacity:null,
     window:validateWindow(raw.window),widen:config.widen,positions:0,readyAvailable:0,
     previewHash:null,authorization:null},batch:validateBatch(v.batch)};
  }
- const sendable=int(raw.sendable,'invalid_send',2000);
+ const requested=int(raw.requested,'invalid_send',2000),reserveRequested=int(raw.reserveRequested,'invalid_send',200);
+ const required=int(raw.required,'invalid_send',2200),sendable=int(raw.sendable,'invalid_send',2000);
+ const reserveReady=int(raw.reserveReady,'invalid_send',200),frozenTotal=int(raw.frozenTotal,'invalid_send',2200);
+ if(typeof raw.fullPreparation!=="boolean"||required!==requested+reserveRequested||
+   frozenTotal!==sendable+reserveReady||raw.fullPreparation!==(sendable===requested&&reserveReady===reserveRequested))throw Error('invalid_send');
  const positions=int(raw.positions,'invalid_send',4000);
  const skipped=counts(raw.skipped,'invalid_send');
- const preview:SendPreview={available:true,requested:int(raw.requested,'invalid_send',2000),sendable,
+ const authorization=raw.authorization==null?null:validateAuthorization(raw.authorization);
+ if(!authorization||authorization.requestedPeople!==requested||authorization.maxPeople!==sendable||
+   authorization.reservePeople!==reserveRequested||authorization.frozenPeople!==frozenTotal||
+   reserveRequested!==Math.ceil(requested*0.1))throw Error('invalid_send');
+ const preview:SendPreview={available:true,requested,reserveRequested,required,sendable,reserveReady,frozenTotal,
+  fullPreparation:raw.fullPreparation,
   positions,readyAvailable:int(raw.readyAvailable,'invalid_send'),samples:validateSamples(raw.samples),
   nameQuality:counts(raw.nameQuality,'invalid_send'),skipped,rateGap:validateRateGap(raw.rateGap),
   capacity:validateCapacity(raw.capacity),window:validateWindow(raw.window),widen:raw.widen===true,
-  previewHash:raw.previewHash==null?null:sha(raw.previewHash),
-  authorization:raw.authorization==null?null:validateAuthorization(raw.authorization)};
+  previewHash:raw.previewHash==null?null:sha(raw.previewHash),authorization};
  // 池子是个划分：扫到的每个槽位要么进这一批，要么有具名原因。对不平就是桥接读错了，整包拒。
- const total=sendable+Object.values(skipped).reduce((a,b)=>a+b,0);
+ const total=frozenTotal+Object.values(skipped).reduce((a,b)=>a+b,0);
  if(total!==positions)throw Error('invalid_send');
  const pool=(v.pool??{}) as Record<string,unknown>;
  const layers=counts(pool.layers,'invalid_send');
@@ -248,11 +268,10 @@ export function validateSendRequest(body:unknown):SendRequest{
  const raw=(v.config??{}) as Record<string,unknown>;
  if(Object.keys(raw).some(key=>!["count","widen","windowEnabled","window"].includes(key)))
   throw Error('invalid_send_request');
- // 页面给的档位必须是放行的那几档；越界档只在开着越界时才接受。
+ // 任意明确目标 N 均可；500/1000/600 只是页面快捷档，不是业务上限。
  if(raw.count!==undefined){
   const count=int(raw.count,'invalid_send_request',2000);
-  if(!SEND_COUNTS.includes(count)&&!(count===PROBE_COUNT&&raw.widen===true))
-   throw Error('invalid_send_request');
+  if(count<1)throw Error('invalid_send_request');
  }
  return {action:"save",config:validateConfig({...raw,
   count:raw.count??500,widen:raw.widen??false,windowEnabled:raw.windowEnabled??false,

@@ -21,7 +21,7 @@ sys.dont_write_bytecode = True
 sys.path.insert(0, str(ROOT / 'scripts'))
 
 from lib.cycle_burst import run_cohort  # noqa: E402
-from lib.send_batch import window_state  # noqa: E402
+from lib.send_batch import promote_reserves, window_state  # noqa: E402
 from lib.second_cycle import CycleError, CycleStore  # noqa: E402
 
 STOP = False
@@ -111,6 +111,9 @@ def main():
                                  (args.batch_id,))
                 publish_runtime(store, args.batch_id, 'waiting_reconciliation')
                 break
+            # Only a definite non-contact terminal result frees a formal slot.  The replacement is
+            # already frozen in this batch; unknown results above never reach this promotion point.
+            promote_reserves(store, args.batch_id)
             if settle(store, args.batch_id):
                 break
             publish_runtime(store, args.batch_id, 'cohort')

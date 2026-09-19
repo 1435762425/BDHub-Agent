@@ -75,10 +75,14 @@ export default function SendBatchPanel({controller}:{controller:SendController})
  // 两个数都要显示，并且相等关系要写出来：positions = passable + 真卡点。
  const blocked=blockers.reduce((sum,[,value])=>sum+value,0);
  const passable=Math.max(0,preview.positions-blocked);
+ const selected=preview.sendable+preview.reserveReady;
  // 卡点的性质必须分开报：台账没存下卡（复读就好） ≠ 卡佣金不一致（业务决定） ≠ 平台上没有卡（平台写入）。
  const names=Object.entries(preview.nameQuality);
  const count=draft?.count??data.config.count;
+ const draftReserve=Math.ceil(Math.max(0,count)*0.1);
  const widen=Boolean(draft?.widen);
+ const configDirty=Boolean(draft&&(draft.count!==data.config.count||draft.widen!==data.config.widen||
+  draft.windowEnabled!==data.config.windowEnabled||draft.window[0]!==data.config.window[0]||draft.window[1]!==data.config.window[1]));
  // 越界时多一档 600：账号级日额度还没拿到，先按它探。
  const choices=widen?[...SEND_COUNTS,PROBE_COUNT]:SEND_COUNTS.filter(value=>value!==PROBE_COUNT);
  const batch=data.batch;
@@ -109,7 +113,7 @@ export default function SendBatchPanel({controller}:{controller:SendController})
    </div>
 
    {/* ② 这一批发给谁、发什么话 */}
-   <Step index="2" title="这一批发给谁、发什么话" hint="两三条例样，就是手指点下去之后真正会发出去的那句话。"/>
+   <Step index="2" title="这一批发给谁、发什么话" hint="两三条例样取自正式成员；候补使用同一套冻结材料，只有明确未触达时才顺序补位。"/>
    <div className="rounded-xl border border-gray-200 p-4 dark:border-gray-800">
     {preview.samples.length===0?<p className="text-xs text-gray-500">
       {preview.sendable===0?"这一批没有可发的位置，所以没有样例。":"这一批还没挑出可发的样例。"}</p>
@@ -131,14 +135,14 @@ export default function SendBatchPanel({controller}:{controller:SendController})
    <Step index="3" title="发不了的是为什么" hint="扫到的槽位要么进这一批，要么有具名原因。原因分成三种性质，别混着看。"/>
    <div className="rounded-xl bg-gray-50 p-4 dark:bg-white/[0.03]">
     <div className="flex flex-wrap items-baseline gap-x-6 gap-y-2">
-     <span className="text-sm text-gray-600 dark:text-gray-300">这一批准备发 <strong className="text-lg text-gray-800 dark:text-white/90">{number(preview.sendable)}</strong> 条
+     <span className="text-sm text-gray-600 dark:text-gray-300">正式成员 <strong className="text-lg text-gray-800 dark:text-white/90">{number(preview.sendable)}</strong> / {number(preview.requested)} 人 · 候补 <strong className="text-lg text-gray-800 dark:text-white/90">{number(preview.reserveReady)}</strong> / {number(preview.reserveRequested)} 人
       {preview.requested>preview.sendable&&<span className="text-xs text-gray-500">（要 {number(preview.requested)} 条，{shortfall}）</span>}</span>
      <span className="text-xs text-gray-500">为凑够这一批往下翻了 <strong>{number(preview.positions)}</strong> 个可发槽位</span>
     </div>
     {/* 两个数字必须对得上：池子口径的"可发" ≠ 过完卡检"真能发"的。差在哪要写出来。 */}
     <p className="mt-2 text-xs leading-5 text-gray-600 dark:text-gray-300">
-     扫到的 <strong>{number(preview.positions)}</strong> 个可发槽位 ＝ 真能发 <strong>{number(passable)}</strong> ＋ 卡点 <strong>{number(blocked)}</strong>。
-     真能发里这一批取 <strong>{number(preview.sendable)}</strong> 条{preview.sendable<passable?`，剩下 ${number(passable-preview.sendable)} 条留在池子里等下一批`:"（这一批全取走）"}。
+     扫到的 <strong>{number(preview.positions)}</strong> 个可发槽位 ＝ 真能准备 <strong>{number(passable)}</strong> ＋ 卡点 <strong>{number(blocked)}</strong>。
+     本批冻结 <strong>{number(selected)}</strong> 人（正式 {number(preview.sendable)}＋候补 {number(preview.reserveReady)}）{selected<passable?`，剩下 ${number(passable-selected)} 条留在池子里等下一批`:"（可用候选全取走）"}。
     </p>
     {blockers.length>0&&<ul className="mt-3 space-y-2">{blockers.map(([reason,count])=>{
      const row=BLOCKERS[reason]??{label:reason,detail:"未知原因，需要查代码。"};
@@ -170,12 +174,16 @@ export default function SendBatchPanel({controller}:{controller:SendController})
    </div>
 
    {/* ④ 这一批怎么定 */}
-   <Step index="4" title="这一批怎么定" hint="只改这三件：多少条、窗口开不开、要不要越界。保存不会开始发送。"/>
+   <Step index="4" title="这一批怎么定" hint="填写正式目标 N，系统自动冻结 ceil(N×10%) 候补；窗口和越界独立设置。保存不会开始发送。"/>
    <div className="grid gap-4 lg:grid-cols-3">
-    <Field label="这一批多少条" hint="默认 500，可切 1000。到 24 小时上限会自动停，不会超发。">
-     <div className="flex flex-wrap gap-2">
+    <Field label="正式目标人数" hint={`允许 1–2000；保存后自动候补 ${number(draftReserve)} 人，候补不增加目标。`}>
+     <div className="space-y-2">
+      <Input type="number" min={1} max={2000} step={1} value={count} disabled={busy||!draft}
+       onChange={e=>draft&&setDraft({...draft,count:Number(e.target.value)})}/>
+      <div className="flex flex-wrap gap-2">
       {choices.map(value=><Button key={value} size="sm" variant={count===value?"primary":"outline"}
        disabled={busy||!draft} onClick={()=>draft&&setDraft({...draft,count:value})}>{value}</Button>)}
+      </div>
      </div>
     </Field>
     <Field label="发送窗口（北京时间）" hint="只在窗口内发；默认 9:00–24:00，两端都能改。关掉就是不设窗口。">
@@ -193,13 +201,14 @@ export default function SendBatchPanel({controller}:{controller:SendController})
       onChange={value=>draft&&setDraft({...draft,windowEnabled:value})}/>
      <Toggle label="越过本地 24 小时 500 新联系闸门" description="显式越界探测。账号级日额度还没拿到，先按 600 探；每条真实回执都会单独落信号，单达人到上限只标那一条、不停整批。"
       checked={widen} disabled={busy||!draft}
-      onChange={value=>draft&&setDraft({...draft,widen:value,count:value&&!SEND_COUNTS.includes(draft.count)?PROBE_COUNT:draft.count})}/>
+      onChange={value=>draft&&setDraft({...draft,widen:value})}/>
     </div>
    </div>
    <div className="flex flex-wrap items-center gap-2">
     <Button size="sm" variant="outline" disabled={busy||!draft} onClick={()=>void save()}>{busy?"保存中…":"保存设置"}</Button>
     {data.configInvalid&&<Pill tone="warning">配置文件已过期，按默认值读</Pill>}
    </div>
+   {configDirty&&<Notice tone="warning">设置尚未保存；上面的候选、样例和预览指纹仍对应已保存的目标 {number(preview.requested)}。先保存并重新预检，才能冻结。</Notice>}
    {message&&<Notice tone="info">{message}</Notice>}
 
    {/* ⑤ 冻结与明确启动：GET/save 永远不会隐式开始。 */}
@@ -208,8 +217,8 @@ export default function SendBatchPanel({controller}:{controller:SendController})
     {!activeBatch&&<div className="space-y-3">
      <p className="text-xs leading-5 text-gray-500">冻结会保存达人、PID、Offer、currentListId、话术和顺序；不调用平台，也不会开始发送。预览在冻结前发生变化时会拒绝并要求重新核对。</p>
      <div className="flex flex-wrap items-center gap-3">
-      <Button size="sm" variant="primary" disabled={busy||preview.sendable===0||!preview.previewHash} onClick={()=>void freeze()}>
-       {busy?"处理中…":`冻结本批 ${number(preview.sendable)} 人`}</Button>
+      <Button size="sm" variant="primary" disabled={busy||configDirty||!preview.fullPreparation||!preview.previewHash} onClick={()=>void freeze()}>
+       {busy?"处理中…":configDirty?"先保存设置再冻结":preview.fullPreparation?`冻结正式 ${number(preview.sendable)}＋候补 ${number(preview.reserveReady)}`:`还缺 ${number(preview.required-preview.frozenTotal)} 位，不能冻结`}</Button>
       {preview.previewHash&&<span className="text-xs text-gray-400">预览 {preview.previewHash.slice(0,12)}…</span>}
      </div>
     </div>}
@@ -220,12 +229,12 @@ export default function SendBatchPanel({controller}:{controller:SendController})
       <span className="text-xs text-gray-500">批次 {batch.batchId} · revision {batch.revision}</span>
      </div>
      <div className="grid gap-2 text-xs leading-5 text-gray-600 dark:text-gray-300 sm:grid-cols-2">
-      <span>冻结人数 <strong>{number(batch.target)}</strong>；窗口 <strong>{batch.authorization.sendWindow?.join("–")??"不设窗口"}</strong></span>
+      <span>正式目标 <strong>{number(batch.target)}</strong>；冻结候补 <strong>{number(batch.reserveTotal)}</strong>；窗口 <strong>{batch.authorization.sendWindow?.join("–")??"不设窗口"}</strong></span>
       <span>越过本地闸门 <strong>{batch.authorization.widenLocalGate?"是":"否"}</strong>；发送账号 <strong>ACC6</strong></span>
       <span>预览指纹 <code>{batch.previewHash.slice(0,16)}…</code></span>
       <span>结果未知时 <strong>整批暂停，只核验原发送意图</strong></span>
      </div>
-     <p className="text-xs text-gray-500">逐项结果：{Object.keys(batch.counts).length===0?"尚未执行":Object.entries(batch.counts).map(([key,value])=>`${key} ${number(value)}`).join(" · ")}</p>
+     <p className="text-xs text-gray-500">已进入执行 {number(batch.attempted)} 人；候补已提升 {number(batch.reservePromoted)}、剩余 {number(batch.reserveRemaining)}。逐项结果：{Object.keys(batch.counts).length===0?"尚未执行":Object.entries(batch.counts).map(([key,value])=>`${key} ${number(value)}`).join(" · ")}</p>
      {batch.runtime&&<p className="text-xs text-gray-500">执行断点：{batch.runtime.phase} · worker {batch.runtime.pid??"—"} · 最近心跳 {new Date(batch.runtime.seenAt*1000).toLocaleString("zh-CN")}</p>}
      <div className="flex flex-wrap gap-2">
       {canStart&&<Button size="sm" variant="primary" disabled={busy} onClick={()=>void start()}>{busy?"启动中…":"确认并开始"}</Button>}
