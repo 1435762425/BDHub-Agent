@@ -35,7 +35,7 @@ export const FLOW_STAGES:DemoStage[]=[
  {key:"collect",index:"01",title:"PID 采集",unit:"商品 PID",input:"全托高机会 / Campaign 活动",output:"来源快照 + PID 去重",rule:"每条 PID 保留来源、活动、事实时间和版本。",failure:"读取中断保留游标，不生成半份生效快照。",refresh:"手动主动采集；定时为可选开关。"},
  {key:"screen",index:"02",title:"商品筛选",unit:"PID / Offer",input:"当前来源快照",output:"合格商品方案",rule:"全托销量≥300；有评分≥4.0，无评分允许；佣金差≥2点。Campaign 使用独立期限与库存规则。",failure:"进入不合格层，历史事实保留。",refresh:"采集完成、规则变化或商品事实变化时重算。"},
  {key:"offer",index:"03",title:"精确 Offer",unit:"PID × 活动",input:"合格候选",output:"唯一当前方案",rule:"达人佣金最高 → 截止更晚 → 活动 ID 定序；不同 Offer 不拼字段。",failure:"没有完整方案则等待事实，不进入建链。",refresh:"每次筛分与发送批次冻结前。"},
- {key:"link",index:"04",title:"TapLink 材料",unit:"PID × 方案",input:"精确 Offer",output:"listId + 当前佣金 + 绑定",rule:"先复用当前有效卡；缺卡或佣金不一致则建新卡。旧卡保留，独立清理。",failure:"待建链 / 待重建 / 结果未知，均不得继续。",refresh:"新建后回读一次；活跃链接 48 小时批量刷新；全部库存每周刷新。"},
+ {key:"link",index:"04",title:"TapLink 材料",unit:"PID × 方案",input:"精确 Offer",output:"listId + 当前佣金 + 绑定",rule:"先复用当前有效卡；缺卡或佣金不一致则建新卡。旧卡保留，确认失效才清理。",failure:"待建链 / 待重建 / 结果未知，均不得继续。",refresh:"Campaign 每日随来源核验；全托已选每周核验一次。"},
  {key:"leads",index:"05",title:"PID 查达人",unit:"PID 查询任务",input:"material-ready PID",output:"正销量达人线索",rule:"首次 PID 优先；已查 PID 7 天后刷新；失败不写 queried_at。",failure:"额度耗尽保留断点；无链接 PID 不进入查询。",refresh:"首次一次；完成后每 7 天到期。"},
  {key:"identity",index:"06",title:"OECID 身份",unit:"去重 handle",input:"达人线索",output:"稳定达人身份",rule:"同一 handle 只做一次 Find 判定；找到后以市场×OECID 归一。",failure:"明确搜索不到则保留证据，但不进入位置。",refresh:"Find 判定一次；画像按需或 48 小时刷新。"},
  {key:"position",index:"07",title:"达人×PID 位置",unit:"达人 × PID",input:"稳定达人 + 同品线索",output:"可经营位置",rule:"一个达人可保留多个 PID；渠道属于商品，冷却和拒联属于达人。",failure:"商品失效、缺材料、关系阻断分别分层，不丢线索。",refresh:"页面读取时实时重算，不保存静态排序。"},
@@ -44,11 +44,10 @@ export const FLOW_STAGES:DemoStage[]=[
 
 export const REFRESH_RULES=[
  {object:"全托商品源",mode:"手动主动采集",optional:"可选定时",cycle:"默认不开；运营按需启动",effect:"生成完整新快照，旧完整快照在中断时继续生效"},
- {object:"Campaign 商品",mode:"完整刷新",optional:"手动 + 可选定时",cycle:"设计值每日一次",effect:"活动失效后相关未发送位置退出可发范围"},
+ {object:"Campaign 商品 + TapLink",mode:"来源完整刷新并核验链接",optional:"手动 + 可选定时",cycle:"每日一次",effect:"同一轮更新活动、商品和对应链接；确认失效则清理"},
  {object:"商品筛选",mode:"确定性重算",optional:"自动",cycle:"新快照或规则版本变化",effect:"只改变当前资格，不删除历史线索"},
  {object:"新建 TapLink",mode:"创建后回读一次",optional:"写入结果结算",cycle:"每次新建后立即",effect:"取得确定 listId；之后不再为这个动作反复核验"},
- {object:"活跃 TapLink",mode:"批量刷新",optional:"确认周期，尚未启用",cycle:"每 48 小时一次",effect:"最后成功快照持续生效；逾期不阻塞查询、组批或发送"},
- {object:"全部链接库存",mode:"完整刷新",optional:"确认周期，尚未启用",cycle:"每周一次",effect:"更新健康分类并形成独立清理范围，不自动删除旧卡"},
+ {object:"全托已选 TapLink",mode:"统一核验",optional:"确认周期，尚未启用",cycle:"每周一次",effect:"以上次成功结果为准；确认失效则清理"},
  {object:"Kalodata 线索",mode:"到期队列",optional:"手动启动",cycle:"首次一次，之后 7 天",effect:"未到期 PID 不为凑数量重复查询"},
  {object:"OECID",mode:"达人级判定",optional:"手动启动",cycle:"Find 一次；画像按需/48h",effect:"搜索不到不自动重试，不伪造身份"},
  {object:"发送池",mode:"读时重算",optional:"无后台轮询",cycle:"每次读取",effect:"时间、关系、商品与材料变化即时改变分层"},
@@ -56,9 +55,8 @@ export const REFRESH_RULES=[
 ];
 
 export const PID_REFRESH_CLOCKS=[
- {key:"create",title:"新建后回读一次",cadence:"立即",items:["只为确认创建结果和取得 listId","结果未知只核验原意图，不重复建卡"]},
- {key:"active",title:"活跃链接批量刷新",cadence:"每 48 小时",items:["一次刷新覆盖当前会使用的 PID","刷新延迟或失败仍沿用上次成功快照"]},
- {key:"inventory",title:"全部库存完整刷新",cadence:"每周一次",items:["更新全部链接健康分类","失效卡只进入独立清理范围，不自动删除"]},
+ {key:"campaign",title:"Campaign 商品",cadence:"每日",items:["刷新 Campaign 来源时顺便核验对应 TapLink","确认失效的链接直接进入清理"]},
+ {key:"selected",title:"全托已选商品",cadence:"每周",items:["统一核验一次 TapLink 状态","确认失效则清理；其余继续沿用"]},
 ] as const;
 
 export const TAPLINK_VALIDITY_CHECKS=[

@@ -51,10 +51,10 @@ function PidTree(){
     <div className="mx-auto max-w-lg rounded-2xl border-2 border-success-300 bg-success-50 p-5 text-center dark:border-success-900 dark:bg-success-900/10"><Pill tone="success">唯一前向结果</Pill><h3 className="mt-3 text-xl font-semibold">PID Material Ready</h3><p className="mt-2 text-sm text-gray-500">当前合格 Offer + 已在平台池 + 最后成功快照确认链接可用。只有这里的 PID 才能去查达人线索。</p></div>
    </div>
   </div></Card>
-  <Card title="TapLink 只保留两个刷新周期" subtitle="活跃链接 48 小时，全部库存每周；新建后只回读一次"><div className="p-5">
-   <div className="grid gap-4 lg:grid-cols-3">{PID_REFRESH_CLOCKS.map(clock=><div key={clock.key} className="rounded-xl border border-gray-200 p-4 dark:border-gray-800"><div className="flex items-center justify-between gap-3"><p className="font-semibold text-gray-800 dark:text-gray-200">{clock.title}</p><Pill tone={clock.key==="active"?"brand":clock.key==="create"?"success":"neutral"}>{clock.cadence}</Pill></div><ul className="mt-3 space-y-2">{clock.items.map(item=><li key={item} className="flex gap-2 text-sm leading-6 text-gray-500"><span aria-hidden="true">•</span><span>{item}</span></li>)}</ul></div>)}</div>
-   <Notice tone="success"><strong>允许短期误差：</strong>达人查询、组批和发送都直接使用最后一次成功快照，不再发送前复读。快照逾期只提示，不阻塞流程。</Notice>
-   <Notice tone="warning"><strong>当前运行事实：</strong>定时调度器尚未实现，现有作业开关全部关闭；48 小时和每周是已经确认的目标周期，不代表后台已经在跑。</Notice>
+  <Card title="TapLink 按来源只有两条规则" subtitle="Campaign 每日随来源核验；全托已选每周核验一次"><div className="p-5">
+   <div className="grid gap-4 lg:grid-cols-2">{PID_REFRESH_CLOCKS.map(clock=><div key={clock.key} className="rounded-xl border border-gray-200 p-4 dark:border-gray-800"><div className="flex items-center justify-between gap-3"><p className="font-semibold text-gray-800 dark:text-gray-200">{clock.title}</p><Pill tone={clock.key==="campaign"?"brand":"neutral"}>{clock.cadence}</Pill></div><ul className="mt-3 space-y-2">{clock.items.map(item=><li key={item} className="flex gap-2 text-sm leading-6 text-gray-500"><span aria-hidden="true">•</span><span>{item}</span></li>)}</ul></div>)}</div>
+   <Notice tone="success"><strong>就这么简单：</strong>其他时间都使用上次成功结果，不做 48 小时、组批前或发送前核验。新建链接只在创建后回读一次以取得 listId。</Notice>
+   <Notice tone="warning"><strong>当前运行事实：</strong>定时调度器尚未实现，现有作业开关全部关闭；每日和每周是已经确认的目标周期，不代表后台已经在跑。</Notice>
   </div></Card>
   <Card title="TapLink 清理是旁路，不参与 PID 前向资格" subtitle={`当前只读库存 ${format(s.inventory.lists)} 张列表；历史清理快照扫描 ${format(s.historicalCleanup.scanned)} 张`}><div className="p-5">
    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -63,7 +63,7 @@ function PidTree(){
     <TreeOutcome title="状态未知" detail="转人工/复读，不允许猜测删除。" tone="warning"/>
     <TreeOutcome title={`历史无效 ${format(s.historicalCleanup.invalid)}`} detail="只进入独立清理范围；冻结删除意图并回读。" tone="warning"/>
    </div>
-   <Notice tone="warning"><strong>当前 A 规则：</strong>PID 主流程不会自动删除任何旧卡。清理必须是独立动作，有明确范围、健康证据、删除意图和删除后回读；历史台账中已有 {format(s.historicalCleanup.verifiedDeletes)} 条已核验删除记录，不代表今后主流程会自动删除。</Notice>
+   <Notice tone="warning"><strong>清理规则：</strong>可用旧卡、佣金不同但仍可用的旧卡、混合有效和未知链接继续保留；周期核验确认失效的链接进入清理，删除后回读。历史台账已有 {format(s.historicalCleanup.verifiedDeletes)} 条已核验删除记录。</Notice>
   </div></Card>
   <Collapsible label="当前建链台账快照"><div className="grid gap-4 lg:grid-cols-2">
    <Card title="全托 · Selected"><div className="grid grid-cols-2 gap-3 p-5 sm:grid-cols-5">{[["已核验",s.fullManaged.links.ready],["可复用",s.fullManaged.links.reuse],["复读中",s.fullManaged.links.reading],["缺链",s.fullManaged.links.missing],["待判断",s.fullManaged.links.review]].map(([label,value])=><div key={String(label)}><p className="text-xs text-gray-400">{label}</p><p className="mt-1 text-lg font-semibold tabular-nums">{format(Number(value))}</p></div>)}</div></Card>
@@ -150,12 +150,12 @@ function Details(){return <div className="space-y-4">
   <Card title="Campaign 商品"><div className="space-y-2 p-5 text-sm leading-6 text-gray-600 dark:text-gray-300">{["活动必须 ACTIVE","剩余期限 > 45 天","普通商品库存 > 100","无额外条款才自动加入","达人佣金高于公开佣金"].map(item=><p key={item} className="flex gap-2"><Icon name="check" className="mt-1 size-4 shrink-0 text-success-500"/>{item}</p>)}</div></Card>
  </div></Collapsible>
  <Collapsible label="刷新周期" defaultOpen><div className="space-y-4">
-  <Notice tone="warning"><strong>先区分规则与运行：</strong>48 小时和每周是目标规则；当前定时调度器未实现，所有定时开关均为关闭。</Notice>
+  <Notice tone="warning"><strong>先区分规则与运行：</strong>Campaign 每日、全托已选每周是目标规则；当前定时调度器未实现，所有定时开关均为关闭。</Notice>
   <div className="overflow-x-auto rounded-xl border border-gray-200 dark:border-gray-800"><table className="w-full text-left text-sm"><thead className="bg-gray-50 text-xs text-gray-500 dark:bg-gray-800/60"><tr>{["对象","什么时候刷新","如何触发","影响"].map(label=><th key={label} className="whitespace-nowrap px-4 py-3 font-medium">{label}</th>)}</tr></thead><tbody>{REFRESH_RULES.map(row=><tr key={row.object} className="border-t border-gray-100 align-top dark:border-gray-800"><td className="whitespace-nowrap px-4 py-3 font-medium">{row.object}</td><td className="min-w-40 px-4 py-3 text-gray-500">{row.cycle}</td><td className="min-w-48 px-4 py-3 text-gray-500">{row.mode} · {row.optional}</td><td className="min-w-64 px-4 py-3 text-gray-500">{row.effect}</td></tr>)}</tbody></table></div>
  </div></Collapsible>
  <Collapsible label="TapLink 核验效率" defaultOpen><div className="space-y-4">
   <div className="grid gap-4 lg:grid-cols-2">{TAPLINK_PERFORMANCE.map(item=><Card key={item.label} title={item.label} action={<Pill tone="brand">{item.value}</Pill>}><p className="p-5 text-sm leading-6 text-gray-500">{item.detail}</p></Card>)}</div>
-  <Notice tone="success"><strong>效率结论：</strong>不做发送前核验。活跃链接集中每 48 小时刷新，全库存每周扫一次；其他时间直接使用最后成功快照。</Notice>
+  <Notice tone="success"><strong>效率结论：</strong>Campaign 每日刷新时顺便核验链接；全托已选每周核验一次。其他时间直接使用最后成功结果。</Notice>
  </div></Collapsible>
  <Collapsible label="刷新时核对哪些 TapLink 事实"><div className="space-y-4">
   <Notice><strong>Material Ready = 当前 Offer 合格 + 最后成功快照确认 TapLink 可用。</strong>刷新窗口内允许平台事实和本地快照存在短期误差。</Notice>
