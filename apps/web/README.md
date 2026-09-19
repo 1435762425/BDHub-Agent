@@ -45,6 +45,7 @@ npm run test:matching
 | 路由 | 当前用途 |
 | --- | --- |
 | `/catalog` | 全托/Campaign 货盘、筛分、入池、备链、线索队列和 OECID |
+| `/flow-demo` | 纯前端 PID→发送池业务沙盘；虚构数据，不连接后端 |
 | `/workspace?mode=second-live` | 二发发送池、收信监控、回复预演、统计和系统状态 |
 | `/opportunities` | 匹配研究及一发 V2 入口 |
 | `/creators` | 稳定达人身份与画像 |

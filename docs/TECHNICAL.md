@@ -222,6 +222,8 @@ pending → started/submitted → confirmed
 | `/api/inbox` | 收信 worker、今日/历史统计和待人工 |
 | `/api/jobs` | 手动作业与定时意向 |
 
+`/flow-demo` 是纯前端业务沙盘：数据和判断函数位于 `apps/web/src/features/demo/`，不调用任何 `/api`、SQLite、CLI、平台或模型。它用于确认产品流程，不得作为真实运行证据。
+
 ## 9. 账号与外部系统
 
 ### TikTok
