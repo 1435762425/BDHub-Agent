@@ -593,8 +593,10 @@ def status(store, limit=12):
     items=items[:limit]
     from lib.typesafe_provider import status as typesafe_status
     jev=typesafe_status(Path(store.db.execute('PRAGMA database_list').fetchone()[2]).parent.parent)
+    templates={value['action']:{'key':key,'text':value['text']}
+               for key,value in policy['templates'].items()}
     return {'schema':'bdhub.reply-review.v1','policyVersion':policy['version'],
             'processingIntervalSeconds':policy['processingIntervalSeconds'],
             'automaticReplies':False,'providers':{'deepseek':{'mode':'shadow'},
                                                    'jev':{'mode':'shadow' if jev['ready'] else 'unconfigured'}},
-            'counts':counts,'evaluation':evaluation_summary(store),'items':items}
+            'templates':templates,'counts':counts,'evaluation':evaluation_summary(store),'items':items}

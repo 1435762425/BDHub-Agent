@@ -52,6 +52,7 @@ class ReplyEvents(unittest.TestCase):
    self.assertEqual((second['episodesAdded'],second['turnsAdded'],second['linksAdded']),(0,0,0))
    self.assertEqual(snapshot['counts']['turns'],1);self.assertEqual(snapshot['counts']['episodes'],1)
    self.assertEqual(snapshot['items'][0]['episodes'][0]['pid'],'1')
+   self.assertIn('Perfetto',snapshot['templates']['collaboration_ack']['text'])
    self.assertEqual((first['platformWrites'],first['modelCalls']),(0,0))
    with self.assertRaises(sqlite3.DatabaseError):s.db.execute("UPDATE inbound_turn SET text='changed'")
 
@@ -102,6 +103,13 @@ class ReplyEvents(unittest.TestCase):
    review_turn(s,turn,0,'collaboration_ack','参考答案')
    after=evaluation_summary(s);self.assertEqual(after['providers']['jev']['accuracy'],1.0)
    self.assertEqual(after['providers']['deepseek']['falseHuman'],1)
+ def test_turn_truth_can_be_corrected_by_appending_a_new_revision(self):
+  with CycleStore(self.db,clock=lambda:self.now) as s:
+   backfill(s);turn=s.db.execute('SELECT turn_id FROM inbound_turn').fetchone()[0]
+   self.assertEqual(review_turn(s,turn,0,'human','初次判断')['revision'],1)
+   self.assertEqual(review_turn(s,turn,1,'no_reply','复核后修正')['revision'],2)
+   current=status(s)['items'][0]['review']
+   self.assertEqual((current['revision'],current['correct_action'],current['note']),(2,'no_reply','复核后修正'))
  def context_revisions(self,s):
   relationship=s.db.execute('SELECT revision FROM relationship WHERE creator_id=?',('c1',)).fetchone()[0]
   pending=s.db.execute('SELECT revision FROM inbox_pending WHERE creator_id=?',('c1',)).fetchone()[0]

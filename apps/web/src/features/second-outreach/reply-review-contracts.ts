@@ -6,6 +6,7 @@ export type ReplyDecision={action:ReplyAction;intentCode:string;evidenceMessageI
  policyVersion:string;automaticReply:false;executionAllowed:false};
 export type ReplyReviewState={turn_id:string;revision:number;correct_action:ReplyAction;
  note:string;created_at:number};
+export const initialReviewAction=(review:ReplyReviewState|null):ReplyAction|""=>review?.correct_action??"";
 export type ReplyReviewItem={turnId:string;messageId:string;creatorId:string;format:string;text:string|null;
  historical:boolean;occurredMs:number|null;episodes:Array<{episode_id:string;pid:string;list_id:string;
  candidate_rank:number;confidence:string}>;classificationId:string|null;decision:ReplyDecision|null;
@@ -16,6 +17,7 @@ export type ReplyReviewItem={turnId:string;messageId:string;creatorId:string;for
    automaticReply:false;platformWrites:number;caseId?:string;candidateId?:string;templateKey?:string}|null}};
 export type ReplyReviewStatus={schema:"bdhub.reply-review.v1";policyVersion:string;
  processingIntervalSeconds:number;automaticReplies:false;providers:{deepseek:{mode:string};jev:{mode:string}};
+ templates:Partial<Record<ReplyAction,{key:string;text:string}>>;
  counts:{turns:number;episodes:number;linkedTurns:number;classified:number;reviewed:number};
  evaluation:{paired:number;agreements:number;disagreements:number;agreementRate:number|null;
   reviewedTurns:number;pendingReview:number;providers:Record<"deepseek"|"jev",{evaluated:number;
