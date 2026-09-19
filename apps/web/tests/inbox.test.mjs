@@ -74,6 +74,12 @@ test('a half-written day is refused instead of drawn on a calendar',()=>{
  assert.throws(()=>validateInbox({...payload,openCases:-1}),/invalid_inbox/);
 });
 
+test('period totals and today must equal the day rows',()=>{
+ assert.throws(()=>validateInbox({...payload,totals:{...totals,replies:1}}),/invalid_inbox/);
+ assert.throws(()=>validateInbox({...payload,today:{...day,showcase:1}}),/invalid_inbox/);
+ assert.throws(()=>validateInbox({...payload,today:{...day,date:'2026-09-16'}}),/invalid_inbox/);
+});
+
 test('a run record whose config no longer validates still renders',()=>{
  const v=validateInbox({...payload,run:{...payload.run,config:{limit:99,interval:5}}});
  assert.equal(v.run.running,true);

@@ -18,6 +18,8 @@ export type InboxTotals=Omit<InboxDay,"date">;
 export type InboxState={available:boolean;config:InboxConfig;configInvalid:boolean;run:InboxRun|null;
  today:InboxDay|null;openCases:number;timezone:string;totals:InboxTotals;days:InboxDay[];saved?:boolean};
 
+const STAT_KEYS=(['cards','texts','creators','unconfirmed','replies','showcase','ourMessages','autoReplies','casesOpened'] as const);
+
 // 上一轮核验最多 12 个会话、两轮之间至少 30 秒——沿用脚本自己的取值域（收信吃的是 ACC6 live 锁，
 // 轮次开大只会把补身份/发送挤得更久）。
 const INTERVAL_MIN=30,INTERVAL_MAX=3600,LIMIT_MAX=12;
@@ -93,8 +95,14 @@ export function validateInbox(value:unknown):InboxState{
  if(new Set(days.map(row=>row.date)).size!==days.length)throw Error('invalid_inbox');
  const totals=v.totals&&typeof v.totals==="object"&&!Array.isArray(v.totals)
   ?day({...v.totals as Record<string,unknown>,date:"1970-01-01"}) : null;
+ if(!totals||STAT_KEYS.some(key=>totals[key]!==days.reduce((sum,row)=>sum+row[key],0)))throw Error('invalid_inbox');
+ const today=v.today==null?null:day(v.today);
+ if(today){
+  const row=days.find(item=>item.date===today.date);
+  if(!row||STAT_KEYS.some(key=>row[key]!==today[key]))throw Error('invalid_inbox');
+ }
  return {available:true,config,configInvalid,run,
-  today:v.today==null?null:day(v.today),openCases:count(v.openCases),timezone:v.timezone,
+  today,openCases:count(v.openCases),timezone:v.timezone,
   totals:totals?(({date,...rest})=>rest)(totals):zero,
   days,...saved};
 }

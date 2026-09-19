@@ -8,9 +8,10 @@ import InboxMonitorPanel from "./InboxMonitorPanel";
 import SendBatchPanel from "./SendBatchPanel";
 import SecondOutreachHistory from "./SecondOutreachHistory";
 import ReplyReviewPanel from "./ReplyReviewPanel";
+import StatsCalendarPanel from "./StatsCalendarPanel";
 import {useInboxMonitor} from "./useInboxMonitor";
 import {useSendBatch} from "./useSendBatch";
-import {PageHeading,Card,EmptyState,Tabs} from "../bdhub/ui";
+import {PageHeading,Tabs} from "../bdhub/ui";
 
 // 一页五件事，各占一个页签。**不堆在一页**：每块只回答一个问题，翻页签就是换问题。
 // 「一发推品 · V2」不在这里——它已经挪到「匹配研究」（/opportunities）。
@@ -44,10 +45,7 @@ function Workbench(){
 
   {tab === "reply" && <ReplyReviewPanel/>}
 
-  {tab === "calendar" && <Card title="统计日历" subtitle="按北京时间分天：发了多少、触达多少达人、收到多少回复、多少加了橱窗。">
-   <div className="p-5"><EmptyState title="正在接入：统计日历"
-    description="按天统计的口径已经落地（触达只算回查确认，回复与橱窗排除历史补录），接下来把它画成日历。"/></div>
-  </Card>}
+  {tab === "calendar" && <StatsCalendarPanel controller={inbox}/>}
 
   {tab === "system" && <div className="space-y-5">
    <CycleSupplyPanel/>
