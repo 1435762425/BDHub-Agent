@@ -15,7 +15,7 @@ export interface DemoScenario{
 export interface DemoGateResult{key:string;label:string;state:"pass"|"stop"|"wait";detail:string;}
 
 export const BUSINESS_PHASES=[
- {key:"product",index:"01",title:"商品准备",question:"这个 PID 现在能用吗？",count:2140,unit:"个 PID 已备好",summary:"商品合格、方案完整，并且已有当前可用 TapLink。",steps:["采集并筛出合格 PID","选定唯一当前方案","复用或创建 TapLink"]},
+ {key:"product",index:"01",title:"商品准备",question:"这个 PID 现在能用吗？",count:2140,unit:"个 PID 已备好",summary:"商品合格、方案完整，并且最后成功快照中有可用 TapLink。",steps:["采集并筛出合格 PID","选定唯一当前方案","复用或创建 TapLink"]},
  {key:"creator",index:"02",title:"达人准备",question:"这个达人是真实可联系的人吗？",count:2930,unit:"个达人已识别",summary:"同 PID 正销量线索已经取得，并解析到稳定 OECID。",steps:["按 PID 查询正销量达人","handle 去重判定一次","绑定市场 × OECID"]},
  {key:"send",index:"03",title:"发送安排",question:"这一条现在可以进入发送批次吗？",count:1880,unit:"条当前可发送",summary:"达人关系清晰、没有冷却或未结问题，并冻结精确材料。",steps:["生成达人 × PID 位置","每达人选择一个最优商品","组批并冻结 Offer + listId"]},
 ] as const;
@@ -35,7 +35,7 @@ export const FLOW_STAGES:DemoStage[]=[
  {key:"collect",index:"01",title:"PID 采集",unit:"商品 PID",input:"全托高机会 / Campaign 活动",output:"来源快照 + PID 去重",rule:"每条 PID 保留来源、活动、事实时间和版本。",failure:"读取中断保留游标，不生成半份生效快照。",refresh:"手动主动采集；定时为可选开关。"},
  {key:"screen",index:"02",title:"商品筛选",unit:"PID / Offer",input:"当前来源快照",output:"合格商品方案",rule:"全托销量≥300；有评分≥4.0，无评分允许；佣金差≥2点。Campaign 使用独立期限与库存规则。",failure:"进入不合格层，历史事实保留。",refresh:"采集完成、规则变化或商品事实变化时重算。"},
  {key:"offer",index:"03",title:"精确 Offer",unit:"PID × 活动",input:"合格候选",output:"唯一当前方案",rule:"达人佣金最高 → 截止更晚 → 活动 ID 定序；不同 Offer 不拼字段。",failure:"没有完整方案则等待事实，不进入建链。",refresh:"每次筛分与发送批次冻结前。"},
- {key:"link",index:"04",title:"TapLink 材料",unit:"PID × 方案",input:"精确 Offer",output:"listId + 当前佣金 + 绑定",rule:"先复用当前有效卡；缺卡或佣金不一致则建新卡。旧卡保留，独立清理。",failure:"待建链 / 待重建 / 结果未知，均不得继续。",refresh:"材料准备时读；组批前复读；发送前 fresh_card。"},
+ {key:"link",index:"04",title:"TapLink 材料",unit:"PID × 方案",input:"精确 Offer",output:"listId + 当前佣金 + 绑定",rule:"先复用当前有效卡；缺卡或佣金不一致则建新卡。旧卡保留，独立清理。",failure:"待建链 / 待重建 / 结果未知，均不得继续。",refresh:"新建后回读一次；活跃链接 48 小时批量刷新；全部库存每周刷新。"},
  {key:"leads",index:"05",title:"PID 查达人",unit:"PID 查询任务",input:"material-ready PID",output:"正销量达人线索",rule:"首次 PID 优先；已查 PID 7 天后刷新；失败不写 queried_at。",failure:"额度耗尽保留断点；无链接 PID 不进入查询。",refresh:"首次一次；完成后每 7 天到期。"},
  {key:"identity",index:"06",title:"OECID 身份",unit:"去重 handle",input:"达人线索",output:"稳定达人身份",rule:"同一 handle 只做一次 Find 判定；找到后以市场×OECID 归一。",failure:"明确搜索不到则保留证据，但不进入位置。",refresh:"Find 判定一次；画像按需或 48 小时刷新。"},
  {key:"position",index:"07",title:"达人×PID 位置",unit:"达人 × PID",input:"稳定达人 + 同品线索",output:"可经营位置",rule:"一个达人可保留多个 PID；渠道属于商品，冷却和拒联属于达人。",failure:"商品失效、缺材料、关系阻断分别分层，不丢线索。",refresh:"页面读取时实时重算，不保存静态排序。"},
@@ -46,10 +46,9 @@ export const REFRESH_RULES=[
  {object:"全托商品源",mode:"手动主动采集",optional:"可选定时",cycle:"默认不开；运营按需启动",effect:"生成完整新快照，旧完整快照在中断时继续生效"},
  {object:"Campaign 商品",mode:"完整刷新",optional:"手动 + 可选定时",cycle:"设计值每日一次",effect:"活动失效后相关未发送位置退出可发范围"},
  {object:"商品筛选",mode:"确定性重算",optional:"自动",cycle:"新快照或规则版本变化",effect:"只改变当前资格，不删除历史线索"},
- {object:"TapLink 日常维护",mode:"当前材料增量复读",optional:"建议值，尚未启用",cycle:"建议每日一次",effect:"提前发现下架、治理、活动、库存、佣金或卡片成员变化"},
- {object:"TapLink 查询门禁",mode:"本地鲜度判断",optional:"建议值，待确认",cycle:"进入达人查询前检查共享库存证据不超过 24 小时",effect:"不逐 PID 联网；快照过期先刷新库存或受影响列表"},
- {object:"TapLink 动作门禁",mode:"平台强校验",optional:"不可跳过",cycle:"选入/加入/建卡后立刻；组批前；每次发送前",effect:"锁定 PID、来源、活动、佣金和 listId；不一致立即退出当前动作"},
- {object:"链接健康清理",mode:"完整库存扫描",optional:"建议值，待确认",cycle:"建议每周一次，或容量告警时手动触发",effect:"只形成独立清理范围，不影响主流程保留旧卡"},
+ {object:"新建 TapLink",mode:"创建后回读一次",optional:"写入结果结算",cycle:"每次新建后立即",effect:"取得确定 listId；之后不再为这个动作反复核验"},
+ {object:"活跃 TapLink",mode:"批量刷新",optional:"确认周期，尚未启用",cycle:"每 48 小时一次",effect:"最后成功快照持续生效；逾期不阻塞查询、组批或发送"},
+ {object:"全部链接库存",mode:"完整刷新",optional:"确认周期，尚未启用",cycle:"每周一次",effect:"更新健康分类并形成独立清理范围，不自动删除旧卡"},
  {object:"Kalodata 线索",mode:"到期队列",optional:"手动启动",cycle:"首次一次，之后 7 天",effect:"未到期 PID 不为凑数量重复查询"},
  {object:"OECID",mode:"达人级判定",optional:"手动启动",cycle:"Find 一次；画像按需/48h",effect:"搜索不到不自动重试，不伪造身份"},
  {object:"发送池",mode:"读时重算",optional:"无后台轮询",cycle:"每次读取",effect:"时间、关系、商品与材料变化即时改变分层"},
@@ -57,10 +56,9 @@ export const REFRESH_RULES=[
 ];
 
 export const PID_REFRESH_CLOCKS=[
- {key:"event",title:"事实变化后立即刷新",cadence:"每次动作",items:["选入 / 加入 Campaign 后立即回读","创建或删除 TapLink 后立即回读","Offer 或分佣规则变化后立即重算"]},
- {key:"periodic",title:"日常巡检",cadence:"每天",items:["Campaign 每日完整刷新","建议：当前材料链接每日增量复读","全托当前仍由运营手动采集；定时开关未启用"]},
- {key:"action",title:"真正使用前强校验",cadence:"每次使用",items:["进入达人查询：检查 ≤24 小时共享库存证据，不逐 PID 联网","正式组批：只复读本批 PID","逐条发送：fresh_card 按冻结 listId 现场复读"]},
- {key:"cleanup",title:"独立健康清理",cadence:"建议每周",items:["完整读取链接列表与成员","只把整条失效且证据明确的卡放进清理范围","容量告警可提前手动触发；主流程从不自动删旧卡"]},
+ {key:"create",title:"新建后回读一次",cadence:"立即",items:["只为确认创建结果和取得 listId","结果未知只核验原意图，不重复建卡"]},
+ {key:"active",title:"活跃链接批量刷新",cadence:"每 48 小时",items:["一次刷新覆盖当前会使用的 PID","刷新延迟或失败仍沿用上次成功快照"]},
+ {key:"inventory",title:"全部库存完整刷新",cadence:"每周一次",items:["更新全部链接健康分类","失效卡只进入独立清理范围，不自动删除"]},
 ] as const;
 
 export const TAPLINK_VALIDITY_CHECKS=[
@@ -73,7 +71,6 @@ export const TAPLINK_VALIDITY_CHECKS=[
 
 export const TAPLINK_PERFORMANCE=[
  {label:"单 PID 严格核验",value:"约 2 秒",detail:"典型需要列表搜索 + 成员读取 2 次平台请求；顺序 1 QPS 的 5 PID 实测约 10 秒量级。"},
- {label:"300 PID 批量复读",value:"约 1.9–5 分钟",detail:"现有 9 路批量记录为 111–300 秒；远端状态和失败比例会影响速度。"},
  {label:"1,908 张库存扫描",value:"约 8 分 18 秒",detail:"完整库存历史实测 497.74 秒；适合一次扫描多人复用，不适合每个 PID 重做。"},
 ] as const;
 
@@ -108,7 +105,7 @@ export function evaluateScenario(s:DemoScenario):{gates:DemoGateResult[];layer:s
  const gates:DemoGateResult[]=[
   {key:"product",label:"商品资格",state:eligible?"pass":"stop",detail:eligible?"满足当前来源规则":"销量、评分、期限、库存或佣金不符合"},
   {key:"offer",label:"精确 Offer",state:eligible&&s.offerReady?"pass":eligible?"wait":"stop",detail:s.offerReady?"方案字段完整且同源":"等待完整方案"},
-  {key:"link",label:"TapLink",state:s.linkState==="verified"?"pass":s.linkState==="rate_changed"?"wait":"wait",detail:s.linkState==="verified"?"listId 与当前佣金一致":s.linkState==="rate_changed"?"旧卡保留，等待新卡":"等待创建并核验新卡"},
+  {key:"link",label:"TapLink",state:s.linkState==="verified"?"pass":s.linkState==="rate_changed"?"wait":"wait",detail:s.linkState==="verified"?"最后快照中 listId 与当前佣金一致":s.linkState==="rate_changed"?"旧卡保留，等待新卡":"等待创建并核验新卡"},
   {key:"lead",label:"PID 线索",state:eligible&&s.linkState==="verified"?"pass":"wait",detail:eligible&&s.linkState==="verified"?"允许进入首次/到期队列":"材料未就绪，不查询或不刷新"},
   {key:"identity",label:"OECID",state:s.identityReady?"pass":"wait",detail:s.identityReady?"达人身份已解析":"等待 Find 判定"},
   {key:"relation",label:"关系状态",state:s.replyOpen?"wait":"pass",detail:s.replyOpen?"未结回复阻断该达人所有商品":"无拒联、人工接管或未结回复"},

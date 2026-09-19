@@ -75,18 +75,18 @@ test("campaign expiry is dynamic and an open reply freezes the creator rather th
  assert.deepEqual([reply.product,reply.creator,reply.send],[true,true,false]);
 });
 
-test("refresh guidance separates event periodic action and cleanup clocks",()=>{
- assert.deepEqual(PID_REFRESH_CLOCKS.map(item=>item.key),["event","periodic","action","cleanup"]);
- assert.match(PID_REFRESH_CLOCKS.find(item=>item.key==="action")?.items.join(" ")??"",/fresh_card/);
- assert.match(REFRESH_RULES.find(item=>item.object==="TapLink 查询门禁")?.cycle??"",/24 小时/);
- assert.match(REFRESH_RULES.find(item=>item.object==="TapLink 查询门禁")?.effect??"",/不逐 PID 联网/);
- assert.match(REFRESH_RULES.find(item=>item.object==="链接健康清理")?.cycle??"",/每周/);
+test("TapLink refresh uses one creation readback plus two simple periodic clocks",()=>{
+ assert.deepEqual(PID_REFRESH_CLOCKS.map(item=>item.key),["create","active","inventory"]);
+ assert.match(PID_REFRESH_CLOCKS.find(item=>item.key==="active")?.cadence??"",/48 小时/);
+ assert.match(PID_REFRESH_CLOCKS.find(item=>item.key==="inventory")?.cadence??"",/每周/);
+ assert.doesNotMatch(PID_REFRESH_CLOCKS.flatMap(item=>item.items).join(" "),/fresh_card|发送前/);
+ assert.match(REFRESH_RULES.find(item=>item.object==="活跃 TapLink")?.effect??"",/逾期不阻塞/);
 });
 
-test("performance guidance prevents one remote verification per PID at the 24 hour gate",()=>{
- assert.deepEqual(TAPLINK_PERFORMANCE.map(item=>item.label),["单 PID 严格核验","300 PID 批量复读","1,908 张库存扫描"]);
+test("performance guidance explains why sending uses the last successful snapshot",()=>{
+ assert.deepEqual(TAPLINK_PERFORMANCE.map(item=>item.label),["单 PID 严格核验","1,908 张库存扫描"]);
  assert.equal(TAPLINK_PERFORMANCE[0].value,"约 2 秒");
- assert.match(PID_REFRESH_CLOCKS.find(item=>item.key==="action")?.items[0]??"",/不逐 PID 联网/);
+ assert.match(PID_REFRESH_CLOCKS.find(item=>item.key==="active")?.items[1]??"",/上次成功快照/);
 });
 
 test("TapLink validity requires both current offer and exact platform binding facts",()=>{

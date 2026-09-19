@@ -40,7 +40,7 @@ function PidTree(){
     <div className="rounded-2xl border-2 border-brand-200 bg-brand-25 p-5 text-center dark:border-brand-900 dark:bg-brand-500/5"><p className="text-xs font-semibold text-brand-500">问题 2</p><h3 className="mt-1 text-lg font-semibold">它已经在对应的平台商品池里吗？</h3></div>
     <div className="mt-4 grid gap-4 md:grid-cols-2"><TreeOutcome title="全托：已选池" detail={`当前台账 ${format(s.fullManaged.selectedPool)} PID；未选则创建选入意图，回查 confirmed/already_selected。`} tone="success"/><TreeOutcome title="Campaign：已加入活动" detail={`当前候选 ${format(s.campaign.chosen)} PID；新加入台账 ${format(s.campaign.newlyJoined)} 条，额外条款转人工。`} tone="success"/></div>
     <Connector/>
-    <div className="rounded-2xl border-2 border-brand-200 bg-brand-25 p-5 text-center dark:border-brand-900 dark:bg-brand-500/5"><p className="text-xs font-semibold text-brand-500">问题 3</p><h3 className="mt-1 text-lg font-semibold">当前方案有精确可用的 TapLink 吗？</h3><p className="mt-2 text-sm text-gray-500">必须同时匹配 PID、来源、Campaign、达人佣金和 listId。</p></div>
+    <div className="rounded-2xl border-2 border-brand-200 bg-brand-25 p-5 text-center dark:border-brand-900 dark:bg-brand-500/5"><p className="text-xs font-semibold text-brand-500">问题 3</p><h3 className="mt-1 text-lg font-semibold">最后成功快照中有可用 TapLink 吗？</h3><p className="mt-2 text-sm text-gray-500">刷新时匹配 PID、来源、Campaign、达人佣金和 listId；刷新之间沿用结果。</p></div>
     <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
      <TreeOutcome title="有且一致" detail="复用当前卡，进入 Material Ready。" tone="success"/>
      <TreeOutcome title="完全没有" detail="创建唯一建链意图；回执未知只核验原意图。" tone="warning"/>
@@ -48,12 +48,13 @@ function PidTree(){
      <TreeOutcome title="状态未知" detail="不创建替代卡，先复读列表与成员。" tone="warning"/>
     </div>
     <Connector/>
-    <div className="mx-auto max-w-lg rounded-2xl border-2 border-success-300 bg-success-50 p-5 text-center dark:border-success-900 dark:bg-success-900/10"><Pill tone="success">唯一前向结果</Pill><h3 className="mt-3 text-xl font-semibold">PID Material Ready</h3><p className="mt-2 text-sm text-gray-500">当前合格 Offer + 已在平台池 + 精确可用 TapLink。只有这里的 PID 才能去查达人线索。</p></div>
+    <div className="mx-auto max-w-lg rounded-2xl border-2 border-success-300 bg-success-50 p-5 text-center dark:border-success-900 dark:bg-success-900/10"><Pill tone="success">唯一前向结果</Pill><h3 className="mt-3 text-xl font-semibold">PID Material Ready</h3><p className="mt-2 text-sm text-gray-500">当前合格 Offer + 已在平台池 + 最后成功快照确认链接可用。只有这里的 PID 才能去查达人线索。</p></div>
    </div>
   </div></Card>
-  <Card title="刷新只有四个时钟" subtitle="刷新不是新状态；每次刷新只是把 PID 送回资格或链接判断"><div className="p-5">
-   <div className="grid gap-4 lg:grid-cols-2">{PID_REFRESH_CLOCKS.map(clock=><div key={clock.key} className="rounded-xl border border-gray-200 p-4 dark:border-gray-800"><div className="flex items-center justify-between gap-3"><p className="font-semibold text-gray-800 dark:text-gray-200">{clock.title}</p><Pill tone={clock.key==="action"?"brand":clock.key==="event"?"success":"neutral"}>{clock.cadence}</Pill></div><ul className="mt-3 space-y-2">{clock.items.map(item=><li key={item} className="flex gap-2 text-sm leading-6 text-gray-500"><span aria-hidden="true">•</span><span>{item}</span></li>)}</ul></div>)}</div>
-   <Notice tone="warning"><strong>当前运行事实：</strong>定时调度器尚未实现，现有作业开关全部关闭。页面中的“每日链接复读、24 小时查询门禁、每周清理”是待确认的目标周期，不代表后台已经在跑。</Notice>
+  <Card title="TapLink 只保留两个刷新周期" subtitle="活跃链接 48 小时，全部库存每周；新建后只回读一次"><div className="p-5">
+   <div className="grid gap-4 lg:grid-cols-3">{PID_REFRESH_CLOCKS.map(clock=><div key={clock.key} className="rounded-xl border border-gray-200 p-4 dark:border-gray-800"><div className="flex items-center justify-between gap-3"><p className="font-semibold text-gray-800 dark:text-gray-200">{clock.title}</p><Pill tone={clock.key==="active"?"brand":clock.key==="create"?"success":"neutral"}>{clock.cadence}</Pill></div><ul className="mt-3 space-y-2">{clock.items.map(item=><li key={item} className="flex gap-2 text-sm leading-6 text-gray-500"><span aria-hidden="true">•</span><span>{item}</span></li>)}</ul></div>)}</div>
+   <Notice tone="success"><strong>允许短期误差：</strong>达人查询、组批和发送都直接使用最后一次成功快照，不再发送前复读。快照逾期只提示，不阻塞流程。</Notice>
+   <Notice tone="warning"><strong>当前运行事实：</strong>定时调度器尚未实现，现有作业开关全部关闭；48 小时和每周是已经确认的目标周期，不代表后台已经在跑。</Notice>
   </div></Card>
   <Card title="TapLink 清理是旁路，不参与 PID 前向资格" subtitle={`当前只读库存 ${format(s.inventory.lists)} 张列表；历史清理快照扫描 ${format(s.historicalCleanup.scanned)} 张`}><div className="p-5">
    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -74,7 +75,7 @@ function PidTree(){
 const blockers:Record<PhaseKey,string[]>={
  product:["商品不符合当前来源规则","没有完整、同源的 Offer","缺 TapLink 或卡上佣金已变化"],
  creator:["PID 尚未查询达人","handle 明确搜索不到","OECID 尚未解析"],
- send:["达人仍在冷却","存在未解决回复或人工接管","商品或链接在组批复读时发生变化"],
+ send:["达人仍在冷却","存在未解决回复或人工接管","最后快照中商品或链接不可用"],
 };
 
 function PhaseCard({phase,active,onClick}:{phase:(typeof BUSINESS_PHASES)[number];active:boolean;onClick:()=>void}){
@@ -98,7 +99,7 @@ function Overview(){
  const scenario=SCENARIOS.find(item=>item.key===scenarioKey)??SCENARIOS[0];
  const result=useMemo(()=>simpleScenario(scenario),[scenario]);
  const checks=[
-  {label:"商品准备",ok:result.product,detail:result.product?"合格商品 + 精确 Offer + 当前链接":"停在商品准备"},
+  {label:"商品准备",ok:result.product,detail:result.product?"合格商品 + 精确 Offer + 最后成功链接快照":"停在商品准备"},
   {label:"达人准备",ok:result.creator,detail:result.creator?"稳定 OECID 已确认":"等待身份判定"},
   {label:"发送安排",ok:result.send,detail:result.send?"可以进入严格发送池":"不进入 Ready"},
  ];
@@ -149,21 +150,20 @@ function Details(){return <div className="space-y-4">
   <Card title="Campaign 商品"><div className="space-y-2 p-5 text-sm leading-6 text-gray-600 dark:text-gray-300">{["活动必须 ACTIVE","剩余期限 > 45 天","普通商品库存 > 100","无额外条款才自动加入","达人佣金高于公开佣金"].map(item=><p key={item} className="flex gap-2"><Icon name="check" className="mt-1 size-4 shrink-0 text-success-500"/>{item}</p>)}</div></Card>
  </div></Collapsible>
  <Collapsible label="刷新周期" defaultOpen><div className="space-y-4">
-  <Notice tone="warning"><strong>先区分规则与运行：</strong>“不可跳过”是业务门禁；“建议值”仍待确认。当前定时调度器未实现，所有定时开关均为关闭。</Notice>
+  <Notice tone="warning"><strong>先区分规则与运行：</strong>48 小时和每周是目标规则；当前定时调度器未实现，所有定时开关均为关闭。</Notice>
   <div className="overflow-x-auto rounded-xl border border-gray-200 dark:border-gray-800"><table className="w-full text-left text-sm"><thead className="bg-gray-50 text-xs text-gray-500 dark:bg-gray-800/60"><tr>{["对象","什么时候刷新","如何触发","影响"].map(label=><th key={label} className="whitespace-nowrap px-4 py-3 font-medium">{label}</th>)}</tr></thead><tbody>{REFRESH_RULES.map(row=><tr key={row.object} className="border-t border-gray-100 align-top dark:border-gray-800"><td className="whitespace-nowrap px-4 py-3 font-medium">{row.object}</td><td className="min-w-40 px-4 py-3 text-gray-500">{row.cycle}</td><td className="min-w-48 px-4 py-3 text-gray-500">{row.mode} · {row.optional}</td><td className="min-w-64 px-4 py-3 text-gray-500">{row.effect}</td></tr>)}</tbody></table></div>
  </div></Collapsible>
  <Collapsible label="TapLink 核验效率" defaultOpen><div className="space-y-4">
-  <div className="grid gap-4 lg:grid-cols-3">{TAPLINK_PERFORMANCE.map(item=><Card key={item.label} title={item.label} action={<Pill tone="brand">{item.value}</Pill>}><p className="p-5 text-sm leading-6 text-gray-500">{item.detail}</p></Card>)}</div>
-  <Notice tone="success"><strong>效率结论：</strong>24 小时门禁只检查一份共享库存快照是否够新，不为每个 PID 单独联网。严格逐 PID 复读只放在建卡回读、正式组批和实际发送前。</Notice>
+  <div className="grid gap-4 lg:grid-cols-2">{TAPLINK_PERFORMANCE.map(item=><Card key={item.label} title={item.label} action={<Pill tone="brand">{item.value}</Pill>}><p className="p-5 text-sm leading-6 text-gray-500">{item.detail}</p></Card>)}</div>
+  <Notice tone="success"><strong>效率结论：</strong>不做发送前核验。活跃链接集中每 48 小时刷新，全库存每周扫一次；其他时间直接使用最后成功快照。</Notice>
  </div></Collapsible>
- <Collapsible label="怎样才算 TapLink 仍然有效" defaultOpen><div className="space-y-4">
-  <Notice><strong>Material Ready = 当前 Offer 合格 + 当前 TapLink 精确可用。</strong>卡还在，不等于商品仍能发；商品仍合格，也不等于旧卡还代表当前方案。</Notice>
+ <Collapsible label="刷新时核对哪些 TapLink 事实"><div className="space-y-4">
+  <Notice><strong>Material Ready = 当前 Offer 合格 + 最后成功快照确认 TapLink 可用。</strong>刷新窗口内允许平台事实和本地快照存在短期误差。</Notice>
   <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">{TAPLINK_VALIDITY_CHECKS.map((check,index)=><div key={check.label} className="rounded-xl bg-gray-50 p-4 dark:bg-gray-800"><p className="text-xs font-semibold text-brand-500">{index+1} · {check.label}</p><p className="mt-2 text-sm leading-6 text-gray-500">{check.detail}</p></div>)}</div>
-  <div className="grid gap-4 lg:grid-cols-4">{[
-   ["动作后","立即回读","选入、加入、建卡或删除完成后，平台读回才算完成。"],
-   ["进入达人查询","共享证据","建议库存快照不超过 24 小时；本地判断，不为每个 PID 单独联网。"],
-   ["正式组批","批次复读","只复读本批 PID；变化项退出批次，其他 PID 不受影响。"],
-   ["逐条发送","最终权威","fresh_card 按冻结 listId 现场复读；不一致或 unknown 立即停止。"],
+  <div className="grid gap-4 lg:grid-cols-3">{[
+   ["新建后","立即一次","平台读回创建结果和 listId；之后不围绕本次创建反复核验。"],
+   ["正常运行","以上次为准","达人查询、组批和发送直接使用最后成功快照，不增加前置等待。"],
+   ["发送明确拒卡","只影响该 PID","转为等待下一次或人工刷新，其他成员继续；不冻结整个批次。"],
   ].map(([title,tag,text])=><Card key={title} title={title} action={<Pill tone="neutral">{tag}</Pill>}><p className="p-5 text-sm leading-6 text-gray-500">{text}</p></Card>)}</div>
  </div></Collapsible>
  <Collapsible label="技术锁与恢复保障"><div className="grid gap-3 md:grid-cols-2">{LOCKS.map(lock=><div key={lock.name} className="rounded-xl border border-gray-200 p-4 dark:border-gray-800"><div className="flex items-center gap-2"><Icon name="lock" className="size-4 text-brand-500"/><p className="font-semibold text-gray-800 dark:text-gray-200">{lock.name}</p></div><p className="mt-2 text-xs text-brand-600 dark:text-brand-300">{lock.scope} · {lock.when}</p><p className="mt-2 text-sm leading-6 text-gray-500">{lock.protects}</p></div>)}</div></Collapsible>
