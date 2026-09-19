@@ -22,6 +22,7 @@ DeepSeek/Agent 已经把 9 月 14 日的“货盘批量备链”继续推进到�
 | 冻结发送桥 | `e0b37be`（不可变批次、start/stop、frozen-v2 worker 与前端确认） |
 | 回复事件与审核 | `dc12e80`（episode/turn、五动作、固定模板、DeepSeek/Jev adapter 与审核页） |
 | Jev 与意大利标准链接 | `67b0c98`（TypeSafe Jev、当前货盘重算、标准链接全量补齐） |
+| 双模型回复评测 | `4de59f9`（35 条同集批量分类、一致率与审核后准确率指标） |
 | 上一个已提交开发头 | `4cdb759`（`agent/p0-catalog-links`） |
 | 继承工作区固化提交 | `cd81dff` |
 | 继承标签 | `takeover-20260919-inherited` |
@@ -47,7 +48,7 @@ DeepSeek/Agent 已经把 9 月 14 日的“货盘批量备链”继续推进到�
 | 发送预检 | 默认请求 500，当前可冻结 500；链接缺失/条款变化均为 0，仅达人关系冻结 5、超出本批规模 206 |
 | 冻结批次 | migration v3 已应用；`cycle_bulk_freeze=0`、`cycle_bulk_candidate=0`，说明本轮没有代用户冻结或启动批次 |
 | 收信 | 555 个索引会话、1,354 个事件、25 个待取内容；累计 live 回复 26、加橱窗 36；当前 open case 1 |
-| 回复事件 | migration v4 已应用并只读回填 495 个外发 episode、35 个入站 turn、26 个有关联；最近 5 条已完成 DeepSeek/Jev 同集影子分类、0 条人工审核 |
+| 回复事件 | 495 个外发 episode、35 个入站 turn、26 个有关联；35 条已完成 DeepSeek/Jev 同集分类，26 条一致、9 条分歧、一致率 74.29%，0 条人工审核 |
 | 凭据 | Kalodata 本机激活码已保存为 0600，真实探测 `ready`；TypeSafe key 已保存为 0600，官方 models 接口可用，均不入 Git |
 | 自动回复 | 关闭；DeepSeek/Jev 的影子分类结果都不授权恢复 |
 
@@ -88,7 +89,7 @@ DeepSeek/Agent 已经把 9 月 14 日的“货盘批量备链”继续推进到�
 5. **文档曾混入大量动态流水**：原 `AGENTS.md` 已由本轮收敛；以后不得继续把每次数字和事故追加回根规则。
 6. **测试资源释放告警**：Python 全量测试通过，但未隐藏 warning 时可见多处未关闭 SQLite connection 的 `ResourceWarning`。它不阻断本次文档交付，后续应按模块修复，避免长驻进程积累连接。
 7. **旧批次仍有 legacy 兼容路径**：新 `/api/send` 只创建 frozen-v2 批次，不重选 PID、不远程复读 TapLink；历史 legacy-only `cycle_bulk` 仍保留旧路径，只用于追溯/兼容，不能拿旧授权恢复发送。
-8. **回复仍处于影子验收**：最近 5 条已完成 DeepSeek/Jev 同集对照；`Certo!` 上 DeepSeek=`human`、Jev=`collaboration_ack`，必须由用户审核形成真值，真实回复 transport 未接新合同。
+8. **回复仍处于影子验收**：35 条已完成 DeepSeek/Jev 同集对照，9 条分歧；`Certo!` 上 DeepSeek=`human`、Jev=`collaboration_ack`。必须由用户审核形成真值后才能报告准确率，真实回复 transport 未接新合同。
 9. **收信监控当前未运行**：代码与断点都保留，但没有常驻 `poll-cycle-inbox.py --worker` 进程；这是运行状态，不授权本轮自动恢复。
 
 ## 7. 建议接续顺序
@@ -117,9 +118,9 @@ DeepSeek/Agent 已经把 9 月 14 日的“货盘批量备链”继续推进到�
 
 ### 下一步：用户审核与评测
 
-1. 用户先在“回复预演与训练”审核最近 5 条及后续样本，特别校准简短合作确认、礼貌拒绝和多消息合并；
+1. 用户在“回复预演与训练”审核 35 条样本，页面会优先展示未审项并在审核后滚到下一批，特别校准简短合作确认、礼貌拒绝和多消息合并；
 2. 将用户审核结果形成固定正反例集，补动作准确率、人工漏判、错 PID、重复模板等指标；
-3. 扩大 DeepSeek/Jev 同集比较；只有用户另行明确开启后，才设计真实自动回复 transport；
+3. 审核后直接比较 DeepSeek/Jev 准确率、误自动处理和误转人工；只有用户另行明确开启后，才设计真实自动回复 transport；
 4. 账号级日额度探测仍由用户另行在页面明确启动，不与回复评测混在一起。
 
 ## 8. 关键入口
@@ -147,7 +148,7 @@ DeepSeek/Agent 已经把 9 月 14 日的“货盘批量备链”继续推进到�
 
 2026-09-20 在冻结发送桥和事件级回复预演完成后：
 
-- Python：`1052` 项 `unittest` 通过。
+- Python：`1053` 项 `unittest` 通过。
 - Web：`374` 项 Node 测试通过。
 - TypeScript：`npm run typecheck` 通过。
 - Next.js：`npm run build` 通过，14 个静态页面（含 `/flow-demo`）及当前 API 路由生成成功。
