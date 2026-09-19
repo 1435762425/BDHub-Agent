@@ -1,4 +1,4 @@
-import {readJobs,saveJobs,validateJobsSave} from "../../../server/jobs/bridge.ts";
+import {readJobs,saveJobs,startJobsScheduler,stopJobsScheduler,validateJobsRequest} from "../../../server/jobs/bridge.ts";
 import {isLocalRequest} from "../../../server/runtime/validation.ts";
 export const runtime="nodejs";
 export const dynamic="force-dynamic";
@@ -16,6 +16,7 @@ export async function POST(request:Request){
  let body:unknown;
  try{body=await request.json();}
  catch{return Response.json({error:'invalid_jobs_request'},{status:400,headers});}
- try{return Response.json(await saveJobs(validateJobsSave(body)),{headers});}
- catch{return Response.json({error:'invalid_jobs_request'},{status:400,headers});}
+ let call;try{call=validateJobsRequest(body);}catch{return Response.json({error:'invalid_jobs_request'},{status:400,headers});}
+ try{return Response.json(call.action==="save"?await saveJobs(call.payload):call.action==="start_scheduler"?await startJobsScheduler():await stopJobsScheduler(),{headers});}
+ catch(error){const code=error instanceof Error?error.message:"jobs_unavailable";return Response.json({error:code},{status:code.includes("already")||code.includes("not_running")?409:503,headers});}
 }

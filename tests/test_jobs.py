@@ -22,6 +22,8 @@ class ConfigFile(unittest.TestCase):
                     {'jobs': {'catalog_collect': {'at': '25:00'}}},
                     {'jobs': {'catalog_collect': {'at': '3:00'}}},
                     {'jobs': {'catalog_collect': {'enabled': 'yes'}}},
+                    {'jobs': {'selected_taplink_verify': {'weekday': 7}}},
+                    {'jobs': {'campaign_material_refresh': {'weekday': 1}}},
                     {'jobs': []}]:
             with self.assertRaises(ValueError):
                 validate(bad)
@@ -43,11 +45,15 @@ class ConfigFile(unittest.TestCase):
 
 
 class Reporting(unittest.TestCase):
-    def test_status_never_claims_the_scheduler_is_ready(self):
+    def test_scheduler_is_available_but_every_cycle_stays_off(self):
         with tempfile.TemporaryDirectory() as folder:
             state = status(folder)
-            self.assertFalse(state['schedulerReady'])
+            self.assertTrue(state['schedulerReady'])
+            self.assertFalse(state['scheduler']['running'])
             self.assertTrue(all(job['enabled'] is False for job in state['jobs']))
+            by_id={job['id']:job for job in state['jobs']}
+            self.assertEqual(by_id['campaign_material_refresh']['cadence'],'daily')
+            self.assertEqual((by_id['selected_taplink_verify']['cadence'],by_id['selected_taplink_verify']['weekday']),('weekly',0))
 
     def test_only_jobs_with_a_verified_endpoint_offer_a_manual_trigger(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -65,7 +71,8 @@ class Reporting(unittest.TestCase):
     def test_a_missing_database_reports_no_last_run_instead_of_a_zero(self):
         with tempfile.TemporaryDirectory() as folder:
             self.assertEqual(set(last_run(folder)),
-                             {'catalog_collect', 'catalog_screen', 'link_prepare', 'inbox_monitor'})
+                             {'catalog_collect', 'catalog_screen', 'link_prepare', 'inbox_monitor',
+                              'campaign_material_refresh','selected_taplink_verify'})
             self.assertTrue(all(value is None for value in last_run(folder).values()))
             self.assertTrue(all(job['lastRunAt'] is None for job in status(folder)['jobs']))
 

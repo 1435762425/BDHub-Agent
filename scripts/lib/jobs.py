@@ -15,7 +15,7 @@ import sqlite3
 from contextlib import closing
 from pathlib import Path
 
-DEFAULTS = {'version': 'jobs-v1', 'jobs': {}}
+DEFAULTS = {'version': 'jobs-v2', 'jobs': {}}
 
 # Manual triggers exist only where a verified path already backs them. Everything else reports
 # 'unwired' so the page never invents a button.
@@ -35,6 +35,12 @@ JOBS = (
     {'id': 'link_prepare', 'name': 'TapLink 链接准备', 'group': '货盘',
      'description': '先查已有链接并复用，确认缺链才按已确认分佣新建。',
      'manual': 'unwired', 'defaultAt': '05:00'},
+    {'id': 'campaign_material_refresh', 'name': 'Campaign 来源与 TapLink 日检', 'group': '货盘',
+     'description': '每日先完整刷新 Campaign 与资格，再只读核验对应标准 TapLink；不建链、不删卡。',
+     'manual': 'unwired', 'defaultAt': '03:00', 'cadence': 'daily'},
+    {'id': 'selected_taplink_verify', 'name': '全托已选 TapLink 周检', 'group': '货盘',
+     'description': '每周统一只读核验全托已选商品的当前标准 TapLink；不建链、不删卡。',
+     'manual': 'unwired', 'defaultAt': '05:00', 'cadence': 'weekly', 'defaultWeekday': 0},
     # 收信监控是**只读**的：它不发送，只把达人回复与橱窗通知落库。它和补身份/发送抢同一把账号
     # live 锁，抢不到就退避重试——所以它适合开成常驻，不适合当唯一入口。
     {'id': 'inbox_monitor', 'name': '收信监控（回复与橱窗）', 'group': '达人',
@@ -67,6 +73,9 @@ def validate(raw):
         entry = supplied.get(job['id']) or {}
         if not isinstance(entry, dict):
             raise ValueError('jobs_invalid')
+        allowed = {'enabled', 'at'} | ({'weekday'} if job.get('cadence') == 'weekly' else set())
+        if set(entry) - allowed:
+            raise ValueError('jobs_invalid')
         enabled = entry.get('enabled', False)
         if type(enabled) is not bool:
             raise ValueError('jobs_invalid')
@@ -79,8 +88,14 @@ def validate(raw):
             hour, minute = int(parts[0]), int(parts[1])
             if not 0 <= hour <= 23 or not 0 <= minute <= 59:
                 raise ValueError('jobs_invalid')
-        jobs[job['id']] = {'enabled': enabled, 'at': at}
-    return {'version': str(raw.get('version') or DEFAULTS['version']), 'jobs': jobs}
+        setting = {'enabled': enabled, 'at': at}
+        if job.get('cadence') == 'weekly':
+            weekday = entry.get('weekday', job.get('defaultWeekday', 0))
+            if type(weekday) is not int or not 0 <= weekday <= 6:
+                raise ValueError('jobs_invalid')
+            setting['weekday'] = weekday
+        jobs[job['id']] = setting
+    return {'version': DEFAULTS['version'], 'jobs': jobs}
 
 
 def load(root):
@@ -122,6 +137,8 @@ def last_run(root):
                                       'SELECT max(updated) FROM global_source_screen_run'),
             'link_prepare': _scalar(root / 'var/catalog-links.sqlite',
                                     'SELECT max(updated) FROM catalog_prepare_run'),
+            'campaign_material_refresh': _maintenance_success(root, 'campaign'),
+            'selected_taplink_verify': _maintenance_success(root, 'selected'),
             # 收信监控把"最近核验"写在它自己的状态文件里；那是真实记录，不是推算。
             'inbox_monitor': _status_stamp(root / 'var/cycle-inbox-status.json')}
 
@@ -138,6 +155,15 @@ def _status_stamp(path):
     return float(stamp) if isinstance(stamp, (int, float)) and stamp > 0 else None
 
 
+def _maintenance_success(root, key):
+    try:
+        value = json.loads((Path(root) / 'var/material-maintenance-status.json').read_text(encoding='utf-8'))
+        stamp = (value.get('lastSuccess') or {}).get(key) if isinstance(value, dict) else None
+        return float(stamp) if isinstance(stamp, (int, float)) and stamp > 0 else None
+    except (OSError, ValueError):
+        return None
+
+
 def status(root=None):
     root = root or Path(__file__).resolve().parents[2]
     config = load(root)
@@ -149,7 +175,9 @@ def status(root=None):
                      'description': job['description'], 'manual': job['manual'],
                      'manualEndpoint': MANUAL_ENDPOINTS.get(job['manual']),
                      'lastRunAt': last.get(job['id']), 'enabled': setting['enabled'],
-                     'at': setting['at']})
+                     'schedulable': job['id'] in ('campaign_material_refresh','selected_taplink_verify'),
+                     'at': setting['at'], 'cadence': job.get('cadence', 'daily'),
+                     'weekday': setting.get('weekday')})
+    from lib.material_maintenance import scheduler_state
     return {'version': config['version'], 'jobs': jobs,
-            # The scheduler is not built. Saying so here keeps the switch honest on the page.
-            'schedulerReady': False}
+            'schedulerReady': True, 'scheduler': scheduler_state(root)}

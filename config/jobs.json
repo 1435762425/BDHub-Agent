@@ -1,5 +1,5 @@
 {
-  "version": "jobs-v1",
+  "version": "jobs-v2",
   "jobs": {
     "catalog_collect": {
       "enabled": false,
@@ -20,6 +20,15 @@
     "link_prepare": {
       "enabled": false,
       "at": "05:00"
+    },
+    "campaign_material_refresh": {
+      "enabled": false,
+      "at": "03:00"
+    },
+    "selected_taplink_verify": {
+      "enabled": false,
+      "at": "05:00",
+      "weekday": 0
     }
   }
 }
