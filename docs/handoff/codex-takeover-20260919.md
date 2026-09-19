@@ -21,6 +21,7 @@ DeepSeek/Agent 已经把 9 月 14 日的“货盘批量备链”继续推进到�
 | 第一轮实现提交 | `3c0edad`（迁移底座）、`b024fec`（标准材料与当前线索）、`17cca7a`（历史索引）、`05ff3e1`（发送池性能）、`cb5c7f7`（跨代身份复用） |
 | 冻结发送桥 | `e0b37be`（不可变批次、start/stop、frozen-v2 worker 与前端确认） |
 | 回复事件与审核 | `dc12e80`（episode/turn、五动作、固定模板、DeepSeek/Jev adapter 与审核页） |
+| Jev 与意大利标准链接 | `67b0c98`（TypeSafe Jev、当前货盘重算、标准链接全量补齐） |
 | 上一个已提交开发头 | `4cdb759`（`agent/p0-catalog-links`） |
 | 继承工作区固化提交 | `cd81dff` |
 | 继承标签 | `takeover-20260919-inherited` |
@@ -42,12 +43,13 @@ DeepSeek/Agent 已经把 9 月 14 日的“货盘批量备链”继续推进到�
 | --- | --- |
 | 身份 | 稳定身份库累计 3,069 个 handle；当前 20 条范围内 963 个 handle：728 已解析、235 明确未解析、0 blocked、0 未判定；`reconciled=true` |
 | 当前线索 | 1,150 个 PID 的本机回执共 1,803 条正销量证据，按 v2 发布 1,617 条当前线索；另为身份复用建立 12,996 条历史索引，50 条旧记录因字段不完整未索引 |
-| 发送池 v2 | 1,306 个当前达人×商品位置：706 可发送、553 等待中、47 暂不参与；728 个达人；累计已发送历史 495 |
-| 发送预检 | 默认请求 500，当前 463 条通过复检；滚动 24 小时本地新联系额度使用 0/500；窗口 09:00–24:00 当时为 closed，但关闭只阻止 dispatch，不阻止冻结 |
+| 发送池 v2 | 当前预览扫描 711 个 ready 位置；累计已发送历史 495 |
+| 发送预检 | 默认请求 500，当前可冻结 500；链接缺失/条款变化均为 0，仅达人关系冻结 5、超出本批规模 206 |
 | 冻结批次 | migration v3 已应用；`cycle_bulk_freeze=0`、`cycle_bulk_candidate=0`，说明本轮没有代用户冻结或启动批次 |
 | 收信 | 555 个索引会话、1,354 个事件、25 个待取内容；累计 live 回复 26、加橱窗 36；当前 open case 1 |
-| 回复事件 | migration v4 已应用并只读回填 495 个外发 episode、35 个入站 turn、26 个有关联；最近 5 条已完成 DeepSeek 影子分类、0 条人工审核 |
-| 自动回复 | 关闭；Jev 为 `unconfigured`，历史累计数字和影子分类都不授权恢复 |
+| 回复事件 | migration v4 已应用并只读回填 495 个外发 episode、35 个入站 turn、26 个有关联；最近 5 条已完成 DeepSeek/Jev 同集影子分类、0 条人工审核 |
+| 凭据 | Kalodata 本机激活码已保存为 0600，真实探测 `ready`；TypeSafe key 已保存为 0600，官方 models 接口可用，均不入 Git |
+| 自动回复 | 关闭；DeepSeek/Jev 的影子分类结果都不授权恢复 |
 
 这些数字会随 worker 和时间变化，不应写入 UI 常量或业务规则。规范化索引与固定 JOIN 顺序完成后，`lead-pool.py status` 本机约 0.45 秒、`send-batch.py status` 约 1.69 秒；这是本机观测，不是 SLA。
 
@@ -57,14 +59,14 @@ DeepSeek/Agent 已经把 9 月 14 日的“货盘批量备链”继续推进到�
 | --- | --- | --- |
 | 全托货盘 | 主来源采集、可配置筛分、选入账本、已选池回读 | 真实数字随台账变化；全托不使用库存门槛 |
 | Campaign | IT Campaign 读取、筛分、加入活动、页面/API 和合同测试 | 仍按非全托规则核对期限、库存与额外条款；不与全托合并资格 |
-| TapLink | `catalog_current_binding` 已成为唯一前向材料；本地回填 1,517 条标准卡，旧卡仍完整保留 | 1 条命名不一致和 1 条 canary 不提升为当前绑定；批量补建未执行 |
+| TapLink | `catalog_current_binding` 是唯一前向材料；当前 selected 2,297/2,297、campaign 474/474 精确绑定 | 旧卡仍完整保留；本轮 1,548 次创建均有 intent+回读，当前 prepared/submitted/unknown 为 0 |
 | 商品短名 | DeepSeek 批量生成与 PID 级缓存；发送预检可按 PID 复用 | 失败不自动重复调用模型；短名质量不应冒充发送资格 |
 | Kalodata 线索 | `leads-queue-v2`、完整 receipt、当前前 20 条发布、历史规范化索引和无平台回填 | 失败不写 `queried_at`；额度耗尽停止并保留断点 |
 | OECID | 达人级一次查询、blocked 重开、结果互斥分类、页面卡片 | 已明确查无的不自动重复；无 OECID 不进入发送位置 |
 | 发送池 | `lead-pool.v2`、统一 `sourceRank → units DESC → PID`、三种业务结果、已发送历史分离 | 池本身只读重算；不能从可发送数量直接启动发送 |
 | 冻结发送 | `previewHash`、完整候选快照、requestId 幂等、revision start/stop、2-lane worker、页面确认摘要与断点 | GET/save/freeze 不启动；只有页面明确 start 才真实发送，本轮批次与发送均为 0 |
 | 收信与统计 | 现有 inbox worker 接入作业面板，按北京时间统计并排除历史补录 | 盘点中出现过一次 `im_transport_error`，最终回读已清除；继续观察而不是重启掩盖 |
-| 回复分类 | 不可变 episode/turn/关联、五种动作、三条固定回复、DeepSeek 影子分类、中文理解和用户正误审核页 | Jev 未配置；旧事实工具只保留历史兼容，不在当前收信路径；AI 自动回复关闭 |
+| 回复分类 | 不可变 episode/turn/关联、五种动作、三条固定回复、DeepSeek/Jev 并列动作与置信度、中文理解和用户正误审核页 | 真实自动回复关闭；`Certo!` 的模型分歧仍需用户审核 |
 | PID→发送池演示 | `/flow-demo` 展示 PID 生命周期树、每 PID 最多 20 条线索、OECID、统一 `sourceRank` 排序和三种业务结果 | 纯前端，PID 数量为 2026-09-19 只读静态快照，达人案例为虚构数据；页面运行时不连接 API、SQLite、平台或模型 |
 
 ## 5. 当前必须保持的业务门禁
@@ -86,7 +88,7 @@ DeepSeek/Agent 已经把 9 月 14 日的“货盘批量备链”继续推进到�
 5. **文档曾混入大量动态流水**：原 `AGENTS.md` 已由本轮收敛；以后不得继续把每次数字和事故追加回根规则。
 6. **测试资源释放告警**：Python 全量测试通过，但未隐藏 warning 时可见多处未关闭 SQLite connection 的 `ResourceWarning`。它不阻断本次文档交付，后续应按模块修复，避免长驻进程积累连接。
 7. **旧批次仍有 legacy 兼容路径**：新 `/api/send` 只创建 frozen-v2 批次，不重选 PID、不远程复读 TapLink；历史 legacy-only `cycle_bulk` 仍保留旧路径，只用于追溯/兼容，不能拿旧授权恢复发送。
-8. **回复仍处于影子验收**：事件账本和审核页已完成，但最近 5 条中可见“Certo!”被 DeepSeek 判为人工的可疑样本，必须由用户逐条审核形成固定正反例；Jev 尚未配置，真实回复 transport 未接新合同。
+8. **回复仍处于影子验收**：最近 5 条已完成 DeepSeek/Jev 同集对照；`Certo!` 上 DeepSeek=`human`、Jev=`collaboration_ack`，必须由用户审核形成真值，真实回复 transport 未接新合同。
 9. **收信监控当前未运行**：代码与断点都保留，但没有常驻 `poll-cycle-inbox.py --worker` 进程；这是运行状态，不授权本轮自动恢复。
 
 ## 7. 建议接续顺序
@@ -110,14 +112,14 @@ DeepSeek/Agent 已经把 9 月 14 日的“货盘批量备链”继续推进到�
 - migration v4 建立 `outbound_episode / inbound_turn / turn_episode_link / service_case_turn / reply_classification / reply_review`，备份位于 `var/backups/20260920-p4-reply-events/second-cycle.sqlite`；
 - 本机历史证据回填 495 episode、35 turn、26 个有关联，`platformWrites=0`、回填 `modelCalls=0`；
 - 收信 worker 删除 60 秒逐达人模型调用，改为只保存事件、立即冻结达人、两小时集中待处理；
-- DeepSeek 只做五动作影子分类，固定模板与模型判断分离；Jev adapter 不猜接口，当前明确 `unconfigured`；
+- DeepSeek 与 TypeSafe Jev 都只做五动作影子分类；Jev 固定官方 `jev-1.13.0`，固定模板与模型判断分离；
 - 回复预演页已展示真实意大利原文、中文理解、关联 PID、候选固定模板和“正确/不正确”审核。
 
 ### 下一步：用户审核与评测
 
 1. 用户先在“回复预演与训练”审核最近 5 条及后续样本，特别校准简短合作确认、礼貌拒绝和多消息合并；
 2. 将用户审核结果形成固定正反例集，补动作准确率、人工漏判、错 PID、重复模板等指标；
-3. Jev 获权后跑同一测试集比较；只有用户另行明确开启后，才设计真实自动回复 transport；
+3. 扩大 DeepSeek/Jev 同集比较；只有用户另行明确开启后，才设计真实自动回复 transport；
 4. 账号级日额度探测仍由用户另行在页面明确启动，不与回复评测混在一起。
 
 ## 8. 关键入口
@@ -139,13 +141,13 @@ DeepSeek/Agent 已经把 9 月 14 日的“货盘批量备链”继续推进到�
 
 ## 9. 本轮执行边界
 
-本轮应用了本项目 `second-cycle.sqlite` 的 additive migration v3/v4，构建并重启了 5198 Web 服务，并对最近 5 条真实意大利入站内容执行 DeepSeek 影子分类；没有发送 TikTok IM、冻结业务批次、启动发送 worker、开启 AI 自动回复、创建回复发送意图、选入商品、加入 Campaign、创建/删除 TapLink、修改旧 BDHub 或恢复其他 worker。
+本轮应用了本项目 `second-cycle.sqlite` 的 additive migration v3/v4，构建并重启了 5198 Web 服务；完成 DeepSeek/Jev 最近 5 条同集影子分类，并按用户授权为意大利当前货盘执行 1,548 次 TapLink 创建与逐条回读。没有发送 TikTok IM、冻结业务批次、启动发送 worker、开启 AI 自动回复、创建回复发送意图、删除历史 TapLink、修改旧 BDHub 或恢复其他 worker。
 
 ## 10. 接管验证
 
 2026-09-20 在冻结发送桥和事件级回复预演完成后：
 
-- Python：`1044` 项 `unittest` 通过。
+- Python：`1052` 项 `unittest` 通过。
 - Web：`374` 项 Node 测试通过。
 - TypeScript：`npm run typecheck` 通过。
 - Next.js：`npm run build` 通过，14 个静态页面（含 `/flow-demo`）及当前 API 路由生成成功。
