@@ -4,13 +4,13 @@ export type ReplyDecision={action:ReplyAction;intentCode:string;evidenceMessageI
  evidenceQuotes:string[];confidence:number;humanReason:string|null;templateKey:string|null;
  meaningZh:string;relatedEpisodeIds:string[];templateText:string|null;provider:string;model:string;
  policyVersion:string;automaticReply:false;executionAllowed:false};
-export type ReplyReviewState={classification_id:string;revision:number;verdict:"correct"|"incorrect";
- correct_action:ReplyAction|null;note:string;created_at:number};
+export type ReplyReviewState={turn_id:string;revision:number;correct_action:ReplyAction;
+ note:string;created_at:number};
 export type ReplyReviewItem={turnId:string;messageId:string;creatorId:string;format:string;text:string|null;
  historical:boolean;occurredMs:number|null;episodes:Array<{episode_id:string;pid:string;list_id:string;
  candidate_rank:number;confidence:string}>;classificationId:string|null;decision:ReplyDecision|null;
  review:ReplyReviewState|null;comparisons:Array<{classificationId:string;provider:string;model:string;
- action:ReplyAction;confidence:number;intentCode:string}>};
+ action:ReplyAction;confidence:number;intentCode:string;decision:ReplyDecision}>};
 export type ReplyReviewStatus={schema:"bdhub.reply-review.v1";policyVersion:string;
  processingIntervalSeconds:number;automaticReplies:false;providers:{deepseek:{mode:string};jev:{mode:string}};
  counts:{turns:number;episodes:number;linkedTurns:number;classified:number;reviewed:number};

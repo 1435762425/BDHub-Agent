@@ -8,7 +8,7 @@ ROOT=Path(__file__).resolve().parents[1]
 sys.dont_write_bytecode=True
 sys.path.insert(0,str(ROOT/'scripts'))
 
-from lib.reply_events import (DeepSeekClassifier,JevClassifier,backfill,classify,review,status)  # noqa:E402
+from lib.reply_events import (DeepSeekClassifier,JevClassifier,backfill,classify,review,review_turn,status)  # noqa:E402
 from lib.second_cycle import CycleError,CycleStore  # noqa:E402
 
 
@@ -18,7 +18,7 @@ def main():
         if len(raw.encode())>20000:raise CycleError('input_too_large')
         request=json.loads(raw or '{}')
         action=request.get('action')
-        if action not in ('status','backfill','classify','batch_classify','review'):raise CycleError('invalid_action')
+        if action not in ('status','backfill','classify','batch_classify','review','review_turn'):raise CycleError('invalid_action')
         readonly=action=='status'
         with CycleStore(ROOT/'var/second-cycle.sqlite',readonly=readonly) as store:
             if action=='status':
@@ -37,11 +37,16 @@ def main():
                 if set(request)!={'action','providers','limit'}:raise CycleError('invalid_input')
                 from lib.reply_events import batch_classify
                 result=batch_classify(store,request['providers'],request['limit'],root=ROOT)
-            else:
+            elif action=='review':
                 if set(request)!={'action','classificationId','expectedRevision','verdict','correctAction','note'}:
                     raise CycleError('invalid_input')
                 result=review(store,request['classificationId'],request['expectedRevision'],request['verdict'],
                               request['correctAction'],request['note'])
+            else:
+                if set(request)!={'action','turnId','expectedRevision','correctAction','note'}:
+                    raise CycleError('invalid_input')
+                result=review_turn(store,request['turnId'],request['expectedRevision'],
+                                   request['correctAction'],request['note'])
         print(json.dumps(result,ensure_ascii=False))
         return 0
     except Exception as error:

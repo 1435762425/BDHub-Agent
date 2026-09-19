@@ -36,7 +36,7 @@ def load_policy(path=POLICY_PATH):
 
 def _tables(store):
     required = {'outbound_episode', 'inbound_turn', 'turn_episode_link', 'service_case_turn',
-                'reply_classification', 'reply_review'}
+                'reply_classification', 'reply_review', 'turn_review'}
     found = {row[0] for row in store.db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     if not required <= found:
         raise CycleError('reply_schema_migration_required')
@@ -333,6 +333,26 @@ def review(store, classification_id, expected_revision, verdict, correct_action,
             'automaticReply':False}
 
 
+def review_turn(store, turn_id, expected_revision, correct_action, note):
+    """Append the operator's turn-level business truth, independent of any provider."""
+    _tables(store)
+    if not isinstance(turn_id,str) or not re.fullmatch(r'turn-[0-9a-f]{24}',turn_id) or \
+            type(expected_revision) is not int or expected_revision<0 or correct_action not in ACTIONS or \
+            not isinstance(note,str) or len(note)>2000:
+        raise CycleError('turn_review_invalid')
+    with store.tx():
+        if not store.db.execute('SELECT 1 FROM inbound_turn WHERE turn_id=?',(turn_id,)).fetchone():
+            raise CycleError('reply_turn_missing')
+        current=store.db.execute('SELECT coalesce(max(revision),0) FROM turn_review WHERE turn_id=?',
+                                 (turn_id,)).fetchone()[0]
+        if current!=expected_revision:raise CycleError('turn_review_conflict')
+        revision=current+1
+        store.db.execute('INSERT INTO turn_review VALUES(?,?,?,?,?)',
+                         (turn_id,revision,correct_action,note.strip(),store.clock()))
+    return {'turnId':turn_id,'revision':revision,'correctAction':correct_action,
+            'automaticReply':False,'executionAllowed':False}
+
+
 def batch_classify(store, providers, limit, *, root=None, classifier_factory=None):
     """Fill the same bounded turn set for each provider; never creates reply work."""
     _tables(store)
@@ -380,13 +400,8 @@ def evaluation_summary(store):
             paired.append({'turnId':turn_id,'deepseek':deep['action'],'jev':jev['action'],
                            'agree':deep['action']==jev['action']})
     labels={}
-    for row in store.db.execute("""SELECT c.input_json,c.decision_json,r.verdict,r.correct_action,r.created_at
-      FROM reply_review r JOIN reply_classification c ON c.classification_id=r.classification_id
-      WHERE c.state='ready' ORDER BY r.created_at DESC,r.revision DESC"""):
-        turn_id=json.loads(row['input_json'])['turn']['turnId']
-        if turn_id in labels:continue
-        decision=json.loads(row['decision_json'])
-        labels[turn_id]=decision['action'] if row['verdict']=='correct' else row['correct_action']
+    for row in store.db.execute('SELECT turn_id,correct_action FROM turn_review ORDER BY revision DESC'):
+        labels.setdefault(row['turn_id'],row['correct_action'])
     provider_metrics={}
     for provider in ('deepseek','jev'):
         evaluated=correct=false_auto=false_human=0
@@ -414,7 +429,7 @@ def status(store, limit=12):
             'linkedTurns':store.db.execute('SELECT count(DISTINCT turn_id) FROM turn_episode_link').fetchone()[0],
             'classified':store.db.execute("SELECT count(DISTINCT json_extract(input_json,'$.turn.turnId')) "
                                           "FROM reply_classification WHERE state='ready'").fetchone()[0],
-            'reviewed':store.db.execute('SELECT count(DISTINCT classification_id) FROM reply_review').fetchone()[0]}
+            'reviewed':store.db.execute('SELECT count(DISTINCT turn_id) FROM turn_review').fetchone()[0]}
     items=[]
     for turn in store.db.execute("SELECT * FROM inbound_turn ORDER BY coalesce(occurred_ms,observed_at*1000) DESC"):
         classifications=list(store.db.execute("SELECT * FROM reply_classification WHERE state='ready' "
@@ -422,10 +437,10 @@ def status(store, limit=12):
             (turn['turn_id'],)))
         by_provider={}
         for row in classifications:by_provider.setdefault(row['provider'],row)
-        classification=classifications[0] if classifications else None
+        classification=by_provider.get('deepseek') or (classifications[0] if classifications else None)
         decision=json.loads(classification['decision_json']) if classification else None
-        review_row=store.db.execute('SELECT * FROM reply_review WHERE classification_id=? ORDER BY revision DESC LIMIT 1',
-                                    (classification['classification_id'],)).fetchone() if classification else None
+        review_row=store.db.execute('SELECT * FROM turn_review WHERE turn_id=? ORDER BY revision DESC LIMIT 1',
+                                    (turn['turn_id'],)).fetchone()
         links=[dict(row) for row in store.db.execute("SELECT e.episode_id,e.pid,e.list_id,l.candidate_rank,l.confidence "
             "FROM turn_episode_link l JOIN outbound_episode e ON e.episode_id=l.episode_id "
             "WHERE l.turn_id=? ORDER BY l.candidate_rank",(turn['turn_id'],))]
@@ -434,7 +449,8 @@ def status(store, limit=12):
             candidate=json.loads(row['decision_json'])
             comparisons.append({'classificationId':row['classification_id'],'provider':provider,
                                 'model':row['model'],'action':candidate['action'],
-                                'confidence':candidate['confidence'],'intentCode':candidate['intentCode']})
+                                'confidence':candidate['confidence'],'intentCode':candidate['intentCode'],
+                                'decision':candidate})
         items.append({'turnId':turn['turn_id'],'messageId':turn['message_id'],'creatorId':turn['creator_id'],
                       'format':turn['format'],'text':turn['text'],'historical':bool(turn['historical']),
                       'occurredMs':turn['occurred_ms'],'episodes':links,

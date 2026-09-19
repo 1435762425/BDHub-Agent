@@ -283,11 +283,29 @@ BEFORE DELETE ON turn_episode_link BEGIN SELECT RAISE(ABORT,'turn episode link i
 """)
 
 
+SECOND_CYCLE_TURN_REVIEW = Migration(5, "reply_turn_review_v1", """
+CREATE TABLE IF NOT EXISTS turn_review(
+  turn_id TEXT NOT NULL,
+  revision INTEGER NOT NULL,
+  correct_action TEXT NOT NULL,
+  note TEXT NOT NULL,
+  created_at REAL NOT NULL,
+  PRIMARY KEY(turn_id,revision)
+);
+CREATE INDEX IF NOT EXISTS turn_review_latest ON turn_review(turn_id,revision DESC);
+CREATE TRIGGER IF NOT EXISTS turn_review_no_update
+BEFORE UPDATE ON turn_review BEGIN SELECT RAISE(ABORT,'turn review is append only'); END;
+CREATE TRIGGER IF NOT EXISTS turn_review_no_delete
+BEFORE DELETE ON turn_review BEGIN SELECT RAISE(ABORT,'turn review is append only'); END;
+""")
+
+
 DATABASES = {
     "catalog-links": ("catalog-links.sqlite", (CATALOG_LINKS,)),
     "second-cycle": ("second-cycle.sqlite", (SECOND_CYCLE, SECOND_CYCLE_INDEXES,
                                                 SECOND_CYCLE_FROZEN_SEND,
-                                                SECOND_CYCLE_REPLY_EVENTS)),
+                                                SECOND_CYCLE_REPLY_EVENTS,
+                                                SECOND_CYCLE_TURN_REVIEW)),
 }
 
 REGISTRY_SQL = """

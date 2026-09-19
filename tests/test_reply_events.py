@@ -11,7 +11,7 @@ sys.path.insert(0,str(ROOT/'scripts'))
 from lib.cycle_delivery import Deliveries  # noqa:E402
 from lib.cycle_inbox import Inbox  # noqa:E402
 from lib.cycle_service import Service  # noqa:E402
-from lib.reply_events import DeepSeekClassifier,JevClassifier,backfill,batch_classify,classify,evaluation_summary,load_policy,review,status  # noqa:E402
+from lib.reply_events import DeepSeekClassifier,JevClassifier,backfill,batch_classify,classify,evaluation_summary,load_policy,review,review_turn,status  # noqa:E402
 from lib.schema_migrations import apply_database  # noqa:E402
 from lib.second_cycle import CycleError,CycleStore,digest  # noqa:E402
 from test_second_cycle import NOW,edge,offer  # noqa:E402
@@ -98,8 +98,8 @@ class ReplyEvents(unittest.TestCase):
    report=batch_classify(s,['deepseek','jev'],10,root=self.root,classifier_factory=Fake)
    self.assertEqual((report['turns'],report['ready'],report['modelCalls']),(1,2,2))
    before=evaluation_summary(s);self.assertEqual((before['paired'],before['disagreements'],before['reviewedTurns']),(1,1,0))
-   jev=s.db.execute("SELECT classification_id FROM reply_classification WHERE provider='jev'").fetchone()[0]
-   review(s,jev,0,'correct',None,'参考答案')
+   turn=s.db.execute('SELECT turn_id FROM inbound_turn').fetchone()[0]
+   review_turn(s,turn,0,'collaboration_ack','参考答案')
    after=evaluation_summary(s);self.assertEqual(after['providers']['jev']['accuracy'],1.0)
    self.assertEqual(after['providers']['deepseek']['falseHuman'],1)
 

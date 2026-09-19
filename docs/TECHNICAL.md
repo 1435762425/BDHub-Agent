@@ -202,7 +202,8 @@ DeepSeek 与 TypeSafe Jev 当前都只作为影子 provider。Jev 使用官方 S
 | `turn_episode_link` | `turn_id, episode_id, evidence, confidence` | 记录入站消息可能对应哪个 PID/外发 episode；不确定时允许多个候选 |
 | `service_case` | `case_id, creator_id, action, state` | 聚合需处理的 turn、相关 episode/PID、人工原因和关闭证据 |
 | `reply_classification` | request ID、输入哈希、provider/model、政策版本、结构化输出 | 保存 DeepSeek/Jev 影子结果，不直接执行发送 |
-| `reply_review` | classification ID、revision、正误、正确动作、备注 | 只保存用户判定；模型自己的输出不成为训练真值 |
+| `reply_review` | classification ID、revision、正误、正确动作、备注 | 旧 provider 级审核兼容记录，不再作为当前真值入口 |
+| `turn_review` | turn ID、revision、正确动作、备注 | 当前唯一人工真值；与 provider 解耦、append-only，可同时评估 DeepSeek/Jev |
 
 分类器只读取当前未处理 turn、少量相邻 turn、候选 episode、达人全局控制和政策版本。原始事件是事实源；任何模型摘要只是可重建缓存。新增表/字段必须提供幂等升级、旧库回填与多 PID 会话测试。
 
@@ -350,7 +351,7 @@ printf '%s' '{"action":"batch_classify","providers":["deepseek","jev"],"limit":3
   | python scripts/reply-review.py
 ```
 
-`backfill` 只读取本机既有发送、收信和案件证据并写新投影，`platformWrites=0`、`modelCalls=0`。批量影子分类只写模型评估，不创建回复 intent；页面并列展示 DeepSeek/Jev 动作、置信度和模型版本，并统计同集一致率。审核队列优先展示两模型分歧且尚未审核的 turn，审核后自动滚到下一项。用户审核产生 turn 级真值后，系统才计算各 provider 的准确率、误自动处理（真值为 `human`）和误转人工；模型自己的输出不能成为真值。
+`backfill` 只读取本机既有发送、收信和案件证据并写新投影，`platformWrites=0`、`modelCalls=0`。批量影子分类只写模型评估，不创建回复 intent；页面并列展示 DeepSeek/Jev 的完整动作、置信度、原因和固定模板候选，中文理解固定取 DeepSeek 的翻译字段，不被 Jev 占位文案覆盖。审核队列优先展示两模型分歧且尚未审核的 turn；用户直接选择独立的五动作标准答案，写入 append-only `turn_review`，审核后自动滚到下一项。系统再用同一份 turn 真值计算两个 provider 的准确率、误自动处理（真值为 `human`）和误转人工；模型自己的输出不能成为真值。
 
 ### 数据迁移与本地回填
 

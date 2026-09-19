@@ -9,29 +9,30 @@ const labels:Record<ReplyAction,string>={no_reply:"无需回复",sample_self_ser
 
 function ReviewItem({item,onChanged}:{item:ReplyReviewItem;onChanged:()=>void}){
  const [busy,setBusy]=useState(false),[message,setMessage]=useState("");
- const [correctAction,setCorrectAction]=useState<ReplyAction>("human"),[note,setNote]=useState("");
+ const initial=item.review?.correct_action??(item.comparisons.length>1&&new Set(item.comparisons.map(row=>row.action)).size===1?item.comparisons[0].action:"human");
+ const [correctAction,setCorrectAction]=useState<ReplyAction>(initial),[note,setNote]=useState(item.review?.note??"");
  const post=async(body:Record<string,unknown>)=>{setBusy(true);setMessage("");try{const response=await fetch("/api/reply-review",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});if(!response.ok){const problem=await response.json().catch(()=>({})) as {error?:string};throw Error(problem.error);}onChanged();}catch(error){setMessage(error instanceof Error&&error.message==="jev_not_configured"?"Jev 尚未配置；当前只能用 DeepSeek 做影子分类。":"操作没有落账，请刷新后重试。");}finally{setBusy(false);}};
  const classify=(provider:"deepseek"|"jev")=>post({action:"classify",turnId:item.turnId,requestId:`web-${crypto.randomUUID()}`,provider});
- const submit=(verdict:"correct"|"incorrect")=>post({action:"review",classificationId:item.classificationId,
-  expectedRevision:item.review?.revision??0,verdict,correctAction:verdict==="correct"?null:correctAction,note});
+ const submit=()=>post({action:"review_turn",turnId:item.turnId,expectedRevision:item.review?.revision??0,
+  correctAction,note});
  const decision=item.decision;
  const compared=new Set(item.comparisons.map(row=>row.provider));
+ const deepseek=item.comparisons.find(row=>row.provider==="deepseek")?.decision;
+ const selectedTemplate=item.comparisons.find(row=>row.action===correctAction)?.decision.templateText;
  return <article className="space-y-3 rounded-xl border border-gray-200 p-4 dark:border-gray-800">
   <div className="flex flex-wrap items-center gap-2"><Pill tone={item.historical?"neutral":"brand"}>{item.historical?"历史样本":"当前消息"}</Pill>
    <span className="text-xs text-gray-500">消息 {item.messageId} · 关联 PID {item.episodes.map(row=>row.pid).join(" / ")||"未确定"}</span></div>
   <p className="whitespace-pre-wrap text-sm leading-6 text-gray-800 dark:text-gray-200">{item.format==="text"?item.text:"[图片或附件：必须人工处理]"}</p>
-  {item.comparisons.length>0&&<div className="flex flex-wrap gap-2 text-xs">{item.comparisons.map(row=><Pill key={row.classificationId} tone={row.provider==="jev"?"brand":"neutral"}>{row.provider==="jev"?"Jev":"DeepSeek"}：{labels[row.action]} {(row.confidence*100).toFixed(0)}%</Pill>)}</div>}
+  {deepseek?.meaningZh&&<p className="text-xs leading-5 text-gray-600 dark:text-gray-300">中文理解：{deepseek.meaningZh}</p>}
+  {item.comparisons.length>0&&<div className="grid gap-2 md:grid-cols-2">{item.comparisons.map(row=><div key={row.classificationId} className="rounded-lg bg-gray-50 p-3 text-xs dark:bg-white/[0.04]"><div className="flex flex-wrap items-center gap-2"><Pill tone={row.provider==="jev"?"brand":"neutral"}>{row.provider==="jev"?"Jev":"DeepSeek"}</Pill><strong>{labels[row.action]}</strong><span className="text-gray-500">{(row.confidence*100).toFixed(0)}% · {row.intentCode}</span></div>{row.decision.humanReason&&<p className="mt-1 text-warning-600">{row.decision.humanReason}</p>}</div>)}</div>}
   {(!compared.has("deepseek")||!compared.has("jev"))&&<div className="flex flex-wrap gap-2">{!compared.has("deepseek")&&<Button size="sm" variant="outline" disabled={busy} onClick={()=>void classify("deepseek")}>{busy?"分类中…":"DeepSeek 影子分类"}</Button>}{!compared.has("jev")&&<Button size="sm" variant="outline" disabled={busy} onClick={()=>void classify("jev")}>{busy?"分类中…":"Jev 对照分类"}</Button>}</div>}
-  {decision&&<div className="space-y-2 rounded-lg bg-gray-50 p-3 dark:bg-white/[0.04]">
-   <div className="flex flex-wrap items-center gap-2"><Pill tone={decision.action==="human"?"warning":"success"}>{labels[decision.action]}</Pill><span className="text-xs text-gray-500">置信度 {(decision.confidence*100).toFixed(0)}% · {decision.intentCode}</span></div>
-   <p className="text-xs leading-5 text-gray-600 dark:text-gray-300">中文理解：{decision.meaningZh}</p>
-   {decision.templateText&&<p className="rounded-md border border-gray-200 bg-white p-2 text-xs leading-5 text-gray-700 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200">候选固定回复：{decision.templateText}</p>}
-   {decision.humanReason&&<p className="text-xs text-warning-600">人工原因：{decision.humanReason}</p>}
-   {item.review?<Notice tone="info">已审核：{item.review.verdict==="correct"?"判断正确":`应改为「${labels[item.review.correct_action??"human"]}」`}{item.review.note?` · ${item.review.note}`:""}</Notice>:<div className="space-y-2">
+  {decision&&<div className="space-y-2 rounded-lg border border-gray-200 p-3 dark:border-gray-800">
+   {item.review?<Notice tone="info">标准动作：{labels[item.review.correct_action]}{item.review.note?` · ${item.review.note}`:""}</Notice>:<div className="space-y-2">
+    <p className="text-xs text-gray-500">请选择这条 turn 的业务标准动作；它独立于两个模型，用作双方共同真值。</p>
     <textarea value={note} maxLength={2000} onChange={event=>setNote(event.target.value)} placeholder="可选：写下判断依据或参考答案" className="w-full rounded-lg border border-gray-300 bg-transparent p-2 text-xs dark:border-gray-700" rows={2}/>
-    <div className="flex flex-wrap gap-2"><Button size="sm" disabled={busy} onClick={()=>void submit("correct")}>判断正确</Button>
-     <select value={correctAction} onChange={event=>setCorrectAction(event.target.value as ReplyAction)} className="rounded-lg border border-gray-300 bg-transparent px-2 text-xs dark:border-gray-700">{REPLY_ACTIONS.map(action=><option key={action} value={action}>{labels[action]}</option>)}</select>
-     <Button size="sm" variant="outline" disabled={busy} onClick={()=>void submit("incorrect")}>判断不对，按所选动作</Button></div>
+    <div className="flex flex-wrap gap-2"><select value={correctAction} onChange={event=>setCorrectAction(event.target.value as ReplyAction)} className="rounded-lg border border-gray-300 bg-transparent px-2 text-xs dark:border-gray-700">{REPLY_ACTIONS.map(action=><option key={action} value={action}>{labels[action]}</option>)}</select>
+     <Button size="sm" disabled={busy} onClick={()=>void submit()}>确认标准动作</Button></div>
+    {selectedTemplate&&<p className="rounded-md border border-gray-200 bg-white p-2 text-xs leading-5 text-gray-700 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200">该动作固定回复：{selectedTemplate}</p>}
    </div>}
   </div>}
   {message&&<Notice tone="warning">{message}</Notice>}
