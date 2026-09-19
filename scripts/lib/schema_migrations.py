@@ -109,10 +109,17 @@ CREATE TABLE IF NOT EXISTS lead_query_head(
 CREATE INDEX IF NOT EXISTS lead_query_head_query ON lead_query_head(query_id);
 """)
 
+SECOND_CYCLE_INDEXES = Migration(2, "current_lead_selection_indexes_v1", """
+CREATE INDEX IF NOT EXISTS lead_query_selection_source
+  ON lead_query_selection(source_id,query_id);
+CREATE INDEX IF NOT EXISTS source_edge_index_handle
+  ON source_edge_index(plan_id,source_handle,pid,source_rank,units);
+""")
+
 
 DATABASES = {
     "catalog-links": ("catalog-links.sqlite", (CATALOG_LINKS,)),
-    "second-cycle": ("second-cycle.sqlite", (SECOND_CYCLE,)),
+    "second-cycle": ("second-cycle.sqlite", (SECOND_CYCLE, SECOND_CYCLE_INDEXES)),
 }
 
 REGISTRY_SQL = """

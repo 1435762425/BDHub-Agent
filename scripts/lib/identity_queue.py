@@ -34,8 +34,8 @@ SCOPE = {'institution': 'bjn-local-research', 'market': 'it'}
 KALODATA = "json_extract(e.payload,'$.sourceKind')='kalodata_http'"
 HANDLE = "json_extract(e.payload,'$.sourceHandle')"
 CURRENT = """SELECT h.plan_id,s.source_id,x.pid,x.source_handle
- FROM lead_query_head h JOIN lead_query_selection s ON s.query_id=h.query_id
- JOIN source_edge_index x ON x.plan_id=h.plan_id AND x.source_id=s.source_id"""
+ FROM lead_query_head h CROSS JOIN lead_query_selection s CROSS JOIN source_edge_index x
+ WHERE s.query_id=h.query_id AND x.plan_id=h.plan_id AND x.source_id=s.source_id"""
 LEGACY_CURRENT = f"""SELECT e.plan_id,e.source_id,json_extract(e.payload,'$.pid') AS pid,
  {HANDLE} AS source_handle FROM source_edge e WHERE {KALODATA}"""
 

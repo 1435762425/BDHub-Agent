@@ -73,9 +73,11 @@ def _eligible_pids(conn,now,tables):
 
 
 def _build(conn, now, limit, eligible_pids=None):
+    # CROSS JOIN pins the intended small-head → selected rows → indexed evidence order.  Ordinary
+    # JOIN let SQLite start with every historical edge for each PID (12s on 13k rows).
     current="""SELECT h.plan_id,s.source_id,x.pid,x.source_handle,x.source_rank,x.units
-      FROM lead_query_head h JOIN lead_query_selection s ON s.query_id=h.query_id
-      JOIN source_edge_index x ON x.plan_id=h.plan_id AND x.source_id=s.source_id"""
+      FROM lead_query_head h CROSS JOIN lead_query_selection s CROSS JOIN source_edge_index x
+      WHERE s.query_id=h.query_id AND x.plan_id=h.plan_id AND x.source_id=s.source_id"""
     leads = _rows(conn, f"SELECT count(*) FROM ({current})")[0][0]
     outcomes = {row[0]: row[1] for row in _rows(conn, f"SELECT o.status,count(*) FROM ({current}) k "
         "JOIN cycle_identity_outcome o ON o.plan_id=k.plan_id AND o.source_id=k.source_id GROUP BY o.status")}
