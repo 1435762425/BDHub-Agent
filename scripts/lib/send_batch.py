@@ -10,7 +10,7 @@
   （已解锁的达人另有额度、不占这 500）。`widen` 是**显式越界探测**：越过本地保守闸门，去拿平台
   自己的上限信号；越界时每条真实回执都要落账（`cycle_platform_signal` 已有字段），
   单达人 `flight<0` 只标该条、不停整批。
-* **执行** ← `bulk-second-send.py` / `cycle_burst.run_cohort`（车道、请求预算、卡片核验、回查、
+* **执行** ← `send-batch-worker.py` / `cycle_burst.run_cohort`（车道、请求预算、本地冻结材料核验、回查、
   结果未知即停）
 
 `preview()` 只读：它算的就是"这一批会发给谁、发什么、为什么有人被跳过"，页面拿它给操作者看那

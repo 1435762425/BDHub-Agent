@@ -13,7 +13,8 @@
 有人被跳过"。`--widen` 是**显式越界探测**：越过本地 24 小时 500 个新联系的保守闸门，去拿平台自己的
 上限信号；越界时每条真实回执都要落账，单达人被拒只标该条、不停整批。
 
-真正执行仍由既有驱动器负责（`bulk-second-send.py` + `cycle_burst.run_cohort`），这里不重写发送。
+真正执行由 `send-batch-worker.py` + `cycle_burst.run_cohort` 负责；旧 `bulk-second-send.py` 已退役，
+不能用历史 `cycle_bulk` 授权恢复发送。
 """
 import argparse
 import json

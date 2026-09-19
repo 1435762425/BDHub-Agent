@@ -80,22 +80,20 @@ class CohortTests(unittest.TestCase):
     def gate():
      with sender_lock:yield lambda:None
     yield {'reads':reads,'adapter':Adapter(),'write_gate':gate,'validate_card':lambda c:kw['card_validator'](c)}
-   patches.enter_context(patch.object(M,'ROOT',root));patches.enter_context(patch.object(M,'_authenticated',authenticated));patches.enter_context(patch.object(M,'sender_binding_sha256',lambda a:'a'*64));patches.enter_context(patch.object(M,'live_runtime',runtime));patches.enter_context(patch.object(M,'fresh_card',lambda *a,**kw:(verified,proof)));patches.enter_context(patch.object(M,'choose_candidates',lambda *a:(cs,[])));patches.enter_context(patch.object(M,'render',lambda *a:{'version':4,'deliveryOrder':'card_then_text','textIt':'Hello'}));patches.enter_context(patch.object(M,'Inbox'));patches.enter_context(patch.object(M,'Service'));patches.enter_context(patch('socket.socket',side_effect=AssertionError('offline tests only')))
+   patches.enter_context(patch.object(M,'ROOT',root));patches.enter_context(patch.object(M,'_authenticated',authenticated));patches.enter_context(patch.object(M,'sender_binding_sha256',lambda a:'a'*64));patches.enter_context(patch.object(M,'live_runtime',runtime));patches.enter_context(patch.object(M,'Inbox'));patches.enter_context(patch.object(M,'Service'));patches.enter_context(patch('socket.socket',side_effect=AssertionError('offline tests only')))
    yield db,plan,calls,auths
  def test_two_recipient_cohort_one_auth_no_duplicate_on_restart(self):
   with self.fixture() as (db,p,calls,auths):
-   result=M.run_cohort('batch',lanes=2);self.assertEqual(len(auths),1);self.assertEqual(len(calls),4);self.assertTrue(all(r['state']=='confirmed' for r in result['items']))
-   M.run_cohort('batch',lanes=2);self.assertEqual(len(calls),4);self.assertEqual(len(auths),1)
+   with self.assertRaisesRegex(M.CycleError,'frozen_batch_required'):M.run_cohort('batch',lanes=2)
+   self.assertEqual((calls,auths),([],[]))
  def test_unknown_halts_other_recipient_and_restart_does_not_send(self):
   with self.fixture(fail_card=True) as (db,p,calls,auths):
-   M.run_cohort('batch',lanes=2);self.assertEqual(len(calls),1)
-   with CycleStore(db) as s:self.assertEqual(s.db.execute('SELECT state FROM cycle_bulk').fetchone()[0],'waiting_reconciliation')
-   with self.assertRaisesRegex(M.CycleError,'bulk_not_running'):M.run_cohort('batch',lanes=2)
-   self.assertEqual(len(calls),1)
+   with self.assertRaisesRegex(M.CycleError,'frozen_batch_required'):M.run_cohort('batch',lanes=2)
+   self.assertEqual((calls,auths),([],[]))
  def test_pause_between_components_blocks_further_dispatches(self):
   with self.fixture(pause=True) as (db,p,calls,auths):
-   M.run_cohort('batch',lanes=2);self.assertTrue(1<=len(calls)<=2);self.assertTrue(all(kind=='card' for _,kind in calls))
-   sent=len(calls);M.run_cohort('batch',lanes=2);self.assertEqual(len(calls),sent)
+   with self.assertRaisesRegex(M.CycleError,'frozen_batch_required'):M.run_cohort('batch',lanes=2)
+   self.assertEqual((calls,auths),([],[]))
 
 
 class FrozenCohortTests(unittest.TestCase):
@@ -175,7 +173,7 @@ class FrozenCohortTests(unittest.TestCase):
     def gate():
      with sender_lock:yield lambda:None
     yield {'reads':reads,'adapter':Adapter(),'write_gate':gate,'validate_card':lambda c:kw['card_validator'](c)}
-   patches.enter_context(patch.object(M,'ROOT',root));patches.enter_context(patch.object(M,'_authenticated',authenticated));patches.enter_context(patch.object(M,'sender_binding_sha256',lambda a:'a'*64));patches.enter_context(patch.object(M,'live_runtime',runtime));patches.enter_context(patch.object(M,'fresh_card',side_effect=AssertionError('frozen batch must not refresh remotely')));patches.enter_context(patch.object(M,'choose_candidates',side_effect=AssertionError('frozen batch must not reselect')));patches.enter_context(patch.object(M,'Inbox'));patches.enter_context(patch.object(M,'Service'));patches.enter_context(patch('socket.socket',side_effect=AssertionError('offline tests only')))
+   patches.enter_context(patch.object(M,'ROOT',root));patches.enter_context(patch.object(M,'_authenticated',authenticated));patches.enter_context(patch.object(M,'sender_binding_sha256',lambda a:'a'*64));patches.enter_context(patch.object(M,'live_runtime',runtime));patches.enter_context(patch.object(M,'Inbox'));patches.enter_context(patch.object(M,'Service'));patches.enter_context(patch('socket.socket',side_effect=AssertionError('offline tests only')))
    yield root,db,plan,calls,auths
 
  def test_frozen_batch_uses_only_snapshot_and_local_binding(self):
@@ -183,6 +181,15 @@ class FrozenCohortTests(unittest.TestCase):
    result=M.run_cohort('frozen',lanes=2)
    self.assertEqual(len(auths),1);self.assertEqual(len(calls),4)
    self.assertTrue(all(item['state']=='confirmed' for item in result['items']))
+
+ def test_changed_batch_authorization_is_rejected_before_authentication(self):
+  with self.fixture() as (root,db,plan,calls,auths):
+   with CycleStore(db) as s:
+    authorization=json.loads(s.db.execute("SELECT authorization FROM cycle_bulk WHERE id='frozen'").fetchone()[0])
+    authorization['note']='tampered-after-freeze'
+    s.db.execute("UPDATE cycle_bulk SET authorization=? WHERE id='frozen'",(encoded(authorization),))
+   with self.assertRaisesRegex(M.CycleError,'frozen_batch_required'):M.run_cohort('frozen',lanes=2)
+   self.assertEqual((calls,auths),([],[]))
 
  def test_changed_binding_marks_items_stale_without_platform_calls(self):
   with self.fixture() as (root,db,plan,calls,auths):
@@ -209,5 +216,16 @@ class FrozenCohortTests(unittest.TestCase):
     self.assertEqual(s.db.execute('SELECT state FROM cycle_bulk_freeze').fetchone()[0],'waiting_reconciliation')
    with self.assertRaisesRegex(M.CycleError,'bulk_not_running'):M.run_cohort('frozen',lanes=2)
    self.assertEqual(len(calls),sent)
+
+class LegacyRejectionTests(unittest.TestCase):
+ def test_cycle_burst_rejects_a_running_bulk_without_freeze_before_authentication(self):
+  with tempfile.TemporaryDirectory() as tmp:
+   root=Path(tmp);(root/'var').mkdir();db=root/'var/second-cycle.sqlite'
+   with CycleStore(db) as store:
+    plan=store.plan('bjn-local-research','it')
+    store.db.executescript('CREATE TABLE cycle_bulk(id TEXT PRIMARY KEY,plan_id TEXT,target INTEGER,authorization TEXT,state TEXT,created REAL);CREATE TABLE cycle_bulk_item(batch_id TEXT,creator_id TEXT,handle TEXT,state TEXT,delivery_id TEXT,reason TEXT,retry_at REAL DEFAULT 0,retry_count INTEGER DEFAULT 0,PRIMARY KEY(batch_id,creator_id));')
+    auth={'source':'current_user_request','maxPeople':1};store.db.execute("INSERT INTO cycle_bulk VALUES('legacy',?,1,?,'running',1)",(plan,encoded(auth)));store.db.execute("INSERT INTO cycle_bulk_item VALUES('legacy','c1','h','pending',NULL,NULL,0,0)")
+   with patch.object(M,'ROOT',root),patch.object(M,'_authenticated',side_effect=AssertionError('must reject before auth')):
+    with self.assertRaisesRegex(M.CycleError,'frozen_batch_required'):M.run_cohort('legacy')
 
 if __name__=='__main__':unittest.main()

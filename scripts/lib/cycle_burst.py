@@ -16,9 +16,7 @@ import time
 from lib.second_cycle import CycleStore, CycleError, digest
 from lib.cycle_delivery import Deliveries
 from lib.cycle_executor import execute
-from lib.cycle_materials import render
-from lib.cycle_review import choose_candidates
-from lib.cycle_send_runtime import descriptor, fresh_card
+from lib.cycle_send_runtime import descriptor
 from lib.second_live_runtime import _authenticated, live_runtime, sender_binding_sha256
 from lib.italy_im_delivery import ItalyVerifiedProductCard
 from lib.cycle_inbox import Inbox
@@ -173,6 +171,11 @@ def run_cohort(batch_id, *, limit=8, lanes=2, stopped=lambda: False):
         auth_scope = json.loads(batch['authorization'])
         if auth_scope.get('source') != 'current_user_request' or auth_scope.get('maxPeople') != batch['target']:
             raise CycleError('bulk_scope_conflict')
+        freeze = s.db.execute("SELECT state,authorization_json FROM cycle_bulk_freeze WHERE batch_id=?",
+                              (batch_id,)).fetchone() if s.db.execute(
+            "SELECT 1 FROM sqlite_master WHERE name='cycle_bulk_freeze'").fetchone() else None
+        if not freeze or freeze['state']!='running' or freeze['authorization_json']!=batch['authorization']:
+            raise CycleError('frozen_batch_required')
         plan = batch['plan_id']
         done = s.db.execute("SELECT count(*) FROM cycle_bulk_item WHERE batch_id=? AND state IN ('confirmed','contacted_inquiry')", (batch_id,)).fetchone()[0]
         remaining = min(limit, batch['target']-done)
@@ -183,21 +186,12 @@ def run_cohort(batch_id, *, limit=8, lanes=2, stopped=lambda: False):
         if recovering: items = recovering[:1]
         if not items: return {'items': [], 'state': 'waiting_supply'}
         frozen_rows = _frozen_rows(s, batch_id)
-        frozen = bool(frozen_rows)
-        if frozen:
-            if auth_scope.get('materialPolicy') != 'frozen-current-binding-v1' or \
-                    any(item['creator_id'] not in frozen_rows for item in items):
-                raise CycleError('frozen_batch_incomplete')
-            candidates = {creator: row['candidate'] for creator, row in frozen_rows.items()}
-        else:
-            with closing(sqlite3.connect((ROOT/'var/creator-identities.sqlite').as_uri()+'?mode=ro', uri=True)) as ids:
-                def person(c,o):
-                    row=ids.execute("SELECT current_handle FROM creator_identity WHERE market='it' AND creator_id=? AND oec_id=? AND handle_conflict=0",(c,o)).fetchone()
-                    return {'handle':row[0]} if row else None
-                cs,_=choose_candidates(s,plan,person,100)
-            candidates={c['creatorId']:c for c in cs}
+        if not frozen_rows or auth_scope.get('materialPolicy') != 'frozen-current-binding-v1' or \
+                any(item['creator_id'] not in frozen_rows for item in items):
+            raise CycleError('frozen_batch_incomplete')
+        candidates = {creator: row['candidate'] for creator, row in frozen_rows.items()}
     abort = threading.Event(); component_lock = threading.BoundedSemaphore(lanes)
-    budget = RequestBudget(3); card_budget = RequestBudget(3); cards = CardCache(); auth_report = {}
+    budget = RequestBudget(3); auth_report = {}
     # Stop admission after 35s. An active group is allowed to finish/read back.
     admission_deadline = time.monotonic()+35
     started = time.time()
@@ -228,29 +222,23 @@ def run_cohort(batch_id, *, limit=8, lanes=2, stopped=lambda: False):
                     did = did or (prior[0] if prior else None)
                     if did:
                         candidate=deliveries.get(did)['snapshot']
-                        if frozen:
-                            frozen_row = frozen_rows[item['creator_id']]
-                            if candidate.get('frozenCandidateHash') != frozen_row['candidate_hash'] or \
-                                    _frozen_hash(candidate) != frozen_row['candidate_hash']:
-                                raise CycleError('frozen_delivery_conflict')
+                        frozen_row = frozen_rows[item['creator_id']]
+                        if candidate.get('frozenCandidateHash') != frozen_row['candidate_hash'] or \
+                                _frozen_hash(candidate) != frozen_row['candidate_hash']:
+                            raise CycleError('frozen_delivery_conflict')
                     else:
                         if item['creator_id'] not in candidates: raise CycleError('candidate_not_ready')
                         candidate=dict(candidates[item['creator_id']])
-                        frozen_row = frozen_rows.get(item['creator_id'])
+                        frozen_row = frozen_rows[item['creator_id']]
                         with closing(sqlite3.connect((ROOT/'var/it-conversations.sqlite').as_uri()+'?mode=ro',uri=True)) as idx:
                             convs=idx.execute("SELECT cid FROM conversation WHERE scope='it:acc6' AND oec=? AND kind=2",(candidate['oecId'],)).fetchall()
                         if len(convs)>1: raise CycleError('ambiguous_conversation')
                         candidate['conversationId']=convs[0][0] if convs else None
-                        if not frozen:
-                            candidate['message']=render(candidate['name'],candidate['offer'],'standard',candidate['handle'])
-                        else:
-                            candidate['frozenCandidateHash'] = frozen_row['candidate_hash']
+                        candidate['frozenCandidateHash'] = frozen_row['candidate_hash']
                         s.db.execute("UPDATE cycle_bulk_item SET state='preparing' WHERE batch_id=? AND creator_id=?",(batch_id,item['creator_id']))
                     def current():
                         available()
-                        if frozen:
-                            return _local_card(s, frozen_rows[item['creator_id']])
-                        return cards.get(candidate, lambda: fresh_card(candidate,account,identity,headers,maintenance,stopped,request_budget=card_budget))
+                        return _local_card(s, frozen_rows[item['creator_id']])
                     card, proof = current()
                     if did:
                         if card.binding_sha256 != candidate['nativeCard']['binding_sha256']: raise CycleError('card_binding_changed')
@@ -265,12 +253,10 @@ def run_cohort(batch_id, *, limit=8, lanes=2, stopped=lambda: False):
                         if stopped() or abort.is_set(): raise CycleError('cohort_stopped')
                         b=s.db.execute('SELECT state,authorization FROM cycle_bulk WHERE id=?',(batch_id,)).fetchone()
                         if not b or b['state'] not in ('running','waiting_supply') or b['authorization']!=batch['authorization']:raise CycleError('bulk_not_running')
-                        if frozen:
-                            frozen_row = frozen_rows[item['creator_id']]
-                            if c.get('frozenCandidateHash') != frozen_row['candidate_hash'] or \
-                                    _frozen_hash(c) != frozen_row['candidate_hash']:
-                                raise CycleError('bulk_scope_conflict')
-                        elif digest(c)!=digest(candidate):raise CycleError('bulk_scope_conflict')
+                        frozen_row = frozen_rows[item['creator_id']]
+                        if c.get('frozenCandidateHash') != frozen_row['candidate_hash'] or \
+                                _frozen_hash(c) != frozen_row['candidate_hash']:
+                            raise CycleError('bulk_scope_conflict')
                     def validator(previous,*_):
                         result,_=current()
                         if result.binding_sha256!=previous.binding_sha256:raise CycleError('card_binding_changed')
@@ -321,7 +307,7 @@ def run_cohort(batch_id, *, limit=8, lanes=2, stopped=lambda: False):
                                          "WHERE batch_id=? AND creator_id=?",
                                          (code,batch_id,item['creator_id']))
                             return {'creatorId':item['creator_id'],'state':'recipient_limit','reason':code}
-                        if frozen and parts.get('card')=='rejected':
+                        if parts.get('card')=='rejected':
                             _cancel_material_delivery(s,did)
                             if not _mark_material_waiting(candidate,error):
                                 abort.set();_set_batch_state(s,batch_id,'material_refresh_record_failed')
@@ -337,7 +323,7 @@ def run_cohort(batch_id, *, limit=8, lanes=2, stopped=lambda: False):
                         abort.set();_set_batch_state(s,batch_id,'platform_rejected')
                     elif code=='new_contact_capacity_reached':
                         abort.set();_set_batch_state(s,batch_id,'local_capacity_reached')
-                    elif frozen and code in LOCAL_MATERIAL_ERRORS:
+                    elif code in LOCAL_MATERIAL_ERRORS:
                         _cancel_material_delivery(s,did)
                         s.db.execute("UPDATE cycle_bulk_item SET state='material_stale',reason=? "
                                      "WHERE batch_id=? AND creator_id=?",
@@ -357,4 +343,4 @@ def run_cohort(batch_id, *, limit=8, lanes=2, stopped=lambda: False):
                         (ROOT/'var/cycle-send'/f'{did}.runtime.json').write_text(json.dumps(report,indent=2))
         with ThreadPoolExecutor(max_workers=lanes) as pool:
             results=list(pool.map(lane,items))
-    return {'items':results,'seconds':round(time.time()-started,2),'lanes':lanes,'authentications':1,'authSeconds':round(auth_seconds,2),'imRequestSlots':budget.requests,'cardRequestSlots':card_budget.requests,'imPacingWaitSeconds':round(budget.wait_seconds,2)}
+    return {'items':results,'seconds':round(time.time()-started,2),'lanes':lanes,'authentications':1,'authSeconds':round(auth_seconds,2),'imRequestSlots':budget.requests,'cardRequestSlots':0,'imPacingWaitSeconds':round(budget.wait_seconds,2)}
