@@ -6,11 +6,11 @@
 
 ## 当前入口
 
+- [项目文档](docs/PROJECT.md)：唯一产品真相源，定义目标、范围、业务流程、规则和完成标准。
+- [技术文档](docs/TECHNICAL.md)：唯一技术真相源，定义架构、模块、数据、接口、运行和验证。
 - [Codex 接管状态](docs/handoff/codex-takeover-20260919.md)：当前 Git 基线、运行状态、已完成能力、阻塞和下一步。
-- [产品需求](docs/PRD.md)：V1 范围、完整业务流程和验收标准。
-- [决策登记](docs/DECISIONS.md)：已确认规则与仍待业务选择的问题。
-- [文档导航](docs/README.md)：架构、实现证据、研究与归档的阅读顺序。
-- [项目约定](AGENTS.md)：开发和真实业务动作的稳定边界。
+- [文档管理](docs/README.md)：旧 PRD、决策、架构、实现证据、研究与归档的层级。
+- [项目约定](AGENTS.md)：Agent 的执行边界和阅读路由。
 
 ## 项目结构
 
@@ -20,7 +20,7 @@ scripts/           Python CLI、worker 与运行入口
 scripts/lib/       业务规则、台账、队列和平台适配
 tests/             Python 合同测试
 config/            可提交的业务参数与本机配置样例
-docs/              PRD、决策、架构、实现证据和交接
+docs/              项目/技术主文档、架构、实现证据和交接
 var/               本机真实状态与证据，不进入 Git
 ```
 

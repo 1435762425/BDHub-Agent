@@ -1,5 +1,7 @@
 # BDHub-Agent 当前架构与产品校准
 
+> 历史审计：本文固定在 2026-09-13 代码基线，不再作为“当前架构”入口。当前产品与技术分别见 [项目文档](../PROJECT.md) 和 [技术文档](../TECHNICAL.md)。
+
 核查日期：2026-09-13。代码基线：a49c5d3。本文是现状审计与待答问题，不修改业务政策、不启用任务。状态依据为当前代码、API入口及对应验收记录；历史测试结果不是本次重新运行结果。
 
 ## 状态口径
@@ -141,7 +143,7 @@ flowchart TB
 
 ## 证据入口
 
-- 当前需求与历史决策：`docs/PRD.md`、`docs/DECISIONS.md`；阶段口径以日期与后续明确覆盖关系判断。
+- 当前产品与技术：`docs/PROJECT.md`、`docs/TECHNICAL.md`；历史需求与决策来源：`docs/PRD.md`、`docs/DECISIONS.md`。
 - 实际API与服务：`apps/web/src/app/api/`、`apps/web/src/server/`、`scripts/lib/`。
 - 稳定身份与匹配：`docs/implementation/creator-discovery.md`、`registry-profile-matching-sync.md`、`existing-profile-auto-analysis.md`。
 - 模拟运行：`docs/implementation/local-runtime-v1.md`。

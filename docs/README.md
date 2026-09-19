@@ -1,36 +1,57 @@
-# BDHub-Agent 文档导航
+# BDHub-Agent 文档管理
 
-本文档树按“当前状态 → 产品规则 → 架构契约 → 实现证据 → 历史追溯”读取。文件日期表示记录时间，不代表它天然比当前交接或实时台账优先。
+项目只保留两个主文档入口：
 
-## 当前资料
+1. [项目文档](PROJECT.md)：做什么、为什么、业务怎样运行、什么算完成；后续产品开发以此为依据。
+2. [技术文档](TECHNICAL.md)：系统怎样实现、状态存在哪里、模块如何协作、怎样运行和验证。
 
-| 目的 | 入口 |
-| --- | --- |
-| 接续当前开发 | [Codex 接管状态](handoff/codex-takeover-20260919.md) |
-| 确认 V1 产品范围 | [PRD](PRD.md) |
-| 查询已确认与待确认决策 | [决策登记](DECISIONS.md) |
-| 了解开发与运行边界 | [项目约定](../AGENTS.md) |
-| 追溯 DeepSeek 接手时状态 | [DeepSeek 交接快照](handoff/deepseek-harness-20260914.md) |
+[AGENTS.md](../AGENTS.md) 只管理 Agent 的执行边界和阅读路由；[当前交接](handoff/codex-takeover-20260919.md) 只管理动态进度。它们都不建立第三套产品或技术规则。
 
-## 架构资料
+## 文档层级
 
-只读取与当前任务直接相关的文档：
+| 层级 | 文档 | 应包含 | 不应包含 |
+| --- | --- | --- | --- |
+| 产品真相 | `PROJECT.md` | 目标、范围、角色、流程、业务规则、验收、路线图 | PID、进程号、临时故障、代码细节 |
+| 技术真相 | `TECHNICAL.md` | 架构、模块、数据、API、运行、配置、测试、技术债 | 临时运行数量、历史流水、未经确认的产品规则 |
+| Agent 路由 | `AGENTS.md` | 必读资料、授权边界、开发/验证方式 | 详细业务规则、动态状态、事故长文 |
+| 当前状态 | `handoff/codex-takeover-20260919.md` | Git、进程、数量、当前风险、下一步和本轮验证 | 永久产品规则、完整架构说明 |
+| 支撑资料 | `architecture/`、`implementation/`、`research/` | 细节设计、实现证据、实验、调查 | 与主文档竞争“当前真相” |
+| 历史追溯 | `archive/` | 被替代的入口、状态流水和旧方案 | 当前开发指令 |
+
+## 权威顺序
+
+1. 用户当前明确指令；
+2. `PROJECT.md` 的产品规则；
+3. `TECHNICAL.md` 的实现契约；
+4. 当前代码、测试和 `var/` 实时台账；
+5. 当前交接页的动态快照；
+6. 日期化架构、实现和研究资料；
+7. 归档。
+
+当产品文档与实际状态不一致时，不让代码或旧报告默默改写产品规则：先确认差异属于需求变化、实现缺口还是运行故障，再更新相应主文档。
+
+## 支撑资料索引
+
+### 产品细节与历史决定
+
+- [旧 PRD 详细版](PRD.md)：2026-09-13 批次需求细节，现作为 `PROJECT.md` 的来源记录。
+- [决策登记](DECISIONS.md)：逐轮确认与历史未决项，现作为来源记录。
+
+### 架构细节
 
 | 领域 | 资料 |
 | --- | --- |
 | 批次与 V1 主流程 | [批次架构](architecture/batch-outreach-v2.md)、[货盘先备链](architecture/catalog-first-preparation.md) |
-| 货盘全链路 | [货盘页链路](architecture/catalog-page-chain.md)、[非全托 Campaign](architecture/non-full-managed-campaign-v1.md) |
-| 达人线索与发送池 | [线索发送池](architecture/lead-sending-pool.md) |
+| 货盘链路与 Campaign | [货盘页链路](architecture/catalog-page-chain.md)、[非全托 Campaign](architecture/non-full-managed-campaign-v1.md) |
+| 线索与发送池 | [线索发送池](architecture/lead-sending-pool.md) |
 | 发送、监控、回复和日历 | [工作台方案](architecture/send-monitor-reply-calendar-v1.md) |
-| 身份、改名和关系 | [稳定身份](architecture/creator-identity-and-rename.md)、[二发确认规则](architecture/second-cycle-confirmed-policy.md) |
-| 账号和维护 | [账号调度](architecture/account-scheduling.md)、[双账号生命周期](architecture/dual-account-lifecycle.md) |
-| Agent 运行 | [Agent runtime](architecture/agent-runtime.md)、[系统设计](architecture/system-design.md) |
+| 身份与关系 | [稳定身份](architecture/creator-identity-and-rename.md)、[二发确认规则](architecture/second-cycle-confirmed-policy.md) |
+| 账号与维护 | [账号调度](architecture/account-scheduling.md)、[双账号生命周期](architecture/dual-account-lifecycle.md) |
+| Agent 与系统 | [Agent runtime](architecture/agent-runtime.md)、[系统设计](architecture/system-design.md) |
 
-架构文档说明目标、状态机和合同；其中带日期的数量是当时证据，不应作为当前页面常量。
+### 实现与验收证据
 
-## 实现与验收证据
-
-`implementation/` 保存按阶段形成的实现说明和验证结果。当前常用入口：
+`implementation/` 保存“当时实现了什么、如何测试、有哪些限制”。常用入口：
 
 - [货盘主动动作与事故复盘](implementation/catalog-actions-and-incident-20260915.md)
 - [货盘页面整理](implementation/catalog-ui-reorg-20260914.md)
@@ -41,21 +62,31 @@
 - [ACC9 单品建链](implementation/acc9-catalog-link-canary.md)
 - [12 QPS / 500 人身份验收](implementation/identity-12qps-500-release.md)
 
-实现报告用于说明“当时做了什么、怎样验证、有哪些限制”。当前能力仍须结合源码、测试、`var/` 台账和当前交接页核对。
+### 接口、研究与归档
 
-## 接口合同与研究
-
-- `contracts/tiktok/`：TikTok 接口、字段、工具边界和已知缺口。
+- `contracts/tiktok/`：TikTok 接口、字段和工具边界。
 - `contracts/legacy-interface-inventory.md`：旧 BDHub 能力索引，仅供只读借鉴。
-- `research/`：DeepSeek、旧逻辑、匹配数据、UI 模板等调查资料；研究结论不自动成为业务规则。
+- `research/`：模型、旧逻辑、匹配数据和 UI 调查；不自动成为业务规则。
+- `archive/`：已被当前口径取代的状态流水和旧入口，只用于追溯。
 
-## 归档
+## 更新规则
 
-`archive/` 保存被当前产品口径替代的 PRD、README 和长状态流水。归档只用于追溯，不参与当前开发决策。完整历史也可从 Git 标签 `takeover-20260919-inherited` 和此前提交恢复。
+| 变化 | 必须更新 |
+| --- | --- |
+| 产品目标、范围、规则、用户流程、验收标准 | `PROJECT.md` |
+| 模块、调用链、数据、API、配置、运行、部署、测试 | `TECHNICAL.md` |
+| Git、动态数量、进程、当前故障、下一步 | 当前 handoff |
+| Agent 执行权限或文档路由 | `AGENTS.md` |
+| 一次实验、压测、发布或事故 | `implementation/` 或 `research/` |
 
-## 维护规则
+同一事实只保留一个主归属。其他文档使用链接引用，不复制长段正文；旧说明被取代时标记“已被取代”，不继续堆多个“最新”。
 
-- 稳定边界写入 `AGENTS.md`；动态进展、Git 基线和运行快照写入当前交接页。
-- 产品策略写入 PRD/DECISIONS；架构文件不以一次实测数字冒充永久配置。
-- 每次功能改动只更新直接失真的文档；旧说明被取代时显式标记，不继续堆叠多个“最新”。
-- 文档不保存激活码、联系邮箱、Cookie、身份文件、原始私密消息或无必要的业务身份。
+文档变更后运行：
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 \
+  /Users/bjn00003/BDHub/01-BDSystem-V2/.venv/bin/python \
+  scripts/check-docs.py
+```
+
+检查会确认主文档完整，并验证仓库内所有 Markdown 本地链接。

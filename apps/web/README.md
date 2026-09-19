@@ -50,7 +50,7 @@ npm run test:matching
 | `/creators` | 稳定达人身份与画像 |
 | `/ops` | 手动作业、定时意向和 Kalodata 身份 |
 
-旧演示路由仍可能存在，但不作为当前 V1 主入口。当前业务链和页面关系见 [文档导航](../../docs/README.md) 与 [Codex 接管状态](../../docs/handoff/codex-takeover-20260919.md)。
+旧演示路由仍可能存在，但不作为当前 V1 主入口。产品规则见 [项目文档](../../docs/PROJECT.md)，实现结构见 [技术文档](../../docs/TECHNICAL.md)，动态运行状态见 [Codex 接管状态](../../docs/handoff/codex-takeover-20260919.md)。
 
 ## 代码边界
 

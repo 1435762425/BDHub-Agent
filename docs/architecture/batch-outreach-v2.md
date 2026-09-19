@@ -1,6 +1,6 @@
 # 指定数量批次架构与实施蓝图
 
-当前产品基线：[PRD](../PRD.md)。本轮实现与验证：[B.17](../implementation/batch-preparation-foundation-v2.md)。本架构覆盖旧的边发边补策略。本文“已实现”均注明是代码/本地验证还是平台验收，不把设计当运行事实。
+当前产品基线：[项目文档](../PROJECT.md)。[旧 PRD](../PRD.md)保留 2026-09-13 批次需求细节；本轮实现与验证：[B.17](../implementation/batch-preparation-foundation-v2.md)。本架构覆盖旧的边发边补策略。本文“已实现”均注明是代码/本地验证还是平台验收，不把设计当运行事实。
 
 ## 架构关系
 

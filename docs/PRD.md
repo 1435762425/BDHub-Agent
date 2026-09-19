@@ -1,6 +1,8 @@
 # BDHub-Agent PRD：指定数量的二发批次系统
 
-版本：2026-09-13 批次需求确认版，后续已确认覆盖关系见[决策登记](DECISIONS.md)，当前实现差异见[Codex 接管状态](handoff/codex-takeover-20260919.md)。本文及[批次架构](architecture/batch-outreach-v2.md)是产品设计基线，覆盖早期小批滚动补料、自动估算“发满”及同时营销/自动回复的设计。历史研究保存在[归档](archive/PRD-research-before-batches-20260913.md)。**需求确认、代码完成和真实验收分别报告。**
+> 支撑资料：本文保留 2026-09-13 批次需求细节。当前产品真相源已收敛为 [项目文档](PROJECT.md)；冲突时以项目文档和用户当前指令为准。
+
+版本：2026-09-13 批次需求确认版，后续已确认覆盖关系见[决策登记](DECISIONS.md)，当前实现差异见[Codex 接管状态](handoff/codex-takeover-20260919.md)。本文与[批次架构](architecture/batch-outreach-v2.md)保留早期小批滚动补料、自动估算“发满”及同时营销/自动回复设计被覆盖的来源记录；当前产品基线统一为[项目文档](PROJECT.md)。历史研究保存在[归档](archive/PRD-research-before-batches-20260913.md)。**需求确认、代码完成和真实验收分别报告。**
 
 ## 1. 目标与边界
 

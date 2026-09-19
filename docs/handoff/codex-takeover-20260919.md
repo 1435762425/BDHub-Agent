@@ -1,6 +1,6 @@
 # BDHub-Agent Codex 接管状态
 
-更新时间：2026-09-19（Asia/Shanghai）。本文件是当前开发交接入口；动态数量是本次只读快照，后续以 `var/` 台账和页面 API 回读为准。
+更新时间：2026-09-19（Asia/Shanghai）。本文件是当前开发交接入口；产品规则以 [项目文档](../PROJECT.md) 为准，技术结构以 [技术文档](../TECHNICAL.md) 为准。动态数量是本次只读快照，后续以 `var/` 台账和页面 API 回读为准。
 
 ## 1. 接管结论
 
@@ -111,7 +111,8 @@ DeepSeek/Agent 已经把 9 月 14 日的“货盘批量备链”继续推进到�
 
 | 目的 | 入口 |
 | --- | --- |
-| 产品规则 | `docs/PRD.md`、`docs/DECISIONS.md` |
+| 产品规则 | `docs/PROJECT.md` |
+| 技术结构 | `docs/TECHNICAL.md` |
 | 全链路 | `docs/architecture/catalog-page-chain.md` |
 | 发送池 | `docs/architecture/lead-sending-pool.md`、`scripts/lib/lead_pool.py` |
 | 发送预检 | `scripts/lib/send_batch.py`、`scripts/send-batch.py`、`apps/web/src/server/send/bridge.ts` |

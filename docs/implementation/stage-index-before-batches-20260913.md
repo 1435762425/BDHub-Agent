@@ -4,7 +4,7 @@
 
 本仓库用于建设独立运行、最终可替代旧 BDHub 的 Agent 驱动达人经营系统。已完成 PRD、架构设计和 `apps/web` 可运行前端原型；UI 已选择 T03 TailAdmin Next.js 免费 MIT 版，缺少的业务页面自行实现。原七页演示保留浏览器状态；`/workspace?mode=local` 已接入新项目独立 SQLite 与持久 Worker，使用确定性 Planner/模拟平台。另已实现 `/opportunities?mode=matching` 的结构化双向召回与评审包，使用独立合成事实库 `var/matching.sqlite`；该合成切片不调用模型或真实平台。
 
-- 当前需求以 `docs/PRD.md` 为准，已确认与未决选择见 `docs/DECISIONS.md`。只读取本次任务需要的资料，不把全部研究报告默认装入上下文。
+- 本文是批次体系建立前的历史索引。当前需求以 `docs/PROJECT.md` 为准，当前实现结构见 `docs/TECHNICAL.md`；只读取本次任务需要的资料，不把全部研究报告默认装入上下文。
 - 墨西哥、巴西、意大利，先 TikTok IM，后 WhatsApp；一发、二发、回复到合作结果；1–2 人运营。日触达不设固定业务硬上限，真实平台和资源约束仍有效。
 - 旧项目 `/Users/bjn00003/BDHub/01-BDSystem-V2` 的业务代码、数据、配置和服务仅供只读调查。本次获准的资料/Skills 清理已完成，范围见 `docs/research/cleanup-register.md`；不扩大为生产修改或继续删除。旧代码用于核对数据、接口与执行语义；一发/二发的选品选人按用户最新要求重新设计，不继承未实用的旧算法。匹配与费用任务先读 `docs/architecture/matching-and-token-budget.md`；不能根据演示界面推导业务规则。
 - 不复制旧仓库全集、凭证、浏览器身份、原始会话或过时指令。接口事实按 `docs/contracts/legacy-interface-inventory.md` 的来源和时间核对。
