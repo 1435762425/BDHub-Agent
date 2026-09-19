@@ -200,7 +200,8 @@ DeepSeek 与 TypeSafe Jev 当前都只作为影子 provider。Jev 使用官方 S
 ### 6.2 状态原则
 
 - SQLite 是业务事实；JSON progress 只用于显示正在运行的步骤，不替代最终台账。
-- `var/` 不入 Git，也不能由源码完整恢复；备份和迁移需要单独设计。
+- `var/` 不入 Git，也不能由源码完整恢复。`state-backup.py` 按 `config/state-backup.json` 的显式清单使用 SQLite online backup API 复制 21 个当前数据库，捕获已提交 WAL 而不复制 `-wal/-shm`，并为每库保存 SHA-256、大小、`quick_check` 与 schema 元数据。清单之外的新数据库会让备份失败，避免静默漏备；`*-before-*.sqlite` 历史快照明确排除。
+- 备份目录和文件分别为 0700/0600。备份包含达人、消息和业务台账，仍属于敏感业务数据；TypeSafe、Kalodata、Campaign 凭据和运行日志固定不纳入。恢复只能写入不存在或空的目标 `var`，绝不覆盖当前状态，并生成恢复回执。跨机器切换需先停止所有写 worker、创建最终备份、复制整个备份目录、在新机器空目录恢复，再单独配置凭据并运行 migration check；多数据库快照不是跨库单事务。
 - 所有 ID、PID、OECID、Campaign ID 和 listId 按字符串处理。
 - 外部响应保存必要摘要、哈希和引用；凭据、Cookie、完整私密正文不进入普通日志。
 - 动态资格和当前平台事实带观测时间；历史快照不自动覆盖更新事实。
@@ -309,6 +310,7 @@ pending → started/submitted → confirmed
 | `config/link-prepare*.json` | 链接读取/创建运行参数 |
 | `config/send-batch.json` | 发送预检数量、窗口和越界档 |
 | `config/reply-policy.json` | 五种回复动作、两小时集中周期、自动回复关闭和三条固定模板 |
+| `config/state-backup.json` | 当前 SQLite 明确清单与历史快照排除规则 |
 | `config/typesafe.example.json` / 本机 `config/typesafe.json` | TypeSafe 官方 endpoint、固定 Jev 模型和本机 API key；真实文件 0600 且不入 Git |
 | `config/jobs.json` | 手动作业与材料维护周期；Campaign 日检、全托周检及调度器均默认关闭 |
 | `config/market-accounts.json` | 市场账号角色和维护目标 |
@@ -371,6 +373,18 @@ printf '%s' '{"action":"batch_classify","providers":["deepseek","jev"],"limit":3
 `backfill` 只读取本机既有发送、收信和案件证据并写新投影，`platformWrites=0`、`modelCalls=0`。批量影子分类只写模型评估，不创建回复 intent；页面并列展示 DeepSeek/Jev 的完整动作、置信度、原因和固定模板候选，中文理解固定取 DeepSeek 的翻译字段，不被 Jev 占位文案覆盖。审核队列优先展示两模型分歧且尚未审核的 turn；用户必须显式选择独立的五动作标准答案，模型一致也不会预选，写入 append-only `turn_review` 后自动滚到下一项。已审核真值可通过当前 revision 追加修订，旧 revision 和既有业务应用不被改写。三条固定模板直接从 `config/reply-policy.json` 投影到状态接口，选择模板动作时始终可见，不依赖某个模型是否碰巧选择它。系统再用同一份 turn 最新真值计算两个 provider 的准确率、误自动处理（真值为 `human`）和误转人工；模型自己的输出不能成为真值。
 
 审核与业务状态是两个动作。`apply_review` 还必须携带当前 review、relationship control 和 inbox pending 三个 revision：历史样本、消息已编辑、控制已变化或非当前案件全部拒绝。`no_reply` 只有在该达人没有更新未处理 turn 和开放案件时才推进 cursor 并解除冻结；`human` 创建/复用人工案件并保持冻结；三种模板只写固定候选并保持冻结。任何分支都不调用 transport，`automaticReply=false`、`platformWrites=0`。
+
+状态备份与空目录恢复：
+
+```bash
+python scripts/state-backup.py inventory
+python scripts/state-backup.py create --label manual
+python scripts/state-backup.py verify --backup <backup-directory>
+python scripts/state-backup.py restore --backup <backup-directory> \
+  --target-var <empty-target-var> --confirmed
+```
+
+`inventory`、`verify` 只读；`create` 只写新的 Git 忽略备份目录，不修改源数据库。`restore` 必须显式确认且只接受空目标，因此不能就地覆盖当前 `var/`。真实跨机器切换前必须停掉所有会写 SQLite 的 worker；恢复后先补齐本机敏感配置，再执行 `migrate-agent.py check` 和只读业务回读。
 
 ### 数据迁移与本地回填
 
@@ -451,12 +465,12 @@ PYTHONDONTWRITEBYTECODE=1 \
 
 - 当前增量 migration registry 只覆盖 `catalog-links.sqlite` 和 `second-cycle.sqlite` 的本轮新投影；其他 SQLite schema 仍分散在领域模块。
 - 历史 `batch-tasks.sqlite` 曾有长事务；当前 UI 已停止唤醒旧准备 worker。若未来为迁移/追溯再次运行它，仍需先完成事务/WAL 与恢复语义验证。
-- Python 全量测试夹具已显式关闭 SQLite connection；`-W default` 下 1072 项通过且未关闭数据库 `ResourceWarning` 为 0。
+- Python 全量测试夹具已显式关闭 SQLite connection；`-W default` 下 1077 项通过且未关闭数据库 `ResourceWarning` 为 0。
 - Web Node 测试存在 module type warning；Next.js 构建有上游 deprecation warning。
 - 冻结批次、start/stop 和 frozen-v2 执行桥已接通；账号级平台日额度的原生信号仍未取得，不能用本地 500 闸门冒充。
 - 历史 legacy-only `cycle_bulk` 仍保留用于追溯，但旧 CLI 与 `cycle_burst` 动态选人回退均已退役；执行只接受当前冻结批次。
 - 35 条意大利 turn 已完成 DeepSeek/Jev 同集影子分类，turn 级真值、分歧统计、审核后准确率和受控案件应用已完成；当前仍等待用户审核真值，真实自动回复 transport 保持关闭且尚未接入新合同。
-- 本机 `var/` 缺正式备份、恢复和跨机器迁移方案。
+- SQLite 备份、校验和空目录恢复工具已完成；当前首份基线仍只在本机，尚未配置异机副本、保留周期或自动调度。
 - 新项目仍依赖旧 Python 环境与部分协议层；最终需要独立依赖和凭据管理。
 
 ## 15. 技术文档变更规则
