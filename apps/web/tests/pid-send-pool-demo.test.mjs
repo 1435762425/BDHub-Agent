@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import {BUSINESS_PHASES,DEMO_COUNTS,FLOW_STAGES,SCENARIOS,SIMPLE_POOL,evaluateScenario,poolReconciles,simpleScenario} from "../src/features/demo/pid-send-pool-demo.ts";
+import {BUSINESS_PHASES,DEMO_COUNTS,FLOW_STAGES,PID_SNAPSHOT,SCENARIOS,SIMPLE_POOL,evaluateScenario,poolReconciles,simpleScenario} from "../src/features/demo/pid-send-pool-demo.ts";
 
 const scenario=key=>SCENARIOS.find(item=>item.key===key);
 
@@ -14,6 +14,16 @@ test("the default experience reduces the flow to three business questions",()=>{
  assert.deepEqual(BUSINESS_PHASES.map(item=>item.key),["product","creator","send"]);
  assert.deepEqual(Object.keys(SIMPLE_POOL),["sendable","waiting","unavailable","total"]);
  assert.equal(SIMPLE_POOL.sendable+SIMPLE_POOL.waiting+SIMPLE_POOL.unavailable,SIMPLE_POOL.total);
+});
+
+test("the PID snapshot reconciles source, link and historical cleanup counts",()=>{
+ const full=PID_SNAPSHOT.fullManaged;
+ const campaign=PID_SNAPSHOT.campaign;
+ assert.equal(full.currentEligible+full.currentRejected,full.collected);
+ assert.equal(Object.values(full.links).reduce((sum,value)=>sum+value,0),full.selectedPool);
+ assert.equal(campaign.chosen+campaign.held,campaign.uniquePids);
+ assert.equal(PID_SNAPSHOT.historicalCleanup.valid+PID_SNAPSHOT.historicalCleanup.invalid,
+              PID_SNAPSHOT.historicalCleanup.scanned);
 });
 
 test("the fake pool counts reconcile exactly",()=>{

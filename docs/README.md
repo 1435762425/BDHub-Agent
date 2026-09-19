@@ -43,6 +43,7 @@
 | --- | --- |
 | 批次与 V1 主流程 | [批次架构](architecture/batch-outreach-v2.md)、[货盘先备链](architecture/catalog-first-preparation.md) |
 | 货盘链路与 Campaign | [货盘页链路](architecture/catalog-page-chain.md)、[非全托 Campaign](architecture/non-full-managed-campaign-v1.md) |
+| PID 来源、选入、链接、刷新和清理 | [PID 生命周期树](architecture/pid-lifecycle-v1.md) |
 | 线索与发送池 | [线索发送池](architecture/lead-sending-pool.md) |
 | 发送、监控、回复和日历 | [工作台方案](architecture/send-monitor-reply-calendar-v1.md) |
 | 身份与关系 | [稳定身份](architecture/creator-identity-and-rename.md)、[二发确认规则](architecture/second-cycle-confirmed-policy.md) |

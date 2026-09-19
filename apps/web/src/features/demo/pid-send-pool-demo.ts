@@ -20,6 +20,17 @@ export const BUSINESS_PHASES=[
  {key:"send",index:"03",title:"发送安排",question:"这一条现在可以进入发送批次吗？",count:1880,unit:"条当前可发送",summary:"达人关系清晰、没有冷却或未结问题，并冻结精确材料。",steps:["生成达人 × PID 位置","每达人选择一个最优商品","组批并冻结 Offer + listId"]},
 ] as const;
 
+export const PID_SNAPSHOT={
+ observedAt:"2026-09-19",
+ fullManaged:{collected:10000,currentEligible:2291,currentRejected:7709,selectedPool:3450,
+  links:{ready:1098,reuse:1193,reading:1154,missing:4,review:1}},
+ campaign:{uniquePids:2697,chosen:449,held:2248,newlyJoined:18,
+  linkRows:{ready:420,reuseRows:176,reusePids:152,missing:259,readIncomplete:2,review:6}},
+ linkIntents:{verified:1519},
+ inventory:{lists:2067,members:2067},
+ historicalCleanup:{scanned:1908,valid:1786,invalid:122,verifiedDeletes:122},
+} as const;
+
 export const FLOW_STAGES:DemoStage[]=[
  {key:"collect",index:"01",title:"PID 采集",unit:"商品 PID",input:"全托高机会 / Campaign 活动",output:"来源快照 + PID 去重",rule:"每条 PID 保留来源、活动、事实时间和版本。",failure:"读取中断保留游标，不生成半份生效快照。",refresh:"手动主动采集；定时为可选开关。"},
  {key:"screen",index:"02",title:"商品筛选",unit:"PID / Offer",input:"当前来源快照",output:"合格商品方案",rule:"全托销量≥300；有评分≥4.0，无评分允许；佣金差≥2点。Campaign 使用独立期限与库存规则。",failure:"进入不合格层，历史事实保留。",refresh:"采集完成、规则变化或商品事实变化时重算。"},

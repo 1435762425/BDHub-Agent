@@ -1,13 +1,76 @@
 "use client";
 
 import {useMemo,useState} from "react";
-import {Card,Collapsible,Icon,Notice,PageHeading,Pill,StatTile,Tabs} from "../bdhub/ui";
-import {BUSINESS_PHASES,DEMO_COUNTS,FLOW_STAGES,LOCKS,REFRESH_RULES,SCENARIOS,SIMPLE_POOL,poolReconciles,simpleScenario,type ScenarioKey} from "./pid-send-pool-demo";
+import {Card,Collapsible,Icon,Notice,PageHeading,Pill,Tabs} from "../bdhub/ui";
+import {BUSINESS_PHASES,DEMO_COUNTS,FLOW_STAGES,LOCKS,PID_SNAPSHOT,REFRESH_RULES,SCENARIOS,SIMPLE_POOL,poolReconciles,simpleScenario,type ScenarioKey} from "./pid-send-pool-demo";
 
-type Tab="overview"|"details";
+type Tab="pid"|"people"|"details";
 type PhaseKey=(typeof BUSINESS_PHASES)[number]["key"];
 
 const format=(value:number)=>value.toLocaleString("zh-CN");
+
+function Connector(){return <div className="flex h-8 items-center justify-center" aria-hidden="true"><span className="h-6 w-px bg-gray-300 dark:bg-gray-700"/><Icon name="down" className="-ml-2 mt-5 size-4 text-gray-400"/></div>}
+
+function TreeOutcome({title,detail,tone}:{title:string;detail:string;tone:"success"|"warning"|"neutral"}){
+ const style=tone==="success"?"border-success-200 bg-success-50/60 dark:border-success-900 dark:bg-success-900/5":tone==="warning"?"border-warning-200 bg-warning-50/60 dark:border-warning-900 dark:bg-warning-900/5":"border-gray-200 bg-gray-50 dark:border-gray-800 dark:bg-gray-800/60";
+ return <div className={`rounded-xl border p-4 ${style}`}><p className="font-semibold text-gray-800 dark:text-gray-200">{title}</p><p className="mt-1 text-xs leading-5 text-gray-500">{detail}</p></div>;
+}
+
+function PidTree(){
+ const s=PID_SNAPSHOT;
+ return <div className="space-y-5">
+  <Notice><strong>当前只看 PID。</strong> 达人、冷却和发送先放到下一层；这棵树只回答：PID 从哪里来、何时合格、如何进入平台池、如何得到当前链接，以及刷新或清理后去哪。</Notice>
+  <Card><div className="grid grid-cols-3 divide-x divide-gray-100 p-4 dark:divide-gray-800">{[
+   ["全托当前合格",s.fullManaged.currentEligible,`${format(s.fullManaged.collected)} 中通过`],
+   ["Campaign 入池候选",s.campaign.chosen,`${format(s.campaign.uniquePids)} 中选出`],
+   ["已核验新建链接",s.linkIntents.verified,`快照 ${s.observedAt}`],
+  ].map(([label,value,hint])=><div key={String(label)} className="min-w-0 px-2 text-center sm:px-4"><p className="truncate text-[11px] text-gray-500 sm:text-xs">{label}</p><p className="mt-1 text-xl font-semibold tabular-nums sm:text-2xl">{format(Number(value))}</p><p className="mt-1 hidden text-xs text-gray-400 sm:block">{hint}</p></div>)}</div></Card>
+  <Card title="一个 PID 的生命周期树" subtitle="只有绿色结果才叫 PID Material Ready；其他情况只分为等待处理或当前不可用"><div className="p-5">
+   <div className="mx-auto max-w-5xl">
+    <div className="mx-auto max-w-sm rounded-2xl bg-brand-500 p-5 text-center text-white"><p className="text-xs font-medium text-brand-100">根元素</p><p className="mt-1 text-xl font-semibold">一个 PID</p><p className="mt-1 text-xs text-brand-100">所有后续状态都必须能回到这个商品</p></div>
+    <Connector/>
+    <div className="grid gap-4 md:grid-cols-2">
+     <div className="rounded-2xl border border-gray-200 p-5 dark:border-gray-800"><div className="flex items-center justify-between"><h3 className="font-semibold">来源 A · 全托</h3><Pill tone="brand">{format(s.fullManaged.collected)} PID</Pill></div><p className="mt-2 text-sm text-gray-500">高机会商品 → 仅全球销售商品</p><p className="mt-3 text-xs leading-5 text-gray-400">当前合格 {format(s.fullManaged.currentEligible)}；当前不合格 {format(s.fullManaged.currentRejected)}。</p></div>
+     <div className="rounded-2xl border border-gray-200 p-5 dark:border-gray-800"><div className="flex items-center justify-between"><h3 className="font-semibold">来源 B · Campaign</h3><Pill tone="warning">{format(s.campaign.uniquePids)} PID</Pill></div><p className="mt-2 text-sm text-gray-500">已加入/可加入活动的商品方案</p><p className="mt-3 text-xs leading-5 text-gray-400">当前选中 {format(s.campaign.chosen)}；不合格或未选 {format(s.campaign.held)}。</p></div>
+    </div>
+    <Connector/>
+    <div className="rounded-2xl border-2 border-brand-200 bg-brand-25 p-5 text-center dark:border-brand-900 dark:bg-brand-500/5"><p className="text-xs font-semibold text-brand-500">问题 1</p><h3 className="mt-1 text-lg font-semibold">这个 PID 现在符合来源规则吗？</h3><p className="mt-2 text-sm text-gray-500">全托看销量/评分/佣金；Campaign 看 ACTIVE/期限/库存/佣金。</p></div>
+    <div className="mt-4 grid gap-4 md:grid-cols-2"><TreeOutcome title="否 → 当前不可用" detail="不删除来源、选入、线索或旧卡；以后刷新重新判断。" tone="neutral"/><TreeOutcome title="是 → 继续" detail="冻结当前来源、活动和佣金方案，进入平台池判断。" tone="success"/></div>
+    <Connector/>
+    <div className="rounded-2xl border-2 border-brand-200 bg-brand-25 p-5 text-center dark:border-brand-900 dark:bg-brand-500/5"><p className="text-xs font-semibold text-brand-500">问题 2</p><h3 className="mt-1 text-lg font-semibold">它已经在对应的平台商品池里吗？</h3></div>
+    <div className="mt-4 grid gap-4 md:grid-cols-2"><TreeOutcome title="全托：已选池" detail={`当前台账 ${format(s.fullManaged.selectedPool)} PID；未选则创建选入意图，回查 confirmed/already_selected。`} tone="success"/><TreeOutcome title="Campaign：已加入活动" detail={`当前候选 ${format(s.campaign.chosen)} PID；新加入台账 ${format(s.campaign.newlyJoined)} 条，额外条款转人工。`} tone="success"/></div>
+    <Connector/>
+    <div className="rounded-2xl border-2 border-brand-200 bg-brand-25 p-5 text-center dark:border-brand-900 dark:bg-brand-500/5"><p className="text-xs font-semibold text-brand-500">问题 3</p><h3 className="mt-1 text-lg font-semibold">当前方案有精确可用的 TapLink 吗？</h3><p className="mt-2 text-sm text-gray-500">必须同时匹配 PID、来源、Campaign、达人佣金和 listId。</p></div>
+    <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+     <TreeOutcome title="有且一致" detail="复用当前卡，进入 Material Ready。" tone="success"/>
+     <TreeOutcome title="完全没有" detail="创建唯一建链意图；回执未知只核验原意图。" tone="warning"/>
+     <TreeOutcome title="旧卡佣金不同" detail="旧卡保留，创建当前佣金新卡，核验后切新 listId。" tone="warning"/>
+     <TreeOutcome title="状态未知" detail="不创建替代卡，先复读列表与成员。" tone="warning"/>
+    </div>
+    <Connector/>
+    <div className="mx-auto max-w-lg rounded-2xl border-2 border-success-300 bg-success-50 p-5 text-center dark:border-success-900 dark:bg-success-900/10"><Pill tone="success">唯一前向结果</Pill><h3 className="mt-3 text-xl font-semibold">PID Material Ready</h3><p className="mt-2 text-sm text-gray-500">当前合格 Offer + 已在平台池 + 精确可用 TapLink。只有这里的 PID 才能去查达人线索。</p></div>
+   </div>
+  </div></Card>
+  <Card title="刷新不是新状态，而是把 PID 送回前面的判断" subtitle="来源、活动和佣金都会变化；刷新后沿同一棵树重新走"><div className="grid gap-4 p-5 lg:grid-cols-3">
+   <TreeOutcome title="来源刷新" detail="全托重新采集、Campaign 每日完整刷新 → 回到问题 1，重新判断当前资格。" tone="neutral"/>
+   <TreeOutcome title="方案刷新" detail="活动、期限或佣金变化 → 回到问题 3；旧链接保留，必要时创建新卡。" tone="neutral"/>
+   <TreeOutcome title="链接库存刷新" detail="读取全部列表和成员 → 有效继续用，未知转核验，失效进入独立清理流程。" tone="neutral"/>
+  </div></Card>
+  <Card title="TapLink 清理是旁路，不参与 PID 前向资格" subtitle={`当前只读库存 ${format(s.inventory.lists)} 张列表；历史清理快照扫描 ${format(s.historicalCleanup.scanned)} 张`}><div className="p-5">
+   <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+    <TreeOutcome title={`有效 ${format(s.historicalCleanup.valid)}`} detail="继续保留，不产生删除动作。" tone="success"/>
+    <TreeOutcome title="混合有效" detail="只要列表中仍有有效商品，整张列表保留。" tone="neutral"/>
+    <TreeOutcome title="状态未知" detail="转人工/复读，不允许猜测删除。" tone="warning"/>
+    <TreeOutcome title={`历史无效 ${format(s.historicalCleanup.invalid)}`} detail="只进入独立清理范围；冻结删除意图并回读。" tone="warning"/>
+   </div>
+   <Notice tone="warning"><strong>当前 A 规则：</strong>PID 主流程不会自动删除任何旧卡。清理必须是独立动作，有明确范围、健康证据、删除意图和删除后回读；历史台账中已有 {format(s.historicalCleanup.verifiedDeletes)} 条已核验删除记录，不代表今后主流程会自动删除。</Notice>
+  </div></Card>
+  <Collapsible label="当前建链台账快照"><div className="grid gap-4 lg:grid-cols-2">
+   <Card title="全托 · Selected"><div className="grid grid-cols-2 gap-3 p-5 sm:grid-cols-5">{[["已核验",s.fullManaged.links.ready],["可复用",s.fullManaged.links.reuse],["复读中",s.fullManaged.links.reading],["缺链",s.fullManaged.links.missing],["待判断",s.fullManaged.links.review]].map(([label,value])=><div key={String(label)}><p className="text-xs text-gray-400">{label}</p><p className="mt-1 text-lg font-semibold tabular-nums">{format(Number(value))}</p></div>)}</div></Card>
+   <Card title="非全托 · Campaign"><div className="grid grid-cols-2 gap-3 p-5 sm:grid-cols-5">{[["已核验",s.campaign.linkRows.ready],["可复用PID",s.campaign.linkRows.reusePids],["缺链",s.campaign.linkRows.missing],["读取不完整",s.campaign.linkRows.readIncomplete],["待判断",s.campaign.linkRows.review]].map(([label,value])=><div key={String(label)}><p className="text-xs text-gray-400">{label}</p><p className="mt-1 text-lg font-semibold tabular-nums">{format(Number(value))}</p></div>)}</div></Card>
+  </div></Collapsible>
+ </div>;
+}
 
 const blockers:Record<PhaseKey,string[]>={
  product:["商品不符合当前来源规则","没有完整、同源的 Offer","缺 TapLink 或卡上佣金已变化"],
@@ -95,17 +158,12 @@ function Details(){return <div className="space-y-4">
  </div>}
 
 export default function PidSendPoolDemoPage(){
- const [tab,setTab]=useState<Tab>("overview");
+ const [tab,setTab]=useState<Tab>("pid");
  return <div className="space-y-5">
-  <PageHeading title="PID → 发送池业务沙盘" description="默认只看三个阶段和三种结果；完整规则、刷新周期和技术锁按需展开。" action={<div className="flex items-center gap-2"><Pill tone="warning">演示数据</Pill><Pill tone="neutral">不连接后端</Pill></div>}/>
-  <Notice tone="warning"><strong>这是一张业务定义页面，不是运行页面。</strong> 所有 PID、达人和数量均为虚构，不会调用 API、SQLite、TikTok、Kalodata 或模型。</Notice>
-  <div className="grid gap-3 sm:grid-cols-3">
-   <StatTile label="商品准备完成" value={DEMO_COUNTS.linked} hint="合格商品 + 当前有效 TapLink"/>
-   <StatTile label="达人身份完成" value={DEMO_COUNTS.resolved} hint="去重达人已有稳定 OECID"/>
-   <StatTile label="现在可以发" value={SIMPLE_POOL.sendable} hint="严格发送池 Ready" brand/>
-  </div>
-  <Tabs items={[{value:"overview",label:"业务总览"},{value:"details",label:"规则明细"}]} value={tab} onChange={setTab}/>
-  {tab==="overview"?<Overview/>:<Details/>}
-  <p className="text-xs text-gray-400">演示恒等式：{poolReconciles()?"已通过":"未通过"} · 技术原因只用于解释，不新增业务状态。</p>
+  <PageHeading title="PID → 发送池业务沙盘" description="先把 PID 来源、选入、建链、刷新、核验与清理讲清楚，再进入达人和发送。" action={<div className="flex items-center gap-2"><Pill tone="brand">PID 优先</Pill><Pill tone="neutral">不连接后端</Pill></div>}/>
+  <Notice tone="warning"><strong>PID 页使用 2026-09-19 只读台账快照；达人示例仍为虚构。</strong> 页面运行时不会读取 API、SQLite、TikTok、Kalodata 或模型，也不会执行任何业务动作。</Notice>
+  <Tabs items={[{value:"pid",label:"PID 生命周期树"},{value:"people",label:"达人和发送"},{value:"details",label:"规则明细"}]} value={tab} onChange={setTab}/>
+  {tab==="pid"?<PidTree/>:tab==="people"?<Overview/>:<Details/>}
+  <p className="text-xs text-gray-400">PID 主链只有三个业务结果：Material Ready、等待处理、当前不可用。达人/发送恒等式：{poolReconciles()?"已通过":"未通过"}。</p>
  </div>;
 }
