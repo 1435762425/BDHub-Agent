@@ -24,6 +24,7 @@ DeepSeek/Agent 已经把 9 月 14 日的“货盘批量备链”继续推进到�
 | Jev 与意大利标准链接 | `67b0c98`（TypeSafe Jev、当前货盘重算、标准链接全量补齐） |
 | 双模型回复评测 | `4de59f9`（35 条同集批量分类、一致率与审核后准确率指标） |
 | Turn 级人工真值 | `e1b5b8c`（provider 解耦标准动作、v5 append-only 审核账本） |
+| 审核结果受控应用 | `6984414`（revision 门禁、案件/候选映射、零平台写入） |
 | 上一个已提交开发头 | `4cdb759`（`agent/p0-catalog-links`） |
 | 继承工作区固化提交 | `cd81dff` |
 | 继承标签 | `takeover-20260919-inherited` |
@@ -115,12 +116,13 @@ DeepSeek/Agent 已经把 9 月 14 日的“货盘批量备链”继续推进到�
 - 本机历史证据回填 495 episode、35 turn、26 个有关联，`platformWrites=0`、回填 `modelCalls=0`；
 - 收信 worker 删除 60 秒逐达人模型调用，改为只保存事件、立即冻结达人、两小时集中待处理；
 - DeepSeek 与 TypeSafe Jev 都只做五动作影子分类；Jev 固定官方 `jev-1.13.0`，固定模板与模型判断分离；
-- 回复预演页并列展示两模型完整判断、固定显示中文理解，并让用户直接选择独立的五动作标准答案；migration v5 的 append-only `turn_review` 已应用，备份位于 `var/backups/20260920-turn-review-v5/second-cycle.sqlite`。
+- 回复预演页并列展示两模型完整判断、固定显示中文理解，并让用户直接选择独立的五动作标准答案；migration v5 的 append-only `turn_review` 已应用。
+- migration v6 将审核与业务应用拆开：`no_reply` 安全解除已处理冻结、`human` 进入人工案件、模板动作只生成候选不发送；备份位于 `var/backups/20260920-review-application-v6/second-cycle.sqlite`。
 
 ### 下一步：用户审核与评测
 
 1. 用户在“回复预演与训练”审核 35 条样本，页面优先展示 9 条模型分歧，并在确认标准动作后滚到下一批；特别校准简短合作确认、礼貌拒绝和多消息合并；
-2. 将用户审核结果形成固定正反例集，补动作准确率、人工漏判、错 PID、重复模板等指标；
+2. 将用户审核结果形成固定正反例集；页面会计算动作准确率、人工漏判等指标，并由用户另行点击才把结果应用到当前案件；
 3. 审核后直接比较 DeepSeek/Jev 准确率、误自动处理和误转人工；只有用户另行明确开启后，才设计真实自动回复 transport；
 4. 账号级日额度探测仍由用户另行在页面明确启动，不与回复评测混在一起。
 
@@ -149,7 +151,7 @@ DeepSeek/Agent 已经把 9 月 14 日的“货盘批量备链”继续推进到�
 
 2026-09-20 在冻结发送桥和事件级回复预演完成后：
 
-- Python：`1053` 项 `unittest` 通过。
+- Python：`1056` 项 `unittest` 通过。
 - Web：`374` 项 Node 测试通过。
 - TypeScript：`npm run typecheck` 通过。
 - Next.js：`npm run build` 通过，14 个静态页面（含 `/flow-demo`）及当前 API 路由生成成功。
