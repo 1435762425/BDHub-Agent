@@ -164,11 +164,11 @@ class Partition(unittest.TestCase):
             state = pool(folder, now=NOW)
             self.assertEqual(sum(state['layers'].values()), state['counts']['positions'])
             self.assertEqual(set(state['layers']), set(LAYER_ORDER))
-            self.assertEqual(state['counts']['unsent'] + state['counts']['sent'],
+            self.assertEqual(state['counts']['unsent'] + state['history']['currentPositions'],
                              state['counts']['positions'])
             self.assertEqual(state['business']['sendable']+state['business']['waiting']+
                              state['business']['inactive'],state['business']['total'])
-            self.assertEqual(state['business']['total']+state['history']['sent'],state['counts']['positions'])
+            self.assertEqual(state['business']['total']+state['history']['currentPositions'],state['counts']['positions'])
 
     def test_product_invalidation_affects_only_that_pid_and_projects_inactive(self):
         with tempfile.TemporaryDirectory() as folder:

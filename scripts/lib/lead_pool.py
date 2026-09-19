@@ -172,7 +172,7 @@ def _build(conn, now, limit, eligible_pids=None):
     layers['product_inactive'].sort(key=strength)
     layers['sent'].sort(key=lambda r: -(r['sentAt'] or 0))
 
-    sent = len(layers['sent'])
+    current_sent = len(layers['sent']);sent = len(sent_pairs)
     merged = outcomes.get('completed', 0)
     counts = {'leads': leads,
               'merged': merged,
@@ -182,7 +182,7 @@ def _build(conn, now, limit, eligible_pids=None):
               'creators': len(unique_creators),
               'handles': handles[0][0] if handles else 0,
               'sent': sent,
-              'unsent': max(0, len(positions) - sent),
+              'unsent': max(0, len(positions) - current_sent),
               'ready': len(layers['ready']),
               'readyCreators': len({row['creatorId'] for row in layers['ready']}),
               'queued': len(layers['queued']),
@@ -199,4 +199,4 @@ def _build(conn, now, limit, eligible_pids=None):
             'layers': {name: len(rows) for name, rows in layers.items()},
             'pools': {name: rows[:limit] for name, rows in layers.items()},
             'business':business,'reasons':{name:len(rows) for name,rows in layers.items() if name not in ('ready','sent')},
-            'history':{'sent':sent}}
+            'history':{'sent':sent,'currentPositions':current_sent}}

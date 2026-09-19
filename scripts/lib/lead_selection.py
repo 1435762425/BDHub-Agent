@@ -113,7 +113,9 @@ def backfill_receipts(root, *, apply=False, limit=DEFAULT_LIMIT, at=None):
         query_rows={row[0]:row[1] for row in db.execute("SELECT pid,window_end FROM leads_query")}
     grouped={}
     for row in pages:grouped.setdefault(str(row["pid"]),[]).append(json.loads(row["payload"]))
-    report={"mode":"apply" if apply else "check","pids":0,"rawPositive":0,"selected":0,"missingWindow":0,"platformWrites":0}
+    index_report=backfill_source_index(root,apply=apply)
+    report={"mode":"apply" if apply else "check","pids":0,"rawPositive":0,"selected":0,"missingWindow":0,
+            "indexedSourceEdges":index_report["indexed"],"invalidSourceEdges":index_report["invalid"],"platformWrites":0}
     stamp=time.time() if at is None else at
     for pid,receipts in grouped.items():
         edges=[edge for receipt in receipts for edge in receipt.get("edges") or []]
@@ -145,3 +147,28 @@ def backfill_receipts(root, *, apply=False, limit=DEFAULT_LIMIT, at=None):
                     db.execute("INSERT INTO lead_query_head VALUES(?,?,?) ON CONFLICT(plan_id,pid) DO UPDATE SET query_id=excluded.query_id",
                                (plan_id,pid,query_id))
     return report
+
+
+def backfill_source_index(root, *, apply=False):
+    """Index every historical Kalodata edge so an OECID resolved on an older edge remains reusable."""
+    path=Path(root)/"var/second-cycle.sqlite"
+    if not path.exists():raise CycleError("plan_store_missing")
+    mode="" if apply else "?mode=ro"
+    with closing(sqlite3.connect(path if apply else path.resolve().as_uri()+mode,uri=not apply,timeout=30)) as db:
+        db.row_factory=sqlite3.Row
+        if apply:_require_schema(db)
+        rows=list(db.execute("SELECT plan_id,source_id,payload FROM source_edge"))
+        valid=[];invalid=0
+        for row in rows:
+            try:edge=_edge(json.loads(row["payload"]));valid.append((row["plan_id"],edge))
+            except (CycleError,TypeError,ValueError):invalid+=1
+        if apply:
+            with db:
+                for plan_id,edge in valid:
+                    db.execute("""INSERT INTO source_edge_index VALUES(?,?,?,?,?,?,?,?,?)
+                      ON CONFLICT(plan_id,source_id) DO UPDATE SET pid=excluded.pid,
+                      source_handle=excluded.source_handle,source_rank=excluded.source_rank,units=excluded.units,
+                      window_start=excluded.window_start,window_end=excluded.window_end,source_kind=excluded.source_kind""",
+                      (plan_id,edge["sourceId"],edge["pid"],edge["sourceHandle"],edge["sourceRank"],edge["units"],
+                       edge["windowStart"],edge["windowEnd"],edge["sourceKind"]))
+        return {"indexed":len(valid),"invalid":invalid,"platformWrites":0}

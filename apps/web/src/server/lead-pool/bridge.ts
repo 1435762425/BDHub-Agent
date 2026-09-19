@@ -11,7 +11,7 @@ export type LeadPosition={creatorId:string;handle:string;pid:string;rank:number|
 export type LeadPoolState={schema:"bdhub.lead-pool.v2";available:boolean;now?:number;counts:LeadPoolCounts;
  cooldown:{unlocked:number;locked:number};layers:Record<string,number>;pools:Record<string,LeadPosition[]>;
  business:{sendable:number;waiting:number;inactive:number;total:number};reasons:Record<string,number>;
- history:{sent:number}};
+ history:{sent:number;currentPositions:number}};
 
 const LAYERS=new Set(["ready","queued","cooling","awaiting_reply","excluded","product_inactive","sent"]);
 
@@ -36,7 +36,7 @@ function validatePositions(value:unknown):LeadPosition[]{
 export function validateLeadPool(value:unknown):LeadPoolState{
  if(!value||typeof value!=="object")throw Error('invalid_lead_pool');
  const v=value as Record<string,unknown>;
- if(v.available!==true)return {schema:"bdhub.lead-pool.v2",available:false,counts:{} as LeadPoolCounts,cooldown:{unlocked:0,locked:0},layers:{},pools:{},business:{sendable:0,waiting:0,inactive:0,total:0},reasons:{},history:{sent:0}};
+ if(v.available!==true)return {schema:"bdhub.lead-pool.v2",available:false,counts:{} as LeadPoolCounts,cooldown:{unlocked:0,locked:0},layers:{},pools:{},business:{sendable:0,waiting:0,inactive:0,total:0},reasons:{},history:{sent:0,currentPositions:0}};
  if(v.schema!=="bdhub.lead-pool.v2")throw Error('invalid_lead_pool');
  const raw=v.counts as Record<string,unknown>;
  const names=["leads","merged","unresolved","queued","positions","creators","handles","sent","unsent",
@@ -56,12 +56,12 @@ export function validateLeadPool(value:unknown):LeadPoolState{
  const business=v.business as Record<string,unknown>,history=v.history as Record<string,unknown>;
  const projected={sendable:count(business?.sendable,"sendable"),waiting:count(business?.waiting,"waiting"),
   inactive:count(business?.inactive,"inactive"),total:count(business?.total,"total")};
- const sent=count(history?.sent,"sent");
- if(projected.sendable+projected.waiting+projected.inactive!==projected.total||projected.total+sent!==counts.positions||sent!==counts.sent)throw Error('invalid_lead_pool');
+ const sent=count(history?.sent,"sent"),currentPositions=count(history?.currentPositions,"currentPositions");
+ if(projected.sendable+projected.waiting+projected.inactive!==projected.total||projected.total+currentPositions!==counts.positions||sent!==counts.sent||currentPositions!==(v.layers as Record<string,number>).sent)throw Error('invalid_lead_pool');
  return {schema:"bdhub.lead-pool.v2",available:true,now:typeof v.now==="number"?v.now:undefined,counts:counts as unknown as LeadPoolCounts,
   cooldown:{unlocked:count(cooldown?.unlocked,"unlocked"),locked:count(cooldown?.locked,"locked")},
   layers:(v.layers as Record<string,number>)??{},pools,business:projected,
-  reasons:countsRecord(v.reasons),history:{sent}};
+  reasons:countsRecord(v.reasons),history:{sent,currentPositions}};
 }
 
 function countsRecord(raw:unknown):Record<string,number>{

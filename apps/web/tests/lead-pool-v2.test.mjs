@@ -11,7 +11,7 @@ test("lead pool v2 exposes only three business outcomes and keeps sent as histor
  const value=validateLeadPool({schema:"bdhub.lead-pool.v2",available:true,now:1,counts,
   cooldown:{unlocked:86400,locked:172800},layers,pools:{},
   business:{sendable:2,waiting:4,inactive:2,total:8},
-  reasons:{queued:2,cooling:1,awaiting_reply:1,excluded:1,product_inactive:1},history:{sent:2}});
+  reasons:{queued:2,cooling:1,awaiting_reply:1,excluded:1,product_inactive:1},history:{sent:2,currentPositions:2}});
  assert.deepEqual(value.business,{sendable:2,waiting:4,inactive:2,total:8});
  assert.equal(value.business.total+value.history.sent,value.counts.positions);
 });
@@ -19,11 +19,11 @@ test("lead pool v2 exposes only three business outcomes and keeps sent as histor
 test("sent cannot be hidden inside the current pool total",()=>{
  assert.throws(()=>validateLeadPool({schema:"bdhub.lead-pool.v2",available:true,counts,
   cooldown:{unlocked:86400,locked:172800},layers,pools:{},
-  business:{sendable:2,waiting:4,inactive:2,total:10},reasons:{},history:{sent:2}}));
+  business:{sendable:2,waiting:4,inactive:2,total:10},reasons:{},history:{sent:2,currentPositions:2}}));
 });
 
 test("unknown internal layers are rejected",()=>{
  assert.throws(()=>validateLeadPool({schema:"bdhub.lead-pool.v2",available:true,counts,
   cooldown:{unlocked:86400,locked:172800},layers:{...layers,mystery:1},pools:{},
-  business:{sendable:2,waiting:4,inactive:2,total:8},reasons:{},history:{sent:2}}));
+  business:{sendable:2,waiting:4,inactive:2,total:8},reasons:{},history:{sent:2,currentPositions:2}}));
 });
