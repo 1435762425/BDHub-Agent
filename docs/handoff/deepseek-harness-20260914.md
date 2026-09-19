@@ -1,5 +1,7 @@
 # BDHub-Agent 开发交接：DeepSeek Harness
 
+> 历史快照：本文件记录 2026-09-14 DeepSeek 接手时的边界，已被 [2026-09-19 Codex 接管状态](codex-takeover-20260919.md) 取代。业务规则仍以当前 PRD/DECISIONS 为准，运行数字与下一步不得从本文件直接恢复。
+
 交接日期：2026-09-14（北京时间）。接收者负责继续现有项目开发，不重新生成一个项目。本文件是当前交接入口；业务细节按链接读取，不需要把整个历史对话、旧仓库或全部接口响应塞入模型上下文。
 
 ## 1. 工作区与当前版本
@@ -69,9 +71,9 @@
 
 10000、599、2291个合格等是带日期快照，不要作为动态UI常量。本地缺卡记录不等于平台无卡；10 PID查不到也不代表其余589无卡。
 
-本轮前端（2026-09-15，按用户四条要求）：TapLink准备删明细、加**准备进展**（驱动器每步发布`var/job-links-progress.json`，`job_run.state()`读回挂在`run.progress`，桥接层严格校验，`start()`先清空上一次的，进度条按阶段换分子）；达人线索查询队列与发送池删明细表；查询队列改成发送池式卡片（四层合计＝队列总数）。详见[三次精简](docs/implementation/catalog-ui-reorg-20260914.md)与[建链进度](docs/implementation/catalog-actions-and-incident-20260915.md)。
+本轮前端（2026-09-15，按用户四条要求）：TapLink准备删明细、加**准备进展**（驱动器每步发布`var/job-links-progress.json`，`job_run.state()`读回挂在`run.progress`，桥接层严格校验，`start()`先清空上一次的，进度条按阶段换分子）；达人线索查询队列与发送池删明细表；查询队列改成发送池式卡片（四层合计＝队列总数）。详见[三次精简](../implementation/catalog-ui-reorg-20260914.md)与[建链进度](../implementation/catalog-actions-and-incident-20260915.md)。
 
-同一轮补上发送前的 **OECID 闸门**：新增独立卡片「达人身份（OECID）」+ 手动按钮，位于查询队列与发送池之间；三类状态（已就位/待补/搜索不到）必须划分全部线索，搜索不到的**保留记录但不进池**。第一次真实运行发现 `leads-run.py` 自己加锁导致每批 0.02 秒即以 `browser_lock_busy` 结束（flock 同进程第二个 fd 也会被拒），已改为**一把锁一个主人**（provider 持锁）。详见[达人身份（OECID）阶段](docs/implementation/creator-identity-oecid-stage-20260915.md)。
+同一轮补上发送前的 **OECID 闸门**：新增独立卡片「达人身份（OECID）」+ 手动按钮，位于查询队列与发送池之间；三类状态（已就位/待补/搜索不到）必须划分全部线索，搜索不到的**保留记录但不进池**。第一次真实运行发现 `leads-run.py` 自己加锁导致每批 0.02 秒即以 `browser_lock_busy` 结束（flock 同进程第二个 fd 也会被拒），已改为**一把锁一个主人**（provider 持锁）。详见[达人身份（OECID）阶段](../implementation/creator-identity-oecid-stage-20260915.md)。
 
 补 OECID 第一次真跑**第二轮停在 `internal_error`**，已查明并修好：账号通道配置所在的 `var/batch-tasks.sqlite` 是**回滚日志库**，被常驻准备作业持有 **23.9–74.3 秒**的写事务（实测），只读连接用的 5 秒默认 busy 超时不够 → 裸 `OperationalError` 被压成兜底码。现在 `production_policy` **等**这个库（120 秒预算，页面那条路 6 秒）、等不到才报具名码 `identity_policy_unreadable`；驱动器对「还没碰到平台」的占用**重试 3 次且不计入轮次**（页面显示 `retry`）；兜底崩溃把 traceback 写进 `var/identity-worker-crash.log`（0600）、接口只给**异常类型**，页面在停止原因下显示它。真实端到端验证过：人为独占 25 秒后仍正常跑完一轮（`claimed 20 / found 14 / notFound 6 / errors []`），现场 3 次占用分别等 42.1s / 24.9s / 42.1s 全部成功。**未动的隐患**：`batch-preparation-worker` 的几十秒写事务仍会挡住页面读 `batch-tasks`，改 WAL 可根治但要动活作业。
 

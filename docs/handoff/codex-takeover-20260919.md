@@ -1,0 +1,138 @@
+# BDHub-Agent Codex 接管状态
+
+更新时间：2026-09-19（Asia/Shanghai）。本文件是当前开发交接入口；动态数量是本次只读快照，后续以 `var/` 台账和页面 API 回读为准。
+
+## 1. 接管结论
+
+DeepSeek/Agent 已经把 9 月 14 日的“货盘批量备链”继续推进到一条较完整的意大利二发准备链：Campaign/全托货盘、筛分与选入、TapLink 复用/创建、线索队列、达人级 OECID、发送池、收信监控、发送前预检和页面分区均已有代码与测试。
+
+当前还不是可直接恢复自动经营的完成态：
+
+- 真实发送仍暂停，`/api/send` 只支持只读预检和保存设置，没有“开始发送”写入口。
+- AI 自动回复仍关闭；本次 API 回读 `automaticRepliesEnabled=false`，数据库配置为 `0`。
+- 收信 worker 在运行，但本次最新一轮显示 `im_transport_error`，不能仅凭进程存活宣称监控健康。
+- 常驻批次准备、二发 worker 和收信 worker 都在运行；后续修改其合同前必须先做运行影响核对。
+
+## 2. Git 基线
+
+| 项目 | 当前值 |
+| --- | --- |
+| 仓库 | `/Users/bjn00003/BDHub/BDHub-Agent` |
+| 接管分支 | `codex/takeover-20260919` |
+| 上一个已提交开发头 | `4cdb759`（`agent/p0-catalog-links`） |
+| 继承工作区固化提交 | `cd81dff` |
+| 继承标签 | `takeover-20260919-inherited` |
+| 远端 | 未配置；当前只有本机 Git，不具备异机备份或协作推送 |
+
+`cd81dff` 保存了接手时 41 个已跟踪修改和 125 个新增源文件/文档；同时将 `outputs/`、Kalodata 激活码和 Campaign 联系邮箱排除出 Git，并提供无敏感值的样例配置。后续文档清理与功能开发必须另做逻辑提交，不能改写这一继承基线。
+
+## 3. 本机运行快照
+
+### 服务与进程
+
+- Next.js 工作台监听 `127.0.0.1:5198`，cwd 为 `apps/web`；当前实例从 2026-09-16 启动。
+- `batch-preparation-worker.py` 正在运行，继续处理现有持久任务。
+- `second-pilot-worker.ts` 正在运行。
+- `poll-cycle-inbox.py --worker` 正在运行，`platformWrites=false`。
+- 旧 BDHub `01-BDSystem-V2` 仍是独立生产系统，本项目不修改它。
+
+### 2026-09-19 只读数据回读
+
+| 领域 | 快照 |
+| --- | --- |
+| 身份 | 3,069 个去重 handle：2,087 已解析、982 明确未解析、0 blocked、0 未判定；`reconciled=true` |
+| 发送池 | 6,980 个达人×商品位置；1,973 ready、4,507 queued、3 等回复、2 排除、495 已发送 |
+| 发送预检 | 默认请求 500，当前预检可选 500；滚动 24 小时本地新联系额度使用 0/500；窗口 09:00–24:00 当时为 open |
+| 收信 | 555 个索引会话、1,354 个事件、25 个待取内容；累计 live 回复 26、加橱窗 36；当前 open case 1 |
+| 自动回复 | 关闭；历史累计数字不授权恢复 |
+
+这些数字会随 worker 和时间变化，不应写入 UI 常量或业务规则。`/api/send` 的只读计算本次约 10 秒返回；性能是否需要优化应通过单独剖析决定。
+
+## 4. 已完成到什么程度
+
+| 模块 | 已有实现 | 当前边界 |
+| --- | --- | --- |
+| 全托货盘 | 主来源采集、可配置筛分、选入账本、已选池回读 | 真实数字随台账变化；全托不使用库存门槛 |
+| Campaign | IT Campaign 读取、筛分、加入活动、页面/API 和合同测试 | 仍按非全托规则核对期限、库存与额外条款；不与全托合并资格 |
+| TapLink | ACC9 单品 canary、批量台账、旧链复用、并发建链、只读复读和清理路径 | unknown 不重建；清理与创建是独立写动作 |
+| 商品短名 | DeepSeek 批量生成与 PID 级缓存；发送预检可按 PID 复用 | 失败不自动重复调用模型；短名质量不应冒充发送资格 |
+| Kalodata 线索 | 首次/到期队列、额度和失败语义、执行入口 | 失败不写 `queried_at`；额度耗尽停止并保留断点 |
+| OECID | 达人级一次查询、blocked 重开、结果互斥分类、页面卡片 | 已明确查无的不自动重复；无 OECID 不进入发送位置 |
+| 发送池 | 达人×商品位置、达人级冷却、关系阻断、渠道合并、数量恒等式 | 池本身只读重算；不能从 ready 数量直接启动发送 |
+| 发送预检 | 按池顺序选人/商品、卡片和短名复用、500/600 预览、本地额度与窗口 | 尚无 `create()` 落批次和页面 start/stop；真实发送为 0 |
+| 收信与统计 | 现有 inbox worker 接入作业面板，按北京时间统计并排除历史补录 | 当前最新一轮有 `im_transport_error`，需先诊断健康 |
+| 回复训练 | 方案和历史实现存在 | AI 自动回复关闭；训练/预演不能进入真实发送队列 |
+
+## 5. 当前必须保持的业务门禁
+
+- 真实发送和 AI 自动回复保持暂停；代码完成、预检通过、旧批次授权或页面有 ready 数量都不能自动解除。
+- 第一次新发送执行器的真实发送必须由用户在页面明确点击开始。用户此前选择的越界探测档是 600，但该选择不等于本次接管自动执行 600 条。
+- 卡片和文字都精确回查成功才算完整触达；单卡、单达人限额、平台拒绝和结果未知分别记账。
+- `flight < 0` 是单达人触达限制，只结束该达人；账号级日额度信号尚未取得，不能编造或用本地 500 闸门替代。
+- 发送超时或不明回执必须停批核验；不重新生成意图或换账号盲发。
+- ACC9 负责货盘/备链，ACC6 负责选入、身份和通信；已验的单品/只读能力不自动推广到未验的批量写动作。
+- 旧 BDHub 只读；不迁移凭据、不写旧数据库、不恢复旧任务。
+
+## 6. 当前技术风险
+
+1. **收信健康未闭合**：worker 存活，但最新进度是 `im_transport_error`。下一步先读取脱敏日志和最近成功时间，区分短暂网络错误、身份问题或锁竞争。
+2. **SQLite 长写事务**：历史实测 `batch-preparation-worker` 会持有 `batch-tasks.sqlite` 写事务 23.9–74.3 秒，导致页面或身份策略读取等待。现有超时/重试只是缓解，WAL 或缩短事务需要在不破坏活作业的前提下单独设计。
+3. **发送执行尚未接通**：`send_batch.py` 当前只有 preview/status/save；授权落库、start/stop、断点执行和平台原始信号还未桥接到现有执行器。
+4. **本机 Git 无远端**：已有提交和标签可以本机回滚，但机器损坏时没有远端恢复点。配置 GitHub/GitLab 远端需要用户提供目标仓库或明确创建位置。
+5. **文档曾混入大量动态流水**：原 `AGENTS.md` 已由本轮收敛；以后不得继续把每次数字和事故追加回根规则。
+6. **测试资源释放告警**：Python 全量测试通过，但未隐藏 warning 时可见多处未关闭 SQLite connection 的 `ResourceWarning`。它不阻断本次文档交付，后续应按模块修复，避免长驻进程积累连接。
+
+## 7. 建议接续顺序
+
+### P0：验证继承基线
+
+运行当前相关 Python/Web 测试、TypeScript 和构建，确认 `cd81dff` 可重现此前声称的绿灯。先不触发任何平台写入。
+
+### P1：修复只读运行健康
+
+先查 `im_transport_error` 和批次 SQLite 长事务，不停止或重启活 worker 来掩盖问题。补充可核对的健康状态和错误原因。
+
+### P2：完成发送执行桥
+
+在现有 `send_batch` 预检之上实现：
+
+1. 把当前用户确认的范围冻结为持久批次与授权；
+2. 页面提供 start/stop，开始前只显示 2–3 条样例和汇总；
+3. 复用既有 `bulk-second-send.py` / `cycle_burst`，不重写平台发送协议；
+4. 每条原始平台信号落 `cycle_platform_signal`；
+5. 本批到顶、窗口关闭、本地额度、账号级平台额度、单达人限额和 unknown 分开处理；
+6. 先完成离线/只读验收，真实 600 探测仍由用户点击启动。
+
+### P3：回复预演与统计
+
+发送闭环稳定后，再把真实回复样本用于“用户判定 → 正反例 → 可审计规则”的预演；保持真实自动回复关闭，直到单独验收。
+
+## 8. 关键入口
+
+| 目的 | 入口 |
+| --- | --- |
+| 产品规则 | `docs/PRD.md`、`docs/DECISIONS.md` |
+| 全链路 | `docs/architecture/catalog-page-chain.md` |
+| 发送池 | `docs/architecture/lead-sending-pool.md`、`scripts/lib/lead_pool.py` |
+| 发送预检 | `scripts/lib/send_batch.py`、`scripts/send-batch.py`、`apps/web/src/server/send/bridge.ts` |
+| 收信与日历 | `scripts/poll-cycle-inbox.py`、`scripts/lib/cycle_stats.py`、`apps/web/src/server/inbox/bridge.ts` |
+| 作业控制 | `scripts/lib/job_run.py`、`apps/web/src/features/ops/` |
+| 身份 | `scripts/lib/identity_queue.py`、`scripts/identity-batch.py` |
+| TapLink | `scripts/lib/catalog_prepare.py`、`scripts/lib/catalog_links.py` |
+| 本机状态 | `var/*.sqlite`、`var/*status*.json`、`var/*.log`（均不入 Git） |
+
+## 9. 接管时未执行的动作
+
+本次只做只读盘点、Git 固化和文档整理；没有发送 TikTok IM、开启 AI 自动回复、选入商品、加入 Campaign、创建/删除 TapLink、修改旧 BDHub、停止/重启 worker 或发布新服务。
+
+## 10. 接管验证
+
+2026-09-19 在继承基线及文档整理后完成：
+
+- Python：`1019` 项 `unittest` 通过。
+- Web：`353` 项 Node 测试通过。
+- TypeScript：`npm run typecheck` 通过。
+- Next.js：`npm run build` 通过，13 个静态页面及当前 API 路由生成成功。
+- 文档：104 个 Markdown 文件的本地链接检查通过；`git diff --check` 通过。
+
+以上均为本机代码与只读合同验证，不是新的平台写入或真实发送验收。

@@ -1,25 +1,66 @@
 # BDHub-Agent
 
-独立的达人经营系统，以指定数量的二发批次为V1主线：全量准备正式名单与候补，批量准备TapLink，按时发送、跨日续发，阶段性处理回复。旧BDHub保持只读。
+独立的 Agent 驱动达人经营系统。当前 V1 聚焦意大利 TikTok IM 二发闭环：先准备合格商品与 TapLink，再查询正销量达人、补齐稳定身份、进入发送池，最后执行发送回查、收信监控和服务处理。
+
+真实发送目前保持暂停，AI 自动回复保持关闭。页面可展示发送池和只读预检，但不会因此获得真实发送授权。
 
 ## 当前入口
 
-- [产品需求](docs/PRD.md)：最新逐轮确认规则，覆盖旧“发满估算”和滚动备料口径。
-- [批次架构与实施状态](docs/architecture/batch-outreach-v2.md)：TapLink在全量准备中的位置、任务对象、阶段、模块进度和验收。
-- [本机二发工作台](http://127.0.0.1:5198/workspace?mode=second-live)：指定数量任务卡、可恢复的任务级整批准备、当前试验批次与速度曲线。
-- [货盘](http://127.0.0.1:5198/catalog)：唯一全托发现源的真实列表、同步/续采和条件核验。
-- [达人库](http://127.0.0.1:5198/creators)：稳定OEC和已有画像；旧版经营能力承接仍在进行。
+- [Codex 接管状态](docs/handoff/codex-takeover-20260919.md)：当前 Git 基线、运行状态、已完成能力、阻塞和下一步。
+- [产品需求](docs/PRD.md)：V1 范围、完整业务流程和验收标准。
+- [决策登记](docs/DECISIONS.md)：已确认规则与仍待业务选择的问题。
+- [文档导航](docs/README.md)：架构、实现证据、研究与归档的阅读顺序。
+- [项目约定](AGENTS.md)：开发和真实业务动作的稳定边界。
 
-**AI自动回复当前按用户要求暂停，不能由任务完成或重启自动恢复。** 收信与原授权意大利试验批次可继续；整批预检不创建新任务、不建链、不发送。IT主力来源首轮10000个PID已采完并核对，其他市场与全量任务执行器仍未完成验收。
+## 项目结构
 
-## 开发与运行
+```text
+apps/web/          Next.js 工作台与 API bridge
+scripts/           Python CLI、worker 与运行入口
+scripts/lib/       业务规则、台账、队列和平台适配
+tests/             Python 合同测试
+config/            可提交的业务参数与本机配置样例
+docs/              PRD、决策、架构、实现证据和交接
+var/               本机真实状态与证据，不进入 Git
+```
 
-前端在apps/web，按[前端运行说明](apps/web/README.md)构建。新项目SQLite与动作证据在var（不入Git）。Python当前复用旧项目.venv运行环境，但不改写旧项目。
+## 开发与验证
 
-最新可追溯实测：[发送吞吐](docs/implementation/second-cycle-throughput-20-v1.md)、[素材解阻与身份提速](docs/implementation/second-cycle-supply-repair-v1.md)。文档数字为历史快照，真实数量以本地数据库和回执为准。
+Web 需要 Node.js `>=22.18.0`：
 
-旧研究入口归档在[历史README](docs/archive/README-before-batches-20260913.md)，不作为当前授权或功能状态。TailAdmin Free来源和许可见[来源说明](apps/web/TAILADMIN-SOURCE.json)、[第三方声明](apps/web/THIRD_PARTY_NOTICES.md)。
+```bash
+cd /Users/bjn00003/BDHub/BDHub-Agent/apps/web
+npm ci
+npm run dev
+```
 
-主力源当前合同与进度：[B.18](docs/implementation/global-opportunity-source-v1.md)。
+工作台监听 `http://127.0.0.1:5198`。源码验证：
 
-最新实现：[任务级整批采集与材料准备](docs/implementation/batch-task-preparation-v2.md)。新任务确认包含采集、身份、短名和已选/活动商品的 TapLink 准备；不包含私信发送，未选全托自动选入继续接入。
+```bash
+npm test
+npm run typecheck
+npm run build
+```
+
+Python 暂时复用旧 BDHub 的兼容环境，但只执行本仓库脚本：
+
+```bash
+cd /Users/bjn00003/BDHub/BDHub-Agent
+PYTHONDONTWRITEBYTECODE=1 \
+  /Users/bjn00003/BDHub/01-BDSystem-V2/.venv/bin/python \
+  -m unittest discover -s tests
+```
+
+按改动范围选择测试；真实发送、建链、选入和外部结果必须另行以持久意图和平台回执验收，不能由离线测试替代。
+
+## 本地配置与状态
+
+`var/`、`outputs/`、Kalodata 激活码、Campaign 联系邮箱和凭据均不进入 Git。本机敏感配置从样例复制：
+
+```bash
+cp config/kalodata-identity.example.json config/kalodata-identity.json
+cp config/campaign-join.example.json config/campaign-join.json
+chmod 600 config/kalodata-identity.json config/campaign-join.json
+```
+
+缺少 `var/` 中的真实 SQLite 与证据文件时，只能进行离线开发；不得用演示数据冒充当前业务状态。
