@@ -27,6 +27,7 @@ DeepSeek/Agent 已经把 9 月 14 日的“货盘批量备链”继续推进到�
 | Turn 级人工真值 | `e1b5b8c`（provider 解耦标准动作、v5 append-only 审核账本） |
 | 审核结果受控应用 | `6984414`（revision 门禁、案件/候选映射、零平台写入） |
 | 统计日历 | `fc91e35`（14 日聚合、今日高亮、未确认单列与恒等式保护） |
+| 旧回复路径退役 | `6eae5e2`（`reply_facts` 退出调度、工作台口径对齐） |
 | 上一个已提交开发头 | `4cdb759`（`agent/p0-catalog-links`） |
 | 继承工作区固化提交 | `cd81dff` |
 | 继承标签 | `takeover-20260919-inherited` |
@@ -121,6 +122,7 @@ DeepSeek/Agent 已经把 9 月 14 日的“货盘批量备链”继续推进到�
 - DeepSeek 与 TypeSafe Jev 都只做五动作影子分类；Jev 固定官方 `jev-1.13.0`，固定模板与模型判断分离；
 - 回复预演页并列展示两模型完整判断、固定显示中文理解，并让用户直接选择独立的五动作标准答案；migration v5 的 append-only `turn_review` 已应用。
 - migration v6 将审核与业务应用拆开：`no_reply` 安全解除已处理冻结、`human` 进入人工案件、模板动作只生成候选不发送；备份位于 `var/backups/20260920-review-application-v6/second-cycle.sqlite`。
+- 旧 `reply_facts` 已从供给调度器的 active stage 集合和命令路由移除；本机历史行仍保留且只读可追溯，不再被 claim、recover 或页面状态投影。工作台同时移除“60 秒合并、事实工具自动答、发送前远程重验”等过期口径。
 
 ### 已完成：统计日历聚合页
 
@@ -162,7 +164,7 @@ DeepSeek/Agent 已经把 9 月 14 日的“货盘批量备链”继续推进到�
 
 2026-09-20 在统计日历聚合页完成后：
 
-- Python：`1056` 项 `unittest` 通过。
+- Python：`1057` 项 `unittest` 通过。
 - Web：`378` 项 Node 测试通过。
 - TypeScript：`npm run typecheck` 通过。
 - Next.js：`npm run build` 通过，14 个静态页面（含 `/flow-demo`）及当前 API 路由生成成功。

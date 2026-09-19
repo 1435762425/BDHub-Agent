@@ -158,6 +158,8 @@ React 组件不能直接读写 SQLite、启动任意命令或实现资格规则�
 
 DeepSeek 与 TypeSafe Jev 当前都只作为影子 provider。Jev 使用官方 System One 合同 `POST https://api.typesafe.ai/v1/systemone`，固定模型 `jev-1.13.0`，五动作由一个 `Choice` 问题返回完整概率分布；API key 只从本机 `config/typesafe.json`（0600、Git 忽略）或 `TYPESAFE_API_KEY` 读取。收信 worker 不再调用旧 `cycle_agent.py`，也不执行 `process_due()`；它只保存事件并立即冻结达人。旧事实工具、60 秒服务代码和已存在的旧评估记录继续保留历史兼容，但不再位于当前收信运行路径。
 
+`cycle_scheduler.PERIODS` 同样不再包含 `reply_facts`：既有 `cycle_schedule` 历史行保留，但 claim、running/recover 判断和状态投影只接受当前五个供给阶段，`run-second-cycle.py` 也不再为该旧阶段生成命令。这样以后启动供给调度器也不会意外恢复事实型回复路径。
+
 模型输出不能直接进入 transport，也不能写达人、PID、冷却、拒联或案件状态。身份、金额、资格、额度、去重、暂停、授权和外部结果继续由代码和台账执行。当前影子审核页只写 `reply_classification/reply_review`，不创建 `service_reply`。
 
 ## 6. 数据与状态
@@ -303,7 +305,7 @@ pending → started/submitted → confirmed
 
 业务配置不得另建第二来源。敏感配置、邮箱、激活码、Cookie 和身份文件不入 Git。
 
-后续回复实施应新增一个版本化政策入口，统一保存五种动作、模板版本、provider 选择和集中批处理周期；不得把这些值散落在 prompt、React 组件和 worker 常量中。API key 继续只放本机敏感配置。
+回复政策统一由版本化的 `config/reply-policy.json` 保存五种动作、模板版本、自动回复开关和集中批处理周期；provider 的连接配置分别从本机敏感配置读取。不得把这些值散落在 prompt、React 组件和 worker 常量中，API key 继续只放本机敏感配置。
 
 ## 11. 运行方式
 
