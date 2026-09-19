@@ -11,7 +11,7 @@ const decision={action:'collaboration_ack',intentCode:'collaboration_confirmed',
  provider:'deepseek',model:'deepseek-flash',policyVersion:'creator-reply-actions-v1',automaticReply:false,executionAllowed:false};
 const payload={schema:'bdhub.reply-review.v1',policyVersion:'creator-reply-actions-v1',processingIntervalSeconds:7200,
  automaticReplies:false,providers:{deepseek:{mode:'shadow'},jev:{mode:'unconfigured'}},
- counts:{turns:35,episodes:10,linkedTurns:20,classified:1,reviewed:0},items:[{turnId:turn,messageId:'1001',
+ counts:{turns:35,episodes:10,linkedTurns:20,classified:1,reviewed:0},evaluation:{paired:1,agreements:1,disagreements:0,agreementRate:1,reviewedTurns:0,pendingReview:35,providers:{deepseek:{evaluated:0,correct:0,accuracy:null,falseAuto:0,falseHuman:0},jev:{evaluated:0,correct:0,accuracy:null,falseAuto:0,falseHuman:0}},disagreementSamples:[]},items:[{turnId:turn,messageId:'1001',
  creatorId:'creator-1',format:'text',text:'Certo, farò un video',historical:true,occurredMs:1789257600000,
  episodes:[{episode_id:'episode-'+'c'.repeat(24),pid:'1729571380453480001',list_id:'8650765182615984910',candidate_rank:1,confidence:'high'}],
  classificationId:classification,decision,review:null,comparisons:[{classificationId:classification,provider:'deepseek',model:'deepseek-flash',action:'collaboration_ack',confidence:.98,intentCode:'collaboration_confirmed'}]}]};

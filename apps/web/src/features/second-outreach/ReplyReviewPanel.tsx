@@ -46,6 +46,12 @@ export default function ReplyReviewPanel(){
   <div className="space-y-4 p-5">
    {error?<Notice tone="warning">暂时无法读取回复审核账本。</Notice>:!data?<p className="text-sm text-gray-500">正在读取真实回复…</p>:<>
     <div className="grid grid-cols-2 gap-3 lg:grid-cols-5"><StatTile label="入站 turn" value={data.counts.turns} hint="每条消息独立保存"/><StatTile label="外发 episode" value={data.counts.episodes} hint="当时的 PID 与链接"/><StatTile label="已关联" value={data.counts.linkedTurns} hint="有候选外发上下文"/><StatTile label="已分类" value={data.counts.classified} hint="影子判断，不执行"/><StatTile label="已审核" value={data.counts.reviewed} hint="人工确认的正反例" brand/></div>
+    <div className="rounded-xl bg-gray-50 p-3 text-xs leading-5 text-gray-600 dark:bg-white/[0.04] dark:text-gray-300">
+     同集对照 <strong>{data.evaluation.paired}</strong> 条 · 一致 <strong>{data.evaluation.agreements}</strong> · 分歧 <strong>{data.evaluation.disagreements}</strong>
+     {data.evaluation.agreementRate!=null&&<> · 一致率 <strong>{(data.evaluation.agreementRate*100).toFixed(1)}%</strong></>}
+     <span className="ml-3">待你审核 <strong>{data.evaluation.pendingReview}</strong> 条。</span>
+     {data.evaluation.reviewedTurns>0&&<span className="ml-3">DeepSeek 准确率 {data.evaluation.providers.deepseek.accuracy==null?"—":`${(data.evaluation.providers.deepseek.accuracy*100).toFixed(1)}%`}；Jev 准确率 {data.evaluation.providers.jev.accuracy==null?"—":`${(data.evaluation.providers.jev.accuracy*100).toFixed(1)}%`}。</span>}
+    </div>
     <p className="text-xs leading-5 text-gray-500">每 {data.processingIntervalSeconds/3600} 小时集中处理一次；DeepSeek 与 Jev 都只做影子分类，同一条可直接对照。固定模板也只是候选，<strong>自动回复始终关闭</strong>。</p>
     <div className="space-y-3">{data.items.map(item=><ReviewItem key={`${item.turnId}-${item.classificationId}-${item.review?.revision??0}`} item={item} onChanged={()=>setRevision(value=>value+1)}/>)}</div>
    </>}

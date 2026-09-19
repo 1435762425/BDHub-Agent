@@ -333,6 +333,79 @@ def review(store, classification_id, expected_revision, verdict, correct_action,
             'automaticReply':False}
 
 
+def batch_classify(store, providers, limit, *, root=None, classifier_factory=None):
+    """Fill the same bounded turn set for each provider; never creates reply work."""
+    _tables(store)
+    if not isinstance(providers,(list,tuple)) or not providers or set(providers)-{'deepseek','jev'} or \
+            type(limit) is not int or not 1<=limit<=50:
+        raise CycleError('reply_batch_invalid')
+    root=Path(root or Path(store.db.execute('PRAGMA database_list').fetchone()[2]).parent.parent)
+    selected=[]
+    for row in store.db.execute('SELECT turn_id FROM inbound_turn ORDER BY coalesce(occurred_ms,observed_at*1000) DESC'):
+        missing=any(not store.db.execute("SELECT 1 FROM reply_classification WHERE state='ready' AND provider=? "
+            "AND json_extract(input_json,'$.turn.turnId')=?",(provider,row['turn_id'])).fetchone()
+            for provider in providers)
+        if missing:selected.append(row['turn_id'])
+        if len(selected)>=limit:break
+    report={'turns':len(selected),'providers':list(providers),'modelCalls':0,'cached':0,'ready':0,
+            'errors':{},'actions':{},'automaticReplies':False,'executionAllowed':False}
+    for turn_id in selected:
+        context=classification_input(store,turn_id);context_hash=digest(context)
+        for provider in providers:
+            if store.db.execute("SELECT 1 FROM reply_classification WHERE state='ready' AND provider=? "
+                    "AND json_extract(input_json,'$.turn.turnId')=?",(provider,turn_id)).fetchone():continue
+            engine=(classifier_factory(provider) if classifier_factory else
+                    DeepSeekClassifier() if provider=='deepseek' else JevClassifier(root))
+            request_id=f'shadow-{provider}-{context_hash[:32]}'
+            try:
+                value=classify(store,turn_id,request_id,engine)
+                report['cached']+=int(value.get('cached') is True);report['modelCalls']+=int(value.get('cached') is not True)
+                report['ready']+=1;action=value['action'];report['actions'][action]=report['actions'].get(action,0)+1
+            except Exception as error:
+                code=str(error) if isinstance(error,CycleError) else type(error).__name__
+                report['errors'][code]=report['errors'].get(code,0)+1
+    return report
+
+
+def evaluation_summary(store):
+    """Provider agreement plus user-ground-truth metrics; no review means no invented accuracy."""
+    latest={}
+    for row in store.db.execute("SELECT classification_id,provider,decision_json,input_json,created_at "
+                                "FROM reply_classification WHERE state='ready' ORDER BY created_at DESC"):
+        turn_id=json.loads(row['input_json'])['turn']['turnId'];latest.setdefault((turn_id,row['provider']),row)
+    turns=sorted({turn for turn,_ in latest});paired=[]
+    for turn_id in turns:
+        if (turn_id,'deepseek') in latest and (turn_id,'jev') in latest:
+            deep=json.loads(latest[(turn_id,'deepseek')]['decision_json']);jev=json.loads(latest[(turn_id,'jev')]['decision_json'])
+            paired.append({'turnId':turn_id,'deepseek':deep['action'],'jev':jev['action'],
+                           'agree':deep['action']==jev['action']})
+    labels={}
+    for row in store.db.execute("""SELECT c.input_json,c.decision_json,r.verdict,r.correct_action,r.created_at
+      FROM reply_review r JOIN reply_classification c ON c.classification_id=r.classification_id
+      WHERE c.state='ready' ORDER BY r.created_at DESC,r.revision DESC"""):
+        turn_id=json.loads(row['input_json'])['turn']['turnId']
+        if turn_id in labels:continue
+        decision=json.loads(row['decision_json'])
+        labels[turn_id]=decision['action'] if row['verdict']=='correct' else row['correct_action']
+    provider_metrics={}
+    for provider in ('deepseek','jev'):
+        evaluated=correct=false_auto=false_human=0
+        for turn_id,truth in labels.items():
+            row=latest.get((turn_id,provider))
+            if not row:continue
+            prediction=json.loads(row['decision_json'])['action'];evaluated+=1;correct+=int(prediction==truth)
+            false_auto+=int(truth=='human' and prediction!='human')
+            false_human+=int(truth!='human' and prediction=='human')
+        provider_metrics[provider]={'evaluated':evaluated,'correct':correct,
+            'accuracy':round(correct/evaluated,4) if evaluated else None,
+            'falseAuto':false_auto,'falseHuman':false_human}
+    agreements=sum(row['agree'] for row in paired)
+    return {'paired':len(paired),'agreements':agreements,'disagreements':len(paired)-agreements,
+            'agreementRate':round(agreements/len(paired),4) if paired else None,
+            'reviewedTurns':len(labels),'pendingReview':store.db.execute('SELECT count(*) FROM inbound_turn').fetchone()[0]-len(labels),
+            'providers':provider_metrics,'disagreementSamples':[row for row in paired if not row['agree']][:5]}
+
+
 def status(store, limit=12):
     _tables(store);policy=load_policy()
     if type(limit) is not int or not 1<=limit<=50:raise CycleError('reply_limit_invalid')
@@ -343,8 +416,7 @@ def status(store, limit=12):
                                           "FROM reply_classification WHERE state='ready'").fetchone()[0],
             'reviewed':store.db.execute('SELECT count(DISTINCT classification_id) FROM reply_review').fetchone()[0]}
     items=[]
-    for turn in store.db.execute('SELECT * FROM inbound_turn ORDER BY coalesce(occurred_ms,observed_at*1000) DESC '
-                                 'LIMIT ?', (limit,)):
+    for turn in store.db.execute("SELECT * FROM inbound_turn ORDER BY coalesce(occurred_ms,observed_at*1000) DESC"):
         classifications=list(store.db.execute("SELECT * FROM reply_classification WHERE state='ready' "
             "AND json_extract(input_json,'$.turn.turnId')=? ORDER BY created_at DESC",
             (turn['turn_id'],)))
@@ -369,10 +441,14 @@ def status(store, limit=12):
                       'classificationId':classification['classification_id'] if classification else None,
                       'decision':decision,'review':dict(review_row) if review_row else None,
                       'comparisons':comparisons})
+    items.sort(key=lambda item:(item['review'] is not None,
+                               len({row['action'] for row in item['comparisons']})<=1,
+                               -(item['occurredMs'] or 0),item['turnId']))
+    items=items[:limit]
     from lib.typesafe_provider import status as typesafe_status
     jev=typesafe_status(Path(store.db.execute('PRAGMA database_list').fetchone()[2]).parent.parent)
     return {'schema':'bdhub.reply-review.v1','policyVersion':policy['version'],
             'processingIntervalSeconds':policy['processingIntervalSeconds'],
             'automaticReplies':False,'providers':{'deepseek':{'mode':'shadow'},
                                                    'jev':{'mode':'shadow' if jev['ready'] else 'unconfigured'}},
-            'counts':counts,'items':items}
+            'counts':counts,'evaluation':evaluation_summary(store),'items':items}

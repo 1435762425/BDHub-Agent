@@ -11,7 +11,7 @@ sys.path.insert(0,str(ROOT/'scripts'))
 from lib.cycle_delivery import Deliveries  # noqa:E402
 from lib.cycle_inbox import Inbox  # noqa:E402
 from lib.cycle_service import Service  # noqa:E402
-from lib.reply_events import DeepSeekClassifier,JevClassifier,backfill,classify,load_policy,review,status  # noqa:E402
+from lib.reply_events import DeepSeekClassifier,JevClassifier,backfill,batch_classify,classify,evaluation_summary,load_policy,review,status  # noqa:E402
 from lib.schema_migrations import apply_database  # noqa:E402
 from lib.second_cycle import CycleError,CycleStore,digest  # noqa:E402
 from test_second_cycle import NOW,edge,offer  # noqa:E402
@@ -83,6 +83,25 @@ class ReplyEvents(unittest.TestCase):
    with self.assertRaisesRegex(CycleError,'jev_not_configured'):
     classify(s,turn,'request-jev-0001',JevClassifier(self.root))
    self.assertEqual(load_policy()['automaticRepliesEnabled'],False)
+ def test_batch_runs_same_turn_for_both_providers_and_metrics_wait_for_review(self):
+  with CycleStore(self.db,clock=lambda:self.now) as s:
+   backfill(s)
+   class Fake:
+    model='fixture'
+    def __init__(self,provider):self.provider=provider
+    def classify(self,context):
+     action='human' if self.provider=='deepseek' else 'collaboration_ack'
+     return ({'schemaVersion':'bdhub.reply-classification.v1','action':action,
+      'intentCode':'fixture_'+action,'evidenceMessageIds':['1001'],'evidenceQuotes':['farò un video'],
+      'confidence':.8,'humanReason':'需人工' if action=='human' else None,
+      'templateKey':None if action=='human' else 'collaboration_ack_v1','meaningZh':'确认会制作视频'},None)
+   report=batch_classify(s,['deepseek','jev'],10,root=self.root,classifier_factory=Fake)
+   self.assertEqual((report['turns'],report['ready'],report['modelCalls']),(1,2,2))
+   before=evaluation_summary(s);self.assertEqual((before['paired'],before['disagreements'],before['reviewedTurns']),(1,1,0))
+   jev=s.db.execute("SELECT classification_id FROM reply_classification WHERE provider='jev'").fetchone()[0]
+   review(s,jev,0,'correct',None,'参考答案')
+   after=evaluation_summary(s);self.assertEqual(after['providers']['jev']['accuracy'],1.0)
+   self.assertEqual(after['providers']['deepseek']['falseHuman'],1)
 
 
 if __name__=='__main__':unittest.main()

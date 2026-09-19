@@ -13,4 +13,9 @@ export type ReplyReviewItem={turnId:string;messageId:string;creatorId:string;for
  action:ReplyAction;confidence:number;intentCode:string}>};
 export type ReplyReviewStatus={schema:"bdhub.reply-review.v1";policyVersion:string;
  processingIntervalSeconds:number;automaticReplies:false;providers:{deepseek:{mode:string};jev:{mode:string}};
- counts:{turns:number;episodes:number;linkedTurns:number;classified:number;reviewed:number};items:ReplyReviewItem[]};
+ counts:{turns:number;episodes:number;linkedTurns:number;classified:number;reviewed:number};
+ evaluation:{paired:number;agreements:number;disagreements:number;agreementRate:number|null;
+  reviewedTurns:number;pendingReview:number;providers:Record<"deepseek"|"jev",{evaluated:number;
+   correct:number;accuracy:number|null;falseAuto:number;falseHuman:number}>;
+  disagreementSamples:Array<{turnId:string;deepseek:ReplyAction;jev:ReplyAction;agree:boolean}>};
+ items:ReplyReviewItem[]};

@@ -262,7 +262,7 @@ Jev 不能因为获得账号权限就直接上线。必须使用相同的用户�
 1. `outbound_episode / inbound_turn / turn_episode_link / service_case_turn` 已建立并从本机历史证据只读回填；分类输入不再发送完整聊天。
 2. 当前收信 worker 已移除 60 秒逐达人模型调用，只保存事件、立即冻结达人并进入两小时集中队列；旧 `cycle_agent.py`、`cycle_reply_facts.py` 和事实回复代码仅保留历史兼容，不在当前收信路径。
 3. 五种动作和三条固定模板已收敛到 `config/reply-policy.json`；`reply_classification` 与 `reply_review` 分开保存模型判断和用户真值，预演页不会创建回复发送意图。
-4. DeepSeek 与 TypeSafe Jev 已接同一影子合同；Jev 固定使用官方 `jev-1.13.0` System One Choice，最近 5 条真实意大利 turn 已完成同集对照，尚待用户逐条审核形成真值。
+4. DeepSeek 与 TypeSafe Jev 已接同一影子合同；Jev 固定使用官方 `jev-1.13.0` System One Choice，35 条真实意大利 turn 已完成同集对照：26 条一致、9 条分歧，一致率 74.29%，尚待用户逐条审核形成真值。
 5. 正式发送桥已冻结完整达人×PID×Offer×`currentListId`、话术与顺序；frozen-v2 执行只读本地当前绑定并调用 `descriptor()`，不再运行时重选 PID 或调用 `fresh_card()`。平台明确拒卡只让对应 PID 等刷新，unknown 仍停批核验。旧 legacy-only 批次保留兼容路径。
 6. 当前自动回复开关必须继续关闭。完成代码不等于允许真实回复。
 
@@ -271,7 +271,7 @@ Jev 不能因为获得账号权限就直接上线。必须使用相同的用户�
 1. 线索数量、统一排序、三结果投影和标准链接已完成，继续保持回放验收；
 2. 冻结批次、start/stop 和移除发送前 `fresh_card()` 已完成，保持真实发送由页面单独启动；
 3. 事件账本、provider 无关分类合同、确定性守卫、版本化模板和用户审核页面已完成；先由用户审核真实意大利样本并形成固定正反例集；
-4. 下一步补齐批量审核、分类指标和受控的 service case 关闭映射，不连接自动发送；
+4. 批量影子分类、同集一致率、审核后准确率/误自动处理/误转人工指标已完成；下一步由用户审核 35 条真值并补受控的 service case 关闭映射，不连接自动发送；
 5. 继续扩大 DeepSeek/Jev 同集评测并由用户审阅；只有用户另行明确开启后，才接真实自动回复发送和结果回查。
 
 本阶段只完成规则固化、影子分类和人工评测，不恢复真实发送或 AI 自动回复。

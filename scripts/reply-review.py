@@ -18,7 +18,7 @@ def main():
         if len(raw.encode())>20000:raise CycleError('input_too_large')
         request=json.loads(raw or '{}')
         action=request.get('action')
-        if action not in ('status','backfill','classify','review'):raise CycleError('invalid_action')
+        if action not in ('status','backfill','classify','batch_classify','review'):raise CycleError('invalid_action')
         readonly=action=='status'
         with CycleStore(ROOT/'var/second-cycle.sqlite',readonly=readonly) as store:
             if action=='status':
@@ -33,6 +33,10 @@ def main():
                 classifier=DeepSeekClassifier() if provider=='deepseek' else JevClassifier(ROOT) if provider=='jev' else None
                 if classifier is None:raise CycleError('reply_provider_invalid')
                 result=classify(store,request['turnId'],request['requestId'],classifier)
+            elif action=='batch_classify':
+                if set(request)!={'action','providers','limit'}:raise CycleError('invalid_input')
+                from lib.reply_events import batch_classify
+                result=batch_classify(store,request['providers'],request['limit'],root=ROOT)
             else:
                 if set(request)!={'action','classificationId','expectedRevision','verdict','correctAction','note'}:
                     raise CycleError('invalid_input')

@@ -152,7 +152,7 @@ React 组件不能直接读写 SQLite、启动任意命令或实现资格规则�
 - `ReplyPolicyGuard`：检查多意图、附件、PID/listId 唯一性、模板版本和人工条件，并把不满足的结果强制收敛为 `human`。
 - `ReplyTemplateRegistry`：只提供版本化的 `sample_self_service`、`collaboration_ack`、`link_usage` 三条人工确认模板。
 
-当前 V1 回复实现已新增 `reply_events.py` 和 `config/reply-policy.json`：前者把已确认外发投影为 `outbound_episode`，把达人入站正文投影为不可变 `inbound_turn`，并保存最多三个 `turn_episode_link` 候选；后者唯一保存五种动作、两小时集中周期、自动回复关闭和三条固定意大利语模板。`reply-review.py` 只允许本地回填、影子分类和人工审核；分类输出必须引用真实 message ID 与原文片段，`link_usage` 还必须只有一个关联 PID/listId，否则确定性守卫改为 `human`。
+当前 V1 回复实现已新增 `reply_events.py` 和 `config/reply-policy.json`：前者把已确认外发投影为 `outbound_episode`，把达人入站正文投影为不可变 `inbound_turn`，并保存最多三个 `turn_episode_link` 候选；后者唯一保存五种动作、两小时集中周期、自动回复关闭和三条固定意大利语模板。`reply-review.py` 只允许本地回填、单条/批量影子分类和人工审核；批量任务用输入哈希生成稳定 request ID，同一批 turn 对两个 provider 分别结算，不重复请求。分类输出必须引用真实 message ID 与原文片段，`link_usage` 还必须只有一个关联 PID/listId，否则确定性守卫改为 `human`。
 
 DeepSeek 与 TypeSafe Jev 当前都只作为影子 provider。Jev 使用官方 System One 合同 `POST https://api.typesafe.ai/v1/systemone`，固定模型 `jev-1.13.0`，五动作由一个 `Choice` 问题返回完整概率分布；API key 只从本机 `config/typesafe.json`（0600、Git 忽略）或 `TYPESAFE_API_KEY` 读取。收信 worker 不再调用旧 `cycle_agent.py`，也不执行 `process_due()`；它只保存事件并立即冻结达人。旧事实工具、60 秒服务代码和已存在的旧评估记录继续保留历史兼容，但不再位于当前收信运行路径。
 
@@ -346,9 +346,11 @@ python scripts/send-batch.py stop --batch-id <id> --expected-revision <n>
 ```bash
 printf '%s' '{"action":"backfill"}' | python scripts/reply-review.py
 printf '%s' '{"action":"status","limit":12}' | python scripts/reply-review.py
+printf '%s' '{"action":"batch_classify","providers":["deepseek","jev"],"limit":30}' \
+  | python scripts/reply-review.py
 ```
 
-`backfill` 只读取本机既有发送、收信和案件证据并写新投影，`platformWrites=0`、`modelCalls=0`。影子分类只能由页面逐条明确触发；DeepSeek 与 Jev 的动作、置信度和模型版本并列展示，任何一方的结果都不能发送回复。
+`backfill` 只读取本机既有发送、收信和案件证据并写新投影，`platformWrites=0`、`modelCalls=0`。批量影子分类只写模型评估，不创建回复 intent；页面并列展示 DeepSeek/Jev 动作、置信度和模型版本，并统计同集一致率。审核队列优先展示两模型分歧且尚未审核的 turn，审核后自动滚到下一项。用户审核产生 turn 级真值后，系统才计算各 provider 的准确率、误自动处理（真值为 `human`）和误转人工；模型自己的输出不能成为真值。
 
 ### 数据迁移与本地回填
 
@@ -433,7 +435,7 @@ PYTHONDONTWRITEBYTECODE=1 \
 - Web Node 测试存在 module type warning；Next.js 构建有上游 deprecation warning。
 - 冻结批次、start/stop 和 frozen-v2 执行桥已接通；账号级平台日额度的原生信号仍未取得，不能用本地 500 闸门冒充。
 - 旧 legacy-only `cycle_bulk` 仍保留旧执行兼容路径；新 `/api/send` 只创建 frozen-v2 批次。
-- 事件级回复账本、五动作、固定模板、DeepSeek/Jev 同集影子分类与人工审核页已完成；真实自动回复 transport 仍保持关闭且尚未接入新合同。
+- 35 条意大利 turn 已完成 DeepSeek/Jev 同集影子分类，批量恢复、分歧统计和审核后准确率已完成；当前仍等待用户审核真值，真实自动回复 transport 保持关闭且尚未接入新合同。
 - 本机 `var/` 缺正式备份、恢复和跨机器迁移方案。
 - 新项目仍依赖旧 Python 环境与部分协议层；最终需要独立依赖和凭据管理。
 
