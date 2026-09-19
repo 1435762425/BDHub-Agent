@@ -6,12 +6,11 @@
 
 DeepSeek/Agent 已经把 9 月 14 日的“货盘批量备链”继续推进到一条较完整的意大利二发准备链：Campaign/全托货盘、筛分与选入、TapLink 复用/创建、线索队列、达人级 OECID、发送池、收信监控、发送前预检和页面分区均已有代码与测试。
 
-当前还不是可直接恢复自动经营的完成态：
+当前发送桥已经接通，但仍不是自动经营态：
 
-- 真实发送仍暂停，`/api/send` 只支持只读预检和保存设置，没有“开始发送”写入口。
+- `/api/send` 已支持预览指纹、不可变冻结、明确 start/stop 和批次状态；只有用户在页面点击“确认并开始”才会启动真实 worker。本轮没有点击，真实发送仍暂停。
 - AI 自动回复仍关闭；本次 API 回读 `automaticRepliesEnabled=false`，数据库配置为 `0`。
-- 收信 worker 在运行；盘点中曾读到一轮 `im_transport_error`，最终回读已恢复为 `errorCode=null`。这说明进程和恢复路径可用，但仍不能仅凭进程存活宣称长期健康。
-- 常驻批次准备、二发 worker 和收信 worker 都在运行；后续修改其合同前必须先做运行影响核对。
+- 2026-09-20 01:xx 未发现批次准备、二发、冻结发送或收信 worker；代码与断点保留，但本轮没有擅自恢复。
 
 ## 2. Git 基线
 
@@ -20,6 +19,7 @@ DeepSeek/Agent 已经把 9 月 14 日的“货盘批量备链”继续推进到�
 | 仓库 | `/Users/bjn00003/BDHub/BDHub-Agent` |
 | 当前开发分支 | `codex/v1-runtime-alignment` |
 | 第一轮实现提交 | `3c0edad`（迁移底座）、`b024fec`（标准材料与当前线索）、`17cca7a`（历史索引）、`05ff3e1`（发送池性能）、`cb5c7f7`（跨代身份复用） |
+| 冻结发送桥 | `e0b37be`（不可变批次、start/stop、frozen-v2 worker 与前端确认） |
 | 上一个已提交开发头 | `4cdb759`（`agent/p0-catalog-links`） |
 | 继承工作区固化提交 | `cd81dff` |
 | 继承标签 | `takeover-20260919-inherited` |
@@ -31,8 +31,8 @@ DeepSeek/Agent 已经把 9 月 14 日的“货盘批量备链”继续推进到�
 
 ### 服务与进程
 
-- Next.js 工作台监听 `127.0.0.1:5198`，cwd 为 `apps/web`；第一轮读侧升级完成后需用最新构建替换实例并回读。
-- 2026-09-20 00:xx 进程回读未发现 `batch-preparation-worker.py`、`second-pilot-worker.ts` 或 `poll-cycle-inbox.py --worker`；本轮没有擅自恢复它们。
+- Next.js 工作台已用最新构建重启，监听 `127.0.0.1:5198`，cwd 为 `apps/web`，LaunchAgent 为 `io.bdhub.agent.web`。
+- 2026-09-20 01:xx 进程回读未发现 `batch-preparation-worker.py`、`second-pilot-worker.ts`、`send-batch-worker.py` 或 `poll-cycle-inbox.py --worker`；本轮没有擅自恢复它们。
 - 旧 BDHub `01-BDSystem-V2` 仍是独立生产系统，本项目不修改它。
 
 ### 2026-09-20 本地数据回读
@@ -42,7 +42,8 @@ DeepSeek/Agent 已经把 9 月 14 日的“货盘批量备链”继续推进到�
 | 身份 | 稳定身份库累计 3,069 个 handle；当前 20 条范围内 963 个 handle：728 已解析、235 明确未解析、0 blocked、0 未判定；`reconciled=true` |
 | 当前线索 | 1,150 个 PID 的本机回执共 1,803 条正销量证据，按 v2 发布 1,617 条当前线索；另为身份复用建立 12,996 条历史索引，50 条旧记录因字段不完整未索引 |
 | 发送池 v2 | 1,306 个当前达人×商品位置：706 可发送、553 等待中、47 暂不参与；728 个达人；累计已发送历史 495 |
-| 发送预检 | 默认请求 500，当前预检可选 500；滚动 24 小时本地新联系额度使用 0/500；窗口 09:00–24:00 当时为 open |
+| 发送预检 | 默认请求 500，当前 463 条通过复检；滚动 24 小时本地新联系额度使用 0/500；窗口 09:00–24:00 当时为 closed，但关闭只阻止 dispatch，不阻止冻结 |
+| 冻结批次 | migration v3 已应用；`cycle_bulk_freeze=0`、`cycle_bulk_candidate=0`，说明本轮没有代用户冻结或启动批次 |
 | 收信 | 555 个索引会话、1,354 个事件、25 个待取内容；累计 live 回复 26、加橱窗 36；当前 open case 1 |
 | 自动回复 | 关闭；历史累计数字不授权恢复 |
 
@@ -59,7 +60,7 @@ DeepSeek/Agent 已经把 9 月 14 日的“货盘批量备链”继续推进到�
 | Kalodata 线索 | `leads-queue-v2`、完整 receipt、当前前 20 条发布、历史规范化索引和无平台回填 | 失败不写 `queried_at`；额度耗尽停止并保留断点 |
 | OECID | 达人级一次查询、blocked 重开、结果互斥分类、页面卡片 | 已明确查无的不自动重复；无 OECID 不进入发送位置 |
 | 发送池 | `lead-pool.v2`、统一 `sourceRank → units DESC → PID`、三种业务结果、已发送历史分离 | 池本身只读重算；不能从可发送数量直接启动发送 |
-| 发送预检 | 按池顺序选人/商品、卡片和短名复用、500/600 预览、本地额度与窗口 | 尚无 `create()` 落批次和页面 start/stop；真实发送为 0 |
+| 冻结发送 | `previewHash`、完整候选快照、requestId 幂等、revision start/stop、2-lane worker、页面确认摘要与断点 | GET/save/freeze 不启动；只有页面明确 start 才真实发送，本轮批次与发送均为 0 |
 | 收信与统计 | 现有 inbox worker 接入作业面板，按北京时间统计并排除历史补录 | 盘点中出现过一次 `im_transport_error`，最终回读已清除；继续观察而不是重启掩盖 |
 | 回复分类 | IT/MX 历史数据已完成首轮影子分析；五种动作、三条固定回复和事件级上下文已固化在当前策略文档 | 代码仍是旧分类/事实工具/60 秒 debounce；Jev 等权限和同集实测；AI 自动回复关闭 |
 | PID→发送池演示 | `/flow-demo` 展示 PID 生命周期树、每 PID 最多 20 条线索、OECID、统一 `sourceRank` 排序和三种业务结果 | 纯前端，PID 数量为 2026-09-19 只读静态快照，达人案例为虚构数据；页面运行时不连接 API、SQLite、平台或模型 |
@@ -78,11 +79,11 @@ DeepSeek/Agent 已经把 9 月 14 日的“货盘批量备链”继续推进到�
 
 1. **收信健康需持续观察**：盘点中出现过一轮 `im_transport_error`，最终只读回读已恢复为 `null`。后续若再次出现，读取脱敏日志和最近成功时间，区分短暂网络错误、身份问题或锁竞争，不用盲目重启掩盖。
 2. **SQLite 长写事务**：历史实测 `batch-preparation-worker` 会持有 `batch-tasks.sqlite` 写事务 23.9–74.3 秒，导致页面或身份策略读取等待。现有超时/重试只是缓解，WAL 或缩短事务需要在不破坏活作业的前提下单独设计。
-3. **发送执行尚未接通**：`send_batch.py` 当前只有 preview/status/save；授权落库、start/stop、断点执行和平台原始信号还未桥接到现有执行器。
+3. **新发送执行器尚未做真实平台验收**：冻结、start/stop 和离线故障合同已完成，但账号级日额度原生信号仍未取得；第一次真实执行仍需用户在页面单独启动并观察。
 4. **本机 Git 无远端**：已有提交和标签可以本机回滚，但机器损坏时没有远端恢复点。配置 GitHub/GitLab 远端需要用户提供目标仓库或明确创建位置。
 5. **文档曾混入大量动态流水**：原 `AGENTS.md` 已由本轮收敛；以后不得继续把每次数字和事故追加回根规则。
 6. **测试资源释放告警**：Python 全量测试通过，但未隐藏 warning 时可见多处未关闭 SQLite connection 的 `ResourceWarning`。它不阻断本次文档交付，后续应按模块修复，避免长驻进程积累连接。
-7. **正式发送仍是旧执行合同**：读侧排序已统一，但 `cycle_bulk` 尚未冻结完整位置，执行器仍会重新挑候选并调用 `fresh_card()`；因此真实发送继续暂停。
+7. **旧批次仍有 legacy 兼容路径**：新 `/api/send` 只创建 frozen-v2 批次，不重选 PID、不远程复读 TapLink；历史 legacy-only `cycle_bulk` 仍保留旧路径，只用于追溯/兼容，不能拿旧授权恢复发送。
 8. **回复实现仍是旧合同**：`cycle_service.py` 仍使用 60 秒 debounce，`cycle_agent.py`/`cycle_reply_facts.py` 仍包含事实工具路径，尚无 episode/turn 关联、五动作 provider adapter 和固定模板注册表。
 9. **收信监控当前未运行**：代码与断点都保留，但没有常驻 `poll-cycle-inbox.py --worker` 进程；这是运行状态，不授权本轮自动恢复。
 
@@ -95,24 +96,19 @@ DeepSeek/Agent 已经把 9 月 14 日的“货盘批量备链”继续推进到�
 - 标准 TapLink、当前前 20 条线索、历史身份索引、统一排序和三结果投影已上线本机数据；
 - 回填与验证均为本机 SQLite，平台写入 0。
 
-### P2：完成发送执行桥
+### 已完成：冻结发送执行桥
 
-在现有 `send_batch` 预检之上实现：
+- 当前预览冻结为完整达人×PID×Offer×`currentListId`、话术和顺序；
+- 页面提供独立“冻结本批”“确认并开始”“停止本批”，且显示授权摘要、revision、逐项结果和 worker 断点；
+- frozen-v2 执行不调用 `choose_candidates` 或 `fresh_card()`；明确拒卡只让对应 PID 等刷新，单达人限制继续下一条，unknown 停止所有 lane；
+- 本机 SQLite migration v3 已在备份后应用，备份位于 `var/backups/20260920-p3-send-bridge/second-cycle.sqlite`；平台写入 0。
 
-1. 把当前用户确认的范围冻结为持久批次与授权；
-2. 页面提供 start/stop，开始前只显示 2–3 条样例和汇总；
-3. 复用既有 `bulk-second-send.py` / `cycle_burst`，不重写平台发送协议；
-4. 每条原始平台信号落 `cycle_platform_signal`；
-5. 本批到顶、窗口关闭、本地额度、账号级平台额度、单达人限额和 unknown 分开处理；
-6. 先完成离线/只读验收，真实 600 探测仍由用户点击启动。
+### 下一步：回复合同迁移
 
-### P3：发送与回复合同迁移
-
-1. 把当前预览冻结成完整达人×PID×Offer×`currentListId` 批次，再接 start/stop；
-2. 移除发送前 `fresh_card()`，明确拒卡只让对应 PID 等刷新，unknown 仍停批核验；
-3. 建立 `outbound_episode / inbound_turn / turn_episode_link / service_case`；
-4. 实现 DeepSeek/Jev 可替换分类器、五种动作、固定模板和用户审核回放；
-5. 保持真实自动回复关闭，直到 Jev 获权、同集实测和单独验收完成。
+1. 建立 `outbound_episode / inbound_turn / turn_episode_link / service_case` 的幂等迁移与只读回填；
+2. 实现 DeepSeek/Jev 可替换分类器、五种动作、固定模板和用户审核回放；
+3. 保持真实自动回复关闭，直到 Jev 获权、同集实测和单独验收完成；
+4. 账号级日额度探测仍由用户另行在页面明确启动，不与回复开发混在一起。
 
 ## 8. 关键入口
 
@@ -123,23 +119,23 @@ DeepSeek/Agent 已经把 9 月 14 日的“货盘批量备链”继续推进到�
 | 达人发送池与 AI 回复当前策略 | `docs/architecture/creator-pool-and-reply-policy-v1.md` |
 | 全链路 | `docs/architecture/catalog-page-chain.md` |
 | 发送池 | `docs/architecture/lead-sending-pool.md`、`scripts/lib/lead_pool.py` |
-| 发送预检 | `scripts/lib/send_batch.py`、`scripts/send-batch.py`、`apps/web/src/server/send/bridge.ts` |
+| 冻结发送 | `scripts/lib/send_batch.py`、`scripts/send-batch.py`、`scripts/send-batch-worker.py`、`scripts/lib/cycle_burst.py`、`apps/web/src/server/send/bridge.ts` |
 | 收信与日历 | `scripts/poll-cycle-inbox.py`、`scripts/lib/cycle_stats.py`、`apps/web/src/server/inbox/bridge.ts` |
 | 作业控制 | `scripts/lib/job_run.py`、`apps/web/src/features/ops/` |
 | 身份 | `scripts/lib/identity_queue.py`、`scripts/identity-batch.py` |
 | TapLink | `scripts/lib/catalog_prepare.py`、`scripts/lib/catalog_links.py` |
 | 本机状态 | `var/*.sqlite`、`var/*status*.json`、`var/*.log`（均不入 Git） |
 
-## 9. 接管时未执行的动作
+## 9. 本轮执行边界
 
-本次只做只读盘点、Git 固化和文档整理；没有发送 TikTok IM、开启 AI 自动回复、选入商品、加入 Campaign、创建/删除 TapLink、修改旧 BDHub、停止/重启 worker 或发布新服务。
+本轮应用了本项目 `second-cycle.sqlite` 的 additive migration v3，构建并重启了 5198 Web 服务；没有发送 TikTok IM、冻结业务批次、启动发送 worker、开启 AI 自动回复、选入商品、加入 Campaign、创建/删除 TapLink、修改旧 BDHub 或恢复其他 worker。
 
 ## 10. 接管验证
 
-2026-09-20 在第一轮读侧升级后完成：
+2026-09-20 在冻结发送桥完成后：
 
-- Python：`1034` 项 `unittest` 通过。
-- Web：`369` 项 Node 测试通过。
+- Python：`1041` 项 `unittest` 通过。
+- Web：`371` 项 Node 测试通过。
 - TypeScript：`npm run typecheck` 通过。
 - Next.js：`npm run build` 通过，14 个静态页面（含 `/flow-demo`）及当前 API 路由生成成功。
 - 文档：108 个 Markdown 文件的本地链接检查通过；`git diff --check` 通过。
