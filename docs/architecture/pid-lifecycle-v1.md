@@ -139,4 +139,4 @@ Campaign 每日随来源核验、全托已选每周核验已由本机材料维�
 - 当前 `catalog_prepare_item` 的 `ready/reuse/reading/missing/review` 仍直接暴露为状态，后续应统一投影成三个业务结果。
 - Campaign 与全托的当前 Offer、TapLink 和刷新证据仍分散在多个 SQLite 表，需要一个 PID Material 投影作为单一读取合同。
 - 当前 `preserveExistingLinks=true` 且读链会复用旧卡；需要改为只认标准规则指纹，并为当前合格方案执行一次标准链接补齐。
-- 当前发送运行时仍执行 `fresh_card()`；后端实施新规则时需移除发送前 TapLink 门禁，并让明确拒卡只影响对应 PID。
+- 发送前远程 `fresh_card()` 门禁已移除；冻结批次只读核对本地当前绑定，平台明确拒卡只影响对应 PID，unknown 仍停批核验。

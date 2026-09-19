@@ -34,6 +34,7 @@ DeepSeek/Agent 已经把 9 月 14 日的“货盘批量备链”继续推进到�
 | 显式回复真值 | `b76d407`（模型不预选、政策模板直出、append-only 修订） |
 | TapLink 周期调度 | `71035e8`（Campaign 日检、全托周检、只读 creates=0） |
 | SQLite 测试资源 | `ad1f373`（夹具显式 close，未关闭连接 warning 归零） |
+| 旧批量发送器退役 | `4145da0`（旧 CLI 固定拒绝、frozen-v2 授权与候选强门禁） |
 | 上一个已提交开发头 | `4cdb759`（`agent/p0-catalog-links`） |
 | 继承工作区固化提交 | `cd81dff` |
 | 继承标签 | `takeover-20260919-inherited` |
@@ -101,8 +102,8 @@ DeepSeek/Agent 已经把 9 月 14 日的“货盘批量备链”继续推进到�
 3. **新发送执行器尚未做真实平台验收**：冻结、start/stop 和离线故障合同已完成，但账号级日额度原生信号仍未取得；第一次真实执行仍需用户在页面单独启动并观察。
 4. **本机 Git 无远端**：已有提交和标签可以本机回滚，但机器损坏时没有远端恢复点。配置 GitHub/GitLab 远端需要用户提供目标仓库或明确创建位置。
 5. **文档曾混入大量动态流水**：原 `AGENTS.md` 已由本轮收敛；以后不得继续把每次数字和事故追加回根规则。
-6. **测试资源释放告警已解决**：tracemalloc 证明告警来自测试夹具把连接事务上下文误当成 close；20 个夹具文件已显式关闭，`-W default` 全量 1069 项未关闭数据库 warning 为 0，生产 migration 本身没有泄漏。
-7. **旧批次仍有 legacy 兼容路径**：新 `/api/send` 只创建 frozen-v2 批次，不重选 PID、不远程复读 TapLink；历史 legacy-only `cycle_bulk` 仍保留旧路径，只用于追溯/兼容，不能拿旧授权恢复发送。
+6. **测试资源释放告警已解决**：tracemalloc 证明告警来自测试夹具把连接事务上下文误当成 close；20 个夹具文件已显式关闭，`-W default` 全量 1072 项未关闭数据库 warning 为 0，生产 migration 本身没有泄漏。
+7. **旧批次执行路径已退役**：`bulk-second-send.py` 固定拒绝；`cycle_burst` 缺少 running freeze 或不可变候选时在认证前拒绝。历史 legacy-only `cycle_bulk` 只读保留，不能拿旧授权恢复发送。
 8. **回复仍处于影子验收**：35 条已完成 DeepSeek/Jev 同集对照，9 条分歧；`Certo!` 上 DeepSeek=`human`、Jev=`collaboration_ack`。必须由用户审核形成真值后才能报告准确率，真实回复 transport 未接新合同。
 9. **收信监控当前未运行**：代码与断点都保留，但没有常驻 `poll-cycle-inbox.py --worker` 进程；这是运行状态，不授权本轮自动恢复。
 
@@ -157,6 +158,13 @@ DeepSeek/Agent 已经把 9 月 14 日的“货盘批量备链”继续推进到�
 - 明确 `recipient_limit/material_stale/needs_review` 等非触达终态可按冻结顺序提升候补；存在 unknown delivery 时提升为 0，整批先进入核验；
 - 真实只读预检：N=500 → 500＋50、N=137 → 137＋14、600 越界 → 600＋60，均完整备齐；本轮没有冻结或启动真实批次。
 
+### 已完成：旧批量发送器退役
+
+- `bulk-second-send.py` 不再创建/恢复批次或动态选人，固定返回 `legacy_bulk_sender_retired`；
+- `cycle_burst.run_cohort()` 必须读到 state=`running`、授权一致的 freeze 和每位成员的不可变 candidate，否则在账号认证前返回 `frozen_batch_required/frozen_batch_incomplete`；
+- 动态 `choose_candidates()`、远程 `fresh_card()` 和无快照 fallback 已从运行路径移除；`cycle-send-cohort.py` 因共用该门禁也不能绕过；
+- 历史表与旧行未删除，本轮没有认证、平台请求、冻结或发送。
+
 ### 已完成：来源化 TapLink 周期调度
 
 - `jobs-v2` 新增 `campaign_material_refresh`（每日）和 `selected_taplink_verify`（每周、默认周一），两者默认关闭；
@@ -170,7 +178,7 @@ DeepSeek/Agent 已经把 9 月 14 日的“货盘批量备链”继续推进到�
 
 - 用 tracemalloc 追到真实分配栈，确认高频告警来自测试中的 `with sqlite3.connect(...)`（只提交/回滚、不关闭），不是 migration 循环；
 - 20 个测试文件改为事务退出后确定性 close，并修复一次重启测试覆盖旧 `CatalogPreparation` 对象；
-- 未关闭数据库 `ResourceWarning` 从 265 → 45 → 13 → 0；`-W default` 下全量 1069 项通过。
+- 未关闭数据库 `ResourceWarning` 从 265 → 45 → 13 → 0；`-W default` 下全量 1072 项通过。
 
 ### 下一步：用户审核与评测
 
@@ -204,9 +212,9 @@ DeepSeek/Agent 已经把 9 月 14 日的“货盘批量备链”继续推进到�
 
 ## 10. 接管验证
 
-2026-09-20 在统计日历聚合页完成后：
+2026-09-20 本轮收尾验证：
 
-- Python：`1069` 项 `unittest` 通过。
+- Python：`1072` 项 `unittest` 通过，未关闭数据库 `ResourceWarning` 为 0。
 - Web：`381` 项 Node 测试通过。
 - TypeScript：`npm run typecheck` 通过。
 - Next.js：`npm run build` 通过，14 个静态页面（含 `/flow-demo`）及当前 API 路由生成成功。

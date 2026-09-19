@@ -263,7 +263,7 @@ Jev 不能因为获得账号权限就直接上线。必须使用相同的用户�
 2. 当前收信 worker 已移除 60 秒逐达人模型调用，只保存事件、立即冻结达人并进入两小时集中队列；旧 `cycle_agent.py`、`cycle_reply_facts.py` 和事实回复代码仅保留历史兼容，不在当前收信路径。
 3. 五种动作和三条固定模板已收敛到 `config/reply-policy.json`；`reply_classification` 保存模型判断，append-only `turn_review` 保存与 provider 无关的用户标准动作。标准动作应用另有 revision 门禁：`no_reply` 安全解除已处理冻结，`human` 进入人工案件，模板动作只生成固定候选且不发送。
 4. DeepSeek 与 TypeSafe Jev 已接同一影子合同；Jev 固定使用官方 `jev-1.13.0` System One Choice，35 条真实意大利 turn 已完成同集对照：26 条一致、9 条分歧，一致率 74.29%，尚待用户逐条审核形成真值。
-5. 正式发送桥已冻结完整达人×PID×Offer×`currentListId`、话术与顺序；frozen-v2 执行只读本地当前绑定并调用 `descriptor()`，不再运行时重选 PID 或调用 `fresh_card()`。平台明确拒卡只让对应 PID 等刷新，unknown 仍停批核验。旧 legacy-only 批次保留兼容路径。
+5. 正式发送桥已冻结完整达人×PID×Offer×`currentListId`、话术与顺序；frozen-v2 执行只读本地当前绑定并调用 `descriptor()`，不再运行时重选 PID 或调用 `fresh_card()`。平台明确拒卡只让对应 PID 等刷新，unknown 仍停批核验。旧 legacy-only 批次只读保留，执行路径已退役。
 6. 当前自动回复开关必须继续关闭。完成代码不等于允许真实回复。
 
 ## 13. 后续实施顺序

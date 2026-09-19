@@ -142,7 +142,9 @@ React 组件不能直接读写 SQLite、启动任意命令或实现资格规则�
 | `cycle_service.py` | 服务案件、事实、人工接管与处理结果 |
 | `cycle_stats.py` | 按北京时间聚合确认发送、回复和橱窗事件 |
 
-`/api/send` 的 GET 只读状态；POST 只接受四种精确动作：保存设置、按 `expectedPreviewHash` 冻结、携带 `confirmed=true + expectedRevision` 启动、按 revision 停止。多一个字段即拒绝。冻结把完整达人×PID×Offer×`currentListId`、话术和顺序写入 `cycle_bulk_candidate`，同时兼容旧 `cycle_bulk/cycle_bulk_item` 状态；重复 `requestId` 幂等，预览变化返回冲突。窗口关闭不阻塞只读预览或冻结；start 后 worker 留在 `waiting_window`，到窗口内才允许 dispatch。只有 start 会启动 `send-batch-worker.py`，GET、save、freeze、构建和测试均不会唤醒执行器。
+`/api/send` 的 GET 只读状态；POST 只接受四种精确动作：保存设置、按 `expectedPreviewHash` 冻结、携带 `confirmed=true + expectedRevision` 启动、按 revision 停止。多一个字段即拒绝。冻结把完整达人×PID×Offer×`currentListId`、话术和顺序写入 `cycle_bulk_candidate`，继续使用旧 `cycle_bulk/cycle_bulk_item` 表承载状态但不继承其历史执行授权；重复 `requestId` 幂等，预览变化返回冲突。窗口关闭不阻塞只读预览或冻结；start 后 worker 留在 `waiting_window`，到窗口内才允许 dispatch。只有 start 会启动 `send-batch-worker.py`，GET、save、freeze、构建和测试均不会唤醒执行器。
+
+`cycle_burst.run_cohort()` 强制同时存在 state=`running` 且 authorization 完全相等的 `cycle_bulk_freeze`，并要求每个待执行 item 都有不可变 `cycle_bulk_candidate`；没有冻结范围时在认证/平台调用前返回 `frozen_batch_required`，不再调用 `choose_candidates()` 或远程 `fresh_card()`。旧 `bulk-second-send.py` 固定返回 `legacy_bulk_sender_retired`，不会建表、恢复或发送；历史 `cycle_bulk` 行只读保留。
 
 `lead_pool.py` 与 `/api/lead-pool` 已使用 `bdhub.lead-pool.v2`：业务只投影 `sendable / waiting / inactive`，`sent` 单列历史；内部原因仍用于排障。达人排序和达人内部 PID 选择统一使用 `sourceRank → units DESC → pid ASC`，同一达人只有一个可发送槽位。发送预览按池子顺序复检；冻结批次执行器按 `position_order` 消费，不再执行时重新挑选或补满。
 
@@ -449,10 +451,10 @@ PYTHONDONTWRITEBYTECODE=1 \
 
 - 当前增量 migration registry 只覆盖 `catalog-links.sqlite` 和 `second-cycle.sqlite` 的本轮新投影；其他 SQLite schema 仍分散在领域模块。
 - 历史 `batch-tasks.sqlite` 曾有长事务；当前 UI 已停止唤醒旧准备 worker。若未来为迁移/追溯再次运行它，仍需先完成事务/WAL 与恢复语义验证。
-- Python 全量测试夹具已显式关闭 SQLite connection；`-W default` 下 1069 项通过且未关闭数据库 `ResourceWarning` 为 0。
+- Python 全量测试夹具已显式关闭 SQLite connection；`-W default` 下 1072 项通过且未关闭数据库 `ResourceWarning` 为 0。
 - Web Node 测试存在 module type warning；Next.js 构建有上游 deprecation warning。
 - 冻结批次、start/stop 和 frozen-v2 执行桥已接通；账号级平台日额度的原生信号仍未取得，不能用本地 500 闸门冒充。
-- 旧 legacy-only `cycle_bulk` 仍保留旧执行兼容路径；新 `/api/send` 只创建 frozen-v2 批次。
+- 历史 legacy-only `cycle_bulk` 仍保留用于追溯，但旧 CLI 与 `cycle_burst` 动态选人回退均已退役；执行只接受当前冻结批次。
 - 35 条意大利 turn 已完成 DeepSeek/Jev 同集影子分类，turn 级真值、分歧统计、审核后准确率和受控案件应用已完成；当前仍等待用户审核真值，真实自动回复 transport 保持关闭且尚未接入新合同。
 - 本机 `var/` 缺正式备份、恢复和跨机器迁移方案。
 - 新项目仍依赖旧 Python 环境与部分协议层；最终需要独立依赖和凭据管理。
