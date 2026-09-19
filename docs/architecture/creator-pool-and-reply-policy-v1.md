@@ -250,24 +250,29 @@ Jev 不能因为获得账号权限就直接上线。必须使用相同的用户�
 
 ## 12. 当前实现差距
 
-以下是目标规则与 2026-09-19 代码之间的明确差距，后续高级模型应据此出实施方案，而不是把现状当成需求：
+2026-09-20 已完成第一轮读侧对齐：
 
-1. `config/leads-queue.json` 仍写 `leadsPerPid=10`，实际 reader 每页 50 条、最多 2 页，也没有在导入后严格截取前 20 条正销量线索。
-2. `lead_pool.py` 已按 `sourceRank` 产生一位达人一个 ready 槽位，但仍向 API 暴露六层内部状态；主页面需要投影成三种业务结果并把已发送移到历史。
-3. 部分批次/发送候选代码仍按达人佣金选择 PID，必须统一改成 `sourceRank → units DESC → PID`。
-4. 当前 `cycle_service.py` 仍使用 60 秒 debounce，并把达人全部历史入站上下文纳入哈希；尚未建立 episode/turn 关联模型。
-5. 当前 `cycle_agent.py` 仍包含佣金和关系事实工具合同，`cycle_reply_facts.py` 与自动回复执行路径仍面向事实型回答；目标规则要求移除这类自动回答。
-6. 当前分类枚举、动作和模板尚未收敛为本页五种动作；三条固定模板尚未成为版本化、可审计的唯一回复正文。
-7. DeepSeek provider 已有影子能力，但尚无统一 `ReplyClassifier` adapter；Jev 权限、模型合同和对照评测尚未完成。
-8. 当前自动回复开关必须继续关闭。完成代码不等于允许真实回复。
+1. `leads-queue-v2` 保存完整回执，但每 PID 只发布当前前 20 条正销量线索；
+2. `market × OECID` 身份和历史 handle 继续归并到同一 `creatorId`；
+3. `lead-pool.v2` 已统一 `sourceRank → units DESC → PID`，业务 API 与页面只显示三种结果，已发送单列历史；
+4. `catalog_current_binding` 已成为唯一标准 TapLink 投影，旧卡不再进入线索或发送材料。
+
+剩余明确差距：
+
+1. 当前 `cycle_service.py` 仍使用 60 秒 debounce，并把达人全部历史入站上下文纳入哈希；尚未建立 episode/turn 关联模型。
+2. 当前 `cycle_agent.py` 仍包含佣金和关系事实工具合同，`cycle_reply_facts.py` 与自动回复执行路径仍面向事实型回答；目标规则要求移除这类自动回答。
+3. 当前分类枚举、动作和模板尚未收敛为本页五种动作；三条固定模板尚未成为版本化、可审计的唯一回复正文。
+4. DeepSeek provider 已有影子能力，但尚无统一 `ReplyClassifier` adapter；Jev 权限、模型合同和对照评测尚未完成。
+5. 正式发送桥尚未冻结完整达人×PID×Offer×`currentListId` 位置，现有执行器仍会在发送前调用 `fresh_card()`。
+6. 当前自动回复开关必须继续关闭。完成代码不等于允许真实回复。
 
 ## 13. 后续实施顺序
 
-1. 先改线索数量、排序和三结果投影，并用固定数据回放证明不会丢位置；
-2. 建立 `outbound_episode / inbound_turn / turn_episode_link / service_case` 的幂等迁移与只读回填；
-3. 实现 provider 无关分类合同和确定性守卫，先接 DeepSeek 影子模式；
-4. 把三条模板做成版本化资源，建立用户审核页面和固定测试集；
-5. Jev 获权后跑同一测试集并由用户审阅；
-6. 只有用户另行明确开启后，才接真实自动回复发送和结果回查。
+1. 线索数量、统一排序、三结果投影和标准链接已完成，继续保持回放验收；
+2. 完成冻结批次、start/stop 和移除发送前 `fresh_card()`；
+3. 建立 `outbound_episode / inbound_turn / turn_episode_link / service_case` 的幂等迁移与只读回填；
+4. 实现 provider 无关分类合同和确定性守卫，先接 DeepSeek 影子模式；
+5. 把三条模板做成版本化资源，建立用户审核页面和固定测试集；
+6. Jev 获权后跑同一测试集并由用户审阅；只有用户另行明确开启后，才接真实自动回复发送和结果回查。
 
 本阶段只完成规则固化、影子分类和人工评测，不恢复真实发送或 AI 自动回复。

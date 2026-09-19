@@ -105,7 +105,7 @@ React 组件不能直接读写 SQLite、启动任意命令或实现资格规则�
 
 目标链接合同只认一个标准版本：`commission-1-to-2-v1` + `link-naming-v1`。标准材料键至少包含市场、来源、PID、Campaign、分佣规则指纹和命名规则指纹；每个当前商品方案投影一个唯一 `currentListId`，发送池只消费该字段。历史卡不参与候选排序、复用或发送；只有完全相同且已由本系统核验的标准卡可以幂等复用。
 
-当前实现尚未符合该合同：`config/catalog-link-policy.json` 仍为 `preserveExistingLinks=true`，`catalog_links.link_decision()` 会选择满足最低条件的旧卡，创建账本还会在发现历史链接或既有 PID 记录时阻止新标准卡。后端实施需要同时取消旧卡复用、允许“历史卡存在但标准卡缺失”时创建、保存标准规则指纹与唯一 `currentListId`，并提供一次性标准链接补齐；本轮不执行真实平台建链。
+当前已由 `catalog_current_binding` 提供唯一前向绑定：普通旧卡只保留在准备/库存历史表，不再进入线索或发送；创建意图按商品方案、分佣规则和命名规则冻结，历史卡存在不再阻止补建标准卡。`scripts/backfill-current-bindings.py` 可以只读检查或从已核验意图中本地回填可证明完全一致的标准卡；回填不调用平台、不创建或删除链接。动态回填数量见当前交接页。
 
 目标刷新合同按来源只有两条：Campaign 每日来源刷新时一并核验对应 TapLink；全托已选商品的 TapLink 每周统一核验一次。最后一次成功结果持续生效，达人查询、组批和发送不另做远程预检；确认失效的链接进入清理并在删除后回读。新建后回读属于写入结果结算，不属于周期核验。当前发送实现仍会调用 `cycle_send_runtime.fresh_card()`，与目标合同不一致；本轮只更新业务文档和演示页，后端实施时应移除该发送前门禁，并把平台明确拒卡收敛为单 PID 等待刷新。
 
@@ -122,7 +122,7 @@ React 组件不能直接读写 SQLite、启动任意命令或实现资格规则�
 
 身份按达人去重，线索按达人×商品保留。明确 `unresolved` 与尚未请求/技术 blocked 分开；只允许技术未提交项有界重试，明确未找到不自动重问。
 
-目标线索合同是每 PID 近 14 天、按 Kalodata `revenue DESC` 读取并严格保留最多 20 条正销量线索。排序只消费来源内的 `sourceRank`，并列时用 `units DESC, pid ASC`；原始 GMV 字符串保留为证据但不跨币种直接比较。当前 `config/leads-queue.json` 仍写 `leadsPerPid=10`，reader 又按最多两页各 50 条导入，尚未真正执行“最多 20 条”，属于待实施缺口。
+线索合同已升级为 `leads-queue-v2`：每 PID 近 14 天、Kalodata `revenue DESC`，完整 page receipt 和全部正销量 `source_edge` 继续保留；`lead_query_head + lead_query_selection` 只发布当前最多 20 条。排序消费 `sourceRank`，并列时用 `units DESC, pid ASC`；原始 GMV 字符串只作证据，不跨币种直接比较。`scripts/backfill-current-leads.py` 可从本机历史 receipt 重建当前范围，不调用平台。
 
 身份表应把 `市场 × OECID` 投影为稳定 `creatorId`，handle 变化只追加带观测时间的 alias。同一 OECID 改名时不得新建关系、重置冷却或丢失达人×PID 位置。
 
@@ -141,7 +141,7 @@ React 组件不能直接读写 SQLite、启动任意命令或实现资格规则�
 
 当前 `/api/send` 只支持 GET 状态和 POST 保存 `count/widen/window`，没有 start 路由。`scripts/send-batch.py` 只有 `preview/status/save`；真正执行桥尚未完成。
 
-业务 API/UI 只投影三种发送池结果：`sendable / waiting / inactive`。当前 `lead_pool.py` 的 `ready / queued / cooling / awaiting_reply / excluded / sent` 可暂时作为内部原因与历史来源，但不能继续直接成为主业务状态；`sent` 应迁到历史。达人排序和达人内部 PID 选择都必须使用 `sourceRank → units DESC → pid ASC`。当前部分候选代码仍按佣金选 PID，需要统一修正。
+`lead_pool.py` 与 `/api/lead-pool` 已使用 `bdhub.lead-pool.v2`：业务只投影 `sendable / waiting / inactive`，`sent` 单列历史；内部原因仍用于排障。达人排序和达人内部 PID 选择统一使用 `sourceRank → units DESC → pid ASC`，同一达人只有一个可发送槽位。发送预览按池子顺序复检；尚未接通的正式执行器仍需在冻结批次后完全消费该顺序，不能执行时重新挑选。
 
 ### 5.5 Agent 与语义能力
 
@@ -175,6 +175,8 @@ React 组件不能直接读写 SQLite、启动任意命令或实现资格规则�
 | `var/second-cycle.sqlite` | plan、关系、发送、收信、服务和回复事实 |
 | `var/it-conversations.sqlite` | IT/ACC6 会话索引 |
 | `var/matching*.sqlite` | 独立匹配研究数据集和结果 |
+
+新增当前投影：`catalog-links.sqlite.catalog_current_binding*` 保存唯一标准卡；`second-cycle.sqlite.lead_query_*` 保存每 PID 当前 20 条范围，`source_edge_index` 为历史证据提供规范化索引。原准备记录、page receipt 和 `source_edge` 都不删除。
 
 表结构当前由各 `scripts/lib/*.py` 的 schema 初始化维护，还没有统一 migration registry。新增表/字段必须提供幂等升级和旧库兼容测试，不能只靠删除本地 DB 重建。
 
@@ -321,6 +323,21 @@ PYTHONDONTWRITEBYTECODE=1 \
 
 手动作业统一优先走页面或 `scripts/job-run.py`，因为它保存配置、检查同名进程并在安全点停止。不要同时另开同一底层 CLI 绕过作业锁。
 
+### 数据迁移与本地回填
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 \
+  /Users/bjn00003/BDHub/01-BDSystem-V2/.venv/bin/python scripts/migrate-agent.py check
+
+PYTHONDONTWRITEBYTECODE=1 \
+  /Users/bjn00003/BDHub/01-BDSystem-V2/.venv/bin/python scripts/backfill-current-bindings.py check
+
+PYTHONDONTWRITEBYTECODE=1 \
+  /Users/bjn00003/BDHub/01-BDSystem-V2/.venv/bin/python scripts/backfill-current-leads.py check
+```
+
+`check` 均只读。正式应用依次执行 `migrate-agent.py apply`、两个 backfill 的 `apply`；它们只修改本机 SQLite，不调用平台。应用前使用 SQLite backup API 备份三个相关数据库。
+
 ## 12. 测试与验证
 
 ### Python
@@ -383,12 +400,12 @@ PYTHONDONTWRITEBYTECODE=1 \
 
 ## 14. 当前技术债与演进方向
 
-- SQLite schema 分散在多个领域模块，缺统一 migration registry；需在稳定后收敛版本管理。
+- 当前增量 migration registry 只覆盖 `catalog-links.sqlite` 和 `second-cycle.sqlite` 的本轮新投影；其他 SQLite schema 仍分散在领域模块。
 - `batch-tasks.sqlite` 长事务影响并发读取；需独立完成事务/WAL 设计与验证。
 - Python 测试仍有未关闭 SQLite connection 的 `ResourceWarning`。
 - Web Node 测试存在 module type warning；Next.js 构建有上游 deprecation warning。
 - 发送预检尚未接持久批次、start/stop 和执行器。
-- 线索 reader 尚未真正执行每 PID 最多 20 条，发送池和部分候选代码尚未完全统一 `sourceRank` 排序及三结果投影。
+- 线索、身份和发送池读侧已经切到当前 20 条、统一排序和三结果投影；正式 `cycle_bulk` 执行仍需冻结完整位置并禁止运行时重新选品。
 - 回复链仍是 60 秒 debounce、事实工具和旧分类合同，尚未迁移到事件级上下文、五动作、固定模板和 provider adapter。
 - 本机 `var/` 缺正式备份、恢复和跨机器迁移方案。
 - 新项目仍依赖旧 Python 环境与部分协议层；最终需要独立依赖和凭据管理。
