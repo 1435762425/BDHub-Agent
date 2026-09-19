@@ -1,0 +1,15 @@
+export const REPLY_ACTIONS=["no_reply","sample_self_service","collaboration_ack","link_usage","human"] as const;
+export type ReplyAction=typeof REPLY_ACTIONS[number];
+export type ReplyDecision={action:ReplyAction;intentCode:string;evidenceMessageIds:string[];
+ evidenceQuotes:string[];confidence:number;humanReason:string|null;templateKey:string|null;
+ meaningZh:string;relatedEpisodeIds:string[];templateText:string|null;provider:string;model:string;
+ policyVersion:string;automaticReply:false;executionAllowed:false};
+export type ReplyReviewState={classification_id:string;revision:number;verdict:"correct"|"incorrect";
+ correct_action:ReplyAction|null;note:string;created_at:number};
+export type ReplyReviewItem={turnId:string;messageId:string;creatorId:string;format:string;text:string|null;
+ historical:boolean;occurredMs:number|null;episodes:Array<{episode_id:string;pid:string;list_id:string;
+ candidate_rank:number;confidence:string}>;classificationId:string|null;decision:ReplyDecision|null;
+ review:ReplyReviewState|null};
+export type ReplyReviewStatus={schema:"bdhub.reply-review.v1";policyVersion:string;
+ processingIntervalSeconds:number;automaticReplies:false;providers:{deepseek:{mode:string};jev:{mode:string}};
+ counts:{turns:number;episodes:number;linkedTurns:number;classified:number;reviewed:number};items:ReplyReviewItem[]};

@@ -116,6 +116,9 @@ def main():
             publish_runtime(store, args.batch_id, 'cohort')
             result = run_cohort(args.batch_id, lanes=args.lanes,
                                 stopped=lambda: should_stop(database, args.batch_id))
+            if store.db.execute("SELECT 1 FROM sqlite_master WHERE name='outbound_episode'").fetchone():
+                from lib.reply_events import backfill
+                backfill(store)
             print(json.dumps(result, ensure_ascii=False), flush=True)
             current = frozen_state(database, args.batch_id)
             if not current or current['state'] == 'waiting_reconciliation':

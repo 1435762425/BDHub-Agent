@@ -197,10 +197,97 @@ BEGIN SELECT RAISE(ABORT,'frozen candidate is immutable'); END;
 """)
 
 
+SECOND_CYCLE_REPLY_EVENTS = Migration(4, "reply_event_ledger_v1", """
+CREATE TABLE IF NOT EXISTS outbound_episode(
+  episode_id TEXT PRIMARY KEY,
+  plan_id TEXT NOT NULL,
+  creator_id TEXT NOT NULL,
+  oec TEXT NOT NULL,
+  delivery_id TEXT NOT NULL UNIQUE,
+  pid TEXT NOT NULL,
+  offer_key TEXT NOT NULL,
+  list_id TEXT NOT NULL,
+  sent_at REAL NOT NULL,
+  payload_json TEXT NOT NULL,
+  snapshot_hash TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS outbound_episode_creator_time
+  ON outbound_episode(plan_id,creator_id,sent_at);
+CREATE TABLE IF NOT EXISTS inbound_turn(
+  turn_id TEXT PRIMARY KEY,
+  plan_id TEXT NOT NULL,
+  creator_id TEXT NOT NULL,
+  oec TEXT NOT NULL,
+  cid TEXT NOT NULL,
+  message_id TEXT NOT NULL,
+  content_hash TEXT NOT NULL,
+  format TEXT NOT NULL,
+  text TEXT,
+  occurred_ms INTEGER,
+  historical INTEGER NOT NULL,
+  observed_at REAL NOT NULL,
+  UNIQUE(plan_id,cid,message_id,content_hash)
+);
+CREATE INDEX IF NOT EXISTS inbound_turn_creator_time
+  ON inbound_turn(plan_id,creator_id,occurred_ms,message_id);
+CREATE TABLE IF NOT EXISTS turn_episode_link(
+  turn_id TEXT NOT NULL,
+  episode_id TEXT NOT NULL,
+  candidate_rank INTEGER NOT NULL,
+  evidence TEXT NOT NULL,
+  confidence TEXT NOT NULL,
+  PRIMARY KEY(turn_id,episode_id),
+  UNIQUE(turn_id,candidate_rank)
+);
+CREATE TABLE IF NOT EXISTS service_case_turn(
+  case_id TEXT NOT NULL,
+  turn_id TEXT NOT NULL,
+  PRIMARY KEY(case_id,turn_id)
+);
+CREATE TABLE IF NOT EXISTS reply_classification(
+  classification_id TEXT PRIMARY KEY,
+  request_id TEXT NOT NULL UNIQUE,
+  input_hash TEXT NOT NULL,
+  policy_version TEXT NOT NULL,
+  provider TEXT NOT NULL,
+  model TEXT NOT NULL,
+  state TEXT NOT NULL,
+  input_json TEXT NOT NULL,
+  response_json TEXT,
+  decision_json TEXT,
+  created_at REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS reply_classification_input
+  ON reply_classification(input_hash,policy_version,provider,state);
+CREATE TABLE IF NOT EXISTS reply_review(
+  classification_id TEXT NOT NULL,
+  revision INTEGER NOT NULL,
+  verdict TEXT NOT NULL,
+  correct_action TEXT,
+  note TEXT NOT NULL,
+  created_at REAL NOT NULL,
+  PRIMARY KEY(classification_id,revision)
+);
+CREATE TRIGGER IF NOT EXISTS outbound_episode_no_update
+BEFORE UPDATE ON outbound_episode BEGIN SELECT RAISE(ABORT,'outbound episode is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS outbound_episode_no_delete
+BEFORE DELETE ON outbound_episode BEGIN SELECT RAISE(ABORT,'outbound episode is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS inbound_turn_no_update
+BEFORE UPDATE ON inbound_turn BEGIN SELECT RAISE(ABORT,'inbound turn is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS inbound_turn_no_delete
+BEFORE DELETE ON inbound_turn BEGIN SELECT RAISE(ABORT,'inbound turn is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS turn_episode_link_no_update
+BEFORE UPDATE ON turn_episode_link BEGIN SELECT RAISE(ABORT,'turn episode link is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS turn_episode_link_no_delete
+BEFORE DELETE ON turn_episode_link BEGIN SELECT RAISE(ABORT,'turn episode link is immutable'); END;
+""")
+
+
 DATABASES = {
     "catalog-links": ("catalog-links.sqlite", (CATALOG_LINKS,)),
     "second-cycle": ("second-cycle.sqlite", (SECOND_CYCLE, SECOND_CYCLE_INDEXES,
-                                                SECOND_CYCLE_FROZEN_SEND)),
+                                                SECOND_CYCLE_FROZEN_SEND,
+                                                SECOND_CYCLE_REPLY_EVENTS)),
 }
 
 REGISTRY_SQL = """

@@ -2,7 +2,7 @@ import sys,unittest,tempfile
 from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'scripts'))
 from lib.second_cycle import CycleStore,CycleError
-from lib.cycle_inbox import Inbox,inbox_status
+from lib.cycle_inbox import Inbox,REPLY_BATCH_SECONDS,inbox_status
 from test_second_cycle import offer,edge,NOW
 class InboxTests(unittest.TestCase):
  def setUp(self):
@@ -17,9 +17,9 @@ class InboxTests(unittest.TestCase):
  def test_replay_and_restart_preserve_dedupe(self):
   e=self.event();self.ingest([e]);self.i=Inbox(self.s);rev=self.rel()['revision'];r=self.ingest([e]);self.assertEqual(r['added'],0);self.assertEqual(self.rel()['revision'],rev)
  def test_new_reply_debounce_extends_once(self):
-  old=self.event(kind='ourMessages');self.ingest([old]);self.now+=100;new=self.event('2');self.ingest([new,old]);self.assertEqual(self.rel()['inbox_until'],self.now+60)
-  self.now+=30;self.ingest([new,old]);self.assertEqual(self.rel()['inbox_until'],self.now+30)
-  self.ingest([self.event('3'),new]);self.assertEqual(self.rel()['inbox_until'],self.now+60)
+  old=self.event(kind='ourMessages');self.ingest([old]);self.now+=100;new=self.event('2');self.ingest([new,old]);deadline=self.now+REPLY_BATCH_SECONDS;self.assertEqual(self.rel()['inbox_until'],deadline)
+  self.now+=30;self.ingest([new,old]);self.assertEqual(self.rel()['inbox_until'],deadline)
+  self.ingest([self.event('3'),new]);self.assertEqual(self.rel()['inbox_until'],self.now+REPLY_BATCH_SECONDS)
  def test_showcase_does_not_schedule_followup_or_clear_rejection(self):
   self.s.control(self.p,'reject',1,'human',self.creator,reject=True);self.ingest([self.event(kind='showcaseNotifications')]);self.assertEqual(self.rel()['mode'],'human');self.assertTrue(self.rel()['rejected']);self.assertEqual(self.rel()['inbox_until'],0)
  def test_late_history_does_not_trigger(self):

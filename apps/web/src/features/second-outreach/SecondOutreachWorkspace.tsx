@@ -7,6 +7,7 @@ import CycleSupplyPanel from "./CycleSupplyPanel";
 import InboxMonitorPanel from "./InboxMonitorPanel";
 import SendBatchPanel from "./SendBatchPanel";
 import SecondOutreachHistory from "./SecondOutreachHistory";
+import ReplyReviewPanel from "./ReplyReviewPanel";
 import {useInboxMonitor} from "./useInboxMonitor";
 import {useSendBatch} from "./useSendBatch";
 import {PageHeading,Card,EmptyState,Tabs} from "../bdhub/ui";
@@ -41,10 +42,7 @@ function Workbench(){
 
   {tab === "inbox" && <InboxMonitorPanel controller={inbox}/>}
 
-  {tab === "reply" && <Card title="回复预演与训练" subtitle="用真实回复出题：Agent 起草 → 你判 OK/不 OK → 沉淀成规则。预演阶段一条消息都不发。">
-   <div className="p-5"><EmptyState title="正在接入：预演队列"
-    description="现在库里已经有真实回复可以当题目。接上来之后一次给你几条，你判完就沉淀成这个 Agent 的规则和案例。"/></div>
-  </Card>}
+  {tab === "reply" && <ReplyReviewPanel/>}
 
   {tab === "calendar" && <Card title="统计日历" subtitle="按北京时间分天：发了多少、触达多少达人、收到多少回复、多少加了橱窗。">
    <div className="p-5"><EmptyState title="正在接入：统计日历"

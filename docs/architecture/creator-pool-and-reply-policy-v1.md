@@ -259,10 +259,10 @@ Jev 不能因为获得账号权限就直接上线。必须使用相同的用户�
 
 剩余明确差距：
 
-1. 当前 `cycle_service.py` 仍使用 60 秒 debounce，并把达人全部历史入站上下文纳入哈希；尚未建立 episode/turn 关联模型。
-2. 当前 `cycle_agent.py` 仍包含佣金和关系事实工具合同，`cycle_reply_facts.py` 与自动回复执行路径仍面向事实型回答；目标规则要求移除这类自动回答。
-3. 当前分类枚举、动作和模板尚未收敛为本页五种动作；三条固定模板尚未成为版本化、可审计的唯一回复正文。
-4. DeepSeek provider 已有影子能力，但尚无统一 `ReplyClassifier` adapter；Jev 权限、模型合同和对照评测尚未完成。
+1. `outbound_episode / inbound_turn / turn_episode_link / service_case_turn` 已建立并从本机历史证据只读回填；分类输入不再发送完整聊天。
+2. 当前收信 worker 已移除 60 秒逐达人模型调用，只保存事件、立即冻结达人并进入两小时集中队列；旧 `cycle_agent.py`、`cycle_reply_facts.py` 和事实回复代码仅保留历史兼容，不在当前收信路径。
+3. 五种动作和三条固定模板已收敛到 `config/reply-policy.json`；`reply_classification` 与 `reply_review` 分开保存模型判断和用户真值，预演页不会创建回复发送意图。
+4. DeepSeek 已接 provider-neutral 影子合同；Jev adapter 已留出但状态仍为 `unconfigured`，权限、正式接口合同和同集对照评测尚未完成。
 5. 正式发送桥已冻结完整达人×PID×Offer×`currentListId`、话术与顺序；frozen-v2 执行只读本地当前绑定并调用 `descriptor()`，不再运行时重选 PID 或调用 `fresh_card()`。平台明确拒卡只让对应 PID 等刷新，unknown 仍停批核验。旧 legacy-only 批次保留兼容路径。
 6. 当前自动回复开关必须继续关闭。完成代码不等于允许真实回复。
 
@@ -270,9 +270,8 @@ Jev 不能因为获得账号权限就直接上线。必须使用相同的用户�
 
 1. 线索数量、统一排序、三结果投影和标准链接已完成，继续保持回放验收；
 2. 冻结批次、start/stop 和移除发送前 `fresh_card()` 已完成，保持真实发送由页面单独启动；
-3. 下一步建立 `outbound_episode / inbound_turn / turn_episode_link / service_case` 的幂等迁移与只读回填；
-4. 实现 provider 无关分类合同和确定性守卫，先接 DeepSeek 影子模式；
-5. 把三条模板做成版本化资源，建立用户审核页面和固定测试集；
-6. Jev 获权后跑同一测试集并由用户审阅；只有用户另行明确开启后，才接真实自动回复发送和结果回查。
+3. 事件账本、provider 无关分类合同、确定性守卫、版本化模板和用户审核页面已完成；先由用户审核真实意大利样本并形成固定正反例集；
+4. 下一步补齐批量审核、分类指标和受控的 service case 关闭映射，不连接自动发送；
+5. Jev 获权后跑同一测试集并由用户审阅；只有用户另行明确开启后，才接真实自动回复发送和结果回查。
 
 本阶段只完成规则固化、影子分类和人工评测，不恢复真实发送或 AI 自动回复。

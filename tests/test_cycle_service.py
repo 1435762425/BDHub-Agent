@@ -3,6 +3,7 @@ from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'scripts'))
 from test_cycle_inbox import InboxTests
 from lib.cycle_service import Service,route
+from lib.cycle_inbox import REPLY_BATCH_SECONDS
 from lib.second_cycle import CycleError
 class ServiceTests(unittest.TestCase):
  _base_setup=InboxTests.setUp
@@ -16,7 +17,7 @@ class ServiceTests(unittest.TestCase):
   self.ingest([self.event(mid)]);self.service.capture(self.p,'10',self.oec,[self.content(mid,text,format)])
  def baseline(self):self.ingest([]);self.now+=100
  def process(self):
-  self.now+=61;p=self.s.db.execute('SELECT revision FROM inbox_pending').fetchone();return self.service.process(self.p,self.creator,p[0])
+  self.now+=REPLY_BATCH_SECONDS+1;p=self.s.db.execute('SELECT revision FROM inbox_pending').fetchone();return self.service.process(self.p,self.creator,p[0])
  def test_historical_body_capture_never_creates_case(self):
   self.add('1','Non mi contattare più');self.service.process_due(self.p)
   self.assertEqual(self.s.db.execute('SELECT count(*) FROM service_case').fetchone()[0],0);self.assertFalse(self.rel()['rejected'])

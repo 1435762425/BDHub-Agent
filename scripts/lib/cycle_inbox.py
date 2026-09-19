@@ -4,6 +4,7 @@ SCHEMA='''CREATE TABLE IF NOT EXISTS inbox_checkpoint(plan_id TEXT NOT NULL,cid 
 CREATE TABLE IF NOT EXISTS inbox_event(plan_id TEXT NOT NULL,cid TEXT NOT NULL,message_id TEXT NOT NULL,oec TEXT NOT NULL,kind TEXT NOT NULL,occurred_ms INTEGER,payload TEXT NOT NULL,historical INTEGER NOT NULL,observed_at REAL NOT NULL,PRIMARY KEY(plan_id,cid,message_id));
 CREATE TABLE IF NOT EXISTS inbox_pending(plan_id TEXT NOT NULL,creator_id TEXT NOT NULL,revision INTEGER NOT NULL,due_at REAL NOT NULL,state TEXT NOT NULL,PRIMARY KEY(plan_id,creator_id));'''
 KINDS={'ourMessages','creatorReplies','showcaseNotifications','otherOrUnknown'}
+REPLY_BATCH_SECONDS=7200
 class Inbox:
  def __init__(self,store):self.s=store;store.db.executescript(SCHEMA)
  def ingest(self,plan,cid,oec,history):
@@ -40,10 +41,10 @@ class Inbox:
    # Interaction evidence is separate from manual control/rejection. No marketing is dispatched here.
    if unlock and not rel['unlocked']:db.execute('UPDATE relationship SET unlocked=1,revision=revision+1 WHERE plan_id=? AND creator_id=?',(plan,rel['creator_id']))
    if gap:
-    db.execute('UPDATE relationship SET inbox_until=?,revision=revision+1 WHERE plan_id=? AND creator_id=? AND inbox_until=0',(now+60,plan,rel['creator_id']))
+    db.execute('UPDATE relationship SET inbox_until=?,revision=revision+1 WHERE plan_id=? AND creator_id=? AND inbox_until=0',(now+REPLY_BATCH_SECONDS,plan,rel['creator_id']))
    if live:
-    db.execute('UPDATE relationship SET inbox_until=?,revision=revision+1 WHERE plan_id=? AND creator_id=?',(max(rel['inbox_until'],now+60),plan,rel['creator_id']))
-    db.execute("INSERT INTO inbox_pending VALUES(?,?,1,?,'awaiting_content') ON CONFLICT(plan_id,creator_id) DO UPDATE SET revision=revision+1,due_at=excluded.due_at,state='awaiting_content'",(plan,rel['creator_id'],now+60))
+    db.execute('UPDATE relationship SET inbox_until=?,revision=revision+1 WHERE plan_id=? AND creator_id=?',(max(rel['inbox_until'],now+REPLY_BATCH_SECONDS),plan,rel['creator_id']))
+    db.execute("INSERT INTO inbox_pending VALUES(?,?,1,?,'awaiting_classification') ON CONFLICT(plan_id,creator_id) DO UPDATE SET revision=revision+1,due_at=excluded.due_at,state='awaiting_classification'",(plan,rel['creator_id'],now+REPLY_BATCH_SECONDS))
    state='gap' if gap else 'tracking'
    db.execute('INSERT INTO inbox_checkpoint VALUES(?,?,?,?,?,?) ON CONFLICT(plan_id,cid) DO UPDATE SET checked_at=excluded.checked_at,state=excluded.state',(plan,cid,oec,baseline,now,state))
   return dict(added=added,historical=historical,liveReplies=live,state=state,realSends=0)

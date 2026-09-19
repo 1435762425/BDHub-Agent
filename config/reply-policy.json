@@ -1,0 +1,29 @@
+{
+  "version": "creator-reply-actions-v1",
+  "processingIntervalSeconds": 7200,
+  "automaticRepliesEnabled": false,
+  "actions": [
+    "no_reply",
+    "sample_self_service",
+    "collaboration_ack",
+    "link_usage",
+    "human"
+  ],
+  "templates": {
+    "sample_self_service_v1": {
+      "action": "sample_self_service",
+      "language": "it",
+      "text": "Se hai ancora il prodotto, puoi continuare a utilizzarlo nei tuoi prossimi video o LIVE 😊 Se invece ti serve un campione nuovo o sostitutivo, controlla nella pagina del prodotto su TikTok Shop se è disponibile il pulsante per la richiesta. Se il pulsante non compare o la richiesta non è disponibile, puoi contattare direttamente il venditore. La disponibilità, l’approvazione e la spedizione dei campioni dipendono dal venditore. Continueremo comunque a condividere con te altre opportunità e prodotti adatti ai tuoi contenuti. Grazie per la comprensione!"
+    },
+    "collaboration_ack_v1": {
+      "action": "collaboration_ack",
+      "language": "it",
+      "text": "Perfetto, grazie per la disponibilità! 😊 Non vediamo l’ora di vedere il tuo prossimo video o LIVE. Continueremo a condividere con te nuove opportunità e prodotti adatti ai tuoi contenuti."
+    },
+    "link_usage_v1": {
+      "action": "link_usage",
+      "language": "it",
+      "text": "Puoi aprire la scheda prodotto che ti abbiamo inviato, aggiungerla alla tua vetrina e utilizzare quel link nel tuo prossimo video o LIVE. La commissione migliorata si applicherà alle vendite generate tramite quel link. Non vediamo l’ora di vedere il tuo prossimo contenuto! 😊"
+    }
+  }
+}

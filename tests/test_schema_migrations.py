@@ -27,7 +27,7 @@ class SchemaMigrations(unittest.TestCase):
     def test_check_is_read_only_and_apply_is_idempotent(self):
         before = check_all(self.root)
         self.assertFalse(before["ready"])
-        self.assertEqual([len(state["pending"]) for state in before["databases"]],[1,3])
+        self.assertEqual([len(state["pending"]) for state in before["databases"]],[1,4])
         # A check must not create its own registry.
         with closing(sqlite3.connect(self.root / "var" / "catalog-links.sqlite")) as db:
             self.assertFalse(db.execute("SELECT 1 FROM sqlite_master WHERE name='agent_schema_migration'").fetchone())
@@ -44,6 +44,8 @@ class SchemaMigrations(unittest.TestCase):
             self.assertTrue(db.execute("SELECT 1 FROM sqlite_master WHERE name='source_edge_index'").fetchone())
             self.assertTrue(db.execute("SELECT 1 FROM sqlite_master WHERE name='cycle_bulk_freeze'").fetchone())
             self.assertTrue(db.execute("SELECT 1 FROM sqlite_master WHERE name='cycle_bulk_candidate'").fetchone())
+            self.assertTrue(db.execute("SELECT 1 FROM sqlite_master WHERE name='outbound_episode'").fetchone())
+            self.assertTrue(db.execute("SELECT 1 FROM sqlite_master WHERE name='reply_classification'").fetchone())
 
     def test_missing_database_is_never_created_by_check_or_apply(self):
         missing = self.root / "var" / "second-cycle.sqlite"

@@ -20,9 +20,8 @@ def tick(limit):
  report={'realSends':0,'automaticReplies':0,'processed':0};reader=None
  with CycleStore(ROOT/'var/second-cycle.sqlite') as store:
   inbox=Inbox(store)
-  from lib.cycle_agent import AgentEvaluation
-  from lib.draft_provider import call_model
-  service=Service(store,classifier=lambda contents,background:AgentEvaluation(store).evaluate(contents,call_model,mode='live_classification',background=background))
+  # 收信只保存事件并冻结达人；分类由独立的两小时影子批次处理，不在轮询里逐达人调用模型。
+  service=Service(store)
   plan=store.db.execute("SELECT id FROM plan WHERE institution='bjn-local-research' AND market='it'").fetchone()[0]
   if store._plan(plan)['state']!='active':return {'state':'plan_paused','realSends':0}
   if (ROOT/'var/cycle-inbox.pause').exists():return {'state':'paused','realSends':0}
@@ -50,7 +49,11 @@ def tick(limit):
   finally:
    signal.setitimer(signal.ITIMER_REAL,0)
    if reader:reader.close()
-   report['serviceDecisions']=len(service.process_due(plan));report['status']=inbox_status(store,plan);report['checkedAt']=time.time()
+   report['serviceDecisions']=0
+   if store.db.execute("SELECT 1 FROM sqlite_master WHERE name='inbound_turn'").fetchone():
+    from lib.reply_events import backfill
+    projection=backfill(store);report['replyProjection']={key:projection[key] for key in ('episodesAdded','turnsAdded','linksAdded')}
+   report['status']=inbox_status(store,plan);report['checkedAt']=time.time()
  return report
 
 def main():

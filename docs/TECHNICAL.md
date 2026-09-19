@@ -148,13 +148,15 @@ React 组件不能直接读写 SQLite、启动任意命令或实现资格规则�
 
 - `catalog_names.py`：批量商品短名；失败不自动无限重试。
 - `outreach_drafts.py` / `draft_provider.py`：主动邀约草稿、模型用量和持久结果；不等于达人入站回复能力。
-- `ReplyClassifier`（目标接口）：接收受限的事件上下文，返回五种动作、意图、消息证据和关联 episode；provider 可为 DeepSeek 或 Jev。
-- `ReplyPolicyGuard`（目标模块）：检查多意图、附件、PID/listId 唯一性、模板版本和人工条件，并把不满足的结果强制收敛为 `human`。
-- `ReplyTemplateRegistry`（目标模块）：只提供版本化的 `sample_self_service`、`collaboration_ack`、`link_usage` 三条人工确认模板。
+- `ReplyClassifier`：接收受限的事件上下文，返回五种动作、意图、消息证据和关联 episode；provider 可为 DeepSeek 或 Jev。
+- `ReplyPolicyGuard`：检查多意图、附件、PID/listId 唯一性、模板版本和人工条件，并把不满足的结果强制收敛为 `human`。
+- `ReplyTemplateRegistry`：只提供版本化的 `sample_self_service`、`collaboration_ack`、`link_usage` 三条人工确认模板。
 
-模型输出不能直接进入 transport，也不能写达人、PID、冷却、拒联或案件状态。身份、金额、资格、额度、去重、暂停、授权和外部结果继续由代码和台账执行。
+当前 V1 回复实现已新增 `reply_events.py` 和 `config/reply-policy.json`：前者把已确认外发投影为 `outbound_episode`，把达人入站正文投影为不可变 `inbound_turn`，并保存最多三个 `turn_episode_link` 候选；后者唯一保存五种动作、两小时集中周期、自动回复关闭和三条固定意大利语模板。`reply-review.py` 只允许本地回填、影子分类和人工审核；分类输出必须引用真实 message ID 与原文片段，`link_usage` 还必须只有一个关联 PID/listId，否则确定性守卫改为 `human`。
 
-当前 `cycle_agent.py` 仍输出佣金/关系事实工具需求，`cycle_reply_facts.py` 和 `cycle_auto_reply.py` 仍保留事实型自动回复路径，`cycle_service.py` 仍使用 60 秒 debounce。这些是现有实现，不是目标合同；后续需由 [达人发送池与 AI 回复策略](architecture/creator-pool-and-reply-policy-v1.md) 的五动作分类、固定模板和集中批处理替换。真实自动回复继续关闭。
+DeepSeek 当前为可用的影子 provider；Jev 只有 provider-neutral adapter，占位状态为 `unconfigured`，在用户获得正式接口合同前不猜 endpoint、凭据或模型 ID。收信 worker 不再调用旧 `cycle_agent.py`，也不执行 `process_due()`；它只保存事件并立即冻结达人。旧事实工具、60 秒服务代码和已存在的旧评估记录继续保留历史兼容，但不再位于当前收信运行路径。
+
+模型输出不能直接进入 transport，也不能写达人、PID、冷却、拒联或案件状态。身份、金额、资格、额度、去重、暂停、授权和外部结果继续由代码和台账执行。当前影子审核页只写 `reply_classification/reply_review`，不创建 `service_reply`。
 
 ## 6. 数据与状态
 
@@ -177,7 +179,7 @@ React 组件不能直接读写 SQLite、启动任意命令或实现资格规则�
 | `var/it-conversations.sqlite` | IT/ACC6 会话索引 |
 | `var/matching*.sqlite` | 独立匹配研究数据集和结果 |
 
-新增当前投影：`catalog-links.sqlite.catalog_current_binding*` 保存唯一标准卡；`second-cycle.sqlite.lead_query_*` 保存每 PID 当前 20 条范围，`source_edge_index` 为历史证据提供规范化索引；`cycle_bulk_freeze/cycle_bulk_candidate` 保存用户确认的不可变发送范围、revision 与完整材料。原准备记录、page receipt、`source_edge` 和旧批次都不删除。
+新增当前投影：`catalog-links.sqlite.catalog_current_binding*` 保存唯一标准卡；`second-cycle.sqlite.lead_query_*` 保存每 PID 当前 20 条范围，`source_edge_index` 为历史证据提供规范化索引；`cycle_bulk_freeze/cycle_bulk_candidate` 保存用户确认的不可变发送范围、revision 与完整材料；`outbound_episode/inbound_turn/turn_episode_link/service_case_turn` 保存事件级回复上下文，`reply_classification/reply_review` 分开保存模型影子结果和人工判断。原准备记录、page receipt、`source_edge`、旧批次和旧回复评估都不删除。
 
 `scripts/lib/schema_migrations.py` 当前以增量 registry 管理 `catalog-links.sqlite` 和 `second-cycle.sqlite` 的本轮新投影；其他历史表仍由各领域模块初始化。新增表/字段必须继续提供幂等升级和旧库兼容测试，不能靠删除本地 DB 重建。
 
@@ -189,7 +191,7 @@ React 组件不能直接读写 SQLite、启动任意命令或实现资格规则�
 - 外部响应保存必要摘要、哈希和引用；凭据、Cookie、完整私密正文不进入普通日志。
 - 动态资格和当前平台事实带观测时间；历史快照不自动覆盖更新事实。
 
-### 6.3 目标回复上下文模型
+### 6.3 回复上下文模型
 
 回复上下文按事件建模，不保存一段会覆盖历史事实的自由关系摘要：
 
@@ -199,7 +201,8 @@ React 组件不能直接读写 SQLite、启动任意命令或实现资格规则�
 | `inbound_turn` | `turn_id, creator_id, message_id, occurred_at` | 每条达人入站消息的不可变原文、类型和会话位置 |
 | `turn_episode_link` | `turn_id, episode_id, evidence, confidence` | 记录入站消息可能对应哪个 PID/外发 episode；不确定时允许多个候选 |
 | `service_case` | `case_id, creator_id, action, state` | 聚合需处理的 turn、相关 episode/PID、人工原因和关闭证据 |
-| `reply_classification` | 输入哈希、provider/model、政策版本、结构化输出 | 保存 DeepSeek/Jev 影子结果和用户审核，不直接执行发送 |
+| `reply_classification` | request ID、输入哈希、provider/model、政策版本、结构化输出 | 保存 DeepSeek/Jev 影子结果，不直接执行发送 |
+| `reply_review` | classification ID、revision、正误、正确动作、备注 | 只保存用户判定；模型自己的输出不成为训练真值 |
 
 分类器只读取当前未处理 turn、少量相邻 turn、候选 episode、达人全局控制和政策版本。原始事件是事实源；任何模型摘要只是可重建缓存。新增表/字段必须提供幂等升级、旧库回填与多 PID 会话测试。
 
@@ -251,6 +254,7 @@ pending → started/submitted → confirmed
 | `/api/identity-queue` | 达人级 OECID 分类与补齐 |
 | `/api/lead-pool` | 发送池分层 |
 | `/api/send` | 发送预览、设置保存、冻结、明确 start/stop 和批次状态 |
+| `/api/reply-review` | 事件级回复样本、DeepSeek/Jev 影子分类和人工正误审核；无发送动作 |
 | `/api/inbox` | 收信 worker、今日/历史统计和待人工 |
 | `/api/jobs` | 手动作业与定时意向 |
 
@@ -286,6 +290,7 @@ pending → started/submitted → confirmed
 | `config/identity-run.json` | OECID 批大小和 cohort |
 | `config/link-prepare*.json` | 链接读取/创建运行参数 |
 | `config/send-batch.json` | 发送预检数量、窗口和越界档 |
+| `config/reply-policy.json` | 五种回复动作、两小时集中周期、自动回复关闭和三条固定模板 |
 | `config/jobs.json` | 可选定时意向；默认关闭 |
 | `config/market-accounts.json` | 市场账号角色和维护目标 |
 | `config/*.example.json` | 敏感本机配置样例 |
@@ -334,6 +339,15 @@ python scripts/send-batch.py stop --batch-id <id> --expected-revision <n>
 ```
 
 `freeze` 只写本机 SQLite；`start` 会启动真实发送 worker，不能用于只读检查、构建或部署验收。
+
+回复事件回填和只读状态：
+
+```bash
+printf '%s' '{"action":"backfill"}' | python scripts/reply-review.py
+printf '%s' '{"action":"status","limit":12}' | python scripts/reply-review.py
+```
+
+`backfill` 只读取本机既有发送、收信和案件证据并写新投影，`platformWrites=0`、`modelCalls=0`。影子分类只能由页面逐条明确触发；Jev 未配置时返回具名错误。
 
 ### 数据迁移与本地回填
 
@@ -418,7 +432,7 @@ PYTHONDONTWRITEBYTECODE=1 \
 - Web Node 测试存在 module type warning；Next.js 构建有上游 deprecation warning。
 - 冻结批次、start/stop 和 frozen-v2 执行桥已接通；账号级平台日额度的原生信号仍未取得，不能用本地 500 闸门冒充。
 - 旧 legacy-only `cycle_bulk` 仍保留旧执行兼容路径；新 `/api/send` 只创建 frozen-v2 批次。
-- 回复链仍是 60 秒 debounce、事实工具和旧分类合同，尚未迁移到事件级上下文、五动作、固定模板和 provider adapter。
+- 事件级回复账本、五动作、固定模板、DeepSeek 影子分类与人工审核页已完成；Jev 仍未配置，真实自动回复 transport 仍保持关闭且尚未接入新合同。
 - 本机 `var/` 缺正式备份、恢复和跨机器迁移方案。
 - 新项目仍依赖旧 Python 环境与部分协议层；最终需要独立依赖和凭据管理。
 
