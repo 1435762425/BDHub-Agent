@@ -9,6 +9,7 @@ export interface DemoScenario{
  key:ScenarioKey;label:string;description:string;source:DemoSource;sales:number;rating:number|null;
  totalPercent:number;publicPercent:number;creatorPercent:number;campaignDays:number|null;stock:number|null;
  offerReady:boolean;linkState:"verified"|"missing"|"rate_changed";identityReady:boolean;replyOpen:boolean;
+ cardPercent?:number;joinedCampaignDays?:number;
 }
 
 export interface DemoGateResult{key:string;label:string;state:"pass"|"stop"|"wait";detail:string;}
@@ -54,11 +55,11 @@ export const LOCKS=[
 ];
 
 export const SCENARIOS:DemoScenario[]=[
- {key:"clean",label:"正常全托 PID",description:"商品、方案、链接和关系全部就绪。",source:"selected",sales:1280,rating:4.7,totalPercent:16,publicPercent:11,creatorPercent:14,campaignDays:null,stock:null,offerReady:true,linkState:"verified",identityReady:true,replyOpen:false},
- {key:"unrated",label:"无评分但销量达标",description:"累计销量达标、无评分，按确认规则允许入池。",source:"selected",sales:460,rating:null,totalPercent:15,publicPercent:10,creatorPercent:13,campaignDays:null,stock:null,offerReady:true,linkState:"verified",identityReady:true,replyOpen:false},
- {key:"rate_changed",label:"旧卡佣金不一致",description:"旧卡保留，但当前方案需要新卡后才能进入发送池。",source:"selected",sales:920,rating:4.5,totalPercent:15,publicPercent:10,creatorPercent:13,campaignDays:null,stock:null,offerReady:true,linkState:"rate_changed",identityReady:true,replyOpen:false},
+ {key:"clean",label:"正常全托 PID",description:"商品、方案、链接和关系全部就绪。",source:"selected",sales:1280,rating:4.7,totalPercent:16,publicPercent:11,creatorPercent:14,campaignDays:null,stock:null,offerReady:true,linkState:"verified",identityReady:true,replyOpen:false,cardPercent:14},
+ {key:"unrated",label:"无评分但销量达标",description:"累计销量达标、无评分，按确认规则允许入池。",source:"selected",sales:460,rating:null,totalPercent:15,publicPercent:10,creatorPercent:13,campaignDays:null,stock:null,offerReady:true,linkState:"verified",identityReady:true,replyOpen:false,cardPercent:13},
+ {key:"rate_changed",label:"旧卡 12% / 当前 13%",description:"卡创建时冻结 12%，后来当前 Offer 重算为 13%；旧卡保留，等待新卡。",source:"selected",sales:920,rating:4.5,totalPercent:15,publicPercent:10,creatorPercent:13,campaignDays:null,stock:null,offerReady:true,linkState:"rate_changed",identityReady:true,replyOpen:false,cardPercent:12},
  {key:"missing_link",label:"Campaign 缺链接",description:"商品合格但没有当前方案的 TapLink，停在待建链。",source:"campaign",sales:780,rating:4.4,totalPercent:18,publicPercent:12,creatorPercent:16,campaignDays:72,stock:820,offerReady:true,linkState:"missing",identityReady:true,replyOpen:false},
- {key:"product_invalid",label:"商品已失效",description:"历史线索保留，但活动剩余期不足，退出发送池。",source:"campaign",sales:1600,rating:4.8,totalPercent:18,publicPercent:12,creatorPercent:16,campaignDays:18,stock:900,offerReady:true,linkState:"verified",identityReady:true,replyOpen:false},
+ {key:"product_invalid",label:"Campaign 期限降到 44 天",description:"加入时剩余 72 天，刷新后只剩 44 天；历史线索保留，但退出发送池。",source:"campaign",sales:1600,rating:4.8,totalPercent:18,publicPercent:12,creatorPercent:16,campaignDays:44,stock:900,offerReady:true,linkState:"verified",identityReady:true,replyOpen:false,cardPercent:16,joinedCampaignDays:72},
  {key:"reply_open",label:"达人有未结问题",description:"商品和链接可用，但该达人有未解决回复，全部商品暂停。",source:"selected",sales:2100,rating:4.9,totalPercent:17,publicPercent:11,creatorPercent:15,campaignDays:null,stock:null,offerReady:true,linkState:"verified",identityReady:true,replyOpen:true},
 ];
 

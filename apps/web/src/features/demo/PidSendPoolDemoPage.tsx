@@ -40,6 +40,13 @@ function Overview(){
   {label:"达人准备",ok:result.creator,detail:result.creator?"稳定 OECID 已确认":"等待身份判定"},
   {label:"发送安排",ok:result.send,detail:result.send?"可以进入严格发送池":"不进入 Ready"},
  ];
+ const scenarioNote=scenario.key==="rate_changed"
+  ?`旧卡创建时达人佣金是 ${scenario.cardPercent}%，当前 Offer 按新规则变成 ${scenario.creatorPercent}%。旧卡没有出错，只是不再代表当前方案。`
+  :scenario.key==="product_invalid"
+   ?`加入 Campaign 时剩余 ${scenario.joinedCampaignDays} 天；今天刷新只剩 ${scenario.campaignDays} 天，已低于 45 天门槛。这个 PID 的未发送位置退出池子。`
+   :scenario.key==="reply_open"
+    ?"冻结的是这个达人名下的全部 PID；同一个 PID 对其他达人不受影响。"
+    :scenario.description;
  return <div className="space-y-5">
   <Card title="只需要理解三个阶段" subtitle="每个阶段只回答一个业务问题；内部步骤和技术锁默认隐藏"><div className="grid gap-4 p-5 lg:grid-cols-3">{BUSINESS_PHASES.map(item=><PhaseCard key={item.key} phase={item} active={phaseKey===item.key} onClick={()=>setPhaseKey(item.key)}/>)}</div></Card>
   <div className="grid gap-5 xl:grid-cols-[1.1fr_.9fr]">
@@ -57,11 +64,19 @@ function Overview(){
   <Card title="拿一个 PID 看结果" subtitle="不展示六七个状态，只看它能否连续通过三个阶段"><div className="p-5">
    <div className="flex gap-2 overflow-x-auto pb-2">{SCENARIOS.map(item=><button key={item.key} type="button" aria-pressed={scenarioKey===item.key} onClick={()=>setScenarioKey(item.key)} className={`shrink-0 rounded-lg border px-3 py-2 text-sm font-medium transition ${scenarioKey===item.key?"border-brand-400 bg-brand-50 text-brand-600 dark:border-brand-700 dark:bg-brand-500/10 dark:text-brand-300":"border-gray-200 text-gray-500 hover:border-brand-200 dark:border-gray-800"}`}>{item.label}</button>)}</div>
    <div className="mt-4 grid gap-3 lg:grid-cols-3">{checks.map((check,index)=><div key={check.label} className={`rounded-xl border p-4 ${check.ok?"border-success-200 bg-success-50/50 dark:border-success-900 dark:bg-success-900/5":"border-warning-200 bg-warning-50/50 dark:border-warning-900 dark:bg-warning-900/5"}`}><div className="flex items-center justify-between"><p className="font-semibold"><span className="mr-2 text-xs text-gray-400">{index+1}</span>{check.label}</p><Pill tone={check.ok?"success":"warning"}>{check.ok?"通过":"等待"}</Pill></div><p className="mt-2 text-xs leading-5 text-gray-500">{check.detail}</p></div>)}</div>
-   <Notice tone={result.send?"success":result.layer.includes("失效")?"warning":"info"}><strong>{result.layer}</strong><span className="ml-2">{result.summary}</span></Notice>
+   <Notice tone={result.send?"success":result.layer.includes("失效")?"warning":"info"}><strong>{result.layer}</strong><span className="ml-2">{result.summary}</span><p className="mt-1">{scenarioNote}</p></Notice>
   </div></Card>
-  <Collapsible label="为什么这个达人会选这个 PID"><div className="overflow-x-auto rounded-xl border border-gray-200 dark:border-gray-800"><table className="w-full text-left text-sm"><thead className="bg-gray-50 text-xs text-gray-500 dark:bg-gray-800/60"><tr>{["候选","达人佣金","rank","材料","结果"].map(label=><th key={label} className="px-4 py-3 font-medium">{label}</th>)}</tr></thead><tbody>{[
-   ["Campaign · PID-A","17%","4","已核验","选中：佣金最高"],["全托 · PID-B","15%","1","已核验","等待：佣金较低"],["全托 · PID-C","15%","3","待重建","等待：材料未完成"],
-  ].map(row=><tr key={row[0]} className="border-t border-gray-100 dark:border-gray-800">{row.map((cell,index)=><td key={index} className={`px-4 py-3 ${index===4?"font-medium text-brand-600 dark:text-brand-300":"text-gray-600 dark:text-gray-300"}`}>{cell}</td>)}</tr>)}</tbody></table></div></Collapsible>
+  <Collapsible label="一个具体排序例子" defaultOpen><div className="space-y-4">
+   <div className="grid gap-3 md:grid-cols-5">{[
+    ["1","先清资格","只保留商品、链接、身份都就绪的位置"],["2","按达人分组","同一达人保留多个 PID 机会"],["3","冻结关系","未结回复只冻结这个达人"],["4","排达人顺序","取该达人全部有效位置中最小 rank"],["5","选本次商品","佣金最高 → rank → 全托 → PID"],
+   ].map(([number,title,text])=><div key={number} className="rounded-xl bg-gray-50 p-4 dark:bg-gray-800"><p className="text-xs font-semibold text-brand-500">{number}</p><p className="mt-2 text-sm font-semibold">{title}</p><p className="mt-1 text-xs leading-5 text-gray-500">{text}</p></div>)}</div>
+   <div className="overflow-x-auto rounded-xl border border-gray-200 dark:border-gray-800"><table className="w-full text-left text-sm"><thead className="bg-gray-50 text-xs text-gray-500 dark:bg-gray-800/60"><tr>{["达人","当前有效位置","达人优先级","本次选择","结果"].map(label=><th key={label} className="whitespace-nowrap px-4 py-3 font-medium">{label}</th>)}</tr></thead><tbody>{[
+    ["@anna","全托 A：rank1 / 13%；Campaign B：rank4 / 17%","1（最佳 rank=1）","Campaign B · 17%","第 1 位，发 B"],
+    ["@bruno","全托 A：rank2 / 15%","2（最佳 rank=2）","全托 A · 15%","第 2 位，发 A"],
+    ["@carla","全托 C：rank1 / 18%；全托 D：rank3 / 16%","—","—","有未结回复，仅冻结 Carla"],
+   ].map(row=><tr key={row[0]} className="border-t border-gray-100 align-top dark:border-gray-800">{row.map((cell,index)=><td key={index} className={`min-w-32 px-4 py-3 ${index===4?"font-medium text-brand-600 dark:text-brand-300":"text-gray-600 dark:text-gray-300"}`}>{cell}</td>)}</tr>)}</tbody></table></div>
+   <Notice><strong>关键点：</strong>@anna 虽然用 rank1 决定她排第 1，但本次商品选佣金更高的 Campaign B；@carla 的冻结不会影响 @bruno 继续使用 PID-A，也不会冻结 PID-C 对其他达人使用。</Notice>
+  </div></Collapsible>
  </div>;
 }
 

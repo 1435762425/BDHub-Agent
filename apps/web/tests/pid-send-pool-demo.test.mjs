@@ -55,3 +55,12 @@ test("an invalid product and an unresolved reply leave ready for different reaso
  assert.equal(reply.layer,"等待回复处理");
  assert.equal(reply.gates.find(item=>item.key==="relation")?.state,"wait");
 });
+
+test("campaign expiry is dynamic and an open reply freezes the creator rather than the PID",()=>{
+ const expired=simpleScenario(scenario("product_invalid"));
+ const reply=simpleScenario(scenario("reply_open"));
+ assert.equal(scenario("product_invalid").joinedCampaignDays,72);
+ assert.equal(scenario("product_invalid").campaignDays,44);
+ assert.deepEqual([expired.product,expired.send],[false,false]);
+ assert.deepEqual([reply.product,reply.creator,reply.send],[true,true,false]);
+});

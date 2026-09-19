@@ -132,7 +132,7 @@ DeepSeek/Agent 已经把 9 月 14 日的“货盘批量备链”继续推进到�
 2026-09-19 在继承基线及文档整理后完成：
 
 - Python：`1019` 项 `unittest` 通过。
-- Web：`361` 项 Node 测试通过。
+- Web：`362` 项 Node 测试通过。
 - TypeScript：`npm run typecheck` 通过。
 - Next.js：`npm run build` 通过，14 个静态页面（含 `/flow-demo`）及当前 API 路由生成成功。
 - 文档：104 个 Markdown 文件的本地链接检查通过；`git diff --check` 通过。
