@@ -37,6 +37,7 @@ DeepSeek/Agent 已经把 9 月 14 日的“货盘批量备链”继续推进到�
 | 旧批量发送器退役 | `4145da0`（旧 CLI 固定拒绝、frozen-v2 授权与候选强门禁） |
 | 状态备份与恢复 | `3fbe6ff`（21 库在线备份、完整性清单、空目录恢复） |
 | 独立 Python 环境 | `c36240a`（全部 Web/worker 入口改用项目 `.venv`）、`1f599db`（完整版本锁） |
+| Vendor 协议运行时 | `4d4db3a`（强制 vendor 源码、旧配置只读引用、禁止代码混用） |
 | 上一个已提交开发头 | `4cdb759`（`agent/p0-catalog-links`） |
 | 继承工作区固化提交 | `cd81dff` |
 | 继承标签 | `takeover-20260919-inherited` |
@@ -104,12 +105,12 @@ DeepSeek/Agent 已经把 9 月 14 日的“货盘批量备链”继续推进到�
 3. **新发送执行器尚未做真实平台验收**：冻结、start/stop 和离线故障合同已完成，但账号级日额度原生信号仍未取得；第一次真实执行仍需用户在页面单独启动并观察。
 4. **本机 Git 无远端**：已有提交和标签可以本机回滚，但机器损坏时没有远端恢复点。配置 GitHub/GitLab 远端需要用户提供目标仓库或明确创建位置。
 5. **文档曾混入大量动态流水**：原 `AGENTS.md` 已由本轮收敛；以后不得继续把每次数字和事故追加回根规则。
-6. **测试资源释放告警已解决**：tracemalloc 证明告警来自测试夹具把连接事务上下文误当成 close；20 个夹具文件已显式关闭，`-W default` 全量 1077 项未关闭数据库 warning 为 0，生产 migration 本身没有泄漏。
+6. **测试资源释放告警已解决**：tracemalloc 证明告警来自测试夹具把连接事务上下文误当成 close；20 个夹具文件已显式关闭，`-W default` 全量 1079 项未关闭数据库 warning 为 0，生产 migration 本身没有泄漏。
 7. **旧批次执行路径已退役**：`bulk-second-send.py` 固定拒绝；`cycle_burst` 缺少 running freeze 或不可变候选时在认证前拒绝。历史 legacy-only `cycle_bulk` 只读保留，不能拿旧授权恢复发送。
 8. **回复仍处于影子验收**：35 条已完成 DeepSeek/Jev 同集对照，9 条分歧；`Certo!` 上 DeepSeek=`human`、Jev=`collaboration_ack`。必须由用户审核形成真值后才能报告准确率，真实回复 transport 未接新合同。
 9. **收信监控当前未运行**：代码与断点都保留，但没有常驻 `poll-cycle-inbox.py --worker` 进程；这是运行状态，不授权本轮自动恢复。
 10. **异机副本仍未配置**：21 库正式备份、校验和空目录恢复已经可用，但首份基线仍在本机；机器损坏时仍需要外部保存位置。
-11. **协议与凭据尚未完全独立**：解释器和包依赖已迁入本项目，但画像、IM、TapLink 的部分账号事实仍按既有只读边界取自旧 BDHub；不能把环境独立误报成账号迁移完成。
+11. **凭据尚未完全独立**：解释器、包依赖和协议源码已迁入本项目，但画像、IM、TapLink 的账号配置、身份文件和锁仍按既有只读边界取自旧 BDHub；不能把代码独立误报成账号迁移完成。
 
 ## 7. 建议接续顺序
 
@@ -181,9 +182,17 @@ DeepSeek/Agent 已经把 9 月 14 日的“货盘批量备链”继续推进到�
 
 - 新增 `requirements.txt` 和 Python 3.13/macOS arm64 的完整 `requirements.lock`，依赖安装在本仓库 Git 忽略的 `.venv`，未修改旧 BDHub 环境；
 - 25 个 Web bridge/worker 入口和 7 个 Python 子进程入口全部改为项目 `.venv/bin/python`，活跃代码中不再存在旧仓库解释器路径；
-- 项目 `.venv` 下 1077 项 Python 测试、vendored runtime check、migration check、发送池/发送预检/回复审核只读 CLI 均通过；26 个固定包与 lock 完全一致；
+- 项目 `.venv` 下 1079 项 Python 测试、vendored runtime check、migration check、发送池/发送预检/回复审核只读 CLI 均通过；26 个固定包与 lock 完全一致；
 - Web 381 项、TypeScript 和 Next 生产构建通过，LaunchAgent 已重启为 PID 57413；真实 API 回读为发送池 ready 711、回复 turn 35/已审核 0、自动回复关闭、真实发送 0；
 - 本轮只迁移解释器与依赖，不复制旧凭据或账号文件，不启动业务 worker，也不解锁真实发送。
+
+### 已完成：协议源码切换到本仓库 Vendor
+
+- `legacy_runtime.py` 统一移除旧源码 import root，强制加载 `vendor/bdhub`；如果同一进程已加载非 vendor 的 `bdhub`，立即以 `nonvendored_bdhub_loaded` 拒绝；
+- 货盘、TapLink、画像、IM、账号状态和 Kalodata 路径共 20 个运行入口已接入适配器，活跃 Python 不再把 `01-BDSystem-V2` 加入 `sys.path`；
+- 旧 `config.yaml`、账号 headers、profile、锁和历史库继续只读使用，未复制或改写；运行核对识别 10 个账号引用且身份文件全部存在；
+- `vendor-legacy-bdhub.py --check` 证明当前协议闭包 162 模块、40,262 行，missing=0、extra=0；真实账号状态仍为 `executionEnabled=false / realSends=0`；
+- Python 全量 1079 项通过；新增测试固定 vendor 来源并阻止旧源码目录重新进入 `sys.path`。
 
 ### 已完成：来源化 TapLink 周期调度
 
@@ -198,7 +207,7 @@ DeepSeek/Agent 已经把 9 月 14 日的“货盘批量备链”继续推进到�
 
 - 用 tracemalloc 追到真实分配栈，确认高频告警来自测试中的 `with sqlite3.connect(...)`（只提交/回滚、不关闭），不是 migration 循环；
 - 20 个测试文件改为事务退出后确定性 close，并修复一次重启测试覆盖旧 `CatalogPreparation` 对象；
-- 未关闭数据库 `ResourceWarning` 从 265 → 45 → 13 → 0；`-W default` 下全量 1077 项通过。
+- 未关闭数据库 `ResourceWarning` 从 265 → 45 → 13 → 0；`-W default` 下全量 1079 项通过。
 
 ### 下一步：用户审核与评测
 
@@ -235,7 +244,7 @@ DeepSeek/Agent 已经把 9 月 14 日的“货盘批量备链”继续推进到�
 
 2026-09-20 本轮收尾验证：
 
-- Python：`1077` 项 `unittest` 通过，未关闭数据库 `ResourceWarning` 为 0。
+- Python：`1079` 项 `unittest` 通过，未关闭数据库 `ResourceWarning` 为 0。
 - Web：`381` 项 Node 测试通过。
 - TypeScript：`npm run typecheck` 通过。
 - Next.js：`npm run build` 通过，14 个静态页面（含 `/flow-demo`）及当前 API 路由生成成功。

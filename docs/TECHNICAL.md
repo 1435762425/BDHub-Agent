@@ -13,7 +13,7 @@
 - 准备、发送、收信和服务是可恢复的独立阶段；
 - 业务规则由确定性代码执行，模型只处理需要语义判断的少量任务；
 - 页面展示来自真实台账，可对账且不能用 demo 数字冒充；
-- 旧 BDHub 仅作为只读协议/身份运行时参考，新系统拥有独立代码和状态。
+- 旧 BDHub 仅作为只读账号配置、身份文件、锁和历史数据库来源；协议代码固定从本仓库 `vendor/bdhub` 加载，新系统拥有独立代码、环境和状态。
 
 ## 2. 技术栈
 
@@ -296,7 +296,7 @@ pending → started/submitted → confirmed
 
 ### 旧 BDHub
 
-`/Users/bjn00003/BDHub/01-BDSystem-V2` 只读。兼容 Python 环境和 vendored 协议可被新项目调用，但不得修改旧代码、配置、数据库、服务或任务状态。
+`/Users/bjn00003/BDHub/01-BDSystem-V2` 只读。`legacy_runtime.configure_vendored_bdhub()` 会先移除旧源码目录，再强制从本仓库 `vendor/bdhub` 加载协议模块，并只把 `bdhub.config.ROOT` 指向旧目录读取现有账号配置。若进程已加载非 vendor 的 `bdhub`，运行立即失败；不会混用两套代码。旧配置、身份文件、账号锁和历史数据库不得修改，凭据也不复制进新仓库。
 
 ## 10. 配置管理
 
@@ -348,7 +348,7 @@ python3 -m venv .venv
 PYTHONDONTWRITEBYTECODE=1 .venv/bin/python scripts/<entry>.py
 ```
 
-Web bridge、作业启动器和子 worker 都固定使用仓库内 `.venv/bin/python`；缺少该环境时应明确失败，不回退旧项目或系统 Python。旧 BDHub 仍可作为只读协议/账号事实来源，但它的虚拟环境不再是本项目运行依赖。
+Web bridge、作业启动器和子 worker 都固定使用仓库内 `.venv/bin/python`；缺少该环境时应明确失败，不回退旧项目或系统 Python。协议模块固定来自 `vendor/bdhub`；旧 BDHub 只提供尚未迁移的只读账号事实，它的源码和虚拟环境都不再是本项目运行依赖。
 
 手动作业统一优先走页面或 `scripts/job-run.py`，因为它保存配置、检查同名进程并在安全点停止。不要同时另开同一底层 CLI 绕过作业锁。
 
@@ -467,13 +467,13 @@ PYTHONDONTWRITEBYTECODE=1 \
 
 - 当前增量 migration registry 只覆盖 `catalog-links.sqlite` 和 `second-cycle.sqlite` 的本轮新投影；其他 SQLite schema 仍分散在领域模块。
 - 历史 `batch-tasks.sqlite` 曾有长事务；当前 UI 已停止唤醒旧准备 worker。若未来为迁移/追溯再次运行它，仍需先完成事务/WAL 与恢复语义验证。
-- Python 全量测试夹具已显式关闭 SQLite connection；`-W default` 下 1077 项通过且未关闭数据库 `ResourceWarning` 为 0。
+- Python 全量测试夹具已显式关闭 SQLite connection；`-W default` 下 1079 项通过且未关闭数据库 `ResourceWarning` 为 0。
 - Web Node 测试存在 module type warning；Next.js 构建有上游 deprecation warning。
 - 冻结批次、start/stop 和 frozen-v2 执行桥已接通；账号级平台日额度的原生信号仍未取得，不能用本地 500 闸门冒充。
 - 历史 legacy-only `cycle_bulk` 仍保留用于追溯，但旧 CLI 与 `cycle_burst` 动态选人回退均已退役；执行只接受当前冻结批次。
 - 35 条意大利 turn 已完成 DeepSeek/Jev 同集影子分类，turn 级真值、分歧统计、审核后准确率和受控案件应用已完成；当前仍等待用户审核真值，真实自动回复 transport 保持关闭且尚未接入新合同。
 - SQLite 备份、校验和空目录恢复工具已完成；当前首份基线仍只在本机，尚未配置异机副本、保留周期或自动调度。
-- 项目 Python 环境和依赖锁已独立；画像、IM、TapLink 等部分账号配置与协议事实仍只读复用旧 BDHub，后续需逐项迁移凭据管理和运行适配，不能一次性复制旧配置。
+- 项目 Python 环境、依赖锁和协议源码已独立；画像、IM、TapLink 等账号配置、身份文件和锁仍只读复用旧 BDHub，后续需逐项迁移凭据管理和身份维护，不能一次性复制旧配置。
 
 ## 15. 技术文档变更规则
 
