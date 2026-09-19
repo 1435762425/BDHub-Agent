@@ -36,6 +36,7 @@ DeepSeek/Agent 已经把 9 月 14 日的“货盘批量备链”继续推进到�
 | SQLite 测试资源 | `ad1f373`（夹具显式 close，未关闭连接 warning 归零） |
 | 旧批量发送器退役 | `4145da0`（旧 CLI 固定拒绝、frozen-v2 授权与候选强门禁） |
 | 状态备份与恢复 | `3fbe6ff`（21 库在线备份、完整性清单、空目录恢复） |
+| 独立 Python 环境 | `c36240a`（全部 Web/worker 入口改用项目 `.venv`）、`1f599db`（完整版本锁） |
 | 上一个已提交开发头 | `4cdb759`（`agent/p0-catalog-links`） |
 | 继承工作区固化提交 | `cd81dff` |
 | 继承标签 | `takeover-20260919-inherited` |
@@ -108,6 +109,7 @@ DeepSeek/Agent 已经把 9 月 14 日的“货盘批量备链”继续推进到�
 8. **回复仍处于影子验收**：35 条已完成 DeepSeek/Jev 同集对照，9 条分歧；`Certo!` 上 DeepSeek=`human`、Jev=`collaboration_ack`。必须由用户审核形成真值后才能报告准确率，真实回复 transport 未接新合同。
 9. **收信监控当前未运行**：代码与断点都保留，但没有常驻 `poll-cycle-inbox.py --worker` 进程；这是运行状态，不授权本轮自动恢复。
 10. **异机副本仍未配置**：21 库正式备份、校验和空目录恢复已经可用，但首份基线仍在本机；机器损坏时仍需要外部保存位置。
+11. **协议与凭据尚未完全独立**：解释器和包依赖已迁入本项目，但画像、IM、TapLink 的部分账号事实仍按既有只读边界取自旧 BDHub；不能把环境独立误报成账号迁移完成。
 
 ## 7. 建议接续顺序
 
@@ -174,6 +176,14 @@ DeepSeek/Agent 已经把 9 月 14 日的“货盘批量备链”继续推进到�
 - `verify` 重新校验清单、文件集合、哈希和 SQLite 完整性；`restore` 需要 `--confirmed`，只写不存在或空的目标目录，绝不覆盖当前 `var/`，并生成恢复回执；
 - 首份真实基线位于 `var/backups/state/20260919T225438Z-v1-baseline`：提交 `3fbe6ff`、工作树干净、21 库、289,329,152 字节，独立回读全部通过，目录 0700、文件 0600、凭据 0；
 - 合成 WAL、漏登数据库、篡改、非空目标和路径逃逸均有回归测试。本轮没有恢复当前库或启动任何 worker。
+
+### 已完成：项目独立 Python 运行环境
+
+- 新增 `requirements.txt` 和 Python 3.13/macOS arm64 的完整 `requirements.lock`，依赖安装在本仓库 Git 忽略的 `.venv`，未修改旧 BDHub 环境；
+- 25 个 Web bridge/worker 入口和 7 个 Python 子进程入口全部改为项目 `.venv/bin/python`，活跃代码中不再存在旧仓库解释器路径；
+- 项目 `.venv` 下 1077 项 Python 测试、vendored runtime check、migration check、发送池/发送预检/回复审核只读 CLI 均通过；26 个固定包与 lock 完全一致；
+- Web 381 项、TypeScript 和 Next 生产构建通过，LaunchAgent 已重启为 PID 57413；真实 API 回读为发送池 ready 711、回复 turn 35/已审核 0、自动回复关闭、真实发送 0；
+- 本轮只迁移解释器与依赖，不复制旧凭据或账号文件，不启动业务 worker，也不解锁真实发送。
 
 ### 已完成：来源化 TapLink 周期调度
 

@@ -43,13 +43,13 @@ npm run typecheck
 npm run build
 ```
 
-Python 暂时复用旧 BDHub 的兼容环境，但只执行本仓库脚本：
+Python 使用本项目自己的 3.13 虚拟环境；固定依赖见 `requirements.lock`：
 
 ```bash
 cd /Users/bjn00003/BDHub/BDHub-Agent
-PYTHONDONTWRITEBYTECODE=1 \
-  /Users/bjn00003/BDHub/01-BDSystem-V2/.venv/bin/python \
-  -m unittest discover -s tests
+python3 -m venv .venv
+.venv/bin/python -m pip install -r requirements.lock
+PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m unittest discover -s tests
 ```
 
 按改动范围选择测试；真实发送、建链、选入和外部结果必须另行以持久意图和平台回执验收，不能由离线测试替代。

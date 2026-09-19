@@ -26,9 +26,9 @@
 | 模型 | DeepSeek OpenAI-compatible provider，仅用于商品短名和受控语义任务 |
 | 测试 | Python `unittest`、Node test runner、TypeScript、Next.js build |
 | 服务地址 | `127.0.0.1:5198`，仅本机 |
-| 当前 Python | 临时复用旧 BDHub `.venv/bin/python`，不修改旧环境 |
+| 当前 Python | 本项目 Python 3.13 `.venv/bin/python`；不再借用旧 BDHub 环境 |
 
-Node.js 要求 `>=22.18.0`。依赖由 `apps/web/package-lock.json` 固定。
+Node.js 要求 `>=22.18.0`。Web 依赖由 `apps/web/package-lock.json` 固定；Python 直接依赖写在 `requirements.txt`，完整已安装版本写在 `requirements.lock`。
 
 ## 3. 系统拓扑
 
@@ -343,20 +343,22 @@ npm run start
 
 ```bash
 cd /Users/bjn00003/BDHub/BDHub-Agent
-PYTHONDONTWRITEBYTECODE=1 \
-  /Users/bjn00003/BDHub/01-BDSystem-V2/.venv/bin/python \
-  scripts/<entry>.py
+python3 -m venv .venv
+.venv/bin/python -m pip install -r requirements.lock
+PYTHONDONTWRITEBYTECODE=1 .venv/bin/python scripts/<entry>.py
 ```
+
+Web bridge、作业启动器和子 worker 都固定使用仓库内 `.venv/bin/python`；缺少该环境时应明确失败，不回退旧项目或系统 Python。旧 BDHub 仍可作为只读协议/账号事实来源，但它的虚拟环境不再是本项目运行依赖。
 
 手动作业统一优先走页面或 `scripts/job-run.py`，因为它保存配置、检查同名进程并在安全点停止。不要同时另开同一底层 CLI 绕过作业锁。
 
 冻结发送的 CLI 仅用于诊断或页面 bridge；真实 start 仍应从页面明确点击：
 
 ```bash
-python scripts/send-batch.py status
-python scripts/send-batch.py freeze --request-id <id> --expected-preview-hash <sha256>
-python scripts/send-batch.py start --batch-id <id> --expected-revision <n> --confirmed
-python scripts/send-batch.py stop --batch-id <id> --expected-revision <n>
+.venv/bin/python scripts/send-batch.py status
+.venv/bin/python scripts/send-batch.py freeze --request-id <id> --expected-preview-hash <sha256>
+.venv/bin/python scripts/send-batch.py start --batch-id <id> --expected-revision <n> --confirmed
+.venv/bin/python scripts/send-batch.py stop --batch-id <id> --expected-revision <n>
 ```
 
 `freeze` 只写本机 SQLite；`start` 会启动真实发送 worker，不能用于只读检查、构建或部署验收。
@@ -364,10 +366,10 @@ python scripts/send-batch.py stop --batch-id <id> --expected-revision <n>
 回复事件回填和只读状态：
 
 ```bash
-printf '%s' '{"action":"backfill"}' | python scripts/reply-review.py
-printf '%s' '{"action":"status","limit":12}' | python scripts/reply-review.py
+printf '%s' '{"action":"backfill"}' | .venv/bin/python scripts/reply-review.py
+printf '%s' '{"action":"status","limit":12}' | .venv/bin/python scripts/reply-review.py
 printf '%s' '{"action":"batch_classify","providers":["deepseek","jev"],"limit":30}' \
-  | python scripts/reply-review.py
+  | .venv/bin/python scripts/reply-review.py
 ```
 
 `backfill` 只读取本机既有发送、收信和案件证据并写新投影，`platformWrites=0`、`modelCalls=0`。批量影子分类只写模型评估，不创建回复 intent；页面并列展示 DeepSeek/Jev 的完整动作、置信度、原因和固定模板候选，中文理解固定取 DeepSeek 的翻译字段，不被 Jev 占位文案覆盖。审核队列优先展示两模型分歧且尚未审核的 turn；用户必须显式选择独立的五动作标准答案，模型一致也不会预选，写入 append-only `turn_review` 后自动滚到下一项。已审核真值可通过当前 revision 追加修订，旧 revision 和既有业务应用不被改写。三条固定模板直接从 `config/reply-policy.json` 投影到状态接口，选择模板动作时始终可见，不依赖某个模型是否碰巧选择它。系统再用同一份 turn 最新真值计算两个 provider 的准确率、误自动处理（真值为 `human`）和误转人工；模型自己的输出不能成为真值。
@@ -377,10 +379,10 @@ printf '%s' '{"action":"batch_classify","providers":["deepseek","jev"],"limit":3
 状态备份与空目录恢复：
 
 ```bash
-python scripts/state-backup.py inventory
-python scripts/state-backup.py create --label manual
-python scripts/state-backup.py verify --backup <backup-directory>
-python scripts/state-backup.py restore --backup <backup-directory> \
+.venv/bin/python scripts/state-backup.py inventory
+.venv/bin/python scripts/state-backup.py create --label manual
+.venv/bin/python scripts/state-backup.py verify --backup <backup-directory>
+.venv/bin/python scripts/state-backup.py restore --backup <backup-directory> \
   --target-var <empty-target-var> --confirmed
 ```
 
@@ -390,13 +392,13 @@ python scripts/state-backup.py restore --backup <backup-directory> \
 
 ```bash
 PYTHONDONTWRITEBYTECODE=1 \
-  /Users/bjn00003/BDHub/01-BDSystem-V2/.venv/bin/python scripts/migrate-agent.py check
+  .venv/bin/python scripts/migrate-agent.py check
 
 PYTHONDONTWRITEBYTECODE=1 \
-  /Users/bjn00003/BDHub/01-BDSystem-V2/.venv/bin/python scripts/backfill-current-bindings.py check
+  .venv/bin/python scripts/backfill-current-bindings.py check
 
 PYTHONDONTWRITEBYTECODE=1 \
-  /Users/bjn00003/BDHub/01-BDSystem-V2/.venv/bin/python scripts/backfill-current-leads.py check
+  .venv/bin/python scripts/backfill-current-leads.py check
 ```
 
 `check` 均只读。正式应用依次执行 `migrate-agent.py apply`、两个 backfill 的 `apply`；它们只修改本机 SQLite，不调用平台。应用前使用 SQLite backup API 备份三个相关数据库。
@@ -409,7 +411,7 @@ PYTHONDONTWRITEBYTECODE=1 \
 
 ```bash
 PYTHONWARNINGS=ignore PYTHONDONTWRITEBYTECODE=1 \
-  /Users/bjn00003/BDHub/01-BDSystem-V2/.venv/bin/python \
+  .venv/bin/python \
   -m unittest discover -s tests
 ```
 
@@ -417,7 +419,7 @@ PYTHONWARNINGS=ignore PYTHONDONTWRITEBYTECODE=1 \
 
 ```bash
 PYTHONDONTWRITEBYTECODE=1 \
-  /Users/bjn00003/BDHub/01-BDSystem-V2/.venv/bin/python \
+  .venv/bin/python \
   -m unittest discover -s tests -p 'test_send_batch.py'
 ```
 
@@ -434,7 +436,7 @@ npm run build
 
 ```bash
 PYTHONDONTWRITEBYTECODE=1 \
-  /Users/bjn00003/BDHub/01-BDSystem-V2/.venv/bin/python \
+  .venv/bin/python \
   scripts/check-docs.py
 ```
 
@@ -471,7 +473,7 @@ PYTHONDONTWRITEBYTECODE=1 \
 - 历史 legacy-only `cycle_bulk` 仍保留用于追溯，但旧 CLI 与 `cycle_burst` 动态选人回退均已退役；执行只接受当前冻结批次。
 - 35 条意大利 turn 已完成 DeepSeek/Jev 同集影子分类，turn 级真值、分歧统计、审核后准确率和受控案件应用已完成；当前仍等待用户审核真值，真实自动回复 transport 保持关闭且尚未接入新合同。
 - SQLite 备份、校验和空目录恢复工具已完成；当前首份基线仍只在本机，尚未配置异机副本、保留周期或自动调度。
-- 新项目仍依赖旧 Python 环境与部分协议层；最终需要独立依赖和凭据管理。
+- 项目 Python 环境和依赖锁已独立；画像、IM、TapLink 等部分账号配置与协议事实仍只读复用旧 BDHub，后续需逐项迁移凭据管理和运行适配，不能一次性复制旧配置。
 
 ## 15. 技术文档变更规则
 

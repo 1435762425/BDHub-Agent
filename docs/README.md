@@ -87,7 +87,7 @@
 
 ```bash
 PYTHONDONTWRITEBYTECODE=1 \
-  /Users/bjn00003/BDHub/01-BDSystem-V2/.venv/bin/python \
+  /Users/bjn00003/BDHub/BDHub-Agent/.venv/bin/python \
   scripts/check-docs.py
 ```
 
