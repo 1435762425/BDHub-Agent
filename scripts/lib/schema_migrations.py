@@ -300,12 +300,51 @@ BEFORE DELETE ON turn_review BEGIN SELECT RAISE(ABORT,'turn review is append onl
 """)
 
 
+SECOND_CYCLE_REVIEW_APPLICATION = Migration(6, "reply_review_application_v1", """
+CREATE TABLE IF NOT EXISTS turn_review_application(
+  application_id TEXT PRIMARY KEY,
+  request_id TEXT NOT NULL UNIQUE,
+  request_json TEXT NOT NULL,
+  turn_id TEXT NOT NULL,
+  review_revision INTEGER NOT NULL,
+  action TEXT NOT NULL,
+  plan_id TEXT NOT NULL,
+  creator_id TEXT NOT NULL,
+  expected_control_revision INTEGER NOT NULL,
+  expected_pending_revision INTEGER NOT NULL,
+  state TEXT NOT NULL,
+  result_json TEXT NOT NULL,
+  created_at REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS turn_review_application_turn
+  ON turn_review_application(turn_id,review_revision);
+CREATE TABLE IF NOT EXISTS review_reply_candidate(
+  candidate_id TEXT PRIMARY KEY,
+  turn_id TEXT NOT NULL,
+  review_revision INTEGER NOT NULL,
+  plan_id TEXT NOT NULL,
+  creator_id TEXT NOT NULL,
+  action TEXT NOT NULL,
+  template_key TEXT NOT NULL,
+  template_text TEXT NOT NULL,
+  state TEXT NOT NULL,
+  created_at REAL NOT NULL,
+  UNIQUE(turn_id,review_revision)
+);
+CREATE TRIGGER IF NOT EXISTS turn_review_application_no_update
+BEFORE UPDATE ON turn_review_application BEGIN SELECT RAISE(ABORT,'review application is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS turn_review_application_no_delete
+BEFORE DELETE ON turn_review_application BEGIN SELECT RAISE(ABORT,'review application is immutable'); END;
+""")
+
+
 DATABASES = {
     "catalog-links": ("catalog-links.sqlite", (CATALOG_LINKS,)),
     "second-cycle": ("second-cycle.sqlite", (SECOND_CYCLE, SECOND_CYCLE_INDEXES,
                                                 SECOND_CYCLE_FROZEN_SEND,
                                                 SECOND_CYCLE_REPLY_EVENTS,
-                                                SECOND_CYCLE_TURN_REVIEW)),
+                                                SECOND_CYCLE_TURN_REVIEW,
+                                                SECOND_CYCLE_REVIEW_APPLICATION)),
 }
 
 REGISTRY_SQL = """

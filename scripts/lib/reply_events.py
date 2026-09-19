@@ -36,7 +36,8 @@ def load_policy(path=POLICY_PATH):
 
 def _tables(store):
     required = {'outbound_episode', 'inbound_turn', 'turn_episode_link', 'service_case_turn',
-                'reply_classification', 'reply_review', 'turn_review'}
+                'reply_classification', 'reply_review', 'turn_review', 'turn_review_application',
+                'review_reply_candidate'}
     found = {row[0] for row in store.db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     if not required <= found:
         raise CycleError('reply_schema_migration_required')
@@ -353,6 +354,135 @@ def review_turn(store, turn_id, expected_revision, correct_action, note):
             'automaticReply':False,'executionAllowed':False}
 
 
+def _operational_state(store, turn):
+    pending=store.db.execute('SELECT * FROM inbox_pending WHERE plan_id=? AND creator_id=?',
+                             (turn['plan_id'],turn['creator_id'])).fetchone()
+    relationship=store.db.execute('SELECT * FROM relationship WHERE plan_id=? AND creator_id=?',
+                                  (turn['plan_id'],turn['creator_id'])).fetchone()
+    application=store.db.execute('SELECT result_json,state FROM turn_review_application WHERE turn_id=? '
+                                 'ORDER BY created_at DESC LIMIT 1',(turn['turn_id'],)).fetchone()
+    head=store.db.execute('SELECT hash FROM inbox_content_head WHERE plan_id=? AND cid=? AND message_id=?',
+                          (turn['plan_id'],turn['cid'],turn['message_id'])).fetchone()
+    applicable=bool(not turn['historical'] and pending and relationship and relationship['inbox_until'] and
+                    pending['state'] in ('awaiting_classification','review_partial','template_ready') and
+                    head and head['hash']==turn['content_hash'] and not application)
+    reason=None if applicable else ('already_applied' if application else 'historical_sample' if turn['historical']
+        else 'message_edited' if head and head['hash']!=turn['content_hash'] else 'no_current_pending_case')
+    return {'applicable':applicable,'reason':reason,
+            'controlRevision':relationship['revision'] if relationship else None,
+            'pendingRevision':pending['revision'] if pending else None,
+            'pendingState':pending['state'] if pending else None,
+            'application':json.loads(application['result_json']) if application else None}
+
+
+def apply_turn_review(store, turn_id, expected_review_revision, expected_control_revision,
+                      expected_pending_revision, request_id):
+    """Apply one reviewed live turn locally.  No branch sends a message."""
+    _tables(store)
+    if not isinstance(request_id,str) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._:-]{7,119}',request_id) or \
+            any(type(value) is not int or value<1 for value in
+                (expected_review_revision,expected_control_revision,expected_pending_revision)):
+        raise CycleError('review_application_invalid')
+    request={'turnId':turn_id,'reviewRevision':expected_review_revision,
+             'controlRevision':expected_control_revision,'pendingRevision':expected_pending_revision}
+    request_json=encoded(request)
+    with store.tx():
+        prior=store.db.execute('SELECT request_json,result_json FROM turn_review_application WHERE request_id=?',
+                               (request_id,)).fetchone()
+        if prior:
+            if prior['request_json']!=request_json:raise CycleError('review_application_request_conflict')
+            return json.loads(prior['result_json'])|{'duplicate':True}
+        turn=store.db.execute('SELECT * FROM inbound_turn WHERE turn_id=?',(turn_id,)).fetchone()
+        if not turn:raise CycleError('reply_turn_missing')
+        if turn['historical']:raise CycleError('historical_turn_not_applicable')
+        review_row=store.db.execute('SELECT * FROM turn_review WHERE turn_id=? ORDER BY revision DESC LIMIT 1',
+                                    (turn_id,)).fetchone()
+        if not review_row or review_row['revision']!=expected_review_revision:
+            raise CycleError('turn_review_conflict')
+        head=store.db.execute('SELECT hash FROM inbox_content_head WHERE plan_id=? AND cid=? AND message_id=?',
+                              (turn['plan_id'],turn['cid'],turn['message_id'])).fetchone()
+        if not head or head['hash']!=turn['content_hash']:raise CycleError('turn_content_changed')
+        relationship=store.db.execute('SELECT * FROM relationship WHERE plan_id=? AND creator_id=?',
+                                      (turn['plan_id'],turn['creator_id'])).fetchone()
+        pending=store.db.execute('SELECT * FROM inbox_pending WHERE plan_id=? AND creator_id=?',
+                                 (turn['plan_id'],turn['creator_id'])).fetchone()
+        if not relationship or relationship['revision']!=expected_control_revision or not pending or \
+                pending['revision']!=expected_pending_revision:
+            raise CycleError('review_application_revision_conflict')
+        if not relationship['inbox_until'] or pending['state'] not in \
+                ('awaiting_classification','review_partial','template_ready'):
+            raise CycleError('review_application_not_current')
+        action=review_row['correct_action'];now=store.clock();result={'turnId':turn_id,'action':action,
+            'reviewRevision':expected_review_revision,'automaticReply':False,'platformWrites':0}
+        application_id='review-application-'+digest([request_id,request])[:24]
+        if action=='human':
+            old=store.db.execute("SELECT id FROM service_case WHERE plan_id=? AND creator_id=? AND state='open'",
+                                 (turn['plan_id'],turn['creator_id'])).fetchone()
+            case_id=old[0] if old else 'case-'+digest([turn['plan_id'],turn['creator_id'],turn_id])[:24]
+            if old:
+                store.db.execute("UPDATE service_case SET assessment_revision=?,reason='turn_review_human',updated=? "
+                                 "WHERE id=?",(pending['revision'],now,case_id))
+            else:
+                store.db.execute("INSERT INTO service_case VALUES(?,?,?,'open',?,'turn_review_human',?,?, 'not_sent')",
+                                 (case_id,turn['plan_id'],turn['creator_id'],pending['revision'],now,now))
+            store.db.execute('INSERT OR IGNORE INTO service_case_turn VALUES(?,?)',(case_id,turn_id))
+            if relationship['mode']!='human':
+                store.db.execute("UPDATE relationship SET mode='human',revision=revision+1 WHERE plan_id=? AND creator_id=?",
+                                 (turn['plan_id'],turn['creator_id']))
+            store.db.execute("UPDATE inbox_pending SET state='human' WHERE plan_id=? AND creator_id=?",
+                             (turn['plan_id'],turn['creator_id']))
+            result|={'state':'human','caseId':case_id}
+        elif action in TEMPLATE_FOR:
+            if relationship['mode']!='auto':raise CycleError('relationship_control_changed')
+            if action=='link_usage':
+                links=store.db.execute("SELECT count(DISTINCT e.pid||':'||e.list_id) FROM turn_episode_link l "
+                    "JOIN outbound_episode e ON e.episode_id=l.episode_id WHERE l.turn_id=?",(turn_id,)).fetchone()[0]
+                if links!=1:raise CycleError('link_episode_not_unique')
+            policy=load_policy();template_key=TEMPLATE_FOR[action];template=policy['templates'][template_key]['text']
+            candidate_id='reply-candidate-'+digest([turn_id,expected_review_revision,action])[:24]
+            store.db.execute("INSERT OR IGNORE INTO review_reply_candidate VALUES(?,?,?,?,?,?,?,?,?,?)",
+                             (candidate_id,turn_id,expected_review_revision,turn['plan_id'],turn['creator_id'],
+                              action,template_key,template,'reviewed_ready',now))
+            store.db.execute("UPDATE inbox_pending SET state='template_ready' WHERE plan_id=? AND creator_id=?",
+                             (turn['plan_id'],turn['creator_id']))
+            result|={'state':'template_ready','candidateId':candidate_id,'templateKey':template_key}
+        else:
+            if relationship['mode']!='auto':raise CycleError('relationship_control_changed')
+            result|={'state':'review_partial'}
+        if action=='no_reply':
+            cursor=store.db.execute('SELECT event_rowid FROM service_cursor WHERE plan_id=? AND creator_id=?',
+                                    (turn['plan_id'],turn['creator_id'])).fetchone();watermark=cursor[0] if cursor else 0
+            unhandled=store.db.execute("""SELECT count(*) FROM inbound_turn t JOIN inbox_event e
+              ON e.plan_id=t.plan_id AND e.cid=t.cid AND e.message_id=t.message_id
+              WHERE t.plan_id=? AND t.creator_id=? AND t.historical=0 AND e.rowid>? AND t.turn_id<>? AND
+              NOT EXISTS(SELECT 1 FROM turn_review_application a WHERE a.turn_id=t.turn_id)""",
+              (turn['plan_id'],turn['creator_id'],watermark,turn_id)).fetchone()[0]
+            open_case=store.db.execute("SELECT 1 FROM service_case WHERE plan_id=? AND creator_id=? AND state='open'",
+                                       (turn['plan_id'],turn['creator_id'])).fetchone()
+            if not unhandled and not open_case:
+                newest=store.db.execute("SELECT max(e.rowid) FROM inbound_turn t JOIN inbox_event e "
+                    "ON e.plan_id=t.plan_id AND e.cid=t.cid AND e.message_id=t.message_id "
+                    "WHERE t.plan_id=? AND t.creator_id=? AND t.historical=0",
+                    (turn['plan_id'],turn['creator_id'])).fetchone()[0] or watermark
+                store.db.execute('INSERT INTO service_cursor VALUES(?,?,?) ON CONFLICT(plan_id,creator_id) '
+                                 'DO UPDATE SET event_rowid=max(event_rowid,excluded.event_rowid)',
+                                 (turn['plan_id'],turn['creator_id'],newest))
+                store.db.execute("UPDATE inbox_pending SET state='resolved_no_reply' WHERE plan_id=? AND creator_id=?",
+                                 (turn['plan_id'],turn['creator_id']))
+                store.db.execute("UPDATE relationship SET inbox_until=0,revision=revision+1 WHERE plan_id=? "
+                                 "AND creator_id=? AND mode='auto'",(turn['plan_id'],turn['creator_id']))
+                result|={'state':'resolved_no_reply'}
+            else:
+                store.db.execute("UPDATE inbox_pending SET state='review_partial' WHERE plan_id=? AND creator_id=?",
+                                 (turn['plan_id'],turn['creator_id']))
+        result_json=encoded(result)
+        store.db.execute('INSERT INTO turn_review_application VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)',
+                         (application_id,request_id,request_json,turn_id,expected_review_revision,action,
+                          turn['plan_id'],turn['creator_id'],expected_control_revision,
+                          expected_pending_revision,result['state'],result_json,now))
+        return result|{'duplicate':False}
+
+
 def batch_classify(store, providers, limit, *, root=None, classifier_factory=None):
     """Fill the same bounded turn set for each provider; never creates reply work."""
     _tables(store)
@@ -456,7 +586,7 @@ def status(store, limit=12):
                       'occurredMs':turn['occurred_ms'],'episodes':links,
                       'classificationId':classification['classification_id'] if classification else None,
                       'decision':decision,'review':dict(review_row) if review_row else None,
-                      'comparisons':comparisons})
+                      'comparisons':comparisons,'operational':_operational_state(store,turn)})
     items.sort(key=lambda item:(item['review'] is not None,
                                len({row['action'] for row in item['comparisons']})<=1,
                                -(item['occurredMs'] or 0),item['turnId']))

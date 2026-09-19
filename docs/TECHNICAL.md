@@ -204,6 +204,8 @@ DeepSeek 与 TypeSafe Jev 当前都只作为影子 provider。Jev 使用官方 S
 | `reply_classification` | request ID、输入哈希、provider/model、政策版本、结构化输出 | 保存 DeepSeek/Jev 影子结果，不直接执行发送 |
 | `reply_review` | classification ID、revision、正误、正确动作、备注 | 旧 provider 级审核兼容记录，不再作为当前真值入口 |
 | `turn_review` | turn ID、revision、正确动作、备注 | 当前唯一人工真值；与 provider 解耦、append-only，可同时评估 DeepSeek/Jev |
+| `turn_review_application` | request ID、turn/review/control/pending revision、动作和结果 | 用户单独确认后把真值映射到当前案件；不可变、幂等、平台写入固定为 0 |
+| `review_reply_candidate` | turn/review revision、固定模板 key/text、状态 | 三种模板动作只形成 `reviewed_ready` 候选，保持达人冻结，不发送 |
 
 分类器只读取当前未处理 turn、少量相邻 turn、候选 episode、达人全局控制和政策版本。原始事件是事实源；任何模型摘要只是可重建缓存。新增表/字段必须提供幂等升级、旧库回填与多 PID 会话测试。
 
@@ -255,7 +257,7 @@ pending → started/submitted → confirmed
 | `/api/identity-queue` | 达人级 OECID 分类与补齐 |
 | `/api/lead-pool` | 发送池分层 |
 | `/api/send` | 发送预览、设置保存、冻结、明确 start/stop 和批次状态 |
-| `/api/reply-review` | 事件级回复样本、DeepSeek/Jev 影子分类和人工正误审核；无发送动作 |
+| `/api/reply-review` | 事件级样本、双模型影子分类、turn 标准动作和受控案件应用；无发送动作 |
 | `/api/inbox` | 收信 worker、今日/历史统计和待人工 |
 | `/api/jobs` | 手动作业与定时意向 |
 
@@ -353,6 +355,8 @@ printf '%s' '{"action":"batch_classify","providers":["deepseek","jev"],"limit":3
 
 `backfill` 只读取本机既有发送、收信和案件证据并写新投影，`platformWrites=0`、`modelCalls=0`。批量影子分类只写模型评估，不创建回复 intent；页面并列展示 DeepSeek/Jev 的完整动作、置信度、原因和固定模板候选，中文理解固定取 DeepSeek 的翻译字段，不被 Jev 占位文案覆盖。审核队列优先展示两模型分歧且尚未审核的 turn；用户直接选择独立的五动作标准答案，写入 append-only `turn_review`，审核后自动滚到下一项。系统再用同一份 turn 真值计算两个 provider 的准确率、误自动处理（真值为 `human`）和误转人工；模型自己的输出不能成为真值。
 
+审核与业务状态是两个动作。`apply_review` 还必须携带当前 review、relationship control 和 inbox pending 三个 revision：历史样本、消息已编辑、控制已变化或非当前案件全部拒绝。`no_reply` 只有在该达人没有更新未处理 turn 和开放案件时才推进 cursor 并解除冻结；`human` 创建/复用人工案件并保持冻结；三种模板只写固定候选并保持冻结。任何分支都不调用 transport，`automaticReply=false`、`platformWrites=0`。
+
 ### 数据迁移与本地回填
 
 ```bash
@@ -436,7 +440,7 @@ PYTHONDONTWRITEBYTECODE=1 \
 - Web Node 测试存在 module type warning；Next.js 构建有上游 deprecation warning。
 - 冻结批次、start/stop 和 frozen-v2 执行桥已接通；账号级平台日额度的原生信号仍未取得，不能用本地 500 闸门冒充。
 - 旧 legacy-only `cycle_bulk` 仍保留旧执行兼容路径；新 `/api/send` 只创建 frozen-v2 批次。
-- 35 条意大利 turn 已完成 DeepSeek/Jev 同集影子分类，批量恢复、分歧统计和审核后准确率已完成；当前仍等待用户审核真值，真实自动回复 transport 保持关闭且尚未接入新合同。
+- 35 条意大利 turn 已完成 DeepSeek/Jev 同集影子分类，turn 级真值、分歧统计、审核后准确率和受控案件应用已完成；当前仍等待用户审核真值，真实自动回复 transport 保持关闭且尚未接入新合同。
 - 本机 `var/` 缺正式备份、恢复和跨机器迁移方案。
 - 新项目仍依赖旧 Python 环境与部分协议层；最终需要独立依赖和凭据管理。
 

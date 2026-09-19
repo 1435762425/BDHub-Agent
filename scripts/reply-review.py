@@ -8,7 +8,7 @@ ROOT=Path(__file__).resolve().parents[1]
 sys.dont_write_bytecode=True
 sys.path.insert(0,str(ROOT/'scripts'))
 
-from lib.reply_events import (DeepSeekClassifier,JevClassifier,backfill,classify,review,review_turn,status)  # noqa:E402
+from lib.reply_events import (DeepSeekClassifier,JevClassifier,apply_turn_review,backfill,classify,review,review_turn,status)  # noqa:E402
 from lib.second_cycle import CycleError,CycleStore  # noqa:E402
 
 
@@ -18,7 +18,7 @@ def main():
         if len(raw.encode())>20000:raise CycleError('input_too_large')
         request=json.loads(raw or '{}')
         action=request.get('action')
-        if action not in ('status','backfill','classify','batch_classify','review','review_turn'):raise CycleError('invalid_action')
+        if action not in ('status','backfill','classify','batch_classify','review','review_turn','apply_review'):raise CycleError('invalid_action')
         readonly=action=='status'
         with CycleStore(ROOT/'var/second-cycle.sqlite',readonly=readonly) as store:
             if action=='status':
@@ -42,11 +42,17 @@ def main():
                     raise CycleError('invalid_input')
                 result=review(store,request['classificationId'],request['expectedRevision'],request['verdict'],
                               request['correctAction'],request['note'])
-            else:
+            elif action=='review_turn':
                 if set(request)!={'action','turnId','expectedRevision','correctAction','note'}:
                     raise CycleError('invalid_input')
                 result=review_turn(store,request['turnId'],request['expectedRevision'],
                                    request['correctAction'],request['note'])
+            else:
+                if set(request)!={'action','turnId','expectedReviewRevision','expectedControlRevision',
+                                  'expectedPendingRevision','requestId'}:raise CycleError('invalid_input')
+                result=apply_turn_review(store,request['turnId'],request['expectedReviewRevision'],
+                                         request['expectedControlRevision'],request['expectedPendingRevision'],
+                                         request['requestId'])
         print(json.dumps(result,ensure_ascii=False))
         return 0
     except Exception as error:

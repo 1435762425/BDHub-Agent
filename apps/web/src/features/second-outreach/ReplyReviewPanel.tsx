@@ -15,6 +15,10 @@ function ReviewItem({item,onChanged}:{item:ReplyReviewItem;onChanged:()=>void}){
  const classify=(provider:"deepseek"|"jev")=>post({action:"classify",turnId:item.turnId,requestId:`web-${crypto.randomUUID()}`,provider});
  const submit=()=>post({action:"review_turn",turnId:item.turnId,expectedRevision:item.review?.revision??0,
   correctAction,note});
+ const applyReview=()=>item.review&&item.operational.controlRevision!=null&&item.operational.pendingRevision!=null&&post({
+  action:"apply_review",turnId:item.turnId,expectedReviewRevision:item.review.revision,
+  expectedControlRevision:item.operational.controlRevision,expectedPendingRevision:item.operational.pendingRevision,
+  requestId:`web-apply-${crypto.randomUUID()}`});
  const decision=item.decision;
  const compared=new Set(item.comparisons.map(row=>row.provider));
  const deepseek=item.comparisons.find(row=>row.provider==="deepseek")?.decision;
@@ -27,7 +31,11 @@ function ReviewItem({item,onChanged}:{item:ReplyReviewItem;onChanged:()=>void}){
   {item.comparisons.length>0&&<div className="grid gap-2 md:grid-cols-2">{item.comparisons.map(row=><div key={row.classificationId} className="rounded-lg bg-gray-50 p-3 text-xs dark:bg-white/[0.04]"><div className="flex flex-wrap items-center gap-2"><Pill tone={row.provider==="jev"?"brand":"neutral"}>{row.provider==="jev"?"Jev":"DeepSeek"}</Pill><strong>{labels[row.action]}</strong><span className="text-gray-500">{(row.confidence*100).toFixed(0)}% · {row.intentCode}</span></div>{row.decision.humanReason&&<p className="mt-1 text-warning-600">{row.decision.humanReason}</p>}</div>)}</div>}
   {(!compared.has("deepseek")||!compared.has("jev"))&&<div className="flex flex-wrap gap-2">{!compared.has("deepseek")&&<Button size="sm" variant="outline" disabled={busy} onClick={()=>void classify("deepseek")}>{busy?"分类中…":"DeepSeek 影子分类"}</Button>}{!compared.has("jev")&&<Button size="sm" variant="outline" disabled={busy} onClick={()=>void classify("jev")}>{busy?"分类中…":"Jev 对照分类"}</Button>}</div>}
   {decision&&<div className="space-y-2 rounded-lg border border-gray-200 p-3 dark:border-gray-800">
-   {item.review?<Notice tone="info">标准动作：{labels[item.review.correct_action]}{item.review.note?` · ${item.review.note}`:""}</Notice>:<div className="space-y-2">
+   {item.review?<div className="space-y-2"><Notice tone="info">标准动作：{labels[item.review.correct_action]}{item.review.note?` · ${item.review.note}`:""}</Notice>
+    {item.operational.application?<Notice tone="info">已应用到业务状态：{item.operational.application.state}。自动回复 {item.operational.application.automaticReply?"已开启":"未开启"}，平台写入 {item.operational.application.platformWrites}。</Notice>
+     :item.operational.applicable?<Button size="sm" variant="outline" disabled={busy} onClick={()=>void applyReview()}>{item.review.correct_action==="no_reply"?"应用：安全解除本次回复冻结":item.review.correct_action==="human"?"应用：转入人工案件":"应用：生成固定模板候选（不发送）"}</Button>
+     :<p className="text-xs text-gray-400">{item.operational.reason==="historical_sample"?"历史样本只用于评测，不修改业务状态。":"当前没有可应用的待处理案件；本条只保留为评测真值。"}</p>}
+   </div>:<div className="space-y-2">
     <p className="text-xs text-gray-500">请选择这条 turn 的业务标准动作；它独立于两个模型，用作双方共同真值。</p>
     <textarea value={note} maxLength={2000} onChange={event=>setNote(event.target.value)} placeholder="可选：写下判断依据或参考答案" className="w-full rounded-lg border border-gray-300 bg-transparent p-2 text-xs dark:border-gray-700" rows={2}/>
     <div className="flex flex-wrap gap-2"><select value={correctAction} onChange={event=>setCorrectAction(event.target.value as ReplyAction)} className="rounded-lg border border-gray-300 bg-transparent px-2 text-xs dark:border-gray-700">{REPLY_ACTIONS.map(action=><option key={action} value={action}>{labels[action]}</option>)}</select>

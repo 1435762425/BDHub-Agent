@@ -11,7 +11,7 @@ sys.path.insert(0,str(ROOT/'scripts'))
 from lib.cycle_delivery import Deliveries  # noqa:E402
 from lib.cycle_inbox import Inbox  # noqa:E402
 from lib.cycle_service import Service  # noqa:E402
-from lib.reply_events import DeepSeekClassifier,JevClassifier,backfill,batch_classify,classify,evaluation_summary,load_policy,review,review_turn,status  # noqa:E402
+from lib.reply_events import DeepSeekClassifier,JevClassifier,apply_turn_review,backfill,batch_classify,classify,evaluation_summary,load_policy,review,review_turn,status  # noqa:E402
 from lib.schema_migrations import apply_database  # noqa:E402
 from lib.second_cycle import CycleError,CycleStore,digest  # noqa:E402
 from test_second_cycle import NOW,edge,offer  # noqa:E402
@@ -102,6 +102,31 @@ class ReplyEvents(unittest.TestCase):
    review_turn(s,turn,0,'collaboration_ack','参考答案')
    after=evaluation_summary(s);self.assertEqual(after['providers']['jev']['accuracy'],1.0)
    self.assertEqual(after['providers']['deepseek']['falseHuman'],1)
+ def context_revisions(self,s):
+  relationship=s.db.execute('SELECT revision FROM relationship WHERE creator_id=?',('c1',)).fetchone()[0]
+  pending=s.db.execute('SELECT revision FROM inbox_pending WHERE creator_id=?',('c1',)).fetchone()[0]
+  return relationship,pending
+ def test_apply_no_reply_releases_only_current_live_turn_and_is_idempotent(self):
+  with CycleStore(self.db,clock=lambda:self.now) as s:
+   backfill(s);turn=s.db.execute('SELECT turn_id FROM inbound_turn').fetchone()[0];review_turn(s,turn,0,'no_reply','无需回复')
+   control,pending=self.context_revisions(s);result=apply_turn_review(s,turn,1,control,pending,'apply-request-0001')
+   self.assertEqual(result['state'],'resolved_no_reply');self.assertEqual(s.db.execute('SELECT inbox_until FROM relationship').fetchone()[0],0)
+   self.assertEqual(s.db.execute('SELECT state FROM inbox_pending').fetchone()[0],'resolved_no_reply')
+   self.assertTrue(apply_turn_review(s,turn,1,control,pending,'apply-request-0001')['duplicate'])
+ def test_apply_template_stages_fixed_text_without_sending_or_unfreezing(self):
+  with CycleStore(self.db,clock=lambda:self.now) as s:
+   backfill(s);turn=s.db.execute('SELECT turn_id FROM inbound_turn').fetchone()[0];review_turn(s,turn,0,'collaboration_ack','合作确认')
+   control,pending=self.context_revisions(s);result=apply_turn_review(s,turn,1,control,pending,'apply-request-0002')
+   self.assertEqual(result['state'],'template_ready');self.assertFalse(result['automaticReply']);self.assertEqual(result['platformWrites'],0)
+   self.assertGreater(s.db.execute('SELECT inbox_until FROM relationship').fetchone()[0],0)
+   candidate=s.db.execute('SELECT action,state,template_text FROM review_reply_candidate').fetchone();self.assertEqual((candidate[0],candidate[1]),('collaboration_ack','reviewed_ready'));self.assertIn('Perfetto',candidate[2])
+ def test_apply_human_opens_case_and_keeps_creator_frozen(self):
+  with CycleStore(self.db,clock=lambda:self.now) as s:
+   backfill(s);turn=s.db.execute('SELECT turn_id FROM inbound_turn').fetchone()[0];review_turn(s,turn,0,'human','佣金异常')
+   control,pending=self.context_revisions(s);result=apply_turn_review(s,turn,1,control,pending,'apply-request-0003')
+   self.assertEqual(result['state'],'human');self.assertEqual(s.db.execute('SELECT mode FROM relationship').fetchone()[0],'human')
+   self.assertEqual(s.db.execute("SELECT count(*) FROM service_case WHERE state='open'").fetchone()[0],1)
+   self.assertGreater(s.db.execute('SELECT inbox_until FROM relationship').fetchone()[0],0)
 
 
 if __name__=='__main__':unittest.main()

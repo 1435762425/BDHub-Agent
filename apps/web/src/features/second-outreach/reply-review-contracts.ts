@@ -10,7 +10,10 @@ export type ReplyReviewItem={turnId:string;messageId:string;creatorId:string;for
  historical:boolean;occurredMs:number|null;episodes:Array<{episode_id:string;pid:string;list_id:string;
  candidate_rank:number;confidence:string}>;classificationId:string|null;decision:ReplyDecision|null;
  review:ReplyReviewState|null;comparisons:Array<{classificationId:string;provider:string;model:string;
- action:ReplyAction;confidence:number;intentCode:string;decision:ReplyDecision}>};
+ action:ReplyAction;confidence:number;intentCode:string;decision:ReplyDecision}>;
+ operational:{applicable:boolean;reason:string|null;controlRevision:number|null;pendingRevision:number|null;
+  pendingState:string|null;application:{turnId:string;action:ReplyAction;reviewRevision:number;state:string;
+   automaticReply:false;platformWrites:number;caseId?:string;candidateId?:string;templateKey?:string}|null}};
 export type ReplyReviewStatus={schema:"bdhub.reply-review.v1";policyVersion:string;
  processingIntervalSeconds:number;automaticReplies:false;providers:{deepseek:{mode:string};jev:{mode:string}};
  counts:{turns:number;episodes:number;linkedTurns:number;classified:number;reviewed:number};

@@ -14,7 +14,7 @@ const payload={schema:'bdhub.reply-review.v1',policyVersion:'creator-reply-actio
  counts:{turns:35,episodes:10,linkedTurns:20,classified:1,reviewed:0},evaluation:{paired:1,agreements:1,disagreements:0,agreementRate:1,reviewedTurns:0,pendingReview:35,providers:{deepseek:{evaluated:0,correct:0,accuracy:null,falseAuto:0,falseHuman:0},jev:{evaluated:0,correct:0,accuracy:null,falseAuto:0,falseHuman:0}},disagreementSamples:[]},items:[{turnId:turn,messageId:'1001',
  creatorId:'creator-1',format:'text',text:'Certo, farò un video',historical:true,occurredMs:1789257600000,
  episodes:[{episode_id:'episode-'+'c'.repeat(24),pid:'1729571380453480001',list_id:'8650765182615984910',candidate_rank:1,confidence:'high'}],
- classificationId:classification,decision,review:null,comparisons:[{classificationId:classification,provider:'deepseek',model:'deepseek-flash',action:'collaboration_ack',confidence:.98,intentCode:'collaboration_confirmed',decision}]}]};
+ classificationId:classification,decision,review:null,comparisons:[{classificationId:classification,provider:'deepseek',model:'deepseek-flash',action:'collaboration_ack',confidence:.98,intentCode:'collaboration_confirmed',decision}],operational:{applicable:false,reason:'historical_sample',controlRevision:2,pendingRevision:1,pendingState:'awaiting_classification',application:null}}]};
 
 test('reply review decoder keeps event links and refuses executable classifications',()=>{
  const value=validateReplyReviewStatus(payload);assert.equal(value.items[0].decision.action,'collaboration_ack');
@@ -30,6 +30,8 @@ test('GET is local read-only and POST accepts only classify or versioned review'
  assert.equal((await handlers.POST(new Request(url,{method:'POST',headers,body:JSON.stringify(classify)}))).status,200);
  const review={action:'review_turn',turnId:turn,expectedRevision:0,correctAction:'human',note:'应转人工'};
  assert.equal((await handlers.POST(new Request(url,{method:'POST',headers,body:JSON.stringify(review)}))).status,200);
+ const apply={action:'apply_review',turnId:turn,expectedReviewRevision:1,expectedControlRevision:2,expectedPendingRevision:1,requestId:'web-apply-0001'};
+ assert.equal((await handlers.POST(new Request(url,{method:'POST',headers,body:JSON.stringify(apply)}))).status,200);
  assert.equal((await handlers.POST(new Request(url,{method:'POST',headers,body:JSON.stringify({...classify,send:true})}))).status,400);
  assert.equal((await handlers.POST(new Request(url,{method:'POST',headers,body:JSON.stringify({...review,action:'send'})}))).status,400);
 });
