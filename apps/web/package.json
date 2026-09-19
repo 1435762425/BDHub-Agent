@@ -2,6 +2,7 @@
   "name": "bdhub-agent-web",
   "version": "0.1.0",
   "private": true,
+  "type": "module",
   "scripts": {
     "dev": "NEXT_TELEMETRY_DISABLED=1 next dev --webpack --hostname 127.0.0.1 --port 5198",
     "build": "NEXT_TELEMETRY_DISABLED=1 next build --webpack",
