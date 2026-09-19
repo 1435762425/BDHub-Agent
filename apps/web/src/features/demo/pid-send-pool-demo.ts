@@ -15,9 +15,9 @@ export interface DemoScenario{
 export interface DemoGateResult{key:string;label:string;state:"pass"|"stop"|"wait";detail:string;}
 
 export const BUSINESS_PHASES=[
- {key:"product",index:"01",title:"商品准备",question:"这个 PID 现在能用吗？",count:2140,unit:"个 PID 已备好",summary:"商品合格、方案完整，并且最后成功快照中有可用 TapLink。",steps:["采集并筛出合格 PID","选定唯一当前方案","复用或创建 TapLink"]},
- {key:"creator",index:"02",title:"达人准备",question:"这个达人是真实可联系的人吗？",count:2930,unit:"个达人已识别",summary:"同 PID 正销量线索已经取得，并解析到稳定 OECID。",steps:["按 PID 查询正销量达人","handle 去重判定一次","绑定市场 × OECID"]},
- {key:"send",index:"03",title:"发送安排",question:"这一条现在可以进入发送批次吗？",count:1880,unit:"条当前可发送",summary:"达人关系清晰、没有冷却或未结问题，并冻结精确材料。",steps:["生成达人 × PID 位置","每达人选择一个最优商品","组批并冻结 Offer + listId"]},
+ {key:"product",index:"01",title:"商品准备",question:"这个 PID 现在能用吗？",count:2140,unit:"个 PID 已备好",summary:"商品合格、方案完整，并且最后成功快照中有当前标准 TapLink。",steps:["采集并筛出合格 PID","选定唯一当前方案","确认或创建当前标准 TapLink"]},
+ {key:"creator",index:"02",title:"达人准备",question:"这个达人是真实可联系的人吗？",count:2930,unit:"个达人已识别",summary:"每 PID 近 14 天最多 20 条正销量线索已经取得，并解析到稳定 OECID。",steps:["按 GMV 顺序取最多 20 条正销量线索","handle 去重判定一次","同一 OECID 合并改名前后 handle"]},
+ {key:"send",index:"03",title:"发送安排",question:"这一条现在可以进入发送批次吗？",count:1880,unit:"条当前可发送",summary:"按 sourceRank 选择达人和本次 PID；达人没有冷却或未结问题。",steps:["生成达人 × PID 位置","统一按 sourceRank 选择达人和商品","组批并冻结 Offer + listId"]},
 ] as const;
 
 export const PID_SNAPSHOT={
@@ -36,10 +36,10 @@ export const FLOW_STAGES:DemoStage[]=[
  {key:"screen",index:"02",title:"商品筛选",unit:"PID / Offer",input:"当前来源快照",output:"合格商品方案",rule:"全托销量≥300；有评分≥4.0，无评分允许；佣金差≥2点。Campaign 使用独立期限与库存规则。",failure:"进入不合格层，历史事实保留。",refresh:"采集完成、规则变化或商品事实变化时重算。"},
  {key:"offer",index:"03",title:"精确 Offer",unit:"PID × 活动",input:"合格候选",output:"唯一当前方案",rule:"达人佣金最高 → 截止更晚 → 活动 ID 定序；不同 Offer 不拼字段。",failure:"没有完整方案则等待事实，不进入建链。",refresh:"每次筛分与发送批次冻结前。"},
  {key:"link",index:"04",title:"TapLink 材料",unit:"PID × 方案",input:"精确 Offer",output:"标准 listId",rule:"只认统一分佣与命名规则创建的标准卡；历史卡忽略。没有标准卡就补建。",failure:"标准链接缺失或创建结果未知时等待，不进入达人查询。",refresh:"Campaign 每日随来源核验；全托已选每周核验一次。"},
- {key:"leads",index:"05",title:"PID 查达人",unit:"PID 查询任务",input:"material-ready PID",output:"正销量达人线索",rule:"首次 PID 优先；已查 PID 7 天后刷新；失败不写 queried_at。",failure:"额度耗尽保留断点；无链接 PID 不进入查询。",refresh:"首次一次；完成后每 7 天到期。"},
- {key:"identity",index:"06",title:"OECID 身份",unit:"去重 handle",input:"达人线索",output:"稳定达人身份",rule:"同一 handle 只做一次 Find 判定；找到后以市场×OECID 归一。",failure:"明确搜索不到则保留证据，但不进入位置。",refresh:"Find 判定一次；画像按需或 48 小时刷新。"},
+ {key:"leads",index:"05",title:"PID 查达人",unit:"PID 查询任务",input:"material-ready PID",output:"近 14 天最多 20 条正销量线索",rule:"Kalodata 按 revenue DESC；严格保留前 20 条正销量线索；失败不写 queried_at。",failure:"额度耗尽保留断点；无链接 PID 不进入查询。",refresh:"首次一次；完成后每 7 天到期。"},
+ {key:"identity",index:"06",title:"OECID 身份",unit:"去重 handle",input:"达人线索",output:"稳定达人身份",rule:"同一 handle 只做一次 Find；handle 改名时按市场×OECID 归并到原 creatorId。",failure:"明确搜索不到则保留证据，但不进入位置。",refresh:"Find 判定一次；画像按需或 48 小时刷新。"},
  {key:"position",index:"07",title:"达人×PID 位置",unit:"达人 × PID",input:"稳定达人 + 同品线索",output:"可经营位置",rule:"一个达人可保留多个 PID；渠道属于商品，冷却和拒联属于达人。",failure:"商品失效、缺材料、关系阻断分别分层，不丢线索。",refresh:"页面读取时实时重算，不保存静态排序。"},
- {key:"pool",index:"08",title:"严格发送池",unit:"当前最优位置",input:"material-ready 位置",output:"ready / queued / cooling / reply",rule:"达人之间按线索强度；达人内部按佣金→rank→全托→PID。",failure:"任一门失败退出 ready，并显示具名原因。",refresh:"实时重算；正式组批后冻结具体 Offer 和 listId。"},
+ {key:"pool",index:"08",title:"发送池",unit:"当前最优位置",input:"material-ready 位置",output:"可发送 / 等待中 / 暂不参与",rule:"达人之间和达人内部都按 sourceRank；并列按正销量更高→PID。",failure:"未通过的原因归入等待或暂不参与，不再增加业务状态。",refresh:"实时重算；正式组批后冻结具体 Offer 和 listId。"},
 ];
 
 export const REFRESH_RULES=[
@@ -108,27 +108,27 @@ export function evaluateScenario(s:DemoScenario):{gates:DemoGateResult[];layer:s
   {key:"identity",label:"OECID",state:s.identityReady?"pass":"wait",detail:s.identityReady?"达人身份已解析":"等待 Find 判定"},
   {key:"relation",label:"关系状态",state:s.replyOpen?"wait":"pass",detail:s.replyOpen?"未结回复阻断该达人所有商品":"无拒联、人工接管或未结回复"},
  ];
- let layer="严格发送池 · Ready",summary="这条达人×PID 可以进入 ready；组批时冻结具体 Offer 和 listId。";
- if(!eligible){layer="商品失效 / 不合格",summary="保留历史线索，但退出可发与等待队列；商品恢复后重新计算。";}
- else if(s.linkState==="missing"){layer="待建链",summary="商品合格但没有可用卡；链接核验前不查新线索、不进入发送池。";}
- else if(s.linkState==="legacy_only"){layer="待补标准链接",summary="历史卡不参与发送；按统一命名与分佣规则补建标准卡。";}
- else if(!s.identityReady){layer="待 OECID",summary="线索存在但达人身份未解析，不生成达人×PID 位置。";}
- else if(s.replyOpen){layer="等待回复处理",summary="该达人所有商品位置暂停；问题解决后重新参与排序。";}
+ let layer="可发送",summary="这条达人×PID 可以进入发送批次；组批时冻结具体 Offer 和 listId。";
+ if(!eligible){layer="暂不参与",summary="当前商品失效或不合格；历史线索保留，商品恢复后重新计算。";}
+ else if(s.linkState==="missing"){layer="等待中",summary="商品合格但没有当前标准卡；链接核验前不查新线索。";}
+ else if(s.linkState==="legacy_only"){layer="等待中",summary="历史卡不参与发送；按统一命名与分佣规则补建标准卡。";}
+ else if(!s.identityReady){layer="等待中",summary="线索存在但达人身份未解析，等待 OECID。";}
+ else if(s.replyOpen){layer="等待中",summary="该达人所有商品位置暂停；问题解决后重新参与排序。";}
  return {gates,layer,summary};
 }
 
 export const DEMO_COUNTS={
  collected:10000,qualified:2460,offers:2285,linked:2140,queriedPids:1920,
  leads:12600,handles:3480,resolved:2930,positions:6920,
- pool:{ready:1880,queued:4015,cooling:420,reply:75,invalid:210,waitingLink:320},
+ pool:{sendable:1880,waiting:4830,inactive:210},
 };
 
 export function poolReconciles(){return Object.values(DEMO_COUNTS.pool).reduce((a,b)=>a+b,0)===DEMO_COUNTS.positions;}
 
 export const SIMPLE_POOL={
- sendable:DEMO_COUNTS.pool.ready,
- waiting:DEMO_COUNTS.pool.queued+DEMO_COUNTS.pool.cooling+DEMO_COUNTS.pool.reply+DEMO_COUNTS.pool.waitingLink,
- unavailable:DEMO_COUNTS.pool.invalid,
+ sendable:DEMO_COUNTS.pool.sendable,
+ waiting:DEMO_COUNTS.pool.waiting,
+ inactive:DEMO_COUNTS.pool.inactive,
  total:DEMO_COUNTS.positions,
 };
 

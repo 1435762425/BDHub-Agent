@@ -4,16 +4,18 @@ import {BUSINESS_PHASES,DEMO_COUNTS,FLOW_STAGES,PID_REFRESH_CLOCKS,PID_SNAPSHOT,
 
 const scenario=key=>SCENARIOS.find(item=>item.key===key);
 
-test("the demo follows the confirmed PID to strict-pool order",()=>{
+test("the demo follows the confirmed PID to send-pool order",()=>{
  assert.deepEqual(FLOW_STAGES.map(item=>item.key),["collect","screen","offer","link","leads","identity","position","pool"]);
  assert.match(FLOW_STAGES[3].rule,/历史卡忽略/);
- assert.match(FLOW_STAGES[4].rule,/7 天/);
+ assert.match(FLOW_STAGES[4].rule,/前 20 条正销量/);
+ assert.match(FLOW_STAGES[7].rule,/达人之间和达人内部都按 sourceRank/);
+ assert.doesNotMatch(FLOW_STAGES[7].rule,/佣金/);
 });
 
 test("the default experience reduces the flow to three business questions",()=>{
  assert.deepEqual(BUSINESS_PHASES.map(item=>item.key),["product","creator","send"]);
- assert.deepEqual(Object.keys(SIMPLE_POOL),["sendable","waiting","unavailable","total"]);
- assert.equal(SIMPLE_POOL.sendable+SIMPLE_POOL.waiting+SIMPLE_POOL.unavailable,SIMPLE_POOL.total);
+ assert.deepEqual(Object.keys(SIMPLE_POOL),["sendable","waiting","inactive","total"]);
+ assert.equal(SIMPLE_POOL.sendable+SIMPLE_POOL.waiting+SIMPLE_POOL.inactive,SIMPLE_POOL.total);
 });
 
 test("the PID snapshot reconciles source, link and historical cleanup counts",()=>{
@@ -33,7 +35,7 @@ test("the fake pool counts reconcile exactly",()=>{
 
 test("a product without a rating can enter when sales and commission qualify",()=>{
  const result=evaluateScenario(scenario("unrated"));
- assert.equal(result.layer,"严格发送池 · Ready");
+ assert.equal(result.layer,"可发送");
  assert.equal(result.gates[0].state,"pass");
 });
 
@@ -41,12 +43,12 @@ test("sales below 300 still fail even when no rating is available",()=>{
  const value={...scenario("unrated"),sales:299};
  const result=evaluateScenario(value);
  assert.equal(result.gates[0].state,"stop");
- assert.equal(result.layer,"商品失效 / 不合格");
+ assert.equal(result.layer,"暂不参与");
 });
 
 test("a legacy-only product waits for one standard card and ignores the old one",()=>{
  const result=evaluateScenario(scenario("legacy_only"));
- assert.equal(result.layer,"待补标准链接");
+ assert.equal(result.layer,"等待中");
  assert.match(result.summary,/历史卡不参与发送/);
  assert.equal(result.gates.find(item=>item.key==="link")?.state,"wait");
 });
@@ -61,8 +63,8 @@ test("the simplified scenario answers only product creator and send readiness",(
 test("an invalid product and an unresolved reply leave ready for different reasons",()=>{
  const invalid=evaluateScenario(scenario("product_invalid"));
  const reply=evaluateScenario(scenario("reply_open"));
- assert.equal(invalid.layer,"商品失效 / 不合格");
- assert.equal(reply.layer,"等待回复处理");
+ assert.equal(invalid.layer,"暂不参与");
+ assert.equal(reply.layer,"等待中");
  assert.equal(reply.gates.find(item=>item.key==="relation")?.state,"wait");
 });
 

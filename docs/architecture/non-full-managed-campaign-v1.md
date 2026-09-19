@@ -1,5 +1,7 @@
 # 非全托（Campaign）商品：设计口径与实施方案（2026-09-15）
 
+> 历史设计与实施证据：同一 PID 内选择 Campaign Offer 的规则仍可参考；跨 PID 的达人内部“佣金优先”已失效。当前发送选择在达人之间和达人内部均按 Kalodata `sourceRank → units DESC → PID`，见 [达人发送池与 AI 回复策略](creator-pool-and-reply-policy-v1.md)。
+
 ## 一、已经确认的口径
 
 | # | 事项 | 结论 |

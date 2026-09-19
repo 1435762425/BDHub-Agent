@@ -64,8 +64,8 @@ function PidTree(){
    <Notice tone="warning"><strong>清理规则：</strong>可用旧卡、佣金不同但仍可用的旧卡、混合有效和未知链接继续保留；周期核验确认失效的链接进入清理，删除后回读。历史台账已有 {format(s.historicalCleanup.verifiedDeletes)} 条已核验删除记录。</Notice>
   </div></Card>
   <Collapsible label="当前建链台账快照"><div className="grid gap-4 lg:grid-cols-2">
-   <Card title="全托 · Selected"><div className="grid grid-cols-2 gap-3 p-5 sm:grid-cols-5">{[["已核验",s.fullManaged.links.ready],["可复用",s.fullManaged.links.reuse],["复读中",s.fullManaged.links.reading],["缺链",s.fullManaged.links.missing],["待判断",s.fullManaged.links.review]].map(([label,value])=><div key={String(label)}><p className="text-xs text-gray-400">{label}</p><p className="mt-1 text-lg font-semibold tabular-nums">{format(Number(value))}</p></div>)}</div></Card>
-   <Card title="非全托 · Campaign"><div className="grid grid-cols-2 gap-3 p-5 sm:grid-cols-5">{[["已核验",s.campaign.linkRows.ready],["可复用PID",s.campaign.linkRows.reusePids],["缺链",s.campaign.linkRows.missing],["读取不完整",s.campaign.linkRows.readIncomplete],["待判断",s.campaign.linkRows.review]].map(([label,value])=><div key={String(label)}><p className="text-xs text-gray-400">{label}</p><p className="mt-1 text-lg font-semibold tabular-nums">{format(Number(value))}</p></div>)}</div></Card>
+   <Card title="全托 · Selected"><div className="grid grid-cols-2 gap-3 p-5 sm:grid-cols-5">{[["当前已核验",s.fullManaged.links.ready],["旧复用记录",s.fullManaged.links.reuse],["历史复读中",s.fullManaged.links.reading],["缺标准链接",s.fullManaged.links.missing],["待判断",s.fullManaged.links.review]].map(([label,value])=><div key={String(label)}><p className="text-xs text-gray-400">{label}</p><p className="mt-1 text-lg font-semibold tabular-nums">{format(Number(value))}</p></div>)}</div></Card>
+   <Card title="非全托 · Campaign"><div className="grid grid-cols-2 gap-3 p-5 sm:grid-cols-5">{[["当前已核验",s.campaign.linkRows.ready],["旧复用记录",s.campaign.linkRows.reusePids],["缺标准链接",s.campaign.linkRows.missing],["读取不完整",s.campaign.linkRows.readIncomplete],["待判断",s.campaign.linkRows.review]].map(([label,value])=><div key={String(label)}><p className="text-xs text-gray-400">{label}</p><p className="mt-1 text-lg font-semibold tabular-nums">{format(Number(value))}</p></div>)}</div></Card>
   </div></Collapsible>
  </div>;
 }
@@ -99,7 +99,7 @@ function Overview(){
  const checks=[
   {label:"商品准备",ok:result.product,detail:result.product?"合格商品 + 精确 Offer + 当前标准 listId":"停在商品准备"},
   {label:"达人准备",ok:result.creator,detail:result.creator?"稳定 OECID 已确认":"等待身份判定"},
-  {label:"发送安排",ok:result.send,detail:result.send?"可以进入严格发送池":"不进入 Ready"},
+  {label:"发送安排",ok:result.send,detail:result.send?"进入可发送":"归入等待中或暂不参与"},
  ];
  const scenarioNote=scenario.key==="legacy_only"
   ?`平台上虽然有一张 ${scenario.cardPercent}% 的历史卡，但发送池不会使用它；系统按当前 ${scenario.creatorPercent}% 和统一命名规则补建标准链接。`
@@ -118,25 +118,25 @@ function Overview(){
    <Card title="最终只看三种结果" subtitle="技术原因是解释，不再单独膨胀成业务状态"><div className="space-y-3 p-5">
     <ResultCard title="可以发" value={SIMPLE_POOL.sendable} description="三个阶段全部完成，当前每位达人只保留一个最优位置。" tone="success"/>
     <ResultCard title="等待中" value={SIMPLE_POOL.waiting} description="等链接、身份、冷却、回复处理或轮到该商品；数据不会丢。" tone="warning"/>
-    <ResultCard title="暂不可用" value={SIMPLE_POOL.unavailable} description="当前商品失效或不合格；事实保留，恢复后重新计算。" tone="neutral"/>
-    <p className="pt-1 text-xs leading-5 text-gray-400">{format(SIMPLE_POOL.sendable)} + {format(SIMPLE_POOL.waiting)} + {format(SIMPLE_POOL.unavailable)} = {format(SIMPLE_POOL.total)} 个达人×PID 位置</p>
+    <ResultCard title="暂不参与" value={SIMPLE_POOL.inactive} description="当前商品失效、不合格或明确排除；事实保留，条件变化后重新计算。" tone="neutral"/>
+    <p className="pt-1 text-xs leading-5 text-gray-400">{format(SIMPLE_POOL.sendable)} + {format(SIMPLE_POOL.waiting)} + {format(SIMPLE_POOL.inactive)} = {format(SIMPLE_POOL.total)} 个达人×PID 位置</p>
    </div></Card>
   </div>
   <Card title="拿一个 PID 看结果" subtitle="不展示六七个状态，只看它能否连续通过三个阶段"><div className="p-5">
    <div className="flex gap-2 overflow-x-auto pb-2">{SCENARIOS.map(item=><button key={item.key} type="button" aria-pressed={scenarioKey===item.key} onClick={()=>setScenarioKey(item.key)} className={`shrink-0 rounded-lg border px-3 py-2 text-sm font-medium transition ${scenarioKey===item.key?"border-brand-400 bg-brand-50 text-brand-600 dark:border-brand-700 dark:bg-brand-500/10 dark:text-brand-300":"border-gray-200 text-gray-500 hover:border-brand-200 dark:border-gray-800"}`}>{item.label}</button>)}</div>
    <div className="mt-4 grid gap-3 lg:grid-cols-3">{checks.map((check,index)=><div key={check.label} className={`rounded-xl border p-4 ${check.ok?"border-success-200 bg-success-50/50 dark:border-success-900 dark:bg-success-900/5":"border-warning-200 bg-warning-50/50 dark:border-warning-900 dark:bg-warning-900/5"}`}><div className="flex items-center justify-between"><p className="font-semibold"><span className="mr-2 text-xs text-gray-400">{index+1}</span>{check.label}</p><Pill tone={check.ok?"success":"warning"}>{check.ok?"通过":"等待"}</Pill></div><p className="mt-2 text-xs leading-5 text-gray-500">{check.detail}</p></div>)}</div>
-   <Notice tone={result.send?"success":result.layer.includes("失效")?"warning":"info"}><strong>{result.layer}</strong><span className="ml-2">{result.summary}</span><p className="mt-1">{scenarioNote}</p></Notice>
+   <Notice tone={result.send?"success":result.layer==="暂不参与"?"warning":"info"}><strong>{result.layer}</strong><span className="ml-2">{result.summary}</span><p className="mt-1">{scenarioNote}</p></Notice>
   </div></Card>
   <Collapsible label="一个具体排序例子" defaultOpen><div className="space-y-4">
    <div className="grid gap-3 md:grid-cols-5">{[
-    ["1","先清资格","只保留商品、链接、身份都就绪的位置"],["2","按达人分组","同一达人保留多个 PID 机会"],["3","冻结关系","未结回复只冻结这个达人"],["4","排达人顺序","取该达人全部有效位置中最小 rank"],["5","选本次商品","佣金最高 → rank → 全托 → PID"],
+    ["1","先清资格","只保留商品、链接、身份都就绪的位置"],["2","按达人分组","同一达人保留多个 PID 机会"],["3","冻结关系","未结回复只冻结这个达人"],["4","排达人顺序","取该达人全部有效位置中最小 sourceRank"],["5","选本次商品","sourceRank 最小 → 销量更高 → PID"],
    ].map(([number,title,text])=><div key={number} className="rounded-xl bg-gray-50 p-4 dark:bg-gray-800"><p className="text-xs font-semibold text-brand-500">{number}</p><p className="mt-2 text-sm font-semibold">{title}</p><p className="mt-1 text-xs leading-5 text-gray-500">{text}</p></div>)}</div>
    <div className="overflow-x-auto rounded-xl border border-gray-200 dark:border-gray-800"><table className="w-full text-left text-sm"><thead className="bg-gray-50 text-xs text-gray-500 dark:bg-gray-800/60"><tr>{["达人","当前有效位置","达人优先级","本次选择","结果"].map(label=><th key={label} className="whitespace-nowrap px-4 py-3 font-medium">{label}</th>)}</tr></thead><tbody>{[
-    ["@anna","全托 A：rank1 / 13%；Campaign B：rank4 / 17%","1（最佳 rank=1）","Campaign B · 17%","第 1 位，发 B"],
+    ["@anna","全托 A：rank1 / 13%；Campaign B：rank4 / 17%","1（最佳 rank=1）","全托 A · rank1","第 1 位，发 A"],
     ["@bruno","全托 A：rank2 / 15%","2（最佳 rank=2）","全托 A · 15%","第 2 位，发 A"],
     ["@carla","全托 C：rank1 / 18%；全托 D：rank3 / 16%","—","—","有未结回复，仅冻结 Carla"],
    ].map(row=><tr key={row[0]} className="border-t border-gray-100 align-top dark:border-gray-800">{row.map((cell,index)=><td key={index} className={`min-w-32 px-4 py-3 ${index===4?"font-medium text-brand-600 dark:text-brand-300":"text-gray-600 dark:text-gray-300"}`}>{cell}</td>)}</tr>)}</tbody></table></div>
-   <Notice><strong>关键点：</strong>@anna 虽然用 rank1 决定她排第 1，但本次商品选佣金更高的 Campaign B；@carla 的冻结不会影响 @bruno 继续使用 PID-A，也不会冻结 PID-C 对其他达人使用。</Notice>
+   <Notice><strong>关键点：</strong>@anna 在达人排序和内部选品都使用 sourceRank，所以选择 rank1 的全托 A，不会因为 Campaign B 佣金更高而改选；@carla 的冻结不会影响 @bruno 继续使用 PID-A，也不会冻结 PID-C 对其他达人使用。</Notice>
   </div></Collapsible>
  </div>;
 }

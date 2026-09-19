@@ -30,7 +30,7 @@ DeepSeek/Agent 已经把 9 月 14 日的“货盘批量备链”继续推进到�
 
 ### 服务与进程
 
-- Next.js 工作台监听 `127.0.0.1:5198`，cwd 为 `apps/web`；当前实例从 2026-09-16 启动。
+- Next.js 工作台监听 `127.0.0.1:5198`，cwd 为 `apps/web`；本轮规则复核构建后已在 2026-09-19 重启并回读 `/flow-demo`。
 - `batch-preparation-worker.py` 正在运行，继续处理现有持久任务。
 - `second-pilot-worker.ts` 正在运行。
 - `poll-cycle-inbox.py --worker` 正在运行，`platformWrites=false`。
@@ -61,8 +61,8 @@ DeepSeek/Agent 已经把 9 月 14 日的“货盘批量备链”继续推进到�
 | 发送池 | 达人×商品位置、达人级冷却、关系阻断、渠道合并、数量恒等式 | 池本身只读重算；不能从 ready 数量直接启动发送 |
 | 发送预检 | 按池顺序选人/商品、卡片和短名复用、500/600 预览、本地额度与窗口 | 尚无 `create()` 落批次和页面 start/stop；真实发送为 0 |
 | 收信与统计 | 现有 inbox worker 接入作业面板，按北京时间统计并排除历史补录 | 盘点中出现过一次 `im_transport_error`，最终回读已清除；继续观察而不是重启掩盖 |
-| 回复训练 | 方案和历史实现存在 | AI 自动回复关闭；训练/预演不能进入真实发送队列 |
-| PID→发送池演示 | `/flow-demo` 默认展示 PID 生命周期树：来源、当前资格、选入/加入活动、TapLink 创建/复用/重建/核验、刷新和独立清理；达人/发送与技术细节在后续页签 | 纯前端，PID 数量为 2026-09-19 只读静态快照，达人案例为虚构数据；页面运行时不连接 API、SQLite、平台或模型 |
+| 回复分类 | IT/MX 历史数据已完成首轮影子分析；五种动作、三条固定回复和事件级上下文已固化在当前策略文档 | 代码仍是旧分类/事实工具/60 秒 debounce；Jev 等权限和同集实测；AI 自动回复关闭 |
+| PID→发送池演示 | `/flow-demo` 展示 PID 生命周期树、每 PID 最多 20 条线索、OECID、统一 `sourceRank` 排序和三种业务结果 | 纯前端，PID 数量为 2026-09-19 只读静态快照，达人案例为虚构数据；页面运行时不连接 API、SQLite、平台或模型 |
 
 ## 5. 当前必须保持的业务门禁
 
@@ -82,6 +82,8 @@ DeepSeek/Agent 已经把 9 月 14 日的“货盘批量备链”继续推进到�
 4. **本机 Git 无远端**：已有提交和标签可以本机回滚，但机器损坏时没有远端恢复点。配置 GitHub/GitLab 远端需要用户提供目标仓库或明确创建位置。
 5. **文档曾混入大量动态流水**：原 `AGENTS.md` 已由本轮收敛；以后不得继续把每次数字和事故追加回根规则。
 6. **测试资源释放告警**：Python 全量测试通过，但未隐藏 warning 时可见多处未关闭 SQLite connection 的 `ResourceWarning`。它不阻断本次文档交付，后续应按模块修复，避免长驻进程积累连接。
+7. **线索数量与排序尚未对齐**：配置仍为每 PID 10 条，reader 实际最多导入 100 条；部分商品选择仍按佣金。目标是严格前 20 条，并在达人之间和达人内部统一 `sourceRank → units DESC → PID`。
+8. **回复实现仍是旧合同**：`cycle_service.py` 仍使用 60 秒 debounce，`cycle_agent.py`/`cycle_reply_facts.py` 仍包含事实工具路径，尚无 episode/turn 关联、五动作 provider adapter 和固定模板注册表。
 
 ## 7. 建议接续顺序
 
@@ -104,9 +106,13 @@ DeepSeek/Agent 已经把 9 月 14 日的“货盘批量备链”继续推进到�
 5. 本批到顶、窗口关闭、本地额度、账号级平台额度、单达人限额和 unknown 分开处理；
 6. 先完成离线/只读验收，真实 600 探测仍由用户点击启动。
 
-### P3：回复预演与统计
+### P3：发送池与回复合同迁移
 
-发送闭环稳定后，再把真实回复样本用于“用户判定 → 正反例 → 可审计规则”的预演；保持真实自动回复关闭，直到单独验收。
+1. 每 PID 严格截取近 14 天前 20 条正销量线索；
+2. 达人和达人内部 PID 都按 `sourceRank → units DESC → PID` 排序，页面只投影三种业务结果；
+3. 建立 `outbound_episode / inbound_turn / turn_episode_link / service_case`；
+4. 实现 DeepSeek/Jev 可替换分类器、五种动作、固定模板和用户审核回放；
+5. 保持真实自动回复关闭，直到 Jev 获权、同集实测和单独验收完成。
 
 ## 8. 关键入口
 
@@ -114,6 +120,7 @@ DeepSeek/Agent 已经把 9 月 14 日的“货盘批量备链”继续推进到�
 | --- | --- |
 | 产品规则 | `docs/PROJECT.md` |
 | 技术结构 | `docs/TECHNICAL.md` |
+| 达人发送池与 AI 回复当前策略 | `docs/architecture/creator-pool-and-reply-policy-v1.md` |
 | 全链路 | `docs/architecture/catalog-page-chain.md` |
 | 发送池 | `docs/architecture/lead-sending-pool.md`、`scripts/lib/lead_pool.py` |
 | 发送预检 | `scripts/lib/send_batch.py`、`scripts/send-batch.py`、`apps/web/src/server/send/bridge.ts` |
@@ -129,12 +136,12 @@ DeepSeek/Agent 已经把 9 月 14 日的“货盘批量备链”继续推进到�
 
 ## 10. 接管验证
 
-2026-09-19 在继承基线及文档整理后完成：
+2026-09-19 在继承基线及本轮规则复核后完成：
 
-- Python：`1019` 项 `unittest` 通过。
-- Web：`363` 项 Node 测试通过。
+- Python：继承基线的 `1019` 项 `unittest` 已通过；本轮只改文档和纯前端演示，未重复全量 Python。
+- Web：`366` 项 Node 测试通过。
 - TypeScript：`npm run typecheck` 通过。
 - Next.js：`npm run build` 通过，14 个静态页面（含 `/flow-demo`）及当前 API 路由生成成功。
-- 文档：104 个 Markdown 文件的本地链接检查通过；`git diff --check` 通过。
+- 文档：108 个 Markdown 文件的本地链接检查通过；`git diff --check` 通过。
 
 以上均为本机代码与只读合同验证，不是新的平台写入或真实发送验收。

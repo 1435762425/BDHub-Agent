@@ -122,6 +122,10 @@ React 组件不能直接读写 SQLite、启动任意命令或实现资格规则�
 
 身份按达人去重，线索按达人×商品保留。明确 `unresolved` 与尚未请求/技术 blocked 分开；只允许技术未提交项有界重试，明确未找到不自动重问。
 
+目标线索合同是每 PID 近 14 天、按 Kalodata `revenue DESC` 读取并严格保留最多 20 条正销量线索。排序只消费来源内的 `sourceRank`，并列时用 `units DESC, pid ASC`；原始 GMV 字符串保留为证据但不跨币种直接比较。当前 `config/leads-queue.json` 仍写 `leadsPerPid=10`，reader 又按最多两页各 50 条导入，尚未真正执行“最多 20 条”，属于待实施缺口。
+
+身份表应把 `市场 × OECID` 投影为稳定 `creatorId`，handle 变化只追加带观测时间的 alias。同一 OECID 改名时不得新建关系、重置冷却或丢失达人×PID 位置。
+
 ### 5.4 发送池、执行与收信
 
 | 模块 | 作用 |
@@ -137,14 +141,19 @@ React 组件不能直接读写 SQLite、启动任意命令或实现资格规则�
 
 当前 `/api/send` 只支持 GET 状态和 POST 保存 `count/widen/window`，没有 start 路由。`scripts/send-batch.py` 只有 `preview/status/save`；真正执行桥尚未完成。
 
+业务 API/UI 只投影三种发送池结果：`sendable / waiting / inactive`。当前 `lead_pool.py` 的 `ready / queued / cooling / awaiting_reply / excluded / sent` 可暂时作为内部原因与历史来源，但不能继续直接成为主业务状态；`sent` 应迁到历史。达人排序和达人内部 PID 选择都必须使用 `sourceRank → units DESC → pid ASC`。当前部分候选代码仍按佣金选 PID，需要统一修正。
+
 ### 5.5 Agent 与语义能力
 
-- `cycle_agent.py`：基于当前关系事实生成结构化判断；不拥有绕过业务代码的写权限。
-- `outreach_drafts.py` / `draft_provider.py`：受控草稿队列、模型用量和持久结果。
 - `catalog_names.py`：批量商品短名；失败不自动无限重试。
-- `cycle_reply_facts.py`：回复所需事实查询结果。
+- `outreach_drafts.py` / `draft_provider.py`：主动邀约草稿、模型用量和持久结果；不等于达人入站回复能力。
+- `ReplyClassifier`（目标接口）：接收受限的事件上下文，返回五种动作、意图、消息证据和关联 episode；provider 可为 DeepSeek 或 Jev。
+- `ReplyPolicyGuard`（目标模块）：检查多意图、附件、PID/listId 唯一性、模板版本和人工条件，并把不满足的结果强制收敛为 `human`。
+- `ReplyTemplateRegistry`（目标模块）：只提供版本化的 `sample_self_service`、`collaboration_ack`、`link_usage` 三条人工确认模板。
 
-身份、金额、资格、额度、去重、暂停、授权和外部结果必须由代码和台账执行，不能交给模型自由决定。
+模型输出不能直接进入 transport，也不能写达人、PID、冷却、拒联或案件状态。身份、金额、资格、额度、去重、暂停、授权和外部结果继续由代码和台账执行。
+
+当前 `cycle_agent.py` 仍输出佣金/关系事实工具需求，`cycle_reply_facts.py` 和 `cycle_auto_reply.py` 仍保留事实型自动回复路径，`cycle_service.py` 仍使用 60 秒 debounce。这些是现有实现，不是目标合同；后续需由 [达人发送池与 AI 回复策略](architecture/creator-pool-and-reply-policy-v1.md) 的五动作分类、固定模板和集中批处理替换。真实自动回复继续关闭。
 
 ## 6. 数据与状态
 
@@ -176,6 +185,20 @@ React 组件不能直接读写 SQLite、启动任意命令或实现资格规则�
 - 所有 ID、PID、OECID、Campaign ID 和 listId 按字符串处理。
 - 外部响应保存必要摘要、哈希和引用；凭据、Cookie、完整私密正文不进入普通日志。
 - 动态资格和当前平台事实带观测时间；历史快照不自动覆盖更新事实。
+
+### 6.3 目标回复上下文模型
+
+回复上下文按事件建模，不保存一段会覆盖历史事实的自由关系摘要：
+
+| 对象 | 主键/关键字段 | 作用 |
+| --- | --- | --- |
+| `outbound_episode` | `episode_id, creator_id, pid, sent_at` | 一次已确认外发及当时的 Offer、`listId`、佣金版本和消息证据 |
+| `inbound_turn` | `turn_id, creator_id, message_id, occurred_at` | 每条达人入站消息的不可变原文、类型和会话位置 |
+| `turn_episode_link` | `turn_id, episode_id, evidence, confidence` | 记录入站消息可能对应哪个 PID/外发 episode；不确定时允许多个候选 |
+| `service_case` | `case_id, creator_id, action, state` | 聚合需处理的 turn、相关 episode/PID、人工原因和关闭证据 |
+| `reply_classification` | 输入哈希、provider/model、政策版本、结构化输出 | 保存 DeepSeek/Jev 影子结果和用户审核，不直接执行发送 |
+
+分类器只读取当前未处理 turn、少量相邻 turn、候选 episode、达人全局控制和政策版本。原始事件是事实源；任何模型摘要只是可重建缓存。新增表/字段必须提供幂等升级、旧库回填与多 PID 会话测试。
 
 ## 7. 幂等、并发与未知结果
 
@@ -228,7 +251,7 @@ pending → started/submitted → confirmed
 | `/api/inbox` | 收信 worker、今日/历史统计和待人工 |
 | `/api/jobs` | 手动作业与定时意向 |
 
-`/flow-demo` 是纯前端业务沙盘：判断函数位于 `apps/web/src/features/demo/`，页面运行时不调用任何 `/api`、SQLite、CLI、平台或模型。PID 生命周期页内的数量是 2026-09-19 只读台账静态快照，达人案例为虚构数据；两者都不作为实时运行证据。页面只展示两条 TapLink 周期：Campaign 每日随来源核验、全托已选每周核验；两次刷新之间以上次成功结果为准，不做发送前远程预检，确认失效的链接进入清理。实测耗时必须注明样本、并发与非 SLA 边界；同时与 `schedulerReady=false`、作业开关关闭的当前运行事实分开。
+`/flow-demo` 是纯前端业务沙盘：判断函数位于 `apps/web/src/features/demo/`，页面运行时不调用任何 `/api`、SQLite、CLI、平台或模型。PID 生命周期页内的数量是 2026-09-19 只读台账静态快照，达人案例为虚构数据；两者都不作为实时运行证据。页面只展示两条 TapLink 周期：Campaign 每日随来源核验、全托已选每周核验；两次刷新之间以上次成功结果为准，不做发送前远程预检，确认失效的链接进入清理。达人页必须说明每 PID 近 14 天最多 20 条、OECID 改名归并、统一 `sourceRank` 排序和三种业务结果，不能继续把佣金优先或六层内部枚举表现为现行规则。实测耗时必须注明样本、并发与非 SLA 边界；同时与 `schedulerReady=false`、作业开关关闭的当前运行事实分开。
 
 ## 9. 账号与外部系统
 
@@ -265,6 +288,8 @@ pending → started/submitted → confirmed
 | `config/*.example.json` | 敏感本机配置样例 |
 
 业务配置不得另建第二来源。敏感配置、邮箱、激活码、Cookie 和身份文件不入 Git。
+
+后续回复实施应新增一个版本化政策入口，统一保存五种动作、模板版本、provider 选择和集中批处理周期；不得把这些值散落在 prompt、React 组件和 worker 常量中。API key 继续只放本机敏感配置。
 
 ## 11. 运行方式
 
@@ -363,6 +388,8 @@ PYTHONDONTWRITEBYTECODE=1 \
 - Python 测试仍有未关闭 SQLite connection 的 `ResourceWarning`。
 - Web Node 测试存在 module type warning；Next.js 构建有上游 deprecation warning。
 - 发送预检尚未接持久批次、start/stop 和执行器。
+- 线索 reader 尚未真正执行每 PID 最多 20 条，发送池和部分候选代码尚未完全统一 `sourceRank` 排序及三结果投影。
+- 回复链仍是 60 秒 debounce、事实工具和旧分类合同，尚未迁移到事件级上下文、五动作、固定模板和 provider adapter。
 - 本机 `var/` 缺正式备份、恢复和跨机器迁移方案。
 - 新项目仍依赖旧 Python 环境与部分协议层；最终需要独立依赖和凭据管理。
 
