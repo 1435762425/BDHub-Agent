@@ -134,7 +134,7 @@ export function decodeDiscoveryOutput(command:CreatorDiscoveryCommand,output:str
 export function callDiscoveryCommand(command:CreatorDiscoveryCommand,input:ObjectValue,options:{run?:typeof execFile;root?:string}={}):Promise<CreatorDiscoveryResponse>{
   const call=normalizedCall(command,input),root=options.root??rootPath(),run=options.run??execFile;
   return new Promise((resolveResult,reject)=>{
-    const child=run(join(root,"../01-BDSystem-V2/.venv/bin/python"),[join(root,"scripts/creator-discovery.py"),call.command],
+    const child=run(join(root,".venv/bin/python"),[join(root,"scripts/creator-discovery.py"),call.command],
       {cwd:root,timeout:10000,maxBuffer:1024*1024,shell:false,env:{...process.env,PYTHONDONTWRITEBYTECODE:"1"}},(error,stdout)=>{
         try{
           const result=decodeDiscoveryOutput(call.command,String(stdout));

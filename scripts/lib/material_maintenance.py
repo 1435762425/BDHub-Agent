@@ -112,7 +112,7 @@ def start_scheduler(root,*,clock=time.time,spawn=subprocess.Popen):
  except OSError:pass
  log=root/'var/material-maintenance.log';log.parent.mkdir(parents=True,exist_ok=True)
  with log.open('a',encoding='utf-8') as handle:
-  child=spawn([str(root.parent/'01-BDSystem-V2/.venv/bin/python'),str(root/'scripts/material-maintenance.py'),'--worker'],
+  child=spawn([str(root/'.venv/bin/python'),str(root/'scripts/material-maintenance.py'),'--worker'],
               cwd=str(root),stdin=subprocess.DEVNULL,stdout=handle,stderr=subprocess.STDOUT,
               start_new_session=True,env={**os.environ,'PYTHONDONTWRITEBYTECODE':'1'})
  _write(run_path(root),{'pid':child.pid,'startedAt':clock(),'log':str(log)})

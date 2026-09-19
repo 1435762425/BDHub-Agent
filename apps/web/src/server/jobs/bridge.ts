@@ -78,7 +78,7 @@ export function validateJobsSave(value:unknown):JobsSave{
 function runJobs(args:string[]):Promise<JobsState>{
  const root=projectRoot();
  return new Promise((resolve,reject)=>{
-  execFile(join(root,"../01-BDSystem-V2/.venv/bin/python"),[join(root,"scripts/jobs.py"),...args],
+  execFile(join(root,".venv/bin/python"),[join(root,"scripts/jobs.py"),...args],
    {cwd:root,timeout:30000,maxBuffer:1024*1024,env:{...process.env,PYTHONDONTWRITEBYTECODE:"1"}},(error,out)=>{
     try{const parsed=JSON.parse(out);if(parsed&&typeof parsed==="object"&&typeof parsed.error==="string"){reject(Error(parsed.error));return;}resolve(validateJobs(parsed));}
     catch{reject(Error('jobs_unavailable'));}

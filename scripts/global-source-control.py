@@ -29,7 +29,7 @@ def main():
       scope=catalog_scope(ROOT,catalog_read_account(ROOT));s.start(run_id,scope)
      fcntl.flock(worker_lock,fcntl.LOCK_UN)
      with (ROOT/'var/global-source-worker.log').open('a') as log:
-      child=subprocess.Popen([str(ROOT.parent/'01-BDSystem-V2/.venv/bin/python'),str(ROOT/'scripts/collect-global-opportunity.py'),'--run-id',run_id,'--pages','15','--worker'],cwd=ROOT,stdin=subprocess.DEVNULL,stdout=log,stderr=subprocess.STDOUT,start_new_session=True,env={**os.environ,'PYTHONDONTWRITEBYTECODE':'1'})
+      child=subprocess.Popen([str(ROOT/'.venv/bin/python'),str(ROOT/'scripts/collect-global-opportunity.py'),'--run-id',run_id,'--pages','15','--worker'],cwd=ROOT,stdin=subprocess.DEVNULL,stdout=log,stderr=subprocess.STDOUT,start_new_session=True,env={**os.environ,'PYTHONDONTWRITEBYTECODE':'1'})
      (ROOT/'var/global-source-worker.pid').write_text(str(child.pid));result={'state':'reader_started','runId':run_id,'executionAllowed':False}
     payload=json.dumps(result);s.db.execute('INSERT INTO global_source_control_request VALUES(?,?)',(request['requestId'],payload));print(payload)
   finally:s.close()

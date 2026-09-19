@@ -51,7 +51,7 @@ export function validateCatalogNames(value:unknown):CatalogNamesState{
 function run(args:string[],timeout:number):Promise<CatalogNamesState>{
  const root=projectRoot();
  return new Promise((resolve,reject)=>{
-  execFile(join(root,"../01-BDSystem-V2/.venv/bin/python"),[join(root,"scripts/catalog-names.py"),...args],
+  execFile(join(root,".venv/bin/python"),[join(root,"scripts/catalog-names.py"),...args],
    {cwd:root,timeout,maxBuffer:1024*1024,env:{...process.env,PYTHONDONTWRITEBYTECODE:"1"}},(error,out)=>{
     let parsed:unknown;
     try{parsed=JSON.parse(out);}catch{reject(Error('catalog_names_unavailable'));return;}
@@ -72,7 +72,7 @@ export function startCatalogNames(limit:number,all=false):{started:boolean}{
  const log=openSync(join(root,"var/catalog-names.log"),"a");
  // ``all`` covers whatever is left, so the operator never has to work out a number.
  const args=all?["prepare","--all"]:["prepare","--limit",String(limit)];
- const child=spawn(join(root,"../01-BDSystem-V2/.venv/bin/python"),
+ const child=spawn(join(root,".venv/bin/python"),
   [join(root,"scripts/catalog-names.py"),...args],
   {cwd:root,detached:true,stdio:["ignore",log,log],env:{...process.env,PYTHONDONTWRITEBYTECODE:"1"}});
  child.unref();

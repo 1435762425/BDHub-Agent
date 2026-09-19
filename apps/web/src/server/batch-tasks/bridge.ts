@@ -17,13 +17,13 @@ export function taskCommand(body:unknown):Record<string,unknown>{
 }
 export function callTasks(body:Record<string,unknown>):Promise<Record<string,unknown>>{
  const root=projectRoot();return new Promise((resolve,reject)=>{
-  const child=execFile(join(root,"../01-BDSystem-V2/.venv/bin/python"),[join(root,"scripts/batch-task-control.py")],{cwd:root,timeout:20000,maxBuffer:2*1024*1024,env:{...process.env,PYTHONDONTWRITEBYTECODE:"1"}},(error,stdout)=>{
+  const child=execFile(join(root,".venv/bin/python"),[join(root,"scripts/batch-task-control.py")],{cwd:root,timeout:20000,maxBuffer:2*1024*1024,env:{...process.env,PYTHONDONTWRITEBYTECODE:"1"}},(error,stdout)=>{
    try{const data=JSON.parse(stdout);if(error||data.error)throw error&&"code" in error&&error.code===2?new TaskInputError(data.error):new Error("task_store_unavailable");resolve(data);}catch(e){reject(e);}
   });child.stdin?.end(JSON.stringify(body));
  });
 }
 export function ensurePreparationWorker(){
- const root=projectRoot();const worker=spawn(join(root,"../01-BDSystem-V2/.venv/bin/python"),[join(root,"scripts/batch-preparation-worker.py")],{cwd:root,detached:true,stdio:"ignore",env:{...process.env,PYTHONDONTWRITEBYTECODE:"1"}});
+ const root=projectRoot();const worker=spawn(join(root,".venv/bin/python"),[join(root,"scripts/batch-preparation-worker.py")],{cwd:root,detached:true,stdio:"ignore",env:{...process.env,PYTHONDONTWRITEBYTECODE:"1"}});
  worker.on("error",()=>{});worker.unref(); // singleton flock in worker; status exposes failure
 }
 export function createTaskHandlers(call=callTasks,wake=ensurePreparationWorker){

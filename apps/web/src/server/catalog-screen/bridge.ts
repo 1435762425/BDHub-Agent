@@ -113,7 +113,7 @@ function validatePreview(value:unknown):CatalogScreenPreview{
 function runScreen(args:string[]):Promise<CatalogScreenState>{
  const root=projectRoot();
  return new Promise((resolve,reject)=>{
-  execFile(join(root,"../01-BDSystem-V2/.venv/bin/python"),[join(root,"scripts/global-screen.py"),...args],
+  execFile(join(root,".venv/bin/python"),[join(root,"scripts/global-screen.py"),...args],
    {cwd:root,timeout:60000,maxBuffer:4*1024*1024,env:{...process.env,PYTHONDONTWRITEBYTECODE:"1"}},(error,out)=>{
     try{const parsed=validateState(JSON.parse(out));resolve(parsed);}
     catch{reject(Error('catalog_screen_unavailable'));}

@@ -284,7 +284,7 @@ class OneRound(unittest.TestCase):
     def _fake_worker(self, parent, body):
         root = Path(parent) / 'repo'
         (root / 'scripts').mkdir(parents=True)
-        binary = Path(parent) / '01-BDSystem-V2/.venv/bin'
+        binary = root / '.venv/bin'
         binary.mkdir(parents=True)
         (binary / 'python').symlink_to(sys.executable)
         (root / 'scripts/creator-profile-refresh.py').write_text(body, encoding='utf-8')

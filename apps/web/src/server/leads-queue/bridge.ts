@@ -84,7 +84,7 @@ export function validateLeadsQueue(value:unknown):LeadsQueueState{
 function runQueue(args:string[]):Promise<LeadsQueueState>{
  const root=projectRoot();
  return new Promise((resolve,reject)=>{
-  execFile(join(root,"../01-BDSystem-V2/.venv/bin/python"),[join(root,"scripts/leads-queue.py"),...args],
+  execFile(join(root,".venv/bin/python"),[join(root,"scripts/leads-queue.py"),...args],
    {cwd:root,timeout:60000,maxBuffer:2*1024*1024,env:{...process.env,PYTHONDONTWRITEBYTECODE:"1"}},(error,out)=>{
     try{resolve(validateLeadsQueue(JSON.parse(out)));}
     catch{reject(Error('leads_queue_unavailable'));}
@@ -109,7 +109,7 @@ export function validateLeadsQueueRequest(value:unknown):{action:"save";config:L
 export function startLeadsRun():{started:boolean}{
  const root=projectRoot();
  const log=openSync(join(root,"var/leads-run.log"),"a");
- const child=spawn(join(root,"../01-BDSystem-V2/.venv/bin/python"),[join(root,"scripts/leads-run.py")],
+ const child=spawn(join(root,".venv/bin/python"),[join(root,"scripts/leads-run.py")],
   {cwd:root,detached:true,stdio:["ignore",log,log],env:{...process.env,PYTHONDONTWRITEBYTECODE:"1"}});
  child.unref();
  return {started:true};

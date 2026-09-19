@@ -36,7 +36,7 @@ export function parseSecondOutreachQuery(url:string){
 export function callSecondOutreach(command:string,input:unknown):Promise<unknown>{
   if(!["status","list","get","command","context","templates"].includes(command))bad();const root=projectRoot();
   return new Promise((resolve,reject)=>{
-    const child=execFile(join(root,"../01-BDSystem-V2/.venv/bin/python"),[join(root,"scripts/second-outreach.py"),command],{cwd:root,timeout:15000,maxBuffer:2*1024*1024,shell:false,env:{...process.env,PYTHONDONTWRITEBYTECODE:"1"}},(error,stdout)=>{
+    const child=execFile(join(root,".venv/bin/python"),[join(root,"scripts/second-outreach.py"),command],{cwd:root,timeout:15000,maxBuffer:2*1024*1024,shell:false,env:{...process.env,PYTHONDONTWRITEBYTECODE:"1"}},(error,stdout)=>{
       try{const body=JSON.parse(stdout);if(body?.error){const code=String(body.error.code),safe=messages[code]||[503,"二发服务暂不可用。"] as [number,string];throw new SecondOutreachError(messages[code]?code:"second_unavailable",safe[0],safe[1]);}if(error||!body||typeof body!=="object")throw new Error();resolve(body);}
       catch(failure){reject(failure instanceof SecondOutreachError?failure:new SecondOutreachError("second_unavailable",503,"二发服务暂不可用，请保留原请求编号。"));}
     });child.stdin?.on("error",()=>{});child.stdin?.end(JSON.stringify(input));

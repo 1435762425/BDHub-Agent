@@ -72,7 +72,7 @@ export function validateIdentityState(value:unknown):KalodataIdentityState{
 function runIdentity(args:string[],timeout:number):Promise<KalodataIdentityState>{
  const root=projectRoot();
  return new Promise((resolve,reject)=>{
-  execFile(join(root,"../01-BDSystem-V2/.venv/bin/python"),[join(root,"scripts/kalodata-identity.py"),...args],
+  execFile(join(root,".venv/bin/python"),[join(root,"scripts/kalodata-identity.py"),...args],
    {cwd:root,timeout,maxBuffer:2*1024*1024,env:{...process.env,PYTHONDONTWRITEBYTECODE:"1"}},(error,out)=>{
     try{resolve(validateIdentityState(JSON.parse(out)));}
     catch{reject(Error('kalodata_identity_unavailable'));}

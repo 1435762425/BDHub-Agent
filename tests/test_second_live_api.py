@@ -135,7 +135,7 @@ class SecondLiveAPITest(unittest.TestCase):
         self.assertEqual(len(self.calls), 1)
         self.assertEqual(len(self.spawns), 1)
         argv, opts = self.spawns[0]
-        self.assertEqual(argv, ["/Users/bjn00003/BDHub/01-BDSystem-V2/.venv/bin/python",
+        self.assertEqual(argv, [str(Path(__file__).resolve().parents[1] / ".venv/bin/python"),
             str(self.root / "scripts" / "italy-second-live.py"), "run", "--trial-id", self.id])
         self.assertFalse(opts["shell"])
         self.assertTrue(opts["start_new_session"])

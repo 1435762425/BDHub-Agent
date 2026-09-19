@@ -118,7 +118,7 @@ const WRITE_TIMEOUT_MS=10*60*1000;
 function run(script:string,args:string[],limit=4*1024*1024,timeout=60000):Promise<unknown>{
  const root=projectRoot();
  return new Promise((resolve,reject)=>{
-  execFile(join(root,"../01-BDSystem-V2/.venv/bin/python"),[join(root,"scripts",script),...args],
+  execFile(join(root,".venv/bin/python"),[join(root,"scripts",script),...args],
    {cwd:root,timeout,maxBuffer:limit,env:{...process.env,PYTHONDONTWRITEBYTECODE:"1"}},(error,out,err)=>{
     let parsed:unknown;
     try{parsed=JSON.parse(out);}

@@ -41,7 +41,7 @@ export function validateNaming(value:unknown):LinkNamingState{
 function runNaming(args:string[]):Promise<LinkNamingState>{
  const root=projectRoot();
  return new Promise((resolve,reject)=>{
-  execFile(join(root,"../01-BDSystem-V2/.venv/bin/python"),[join(root,"scripts/link-naming.py"),...args],
+  execFile(join(root,".venv/bin/python"),[join(root,"scripts/link-naming.py"),...args],
    {cwd:root,timeout:30000,maxBuffer:2*1024*1024,env:{...process.env,PYTHONDONTWRITEBYTECODE:"1"}},(error,out)=>{
     try{const parsed=validateNaming(JSON.parse(out));if(error&&!parsed.error)throw error;resolve(parsed);}
     catch{reject(Error('link_naming_unavailable'));}

@@ -11,7 +11,7 @@ export function validatePreparation(v:unknown):PreparationStatus{
  return p;
 }
 export function readPreparation(target:number):Promise<PreparationStatus>{const root=projectRoot();return new Promise((resolve,reject)=>{
- const child=execFile(join(root,"../01-BDSystem-V2/.venv/bin/python"),[join(root,"scripts/inspect-batch-preparation.py")],{cwd:root,timeout:30000,maxBuffer:1024*1024,env:{...process.env,PYTHONDONTWRITEBYTECODE:"1"}},(error,stdout)=>{try{if(error)throw error;resolve(validatePreparation(JSON.parse(stdout)));}catch{reject(new Error("preparation_unavailable"));}});
+ const child=execFile(join(root,".venv/bin/python"),[join(root,"scripts/inspect-batch-preparation.py")],{cwd:root,timeout:30000,maxBuffer:1024*1024,env:{...process.env,PYTHONDONTWRITEBYTECODE:"1"}},(error,stdout)=>{try{if(error)throw error;resolve(validatePreparation(JSON.parse(stdout)));}catch{reject(new Error("preparation_unavailable"));}});
  child.stdin?.end(JSON.stringify({target}));
 });}
 export function createPreparationPost(read=readPreparation){return async(request:Request)=>{

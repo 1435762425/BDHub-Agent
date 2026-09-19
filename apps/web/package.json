@@ -16,7 +16,7 @@
     "import:italy-profiles": "node --experimental-strip-types scripts/import-italy-profiles.ts",
     "pilot:italy-second": "node --experimental-strip-types scripts/italy-second-pilot.ts",
     "second:worker": "node --experimental-strip-types scripts/second-pilot-worker.ts",
-    "identity:worker": "PYTHONDONTWRITEBYTECODE=1 python3 ../../scripts/creator-profile-refresh.py worker",
+    "identity:worker": "PYTHONDONTWRITEBYTECODE=1 ../../.venv/bin/python ../../scripts/creator-profile-refresh.py worker",
     "sync:identity-profiles": "node --experimental-strip-types scripts/sync-registry-profiles.ts",
     "drafts:worker": "node --experimental-strip-types scripts/outreach-draft-worker.ts"
   },

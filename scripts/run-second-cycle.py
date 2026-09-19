@@ -6,7 +6,7 @@ sys.dont_write_bytecode=True
 ROOT=Path(__file__).resolve().parents[1];sys.path.insert(0,str(ROOT/'scripts'))
 from lib.second_cycle import CycleStore
 from lib.cycle_scheduler import Scheduler,schedule_status
-PYTHON=str(ROOT.parent/'01-BDSystem-V2/.venv/bin/python');STOP=False;CHILD=None
+PYTHON=str(ROOT/'.venv/bin/python');STOP=False;CHILD=None
 
 def stop(*_):
  global STOP

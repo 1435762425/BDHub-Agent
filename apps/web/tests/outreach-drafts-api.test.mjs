@@ -67,7 +67,7 @@ test("decoder keeps unknown cost/cache distinct from zero and strips extra provi
 });
 test("fixed CLI argv and stdin keep custom content out of shell and child errors masked",async()=>{
   let captured;const runner=(executable,args,options,callback)=>({stdin:{on(){return this;},end(value){captured={executable,args,options,value};queueMicrotask(()=>callback(null,JSON.stringify(status(false))));}}});
-  await callDraftCommand("status",{},{root:"/project/BDHub-Agent",run:runner});assert.equal(captured.executable,"/project/01-BDSystem-V2/.venv/bin/python");assert.deepEqual(captured.args,["/project/BDHub-Agent/scripts/outreach-drafts.py","status"]);assert.equal(captured.options.shell,false);
+  await callDraftCommand("status",{},{root:"/project/BDHub-Agent",run:runner});assert.equal(captured.executable,"/project/BDHub-Agent/.venv/bin/python");assert.deepEqual(captured.args,["/project/BDHub-Agent/scripts/outreach-drafts.py","status"]);assert.equal(captured.options.shell,false);
   const bad=(executable,args,options,callback)=>({stdin:{on(){return this;},end(){queueMicrotask(()=>callback(Error("SECRET"),JSON.stringify(summary())));}}});
   await assert.rejects(callDraftCommand("enqueue",{requestId:input.requestId,context:{text:"$(PRIVATE)"},fingerprint:HASH,contextRequest:ctx},{root:"/project/BDHub-Agent",run:bad}),error=>error.code==="draft_service_unavailable"&&!error.message.includes("SECRET"));
 });

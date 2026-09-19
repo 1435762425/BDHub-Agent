@@ -19,7 +19,7 @@ from lib.creator_identity import CreatorIdentityStore
 
 ROOT = Path(__file__).resolve().parents[2]
 VAR = ROOT / "var"
-LEGACY_PYTHON = ROOT.parent / "01-BDSystem-V2/.venv/bin/python"
+PROJECT_PYTHON = ROOT / ".venv/bin/python"
 LEASE_SECONDS = 240
 SAFE_ERRORS = frozenset({
     "identity_not_found", "identity_mismatch", "unsupported_market", "idempotency_conflict",
@@ -255,11 +255,11 @@ def _import_reports(store, reports):
 
 
 def _execute_probe(target_file, output):
-    if not LEGACY_PYTHON.is_file():
+    if not PROJECT_PYTHON.is_file():
         raise ProfileRefreshError("runtime_unavailable", 503)
     # These paths are constructed from job IDs under our fixed var directory,
     # never from a request payload or an environment-selected script path.
-    command = [str(LEGACY_PYTHON), str(ROOT / "scripts/probe-italy-profile.py"),
+    command = [str(PROJECT_PYTHON), str(ROOT / "scripts/probe-italy-profile.py"),
                "--account", "acc6", "--targets", str(target_file), "--output", str(output)]
     process = subprocess.Popen(command, cwd=ROOT, start_new_session=True, stdin=subprocess.DEVNULL,
                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,

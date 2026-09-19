@@ -17,7 +17,7 @@ export function validateLinkStatus(value:unknown):CatalogLinkStatus{
  if(!v.items.every(i=>i&&/^\d{19}$/.test(i.pid)&&typeof i.campaignId==="string"&&typeof i.state==="string"&&typeof i.title==="string"))throw Error('invalid_link_status');
  return v;
 }
-export function readLinkStatus():Promise<CatalogLinkStatus>{const root=projectRoot();return new Promise((resolve,reject)=>{execFile(join(root,"../01-BDSystem-V2/.venv/bin/python"),[join(root,"scripts/catalog-link-prepare.py"),"--status-links"],{cwd:root,timeout:20000,maxBuffer:2*1024*1024,env:{...process.env,PYTHONDONTWRITEBYTECODE:"1"}},(e,out)=>{try{if(e)throw e;resolve(validateLinkStatus(JSON.parse(out)));}catch{reject(Error('catalog_link_status_unavailable'));}});});}
+export function readLinkStatus():Promise<CatalogLinkStatus>{const root=projectRoot();return new Promise((resolve,reject)=>{execFile(join(root,".venv/bin/python"),[join(root,"scripts/catalog-link-prepare.py"),"--status-links"],{cwd:root,timeout:20000,maxBuffer:2*1024*1024,env:{...process.env,PYTHONDONTWRITEBYTECODE:"1"}},(e,out)=>{try{if(e)throw e;resolve(validateLinkStatus(JSON.parse(out)));}catch{reject(Error('catalog_link_status_unavailable'));}});});}
 export function validateGlobal(value:unknown):GlobalStatus{
  if(!value||typeof value!=="object")throw Error('invalid_global_source');const v=value as GlobalStatus;
  if(v.executionAllowed!==false||typeof v.available!=="boolean")throw Error('invalid_global_source');
@@ -25,7 +25,7 @@ export function validateGlobal(value:unknown):GlobalStatus{
  if(v.source!=="opportunity_global_only"||v.market!=="it"||!Number.isSafeInteger(v.products)||Number(v.products)<0||!Number.isSafeInteger(v.totalMatches)||v.totalMatches<0||!Array.isArray(v.items)||v.items.length>50||!v.items.every(p=>p&&/^\d{19}$/.test(p.pid)&&typeof p.title==='string'&&Array.isArray(p.selectedOffers)))throw Error('invalid_global_source');
  return v;
 }
-export function readGlobal(offset=0,query=""):Promise<GlobalStatus>{const root=projectRoot();return new Promise((resolve,reject)=>{execFile(join(root,"../01-BDSystem-V2/.venv/bin/python"),[join(root,"scripts/collect-global-opportunity.py"),"--status","--offset",String(offset),`--query=${query}`],{cwd:root,timeout:15000,maxBuffer:2*1024*1024,env:{...process.env,PYTHONDONTWRITEBYTECODE:"1"}},(e,out)=>{try{if(e)throw e;resolve(validateGlobal(JSON.parse(out)));}catch{reject(Error('global_source_unavailable'));}});});}
+export function readGlobal(offset=0,query=""):Promise<GlobalStatus>{const root=projectRoot();return new Promise((resolve,reject)=>{execFile(join(root,".venv/bin/python"),[join(root,"scripts/collect-global-opportunity.py"),"--status","--offset",String(offset),`--query=${query}`],{cwd:root,timeout:15000,maxBuffer:2*1024*1024,env:{...process.env,PYTHONDONTWRITEBYTECODE:"1"}},(e,out)=>{try{if(e)throw e;resolve(validateGlobal(JSON.parse(out)));}catch{reject(Error('global_source_unavailable'));}});});}
 export function createGlobalGet(read=readGlobal){return async(request:Request)=>{
  const headers={"Cache-Control":"no-store"};if(!isLocalRequest(request,false))return Response.json({error:'local_origin_required'},{status:403,headers});
  const u=new URL(request.url),offset=Number(u.searchParams.get('offset')||0),q=u.searchParams.get('q')||'';
@@ -34,7 +34,7 @@ export function createGlobalGet(read=readGlobal){return async(request:Request)=>
 };}
 
 export function requestGlobalSync(requestId:string):Promise<{state:string;runId:string|null;executionAllowed:false}>{const root=projectRoot();return new Promise((resolve,reject)=>{
- const child=execFile(join(root,"../01-BDSystem-V2/.venv/bin/python"),[join(root,"scripts/global-source-control.py")],{cwd:root,timeout:15000,maxBuffer:65536,env:{...process.env,PYTHONDONTWRITEBYTECODE:"1"}},(e,out)=>{try{if(e)throw e;const v=JSON.parse(out);if(!['reader_started','already_running'].includes(v.state)||v.executionAllowed!==false)throw Error();resolve(v);}catch{reject(Error('source_sync_unavailable'));}});
+ const child=execFile(join(root,".venv/bin/python"),[join(root,"scripts/global-source-control.py")],{cwd:root,timeout:15000,maxBuffer:65536,env:{...process.env,PYTHONDONTWRITEBYTECODE:"1"}},(e,out)=>{try{if(e)throw e;const v=JSON.parse(out);if(!['reader_started','already_running'].includes(v.state)||v.executionAllowed!==false)throw Error();resolve(v);}catch{reject(Error('source_sync_unavailable'));}});
  child.stdin?.end(JSON.stringify({action:'sync',requestId}));
 });}
 export function createGlobalPost(sync=requestGlobalSync){return async(request:Request)=>{

@@ -67,7 +67,7 @@ test("child execution is a fixed local script with stdin and no shell or user te
   let captured;const run=(executable,args,options,callback)=>({stdin:{on(){return this;},end(data){captured={executable,args,options,data};queueMicrotask(()=>callback(null,JSON.stringify(preview())));}}});
   const input={market:"it",sourceLabel:"意大利名单",text:"@alice\n$(touch /tmp/never)"};
   await callDiscoveryCommand("preview",input,{root:"/project/BDHub-Agent",run});
-  assert.equal(captured.executable,"/project/01-BDSystem-V2/.venv/bin/python");assert.deepEqual(captured.args,["/project/BDHub-Agent/scripts/creator-discovery.py","preview"]);assert.equal(captured.options.shell,false);assert.deepEqual(JSON.parse(captured.data),input);assert(!captured.args.join(" ").includes("touch"));
+  assert.equal(captured.executable,"/project/BDHub-Agent/.venv/bin/python");assert.deepEqual(captured.args,["/project/BDHub-Agent/scripts/creator-discovery.py","preview"]);assert.equal(captured.options.shell,false);assert.deepEqual(JSON.parse(captured.data),input);assert(!captured.args.join(" ").includes("touch"));
 });
 test("nonzero child success-looking output is not acknowledged and known error is still recoverable",async()=>{
   const runner=output=>(executable,args,options,callback)=>({stdin:{on(){return this;},end(){queueMicrotask(()=>callback(new Error("PRIVATE_EXEC_ERROR"),output));}}});

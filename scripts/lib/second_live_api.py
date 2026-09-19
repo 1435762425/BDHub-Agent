@@ -25,7 +25,7 @@ import uuid
 from lib.second_live_trial import LiveTrialError, LiveTrialStore
 
 ROOT = Path(__file__).resolve().parents[2]
-PYTHON = Path("/Users/bjn00003/BDHub/01-BDSystem-V2/.venv/bin/python")
+PYTHON = ROOT / ".venv/bin/python"
 TRIAL_ID = re.compile(r"second_live_trial_[a-f0-9]{32}\Z")
 HASH = re.compile(r"[a-f0-9]{64}\Z")
 REQUEST_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,159}\Z")

@@ -180,7 +180,7 @@ export function parseInboxQuery(url:string):InboxQuery{
 function runMonitor(args:string[]):Promise<unknown>{
  const root=projectRoot();
  return new Promise((resolve,reject)=>{
-  execFile(join(root,"../01-BDSystem-V2/.venv/bin/python"),[join(root,"scripts/inbox-monitor.py"),...args],
+  execFile(join(root,".venv/bin/python"),[join(root,"scripts/inbox-monitor.py"),...args],
    {cwd:root,timeout:60000,maxBuffer:2*1024*1024,env:{...process.env,PYTHONDONTWRITEBYTECODE:"1"}},(error,out)=>{
     let parsed:unknown;
     try{parsed=JSON.parse(out);}
@@ -205,7 +205,7 @@ export function saveInboxConfig(config:InboxConfig):Promise<InboxState>{
 function runJob(args:string[]):Promise<void>{
  const root=projectRoot();
  return new Promise((resolve,reject)=>{
-  execFile(join(root,"../01-BDSystem-V2/.venv/bin/python"),[join(root,"scripts/job-run.py"),...args],
+  execFile(join(root,".venv/bin/python"),[join(root,"scripts/job-run.py"),...args],
    {cwd:root,timeout:60000,maxBuffer:1024*1024,env:{...process.env,PYTHONDONTWRITEBYTECODE:"1"}},(error,out)=>{
     let parsed:unknown;
     try{parsed=JSON.parse(out);}

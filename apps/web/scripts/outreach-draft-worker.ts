@@ -4,7 +4,7 @@ import {fileURLToPath} from "node:url";
 import {join,resolve} from "node:path";
 
 const root=fileURLToPath(new URL("../../../",import.meta.url));
-const python=resolve(root,"../01-BDSystem-V2/.venv/bin/python");
+const python=resolve(root,".venv/bin/python");
 if(!existsSync(python)){
   process.stderr.write("草稿 Worker 所需的 Python 环境未就绪。\n");
   process.exitCode=1;

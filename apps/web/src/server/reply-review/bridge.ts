@@ -64,7 +64,7 @@ export function validateReplyReviewStatus(value:unknown):ReplyReviewStatus{
  return {schema:"bdhub.reply-review.v1",policyVersion:string(v.policyVersion,64),processingIntervalSeconds:integer(v.processingIntervalSeconds,86400),automaticReplies:false,providers:{deepseek:{mode:string(deepseek.mode,32)},jev:{mode:string(jev.mode,32)}},templates,counts,evaluation,items};
 }
 
-export function invokeReplyReview(input:Command):Promise<unknown>{const root=projectRoot();return new Promise((resolve,reject)=>{const child=execFile(join(root,"../01-BDSystem-V2/.venv/bin/python"),[join(root,"scripts/reply-review.py")],{cwd:root,timeout:90000,maxBuffer:4*1024*1024,env:{...process.env,PYTHONDONTWRITEBYTECODE:"1"}},(error,stdout)=>{try{const value=JSON.parse(stdout);if(error||value.error)throw Error(String(value.error||"reply_review_unavailable"));resolve(input.action==="status"?validateReplyReviewStatus(value):value);}catch(error){reject(error);}});child.stdin?.end(JSON.stringify(input));});}
+export function invokeReplyReview(input:Command):Promise<unknown>{const root=projectRoot();return new Promise((resolve,reject)=>{const child=execFile(join(root,".venv/bin/python"),[join(root,"scripts/reply-review.py")],{cwd:root,timeout:90000,maxBuffer:4*1024*1024,env:{...process.env,PYTHONDONTWRITEBYTECODE:"1"}},(error,stdout)=>{try{const value=JSON.parse(stdout);if(error||value.error)throw Error(String(value.error||"reply_review_unavailable"));resolve(input.action==="status"?validateReplyReviewStatus(value):value);}catch(error){reject(error);}});child.stdin?.end(JSON.stringify(input));});}
 
 const headers={"Cache-Control":"no-store","X-Content-Type-Options":"nosniff"};
 export function createReplyReviewHandlers(invoke=invokeReplyReview){return {

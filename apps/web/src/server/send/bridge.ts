@@ -215,7 +215,7 @@ export function validateSendState(value:unknown):SendState{
 function run(args:string[]):Promise<SendState>{
  const root=projectRoot();
  return new Promise((resolve,reject)=>{
-  execFile(join(root,"../01-BDSystem-V2/.venv/bin/python"),
+  execFile(join(root,".venv/bin/python"),
    [join(root,"scripts/send-batch.py"),...args],
    {cwd:root,timeout:180000,maxBuffer:8*1024*1024,env:{...process.env,PYTHONDONTWRITEBYTECODE:"1"}},
    (error,out)=>{

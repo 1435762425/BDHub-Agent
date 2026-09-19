@@ -197,7 +197,7 @@ def _inbox_step(payload):
 
 
 def python_bin(root):
-    return Path(root).parent / '01-BDSystem-V2/.venv/bin/python'
+    return Path(root) / '.venv/bin/python'
 
 def _bounded(value, low, high, code):
     if type(value) is not int or not low <= value <= high:

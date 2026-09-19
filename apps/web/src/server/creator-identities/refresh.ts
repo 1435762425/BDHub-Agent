@@ -46,7 +46,7 @@ export function decodeRefreshOutput(output:string):unknown {
 export function callRefreshCommand(command:RefreshCommand,input:Record<string,string>|ProfileRefreshRequest):Promise<unknown> {
   const root=projectRoot();
   return new Promise((resolveResult,reject)=>{
-    const child=execFile(join(root,"../01-BDSystem-V2/.venv/bin/python"),[join(root,"scripts/creator-profile-refresh.py"),command],
+    const child=execFile(join(root,".venv/bin/python"),[join(root,"scripts/creator-profile-refresh.py"),command],
       {cwd:root,timeout:10000,maxBuffer:128*1024,env:{...process.env,PYTHONDONTWRITEBYTECODE:"1"}},(error,stdout)=>{
         try{if(error&&!stdout.trim())throw new ProfileRefreshError("refresh_unavailable",503,"暂未确认刷新请求，请保留原编号后重试。");resolveResult(decodeRefreshOutput(stdout));}catch(failure){reject(failure);}
       });

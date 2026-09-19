@@ -167,7 +167,7 @@ export function validateIdentityQueue(value:unknown):IdentityQueueState{
 function runQueue(args:string[]):Promise<IdentityQueueState>{
  const root=projectRoot();
  return new Promise((resolve,reject)=>{
-  execFile(join(root,"../01-BDSystem-V2/.venv/bin/python"),[join(root,"scripts/identity-queue.py"),...args],
+  execFile(join(root,".venv/bin/python"),[join(root,"scripts/identity-queue.py"),...args],
    {cwd:root,timeout:60000,maxBuffer:2*1024*1024,env:{...process.env,PYTHONDONTWRITEBYTECODE:"1"}},(error,out)=>{
     let parsed:unknown;
     try{parsed=JSON.parse(out);}
@@ -189,7 +189,7 @@ export function saveIdentityConfig(config:IdentityConfig):Promise<IdentityQueueS
 function runJob(args:string[]):Promise<void>{
  const root=projectRoot();
  return new Promise((resolve,reject)=>{
-  execFile(join(root,"../01-BDSystem-V2/.venv/bin/python"),[join(root,"scripts/job-run.py"),...args],
+  execFile(join(root,".venv/bin/python"),[join(root,"scripts/job-run.py"),...args],
    {cwd:root,timeout:60000,maxBuffer:1024*1024,env:{...process.env,PYTHONDONTWRITEBYTECODE:"1"}},(error,out)=>{
     let parsed:unknown;
     try{parsed=JSON.parse(out);}

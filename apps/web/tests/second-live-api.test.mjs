@@ -48,7 +48,7 @@ test("projection matches Python Unicode limits and rejects mismatched fixed acco
 });
 test("CLI argument vector is fixed with safe stdin and no shell for fake startup",async()=>{
   let recorded;const run=(executable,args,options,callback)=>({stdin:{on(){return this;},end(input){recorded={executable,args,options,input};queueMicrotask(()=>callback(null,JSON.stringify(value())));}}});
-  await callSecondLiveCommand("start",request,{root:"/project/BDHub-Agent",run});assert.equal(recorded.executable,"/project/01-BDSystem-V2/.venv/bin/python");assert.deepEqual(recorded.args,["/project/BDHub-Agent/scripts/second-live-api.py","start"]);assert.deepEqual(JSON.parse(recorded.input),request);assert.equal(recorded.options.shell,false);assert.equal(recorded.options.env.PYTHONDONTWRITEBYTECODE,"1");assert(!recorded.args.join(" ").includes(HASH));
+  await callSecondLiveCommand("start",request,{root:"/project/BDHub-Agent",run});assert.equal(recorded.executable,"/project/BDHub-Agent/.venv/bin/python");assert.deepEqual(recorded.args,["/project/BDHub-Agent/scripts/second-live-api.py","start"]);assert.deepEqual(JSON.parse(recorded.input),request);assert.equal(recorded.options.shell,false);assert.equal(recorded.options.env.PYTHONDONTWRITEBYTECODE,"1");assert(!recorded.args.join(" ").includes(HASH));
 });
 test("nonzero child status or another trial response is not acknowledged as a launch",async()=>{
   const runner=(output,failed=false)=>(executable,args,options,callback)=>({stdin:{on(){return this;},end(){queueMicrotask(()=>callback(failed?Error("PRIVATE"):null,JSON.stringify(output)));}}});

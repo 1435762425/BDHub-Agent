@@ -15,7 +15,7 @@ export function validateCycle(value:unknown):CycleStatus {
   if(!Array.isArray(v.offers)||v.offers.length>10000||!v.offers.every(o=>o&&typeof o.pid==="string"&&(!o.title||typeof o.title==="string")&&o.assessment&&typeof o.assessment.eligible==="boolean"&&Array.isArray(o.assessment.reasons)&&o.assessment.reasons.every(r=>typeof r==="string")))throw new Error("invalid_cycle_offers");
   return v;
 }
-export function readCycle():Promise<CycleStatus>{const root=projectRoot();return new Promise((resolve,reject)=>{execFile(join(root,"../01-BDSystem-V2/.venv/bin/python"),[join(root,"scripts/second-cycle.py"),"status"],{cwd:root,timeout:15000,maxBuffer:2*1024*1024,env:{...process.env,PYTHONDONTWRITEBYTECODE:"1"}},(error,stdout)=>{try{if(error)throw error;resolve(validateCycle(JSON.parse(stdout)));}catch{reject(new Error("cycle_unavailable"));}});});}
+export function readCycle():Promise<CycleStatus>{const root=projectRoot();return new Promise((resolve,reject)=>{execFile(join(root,".venv/bin/python"),[join(root,"scripts/second-cycle.py"),"status"],{cwd:root,timeout:15000,maxBuffer:2*1024*1024,env:{...process.env,PYTHONDONTWRITEBYTECODE:"1"}},(error,stdout)=>{try{if(error)throw error;resolve(validateCycle(JSON.parse(stdout)));}catch{reject(new Error("cycle_unavailable"));}});});}
 export function createCycleGet(read=readCycle){return async(request:Request)=>{
  const headers={"Cache-Control":"no-store","X-Content-Type-Options":"nosniff"};
  if(!isLocalRequest(request,false))return Response.json({error:"local_origin_required"},{status:403,headers});

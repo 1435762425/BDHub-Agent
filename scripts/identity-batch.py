@@ -48,7 +48,7 @@ RETRY_WAIT_SECONDS = 5.0
 
 
 def python_bin(root=ROOT):
-    return Path(root).parent / '01-BDSystem-V2/.venv/bin/python'
+    return Path(root) / '.venv/bin/python'
 
 
 def publish(path, payload):
