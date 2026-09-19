@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import {BUSINESS_PHASES,DEMO_COUNTS,FLOW_STAGES,PID_REFRESH_CLOCKS,PID_SNAPSHOT,REFRESH_RULES,SCENARIOS,SIMPLE_POOL,TAPLINK_VALIDITY_CHECKS,evaluateScenario,poolReconciles,simpleScenario} from "../src/features/demo/pid-send-pool-demo.ts";
+import {BUSINESS_PHASES,DEMO_COUNTS,FLOW_STAGES,PID_REFRESH_CLOCKS,PID_SNAPSHOT,REFRESH_RULES,SCENARIOS,SIMPLE_POOL,TAPLINK_PERFORMANCE,TAPLINK_VALIDITY_CHECKS,evaluateScenario,poolReconciles,simpleScenario} from "../src/features/demo/pid-send-pool-demo.ts";
 
 const scenario=key=>SCENARIOS.find(item=>item.key===key);
 
@@ -79,7 +79,14 @@ test("refresh guidance separates event periodic action and cleanup clocks",()=>{
  assert.deepEqual(PID_REFRESH_CLOCKS.map(item=>item.key),["event","periodic","action","cleanup"]);
  assert.match(PID_REFRESH_CLOCKS.find(item=>item.key==="action")?.items.join(" ")??"",/fresh_card/);
  assert.match(REFRESH_RULES.find(item=>item.object==="TapLink 查询门禁")?.cycle??"",/24 小时/);
+ assert.match(REFRESH_RULES.find(item=>item.object==="TapLink 查询门禁")?.effect??"",/不逐 PID 联网/);
  assert.match(REFRESH_RULES.find(item=>item.object==="链接健康清理")?.cycle??"",/每周/);
+});
+
+test("performance guidance prevents one remote verification per PID at the 24 hour gate",()=>{
+ assert.deepEqual(TAPLINK_PERFORMANCE.map(item=>item.label),["单 PID 严格核验","300 PID 批量复读","1,908 张库存扫描"]);
+ assert.equal(TAPLINK_PERFORMANCE[0].value,"约 2 秒");
+ assert.match(PID_REFRESH_CLOCKS.find(item=>item.key==="action")?.items[0]??"",/不逐 PID 联网/);
 });
 
 test("TapLink validity requires both current offer and exact platform binding facts",()=>{

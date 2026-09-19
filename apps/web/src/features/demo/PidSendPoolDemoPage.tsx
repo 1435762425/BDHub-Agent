@@ -2,7 +2,7 @@
 
 import {useMemo,useState} from "react";
 import {Card,Collapsible,Icon,Notice,PageHeading,Pill,Tabs} from "../bdhub/ui";
-import {BUSINESS_PHASES,DEMO_COUNTS,FLOW_STAGES,LOCKS,PID_REFRESH_CLOCKS,PID_SNAPSHOT,REFRESH_RULES,SCENARIOS,SIMPLE_POOL,TAPLINK_VALIDITY_CHECKS,poolReconciles,simpleScenario,type ScenarioKey} from "./pid-send-pool-demo";
+import {BUSINESS_PHASES,DEMO_COUNTS,FLOW_STAGES,LOCKS,PID_REFRESH_CLOCKS,PID_SNAPSHOT,REFRESH_RULES,SCENARIOS,SIMPLE_POOL,TAPLINK_PERFORMANCE,TAPLINK_VALIDITY_CHECKS,poolReconciles,simpleScenario,type ScenarioKey} from "./pid-send-pool-demo";
 
 type Tab="pid"|"people"|"details";
 type PhaseKey=(typeof BUSINESS_PHASES)[number]["key"];
@@ -152,12 +152,16 @@ function Details(){return <div className="space-y-4">
   <Notice tone="warning"><strong>先区分规则与运行：</strong>“不可跳过”是业务门禁；“建议值”仍待确认。当前定时调度器未实现，所有定时开关均为关闭。</Notice>
   <div className="overflow-x-auto rounded-xl border border-gray-200 dark:border-gray-800"><table className="w-full text-left text-sm"><thead className="bg-gray-50 text-xs text-gray-500 dark:bg-gray-800/60"><tr>{["对象","什么时候刷新","如何触发","影响"].map(label=><th key={label} className="whitespace-nowrap px-4 py-3 font-medium">{label}</th>)}</tr></thead><tbody>{REFRESH_RULES.map(row=><tr key={row.object} className="border-t border-gray-100 align-top dark:border-gray-800"><td className="whitespace-nowrap px-4 py-3 font-medium">{row.object}</td><td className="min-w-40 px-4 py-3 text-gray-500">{row.cycle}</td><td className="min-w-48 px-4 py-3 text-gray-500">{row.mode} · {row.optional}</td><td className="min-w-64 px-4 py-3 text-gray-500">{row.effect}</td></tr>)}</tbody></table></div>
  </div></Collapsible>
+ <Collapsible label="TapLink 核验效率" defaultOpen><div className="space-y-4">
+  <div className="grid gap-4 lg:grid-cols-3">{TAPLINK_PERFORMANCE.map(item=><Card key={item.label} title={item.label} action={<Pill tone="brand">{item.value}</Pill>}><p className="p-5 text-sm leading-6 text-gray-500">{item.detail}</p></Card>)}</div>
+  <Notice tone="success"><strong>效率结论：</strong>24 小时门禁只检查一份共享库存快照是否够新，不为每个 PID 单独联网。严格逐 PID 复读只放在建卡回读、正式组批和实际发送前。</Notice>
+ </div></Collapsible>
  <Collapsible label="怎样才算 TapLink 仍然有效" defaultOpen><div className="space-y-4">
   <Notice><strong>Material Ready = 当前 Offer 合格 + 当前 TapLink 精确可用。</strong>卡还在，不等于商品仍能发；商品仍合格，也不等于旧卡还代表当前方案。</Notice>
   <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">{TAPLINK_VALIDITY_CHECKS.map((check,index)=><div key={check.label} className="rounded-xl bg-gray-50 p-4 dark:bg-gray-800"><p className="text-xs font-semibold text-brand-500">{index+1} · {check.label}</p><p className="mt-2 text-sm leading-6 text-gray-500">{check.detail}</p></div>)}</div>
   <div className="grid gap-4 lg:grid-cols-4">{[
    ["动作后","立即回读","选入、加入、建卡或删除完成后，平台读回才算完成。"],
-   ["进入达人查询","鲜度门禁","建议最后平台核验不超过 24 小时；过期就先等待复读。"],
+   ["进入达人查询","共享证据","建议库存快照不超过 24 小时；本地判断，不为每个 PID 单独联网。"],
    ["正式组批","批次复读","只复读本批 PID；变化项退出批次，其他 PID 不受影响。"],
    ["逐条发送","最终权威","fresh_card 按冻结 listId 现场复读；不一致或 unknown 立即停止。"],
   ].map(([title,tag,text])=><Card key={title} title={title} action={<Pill tone="neutral">{tag}</Pill>}><p className="p-5 text-sm leading-6 text-gray-500">{text}</p></Card>)}</div>
