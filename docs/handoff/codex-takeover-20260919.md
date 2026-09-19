@@ -31,6 +31,7 @@ DeepSeek/Agent 已经把 9 月 14 日的“货盘批量备链”继续推进到�
 | 日历日明细 | `e669ad4`（只读白名单投影、分页核对与明细弹窗） |
 | 历史任务收敛 | `8b317e3`（旧任务只读、缺失选择明细保持未知） |
 | 任意 N＋候补 | `54df9b9`（send-preview v3、冻结 formal/reserve、unknown 不补位） |
+| 显式回复真值 | `b76d407`（模型不预选、政策模板直出、append-only 修订） |
 | 上一个已提交开发头 | `4cdb759`（`agent/p0-catalog-links`） |
 | 继承工作区固化提交 | `cd81dff` |
 | 继承标签 | `takeover-20260919-inherited` |
@@ -127,6 +128,7 @@ DeepSeek/Agent 已经把 9 月 14 日的“货盘批量备链”继续推进到�
 - 回复预演页并列展示两模型完整判断、固定显示中文理解，并让用户直接选择独立的五动作标准答案；migration v5 的 append-only `turn_review` 已应用。
 - migration v6 将审核与业务应用拆开：`no_reply` 安全解除已处理冻结、`human` 进入人工案件、模板动作只生成候选不发送；备份位于 `var/backups/20260920-review-application-v6/second-cycle.sqlite`。
 - 旧 `reply_facts` 已从供给调度器的 active stage 集合和命令路由移除；本机历史行仍保留且只读可追溯，不再被 claim、recover 或页面状态投影。工作台同时移除“60 秒合并、事实工具自动答、发送前远程重验”等过期口径。
+- 回复审核不再用两个模型的一致动作作为默认答案；每条都要求用户显式选择。固定模板直接来自版本化政策，模型没选中也能预览；已审核结果可追加新 revision 修正，旧真值和既有业务应用保持不可变。
 
 ### 已完成：统计日历聚合页
 
@@ -186,8 +188,8 @@ DeepSeek/Agent 已经把 9 月 14 日的“货盘批量备链”继续推进到�
 
 2026-09-20 在统计日历聚合页完成后：
 
-- Python：`1064` 项 `unittest` 通过。
-- Web：`380` 项 Node 测试通过。
+- Python：`1065` 项 `unittest` 通过。
+- Web：`381` 项 Node 测试通过。
 - TypeScript：`npm run typecheck` 通过。
 - Next.js：`npm run build` 通过，14 个静态页面（含 `/flow-demo`）及当前 API 路由生成成功。
 - 文档：109 个 Markdown 文件的本地链接检查通过；`git diff --check` 通过。
