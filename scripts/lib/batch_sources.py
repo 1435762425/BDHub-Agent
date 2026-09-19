@@ -117,4 +117,8 @@ class BatchSources:
   counts={r[0]:r[1] for r in self.db.execute('SELECT state,count(*) FROM batch_source_job WHERE task_id=? GROUP BY state',(id,))}
   errors=[r[0] for r in self.db.execute('SELECT DISTINCT error FROM batch_source_job WHERE task_id=? AND error IS NOT NULL',(id,))]
   pages=self.db.execute('SELECT count(*) FROM batch_source_page p JOIN batch_source_job j ON j.id=p.job_id WHERE j.task_id=?',(id,)).fetchone()[0]
-  return {'pids':sum(counts.values()),'states':counts,'pages':pages,'edges':self.db.execute('SELECT count(*) FROM batch_source_selection s JOIN batch_source_job j ON j.id=s.job_id WHERE j.task_id=?',(id,)).fetchone()[0],'errors':errors,'dailyQuotaUsed':0}
+  selection_recorded=bool(self.db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='batch_source_selection'").fetchone())
+  edges=(self.db.execute('SELECT count(*) FROM batch_source_selection s JOIN batch_source_job j ON j.id=s.job_id WHERE j.task_id=?',(id,)).fetchone()[0]
+         if selection_recorded else None)
+  return {'pids':sum(counts.values()),'states':counts,'pages':pages,'edges':edges,
+          'selectionRecorded':selection_recorded,'errors':errors,'dailyQuotaUsed':0}

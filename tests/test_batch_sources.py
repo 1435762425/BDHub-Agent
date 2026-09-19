@@ -78,4 +78,8 @@ class SourceTests(unittest.TestCase):
   with self.assertRaisesRegex(CycleError,'lease_lost'):self.q._owned(old)
  def test_source_status_does_not_commit_enclosing_confirmation_transaction(self):
   card=self.s.preview(self.spec);self.assertEqual(self.s.confirm(card['token'],'one')['id'],self.id)
+ def test_legacy_store_without_selection_table_is_unknown_not_zero_or_unavailable(self):
+  self.s.db.execute('DROP TABLE batch_source_selection')
+  status=self.q.status(self.id)
+  self.assertIsNone(status['edges']);self.assertFalse(status['selectionRecorded'])
 if __name__=='__main__':unittest.main()
