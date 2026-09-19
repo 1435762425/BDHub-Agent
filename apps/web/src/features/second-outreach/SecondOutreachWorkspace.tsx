@@ -12,20 +12,19 @@ import StatsCalendarPanel from "./StatsCalendarPanel";
 import {useInboxMonitor} from "./useInboxMonitor";
 import {useSendBatch} from "./useSendBatch";
 import {PageHeading,Tabs} from "../bdhub/ui";
+import {initialSecondOutreachTab,type SecondOutreachTab} from "./workspace-tabs";
 
 // 一页五件事，各占一个页签。**不堆在一页**：每块只回答一个问题，翻页签就是换问题。
 // 「一发推品 · V2」不在这里——它已经挪到「匹配研究」（/opportunities）。
-type Tab = "send" | "inbox" | "reply" | "calendar" | "system";
-
 /** 历史页是另一张页面，单独一个组件：钩子不能挂在可能提前 return 的分支后面。 */
 export default function SecondOutreachWorkspace(){
  const params = useSearchParams();
  if(params.get("history") === "1") return <SecondOutreachHistory/>;
- return <Workbench/>;
+ return <Workbench initialTab={initialSecondOutreachTab(params.get("tab"))}/>;
 }
 
-function Workbench(){
- const [tab, setTab] = useState<Tab>("send");
+function Workbench({initialTab}:{initialTab:SecondOutreachTab}){
+ const [tab, setTab] = useState<SecondOutreachTab>(initialTab);
  // 每块的读取只有它自己一个主人，卡片之外不重复轮询。
  const inbox = useInboxMonitor();
  const send = useSendBatch();
