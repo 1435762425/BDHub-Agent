@@ -1,5 +1,5 @@
 export type DemoSource="selected"|"campaign";
-export type ScenarioKey="clean"|"unrated"|"rate_changed"|"missing_link"|"product_invalid"|"reply_open";
+export type ScenarioKey="clean"|"unrated"|"legacy_only"|"missing_link"|"product_invalid"|"reply_open";
 
 export interface DemoStage{
  key:string;index:string;title:string;unit:string;input:string;output:string;rule:string;failure:string;refresh:string;
@@ -8,7 +8,7 @@ export interface DemoStage{
 export interface DemoScenario{
  key:ScenarioKey;label:string;description:string;source:DemoSource;sales:number;rating:number|null;
  totalPercent:number;publicPercent:number;creatorPercent:number;campaignDays:number|null;stock:number|null;
- offerReady:boolean;linkState:"verified"|"missing"|"rate_changed";identityReady:boolean;replyOpen:boolean;
+ offerReady:boolean;linkState:"verified"|"missing"|"legacy_only";identityReady:boolean;replyOpen:boolean;
  cardPercent?:number;joinedCampaignDays?:number;
 }
 
@@ -35,7 +35,7 @@ export const FLOW_STAGES:DemoStage[]=[
  {key:"collect",index:"01",title:"PID 采集",unit:"商品 PID",input:"全托高机会 / Campaign 活动",output:"来源快照 + PID 去重",rule:"每条 PID 保留来源、活动、事实时间和版本。",failure:"读取中断保留游标，不生成半份生效快照。",refresh:"手动主动采集；定时为可选开关。"},
  {key:"screen",index:"02",title:"商品筛选",unit:"PID / Offer",input:"当前来源快照",output:"合格商品方案",rule:"全托销量≥300；有评分≥4.0，无评分允许；佣金差≥2点。Campaign 使用独立期限与库存规则。",failure:"进入不合格层，历史事实保留。",refresh:"采集完成、规则变化或商品事实变化时重算。"},
  {key:"offer",index:"03",title:"精确 Offer",unit:"PID × 活动",input:"合格候选",output:"唯一当前方案",rule:"达人佣金最高 → 截止更晚 → 活动 ID 定序；不同 Offer 不拼字段。",failure:"没有完整方案则等待事实，不进入建链。",refresh:"每次筛分与发送批次冻结前。"},
- {key:"link",index:"04",title:"TapLink 材料",unit:"PID × 方案",input:"精确 Offer",output:"listId + 当前佣金 + 绑定",rule:"先复用当前有效卡；缺卡或佣金不一致则建新卡。旧卡保留，确认失效才清理。",failure:"待建链 / 待重建 / 结果未知，均不得继续。",refresh:"Campaign 每日随来源核验；全托已选每周核验一次。"},
+ {key:"link",index:"04",title:"TapLink 材料",unit:"PID × 方案",input:"精确 Offer",output:"标准 listId",rule:"只认统一分佣与命名规则创建的标准卡；历史卡忽略。没有标准卡就补建。",failure:"标准链接缺失或创建结果未知时等待，不进入达人查询。",refresh:"Campaign 每日随来源核验；全托已选每周核验一次。"},
  {key:"leads",index:"05",title:"PID 查达人",unit:"PID 查询任务",input:"material-ready PID",output:"正销量达人线索",rule:"首次 PID 优先；已查 PID 7 天后刷新；失败不写 queried_at。",failure:"额度耗尽保留断点；无链接 PID 不进入查询。",refresh:"首次一次；完成后每 7 天到期。"},
  {key:"identity",index:"06",title:"OECID 身份",unit:"去重 handle",input:"达人线索",output:"稳定达人身份",rule:"同一 handle 只做一次 Find 判定；找到后以市场×OECID 归一。",failure:"明确搜索不到则保留证据，但不进入位置。",refresh:"Find 判定一次；画像按需或 48 小时刷新。"},
  {key:"position",index:"07",title:"达人×PID 位置",unit:"达人 × PID",input:"稳定达人 + 同品线索",output:"可经营位置",rule:"一个达人可保留多个 PID；渠道属于商品，冷却和拒联属于达人。",failure:"商品失效、缺材料、关系阻断分别分层，不丢线索。",refresh:"页面读取时实时重算，不保存静态排序。"},
@@ -60,11 +60,11 @@ export const PID_REFRESH_CLOCKS=[
 ] as const;
 
 export const TAPLINK_VALIDITY_CHECKS=[
- {label:"当前方案",detail:"商品仍可用；Campaign 仍 ACTIVE、剩余 >45 天且库存 >100；当前佣金规则仍通过。"},
- {label:"列表身份",detail:"发送账号在正确市场能看到冻结的 listId；列表未删除、未禁用。"},
- {label:"成员绑定",detail:"列表中恰好存在这个 PID，来源与 Campaign 绑定匹配当前 Offer。"},
- {label:"商业条件",detail:"卡上达人佣金等于当前方案，并且仍高于当前公开佣金。"},
- {label:"健康事实",detail:"product_status 可用、未被治理，unavailable_type 可接受，且没有未解决的 unknown。"},
+ {label:"统一规则",detail:"分佣版本 commission-1-to-2-v1；命名版本 link-naming-v1。"},
+ {label:"统一名称",detail:"🔥 BJN {short_name} {creator_percent}% {tail}。"},
+ {label:"精确绑定",detail:"标准 listId 精确绑定 PID、来源、Campaign 和当前分佣。"},
+ {label:"唯一发送卡",detail:"发送池只读取当前标准 listId，不从历史卡临时挑选。"},
+ {label:"历史卡",detail:"全部忽略；确认失效才清理，仍可用的只保留为历史。"},
 ] as const;
 
 export const TAPLINK_PERFORMANCE=[
@@ -87,7 +87,7 @@ export const LOCKS=[
 export const SCENARIOS:DemoScenario[]=[
  {key:"clean",label:"正常全托 PID",description:"商品、方案、链接和关系全部就绪。",source:"selected",sales:1280,rating:4.7,totalPercent:16,publicPercent:11,creatorPercent:14,campaignDays:null,stock:null,offerReady:true,linkState:"verified",identityReady:true,replyOpen:false,cardPercent:14},
  {key:"unrated",label:"无评分但销量达标",description:"累计销量达标、无评分，按确认规则允许入池。",source:"selected",sales:460,rating:null,totalPercent:15,publicPercent:10,creatorPercent:13,campaignDays:null,stock:null,offerReady:true,linkState:"verified",identityReady:true,replyOpen:false,cardPercent:13},
- {key:"rate_changed",label:"旧卡 12% / 当前 13%",description:"卡创建时冻结 12%，后来当前 Offer 重算为 13%；旧卡保留，等待新卡。",source:"selected",sales:920,rating:4.5,totalPercent:15,publicPercent:10,creatorPercent:13,campaignDays:null,stock:null,offerReady:true,linkState:"rate_changed",identityReady:true,replyOpen:false,cardPercent:12},
+ {key:"legacy_only",label:"只有历史旧卡",description:"旧卡不参与发送；按统一命名与分佣规则补建标准链接。",source:"selected",sales:920,rating:4.5,totalPercent:15,publicPercent:10,creatorPercent:13,campaignDays:null,stock:null,offerReady:true,linkState:"legacy_only",identityReady:true,replyOpen:false,cardPercent:12},
  {key:"missing_link",label:"Campaign 缺链接",description:"商品合格但没有当前方案的 TapLink，停在待建链。",source:"campaign",sales:780,rating:4.4,totalPercent:18,publicPercent:12,creatorPercent:16,campaignDays:72,stock:820,offerReady:true,linkState:"missing",identityReady:true,replyOpen:false},
  {key:"product_invalid",label:"Campaign 期限降到 44 天",description:"加入时剩余 72 天，刷新后只剩 44 天；历史线索保留，但退出发送池。",source:"campaign",sales:1600,rating:4.8,totalPercent:18,publicPercent:12,creatorPercent:16,campaignDays:44,stock:900,offerReady:true,linkState:"verified",identityReady:true,replyOpen:false,cardPercent:16,joinedCampaignDays:72},
  {key:"reply_open",label:"达人有未结问题",description:"商品和链接可用，但该达人有未解决回复，全部商品暂停。",source:"selected",sales:2100,rating:4.9,totalPercent:17,publicPercent:11,creatorPercent:15,campaignDays:null,stock:null,offerReady:true,linkState:"verified",identityReady:true,replyOpen:true},
@@ -103,7 +103,7 @@ export function evaluateScenario(s:DemoScenario):{gates:DemoGateResult[];layer:s
  const gates:DemoGateResult[]=[
   {key:"product",label:"商品资格",state:eligible?"pass":"stop",detail:eligible?"满足当前来源规则":"销量、评分、期限、库存或佣金不符合"},
   {key:"offer",label:"精确 Offer",state:eligible&&s.offerReady?"pass":eligible?"wait":"stop",detail:s.offerReady?"方案字段完整且同源":"等待完整方案"},
-  {key:"link",label:"TapLink",state:s.linkState==="verified"?"pass":s.linkState==="rate_changed"?"wait":"wait",detail:s.linkState==="verified"?"最后快照中 listId 与当前佣金一致":s.linkState==="rate_changed"?"旧卡保留，等待新卡":"等待创建并核验新卡"},
+  {key:"link",label:"标准 TapLink",state:s.linkState==="verified"?"pass":"wait",detail:s.linkState==="verified"?"当前标准 listId 已核验":s.linkState==="legacy_only"?"历史卡忽略，等待补建标准卡":"等待创建并核验标准卡"},
   {key:"lead",label:"PID 线索",state:eligible&&s.linkState==="verified"?"pass":"wait",detail:eligible&&s.linkState==="verified"?"允许进入首次/到期队列":"材料未就绪，不查询或不刷新"},
   {key:"identity",label:"OECID",state:s.identityReady?"pass":"wait",detail:s.identityReady?"达人身份已解析":"等待 Find 判定"},
   {key:"relation",label:"关系状态",state:s.replyOpen?"wait":"pass",detail:s.replyOpen?"未结回复阻断该达人所有商品":"无拒联、人工接管或未结回复"},
@@ -111,7 +111,7 @@ export function evaluateScenario(s:DemoScenario):{gates:DemoGateResult[];layer:s
  let layer="严格发送池 · Ready",summary="这条达人×PID 可以进入 ready；组批时冻结具体 Offer 和 listId。";
  if(!eligible){layer="商品失效 / 不合格",summary="保留历史线索，但退出可发与等待队列；商品恢复后重新计算。";}
  else if(s.linkState==="missing"){layer="待建链",summary="商品合格但没有可用卡；链接核验前不查新线索、不进入发送池。";}
- else if(s.linkState==="rate_changed"){layer="待重建",summary="旧卡继续保留，创建并核验符合当前佣金的新卡后再进入发送池。";}
+ else if(s.linkState==="legacy_only"){layer="待补标准链接",summary="历史卡不参与发送；按统一命名与分佣规则补建标准卡。";}
  else if(!s.identityReady){layer="待 OECID",summary="线索存在但达人身份未解析，不生成达人×PID 位置。";}
  else if(s.replyOpen){layer="等待回复处理",summary="该达人所有商品位置暂停；问题解决后重新参与排序。";}
  return {gates,layer,summary};

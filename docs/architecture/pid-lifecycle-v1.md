@@ -23,16 +23,12 @@ flowchart TD
     POOL -->|Campaign 未加入| JOIN[创建加入活动意图<br/>额外条款转人工]
     SELECT --> LINK
     JOIN --> LINK
-    POOL -->|已在池| LINK{最后成功快照有精确 TapLink?}
+    POOL -->|已在池| LINK{有当前标准链接?}
 
-    LINK -->|有且佣金一致| READY[PID Material Ready]
-    LINK -->|完全没有| CREATE[创建唯一建链意图]
-    LINK -->|旧卡佣金不同| REBUILD[旧卡保留<br/>创建当前佣金新卡]
-    LINK -->|结果未知| VERIFY[只核验原意图<br/>不创建替代卡]
+    LINK -->|有| READY[PID Material Ready]
+    LINK -->|没有/只有历史卡| CREATE[按统一规则创建标准链接<br/>历史卡忽略]
     CREATE -->|创建+回读成功| READY
-    REBUILD -->|新 listId 核验成功| READY
-    VERIFY -->|确认成功| READY
-    VERIFY -->|仍未知| WAIT[等待处理]
+    CREATE -->|结果未知| WAIT[只核验原创建意图]
 
     READY --> LEADS[允许进入 PID 达人查询队列]
 
@@ -61,7 +57,7 @@ flowchart TD
 - Campaign：已核验 420；可复用 152 个 PID；缺链 259；读取不完整 2；待判断 6。
 - 已核验新建链接意图：1,519。
 
-这些状态是技术处理细节，面向业务只映射为：`material_ready`、`waiting_action` 或 `inactive`。
+这些状态是现有技术台账快照；其中历史 `reuse` 在新规则下不再直接等于可发送。面向业务仍只映射为：标准链接已就绪的 `material_ready`、等待标准链接的 `waiting_action` 或 `inactive`。
 
 ## 刷新规则
 
@@ -70,7 +66,7 @@ flowchart TD
 ```text
 PID Material Ready
   = 当前 Offer 仍合格
-  + 最后一次成功快照确认 TapLink 可用
+  + 当前标准 listId 已核验
 ```
 
 ### 来源刷新
@@ -82,8 +78,9 @@ PID Material Ready
 
 ### 方案与链接刷新
 
-- 活动、佣金、期限变化后重新选择当前 Offer。
-- 旧卡创建时的佣金不会自动变化。旧卡 12%、当前方案 13% 时进入待重建；旧卡保留，新发送只使用核验后的新 `listId`。
+- 活动、佣金、期限变化后重新选择当前 Offer；当前标准链接按同一规则版本生成。
+- 历史卡不再参与复用或“佣金是否一致”判断。只有同时匹配 `commission-1-to-2-v1`、`link-naming-v1`、PID、来源、Campaign 和当前分佣结果的卡，才是当前标准链接。
+- 当前合格方案没有标准链接时，无论是否存在其他历史卡，都按统一规则创建新卡。完全相同且已由本系统核验的标准卡才可幂等复用。
 - 链接刷新时必须证明：正确账号/市场可见冻结的 `listId`；成员中存在精确 PID；来源与 Campaign 绑定匹配；卡上达人佣金等于当前 Offer 且高于公开佣金；商品可用、未治理、`unavailable_type` 可接受；Campaign 库存规则通过。
 - 新建链接后立即回读一次，用于取得 `listId` 和结算原写入意图。此后不在达人查询、组批或发送前逐项复读。
 - Campaign 每日刷新来源时同时核验对应 TapLink；全托已选商品的 TapLink 每周统一核验一次。两次刷新之间、任务延迟或失败时，以上次成功结果为准，不阻塞流程。
@@ -141,4 +138,5 @@ Campaign 每日随来源核验、全托已选每周核验是用户确认的业�
 - 真实 `lead_pool` 尚未把 `material_ready` 作为位置入口，历史线索可能绕过当前 PID 树进入池子。
 - 当前 `catalog_prepare_item` 的 `ready/reuse/reading/missing/review` 仍直接暴露为状态，后续应统一投影成三个业务结果。
 - Campaign 与全托的当前 Offer、TapLink 和刷新证据仍分散在多个 SQLite 表，需要一个 PID Material 投影作为单一读取合同。
+- 当前 `preserveExistingLinks=true` 且读链会复用旧卡；需要改为只认标准规则指纹，并为当前合格方案执行一次标准链接补齐。
 - 当前发送运行时仍执行 `fresh_card()`；后端实施新规则时需移除发送前 TapLink 门禁，并让明确拒卡只影响对应 PID。

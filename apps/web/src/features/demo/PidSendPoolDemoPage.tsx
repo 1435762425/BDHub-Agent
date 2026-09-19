@@ -40,15 +40,13 @@ function PidTree(){
     <div className="rounded-2xl border-2 border-brand-200 bg-brand-25 p-5 text-center dark:border-brand-900 dark:bg-brand-500/5"><p className="text-xs font-semibold text-brand-500">问题 2</p><h3 className="mt-1 text-lg font-semibold">它已经在对应的平台商品池里吗？</h3></div>
     <div className="mt-4 grid gap-4 md:grid-cols-2"><TreeOutcome title="全托：已选池" detail={`当前台账 ${format(s.fullManaged.selectedPool)} PID；未选则创建选入意图，回查 confirmed/already_selected。`} tone="success"/><TreeOutcome title="Campaign：已加入活动" detail={`当前候选 ${format(s.campaign.chosen)} PID；新加入台账 ${format(s.campaign.newlyJoined)} 条，额外条款转人工。`} tone="success"/></div>
     <Connector/>
-    <div className="rounded-2xl border-2 border-brand-200 bg-brand-25 p-5 text-center dark:border-brand-900 dark:bg-brand-500/5"><p className="text-xs font-semibold text-brand-500">问题 3</p><h3 className="mt-1 text-lg font-semibold">最后成功快照中有可用 TapLink 吗？</h3><p className="mt-2 text-sm text-gray-500">刷新时匹配 PID、来源、Campaign、达人佣金和 listId；刷新之间沿用结果。</p></div>
-    <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-     <TreeOutcome title="有且一致" detail="复用当前卡，进入 Material Ready。" tone="success"/>
-     <TreeOutcome title="完全没有" detail="创建唯一建链意图；回执未知只核验原意图。" tone="warning"/>
-     <TreeOutcome title="旧卡佣金不同" detail="旧卡保留，创建当前佣金新卡，核验后切新 listId。" tone="warning"/>
-     <TreeOutcome title="状态未知" detail="不创建替代卡，先复读列表与成员。" tone="warning"/>
+    <div className="rounded-2xl border-2 border-brand-200 bg-brand-25 p-5 text-center dark:border-brand-900 dark:bg-brand-500/5"><p className="text-xs font-semibold text-brand-500">问题 3</p><h3 className="mt-1 text-lg font-semibold">这个 PID 有当前标准链接吗？</h3><p className="mt-2 text-sm text-gray-500">标准链接必须使用统一分佣、统一命名，并绑定唯一 listId；历史卡一律忽略。</p></div>
+    <div className="mt-4 grid gap-3 md:grid-cols-2">
+     <TreeOutcome title="有标准链接" detail="直接使用固定的当前 listId，进入 Material Ready。" tone="success"/>
+     <TreeOutcome title="没有 / 只有历史卡" detail="按统一规则补建标准链接；创建结果未知只核验原意图。" tone="warning"/>
     </div>
     <Connector/>
-    <div className="mx-auto max-w-lg rounded-2xl border-2 border-success-300 bg-success-50 p-5 text-center dark:border-success-900 dark:bg-success-900/10"><Pill tone="success">唯一前向结果</Pill><h3 className="mt-3 text-xl font-semibold">PID Material Ready</h3><p className="mt-2 text-sm text-gray-500">当前合格 Offer + 已在平台池 + 最后成功快照确认链接可用。只有这里的 PID 才能去查达人线索。</p></div>
+    <div className="mx-auto max-w-lg rounded-2xl border-2 border-success-300 bg-success-50 p-5 text-center dark:border-success-900 dark:bg-success-900/10"><Pill tone="success">唯一前向结果</Pill><h3 className="mt-3 text-xl font-semibold">PID Material Ready</h3><p className="mt-2 text-sm text-gray-500">当前合格 Offer + 已在平台池 + 当前标准 listId 已核验。只有这里的 PID 才能去查达人线索。</p></div>
    </div>
   </div></Card>
   <Card title="TapLink 按来源只有两条规则" subtitle="Campaign 每日随来源核验；全托已选每周核验一次"><div className="p-5">
@@ -73,7 +71,7 @@ function PidTree(){
 }
 
 const blockers:Record<PhaseKey,string[]>={
- product:["商品不符合当前来源规则","没有完整、同源的 Offer","缺 TapLink 或卡上佣金已变化"],
+ product:["商品不符合当前来源规则","没有完整、同源的 Offer","还没有当前标准链接"],
  creator:["PID 尚未查询达人","handle 明确搜索不到","OECID 尚未解析"],
  send:["达人仍在冷却","存在未解决回复或人工接管","最后快照中商品或链接不可用"],
 };
@@ -99,12 +97,12 @@ function Overview(){
  const scenario=SCENARIOS.find(item=>item.key===scenarioKey)??SCENARIOS[0];
  const result=useMemo(()=>simpleScenario(scenario),[scenario]);
  const checks=[
-  {label:"商品准备",ok:result.product,detail:result.product?"合格商品 + 精确 Offer + 最后成功链接快照":"停在商品准备"},
+  {label:"商品准备",ok:result.product,detail:result.product?"合格商品 + 精确 Offer + 当前标准 listId":"停在商品准备"},
   {label:"达人准备",ok:result.creator,detail:result.creator?"稳定 OECID 已确认":"等待身份判定"},
   {label:"发送安排",ok:result.send,detail:result.send?"可以进入严格发送池":"不进入 Ready"},
  ];
- const scenarioNote=scenario.key==="rate_changed"
-  ?`旧卡创建时达人佣金是 ${scenario.cardPercent}%，当前 Offer 按新规则变成 ${scenario.creatorPercent}%。旧卡没有出错，只是不再代表当前方案。`
+ const scenarioNote=scenario.key==="legacy_only"
+  ?`平台上虽然有一张 ${scenario.cardPercent}% 的历史卡，但发送池不会使用它；系统按当前 ${scenario.creatorPercent}% 和统一命名规则补建标准链接。`
   :scenario.key==="product_invalid"
    ?`加入 Campaign 时剩余 ${scenario.joinedCampaignDays} 天；今天刷新只剩 ${scenario.campaignDays} 天，已低于 45 天门槛。这个 PID 的未发送位置退出池子。`
    :scenario.key==="reply_open"
@@ -158,7 +156,7 @@ function Details(){return <div className="space-y-4">
   <Notice tone="success"><strong>效率结论：</strong>Campaign 每日刷新时顺便核验链接；全托已选每周核验一次。其他时间直接使用最后成功结果。</Notice>
  </div></Collapsible>
  <Collapsible label="刷新时核对哪些 TapLink 事实"><div className="space-y-4">
-  <Notice><strong>Material Ready = 当前 Offer 合格 + 最后成功快照确认 TapLink 可用。</strong>刷新窗口内允许平台事实和本地快照存在短期误差。</Notice>
+  <Notice><strong>Material Ready = 当前 Offer 合格 + 当前标准链接已就绪。</strong>历史卡不再参与佣金比较或发送选择。</Notice>
   <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">{TAPLINK_VALIDITY_CHECKS.map((check,index)=><div key={check.label} className="rounded-xl bg-gray-50 p-4 dark:bg-gray-800"><p className="text-xs font-semibold text-brand-500">{index+1} · {check.label}</p><p className="mt-2 text-sm leading-6 text-gray-500">{check.detail}</p></div>)}</div>
   <div className="grid gap-4 lg:grid-cols-3">{[
    ["新建后","立即一次","平台读回创建结果和 listId；之后不围绕本次创建反复核验。"],

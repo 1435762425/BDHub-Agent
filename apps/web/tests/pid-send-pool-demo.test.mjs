@@ -6,7 +6,7 @@ const scenario=key=>SCENARIOS.find(item=>item.key===key);
 
 test("the demo follows the confirmed PID to strict-pool order",()=>{
  assert.deepEqual(FLOW_STAGES.map(item=>item.key),["collect","screen","offer","link","leads","identity","position","pool"]);
- assert.match(FLOW_STAGES[3].rule,/旧卡保留/);
+ assert.match(FLOW_STAGES[3].rule,/历史卡忽略/);
  assert.match(FLOW_STAGES[4].rule,/7 天/);
 });
 
@@ -44,18 +44,18 @@ test("sales below 300 still fail even when no rating is available",()=>{
  assert.equal(result.layer,"商品失效 / 不合格");
 });
 
-test("a rate mismatch waits for a new card without deleting the old one",()=>{
- const result=evaluateScenario(scenario("rate_changed"));
- assert.equal(result.layer,"待重建");
- assert.match(result.summary,/旧卡继续保留/);
+test("a legacy-only product waits for one standard card and ignores the old one",()=>{
+ const result=evaluateScenario(scenario("legacy_only"));
+ assert.equal(result.layer,"待补标准链接");
+ assert.match(result.summary,/历史卡不参与发送/);
  assert.equal(result.gates.find(item=>item.key==="link")?.state,"wait");
 });
 
 test("the simplified scenario answers only product creator and send readiness",()=>{
  const clean=simpleScenario(scenario("clean"));
- const rateChanged=simpleScenario(scenario("rate_changed"));
+ const legacyOnly=simpleScenario(scenario("legacy_only"));
  assert.deepEqual([clean.product,clean.creator,clean.send],[true,true,true]);
- assert.deepEqual([rateChanged.product,rateChanged.creator,rateChanged.send],[false,true,false]);
+ assert.deepEqual([legacyOnly.product,legacyOnly.creator,legacyOnly.send],[false,true,false]);
 });
 
 test("an invalid product and an unresolved reply leave ready for different reasons",()=>{
@@ -90,8 +90,8 @@ test("performance guidance explains why selected TapLinks refresh weekly",()=>{
  assert.match(PID_REFRESH_CLOCKS.find(item=>item.key==="selected")?.items.join(" ")??"",/失效则清理/);
 });
 
-test("TapLink validity requires both current offer and exact platform binding facts",()=>{
- assert.deepEqual(TAPLINK_VALIDITY_CHECKS.map(item=>item.label),["当前方案","列表身份","成员绑定","商业条件","健康事实"]);
+test("TapLink validity means one standard rule and one canonical send card",()=>{
+ assert.deepEqual(TAPLINK_VALIDITY_CHECKS.map(item=>item.label),["统一规则","统一名称","精确绑定","唯一发送卡","历史卡"]);
  assert.match(TAPLINK_VALIDITY_CHECKS.map(item=>item.detail).join(" "),/listId/);
- assert.match(TAPLINK_VALIDITY_CHECKS.map(item=>item.detail).join(" "),/unknown/);
+ assert.match(TAPLINK_VALIDITY_CHECKS.map(item=>item.detail).join(" "),/commission-1-to-2-v1/);
 });
