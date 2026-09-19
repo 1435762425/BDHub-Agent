@@ -2,6 +2,7 @@
 """收信监控与按天统计：这一页要读的全部数字，一次读完。
 
     python scripts/inbox-monitor.py status [--days 14]
+    python scripts/inbox-monitor.py detail --date 2026-09-15 [--offset 0 --limit 50]
     python scripts/inbox-monitor.py save --json '{"limit":6,"interval":60}'
 
 ``status`` 只读，给"监控与回复"卡片用：
@@ -23,7 +24,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(ROOT / 'scripts'))
-from lib.cycle_stats import daily  # noqa: E402
+from lib.cycle_stats import daily, day_detail  # noqa: E402
 from lib.job_run import load_config, save_config, status as job_status  # noqa: E402
 
 
@@ -43,13 +44,20 @@ def status(root, days=14):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action', choices=['status', 'save'])
+    parser.add_argument('action', choices=['status', 'detail', 'save'])
     parser.add_argument('--json', help='config JSON, inline or @path')
     parser.add_argument('--days', type=int, default=14)
+    parser.add_argument('--date')
+    parser.add_argument('--offset', type=int, default=0)
+    parser.add_argument('--limit', type=int, default=50)
     args = parser.parse_args()
     try:
         if args.action == 'status':
             print(json.dumps(status(ROOT, args.days), ensure_ascii=False))
+            return 0
+        if args.action == 'detail':
+            print(json.dumps(day_detail(ROOT, args.date, offset=args.offset, limit=args.limit),
+                             ensure_ascii=False))
             return 0
         raw = {}
         if args.json:

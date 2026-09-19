@@ -1,4 +1,5 @@
 """按天统计：北京日边界、只算已确认、排除历史补录。"""
+import json
 import sqlite3
 import sys
 import tempfile
@@ -8,7 +9,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'scripts'))
-from lib.cycle_stats import BEIJING, beijing_day, daily, day_bounds  # noqa: E402
+from lib.cycle_stats import BEIJING, beijing_day, daily, day_bounds, day_detail  # noqa: E402
 
 # 2026-09-15 12:00 北京时间。固定时刻，让边界断言不随"现在"漂移。
 NOON = datetime(2026, 9, 15, 12, 0, tzinfo=BEIJING).timestamp()
@@ -23,22 +24,36 @@ def fixture(folder):
     var.mkdir(parents=True, exist_ok=True)
     with sqlite3.connect(var / 'second-cycle.sqlite') as conn:
         conn.executescript('''
-            CREATE TABLE cycle_delivery(id TEXT,plan_id TEXT,creator_id TEXT,state TEXT);
+            CREATE TABLE cycle_delivery(id TEXT,plan_id TEXT,creator_id TEXT,oec TEXT,pid TEXT,
+                                        snapshot TEXT,state TEXT);
             CREATE TABLE cycle_delivery_part(delivery_id TEXT,kind TEXT,state TEXT,started REAL);
             CREATE TABLE inbox_event(plan_id TEXT,cid TEXT,message_id TEXT,oec TEXT,kind TEXT,
-                                     occurred_ms INTEGER,historical INTEGER,observed_at REAL);
-            CREATE TABLE service_reply(id TEXT,state TEXT,started REAL);
-            CREATE TABLE service_case(id TEXT,state TEXT,created REAL);''')
+                                     occurred_ms INTEGER,payload TEXT,historical INTEGER,observed_at REAL);
+            CREATE TABLE inbox_content_head(plan_id TEXT,cid TEXT,message_id TEXT,hash TEXT);
+            CREATE TABLE inbox_content_version(plan_id TEXT,cid TEXT,message_id TEXT,hash TEXT,
+                                                payload TEXT,observed REAL);
+            CREATE TABLE relationship(plan_id TEXT,creator_id TEXT,oec TEXT);
+            CREATE TABLE service_reply(id TEXT,plan_id TEXT,creator_id TEXT,oec TEXT,text TEXT,
+                                       state TEXT,started REAL);
+            CREATE TABLE service_case(id TEXT,plan_id TEXT,creator_id TEXT,reason TEXT,state TEXT,
+                                      created REAL);''')
         # 09-14 23:59:59 与 09-15 00:00:00 各一条：左闭右开，谁也不能跨日。
         for index, (creator, started) in enumerate([('c1', at(14, 23, 59, 59)), ('c2', at(15, 0, 0, 0)),
                                                     ('c3', at(15, 23, 59, 59))]):
-            conn.execute('INSERT INTO cycle_delivery VALUES(?,?,?,?)', (f'd{index}', 'p', creator, 'confirmed'))
+            snapshot = {'handle': f'old_{creator}', 'name': {'shortNameIt': f'prodotto {index}'},
+                        'offer': {'creatorPercent': '13', 'catalogSource': 'selected'},
+                        'message': {'textIt': f'messaggio {index}'}, 'private': 'must-not-leak'}
+            conn.execute('INSERT INTO cycle_delivery VALUES(?,?,?,?,?,?,?)',
+                         (f'd{index}', 'p', creator, f'oec{index}', f'172948000000000000{index}',
+                          json.dumps(snapshot), 'confirmed'))
             conn.execute('INSERT INTO cycle_delivery_part VALUES(?,?,?,?)',
                          (f'd{index}', 'card', 'confirmed', started))
             conn.execute('INSERT INTO cycle_delivery_part VALUES(?,?,?,?)',
                          (f'd{index}', 'text', 'confirmed', started))
         # 发出去了但结果未确认：不能算触达。
-        conn.execute('INSERT INTO cycle_delivery VALUES(?,?,?,?)', ('d9', 'p', 'c9', 'unknown'))
+        conn.execute('INSERT INTO cycle_delivery VALUES(?,?,?,?,?,?,?)',
+                     ('d9', 'p', 'c9', 'oec9', '1729480000000000009',
+                      json.dumps({'handle': 'old_c9', 'message': {'textIt': 'pending'}}), 'unknown'))
         conn.execute('INSERT INTO cycle_delivery_part VALUES(?,?,?,?)', ('d9', 'card', 'result_unknown', at(15, 10)))
         for message_id, kind, occurred, historical in [
                 ('1', 'creatorReplies', at(15, 9), 0),
@@ -46,12 +61,26 @@ def fixture(folder):
                 ('3', 'showcaseNotifications', at(15, 11), 0),
                 ('4', 'ourMessages', at(15, 8), 0),
                 ('5', 'creatorReplies', at(14, 23, 59, 59), 0)]:
-            conn.execute('INSERT INTO inbox_event VALUES(?,?,?,?,?,?,?,?)',
-                         ('p', 'cid', message_id, 'oec', kind, int(occurred * 1000), historical, NOON))
-        conn.execute('INSERT INTO service_reply VALUES(?,?,?)', ('r1', 'confirmed', at(15, 12)))
-        conn.execute('INSERT INTO service_reply VALUES(?,?,?)', ('r2', 'ready', at(15, 12)))
-        conn.execute('INSERT INTO service_case VALUES(?,?,?)', ('case1', 'open', at(15, 13)))
-        conn.execute('INSERT INTO service_case VALUES(?,?,?)', ('case2', 'resolved', at(15, 13)))
+            conn.execute('INSERT INTO inbox_event VALUES(?,?,?,?,?,?,?,?,?)',
+                         ('p', 'cid', message_id, 'oec', kind, int(occurred * 1000),
+                          json.dumps({'messageId': message_id}), historical, NOON))
+        conn.execute('INSERT INTO relationship VALUES(?,?,?)', ('p', 'reply_creator', 'oec'))
+        conn.execute('INSERT INTO inbox_content_head VALUES(?,?,?,?)', ('p', 'cid', '1', 'h1'))
+        conn.execute('INSERT INTO inbox_content_version VALUES(?,?,?,?,?,?)',
+                     ('p', 'cid', '1', 'h1', json.dumps({'format': 'text', 'text': 'Grazie!'}), NOON))
+        conn.execute('INSERT INTO service_reply VALUES(?,?,?,?,?,?,?)',
+                     ('r1', 'p', 'reply_creator', 'oec', 'Risposta storica', 'confirmed', at(15, 12)))
+        conn.execute('INSERT INTO service_reply VALUES(?,?,?,?,?,?,?)',
+                     ('r2', 'p', 'reply_creator', 'oec', 'Non inviata', 'ready', at(15, 12)))
+        conn.execute('INSERT INTO service_case VALUES(?,?,?,?,?,?)',
+                     ('case1', 'p', 'reply_creator', 'catalog_request', 'open', at(15, 13)))
+        conn.execute('INSERT INTO service_case VALUES(?,?,?,?,?,?)',
+                     ('case2', 'p', 'reply_creator', 'sample_request', 'resolved', at(15, 13)))
+        conn.commit()
+    with sqlite3.connect(var / 'creator-identities.sqlite') as conn:
+        conn.execute('CREATE TABLE creator_identity(creator_id TEXT,market TEXT,oec_id TEXT,current_handle TEXT)')
+        conn.execute('INSERT INTO creator_identity VALUES(?,?,?,?)', ('c2', 'it', 'oec1', 'current_c2'))
+        conn.execute('INSERT INTO creator_identity VALUES(?,?,?,?)', ('reply_creator', 'it', 'oec', 'current_reply'))
         conn.commit()
 
 
@@ -121,6 +150,48 @@ class Daily(unittest.TestCase):
                              ['2026-09-12', '2026-09-13', '2026-09-14', '2026-09-15'])
             # 再往后一天（北京时间）就换到今天。
             self.assertEqual(beijing_day(NOON + 12 * 3600), '2026-09-16')
+
+    def test_day_detail_is_bounded_read_only_and_reconciles_with_the_summary(self):
+        with tempfile.TemporaryDirectory() as folder:
+            fixture(folder)
+            detail = day_detail(folder, '2026-09-15', limit=100)
+            self.assertTrue(detail['available'])
+            self.assertFalse(detail['platformWrites'])
+            self.assertEqual(detail['total'], 8)
+            self.assertEqual(len(detail['items']), 8)
+            self.assertIsNone(detail['nextOffset'])
+            kinds = {kind: sum(item['kind'] == kind for item in detail['items'])
+                     for kind in ('delivery', 'reply', 'showcase', 'auto_reply', 'case')}
+            self.assertEqual(kinds, {'delivery': 3, 'reply': 1, 'showcase': 1,
+                                     'auto_reply': 1, 'case': 2})
+            reply = next(item for item in detail['items'] if item['kind'] == 'reply')
+            self.assertEqual((reply['handle'], reply['text']), ('current_reply', 'Grazie!'))
+            delivery = next(item for item in detail['items'] if item['ref'] == 'd1')
+            self.assertEqual((delivery['handle'], delivery['handleAtEvent']), ('current_c2', 'old_c2'))
+            self.assertEqual(delivery['product'], 'prodotto 1')
+            self.assertNotIn('private', delivery)
+
+    def test_day_detail_pages_without_changing_the_daily_total(self):
+        with tempfile.TemporaryDirectory() as folder:
+            fixture(folder)
+            first = day_detail(folder, '2026-09-15', limit=3)
+            second = day_detail(folder, '2026-09-15', offset=3, limit=3)
+            self.assertEqual((first['total'], second['total']), (8, 8))
+            self.assertEqual(first['nextOffset'], 3)
+            self.assertEqual(second['nextOffset'], 6)
+            self.assertFalse({item['ref'] for item in first['items']} &
+                             {item['ref'] for item in second['items']})
+
+    def test_day_detail_rejects_unbounded_or_non_calendar_queries(self):
+        with tempfile.TemporaryDirectory() as folder:
+            fixture(folder)
+            for day in ('2026-02-30', '2026/09/15', None):
+                with self.assertRaisesRegex(ValueError, 'invalid_inbox_day'):
+                    day_detail(folder, day)
+            with self.assertRaisesRegex(ValueError, 'invalid_inbox_limit'):
+                day_detail(folder, '2026-09-15', limit=101)
+            with self.assertRaisesRegex(ValueError, 'invalid_inbox_offset'):
+                day_detail(folder, '2026-09-15', offset=5001)
 
 
 if __name__ == '__main__':

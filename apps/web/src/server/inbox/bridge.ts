@@ -17,6 +17,14 @@ export type InboxDay={date:string;cards:number;texts:number;creators:number;unco
 export type InboxTotals=Omit<InboxDay,"date">;
 export type InboxState={available:boolean;config:InboxConfig;configInvalid:boolean;run:InboxRun|null;
  today:InboxDay|null;openCases:number;timezone:string;totals:InboxTotals;days:InboxDay[];saved?:boolean};
+export type InboxDetailKind="delivery"|"reply"|"showcase"|"auto_reply"|"case";
+export type InboxDetailItem={kind:InboxDetailKind;occurredAt:number;ref:string;creatorId:string|null;
+ oec:string|null;handle:string|null;handleAtEvent:string|null;pid:string|null;status:string|null;
+ product:string|null;creatorPercent:string|null;catalogSource:string|null;text:string|null;
+ format:"text"|"attachment_or_unsupported"|"not_fetched"|null;textState:string|null};
+export type InboxDayDetail={available:boolean;date:string;timezone:string;summary:InboxDay|null;
+ total:number;offset:number;limit:number;nextOffset:number|null;items:InboxDetailItem[];platformWrites:false};
+export type InboxQuery={view:"status"}|{view:"detail";date:string;offset:number;limit:number};
 
 const STAT_KEYS=(['cards','texts','creators','unconfirmed','replies','showcase','ourMessages','autoReplies','casesOpened'] as const);
 
@@ -38,6 +46,8 @@ const count=(raw:unknown)=>{if(typeof raw!=="number"||!Number.isSafeInteger(raw)
 const clock=(raw:unknown)=>{if(typeof raw!=="number"||!Number.isFinite(raw)||raw<0)throw Error('invalid_inbox');return raw;};
 // 北京日：固定 +08:00，中国没有夏令时；格式钉死，免得一个手写的日期混进日历。
 const DATE=/^\d{4}-\d{2}-\d{2}$/;
+const DETAIL_KINDS=new Set<InboxDetailKind>(["delivery","reply","showcase","auto_reply","case"]);
+const validDate=(value:string)=>DATE.test(value)&&new Date(`${value}T00:00:00Z`).toISOString().slice(0,10)===value;
 
 function day(raw:unknown):InboxDay{
  if(!raw||typeof raw!=="object"||Array.isArray(raw))throw Error('invalid_inbox');
@@ -107,7 +117,67 @@ export function validateInbox(value:unknown):InboxState{
   days,...saved};
 }
 
-function runMonitor(args:string[]):Promise<InboxState>{
+function optionalText(raw:unknown,max:number):string|null{
+ if(raw==null)return null;
+ if(typeof raw!=="string"||!raw.length||raw.length>max)throw Error('invalid_inbox_detail');
+ return raw;
+}
+
+export function validateInboxDayDetail(value:unknown):InboxDayDetail{
+ if(!value||typeof value!=="object"||Array.isArray(value))throw Error('invalid_inbox_detail');
+ const v=value as Record<string,unknown>;
+ if(typeof v.date!=="string"||!validDate(v.date)||typeof v.timezone!=="string"||!v.timezone)
+  throw Error('invalid_inbox_detail');
+ const offset=count(v.offset),limit=count(v.limit),total=count(v.total);
+ if(offset>5000||limit<1||limit>100||typeof v.platformWrites!=="boolean"||v.platformWrites)
+  throw Error('invalid_inbox_detail');
+ if(v.available!==true){
+  if(total!==0||v.summary!=null||v.nextOffset!=null||!Array.isArray(v.items)||v.items.length)throw Error('invalid_inbox_detail');
+  return {available:false,date:v.date,timezone:v.timezone,summary:null,total:0,
+   offset,limit,nextOffset:null,items:[],platformWrites:false};
+ }
+ if(!Array.isArray(v.items)||v.items.length>limit)throw Error('invalid_inbox_detail');
+ const summary=v.summary==null?null:day(v.summary);
+ if(!summary||summary.date!==v.date||total!==summary.cards+summary.unconfirmed+summary.replies+
+  summary.showcase+summary.autoReplies+summary.casesOpened)throw Error('invalid_inbox_detail');
+ const items=v.items.map(raw=>{
+  if(!raw||typeof raw!=="object"||Array.isArray(raw))throw Error('invalid_inbox_detail');
+  const item=raw as Record<string,unknown>;
+  if(typeof item.kind!=="string"||!DETAIL_KINDS.has(item.kind as InboxDetailKind))throw Error('invalid_inbox_detail');
+  let format:InboxDetailItem["format"]=null;
+  if(item.format==="text"||item.format==="attachment_or_unsupported"||item.format==="not_fetched")format=item.format;
+  else if(item.format!=null)throw Error('invalid_inbox_detail');
+  return {kind:item.kind as InboxDetailKind,occurredAt:count(item.occurredAt),ref:optionalText(item.ref,200)!,
+   creatorId:optionalText(item.creatorId,200),oec:optionalText(item.oec,40),handle:optionalText(item.handle,100),
+   handleAtEvent:optionalText(item.handleAtEvent,100),pid:optionalText(item.pid,40),status:optionalText(item.status,80),
+   product:optionalText(item.product,300),creatorPercent:optionalText(item.creatorPercent,32),
+   catalogSource:optionalText(item.catalogSource,40),text:optionalText(item.text,4000),
+   format,textState:optionalText(item.textState,80)};
+ });
+ if(items.some(item=>!item.ref)||offset+items.length>total)throw Error('invalid_inbox_detail');
+ const nextOffset=v.nextOffset==null?null:count(v.nextOffset);
+ const expected=offset+items.length<total?offset+items.length:null;
+ if(nextOffset!==expected)throw Error('invalid_inbox_detail');
+ return {available:true,date:v.date,timezone:v.timezone,summary,total,offset,limit,nextOffset,items,platformWrites:false};
+}
+
+export function parseInboxQuery(url:string):InboxQuery{
+ const params=new URL(url).searchParams;
+ if(!params.size)return {view:"status"};
+ if([...params.keys()].some(key=>!['date','offset','limit'].includes(key))||
+  ['date','offset','limit'].some(key=>params.getAll(key).length>1))throw Error('invalid_inbox_query');
+ const date=params.get('date');
+ if(!date||!validDate(date))
+  throw Error('invalid_inbox_query');
+ const integer=(key:string,fallback:number,max:number)=>{const raw=params.get(key);if(raw==null)return fallback;
+  if(!/^(0|[1-9]\d*)$/.test(raw))throw Error('invalid_inbox_query');const value=Number(raw);
+  if(!Number.isSafeInteger(value)||value>max)throw Error('invalid_inbox_query');return value;};
+ const offset=integer('offset',0,5000),limit=integer('limit',50,100);
+ if(limit<1)throw Error('invalid_inbox_query');
+ return {view:"detail",date,offset,limit};
+}
+
+function runMonitor(args:string[]):Promise<unknown>{
  const root=projectRoot();
  return new Promise((resolve,reject)=>{
   execFile(join(root,"../01-BDSystem-V2/.venv/bin/python"),[join(root,"scripts/inbox-monitor.py"),...args],
@@ -118,15 +188,17 @@ function runMonitor(args:string[]):Promise<InboxState>{
     // 只有"错误码一个键"的裸信封才是失败；带 error 字段的成功回答不算。
     if(parsed&&typeof parsed==="object"&&Object.keys(parsed).length===1&&typeof (parsed as {error?:unknown}).error==="string"&&(parsed as {error:string}).error!==""){
      reject(Error((parsed as {error:string}).error));return;}
-    try{resolve(validateInbox(parsed));}
-    catch{reject(Error('inbox_unavailable'));}
+    resolve(parsed);
    });
  });
 }
 
-export function readInbox():Promise<InboxState>{return runMonitor(["status"]);}
+export async function readInbox():Promise<InboxState>{return validateInbox(await runMonitor(["status"]));}
+export async function readInboxDay(date:string,offset:number,limit:number):Promise<InboxDayDetail>{
+ return validateInboxDayDetail(await runMonitor(["detail","--date",date,"--offset",String(offset),"--limit",String(limit)]));
+}
 export function saveInboxConfig(config:InboxConfig):Promise<InboxState>{
- return runMonitor(["save","--json",JSON.stringify(config)]);
+ return runMonitor(["save","--json",JSON.stringify(config)]).then(validateInbox);
 }
 
 /** job-run.py 的拒绝要原样带出来；它的成功回答是全部作业，不是这一个。 */

@@ -14,12 +14,15 @@
 """
 from contextlib import closing
 from datetime import datetime, timedelta, timezone
+import json
 import sqlite3
 import time
 from pathlib import Path
 
 BEIJING = timezone(timedelta(hours=8))
 DAY_SECONDS = 86400
+DETAIL_LIMIT_MAX = 100
+DETAIL_OFFSET_MAX = 5000
 
 
 def beijing_day(stamp):
@@ -73,6 +76,128 @@ def _day_row(conn, day):
         'casesOpened': _one(conn, "SELECT count(*) FROM service_case WHERE created>=? AND created<?",
                             (start, end)),
     }
+
+
+def _clean_text(value, limit):
+    return value[:limit] if isinstance(value, str) and value else None
+
+
+def _detail_item(row, handles):
+    try:
+        payload = json.loads(row['data_json']) if row['data_json'] else {}
+    except (TypeError, json.JSONDecodeError):
+        payload = {}
+    if not isinstance(payload, dict):
+        payload = {}
+    snapshot_handle = _clean_text(payload.get('handle'), 100) if row['item_kind'] == 'delivery' else None
+    current_handle = handles.get((row['creator_id'], row['oec'])) if row['creator_id'] else None
+    item = {
+        'kind': row['item_kind'],
+        'occurredAt': int(row['occurred_ms']),
+        'ref': _clean_text(row['ref'], 200),
+        'creatorId': _clean_text(row['creator_id'], 200),
+        'oec': _clean_text(row['oec'], 40),
+        'handle': current_handle or snapshot_handle,
+        'handleAtEvent': snapshot_handle,
+        'pid': _clean_text(row['pid'], 40),
+        'status': _clean_text(row['status'], 80),
+        'product': None,
+        'creatorPercent': None,
+        'catalogSource': None,
+        'text': None,
+        'format': None,
+        'textState': _clean_text(row['aux_status'], 80),
+    }
+    if row['item_kind'] == 'delivery':
+        name = payload.get('name') if isinstance(payload.get('name'), dict) else {}
+        offer = payload.get('offer') if isinstance(payload.get('offer'), dict) else {}
+        message = payload.get('message') if isinstance(payload.get('message'), dict) else {}
+        item['product'] = _clean_text(name.get('shortNameIt') or name.get('mentionIt') or offer.get('title'), 300)
+        item['creatorPercent'] = _clean_text(offer.get('creatorPercent'), 32)
+        item['catalogSource'] = _clean_text(offer.get('catalogSource'), 40)
+        item['text'] = _clean_text(message.get('textIt'), 4000)
+        item['format'] = 'text' if item['text'] else None
+    elif row['item_kind'] in ('reply', 'auto_reply'):
+        item['format'] = payload.get('format') if payload.get('format') in ('text', 'attachment_or_unsupported') else 'not_fetched'
+        item['text'] = _clean_text(payload.get('text'), 4000) if item['format'] == 'text' else None
+    elif row['item_kind'] == 'case':
+        item['status'] = _clean_text(payload.get('reason') or row['status'], 80)
+    return item
+
+
+def _current_handles(root, rows):
+    path = Path(root) / 'var/creator-identities.sqlite'
+    pairs = {(row['creator_id'], row['oec']) for row in rows if row['creator_id'] and row['oec']}
+    if not path.exists() or not pairs:
+        return {}
+    creators = sorted({creator for creator, _ in pairs})
+    placeholders = ','.join('?' for _ in creators)
+    with closing(sqlite3.connect(path.resolve().as_uri() + '?mode=ro', uri=True)) as conn:
+        found = conn.execute('SELECT creator_id,oec_id,current_handle FROM creator_identity '
+                             f"WHERE market='it' AND creator_id IN ({placeholders})", creators).fetchall()
+    return {(creator, oec): handle for creator, oec, handle in found
+            if (creator, oec) in pairs and isinstance(handle, str) and handle}
+
+
+def day_detail(root, day, *, offset=0, limit=50):
+    """一个北京自然日的有界核对明细。只读；不返回原始 snapshot、回执或平台 payload。"""
+    root = Path(root)
+    try:
+        parsed = datetime.strptime(day, '%Y-%m-%d')
+    except (TypeError, ValueError):
+        raise ValueError('invalid_inbox_day')
+    if parsed.strftime('%Y-%m-%d') != day:
+        raise ValueError('invalid_inbox_day')
+    if type(offset) is not int or not 0 <= offset <= DETAIL_OFFSET_MAX:
+        raise ValueError('invalid_inbox_offset')
+    if type(limit) is not int or not 1 <= limit <= DETAIL_LIMIT_MAX:
+        raise ValueError('invalid_inbox_limit')
+    path = root / 'var/second-cycle.sqlite'
+    if not path.exists():
+        return {'available': False, 'date': day, 'timezone': 'Asia/Shanghai', 'summary': None,
+                'total': 0, 'offset': offset, 'limit': limit, 'nextOffset': None,
+                'items': [], 'platformWrites': False}
+    start, end = day_bounds(day)
+    start_ms, end_ms = int(start * 1000), int(end * 1000)
+    sql = '''WITH detail AS (
+      SELECT 'delivery' item_kind,CAST(p.started*1000 AS INTEGER) occurred_ms,d.id ref,
+             d.creator_id,d.oec,d.pid,p.state status,d.snapshot data_json,
+             (SELECT t.state FROM cycle_delivery_part t WHERE t.delivery_id=d.id AND t.kind='text') aux_status
+        FROM cycle_delivery_part p JOIN cycle_delivery d ON d.id=p.delivery_id
+       WHERE p.kind='card' AND p.started>=? AND p.started<?
+      UNION ALL
+      SELECT CASE e.kind WHEN 'creatorReplies' THEN 'reply' ELSE 'showcase' END,
+             e.occurred_ms,e.message_id,r.creator_id,e.oec,NULL,e.kind,
+             CASE WHEN e.kind='creatorReplies' THEN v.payload ELSE NULL END,NULL
+        FROM inbox_event e
+        LEFT JOIN relationship r ON r.plan_id=e.plan_id AND r.oec=e.oec
+        LEFT JOIN inbox_content_head h ON h.plan_id=e.plan_id AND h.cid=e.cid AND h.message_id=e.message_id
+        LEFT JOIN inbox_content_version v ON v.plan_id=h.plan_id AND v.cid=h.cid AND v.message_id=h.message_id AND v.hash=h.hash
+       WHERE e.historical=0 AND e.kind IN ('creatorReplies','showcaseNotifications')
+         AND e.occurred_ms>=? AND e.occurred_ms<?
+      UNION ALL
+      SELECT 'auto_reply',CAST(started*1000 AS INTEGER),id,creator_id,oec,NULL,state,
+             json_object('format','text','text',text),NULL
+        FROM service_reply WHERE state='confirmed' AND started>=? AND started<?
+      UNION ALL
+      SELECT 'case',CAST(c.created*1000 AS INTEGER),c.id,c.creator_id,r.oec,NULL,c.state,
+             json_object('reason',c.reason),NULL
+        FROM service_case c LEFT JOIN relationship r ON r.plan_id=c.plan_id AND r.creator_id=c.creator_id
+       WHERE c.created>=? AND c.created<?
+    ) SELECT * FROM detail ORDER BY occurred_ms DESC,ref LIMIT ? OFFSET ?'''
+    args = (start, end, start_ms, end_ms, start, end, start, end, limit, offset)
+    with closing(sqlite3.connect(path.resolve().as_uri() + '?mode=ro', uri=True)) as conn:
+        conn.row_factory = sqlite3.Row
+        summary = _day_row(conn, day)
+        rows = conn.execute(sql, args).fetchall()
+    handles = _current_handles(root, rows)
+    total = sum(summary[key] for key in ('cards', 'unconfirmed', 'replies', 'showcase',
+                                         'autoReplies', 'casesOpened'))
+    items = [_detail_item(row, handles) for row in rows]
+    next_offset = offset + len(items) if offset + len(items) < total else None
+    return {'available': True, 'date': day, 'timezone': 'Asia/Shanghai', 'summary': summary,
+            'total': total, 'offset': offset, 'limit': limit, 'nextOffset': next_offset,
+            'items': items, 'platformWrites': False}
 
 
 def daily(root, *, count=14, now=None):

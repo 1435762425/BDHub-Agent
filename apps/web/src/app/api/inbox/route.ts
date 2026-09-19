@@ -1,4 +1,4 @@
-import {readInbox,saveInboxConfig,startInboxRun,stopInboxRun,validateInboxRequest} from "../../../server/inbox/bridge.ts";
+import {parseInboxQuery,readInbox,readInboxDay,saveInboxConfig,startInboxRun,stopInboxRun,validateInboxRequest} from "../../../server/inbox/bridge.ts";
 import type {InboxConfig} from "../../../server/inbox/bridge.ts";
 import {isLocalRequest} from "../../../server/runtime/validation.ts";
 export const runtime="nodejs";
@@ -8,7 +8,9 @@ const headers={"Cache-Control":"no-store","X-Content-Type-Options":"nosniff"};
 
 export async function GET(request:Request){
  if(!isLocalRequest(request,false))return Response.json({error:'local_origin_required'},{status:403,headers});
- try{return Response.json(await readInbox(),{headers});}
+ let query;try{query=parseInboxQuery(request.url);}
+ catch{return Response.json({error:'invalid_inbox_query'},{status:400,headers});}
+ try{return Response.json(query.view==="status"?await readInbox():await readInboxDay(query.date,query.offset,query.limit),{headers});}
  catch{return Response.json({error:'inbox_unavailable'},{status:503,headers});}
 }
 

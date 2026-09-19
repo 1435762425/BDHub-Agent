@@ -1,6 +1,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {validateInbox,validateInboxConfig,validateInboxRequest} from '../src/server/inbox/bridge.ts';
+import {parseInboxQuery,validateInbox,validateInboxConfig,validateInboxDayDetail,validateInboxRequest} from '../src/server/inbox/bridge.ts';
+const url='http://127.0.0.1:5198/api/inbox';
 
 const step={processed:6,added:0,historical:0,liveReplies:0,indexedTargets:555,serviceDecisions:0,
  errorCode:null,state:'',checkedAt:1789472601.7,conversations:555,events:1352,historicalEvents:316,
@@ -107,4 +108,36 @@ test('a run record for a different job cannot wear this shape',()=>{
  }
  // 只读监控永远不报写入；状态只读，所以这里只断言它被如实读出。
  assert.equal(validateInbox(payload).run.platformWrites,false);
+});
+
+test('day-detail queries are exact, bounded and cannot smuggle another command',()=>{
+ assert.deepEqual(parseInboxQuery(url),{view:'status'});
+ assert.deepEqual(parseInboxQuery(url+'?date=2026-09-15'),
+  {view:'detail',date:'2026-09-15',offset:0,limit:50});
+ assert.deepEqual(parseInboxQuery(url+'?date=2026-09-15&offset=50&limit=100'),
+  {view:'detail',date:'2026-09-15',offset:50,limit:100});
+ for(const query of ['?date=2026-02-30','?date=2026-09-15&limit=0','?date=2026-09-15&limit=101',
+  '?date=2026-09-15&offset=5001','?date=2026-09-15&date=2026-09-16','?date=2026-09-15&action=start'])
+  assert.throws(()=>parseInboxQuery(url+query),/invalid_inbox_query/);
+});
+
+test('day-detail decoder keeps only bounded read-only rows and reconciles its total',()=>{
+ const summary={...day,cards:1,replies:1};
+ const items=[
+  {kind:'delivery',occurredAt:1789472601000,ref:'delivery-1',creatorId:'creator-1',oec:'123',handle:'new_name',handleAtEvent:'old_name',pid:'1729480019490150432',status:'confirmed',product:'prodotto',creatorPercent:'13',catalogSource:'selected',text:'Ciao!',format:'text',textState:'confirmed'},
+  {kind:'reply',occurredAt:1789472602000,ref:'message-1',creatorId:'creator-1',oec:'123',handle:'new_name',handleAtEvent:null,pid:null,status:'creatorReplies',product:null,creatorPercent:null,catalogSource:null,text:'Grazie!',format:'text',textState:null},
+ ];
+ const result=validateInboxDayDetail({available:true,date:day.date,timezone:'Asia/Shanghai',summary,
+  total:2,offset:0,limit:50,nextOffset:null,items,platformWrites:false});
+ assert.equal(result.items[0].handleAtEvent,'old_name');
+ assert.equal(result.items[1].text,'Grazie!');
+ assert.equal(result.platformWrites,false);
+ for(const bad of [
+  {total:3},
+  {platformWrites:true},
+  {nextOffset:1},
+  {items:[{...items[0],kind:'raw_payload'}]},
+  {items:[{...items[0],text:'x'.repeat(4001)}]},
+ ])assert.throws(()=>validateInboxDayDetail({available:true,date:day.date,timezone:'Asia/Shanghai',summary,
+  total:2,offset:0,limit:50,nextOffset:null,items,platformWrites:false,...bad}),/invalid_inbox_detail/);
 });
