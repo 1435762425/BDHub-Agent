@@ -144,6 +144,8 @@ React 组件不能直接读写 SQLite、启动任意命令或实现资格规则�
 
 `lead_pool.py` 与 `/api/lead-pool` 已使用 `bdhub.lead-pool.v2`：业务只投影 `sendable / waiting / inactive`，`sent` 单列历史；内部原因仍用于排障。达人排序和达人内部 PID 选择统一使用 `sourceRank → units DESC → pid ASC`，同一达人只有一个可发送槽位。发送预览按池子顺序复检；冻结批次执行器按 `position_order` 消费，不再执行时重新挑选或补满。
 
+当前 send preview v3 接受任意 `N=1..2000`，自动要求 `R=ceil(N×10%)`。冻结把前 N 位标为 `batchRole=formal` 并建立初始 `cycle_bulk_item`，后 R 位标为 `reserve` 且只保存在不可变 `cycle_bulk_candidate`；N＋R 未齐时 `fullPreparation=false`，服务端拒绝冻结。执行器仅在正式成员进入明确非触达终态后按 `position_order` 提升已冻结候补；`unknown` 先把整批切到 `waiting_reconciliation`，不会提升候补。`cycle_bulk.target` 始终是 N，`attempted/reservePromoted/reserveRemaining` 单独展示，候补不增加目标。页面修改目标、窗口或越界开关后先标记为未保存并禁用冻结，保存后重新预检并取得新的 preview hash，不能用旧预览冻结新设置。
+
 `/api/inbox` 一次返回监控状态、最近 14 个北京自然日和当前未结人工事项；`StatsCalendarPanel` 直接复用工作台唯一的 `useInboxMonitor()` controller，不增加请求或轮询。日历主指标为确认触达达人次、确认商品卡、实时达人回复和加橱窗；未确认卡片单独展示，不计入成功。bridge 与纯展示模型都会复核期间 totals 等于每日行求和、`today` 等于同日期行；不可用、空数据或恒等式不成立时不显示成业务 0。
 
 点击日期后，GET `/api/inbox?date=YYYY-MM-DD&offset=0&limit=50` 调用 `cycle_stats.day_detail()` 只读同一 SQLite，单页上限 100、偏移上限 5000。明细只投影投递、实时回复、加橱窗、历史已确认服务回复和当日新建人工案件的白名单字段；不下发原始 delivery snapshot、平台 payload、receipt、confirmation 或身份凭据。`total` 必须等于当日这些明细类型的统计求和，分页游标、日期和字段长度在 CLI/bridge 两层校验；确认文字跟随商品卡展示，不重复算成第二条触达。
@@ -189,7 +191,7 @@ DeepSeek 与 TypeSafe Jev 当前都只作为影子 provider。Jev 使用官方 S
 
 `scripts/lib/schema_migrations.py` 当前以增量 registry 管理 `catalog-links.sqlite` 和 `second-cycle.sqlite` 的本轮新投影；其他历史表仍由各领域模块初始化。新增表/字段必须继续提供幂等升级和旧库兼容测试，不能靠删除本地 DB 重建。
 
-早期 `batch-tasks.sqlite` 与当前 `cycle_bulk_freeze/cycle_bulk_candidate` 是两套不同台账。工作台不再从旧任务卡创建、暂停、恢复或唤醒 `batch-preparation-worker`；旧卡只读展示，当前新批次只走 `/api/send` 的预览、冻结、明确 start/stop。旧数据库可能没有后来新增的 `batch_source_selection`，读侧必须返回 `edges=null + selectionRecorded=false`，不能创建空表后把未知冒充为 0。项目文档要求的“任意 N＋10% 候补”仍需在当前冻结发送台账上实现，不能重新启用旧并行入口。
+早期 `batch-tasks.sqlite` 与当前 `cycle_bulk_freeze/cycle_bulk_candidate` 是两套不同台账。工作台不再从旧任务卡创建、暂停、恢复或唤醒 `batch-preparation-worker`；旧卡只读展示，当前新批次只走 `/api/send` 的预览、冻结、明确 start/stop。旧数据库可能没有后来新增的 `batch_source_selection`，读侧必须返回 `edges=null + selectionRecorded=false`，不能创建空表后把未知冒充为 0。项目文档要求的“任意 N＋10% 候补”已迁入当前冻结发送台账，不再依赖旧并行入口。
 
 ### 6.2 状态原则
 

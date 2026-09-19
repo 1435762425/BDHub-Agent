@@ -30,6 +30,7 @@ DeepSeek/Agent 已经把 9 月 14 日的“货盘批量备链”继续推进到�
 | 旧回复路径退役 | `6eae5e2`（`reply_facts` 退出调度、工作台口径对齐） |
 | 日历日明细 | `e669ad4`（只读白名单投影、分页核对与明细弹窗） |
 | 历史任务收敛 | `8b317e3`（旧任务只读、缺失选择明细保持未知） |
+| 任意 N＋候补 | `54df9b9`（send-preview v3、冻结 formal/reserve、unknown 不补位） |
 | 上一个已提交开发头 | `4cdb759`（`agent/p0-catalog-links`） |
 | 继承工作区固化提交 | `cd81dff` |
 | 继承标签 | `takeover-20260919-inherited` |
@@ -72,10 +73,10 @@ DeepSeek/Agent 已经把 9 月 14 日的“货盘批量备链”继续推进到�
 | Kalodata 线索 | `leads-queue-v2`、完整 receipt、当前前 20 条发布、历史规范化索引和无平台回填 | 失败不写 `queried_at`；额度耗尽停止并保留断点 |
 | OECID | 达人级一次查询、blocked 重开、结果互斥分类、页面卡片 | 已明确查无的不自动重复；无 OECID 不进入发送位置 |
 | 发送池 | `lead-pool.v2`、统一 `sourceRank → units DESC → PID`、三种业务结果、已发送历史分离 | 池本身只读重算；不能从可发送数量直接启动发送 |
-| 冻结发送 | `previewHash`、完整候选快照、requestId 幂等、revision start/stop、2-lane worker、页面确认摘要与断点 | GET/save/freeze 不启动；只有页面明确 start 才真实发送，本轮批次与发送均为 0 |
+| 冻结发送 | 任意 N（1–2000）＋自动 10% 候补、`previewHash`、完整候选快照、requestId 幂等、revision start/stop、2-lane worker、页面确认摘要与断点 | 初始执行只含 N 位正式成员；明确未触达才提升冻结候补，unknown 不释放名额；只有页面明确 start 才真实发送 |
 | 收信与统计 | 现有 inbox worker 接入作业面板，按北京时间统计并排除历史补录 | 盘点中出现过一次 `im_transport_error`，最终回读已清除；继续观察而不是重启掩盖 |
 | 统计日历 | 最近 14 日汇总、每日紧凑日历、今日高亮、未确认单列、点击日期查看分页明细 | 明细严格只读并只投影白名单字段；原始 snapshot、平台 payload 和回执不下发 |
-| 早期指定数量任务 | 历史任务卡改为只读，缺失的选择明细显示“历史未记录”而不是 0；当前页面不再唤醒旧 worker | 项目文档要求的任意 N＋10% 候补尚未迁入当前 frozen-v2 台账，不能用旧任务权限替代 |
+| 早期指定数量任务 | 历史任务卡改为只读，缺失的选择明细显示“历史未记录”而不是 0；当前页面不再唤醒旧 worker | 任意 N＋10% 候补已迁入 frozen-v2，旧任务权限不再参与当前执行 |
 | 回复分类 | 不可变 episode/turn/关联、五种动作、三条固定回复、DeepSeek/Jev 并列动作与置信度、中文理解和用户正误审核页 | 真实自动回复关闭；`Certo!` 的模型分歧仍需用户审核 |
 | PID→发送池演示 | `/flow-demo` 展示 PID 生命周期树、每 PID 最多 20 条线索、OECID、统一 `sourceRank` 排序和三种业务结果 | 纯前端，PID 数量为 2026-09-19 只读静态快照，达人案例为虚构数据；页面运行时不连接 API、SQLite、平台或模型 |
 
@@ -92,7 +93,7 @@ DeepSeek/Agent 已经把 9 月 14 日的“货盘批量备链”继续推进到�
 ## 6. 当前技术风险
 
 1. **收信健康需持续观察**：盘点中出现过一轮 `im_transport_error`，最终只读回读已恢复为 `null`。后续若再次出现，读取脱敏日志和最近成功时间，区分短暂网络错误、身份问题或锁竞争，不用盲目重启掩盖。
-2. **早期任务尚未迁入当前冻结台账**：历史 `batch-preparation-worker` 曾持有 `batch-tasks.sqlite` 写事务 23.9–74.3 秒；当前 UI 已停止创建/控制旧任务并只读追溯。任意 N＋10% 候补仍需在 frozen-v2 上实现，不能重新唤醒旧 worker 规避迁移。
+2. **早期任务库只读保留**：历史 `batch-preparation-worker` 曾持有 `batch-tasks.sqlite` 写事务 23.9–74.3 秒；当前 UI 已停止创建/控制旧任务并只读追溯。任意 N＋10% 候补已迁入 frozen-v2，不应重新唤醒旧 worker。
 3. **新发送执行器尚未做真实平台验收**：冻结、start/stop 和离线故障合同已完成，但账号级日额度原生信号仍未取得；第一次真实执行仍需用户在页面单独启动并观察。
 4. **本机 Git 无远端**：已有提交和标签可以本机回滚，但机器损坏时没有远端恢复点。配置 GitHub/GitLab 远端需要用户提供目标仓库或明确创建位置。
 5. **文档曾混入大量动态流水**：原 `AGENTS.md` 已由本轮收敛；以后不得继续把每次数字和事故追加回根规则。
@@ -141,7 +142,15 @@ DeepSeek/Agent 已经把 9 月 14 日的“货盘批量备链”继续推进到�
 - `/api/batch-tasks` 的 503 根因是历史库缺少后来新增的 `batch_source_selection`；读侧现在返回“历史未记录”，不建空表、不伪造 0；
 - 工作台移除旧任务创建、暂停、优先级和 resume 操作，只保留目标、候补、历史准备进度、来源页面和事件的只读追溯；
 - 当前新发送的唯一页面入口仍是“发送池与发送”的预览→冻结→明确开始，历史任务 `executionConnected=false`，不会继承旧授权或唤醒准备 worker；
-- 仍未完成的是把项目文档的任意 N＋10% 候补迁到 frozen-v2；这是下一项实现，不应恢复旧并行任务源。
+- 项目文档的任意 N＋10% 候补已迁到 frozen-v2，不再恢复旧并行任务源。
+
+### 已完成：frozen-v2 任意 N＋候补
+
+- 页面接受 `1–2000` 的明确正式目标，保留 500/1000 快捷值和 600 越界探测快捷值；
+- send-preview v3 自动计算 `reserve=ceil(N×10%)`，正式与候补未全部备齐时服务端拒绝冻结，原目标不缩小；
+- 冻结候选在不可变 JSON 中保存 `batchRole=formal|reserve`，只有 formal 写入初始 `cycle_bulk_item`，`cycle_bulk.target` 始终为 N；
+- 明确 `recipient_limit/material_stale/needs_review` 等非触达终态可按冻结顺序提升候补；存在 unknown delivery 时提升为 0，整批先进入核验；
+- 真实只读预检：N=500 → 500＋50、N=137 → 137＋14、600 越界 → 600＋60，均完整备齐；本轮没有冻结或启动真实批次。
 
 ### 下一步：用户审核与评测
 
@@ -150,7 +159,7 @@ DeepSeek/Agent 已经把 9 月 14 日的“货盘批量备链”继续推进到�
 3. 审核后直接比较 DeepSeek/Jev 准确率、误自动处理和误转人工；只有用户另行明确开启后，才设计真实自动回复 transport；
 4. 账号级日额度探测仍由用户另行在页面明确启动，不与回复评测混在一起。
 
-并行开发顺序：先把“任意 N＋10% 候补”接到当前冻结发送台账，复用当前 PID/OECID/TapLink/关系门禁；旧 `batch-tasks.sqlite` 只作迁移证据，不再作为执行入口。
+旧 `batch-tasks.sqlite` 只作迁移证据，不再作为执行入口；后续批次能力继续只在 frozen-v2 上扩展。
 
 ## 8. 关键入口
 
@@ -177,7 +186,7 @@ DeepSeek/Agent 已经把 9 月 14 日的“货盘批量备链”继续推进到�
 
 2026-09-20 在统计日历聚合页完成后：
 
-- Python：`1061` 项 `unittest` 通过。
+- Python：`1064` 项 `unittest` 通过。
 - Web：`380` 项 Node 测试通过。
 - TypeScript：`npm run typecheck` 通过。
 - Next.js：`npm run build` 通过，14 个静态页面（含 `/flow-demo`）及当前 API 路由生成成功。

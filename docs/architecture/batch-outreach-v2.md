@@ -1,6 +1,6 @@
 # 指定数量批次架构与实施蓝图
 
-> 当前实施说明（2026-09-20）：本文的“任意 N＋10% 候补”仍是项目需求，但早期 `batch-tasks.sqlite` 实现没有接入当前 frozen-v2 发送台账。工作台已将旧任务卡改为只读追溯，不再创建任务或唤醒旧 worker。后续必须在 `/api/send`、`cycle_bulk_freeze/cycle_bulk_candidate` 上实现本需求，不能恢复两套并行任务真相源。
+> 当前实施说明（2026-09-20）：本文的“任意 N＋10% 候补”已接入当前 frozen-v2 发送台账。工作台旧 `batch-tasks.sqlite` 任务卡只读追溯，不再创建任务或唤醒旧 worker；新预览/冻结使用 send-preview v3，在不可变候选中区分 formal/reserve，unknown 不释放名额。两套并行任务真相源不再恢复。
 
 当前产品基线：[项目文档](../PROJECT.md)。[旧 PRD](../PRD.md)保留 2026-09-13 批次需求细节；本轮实现与验证：[B.17](../implementation/batch-preparation-foundation-v2.md)。本架构覆盖旧的边发边补策略。本文“已实现”均注明是代码/本地验证还是平台验收，不把设计当运行事实。
 
