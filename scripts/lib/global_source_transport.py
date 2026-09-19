@@ -2,6 +2,7 @@
 from contextlib import contextmanager
 from pathlib import Path
 import hashlib,importlib.util,sys,time
+from lib.legacy_runtime import configure_vendored_bdhub
 ROOT=Path(__file__).resolve().parents[2];LEGACY=ROOT.parent/'01-BDSystem-V2'
 LIST='/api/v1/affiliate/partner/product/opportunity_product/list'
 DETAIL='/api/v1/affiliate/partner/product/opportunity_product/campaign_detail'
@@ -132,7 +133,7 @@ def _opportunity_transport(report,*,stopped=lambda:False,extra_read_endpoints=fr
     # campaign+source in pages), used to avoid one search per PID. It never writes.
     if not set(extra_read_endpoints)<=ALLOWED_EXTRA_READS:raise ValueError('source_read_endpoint_forbidden')
     sys.dont_write_bytecode=True
-    if str(LEGACY) not in sys.path:sys.path.insert(0,str(LEGACY))
+    configure_vendored_bdhub(root=ROOT,legacy_root=LEGACY)
     from bdhub import scheduled_relogin
     from bdhub.hub.markets import identity_for
     from bdhub.send.taplink.transport import account_for

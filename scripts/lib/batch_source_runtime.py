@@ -7,11 +7,12 @@ from lib.batch_task_service import read_local_preparation
 from lib.second_cycle import CycleStore,CycleError,encoded
 from lib.creator_discovery import CreatorDiscoveryStore
 from lib.cycle_identity import IdentityBridge
+from lib.legacy_runtime import configure_vendored_bdhub
 
 @contextmanager
 def kalodata_provider(root):
  legacy=root.parent/'01-BDSystem-V2';sys.dont_write_bytecode=True
- if str(legacy) not in sys.path:sys.path.insert(0,str(legacy))
+ configure_vendored_bdhub(root=root,legacy_root=legacy)
  spec=importlib.util.spec_from_file_location('batch_kalodata_http',root/'scripts/second-cycle-worker.py')
  mod=importlib.util.module_from_spec(spec);spec.loader.exec_module(mod)
  with (legacy/'data/research/kalodata/.browser.lock').open('rb') as lock:

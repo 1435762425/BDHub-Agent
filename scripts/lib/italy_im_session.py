@@ -45,9 +45,8 @@ class VerifiedConversation:
 
 def _proto():
     sys.dont_write_bytecode = True
-    legacy = "/Users/bjn00003/BDHub/01-BDSystem-V2"
-    if legacy not in sys.path:
-        sys.path.insert(0, legacy)
+    from lib.legacy_runtime import configure_vendored_bdhub
+    configure_vendored_bdhub()
     from bdhub.send import http_protocol
     return http_protocol
 

@@ -5,7 +5,9 @@ from pathlib import Path
 from datetime import datetime,timezone
 sys.dont_write_bytecode=True
 ROOT=Path(__file__).resolve().parents[1];LEGACY=ROOT.parent/'01-BDSystem-V2'
-sys.path.insert(0,str(LEGACY));sys.path.insert(0,str(ROOT/'scripts'))
+sys.path.insert(0,str(ROOT/'scripts'))
+from lib.legacy_runtime import configure_vendored_bdhub
+configure_vendored_bdhub(root=ROOT,legacy_root=LEGACY)
 import requests
 from sqlalchemy import text
 from bdhub import config,scheduled_relogin

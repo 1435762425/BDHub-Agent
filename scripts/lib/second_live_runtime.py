@@ -24,6 +24,7 @@ import time
 from lib.italy_im_auth import ItalyImAuthContext, ItalyImAuthError, authenticate_it
 from lib.italy_im_delivery import ItalyImDeliveryAdapter, ItalyVerifiedProductCard
 from lib.italy_im_session import ItalyImReadSession
+from lib.legacy_runtime import configure_vendored_bdhub
 from lib.second_card_binding import refresh_card_binding
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -46,8 +47,7 @@ class SecondLiveRuntimeError(RuntimeError):
 
 def _legacy_imports():
     sys.dont_write_bytecode = True
-    if str(LEGACY) not in sys.path:
-        sys.path.insert(0, str(LEGACY))
+    configure_vendored_bdhub(root=ROOT, legacy_root=LEGACY)
 
 
 def _load_runtime():

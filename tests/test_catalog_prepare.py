@@ -2,7 +2,7 @@ import json,sqlite3,sys,tempfile,unittest
 from decimal import Decimal
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
-sys.path.insert(0,str(ROOT/'scripts'));sys.path.insert(0,str(ROOT.parent/'01-BDSystem-V2'))
+sys.path.insert(0,str(ROOT/'scripts'));sys.path.insert(0,str(ROOT/'vendor'))
 from lib.catalog_prepare import (CatalogPreparation,assess_existing,choose_existing_batch,new_offer,classify_pid,search_cards,card_facts,rate_text,CARD,MEMBERS,TaplinkInventory,new_offer,reconcile_from_inventory,needs_standard_reread)
 from lib.catalog_links import CatalogLinks,policy_fingerprint
 from lib.catalog_binding import CatalogBindings

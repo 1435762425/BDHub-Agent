@@ -5,7 +5,7 @@ import sqlite3
 from pathlib import Path
 from unittest.mock import patch
 ROOT=Path(__file__).resolve().parents[1]
-sys.path.insert(0,str(ROOT/'scripts'));sys.path.insert(0,str(ROOT.parent/'01-BDSystem-V2'))
+sys.path.insert(0,str(ROOT/'scripts'));sys.path.insert(0,str(ROOT/'vendor'))
 from lib.batch_task_service import TaskService
 from lib.batch_materials import BatchMaterials,apply_materials
 from lib.second_cycle import CycleStore,digest

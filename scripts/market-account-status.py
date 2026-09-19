@@ -8,7 +8,9 @@ from lib.market_accounts import load_config,evidence_summary
 from lib.catalog_links import canary_summary
 
 def status():
-    data=load_config(ROOT);sys.path.insert(0,str(ROOT.parent/'01-BDSystem-V2'))
+    data=load_config(ROOT)
+    from lib.legacy_runtime import configure_vendored_bdhub
+    configure_vendored_bdhub(root=ROOT,legacy_root=ROOT.parent/'01-BDSystem-V2')
     from bdhub import config,scheduled_relogin
     from bdhub.enrich.profile_lease import ProfileLease
     accounts={a.name:a for a in config.load_accounts(config.load())};result=[]

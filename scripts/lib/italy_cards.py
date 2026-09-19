@@ -118,9 +118,8 @@ def combine_card_facts(im_rows, members, *, im_observed_at, members_observed_at)
 def legacy_params(identity, account):
     """Reuse the current query builder without constructing transport or stores."""
     sys.dont_write_bytecode = True
-    legacy = "/Users/bjn00003/BDHub/01-BDSystem-V2"
-    if legacy not in sys.path:
-        sys.path.insert(0, legacy)
+    from lib.legacy_runtime import configure_vendored_bdhub
+    configure_vendored_bdhub()
     from bdhub.send.sharelink.transport import ShareLinkBrowserTransport
     context = SimpleNamespace(identity=identity, fp=str(getattr(account, "fp", "") or ""), device_id=str(getattr(account, "device_id", "0") or "0"))
     return ShareLinkBrowserTransport._params(context)

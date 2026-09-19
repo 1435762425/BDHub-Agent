@@ -13,7 +13,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'scripts'))
-sys.path.insert(0, str(ROOT.parent / '01-BDSystem-V2'))
+sys.path.insert(0, str(ROOT / 'vendor'))
 from lib import global_source_transport as transport  # noqa: E402
 
 PID = '1729480061238089885'

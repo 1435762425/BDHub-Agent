@@ -38,10 +38,8 @@ CREATE TABLE IF NOT EXISTS catalog_clean_intent(
 
 def _legacy():
     """The legacy health rules, imported lazily from the vendored copy."""
-    root = Path(__file__).resolve().parents[2]
-    for candidate in (root / 'vendor', root.parent / '01-BDSystem-V2'):
-        if candidate.is_dir() and str(candidate) not in sys.path:
-            sys.path.insert(0, str(candidate))
+    from lib.legacy_runtime import configure_vendored_bdhub
+    configure_vendored_bdhub()
     from bdhub.send.taplink.cleanup import UNAVAILABLE, classify_list, product_health
     return product_health, classify_list, UNAVAILABLE
 

@@ -3,7 +3,9 @@
 import argparse,hashlib,importlib.util,json,sqlite3,sys,time
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1];LEGACY=ROOT.parent/'01-BDSystem-V2'
-sys.dont_write_bytecode=True;sys.path.insert(0,str(ROOT/'scripts'));sys.path.insert(0,str(LEGACY))
+sys.dont_write_bytecode=True;sys.path.insert(0,str(ROOT/'scripts'))
+from lib.legacy_runtime import configure_vendored_bdhub
+configure_vendored_bdhub(root=ROOT,legacy_root=LEGACY)
 from lib.second_cycle import CycleStore,CycleError
 from lib.cycle_review import ReviewBatches,choose_candidates
 

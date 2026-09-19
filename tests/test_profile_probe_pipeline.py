@@ -209,6 +209,7 @@ class ProbeHarness:
         stderr = io.StringIO()
         try:
             with patch.dict(sys.modules, self.modules), patch.dict(os.environ), \
+                    patch.object(probe, "configure_vendored_bdhub", return_value=self.config), \
                     patch.object(probe, "get_readiness", return_value={"accounts": [{
                         "name": "acc6", "startable": self.startable,
                     }]}), patch.object(probe, "readonly_guard", self.guard), \

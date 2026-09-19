@@ -20,6 +20,7 @@ VAR=ROOT/'var'
 sys.path.insert(0,str(ROOT/'scripts'))
 from lib.italy_cards import read_freegrin_card,ItalyCardsError,PID,LIST_ID,CAMPAIGN_ID
 from lib.italy_im_auth import ImProbeDeadline
+from lib.legacy_runtime import configure_vendored_bdhub
 
 
 def write_json(path,value):
@@ -29,7 +30,7 @@ def write_json(path,value):
 
 
 def runtime():
-    sys.dont_write_bytecode=True;sys.path.insert(0,str(LEGACY))
+    sys.dont_write_bytecode=True;configure_vendored_bdhub(root=ROOT,legacy_root=LEGACY)
     from bdhub import scheduled_relogin
     from bdhub.enrich.identity_store import load_identity
     from bdhub.hub.markets import identity_for

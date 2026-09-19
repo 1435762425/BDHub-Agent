@@ -4,7 +4,9 @@ import json,os,signal,sqlite3,subprocess,sys,time,uuid,hashlib,argparse,fcntl
 from contextlib import closing
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1];LEGACY=ROOT.parent/'01-BDSystem-V2'
-sys.dont_write_bytecode=True;sys.path.insert(0,str(LEGACY));sys.path.insert(0,str(ROOT/'scripts'))
+sys.dont_write_bytecode=True;sys.path.insert(0,str(ROOT/'scripts'))
+from lib.legacy_runtime import configure_vendored_bdhub
+configure_vendored_bdhub(root=ROOT,legacy_root=LEGACY)
 ACCOUNTS=['acc6','acc1','acc8','acc9','acc11'];ACTIVE=[]
 
 def launch(script,args,logfile,pidfile):

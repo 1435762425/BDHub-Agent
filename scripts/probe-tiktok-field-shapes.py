@@ -13,6 +13,8 @@ import time
 
 ROOT=Path(__file__).resolve().parents[1]
 LEGACY=ROOT.parent/'01-BDSystem-V2'
+sys.path.insert(0,str(ROOT/'scripts'))
+from lib.legacy_runtime import configure_vendored_bdhub
 READS={
  'campaigns':('GET','/api/v1/affiliate/partner/campaign/list'),
  'selected':('POST','/api/v1/affiliate/partner/product/pick_up/list'),
@@ -40,8 +42,7 @@ def field_shapes(value):
 
 def run(output, markets=('mx','it','br'), only=None):
     sys.dont_write_bytecode=True
-    sys.path.insert(0,str(LEGACY))
-    sys.path.insert(0,str(ROOT/'scripts'))
+    configure_vendored_bdhub(root=ROOT,legacy_root=LEGACY)
     import requests
     from bdhub import scheduled_relogin
     from bdhub.enrich.identity_store import load_identity

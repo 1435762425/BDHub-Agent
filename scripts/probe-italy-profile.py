@@ -28,6 +28,8 @@ from datetime import datetime, timezone
 ROOT = Path(__file__).resolve().parents[1]
 LEGACY = Path("/Users/bjn00003/BDHub/01-BDSystem-V2")
 VAR = ROOT / "var"
+sys.path.insert(0, str(ROOT / "scripts"))
+from lib.legacy_runtime import configure_vendored_bdhub
 STOP_CODES = {"10000", "10001", "98000001", "98000002", "16901008"}
 
 
@@ -154,8 +156,7 @@ def network_child(account_name: str, target_file: Path, output: Path) -> int:
     signal.setitimer(signal.ITIMER_REAL, 175)
     os.umask(0o077)
     sys.dont_write_bytecode = True
-    sys.path.insert(0, str(LEGACY))
-    sys.path.insert(0, str(ROOT / "scripts"))
+    configure_vendored_bdhub(root=ROOT, legacy_root=LEGACY)
     scratch = output / "temporary"
     scratch.mkdir(parents=True, exist_ok=True)
     tempfile.tempdir = str(scratch)

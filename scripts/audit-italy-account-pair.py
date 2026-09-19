@@ -4,7 +4,9 @@ import argparse,hashlib,importlib.util,json,sys,time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1];LEGACY=ROOT.parent/'01-BDSystem-V2'
-sys.dont_write_bytecode=True;sys.path.insert(0,str(LEGACY));sys.path.insert(0,str(ROOT/'scripts'))
+sys.dont_write_bytecode=True;sys.path.insert(0,str(ROOT/'scripts'))
+from lib.legacy_runtime import configure_vendored_bdhub
+configure_vendored_bdhub(root=ROOT,legacy_root=LEGACY)
 from bdhub import scheduled_relogin
 from bdhub.hub.markets import identity_for
 from bdhub.send.taplink.transport import account_for

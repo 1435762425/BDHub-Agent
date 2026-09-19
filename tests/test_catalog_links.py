@@ -7,7 +7,7 @@ from lib.catalog_binding import CatalogBindings
 from lib.schema_migrations import apply_database
 from lib.second_cycle import digest
 ROOT=Path(__file__).resolve().parents[1]
-sys.path.insert(0,str(ROOT.parent/'01-BDSystem-V2'))
+sys.path.insert(0,str(ROOT/'vendor'))
 class LinkTests(unittest.TestCase):
  def setUp(self):self.policy=json.loads((ROOT/'config/catalog-link-policy.json').read_text())
  def test_new_commission_edges_and_precision(self):

@@ -49,8 +49,8 @@ def grabber():
     if override:
         return Path(override).expanduser()
     try:
-        if str(LEGACY) not in sys.path:
-            sys.path.insert(0, str(LEGACY))
+        from lib.legacy_runtime import configure_vendored_bdhub
+        configure_vendored_bdhub(root=root_of(),legacy_root=LEGACY)
         from bdhub import config
         return Path(config.load().kalodata.project_dir)
     except Exception:

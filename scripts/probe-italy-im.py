@@ -22,6 +22,7 @@ VAR = ROOT / "var"
 sys.path.insert(0, str(ROOT / "scripts"))
 from lib.italy_im_auth import ItalyImAuthError, ImProbeDeadline, PARTNER_HOST, authenticate_it
 from lib.italy_im_session import ItalyImReadError, ItalyImReadSession
+from lib.legacy_runtime import configure_vendored_bdhub
 
 
 def write_report(path, value):
@@ -35,7 +36,7 @@ def write_report(path, value):
 
 def load_runtime():
     sys.dont_write_bytecode = True
-    sys.path.insert(0, str(LEGACY))
+    configure_vendored_bdhub(root=ROOT, legacy_root=LEGACY)
     from bdhub import config, scheduled_relogin
     from bdhub.account_policy import resolve_account_policy
     from bdhub.enrich.identity_store import load_identity
