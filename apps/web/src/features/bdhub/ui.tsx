@@ -1,5 +1,5 @@
 "use client";
-import {useEffect,useId,useRef,type ReactNode,type ButtonHTMLAttributes,type InputHTMLAttributes,type SelectHTMLAttributes,type TextareaHTMLAttributes} from "react";
+import {useEffect,useId,useRef,useState,type ReactNode,type ButtonHTMLAttributes,type InputHTMLAttributes,type SelectHTMLAttributes,type TextareaHTMLAttributes} from "react";
 import {createPortal} from "react-dom";
 import * as Icons from "@/icons";
 import TemplateBadge from "@/components/ui/badge/Badge";
@@ -37,3 +37,27 @@ export function Dialog({open,onClose,title,description,children,wide=false}:{ope
 }
 export function Notice({children,tone="info"}:{children:ReactNode;tone?:"info"|"warning"|"success"}){return <div className={`flex items-start gap-3 rounded-xl border px-4 py-3 text-sm leading-6 ${tone==="warning"?"border-warning-200 bg-warning-50 text-warning-700 dark:border-warning-900 dark:bg-warning-900/10 dark:text-warning-400":tone==="success"?"border-success-200 bg-success-50 text-success-700 dark:border-success-900 dark:bg-success-900/10 dark:text-success-400":"border-brand-100 bg-brand-50 text-brand-600 dark:border-brand-900 dark:bg-brand-500/10 dark:text-brand-300"}`}><Icon name={tone==="success"?"check":"info"} className="mt-0.5 size-5 shrink-0"/><div>{children}</div></div>;}
 export function Toggle({checked,onChange,label,description,disabled=false}:{checked:boolean;onChange:(value:boolean)=>void;label:string;description?:string;disabled?:boolean}){return <label className="flex cursor-pointer items-center justify-between gap-4 py-3"><span><span className="block text-sm font-medium text-gray-700 dark:text-gray-200">{label}</span>{description&&<span className="mt-1 block text-xs leading-5 text-gray-500">{description}</span>}</span><input className="sr-only peer" type="checkbox" role="switch" checked={checked} onChange={e=>onChange(e.target.checked)} disabled={disabled}/><span className={`relative h-6 w-11 shrink-0 rounded-full transition peer-focus-visible:ring-3 peer-focus-visible:ring-brand-300 ${checked?"bg-brand-500":"bg-gray-300 dark:bg-gray-700"} ${disabled?"opacity-50":""}`}><span className={`absolute top-0.5 size-5 rounded-full bg-white shadow transition ${checked?"left-5.5":"left-0.5"}`}/></span></label>;}
+// One horizontal bar for work that reports how much of it is done. A job with nothing to do shows
+// a full bar rather than an empty one, because "finished" and "did nothing" look the same otherwise.
+export function Progress({done,total,label}:{done:number;total:number;label?:string}){
+ const safeTotal=Math.max(0,total),safeDone=Math.max(0,Math.min(done,safeTotal));
+ const percent=safeTotal===0?100:Math.round((safeDone/safeTotal)*100);
+ return <div><div className="mb-1.5 flex items-center justify-between text-xs text-gray-500"><span>{label}</span><span className="tabular-nums">{safeDone.toLocaleString()} / {safeTotal.toLocaleString()}</span></div><div className="h-2 w-full overflow-hidden rounded-full bg-gray-100 dark:bg-gray-800" role="progressbar" aria-valuenow={percent} aria-valuemin={0} aria-valuemax={100}><div className="h-full rounded-full bg-brand-500 transition-all" style={{width:`${percent}%`}}/></div></div>;
+}
+// One number with a caption and a one-line explanation. Every queue card on the catalogue page is
+// read as a row of these, so the shape lives here instead of being retyped per card. ``brand`` marks
+// the single number the operator acts on.
+export function StatTile({label,value,hint,brand}:{label:string;value:number;hint:string;brand?:boolean}){
+ return <div className={`rounded-xl p-4 ${brand?"bg-brand-50 dark:bg-brand-500/10":"bg-gray-50 dark:bg-gray-800"}`}><p className="text-xs text-gray-500">{label}</p><p className="mt-2 text-2xl font-semibold tabular-nums">{value.toLocaleString()}</p><p className="mt-1 text-xs leading-5 text-gray-400">{hint}</p></div>;
+}
+// A named stage of a workflow. The index and summary line let a long page be read as a sequence
+// of steps rather than a pile of equally weighted cards.
+export function Section({id,index,title,summary,children}:{id:string;index?:string;title:string;summary?:ReactNode;children:ReactNode}){
+ return <section id={id} className="scroll-mt-6 space-y-4"><div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 border-l-4 border-brand-500 pl-3"><h2 className="text-lg font-semibold text-gray-800 dark:text-white/90">{index&&<span className="mr-2 text-brand-500">{index}</span>}{title}</h2>{summary&&<p className="text-sm text-gray-500">{summary}</p>}</div>{children}</section>;
+}
+// Long tables are folded by default so a page stays readable; the row count stays visible in the
+// header, so folding never hides how much data there is.
+export function Collapsible({label,count,defaultOpen=false,children}:{label:string;count?:number;defaultOpen?:boolean;children:ReactNode}){
+ const [open,setOpen]=useState(defaultOpen);
+ return <div><button type="button" aria-expanded={open} onClick={()=>setOpen(value=>!value)} className="flex w-full items-center justify-between gap-3 rounded-xl border border-gray-200 px-4 py-3 text-sm font-medium text-gray-700 transition hover:bg-gray-50 dark:border-gray-700 dark:text-gray-200 dark:hover:bg-gray-800"><span className="flex flex-wrap items-center gap-2">{open?"收起":"展开"}{label}{count!==undefined&&<span className="rounded bg-gray-100 px-1.5 py-0.5 text-xs text-gray-500 dark:bg-gray-700 dark:text-gray-400">{count.toLocaleString()} 条</span>}</span><Icon name="down" className={`size-4 shrink-0 transition ${open?"rotate-180":""}`}/></button>{open&&<div className="mt-4">{children}</div>}</div>;
+}

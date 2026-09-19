@@ -18,6 +18,11 @@ import uuid
 from lib.creator_identity import CreatorIdentityStore
 from lib.profile_refresh import ROOT, VAR, SAFE_ERRORS, LEASE_SECONDS, _alive, _execute_probe, _iso
 
+# 「被挡住」不是"没问过"：请求构造/签名失败、账号起不来、被远端挡回——**一条都没拿到平台的真实回答**。
+# 所以它必须能重试（否则这些达人永远停在"待补"），但也不能疯狂重试：退避 15 分钟，最多 3 次。
+BLOCKED_RETRY_SECONDS = 900
+BLOCKED_MAX_ATTEMPTS = 3
+
 ERRORS = SAFE_ERRORS | {"input_limit_exceeded", "preview_mismatch", "empty_batch", "batch_not_found", "batch_not_resumable"}
 
 
@@ -169,6 +174,11 @@ class CreatorDiscoveryStore:
             counts[row["status"]] += row["n"]
             if row["outcome"]:
                 counts["identityOnly" if row["outcome"] == "identity_only" else row["outcome"]] += row["n"]
+        # 「被挡住」的项退避后还能重试；只有**没得重试**的批次才算真的结束。少了这一条，一个批次里
+        # 只要有一条被挡住就会被判成"完成"、outbox 结算掉，那批人永远停在待补（2026-09-15 实测）。
+        counts["retryableBlocked"] = self._db.execute(
+            "SELECT count(*) FROM discovery_item WHERE batch_id=? AND status='blocked' AND attempt_no<?",
+            (batch_id, BLOCKED_MAX_ATTEMPTS)).fetchone()[0]
         return {"id": batch_id, "market": batch["market"], "sourceLabel": batch["source_label"], "status": batch["status"],
                 "createdAt": batch["created_at"], "startedAt": batch["started_at"], "finishedAt": batch["finished_at"],
                 "errorCode": batch["error_code"], "counts": counts, "workerOnline": self.worker_online()}
@@ -246,23 +256,30 @@ class CreatorDiscoveryStore:
         with self._lock:
             return any(_alive(r[0]) for r in self._db.execute("SELECT pid FROM discovery_heartbeat WHERE seen_at>=?", (self.now() - 30,)))
 
-    def _next_items(self,limit,batch_ids=None,distinct=False):
+    def _next_items(self,limit,batch_ids=None,distinct=False,skip_judged=False,retry_blocked=False):
         # Unknown handles grow the creator pool first; this only changes
         # queue order, never substitutes cached identity for exact Find.
+        #
+        # ``skip_judged``（补 OECID 用）：**达人级一次**。平台回答的是"这个 handle 是谁"，与商品无关，
+        # 所以一位达人被判过之后，他名下其它线索再问一遍平台不会有新答案——找到的早已找到，找不到的
+        # 也不会变得找得到（用户确认过"搜索不到不自动重试"）。这里把这部分整段排除，只留真正没判过的。
+        judged = ("AND NOT EXISTS (SELECT 1 FROM discovery_item old WHERE old.handle=i.handle "
+                  "AND old.id<>i.id AND old.status IN ('completed','unresolved')) ") if skip_judged else ''
         known=[]; identity_path=self.var_dir/'creator-identities.sqlite'
         if identity_path.exists():
             with closing(sqlite3.connect(identity_path.resolve().as_uri()+'?mode=ro',uri=True)) as identities:
                 if identities.execute("SELECT 1 FROM sqlite_master WHERE name='creator_identity'").fetchone():
                     known=[r[0] for r in identities.execute("SELECT current_handle FROM creator_identity WHERE market='it' AND current_handle IS NOT NULL AND handle_conflict=0")]
         if distinct:
+            # noqa: 参数顺序 = known(优先级) / now / retry_blocked / attempt 上限 / batch_ids×2 / known / limit
             return self._db.execute("""WITH candidates AS (
               SELECT i.*,b.created_at queue_created,CASE WHEN b.source_label='Kalodata 二发线索身份解析' THEN CASE WHEN i.handle IN (SELECT value FROM json_each(?)) THEN 2 WHEN EXISTS(SELECT 1 FROM discovery_item old WHERE old.handle=i.handle AND old.id<>i.id AND old.status IN ('completed','unresolved')) THEN 1 ELSE 0 END ELSE 0 END queue_priority
-              FROM discovery_item i JOIN discovery_batch b ON b.id=i.batch_id WHERE i.status='queued' AND b.status IN ('queued','running') AND i.retry_at<=? AND (? IS NULL OR b.id IN (SELECT value FROM json_each(?)))
+              FROM discovery_item i JOIN discovery_batch b ON b.id=i.batch_id WHERE i.retry_at<=? AND ((i.status='queued' AND b.status IN ('queued','running')) OR (?=1 AND i.status='blocked' AND i.attempt_no<? AND b.status IN ('queued','running','blocked'))) AND (? IS NULL OR b.id IN (SELECT value FROM json_each(?))) """ + judged + """
             ), unique_handles AS (SELECT *,row_number() OVER(PARTITION BY handle ORDER BY queue_priority,queue_created,batch_id,row_index) occurrence FROM candidates)
-            SELECT * FROM unique_handles WHERE occurrence=1 ORDER BY queue_priority,queue_created,batch_id,row_index LIMIT ?""",(_json(known),self.now(),_json(batch_ids) if batch_ids is not None else None,_json(batch_ids) if batch_ids is not None else None,limit)).fetchall()
+            SELECT * FROM unique_handles WHERE occurrence=1 ORDER BY queue_priority,queue_created,batch_id,row_index LIMIT ?""",(_json(known),self.now(),1 if retry_blocked else 0,BLOCKED_MAX_ATTEMPTS,_json(batch_ids) if batch_ids is not None else None,_json(batch_ids) if batch_ids is not None else None,limit)).fetchall()
         return self._db.execute("""SELECT i.* FROM discovery_item i JOIN discovery_batch b ON b.id=i.batch_id
-            WHERE i.status='queued' AND b.status IN ('queued','running') AND i.retry_at<=? AND (? IS NULL OR b.id IN (SELECT value FROM json_each(?)))
-            ORDER BY CASE WHEN b.source_label='Kalodata 二发线索身份解析' THEN CASE WHEN i.handle IN (SELECT value FROM json_each(?)) THEN 2 WHEN EXISTS(SELECT 1 FROM discovery_item old WHERE old.handle=i.handle AND old.id<>i.id AND old.status IN ('completed','unresolved')) THEN 1 ELSE 0 END ELSE 0 END,b.created_at,b.id,i.row_index LIMIT ?""",(self.now(),_json(batch_ids) if batch_ids is not None else None,_json(batch_ids) if batch_ids is not None else None,_json(known),limit)).fetchall()
+            WHERE i.retry_at<=? AND ((i.status='queued' AND b.status IN ('queued','running')) OR (?=1 AND i.status='blocked' AND i.attempt_no<? AND b.status IN ('queued','running','blocked'))) AND (? IS NULL OR b.id IN (SELECT value FROM json_each(?))) """ + judged + """
+            ORDER BY CASE WHEN b.source_label='Kalodata 二发线索身份解析' THEN CASE WHEN i.handle IN (SELECT value FROM json_each(?)) THEN 2 WHEN EXISTS(SELECT 1 FROM discovery_item old WHERE old.handle=i.handle AND old.id<>i.id AND old.status IN ('completed','unresolved')) THEN 1 ELSE 0 END ELSE 0 END,b.created_at,b.id,i.row_index LIMIT ?""",(self.now(),1 if retry_blocked else 0,BLOCKED_MAX_ATTEMPTS,_json(batch_ids) if batch_ids is not None else None,_json(batch_ids) if batch_ids is not None else None,_json(known),limit)).fetchall()
 
     def claim(self, owner, *, recovery=False):
         with self.transaction():
@@ -283,22 +300,27 @@ class CreatorDiscoveryStore:
                              (_iso(self.now()), owner, os.getpid(), self.now() + LEASE_SECONDS, row["id"]))
             return dict(self._db.execute("SELECT * FROM discovery_item WHERE id=?", (row["id"],)).fetchone())
 
-    def claim_cohort(self,owner,batch_ids,limit=20):
+    def claim_cohort(self,owner,batch_ids,limit=20,skip_judged=False):
         if type(limit) is not int or not 1<=limit<=20:raise CreatorDiscoveryError('invalid_request')
         with self.transaction():
             if self._db.execute("SELECT 1 FROM discovery_item WHERE status='running'").fetchone():return None
-            candidates=self._next_items(limit,batch_ids,distinct=True);items=[];handles=set()
+            candidates=self._next_items(limit,batch_ids,distinct=True,skip_judged=skip_judged,retry_blocked=True);items=[];handles=set()
             for row in candidates:
                 if row['handle'] in handles:continue
                 handles.add(row['handle']);items.append(dict(row))
                 if len(items)==limit:break
             if not items:return None
             for item in items:
-                self._db.execute("UPDATE discovery_item SET status='running',started_at=COALESCE(started_at,?),request_count=NULL,lease_owner=?,lease_pid=?,lease_until=? WHERE id=?",(_iso(self.now()),owner,os.getpid(),self.now()+LEASE_SECONDS,item['id']))
+                # 再领一次被挡住的项 = 又尝试了一次：`attempt_no` 在这里 +1，于是新的取证写进
+                # attempt-<n>/，上一次的原样留档（不覆盖、不删除）。
+                self._db.execute("UPDATE discovery_item SET status='running',started_at=COALESCE(started_at,?),request_count=NULL,attempt_no=attempt_no+(status='blocked'),lease_owner=?,lease_pid=?,lease_until=? WHERE id=?",(_iso(self.now()),owner,os.getpid(),self.now()+LEASE_SECONDS,item['id']))
                 self._db.execute("UPDATE discovery_batch SET status='running',started_at=COALESCE(started_at,?) WHERE id=?",(_iso(self.now()),item['batch_id']))
             cid='discovery_cohort_'+uuid.uuid4().hex
-            self._db.execute("INSERT INTO discovery_cohort VALUES(?,?,?,'running',?)",(cid,owner,_json(items),self.now()))
-            return {'id':cid,'items':items}
+            # 载荷要写**更新后**的行：`attempt_no` 在领取时可能 +1，而它决定取证目录 attempt-<n>/。
+            # 写旧值的话，恢复这条 cohort 时会算回同一个目录，新旧取证撞在一起报 probe_report_invalid。
+            fresh=[dict(self._db.execute('SELECT * FROM discovery_item WHERE id=?',(i['id'],)).fetchone()) for i in items]
+            self._db.execute("INSERT INTO discovery_cohort VALUES(?,?,?,'running',?)",(cid,owner,_json(fresh),self.now()))
+            return {'id':cid,'items':fresh}
 
     def recover_cohort(self,owner):
         with self.transaction():
@@ -341,6 +363,13 @@ class CreatorDiscoveryStore:
             batch = self._summary(item["batch_id"])
             if status == "blocked":
                 paused = batch["status"] == "paused"
+                # 排下一次重试：被挡住是"没拿到答案"，不是"答案是否"。不排的话这一项永远停在 blocked，
+                # 而 blocked 的批次不会被领走——补 OECID 就会一直空转（2026-09-15 实测就是这样）。
+                # 注意 `attempt_no` **不在这里加**：它表示"已经被尝试过几次"，由领到的那一刻 +1。
+                # 这样每一次尝试的取证落在 attempt-<n>/ 下，**旧的一次不被覆盖也不被删**——正是它拦住了
+                # 上一次重试（新旧字节不同被当成"证据被篡改"→ probe_report_invalid）。
+                self._db.execute("UPDATE discovery_item SET retry_at=? WHERE id=?",
+                                 (self.now() + BLOCKED_RETRY_SECONDS, item["id"]))
                 self._db.execute("UPDATE discovery_batch SET status=?,error_code=?,finished_at=? WHERE id=?",
                     ("paused" if paused else "blocked", reason, None if paused else _iso(self.now()), item["batch_id"]))
             elif not batch["counts"]["queued"] and not batch["counts"]["running"]:

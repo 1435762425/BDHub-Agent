@@ -4,6 +4,7 @@ sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'scripts'))
 from lib.catalog_links import new_commission,choose_existing,link_decision,CatalogLinks,catalog_owns_pid
 from lib.second_cycle import digest
 ROOT=Path(__file__).resolve().parents[1]
+sys.path.insert(0,str(ROOT.parent/'01-BDSystem-V2'))
 class LinkTests(unittest.TestCase):
  def setUp(self):self.policy=json.loads((ROOT/'config/catalog-link-policy.json').read_text())
  def test_new_commission_edges_and_precision(self):
@@ -34,4 +35,25 @@ class LinkTests(unittest.TestCase):
    with self.assertRaises(ValueError):l.confirm(r['id'],card|{'creatorPercent':'12'})
    l.confirm(r['id'],card);self.assertEqual(l.get(r['id'])['state'],'verified')
    c=sqlite3.connect(root/'var/second-cycle.sqlite');self.assertTrue(catalog_owns_pid(c,'123'));c.close();l.db.close()
+ def test_campaign_route_freezes_its_own_payload_shape_and_wire_id(self):
+  """非全托建链意图：载荷形状不同（活动在顶层、没有 source），回读的线上活动号也不同。
+
+  两条渠道同一套账本，所以这里逐项钉死：用全托的载荷去冻结非全托意图必须被拒，
+  用全托的 wireCampaignId='0' 去确认非全托卡片也必须被拒。
+  """
+  from bdhub.send.taplink.protocol import create_payload
+  with tempfile.TemporaryDirectory() as d:
+   root=Path(d);(root/'var').mkdir();(root/'config').mkdir();(root/'config/catalog-link-policy.json').write_text(json.dumps(self.policy));l=CatalogLinks(root)
+   payload=create_payload(pid='123',campaign_id='456',creator_pct='13',name='BJN test',route='campaign')
+   self.assertEqual(payload,{'name':'BJN test','campaign_id':'456','items':[{'product_id':'123','creator_commission_rate':'1300'}]})
+   s={'pid':'123','account':'acc9','market':'it','route':'campaign','purpose':'catalog_batch_link','campaignId':'456','creatorPercent':'13',
+      'listName':'BJN test','shortName':'test','policyFingerprint':digest(self.policy),'searchTotal':0,'sourceRun':'run-1','payload':payload}
+   r=l.prepare(s);self.assertEqual(r['state'],'prepared')
+   with self.assertRaises(ValueError):l.prepare(s|{'pid':'124','payload':create_payload(pid='124',campaign_id='456',creator_pct='13',name='BJN test',route='selected')})
+   l.begin(r['id'],'acc9')
+   card={'state':'verified_read_only','listId':'789','pid':'123','sourceCampaignId':'456','creatorPercent':'13','wireCampaignId':'456','verifiedListName':'BJN test'}
+   with self.assertRaises(ValueError):l.confirm(r['id'],card|{'wireCampaignId':'0'})
+   l.confirm(r['id'],card);self.assertEqual(l.get(r['id'])['state'],'verified')
+   with self.assertRaises(ValueError):l.prepare(s|{'pid':'125','route':'bogus','campaignId':'456'})
+   l.db.close()
 if __name__=='__main__':unittest.main()

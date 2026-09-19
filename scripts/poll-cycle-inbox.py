@@ -54,19 +54,22 @@ def tick(limit):
  return report
 
 def main():
- p=argparse.ArgumentParser(description=__doc__);p.add_argument('--worker',action='store_true');p.add_argument('--limit',type=int,default=6);p.add_argument('--interval',type=int,default=60);a=p.parse_args()
+ p=argparse.ArgumentParser(description=__doc__);p.add_argument('--worker',action='store_true');p.add_argument('--limit',type=int,default=6);p.add_argument('--interval',type=int,default=60);p.add_argument('--stop',type=Path,help='stop request written by the launcher; honored between rounds');a=p.parse_args()
  if not 1<=a.limit<=12 or a.interval<30:p.error('limit 1..12; interval >=30')
+ if a.stop is not None and not a.stop.resolve().is_relative_to(ROOT/'var'):p.error('stop must live under var')
  signal.signal(signal.SIGTERM,stop);signal.signal(signal.SIGINT,stop)
+ def stopping():return STOP or (a.stop is not None and a.stop.exists())
  with (ROOT/'var/cycle-inbox.lock').open('a') as lock:
   try:fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
   except BlockingIOError:raise SystemExit('inbox_worker_busy')
-  while not STOP:
+  while not stopping():
    r=tick(a.limit);r['workerPid']=os.getpid();r['workerMode']=a.worker
    path=ROOT/'var/cycle-inbox-status.json';tmp=path.with_suffix('.tmp');tmp.write_text(json.dumps(r,indent=2)+'\n');tmp.replace(path)
    print(json.dumps({k:r[k] for k in ('processed','added','historical','liveReplies','errorCode','state') if k in r}),flush=True)
    if not a.worker:break
-   # Backoff failure; never spin or send to discover quota.
-   delay=15 if r.get('errorCode')=='live_guard_busy' else max(a.interval,300) if r.get('errorCode') else a.interval
+   # 被别的作业占着 ACC6 live 锁时快速重试：补身份/发送是按轮持锁的，退避 15 秒会整整错过两轮之间的
+   # 空档，收信就长期停摆。3 秒够让它钻进去，又不会把锁抢烂。其它错误仍慢退避——绝不靠狂发去探额度。
+   delay=3 if r.get('errorCode')=='live_guard_busy' else max(a.interval,300) if r.get('errorCode') else a.interval
    until=time.monotonic()+delay
-   while not STOP and time.monotonic()<until:time.sleep(max(0,min(1,until-time.monotonic())))
+   while not stopping() and time.monotonic()<until:time.sleep(max(0,min(1,until-time.monotonic())))
 if __name__=='__main__':main()

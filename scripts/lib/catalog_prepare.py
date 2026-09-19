@@ -233,12 +233,18 @@ DROP TABLE catalog_prepare_reuse_old;''')
         links=self.db.execute("SELECT count(*),count(DISTINCT pid) FROM catalog_prepare_readback WHERE run_id=? AND kind='verifiedLink'",(run_id,)).fetchone()
         retired=self.db.execute("SELECT count(*) FROM catalog_prepare_item WHERE run_id=? AND state='retired'",(run_id,)).fetchone()[0]
         reuse=self.db.execute('SELECT count(DISTINCT pid) FROM catalog_prepare_reuse WHERE run_id=? AND reusable=1',(run_id,)).fetchone()[0]
-        errors=[r[0] for r in self.db.execute('SELECT DISTINCT error FROM catalog_prepare_item WHERE run_id=? AND error IS NOT NULL',(run_id,))]
+        # Only unsettled problems are reported as outstanding. A product sitting in ``missing`` with
+        # an error is a creation attempt that failed; it is retried by the next create run, and the
+        # error clears when it succeeds. Reporting it without that context reads like a live fault.
+        errors=[r[0] for r in self.db.execute("SELECT DISTINCT error FROM catalog_prepare_item WHERE run_id=? AND error IS NOT NULL AND state='read_incomplete'",(run_id,))]
+        retryable=[r[0] for r in self.db.execute("SELECT DISTINCT error FROM catalog_prepare_item WHERE run_id=? AND error IS NOT NULL AND state='missing'",(run_id,))]
+        error_age=self.db.execute("SELECT max(updated) FROM catalog_prepare_item WHERE run_id=? AND error IS NOT NULL",(run_id,)).fetchone()[0]
         blockers=[r[0] for r in self.db.execute('SELECT DISTINCT blocker FROM catalog_prepare_item WHERE run_id=? AND blocker IS NOT NULL',(run_id,))]
         total=sum(counts.values())
         return {'runId':run_id,'total':total,'states':counts,'retiredCount':retired,'verifiedLinkCount':links[0],'verifiedPidCount':links[1],'reusePidCount':reuse,
                 'pendingCount':sum(counts.get(k,0) for k in ('pending','reading','missing','prepared','submitted','unknown')),
-                'incompleteCount':counts.get('read_incomplete',0),'errors':errors,'blockers':blockers}
+                'incompleteCount':counts.get('read_incomplete',0),'errors':errors,'blockers':blockers,
+                'retryableErrors':retryable,'errorsUpdatedAt':error_age}
 
 def new_offer(listing,pid,campaign_id,source='selected',total=None,public=None,policy=None):
     """Fresh commercial facts for one selected/campaign plan, computed with the confirmed policy."""
@@ -354,8 +360,10 @@ def scan_lists(read,source='2',campaign_id='0',page_size=100,max_pages=500):
         if not isinstance(data,dict) or type(data.get('total')) is not int or data['total']<0:raise ValueError('taplink_inventory_malformed')
         if total is not None and total!=data['total']:raise ValueError('taplink_inventory_changed')
         total=data['total']
-        batch=data.get('lists')
-        if not isinstance(batch,list):raise ValueError('taplink_inventory_malformed')
+        # 复用 list_rows：平台在 total=0 时**整个省略 lists 键**（实测 43 个活动里 41 个如此），
+        # 自己再判一次 isinstance(list) 会把「一张卡都没有」误报成「响应格式错误」。
+        batch=list_rows(data,'total','lists')
+        if batch is None:raise ValueError('taplink_inventory_malformed')
         for raw in batch:
             lid=str(raw.get('id') or '')
             if not lid.isdigit() or lid in seen:raise ValueError('taplink_inventory_duplicate')
@@ -455,7 +463,15 @@ url=excluded.url,product_total=excluded.product_total,platform_updated_at=exclud
     def lists(self):
         return [dict(r) for r in self.db.execute('SELECT * FROM catalog_tap_list ORDER BY list_id')]
     def members_for_pid(self,pid):
-        return [dict(r) for r in self.db.execute('SELECT * FROM catalog_tap_member WHERE pid=? ORDER BY list_id',(str(pid),))]
+        """一件商品在所有卡里的成员行，并带上**卡片自己**的渠道与活动。
+
+        两条渠道的字段落点不同（实测）：全托卡是账号级（`list.campaign_id='0'`）而成员行带真实活动号；
+        非全托卡本身就挂在活动上（`list.source='1'`、`list.campaign_id=<活动>`），成员行的
+        `campaign_id` 是 **None**（实测 24/24）。只读成员行会把非全托卡判成"卡在别的活动"。
+        """
+        rows=self.db.execute('''SELECT m.*,l.source AS list_source,l.campaign_id AS list_campaign_id
+FROM catalog_tap_member m JOIN catalog_tap_list l ON l.list_id=m.list_id WHERE m.pid=? ORDER BY m.list_id''',(str(pid),))
+        return [dict(r) for r in rows]
     def summary(self):
         lists=self.db.execute('SELECT count(*),coalesce(sum(product_total),0),coalesce(sum(members_at IS NOT NULL),0) FROM catalog_tap_list').fetchone()
         members=self.db.execute('SELECT count(*),count(DISTINCT pid) FROM catalog_tap_member').fetchone()
@@ -478,7 +494,14 @@ def reconcile_from_inventory(prep,inv,items,offers,diag=None,now=None):
     for it in items:
         pid=str(it['pid']);cid=str(it['campaign_id']);src=it['catalog_source'];run_id=it['run_id']
         members=inv.members_for_pid(pid)
-        matching=[m for m in members if str(m.get('member_campaign_id') or '')==cid]
+        # 卡片必须**先属于本渠道**再看活动归属，两条渠道的字段落点也不同：
+        #   全托：卡是账号级（list.campaign_id='0'），真实活动号在成员行上；
+        #   非全托：卡本身就挂在活动上（list.campaign_id=<活动>），成员行没有活动号（实测 24/24 为 None）。
+        # 少了渠道这一层，非全托会把全托卡当自己的链接用（反之亦然）——那是两个不同的平台对象。
+        wire_source='2' if src=='selected' else '1'
+        field='member_campaign_id' if src=='selected' else 'list_campaign_id'
+        matching=[m for m in members if str(m.get('list_source') or '')==wire_source
+                  and str(m.get(field) or '')==cid]
         # The plan is independent of the card: a card-less product still needs its plan to be
         # creatable, so never gate the plan lookup on whether a card exists.
         offer=offers.get(pid)

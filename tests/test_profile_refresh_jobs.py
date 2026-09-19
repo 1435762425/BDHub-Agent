@@ -326,13 +326,46 @@ class ProfileRefreshJobsTests(unittest.TestCase):
                     CLI.read_request(("creatorId", "requestId"))
                 self.assertEqual(error.exception.code, "invalid_request")
         output = io.StringIO()
-        with patch.object(CLI.sys, "argv", ["refresh", "enqueue"]), patch.object(CLI, "ProfileRefreshStore", side_effect=RuntimeError("private-token")), \
-                contextlib.redirect_stdout(output):
+        with tempfile.TemporaryDirectory() as folder, \
+                patch.object(CLI, "CRASH_LOG", Path(folder) / "identity-worker-crash.log"), \
+                patch.object(CLI.sys, "argv", ["refresh", "enqueue"]), patch.object(CLI, "ProfileRefreshStore", side_effect=RuntimeError("private-token")), \
+                contextlib.redirect_stdout(output), contextlib.redirect_stderr(io.StringIO()):
             self.assertEqual(CLI.main(), 1)
         value = json.loads(output.getvalue())
         self.assertEqual(value["error"]["status"], 500)
         self.assertIn("message", value["error"])
         self.assertNotIn("private-token", output.getvalue())
+
+    def test_a_crash_is_announced_by_type_and_kept_in_a_local_log(self):
+        """`internal_error` 不能是全部：异常类型要能到操作者眼前（它足以区分"库被锁"和"字段缺失"），
+        而原始消息可能带凭证或远端原文，只许落在本机日志里。"""
+        with tempfile.TemporaryDirectory() as folder:
+            crash_log = Path(folder) / "identity-worker-crash.log"
+            output, errors = io.StringIO(), io.StringIO()
+            with patch.object(CLI.sys, "argv", ["refresh", "enqueue"]), \
+                    patch.object(CLI, "ProfileRefreshStore", side_effect=RuntimeError("private-token")), \
+                    patch.object(CLI, "CRASH_LOG", crash_log), \
+                    contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
+                self.assertEqual(CLI.main(), 1)
+            self.assertNotIn("private-token", output.getvalue())
+            self.assertNotIn("private-token", errors.getvalue())
+            self.assertIn("RuntimeError", errors.getvalue())
+            self.assertIn("identity-worker-crash.log", errors.getvalue())
+            # 完整原因留在本机日志里，那才是能定位的那一份。
+            self.assertIn("private-token", crash_log.read_text(encoding="utf-8"))
+            self.assertEqual(crash_log.stat().st_mode & 0o777, 0o600)
+
+    def test_a_cohort_refusal_is_not_flattened_into_internal_error(self):
+        """cohort 层的拒绝自带安全码；把它压成 internal_error 等于说"我们不知道"，而我们知道。"""
+        output, errors = io.StringIO(), io.StringIO()
+        with tempfile.TemporaryDirectory() as folder, \
+                patch.object(CLI, "CRASH_LOG", Path(folder) / "identity-worker-crash.log"), \
+                patch.object(CLI.sys, "argv", ["refresh", "enqueue"]), \
+                patch.object(CLI, "ProfileRefreshStore",
+                             side_effect=CLI.CreatorDiscoveryError("probe_report_invalid")), \
+                contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
+            self.assertEqual(CLI.main(), 1)
+        self.assertEqual(json.loads(output.getvalue())["error"]["code"], "probe_report_invalid")
 
 
 if __name__ == "__main__":

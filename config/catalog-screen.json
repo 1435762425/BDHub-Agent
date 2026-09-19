@@ -1,0 +1,7 @@
+{
+  "version": "catalog-screen-v1",
+  "minSales": 300,
+  "minRating": 4.0,
+  "minCommissionGapPoints": 2.0,
+  "allowUnrated": true
+}

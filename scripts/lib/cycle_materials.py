@@ -13,12 +13,20 @@ TEMPLATES={
  'brief':"Ciao{recipient}! Per {mention}, commissione del {rate}% per te 👏 Ci fai un nuovo video o LIVE? 😊",
  'video_live':"Ciao{recipient}! Stai preparando un nuovo video o LIVE? Per {mention} abbiamo una commissione migliorata al {rate}% per te 😊",
 }
+# The exact instruction the model receives. Kept here as one string so the workbench can show the
+# operator what is actually being asked, instead of a paraphrase that could drift from the code.
+NAMES_SYSTEM_PROMPT='将意大利商品标题缩成真实商品类型，不添加营销、疗效、品质或销量主张。去掉品牌、促销、颜色、包装等非必要词，但不可改品类。输出JSON items数组，逐项ref原样，shortNameIt为简短意大利商品名，mentionIt为可接在su/per之后的意大利短语（例如questo cuscino cervicale、questi leggings），shortNameZh为中文短名。每个名称最好2至5词。'
+
 def name_key(offer):return digest(['product-short-name-v1','it-IT',offer['pid'],offer['title']])
 def checked_names(body,inputs):
  if not isinstance(body,dict) or set(body)!={'items'} or not isinstance(body['items'],list) or len(body['items'])!=len(inputs):raise CycleError('names_invalid')
  result={}
+ required={'ref','shortNameIt','mentionIt','shortNameZh'}
  for row in body['items']:
-  if not isinstance(row,dict) or set(row)!={'ref','shortNameIt','mentionIt','shortNameZh'} or row['ref'] not in {str(i) for i in range(len(inputs))} or row['ref'] in result:raise CycleError('names_invalid')
+  # The four keys must all be present, but extra ones are ignored rather than fatal: the model
+  # sometimes echoes the input title back, which is harmless and was rejecting whole valid batches.
+  if not isinstance(row,dict) or not required<=set(row) or row['ref'] not in {str(i) for i in range(len(inputs))} or row['ref'] in result:raise CycleError('names_invalid')
+  row={k:row[k] for k in required}
   for key in ('shortNameIt','mentionIt','shortNameZh'):
    v=row[key]
    if not isinstance(v,str) or not v.strip() or len(v)>60 or len(v.split())>8 or re.search(r'[\n\r<>%{}]|https?://|BJN|gratis|commission|sconto|best.?sell|爆款|热销|保证',v,re.I):raise CycleError('names_invalid')
@@ -34,9 +42,19 @@ def render(name,offer,kind='standard',handle=None):
  'translationZh':f"你好！这款{name['shortNameZh']}可以为你提供更高的 {rate}% 佣金，下一条视频或直播可以再推一轮。",
  'deliveryOrder':'card_then_text','pid':offer['pid'],'executionAllowed':False,'requiresVerifiedCard':True,'commissionState':'proposed_not_applied'}
 
-def select_offers(store,plan,limit=5,require_demand=False):
+def select_offers(store,plan,limit=5,require_demand=False,scoped_pids=None):
+ """当前合格货盘里的 offer，按 pid 取最好的一条。
+
+ `scoped_pids` 给了就**只在这些 pid 里挑**，并且**不再要求这个 pid 在 `opportunity` 表里有行**。
+ 那道过滤是给**准备/估算**用的（"这个商品有没有人点"），发送时不该有它：发送位置来自发送池，
+ 池位本身就是需求。少了这个区分，一大批**商品明明在货盘里、也明明有卡**的位置会被报成
+ "商品不在当前合格货盘"（实测 182 条）。
+ """
  if store._plan(plan)['market']!='it':return []
- pids={r[0] for r in store.db.execute('SELECT DISTINCT pid FROM opportunity WHERE plan_id=?',(plan,))}
+ if scoped_pids is None:
+  pids={r[0] for r in store.db.execute('SELECT DISTINCT pid FROM opportunity WHERE plan_id=?',(plan,))}
+ else:
+  pids={str(p) for p in scoped_pids}
  chosen={}
  for _,offer in store._offers(plan):
   if offer['pid'] not in pids or not assess_offer(offer,store.clock())['eligible']:continue
@@ -45,7 +63,9 @@ def select_offers(store,plan,limit=5,require_demand=False):
  people=store._eligible_people(plan);demand={}
  for row in store.db.execute('SELECT creator_id,pid,units FROM opportunity WHERE plan_id=?',(plan,)):
   if row['creator_id'] in people:demand.setdefault(row['pid'],set()).add(row['creator_id'])
- return sorted((o for o in chosen.values() if not require_demand or demand.get(o['pid'])),key=lambda o:(-len(demand.get(o['pid'],set())),o['pid']))[:limit]
+ result=sorted((o for o in chosen.values() if not require_demand or demand.get(o['pid'])),
+               key=lambda o:(-len(demand.get(o['pid'],set())),o['pid']))
+ return result if limit is None else result[:limit]
 
 class Materials:
  def __init__(self,store):self.store=store;store.db.executescript(SCHEMA)
@@ -57,8 +77,21 @@ class Materials:
    result.append(o)
    if len(result)>=limit:break
   return result
+ def usable_cached(self,offer):
+  """A stored name only counts if a reader would accept it.
+
+  Row existence is not enough: a row whose shortNameIt is empty or over the length limit satisfies
+  ``WHERE id=?`` and would block regeneration forever, while every reader still falls back to a
+  truncated title. Those rows must be regenerated, not treated as done.
+  """
+  row=self.store.db.execute('SELECT payload FROM cycle_product_name WHERE id=?',(name_key(offer),)).fetchone()
+  if not row:return False
+  try:value=json.loads(row[0]).get('shortNameIt')
+  except (TypeError,ValueError):return False
+  return isinstance(value,str) and 1<=len(value)<=30
+
  def prepare_names(self,offers,call):
-  missing=[o for o in offers if not self.store.db.execute('SELECT 1 FROM cycle_product_name WHERE id=?',(name_key(o),)).fetchone()]
+  missing=[o for o in offers if not self.usable_cached(o)]
   if not missing:return {'modelCalls':0,'cached':len(offers)}
   if len(missing)>5:raise CycleError('names_batch_limit')
   jid='names-'+digest([name_key(o) for o in missing]);row=self.store.db.execute('SELECT * FROM cycle_name_job WHERE id=?',(jid,)).fetchone()
@@ -72,7 +105,7 @@ class Materials:
     self.store.db.execute('INSERT INTO cycle_name_job VALUES(?,?,?,?,?)',(jid,'request_started',encoded(missing),None,None))
    prompt={'items':[{'ref':str(i),'title':o['title']} for i,o in enumerate(missing)]}
    try:
-    response=call([{'role':'system','content':'将意大利商品标题缩成真实商品类型，不添加营销、疗效、品质或销量主张。去掉品牌、促销、颜色、包装等非必要词，但不可改品类。输出JSON items数组，逐项ref原样，shortNameIt为简短意大利商品名，mentionIt为可接在su/per之后的意大利短语（例如questo cuscino cervicale、questi leggings），shortNameZh为中文短名。每个名称最好2至5词。'}, {'role':'user','content':encoded(prompt)}],max_output_tokens=1000)
+    response=call([{'role':'system','content':NAMES_SYSTEM_PROMPT}, {'role':'user','content':encoded(prompt)}],max_output_tokens=1000)
     with self.store.tx():self.store.db.execute("UPDATE cycle_name_job SET state='response_saved',response=? WHERE id=?",(encoded(response),jid))
    except Exception as e:
     with self.store.tx():self.store.db.execute("UPDATE cycle_name_job SET state='unknown',error=?,response=? WHERE id=?",(getattr(e,'code','provider_failed'),encoded(getattr(e,'receipt',None)),jid))
@@ -80,7 +113,10 @@ class Materials:
   else:response=json.loads(row['response'])
   parsed=checked_names(json.loads(response['content']),missing)
   with self.store.tx():
-   for i,o in enumerate(missing):self.store.db.execute('INSERT OR IGNORE INTO cycle_product_name VALUES(?,?,?,?,?,?)',(name_key(o),o['pid'],'it-IT',o['title'],encoded(parsed[str(i)]),jid))
+   for i,o in enumerate(missing):
+    # Upsert: ``missing`` only holds products with no row or an unusable one, so replacing is the
+    # intended outcome and a good row is never overwritten.
+    self.store.db.execute('INSERT INTO cycle_product_name VALUES(?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET pid=excluded.pid,locale=excluded.locale,source_title=excluded.source_title,payload=excluded.payload,job_id=excluded.job_id',(name_key(o),o['pid'],'it-IT',o['title'],encoded(parsed[str(i)]),jid))
    self.store.db.execute("UPDATE cycle_name_job SET state='ready' WHERE id=?",(jid,))
   return {'modelCalls':0 if row else 1,'prepared':len(missing),'jobId':jid,'usage':response.get('usage'),'cost':response.get('cost')}
  def name(self,offer):

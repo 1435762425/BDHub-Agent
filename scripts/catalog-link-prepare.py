@@ -6,7 +6,7 @@ from decimal import Decimal
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1];sys.dont_write_bytecode=True;sys.path.insert(0,str(ROOT/'scripts'))
 from lib.catalog_links import CatalogLinks,new_commission
-from lib.catalog_prepare import CatalogPreparation,READ_EXTRA,MEMBERS,list_rows,new_offer,classify_pid,search_cards,scan_lists,read_members,member_facts,TaplinkInventory,reconcile_from_inventory
+from lib.catalog_prepare import CatalogPreparation,READ_EXTRA,MEMBERS,list_rows,new_offer,classify_pid,search_cards,scan_lists,read_members,member_facts,TaplinkInventory,reconcile_from_inventory,reused_card
 from lib.global_selection import selected_rows,assess
 from lib.global_source import clean_product
 from lib.global_source_transport import opportunity_reader,opportunity_card_creator_batch,CREATE
@@ -14,6 +14,9 @@ from lib.product_stock_policy import full_managed,mark_full_managed,require_stoc
 from lib.second_cycle import digest
 spec=importlib.util.spec_from_file_location('catalog_card_inspection',ROOT/'scripts/prepare-cycle-materials.py');inspection=importlib.util.module_from_spec(spec);spec.loader.exec_module(inspection)
 SCOPE={'market':'it','account':'acc9','institution':'bjn-local-research','sourceRun':'it-global-20260914','route':'selected'}
+ROUTES=('selected','campaign')
+# 非全托读卡用的渠道号：卡清单是 `source=1, campaign_id=<活动>`，成员读也要带 source=1。
+CAMPAIGN_SOURCE='1'
 
 def scope():
     policy=json.loads((ROOT/'config/catalog-link-policy.json').read_text())
@@ -166,7 +169,14 @@ def step_read(prep,run_id,limit,report,lanes=1,qps=3):
                     states['read_incomplete']=states.get('read_incomplete',0)+1;continue
                 outcome=dict(outcome)
                 outcome['listing']={'product_id':pid,'title':offer['title'],'creatorPercent':offer['creatorPercent'],'publicPercent':offer['publicPercent'],'totalPercent':offer['totalPercent'],'agencyPercent':offer['agencyPercent'],'planFingerprint':plan_bounds(offer)['planFingerprint'],'managementType':offer.get('managementType'),'managementEvidenceRef':offer.get('managementEvidenceRef')}
-                outcome['card']={'state':'existing_links_observed','total':outcome['total']}
+                # **别把已经读到的卡丢掉**：`classify_pid` 算出的是"复用事实"（listId ＋ 佣金原始值），
+                # 不是卡片形状。以前这里无条件换成 `{'state':'existing_links_observed','total':N}`——
+                # 一个没有 listId 的摘要，于是"我们明明在平台上读到过这张卡"被扔掉，发送池里就冒出
+                # 一大批假的"备链缺口"。现在按卡片契约 `reused_card()` 转好再存。
+                fact=outcome.get('card')
+                outcome['card']=(reused_card(fact,pid,str(it['campaign_id']),it['catalog_source'],time.time())
+                                 if isinstance(fact,dict) and fact.get('listId')
+                                 else {'state':'existing_links_observed','total':outcome['total']})
                 prep.apply_read(run_id,it['pid'],it['campaign_id'],it['catalog_source'],outcome)
                 states[outcome['state']]=states.get(outcome['state'],0)+1
     return {'claimed':len(claimed),'states':states}
@@ -295,6 +305,110 @@ def step_reconcile(prep,inv,run_id,report,limit=None):
                     report.setdefault('reconcilePlanErrors',[]).append(str(error)[:60])
     return reconcile_from_inventory(prep,inv,rows,offers,diag)
 
+def requeue_cardless(prep,route):
+    """把"台账里有行、但没有可定位卡片"的行**重新排进读卡队列**。
+
+    读卡只领 `pending/read_incomplete`，所以 `review`/`reuse` 的行以前**永远不会再被读**
+    ——这正是"卡点"的由来：一次判定把一个位置永久钉住，哪怕平台上卡就在那里。
+    这一步只改本地队列状态，然后照常走 `step_read`（**只读卡，不建链**）。
+    """
+    src='campaign' if route=='campaign' else 'selected'
+    with prep.db:
+        n=prep.db.execute("""UPDATE catalog_prepare_item SET state='pending',blocker=NULL,error=NULL,lease_until=0,
+            updated=? WHERE catalog_source=? AND state IN ('review','reuse')
+            AND (card IS NULL OR json_extract(card,'$.listId') IS NULL OR json_extract(card,'$.listId')='')""",
+            (time.time(),src)).rowcount
+    return n
+
+
+def step_read_campaign(prep,run_id,limit,report):
+    """非全托读卡：按活动读一次卡清单（`source=1, campaign_id=<活动>`），再用池子的事实判定。
+
+    非全托**没有账号级卡清单**可读——卡片就是挂在活动上的，所以先按活动分组、每个活动读一次。
+    判定用的商业事实取自池子（快照 + 当前规则重算的佣金），不另读一遍商品：建链之前还会再实时重验一次，
+    所以这里快一点的代价是可控的。
+    """
+    claimed=prep.claim_read(run_id,limit=limit)
+    block=campaign_block()
+    offers={t['pid']:t['offer'] for t in block['targets']}
+    report['campaignTargets']=len(block['targets']);report['campaignSkipped']=block.get('skipped')
+    campaigns=sorted({str(it['campaign_id']) for it in claimed})
+    inv=TaplinkInventory(ROOT);failed={}
+    try:
+        if campaigns:
+            with opportunity_reader(report,extra_read_endpoints=READ_EXTRA,wait_seconds=60,account_name='acc9') as transport:
+                def read(path,extra):
+                    r=transport._xhr(method='GET',path=path,params=transport._params()|extra,payload=None,write=False)
+                    body=transport.require_read(r);return body,digest(body)
+                cards={}
+                for cid in campaigns:
+                    try:
+                        total,rows=scan_lists(read,source=CAMPAIGN_SOURCE,campaign_id=cid)
+                        for row in rows:
+                            inv.save_list(row,source=CAMPAIGN_SOURCE,campaign_id=cid)
+                            inv.save_members(row['list_id'],row.get('name'),
+                                             read_members(read,row['list_id'],source=CAMPAIGN_SOURCE))
+                        cards[cid]=total
+                    except Exception as error:
+                        # 一个活动读不到不能把别的活动也拖下水：只给它自己的行记原因。
+                        failed[cid]=str(error) if isinstance(error,ValueError) else f'{type(error).__name__}:{str(error)[:60]}'
+            report['campaignCards']=cards
+        report['campaignReadFailures']=failed
+        # 即使这次没有领到新行也照常复判：卡清单是缓存的，判定读的是缓存 + 池子事实，
+        # 所以"修好判定再跑一次"必须能生效，而不是因为没有 pending 就什么都不做。
+        rows=[dict(r) for r in prep.db.execute("SELECT * FROM catalog_prepare_item WHERE run_id=? AND state NOT IN ('retired','ready')",(run_id,))]
+        for item in rows:
+            code=failed.get(str(item['campaign_id']))
+            if code:
+                prep.apply_read(run_id,item['pid'],item['campaign_id'],item['catalog_source'],
+                                {'state':'read_incomplete','error':'campaign_cards_unreadable:'+code[:120]})
+        readable=[item for item in rows if str(item['campaign_id']) not in failed]
+        states=reconcile_from_inventory(prep,inv,readable,offers)
+        for cid in failed:states['read_incomplete']=states.get('read_incomplete',0)+1
+        return {'claimed':len(claimed),'states':states,'campaigns':len(campaigns)}
+    finally:inv.close()
+
+def campaign_fresh_offers(transport,offers,at=None):
+    """建链前实时重验非全托商业事实：按活动翻一遍商品列表，只挑我们关心的 PID。
+
+    目的与全托侧完全一样——**不是为了再读一遍，而是让平台侧的改动在写入之前暴露出来**。
+    按活动分组而不是按 PID：一个活动的商品列表翻一页就够（实测 3,622 offer / 43 个活动），
+    逐个 PID 重读会把同一页读几十遍。
+    """
+    from lib.cycle_catalog import normalize,commission_rule,commission_calculator,CAMPAIGNS,PRODUCTS,_total
+    from lib.second_cycle import assess_offer
+    rule=commission_rule(ROOT);calculator=commission_calculator(rule)
+    at=at if at is not None else time.time()
+    wanted={}
+    for offer in offers:wanted.setdefault(str(offer['campaignId']),set()).add(str(offer['pid']))
+    def request(method,path,params,payload=None):
+        r=transport._xhr(method=method,path=path,params=transport._params()|params,payload=payload,write=False)
+        return transport.require_read(r),digest(r.payload)
+    meta={}
+    for page in range(1,6):
+        body,_=request('GET',CAMPAIGNS,{'campaign_join_status_category':'1','crs_campaign_types':'','cur_page':page,'page_size':100})
+        data=body.get('data') or {}
+        for row in data.get('campaign') or []:
+            cid=str(row.get('campaign_id'))
+            if cid in wanted:meta[cid]=row
+        if page*100>=_total(data,'total_num'):break
+    fresh={}
+    for cid,pids in wanted.items():
+        campaign=meta.get(cid)
+        if not campaign:continue
+        found=set()
+        for page in range(1,21):
+            body,sha=request('GET',PRODUCTS,{'campaign_id':cid,'marked':'0' if str(campaign.get('crs_campaign_type'))=='7' else 'false','cur_page':page,'page_size':100})
+            data=body.get('data') or {};rows=data.get('campaign_product') or []
+            for row in rows:
+                pid=str(row.get('product_id'))
+                if pid in pids and pid not in found:
+                    found.add(pid)
+                    fresh[pid]=normalize(row,campaign,'campaign',rule,calculator,sha,at)
+            if len(found)==len(pids) or page*100>=_total(data,'total_num'):break
+    # 资格用与池子同一个闸门复判：平台把商品改下线/降佣/改期限，都在这里被挡下。
+    return {pid:offer for pid,offer in fresh.items() if assess_offer(offer,at)['eligible']}
+
 def step_verify(prep,report,limit=None):
     """Read back intents that already reached the platform. Never creates, never deletes.
 
@@ -321,7 +435,9 @@ def step_verify(prep,report,limit=None):
                 # full-managed evidence from the ledger row so the stock gate stays cancelled.
                 listing=json.loads(item['listing']) if item.get('listing') else {}
                 offer=intent['spec']['offer']
-                if not full_managed(offer) and listing.get('managementEvidenceRef'):
+                # 只有全托这条队列准备官方全托来源，才在这里补上数量门槛的取消证据；
+                # 非全托不能被冒充成全托（那会连带把库存门槛也取消掉）。
+                if (intent['spec'].get('route') or 'selected')=='selected' and not full_managed(offer) and listing.get('managementEvidenceRef'):
                     offer=mark_full_managed(offer,listing['managementEvidenceRef'])
                 try:
                     card=None
@@ -348,22 +464,30 @@ def verify_created_card(read,intent,receipt):
     Cheaper than a full search: the receipt already names the list to read, and the frozen
     intent says exactly what that card must contain.
     """
-    spec=intent['spec'];offer=spec['offer']
+    spec=intent['spec'];offer=spec['offer'];route=spec.get('route') or 'selected'
+    source=2 if route=='selected' else 1
+    wire='0' if route=='selected' else str(spec['campaignId'])
     list_id=str(receipt.get('list_id') or '')
     if not list_id.isdigit():raise ValueError('catalog_receipt_list_missing')
-    body,sha=read(MEMBERS,{'list_id':list_id,'source':2})
+    body,sha=read(MEMBERS,{'list_id':list_id,'source':source})
     data=body.get('data') if isinstance(body,dict) else None
     rows=list_rows(data,'total_num','campaign_products')
     if rows is None or data.get('total_num')!=len(rows):raise ValueError('card_members_incomplete')
     wanted=str(spec['campaignId']);pid=str(spec['pid'])
-    member=next((p for p in rows if str(p.get('product_id'))==pid and str(p.get('campaign_id'))==wanted),None)
+    # 非全托卡片的成员行不带活动号（活动号在卡本身），所以这里必须容忍 None。
+    member=next((p for p in rows if str(p.get('product_id'))==pid
+                 and (str(p.get('campaign_id'))==wanted or route!='selected' and p.get('campaign_id') is None)),None)
     if member is None:return None
     raw=member.get('creator_commission_percent')
     if raw is None:return None
     rate=Decimal(str(raw))/100
     if rate!=Decimal(str(spec['creatorPercent'])):return None
     if str(member.get('product_status'))!='2' or member.get('is_under_governed') is True:return None
-    merged=offer|{'managementType':offer.get('managementType') or 'full_managed','managementEvidenceRef':offer.get('managementEvidenceRef') or 'catalog-prepare:full_managed_source'}
+    if route=='selected':
+        # 这条队列准备的是官方全托来源，所以在这里取消数量门槛；非全托保留自己的库存规则。
+        merged=offer|{'managementType':offer.get('managementType') or 'full_managed','managementEvidenceRef':offer.get('managementEvidenceRef') or 'catalog-prepare:full_managed_source'}
+    else:
+        merged=offer
     if not unavailable_allowed(member.get('unavailable_type'),merged):return None
     needs_stock=require_stock(merged)
     if needs_stock and (member.get('stock') is None or Decimal(str(member.get('stock')))<=100):return None
@@ -371,21 +495,23 @@ def verify_created_card(read,intent,receipt):
     return {'state':'verified_read_only','pid':pid,'verifiedListName':spec['listName'],'listName':spec['listName'],
             'campaignName':'','stock':str(member.get('stock')) if needs_stock else None,'stockRequired':needs_stock,
             'publicPercent':format(Decimal(str(public))/100,'f') if public is not None else None,
-            'listId':list_id,'wireCampaignId':'0','sourceCampaignId':wanted,'creatorPercent':format(rate,'f'),
+            'listId':list_id,'wireCampaignId':wire,'sourceCampaignId':wanted,'creatorPercent':format(rate,'f'),
             'checkedAt':time.time(),'evidenceRefs':[sha],'executionAllowed':False,'readAccount':'acc9'}
 
-def create_spec(prep,run_id,offer,short_name,naming=None):
+def create_spec(prep,run_id,offer,short_name,naming=None,route=None):
     """Freeze one creation intent. The name comes from the frontend-controllable naming config."""
     from lib.link_naming import load as load_naming,fingerprint as naming_fingerprint,name_for
     naming=naming or load_naming(ROOT)
+    route=route or SCOPE['route']
     campaign=offer['campaignId'];pid=offer['pid']
     rendered=name_for(ROOT,pid=pid,campaign=campaign,creator_percent=offer['creatorPercent'],
                       short_name=short_name,public_percent=offer.get('publicPercent'),
                       total_percent=offer.get('totalPercent'),market='it',config=naming)
     name=rendered['name']
+    # 载荷由生成器按渠道给出，不在这里手拼：两条渠道的形状不同（非全托没有 source、活动在顶层）。
     from bdhub.send.taplink.protocol import create_payload
-    payload=create_payload(pid=pid,campaign_id=campaign,creator_pct=offer['creatorPercent'],name=name,route='selected')
-    return {'market':'it','account':'acc9','route':'selected','purpose':'catalog_batch_link','sourceRun':run_id,'pid':pid,'campaignId':campaign,
+    payload=create_payload(pid=pid,campaign_id=campaign,creator_pct=offer['creatorPercent'],name=name,route=route)
+    return {'market':'it','account':'acc9','route':route,'purpose':'catalog_batch_link','sourceRun':run_id,'pid':pid,'campaignId':campaign,
             'creatorPercent':offer['creatorPercent'],'listName':name,'shortName':rendered['shortName'],'policyFingerprint':digest(prep.policy),'searchTotal':0,
             'namingVersion':naming['version'],'namingFingerprint':naming_fingerprint(naming),
             'offer':plan_bounds(offer)|{'observedAt':time.time()},'payload':payload,'preparedAt':time.time()}
@@ -440,7 +566,13 @@ def step_create(prep,run_id,limit,report,pace=0.0,lanes=1,qps=5):
         # Phase 2: one session. Every read is done up front in batch/parallel, so the write
         # loop is left with exactly two serial requests per product (write + member readback).
         payloads={str(intent['spec']['pid']):intent['spec']['payload'] for _,intent in work}
-        with opportunity_card_creator_batch(report,payloads,stopped=lambda:False,wait_seconds=60) as transport:
+        # 一条 run 只有一条渠道，所以整批共用。（意图本身各自带 route，写载荷仍逐条核对。）
+        route=SCOPE['route']
+        # 非全托在写之前要按活动重验商业事实，那两次只读必须在这里声明——
+        # 少了它，整条创建路径会在发出任何请求之前就被 TapLinkError('taplink_endpoint_not_allowed') 挡下。
+        from lib.global_source_transport import CAMPAIGN_OFFER_READS
+        extra_reads=CAMPAIGN_OFFER_READS if route=='campaign' else frozenset()
+        with opportunity_card_creator_batch(report,payloads,stopped=lambda:False,wait_seconds=60,extra_reads=extra_reads) as transport:
             def reader(on):
                 def read(path,extra):
                     r=on._xhr(method='GET',path=path,params=on._params()|extra,payload=None,write=False)
@@ -448,8 +580,13 @@ def step_create(prep,run_id,limit,report,pace=0.0,lanes=1,qps=5):
                 return read
             read=reader(transport)
             pids=[str(intent['spec']['pid']) for _,intent in work]
+            cards_in_channel={str(intent['spec']['pid']):(str(intent['spec'].get('route') or 'selected'),
+                                                          str(intent['spec']['campaignId'])) for _,intent in work}
             t=time.time()
-            fresh_all=fresh_offers(transport,prep,pids,time.time())
+            if route=='campaign':
+                fresh_all=campaign_fresh_offers(transport,[intent['spec']['offer'] for _,intent in work],time.time())
+            else:
+                fresh_all=fresh_offers(transport,prep,pids,time.time())
             report.setdefault('phaseSeconds',{})['plans']=round(time.time()-t,2)
             # Card pre-search for the whole batch across read lanes: a product that already has a
             # card is blocked before any write, and the write loop keeps no search of its own.
@@ -461,7 +598,13 @@ def step_create(prep,run_id,limit,report,pace=0.0,lanes=1,qps=5):
             try:
                 lane_reads=[read]+[reader(on) for on in lane_transports[1:]]
                 def look(index,pid):
-                    try:return pid,search_cards(lane_reads[index%max(1,lanes)],pid)[0],None
+                    try:
+                        source,cid=cards_in_channel[pid]
+                        # 只数**这条渠道**下的卡：非全托要建链的商品几乎都有全托卡（2,289 个），
+                        # 按账号里的卡片总数判会把每一次非全托建链都拦掉。
+                        wire='0' if source=='selected' else cid
+                        total,cards=search_cards(lane_reads[index%max(1,lanes)],pid)
+                        return pid,sum(1 for _,row in cards if str(row.get('campaign_id') or '0')==wire),None
                     except Exception as error:return pid,None,error
                 with ThreadPoolExecutor(max_workers=max(1,lanes)) as executor:
                     for pid,total,error in (f.result() for f in [executor.submit(look,i,p) for i,p in enumerate(pids)]):
@@ -509,8 +652,16 @@ def step_create(prep,run_id,limit,report,pace=0.0,lanes=1,qps=5):
                     if not fresh:raise ValueError('product_no_longer_eligible')
                     # The campaign binding comes from the frozen intent; only the commercial facts
                     # are re-read, so a plan edited on the platform can never be created silently.
-                    current=new_offer(fresh,pid,intent['spec']['campaignId'],'selected',policy=prep.policy)
-                    if any(str(current.get(k))!=str(intent['spec']['offer'].get(k)) for k in ('campaignId','creatorPercent','totalPercent','publicPercent')):raise ValueError('commercial_facts_changed')
+                    # 非全托的实时事实已经是同名字段（normalize 的输出），不必再折算一次。
+                    if route=='campaign':
+                        current=fresh
+                    else:
+                        current=new_offer(fresh,pid,intent['spec']['campaignId'],'selected',policy=prep.policy)
+                    # Record which field moved, not just that something did. Without the diff the
+                    # only way to learn what happened was to read the platform again by hand, and
+                    # a transient platform answer looks exactly like a real change.
+                    moved={k:(str(intent['spec']['offer'].get(k)),str(current.get(k))) for k in ('campaignId','creatorPercent','totalPercent','publicPercent') if str(current.get(k))!=str(intent['spec']['offer'].get(k))}
+                    if moved:raise ValueError('commercial_facts_changed:'+(';'.join(f'{k} {a}->{b}' for k,(a,b) in moved.items()))[:180])
                     total=totals.get(pid)
                     if total is None:raise ValueError('card_search_unresolved')
                     if total!=0:raise ValueError('existing_links_preserved_no_creation')
@@ -565,20 +716,61 @@ def selection_items(pids=None):
     if pids:items=[i for i in items if i['pid'] in pids]
     return items
 
-def status_view():
+def channel_overlap(route=None):
+    """跨渠道重叠的商品：**另一条渠道**已有卡、或已有链接意图的 PID。
+
+    按已确认口径「位置只出一条、全托优先」，这些商品只出一条位置，另一条渠道不另建链——
+    一个商品去建第二条链既不会被发出去，也会占用意图账本里那个**按 PID** 的唯一键。
+
+    **只算另一条渠道**：本渠道自己的意图（比如刚建好或已冻结的那几条）不是"重叠"，
+    把它们也算进来会让"待备链商品"凭空少掉几条，与池子对不上。名单实时算，实测重叠只有 1 个 PID。
+    """
+    route=route or SCOPE['route']
+    other_source='2' if route=='campaign' else '1'
+    covered=set()
+    inv=TaplinkInventory(ROOT)
+    try:
+        covered={str(r[0]) for r in inv.db.execute(
+            "SELECT DISTINCT m.pid FROM catalog_tap_member m JOIN catalog_tap_list l ON l.list_id=m.list_id WHERE l.source=?",
+            (other_source,))}
+    finally:inv.close()
+    path=ROOT/'var/catalog-links.sqlite'
+    if path.exists():
+        with closing(sqlite3.connect(path.resolve().as_uri()+'?mode=ro',uri=True,timeout=5)) as conn:
+            conn.execute('BEGIN')
+            # 意图里存了 route：只排另一条渠道的，本渠道的已经在这条 run 里了。
+            covered|={str(r[0]) for r in conn.execute(
+                "SELECT DISTINCT pid FROM catalog_link_intent WHERE json_extract(spec,'$.route') IS NOT ?",(route,))}
+    return covered
+
+def campaign_block():
+    """非全托的建链目标：已入池（chosen）商品 + 按**当前**规则重算的商业事实。"""
+    from lib.campaign_screen import link_targets
+    return link_targets(ROOT,exclude=channel_overlap(SCOPE['route']))
+
+def status_view(route='selected'):
     """Read-only coverage view for the product page: links, covered PIDs and blocking reasons."""
     from lib.catalog_prepare import CatalogPreparation
     prep=CatalogPreparation(ROOT)
     try:
-        run=prep.db.execute('SELECT * FROM catalog_prepare_run ORDER BY created DESC LIMIT 1').fetchone()
-        if not run:return {'available':False,'executionAllowed':False,'reason':'catalog_prepare_not_started'}
+        # 按渠道各取自己最近的一次准备 run：两条渠道的账本同表，最新一条不一定是这条渠道的。
+        run=prep.db.execute("SELECT * FROM catalog_prepare_run WHERE json_extract(scope,'$.route')=? ORDER BY created DESC LIMIT 1",(route,)).fetchone()
+        if not run:return {'available':False,'executionAllowed':False,'route':route,'reason':'catalog_prepare_not_started'}
         items=[dict(r) for r in prep.db.execute('''SELECT pid,campaign_id,state,error,blocker,creator_percent,public_percent,total_percent,title,intent_id,updated
             FROM catalog_prepare_item WHERE run_id=? ORDER BY CASE state WHEN 'ready' THEN 0 WHEN 'missing' THEN 1 WHEN 'reuse' THEN 2 WHEN 'review' THEN 3 ELSE 4 END,updated DESC LIMIT 40''',(run['id'],))]
-        with closing(sqlite3.connect((ROOT/'var/global-selection.sqlite').as_uri()+'?mode=ro',uri=True)) as db:
-            db.execute('BEGIN')
-            row=db.execute('SELECT run_id,count(*) FROM intake_item GROUP BY run_id ORDER BY max(updated) DESC LIMIT 1').fetchone()
-        return {'available':True,'executionAllowed':False,'runId':run['id'],'scope':json.loads(run['scope']),'created':run['created'],
-                'selection':{'intakeRun':row[0],'confirmed':row[1]} if row else None,
+        selection=None
+        if route=='selected':
+            with closing(sqlite3.connect((ROOT/'var/global-selection.sqlite').as_uri()+'?mode=ro',uri=True)) as db:
+                db.execute('BEGIN')
+                row=db.execute('SELECT run_id,count(*) FROM intake_item GROUP BY run_id ORDER BY max(updated) DESC LIMIT 1').fetchone()
+            selection={'intakeRun':row[0],'confirmed':row[1]} if row else None
+        else:
+            # 非全托的"宇宙"是池子不是选入台账，所以这里报池子本身，让页面对得上数。
+            block=campaign_block()
+            selection={'poolRun':block.get('runId'),'snapshot':block.get('snapshot'),
+                       'targets':len(block.get('targets') or []),'skipped':block.get('skipped')}
+        return {'available':True,'executionAllowed':False,'route':route,'runId':run['id'],'scope':json.loads(run['scope']),'created':run['created'],
+                'selection':selection,
                 'summary':prep.summary(run['id']),
                 'items':[{'pid':i['pid'],'campaignId':i['campaign_id'],'state':i['state'],'error':i['error'],'blocker':i['blocker'],
                           'creatorPercent':i['creator_percent'],'publicPercent':i['public_percent'],'totalPercent':i['total_percent'],
@@ -586,62 +778,97 @@ def status_view():
     finally:prep.close()
 
 def main():
-    p=argparse.ArgumentParser(description=__doc__);p.add_argument('action',nargs='?',choices=['status','seed','read','create','inventory','reconcile','verify'])
+    p=argparse.ArgumentParser(description=__doc__);p.add_argument('action',nargs='?',choices=['status','seed','read','reread','create','inventory','reconcile','verify'])
     p.add_argument('--status-links',action='store_true',help='read-only coverage view for the product page')
     p.add_argument('--report',type=Path);p.add_argument('--pids');p.add_argument('--limit',type=int,default=15);p.add_argument('--max-creates',type=int,default=0)
     p.add_argument('--lists',type=int,default=0,help='inventory: max lists to read members for (0=all pending)')
     p.add_argument('--items',type=int,default=0,help='reconcile: max queued plans to judge (0=all)')
     p.add_argument('--scope',choices=['intake','pool'],default='intake',
                    help='seed universe: intake=durable full-managed selection only; pool=every live selected plan')
+    p.add_argument('--route',choices=list(ROUTES),default='selected',
+                   help='selected=全托（账号级卡 source=2）；campaign=非全托（按活动的卡 source=1）')
     p.add_argument('--lanes',type=int,default=1,choices=[1,3,6,9],help='same-account read lanes')
     p.add_argument('--qps',type=int,default=3,choices=[3,5,8,12],help='aggregate request rate shared by all lanes')
     a=p.parse_args()
+    SCOPE['route']=a.route
+    if a.route=='campaign':
+        # 非全托的源跑号用**池子的 run**：快照或规则一变就换新 run，旧 run 的结论不会被沿用。
+        block=campaign_block()
+        if not block.get('available'):p.error('campaign pool unavailable: '+str(block.get('reason')))
+        SCOPE['sourceRun']=block['runId']
     if a.action=='status' or a.status_links:
-        print(json.dumps(status_view(),ensure_ascii=False));return
+        print(json.dumps(status_view(a.route),ensure_ascii=False));return
     if not a.action:p.error('action required')
+    if a.route=='campaign' and a.action in ('inventory','reconcile'):
+        p.error('campaign route reads cards per campaign inside `read`; use campaign-inventory.py for a plain scan')
     if not a.report:p.error('--report required')
     output=a.report.resolve()
     if not output.is_relative_to(ROOT/'var') or output.exists():p.error('new report under var required')
     if a.limit<1 or a.limit>600 or a.max_creates<0 or a.max_creates>600:p.error('limit out of range')
     prep=CatalogPreparation(ROOT);s=scope();run_id=prep.open_run(s)
-    report={'action':a.action,'realSends':0,'platformWrites':0,'startedAt':time.time(),'scope':s,'runId':run_id}
+    report={'action':a.action,'route':a.route,'realSends':0,'platformWrites':0,'startedAt':time.time(),'scope':s,'runId':run_id}
     if a.action=='seed':
         wanted=set(a.pids.split(',')) if a.pids else None
-        # intake keeps the original narrow universe (the durable full-managed selection ledger).
-        # pool covers every live selected plan, so already-verified links are reused instead of
-        # only creating links for the newly selected PIDs.
-        universe=None if a.scope=='pool' else {i['pid'] for i in selection_items(wanted)}
-        with opportunity_reader(report,wait_seconds=60,account_name='acc9') as transport:
-            pool=pool_cache(report)
-            if pool is None:
-                pool=read_selected_pool(transport);pool['readAt']=time.time()
-                (ROOT/'var/catalog-selected-pool-cache.json').write_text(json.dumps(pool,ensure_ascii=False))
-        items=[]
-        for r in pool['rows']:
-            cp=r.get('campaign_product') or {};ci=r.get('campaign_info') or {}
-            pid=str(cp.get('product_id'))
-            if not pid.isdigit() or str(ci.get('crs_campaign_type')) not in ('8','9'):continue
-            if wanted is not None and pid not in wanted:continue
-            if universe is not None and pid not in universe:continue
-            items.append({'pid':pid,'campaignId':str(ci.get('campaign_id')),'catalogSource':'selected'})
-        report['selectedPoolTotal']=pool['total'];report['candidates']=len(universe) if universe is not None else pool['total']
-        report['scopeMode']=a.scope
-        report['seeded']=prep.seed(run_id,items,s)
-        report['retired']=prep.retire_mismatched_bindings(run_id)
-    elif a.action=='read':
-        if a.pids:
-            # Reserve the exact live binding before classifying; a stale local snapshot is not a plan.
+        if a.route=='campaign':
+            # 非全托的播种宇宙＝已入池商品（一个 PID 一条），不需要联网。
+            block=campaign_block()
+            items=[{'pid':t['pid'],'campaignId':t['campaignId'],'catalogSource':'campaign','title':t['title']}
+                   for t in block['targets'] if wanted is None or t['pid'] in wanted]
+            report['campaignPoolRun']=block.get('runId');report['campaignSkipped']=block.get('skipped')
+            report['candidates']=len(block['targets'])
+        else:
+            # intake keeps the original narrow universe (the durable full-managed selection ledger).
+            # pool covers every live selected plan, so already-verified links are reused instead of
+            # only creating links for the newly selected PIDs.
+            universe=None if a.scope=='pool' else {i['pid'] for i in selection_items(wanted)}
             with opportunity_reader(report,wait_seconds=60,account_name='acc9') as transport:
                 pool=pool_cache(report)
                 if pool is None:
                     pool=read_selected_pool(transport);pool['readAt']=time.time()
                     (ROOT/'var/catalog-selected-pool-cache.json').write_text(json.dumps(pool,ensure_ascii=False))
-            wanted=set(a.pids.split(','))
-            items=[{'pid':str((r.get('campaign_product') or {}).get('product_id')),'campaignId':str((r.get('campaign_info') or {}).get('campaign_id')),'catalogSource':'selected'}
-                   for r in pool['rows'] if str((r.get('campaign_product') or {}).get('product_id')) in wanted and str((r.get('campaign_info') or {}).get('crs_campaign_type')) in ('8','9')]
-            report['selectedPoolTotal']=pool['total'];report['seeded']=prep.seed(run_id,items,s)
-        report['read']=step_read(prep,run_id,a.limit,report,lanes=a.lanes,qps=a.qps)
+            items=[]
+            for r in pool['rows']:
+                cp=r.get('campaign_product') or {};ci=r.get('campaign_info') or {}
+                pid=str(cp.get('product_id'))
+                if not pid.isdigit() or str(ci.get('crs_campaign_type')) not in ('8','9'):continue
+                if wanted is not None and pid not in wanted:continue
+                if universe is not None and pid not in universe:continue
+                items.append({'pid':pid,'campaignId':str(ci.get('campaign_id')),'catalogSource':'selected'})
+            report['selectedPoolTotal']=pool['total'];report['candidates']=len(universe) if universe is not None else pool['total']
+            report['scopeMode']=a.scope
+        report['seeded']=prep.seed(run_id,items,s)
         report['retired']=prep.retire_mismatched_bindings(run_id)
+    elif a.action=='read':
+        if a.route=='campaign':
+            report['read']=step_read_campaign(prep,run_id,a.limit,report)
+        else:
+            if a.pids:
+                # Reserve the exact live binding before classifying; a stale local snapshot is not a plan.
+                with opportunity_reader(report,wait_seconds=60,account_name='acc9') as transport:
+                    pool=pool_cache(report)
+                    if pool is None:
+                        pool=read_selected_pool(transport);pool['readAt']=time.time()
+                        (ROOT/'var/catalog-selected-pool-cache.json').write_text(json.dumps(pool,ensure_ascii=False))
+                wanted=set(a.pids.split(','))
+                items=[{'pid':str((r.get('campaign_product') or {}).get('product_id')),'campaignId':str((r.get('campaign_info') or {}).get('campaign_id')),'catalogSource':'selected'}
+                       for r in pool['rows'] if str((r.get('campaign_product') or {}).get('product_id')) in wanted and str((r.get('campaign_info') or {}).get('crs_campaign_type')) in ('8','9')]
+                report['selectedPoolTotal']=pool['total'];report['seeded']=prep.seed(run_id,items,s)
+            report['read']=step_read(prep,run_id,a.limit,report,lanes=a.lanes,qps=a.qps)
+            report['retired']=prep.retire_mismatched_bindings(run_id)
+    elif a.action=='reread':
+        # 只读：把没卡的行重新排一次队，再用既有的读卡路径读一遍。
+        report['requeued']=requeue_cardless(prep,a.route)
+        if a.route=='campaign':
+            # 非全托的 run 是**按活动来源**建的（`sourceRun` 进 id），每次调用都会算出新 id，
+            # 所以不能用本次的 run_id 去读——要读**真正持有这些行的那些 run**。
+            src='campaign'
+            runs=[r[0] for r in prep.db.execute(
+                "SELECT DISTINCT run_id FROM catalog_prepare_item WHERE catalog_source=? AND "
+                "(card IS NULL OR coalesce(json_extract(card,'$.listId'),'')='')",(src,))]
+            report['readRuns']=len(runs)
+            report['read']={run:step_read_campaign(prep,run,a.limit,report) for run in runs}
+        else:
+            report['read']=step_read(prep,run_id,a.limit,report,lanes=a.lanes,qps=a.qps)
     elif a.action=='inventory':
         report['inventoryResult']=step_inventory(report,lanes=a.lanes,qps=a.qps,limit=(a.lists or None))
     elif a.action=='reconcile':
@@ -649,12 +876,20 @@ def main():
         try:report['reconcile']=step_reconcile(prep,inv,run_id,report,limit=(a.items or None))
         finally:inv.close()
     elif a.action=='create':
-        report['create']=step_create(prep,run_id,a.max_creates,report,lanes=a.lanes,qps=a.qps)
+        try:
+            report['create']=step_create(prep,run_id,a.max_creates,report,lanes=a.lanes,qps=a.qps)
+        except Exception as error:                                     # noqa: BLE001 - 报告必须先落盘
+            # 写不出去的时候，**这份报告就是唯一的证据**：异常抛出会让 stdout 空白、
+            # 报告文件根本不生成，于是"为什么没写成"就查不出来了（踩过一次）。
+            report['create']={'error':f'{type(error).__name__}:{str(error)[:200]}','created':[],'blocked':[]}
+            report['state']='blocked'
         report['platformWrites']=report.get('createWrites',0)
     elif a.action=='verify':
         report['verify']=step_verify(prep,report,limit=(a.items or None))
     report['summary']=prep.summary(run_id);report['elapsedSeconds']=round(time.time()-report['startedAt'],2)
     report['state']=report.get('state') or 'completed'
     output.write_text(json.dumps(report,ensure_ascii=False,indent=2)+'\n');prep.close()
-    print(json.dumps({'action':a.action,'state':report['state'],'summary':report['summary'],'platformWrites':report['platformWrites']},ensure_ascii=False))
+    # The driver loops creation while anything is still being created, so the count has to be on
+    # stdout. Without it the loop's exit condition was always true and one run meant one batch.
+    print(json.dumps({'action':a.action,'state':report['state'],'summary':report['summary'],'platformWrites':report['platformWrites'],'created':len((report.get('create') or {}).get('created') or [])},ensure_ascii=False))
 if __name__=='__main__':main()

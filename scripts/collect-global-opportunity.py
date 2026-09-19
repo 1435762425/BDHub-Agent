@@ -70,6 +70,20 @@ def main():
    if s.status(a.run_id)['published'] and not a.audit_store:
     from lib.cycle_management import sync_full_managed
     sync_full_managed(ROOT/'var/second-cycle.sqlite',db,scope)
-   print(json.dumps(s.status(a.run_id),ensure_ascii=False),flush=True)
+   final=s.status(a.run_id)
+   if not a.audit_store and final['state']!='collecting':
+    # Screen at collection. This is the fixed step once a collection turn stops reading: it
+    # applies the operator's thresholds to the listings already stored and records one decision
+    # per product. It only ever admits, never contacts the platform, and a screening error must
+    # not cast doubt on a collection that already succeeded -- so it is reported, not raised.
+    try:
+     from lib.global_screen import screen_source
+     detail=screen_source(db,a.run_id,root=ROOT)
+     report['screen']={'runId':detail['runId'],'counts':detail['counts'],'reasons':detail['reasons']}
+    except Exception as e:
+     report['screen']={'error':str(e) if isinstance(e,ValueError) else type(e).__name__}
+    (ROOT/'var/global-source-runtime.json').write_text(json.dumps(report,ensure_ascii=False,indent=2))
+    print(json.dumps({'screen':report['screen']},ensure_ascii=False),flush=True)
+   print(json.dumps(final,ensure_ascii=False),flush=True)
   finally:s.close()
 if __name__=='__main__':main()

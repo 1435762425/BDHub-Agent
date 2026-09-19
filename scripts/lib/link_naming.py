@@ -112,18 +112,28 @@ def render(config, **kwargs):
 
 
 def short_name_for(root, pid, title):
-    """Cached AI short name for one product, else a trimmed title. Shared by preview and create."""
+    """Cached AI short name for one product, else a trimmed title. Shared by preview and create.
+
+    The lookup is by product id, not by the cached title. A short name belongs to the product; the
+    title is only the input the model saw. Keying on the title meant that the same product arriving
+    from a different source -- Kalodata writes ``cuscino per il collo morbido``, the platform listing
+    writes ``Cuscino morbido per il collo`` -- silently missed the cache and fell back to a truncated
+    raw title, so no generated name was ever used on a card.
+    """
     import sqlite3
     from contextlib import closing
     db = Path(root) / 'var/second-cycle.sqlite'
     if db.exists():
         with closing(sqlite3.connect(db.as_uri() + '?mode=ro', uri=True)) as conn:
             conn.execute('BEGIN')
-            row = conn.execute('SELECT payload FROM cycle_product_name WHERE id=?',
-                               (digest(['product-short-name-v1', 'it-IT', str(pid), title]),)).fetchone()
+            row = conn.execute('SELECT payload FROM cycle_product_name WHERE pid=? '
+                               'ORDER BY rowid DESC LIMIT 1', (str(pid),)).fetchone()
         if row:
             value = json.loads(row[0]).get('shortNameIt')
-            if isinstance(value, str) and 1 <= len(value) <= 30:
+            # The writer validates names up to 60 characters. Refusing anything over 30 here threw
+            # away a perfectly good generated name; fitting it to the card limit is render_full's
+            # job, and it already trims by whole words.
+            if isinstance(value, str) and 1 <= len(value) <= 60:
                 return value
     cleaned = ' '.join(str(title).split())
     return (cleaned[:30].rsplit(' ', 1)[0] if len(cleaned) > 30 and ' ' in cleaned[:31] else cleaned[:30]) or str(pid)

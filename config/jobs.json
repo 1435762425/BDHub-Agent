@@ -1,0 +1,25 @@
+{
+  "version": "jobs-v1",
+  "jobs": {
+    "catalog_collect": {
+      "enabled": false,
+      "at": "03:00"
+    },
+    "catalog_screen": {
+      "enabled": false,
+      "at": "03:30"
+    },
+    "creator_leads": {
+      "enabled": false,
+      "at": "04:00"
+    },
+    "creator_profile_refresh": {
+      "enabled": false,
+      "at": "04:30"
+    },
+    "link_prepare": {
+      "enabled": false,
+      "at": "05:00"
+    }
+  }
+}

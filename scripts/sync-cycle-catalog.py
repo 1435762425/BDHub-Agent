@@ -5,7 +5,7 @@ from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1];LEGACY=ROOT.parent/'01-BDSystem-V2'
 sys.dont_write_bytecode=True;sys.path.insert(0,str(LEGACY));sys.path.insert(0,str(ROOT/'scripts'))
 from lib.second_cycle import CycleStore,CycleError,digest
-from lib.cycle_catalog import new_state,step,CAMPAIGNS,PRODUCTS,SELECTED
+from lib.cycle_catalog import new_state,step,CAMPAIGNS,PRODUCTS,SELECTED,commission_rule,commission_calculator
 from lib.global_source_transport import opportunity_reader,is_account_busy
 from lib.market_accounts import catalog_read_account,catalog_scope
 
@@ -18,15 +18,14 @@ def main():
  if not path.is_relative_to(ROOT/'var') or not 1<=args.max_requests<=150:p.error('invalid local scope')
  path.parent.mkdir(parents=True,exist_ok=True)
  import fcntl
- from bdhub.research.catalog_rules import link_rules_for,engine_for
  lock=path.with_suffix('.lock').open('a');fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
  prior=json.loads(path.read_text()) if path.exists() else None
  account_name=catalog_read_account(ROOT,prior['scope']['account'] if prior else None)
- rule=link_rules_for('it',args.source)[0]
+ rule=commission_rule(ROOT)
  scope=catalog_scope(ROOT,account_name)
  state=prior or new_state(args.source,rule,scope,time.time())
  if state['source']!=args.source or state['scope']!=scope or digest(state['rule'])!=digest(rule):raise CycleError('catalog_run_scope_changed')
- engine=engine_for(rule)
+ calculate=commission_calculator(rule)
  def publish():
   if args.audit_only:return
   if state.get('identityFileUnchanged') is not True:raise CycleError('identity_unverified')
@@ -48,7 +47,7 @@ def main():
     data=transport.require_read(r)
     return data,digest(data)
    for _ in range(args.max_requests):
-    next_state=json.loads(json.dumps(state));step(next_state,read,engine.calculate,time.time());next_state['attempts']=state.get('attempts',[]);state=next_state;save(path,state)
+    next_state=json.loads(json.dumps(state));step(next_state,read,calculate,time.time());next_state['attempts']=state.get('attempts',[]);state=next_state;save(path,state)
     if state['state']=='completed':break
    if state['state']!='completed':state['state']='paused';save(path,state)
  except Exception as e:

@@ -5,9 +5,42 @@ import json
 import signal
 import sys
 import time
+import traceback
 
-from lib.profile_refresh import ProfileRefreshError, ProfileRefreshStore, ProfileRefreshWorker
-from lib.creator_discovery import CreatorDiscoveryStore, CreatorDiscoveryWorker
+from lib.profile_refresh import ROOT, ProfileRefreshError, ProfileRefreshStore, ProfileRefreshWorker
+from lib.creator_discovery import CreatorDiscoveryError, CreatorDiscoveryStore, CreatorDiscoveryWorker
+
+
+CRASH_LOG = ROOT / "var/identity-worker-crash.log"
+
+
+def record_crash(error):
+    """Keep the reason behind ``internal_error`` -- without publishing raw exception text.
+
+    ``internal_error`` on its own is undiagnosable: on 2026-09-15 it was the only thing left of a
+    stopped backfill. But the exception *message* is not safe to publish either -- it can carry a
+    credential or a remote body -- so the full traceback goes to a local log, and only the exception
+    *type* is announced on stderr, which is what the batch driver stores in its report and the page
+    shows. That is enough to tell "the database was locked" from "a field was missing" without
+    putting anything the platform or a credential said into an API answer.
+    """
+    detail = traceback.format_exc()
+    try:
+        with CRASH_LOG.open("a", encoding="utf-8") as stream:
+            stream.write(f"=== {time.strftime('%Y-%m-%d %H:%M:%S')} {type(error).__name__}: {error} ===\n{detail}\n")
+        CRASH_LOG.chmod(0o600)
+    except OSError:
+        # A worker that cannot write its own crash log must still report the crash.
+        pass
+    try:
+        where = CRASH_LOG.relative_to(ROOT)
+    except ValueError:
+        where = CRASH_LOG
+    print(f"identity_worker_crash {type(error).__name__} -- traceback: {where}", file=sys.stderr)
+
+
+def envelope(code, message, status):
+    return json.dumps({"error": {"code": code, "message": message, "status": status}})
 
 
 def read_request(fields):
@@ -54,6 +87,8 @@ def main():
     worker.add_argument("--cohort-size",type=int,choices=(1,10,20),default=1)
     worker.add_argument("--cohort-lanes",type=int,choices=(3,6,9),default=3)
     worker.add_argument("--interval", type=float, default=5)
+    # 达人级一次：判过的 handle 不再重复问平台（补 OECID 的驱动器会带上它；soak/验收默认不带）。
+    worker.add_argument("--skip-judged", action="store_true")
     args = parser.parse_args()
     try:
         with ProfileRefreshStore() as store:
@@ -80,7 +115,7 @@ def main():
                         cohort_result=None
                         if args.cohort_size>1:
                             from lib.discovery_cohort import run_cohort
-                            cohort_result=run_cohort(discovery,args.cohort_size,lanes=args.cohort_lanes,soak_id=args.soak_run,use_production_policy=True)
+                            cohort_result=run_cohort(discovery,args.cohort_size,lanes=args.cohort_lanes,soak_id=args.soak_run,use_production_policy=True,skip_judged=args.skip_judged)
                         discovered = None if cohort_result else discovery.run_once()
                         cycle_result = reconcile_cycle(store.var_dir,discovery_store)
                         if refreshed is not None or discovered is not None or cohort_result is not None or args.once:
@@ -93,13 +128,16 @@ def main():
                             else:break
                         time.sleep(15 if args.soak_run and cohort_result and cohort_result.get('targets')==0 else args.interval)
         return 0
-    except ProfileRefreshError as error:
-        print(json.dumps({"error": {"code": error.code, "message": error.code, "status": error.status}}))
+    except (ProfileRefreshError, CreatorDiscoveryError) as error:
+        # A cohort-level refusal -- a locked policy read, a malformed probe report -- carries its own
+        # code. Flattening it into ``internal_error`` says "we do not know" when we do know.
+        print(envelope(error.code, error.code, error.status))
         return 1
     except KeyboardInterrupt:
         return 130
-    except Exception:
-        print(json.dumps({"error": {"code": "internal_error", "message": "Profile refresh service error", "status": 500}}))
+    except Exception as error:
+        record_crash(error)
+        print(envelope("internal_error", "Profile refresh service error", 500))
         return 1
 
 

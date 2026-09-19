@@ -15,7 +15,7 @@ def slice_report(report,item):
         value['status']='completed';value.pop('reason',None)
     return value
 
-def run_cohort(worker,limit=20,lanes=3,soak_id=None,only_batch=None,use_production_policy=False):
+def run_cohort(worker,limit=20,lanes=3,soak_id=None,only_batch=None,use_production_policy=False,skip_judged=False):
     if type(lanes) is not int or lanes not in (3,6,9):raise CreatorDiscoveryError("invalid_request")
     store=worker.store;store.heartbeat(worker.owner)
     soak=None;service=None;published=None
@@ -43,7 +43,7 @@ def run_cohort(worker,limit=20,lanes=3,soak_id=None,only_batch=None,use_producti
                 scoped={r[0] for r in db.execute('SELECT batch_id FROM cycle_identity_outbox WHERE id IN (SELECT value FROM json_each(?))',(_json(boxes),))}
             batches=[b for b in batches if b in scoped]
         if only_batch:batches=[b for b in batches if b==only_batch]
-        group=store.claim_cohort(worker.owner,batches,limit)
+        group=store.claim_cohort(worker.owner,batches,limit,skip_judged=skip_judged)
     if not group:
         if service:service.close()
         return {'soakState':'waiting_supply','targets':0} if soak_id else None
@@ -62,14 +62,19 @@ def run_cohort(worker,limit=20,lanes=3,soak_id=None,only_batch=None,use_producti
             refs={i['id'] for i in items}
             if any(t.get('targetRef') not in refs for t in report.get('targets',[])) or any(r.get('targetRef') not in refs for r in report.get('requests',[])):raise CreatorDiscoveryError('probe_report_invalid')
         for item in items:
-            current=store._db.execute('SELECT status,lease_owner FROM discovery_item WHERE id=?',(item['id'],)).fetchone()
+            current=store._db.execute('SELECT * FROM discovery_item WHERE id=?',(item['id'],)).fetchone()
             if current['status']!='running' or current['lease_owner']!=worker.owner:continue
+            # 取证目录由**库里**的 attempt_no 决定，不用轮次快照里的旧值（恢复时两者会不一致）。
+            item=dict(current)
             part=slice_report(report,item) if report else None
             if part is None:
                 store.defer_busy(item,worker.owner);continue
             _,single,_=worker._paths(item);single.mkdir(parents=True,exist_ok=True,mode=0o700)
             evidence=single/'report.private.json';payload=_json(part)
-            if evidence.exists() and evidence.read_text()!=payload:raise CreatorDiscoveryError('probe_report_invalid')
+            if evidence.exists() and evidence.read_text()!=payload:
+                # 同一次尝试的取证不该变；变了说明这是**又一次尝试**（重试/恢复），新的 Find 回执本来就
+                # 与上一次不同。把旧的一份改名留档（不删、不覆盖），再写新的——直接报错会把重试永远卡死。
+                evidence.replace(single/f"report.private.superseded-{int(time.time())}.json")
             if not evidence.exists():evidence.write_text(payload);evidence.chmod(0o600)
             worker._settle(item,part)
         if soak_id and report is None and target_file.exists() and json.loads(target_file.read_text()).get('soakRun')==soak_id:

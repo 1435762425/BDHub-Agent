@@ -3,7 +3,7 @@ import json,sqlite3
 from contextlib import closing
 from pathlib import Path
 from lib.second_cycle import CycleError,digest,encoded,identifier
-from lib.creator_discovery import preview
+from lib.creator_discovery import BLOCKED_MAX_ATTEMPTS, preview
 SCHEMA='''
 CREATE TABLE IF NOT EXISTS cycle_identity_outbox(id TEXT PRIMARY KEY,plan_id TEXT NOT NULL,payload TEXT NOT NULL,batch_id TEXT,settled INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS cycle_identity_handoff(plan_id TEXT NOT NULL,source_id TEXT NOT NULL,outbox_id TEXT NOT NULL,PRIMARY KEY(plan_id,source_id));
@@ -35,15 +35,38 @@ class IdentityBridge:
    with self.store.tx():self.store.db.execute('UPDATE cycle_identity_outbox SET batch_id=? WHERE id=? AND batch_id IS NULL',(r['id'],row['id']))
    result.append(r['id'])
   return result
+ def _reopen_blocked(self,plan):
+  """把"因为被挡住而被结算掉"的批次重新打开，让队列能重试它们（幂等）。
+
+  旧规则下 outbox 只要写进了 outcome 就结算，而「被挡住」（请求/签名失败、账号起不来、远端挡回）
+  也算 outcome —— 结果是那批人从此不在队列的候选范围里，补 OECID 一直空转、卡片上永远显示待补
+  （2026-09-15 实测：40 个批次里 39 个被这样结算掉）。被挡住是"没拿到答案"，不是结论。
+  """
+  try:
+   detail=self.discovery._db.execute("SELECT batch_id FROM discovery_item WHERE status='blocked' AND attempt_no<? GROUP BY batch_id",(BLOCKED_MAX_ATTEMPTS,)).fetchall()
+  except Exception:
+   return 0
+  reopened=0
+  with self.store.tx():
+   for (batch_id,) in detail:
+    row=self.store.db.execute('SELECT id FROM cycle_identity_outbox WHERE plan_id=? AND batch_id=? AND settled=1',(plan,batch_id)).fetchone()
+    if not row:continue
+    self.store.db.execute('UPDATE cycle_identity_outbox SET settled=0 WHERE id=?',(row[0],));reopened+=1
+  return reopened
+
  def reconcile(self,plan,*,outbox_ids=None):
   if self.store._plan(plan)['market']!='it':raise CycleError('identity_market_not_enabled')
+  self._reopen_blocked(plan)
   bound=0;states={};finished=[]
   with closing(sqlite3.connect(self.identity_path.resolve().as_uri()+'?mode=ro',uri=True)) as identities, identities:
    identities.row_factory=sqlite3.Row
    for box in self.store.db.execute('SELECT * FROM cycle_identity_outbox WHERE plan_id=? AND batch_id IS NOT NULL AND settled=0 AND (? IS NULL OR id IN (SELECT value FROM json_each(?)))',(plan,encoded(outbox_ids) if outbox_ids is not None else None,encoded(outbox_ids) if outbox_ids is not None else None)).fetchall():
     detail=self.discovery.detail(box['batch_id']);states[box['batch_id']]=detail['batch']['counts']
     matched={r['handle']:r for r in detail['items']}
-    if not detail['batch']['counts']['queued'] and not detail['batch']['counts']['running']:finished.append(box['id'])
+    counts=detail['batch']['counts']
+    # 队列空 + 没有在跑 + **没有被挡住还能重试的**，才算这一批有结论了。被挡住的项要退避重试，
+    # 所以它没结论之前不能把 outbox 结算掉——否则那批人从此出不了候选范围。
+    if not counts['queued'] and not counts['running'] and not counts.get('retryableBlocked'):finished.append(box['id'])
     for edge in json.loads(box['payload'])['edges']:
      item=matched.get(edge['handle'])
      if not item:continue

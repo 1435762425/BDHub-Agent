@@ -1,8 +1,47 @@
 """Resumable catalog read normalization; no remote mutations or credentials."""
+import json
 from datetime import datetime,timezone
 from decimal import Decimal, InvalidOperation
+from pathlib import Path
 from lib.second_cycle import CycleError,digest
 from lib.product_stock_policy import mark_full_managed,require_stock,unavailable_allowed
+
+# 已确认的新分佣规则（机构保留 1–2 个百分点、达人至少高于公开 1 个百分点），全托与非全托统一。
+# 旧版按市场×渠道各存一套 link_rules（默认 "平均分佣" MX_AVERAGE），这里不再读取。
+POLICY_PATH='config/catalog-link-policy.json'
+
+
+def commission_rule(root):
+    """The confirmed commission rule as a fingerprinted dict, shared by both channels.
+
+    Keeping the rule in the run state -- and in every offer's ``commissionRuleFingerprint`` -- is what
+    lets a prepared offer refuse to execute once the rule has changed, instead of silently applying
+    new numbers to an old plan.
+    """
+    policy=json.loads((Path(root)/POLICY_PATH).read_text(encoding='utf-8'))
+    return {'id':str(policy.get('version') or 'commission-1-to-2-v1'),'name':'机构1-2点·达人高于公开1点',
+            'agencyMinPoints':str(policy['agencyMinPoints']),'agencyPreferredPoints':str(policy['agencyPreferredPoints']),
+            'newCreatorMinBoostPoints':str(policy['newCreatorMinBoostPoints'])}
+
+
+class Commission:
+    """Same shape the legacy engine returned, so ``normalize`` reads either one unchanged."""
+    __slots__=('valid','creator_pct','error')
+
+    def __init__(self,valid,creator_pct=None,error=None):
+        self.valid=valid;self.creator_pct=creator_pct;self.error=error
+
+
+def commission_calculator(rule):
+    """``calculate(total, public)`` over the confirmed rule; an unusable gap is invalid, not a crash."""
+    from lib.catalog_links import new_commission
+    policy={key:rule[key] for key in ('agencyMinPoints','agencyPreferredPoints','newCreatorMinBoostPoints')}
+
+    def calculate(total,public):
+        try:q=new_commission(total,public,policy)
+        except ValueError as error:return Commission(False,None,str(error))
+        return Commission(True,Decimal(q['creatorPercent']),None)
+    return calculate
 
 CAMPAIGNS='/api/v1/affiliate/partner/campaign/list'
 PRODUCTS='/api/v1/affiliate/partner/campaign/product/list'
@@ -46,6 +85,10 @@ def normalize(product,campaign,source,rule,calculator,evidence,at):
  'stock':str(number(product.get('stock'))) if require_stock(management) and number(product.get('stock')) is not None else None,'creatorPercent':creator,
  'publicPercent':percent(public),'totalPercent':percent(total),'endAt':end,'startAt':start,'available':available,
  'rating':str(number(product.get('product_rating'))) if number(product.get('product_rating')) is not None else None,
+ # 累计销量：**线索队列按它排序**。平台的活动商品行本来就有 product_sales，
+ # 以前这里没接出来，导致非全托的商品进了队列也排不了序（只能排到最后）。
+ 'sales':str(number(product.get('product_sales'))) if number(product.get('product_sales')) is not None else None,
+ 'reviewCount':str(number(product.get('product_review_count'))) if number(product.get('product_review_count')) is not None else None,
  'evidenceRef':evidence,'observedAt':at,'commissionState':'proposed_not_applied','commissionRuleId':rule['id'],
  'commissionRuleFingerprint':digest(rule),'cardBindingVerified':False}
 

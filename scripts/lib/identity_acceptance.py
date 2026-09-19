@@ -1,7 +1,8 @@
 """Real positive-sales candidate acceptance and evidence-backed production promotion."""
-import json,sqlite3,math
+import json,sqlite3,math,time
 from pathlib import Path
 from contextlib import closing
+from lib.profile_refresh import ProfileRefreshError
 from lib.second_cycle import encoded,digest,CycleStore
 from lib.batch_task_service import TaskService,read_local_preparation
 from lib.creator_discovery import preview
@@ -100,18 +101,48 @@ class Acceptance:
      self.s.tasks.event(record['task_id'],'identity_release_validation_failed',{'acceptanceId':id,'metrics':metrics})
   return metrics
 
-def production_policy(root,account='acc6',market='it'):
- default={'qps':3,'lanes':3,'acceptanceId':None}
- if market!='it':return default
- path=Path(root)/'var/batch-tasks.sqlite'
- if not path.exists():return default
- with closing(sqlite3.connect(path.resolve().as_uri()+'?mode=ro',uri=True)) as c:
+POLICY_BUSY_SECONDS=5.0
+
+def _read_published(uri,account,default,busy):
+ with closing(sqlite3.connect(uri,uri=True,timeout=busy)) as c:
   if not c.execute("SELECT 1 FROM sqlite_master WHERE name='identity_runtime_policy'").fetchone():return default
   row=c.execute("SELECT p.qps,p.lanes,p.acceptance_id,p.result_hash,a.result FROM identity_runtime_policy p JOIN identity_acceptance a ON a.id=p.acceptance_id WHERE p.account=? AND a.state='passed'",(account,)).fetchone()
   if not row:return default
   metrics=json.loads(row[4])
-  if row[0]!=12 or row[1]!=9 or not metrics.get('passed') or digest(metrics)!=row[3]:raise ValueError('published_identity_policy_invalid')
+  if row[0]!=12 or row[1]!=9 or not metrics.get('passed') or digest(metrics)!=row[3]:raise ProfileRefreshError('published_identity_policy_invalid',409)
   return {'qps':12,'lanes':9,'acceptanceId':row[2]}
+
+def production_policy(root,account='acc6',market='it',*,wait_seconds=120.0):
+ """The published channel for this account, or the conservative default when nothing is published.
+
+ ``batch-tasks.sqlite`` is a rollback-journal database shared with the resident preparation worker.
+ While that worker holds a write transaction the whole database is unreadable to everyone else, and a
+ measured hold on 2026-09-15 lasted 37 seconds -- far beyond sqlite's 5-second default busy timeout.
+ That is what stopped the OECID backfill dead with a nameless ``internal_error`` five seconds into its
+ second round. So a *busy* database is waited out here, in one place, for every caller. A row that is
+ present but does not match its own acceptance evidence is a different answer: it is named, never
+ retried, and never disguised as ``internal_error``.
+ ``wait_seconds`` bounds the wait; a caller that must answer a page promptly passes a small budget and
+ reports the channel as unreadable rather than pretending it is the 3 QPS default.
+ """
+ default={'qps':3,'lanes':3,'acceptanceId':None}
+ if market!='it':return default
+ path=Path(root)/'var/batch-tasks.sqlite'
+ if not path.exists():return default
+ uri=path.resolve().as_uri()+'?mode=ro'
+ deadline=time.monotonic()+max(0.0,float(wait_seconds))
+ while True:
+  # 等待预算决定这一次愿意阻塞多久：预算小的调用者（页面）快速拿到"读不到"，而不是干等五秒。
+  remaining=deadline-time.monotonic()
+  busy=POLICY_BUSY_SECONDS if remaining<=0 else max(0.2,min(POLICY_BUSY_SECONDS,remaining))
+  try:
+   return _read_published(uri,account,default,busy)
+  except sqlite3.OperationalError as error:
+   # Only a busy database is a delay. A missing table or a corrupt file is an answer.
+   if 'locked' not in str(error) and 'busy' not in str(error):raise
+   remaining=deadline-time.monotonic()
+   if remaining<=0:raise ProfileRefreshError('identity_policy_unreadable',503)
+   time.sleep(min(1.0,remaining))
 
 def acceptance_status(service,task):
  if not service.db.execute("SELECT 1 FROM sqlite_master WHERE name='identity_acceptance'").fetchone():return None

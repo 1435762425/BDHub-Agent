@@ -1,34 +1,23 @@
-"""Frozen full-managed intake rules and durable single-submit selection receipts."""
+"""Frozen full-managed intake rules and durable single-submit selection receipts.
+
+The intake thresholds themselves are no longer frozen here: they are the operator's knobs and
+live in ``config/catalog-screen.json`` (see ``lib/global_screen``). What stays frozen is the
+receipt discipline -- one submit per product, an explicit verification for every unknown, and a
+run id that changes whenever the thresholds change, so two rule sets can never share one batch.
+"""
 import json,re,sqlite3,time
 from contextlib import closing
 from decimal import Decimal,InvalidOperation
 from pathlib import Path
+from lib.global_screen import decimal, evaluate, fingerprint, load, sales
 from lib.second_cycle import encoded,digest
-RULES={'minSalesInclusive':300,'minRating':4,'allowUnrated':True,'minCommissionGapPoints':2}
 
-def sales(value):
-    if not isinstance(value,str):return None
-    if re.fullmatch(r'\d+(?:\.\d{3})* 已售',value):return int(value.replace('.','').replace(' 已售',''))
-    if re.fullmatch(r'\d+,\d+K 已售',value):return int(Decimal(value.replace('K 已售','').replace(',','.'))*1000)
-    return None
+def rules(root=None):
+    """The thresholds currently in force, read from the operator-controlled config."""
+    return load(root)
 
-def decimal(value):
-    try:
-        if value is None or isinstance(value,bool):return None
-        d=Decimal(str(value));return d if d.is_finite() else None
-    except InvalidOperation:return None
-
-def assess(product):
-    units=sales(product.get('sales'));rating=decimal(product.get('product_rating'));total=decimal(product.get('commission_rate'));public=decimal(product.get('open_collab_rate'))
-    reasons=[]
-    if units is None:reasons.append('sales_missing')
-    elif units<300:reasons.append('sales_below_300')
-    if rating is None or rating==0:reasons.append('rating_unrated_unverified')
-    elif not 4<=rating<=5:reasons.append('rating_below_4_or_invalid')
-    if total is None or public is None:reasons.append('commission_missing')
-    elif not 0<=public<=10000 or not 0<=total<=10000 or total-public<200:reasons.append('commission_gap_below_2_or_invalid')
-    # No stock check. Rating 0 semantics remain unresolved; no >=300 snapshot candidates have 0.
-    return {'eligible':not reasons,'reasons':reasons,'units':units}
+def assess(product,config=None):
+    return evaluate(product,config)
 
 def choose_campaign(entries,now):
     choices=[]
@@ -53,11 +42,18 @@ class Selection:
             rid,scope=source[0]
             if json.loads(scope)['account'] not in ('acc6','acc9'):raise ValueError('source_account_changed')
             rows=[json.loads(r[0]) for r in c.execute('SELECT payload FROM global_source_product WHERE run_id=?',(rid,))]
-        id='select-'+digest([rid,RULES,'user-300-inclusive'])[:24]
+        config=rules(self.root);stamp=fingerprint(config)
+        id='select-'+digest([rid,config,stamp,'user-300-inclusive'])[:24]
+        # A product already proven to be in the pool is never enqueued again. Without this, every
+        # threshold change created a fresh batch of products that were all already selected, which
+        # then had to be read back one by one just to be told so.
+        settled={row[0] for row in self.db.execute(
+            "SELECT DISTINCT pid FROM intake_item WHERE state IN ('confirmed','already_selected')")}
         with self.db:
-            self.db.execute('INSERT OR IGNORE INTO intake_run VALUES(?,?,?,?)',(id,encoded(RULES),rid,time.time()))
+            self.db.execute('INSERT OR IGNORE INTO intake_run VALUES(?,?,?,?)',(id,encoded(config),rid,time.time()))
             for p in rows:
-                if assess(p)['eligible'] and p.get('fs_is_selected') is False:
+                if p['product_id'] in settled:continue
+                if assess(p,config)['eligible'] and p.get('fs_is_selected') is False:
                     self.db.execute('INSERT OR IGNORE INTO intake_item VALUES(?,?,?,?,?)',(id,p['product_id'],'pending',encoded({'snapshot':p}),time.time()))
         return id
     def items(self,id):return [dict(r)|{'payload':json.loads(r['payload'])} for r in self.db.execute('SELECT * FROM intake_item WHERE run_id=? ORDER BY pid',(id,))]
@@ -86,6 +82,21 @@ def selected_rows(t,pids):
         if len(rows)==total:return rows
         if not data['items'] or len(rows)>total:raise ValueError('selected_incomplete')
     raise ValueError('selected_page_limit')
+
+def settled_pids(root):
+    """Products any batch has proven to be in the selected pool.
+
+    The collection snapshot only says what the pool held when we collected. Once a product is
+    confirmed selected, the snapshot is out of date for it, and a page that keeps reading the
+    snapshot will keep claiming work that is already done.
+    """
+    path=Path(root)/'var/global-selection.sqlite'
+    if not path.exists():return set()
+    with closing(sqlite3.connect(path.resolve().as_uri()+'?mode=ro',uri=True)) as conn:
+        conn.execute('BEGIN')
+        return {row[0] for row in conn.execute(
+            "SELECT DISTINCT pid FROM intake_item WHERE state IN ('confirmed','already_selected')")}
+
 
 def observations(folder,source_run):
     """Read verified intake observations without rewriting source snapshots."""

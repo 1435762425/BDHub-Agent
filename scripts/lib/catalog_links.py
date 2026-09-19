@@ -5,6 +5,8 @@ from decimal import Decimal,InvalidOperation
 from pathlib import Path
 from lib.second_cycle import digest,encoded
 
+ROUTES={'selected','campaign'}
+
 def basis(value):
     if value is None or isinstance(value,bool):raise ValueError('commission_missing')
     try:d=Decimal(str(value))
@@ -41,6 +43,10 @@ class CatalogLinks:
         self.root=Path(root);self.policy=json.loads((self.root/'config/catalog-link-policy.json').read_text())
         self.db=sqlite3.connect(self.root/'var/catalog-links.sqlite',isolation_level=None,timeout=10);self.db.row_factory=sqlite3.Row
         self.db.execute('''CREATE TABLE IF NOT EXISTS catalog_link_intent(id TEXT PRIMARY KEY,pid TEXT NOT NULL,account TEXT NOT NULL,state TEXT NOT NULL,spec TEXT NOT NULL,receipt TEXT,readback TEXT,created REAL NOT NULL,updated REAL NOT NULL)''')
+        # 唯一键刻意保持**按 PID**（不是 PID×渠道）：一个商品永远只允许存在一份未结意图，
+        # 跨渠道也不例外。这与"同一商品只出一条位置、全托优先"的商品级决定一致，
+        # 也是防止同一商品被两条渠道各建一次链的兜底。真正的跨渠道重叠实测只有 1 个 PID，
+        # 且它已有全托卡，非全托侧不建（见 catalog-link-prepare 的 route 排除）。
         self.db.execute("CREATE UNIQUE INDEX IF NOT EXISTS catalog_link_open_pid ON catalog_link_intent(pid) WHERE state IN ('prepared','submitted','receipt_saved','unknown')")
     def get(self,id):
         r=self.db.execute('SELECT * FROM catalog_link_intent WHERE id=?',(id,)).fetchone()
@@ -61,12 +67,17 @@ class CatalogLinks:
         if not isinstance(spec.get('shortName'),str) or not 1<=len(spec['shortName'])<=30:raise ValueError('catalog_prepare_name_invalid')
         return self._freeze(spec,'catalog_link_scope_invalid',canary=False)
     def _freeze(self,spec,scope_error,*,canary):
-        if spec.get('account')!='acc9' or spec.get('market')!='it' or spec.get('route')!='selected':raise ValueError(scope_error)
+        # 渠道属于商品/线索/链接：同一个 PID 在两条渠道上是两个不同的平台对象，
+        # 所以这里放开 route，但载荷必须逐字节等于**该渠道**的冻结请求。
+        if spec.get('account')!='acc9' or spec.get('market')!='it' or spec.get('route') not in ROUTES:raise ValueError(scope_error)
         if type(spec.get('searchTotal')) is not int or spec['searchTotal']!=0:raise ValueError('existing_links_preserved_requires_review' if not canary else 'existing_link_or_intent_requires_review')
         if self.legacy_conflict(spec['pid']):raise ValueError('legacy_creation_in_progress' if not canary else 'existing_link_or_intent_requires_review')
         if spec.get('policyFingerprint')!=digest(self.policy):raise ValueError('catalog_policy_changed')
-        rate=basis(Decimal(spec['creatorPercent'])*100)
-        expected={'name':spec['listName'],'campaign_id':'0','source':2,'items':[{'product_id':spec['pid'],'campaign_id':spec['campaignId'],'creator_commission_rate':str(rate)}]}
+        # 预期载荷由生成器本身给出，不再手抄一份：抄的那份在加渠道时正是最容易抄错的地方。
+        from bdhub.send.taplink.protocol import create_payload
+        try:expected=create_payload(pid=spec['pid'],campaign_id=spec['campaignId'],creator_pct=spec['creatorPercent'],
+                                    name=spec['listName'],route=spec['route'])
+        except ValueError:raise ValueError('catalog_payload_binding_invalid') from None
         if spec.get('payload')!=expected or not 1<=len(spec['listName'])<=50:raise ValueError('catalog_payload_binding_invalid')
         key={k:spec[k] for k in ('pid','account','market','route','campaignId','creatorPercent','policyFingerprint')};id='catalog-link-'+digest(key)[:28]
         old=self.db.execute('SELECT id FROM catalog_link_intent WHERE id=?',(id,)).fetchone()
@@ -89,7 +100,10 @@ class CatalogLinks:
         if row['state']=='verified':return
         if row['state'] not in ('submitted','receipt_saved','unknown'):raise ValueError('catalog_link_not_submitted')
         if not re.fullmatch(r'[1-9][0-9]{0,31}',str(card.get('listId',''))):raise ValueError('catalog_link_id_missing')
-        if any(str(card.get(k))!=str(v) for k,v in {'pid':s['pid'],'sourceCampaignId':s['campaignId'],'creatorPercent':s['creatorPercent'],'wireCampaignId':'0','verifiedListName':s['listName'],'state':'verified_read_only'}.items()):raise ValueError('catalog_link_binding_mismatch')
+        # 回读卡片的线上活动号按渠道判定：全托是账号级卡片（campaign_id='0'），
+        # 非全托卡片就挂在这个活动上。用错渠道的期望值会让确认整批失败。
+        wire='0' if s['route']=='selected' else s['campaignId']
+        if any(str(card.get(k))!=str(v) for k,v in {'pid':s['pid'],'sourceCampaignId':s['campaignId'],'creatorPercent':s['creatorPercent'],'wireCampaignId':wire,'verifiedListName':s['listName'],'state':'verified_read_only'}.items()):raise ValueError('catalog_link_binding_mismatch')
         if row['receipt'] and row['receipt'].get('list_id') and row['receipt']['list_id']!=card.get('listId'):raise ValueError('catalog_link_receipt_mismatch')
         self.db.execute("UPDATE catalog_link_intent SET state='verified',readback=?,updated=? WHERE id=?",(encoded(card),time.time(),id))
 

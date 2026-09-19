@@ -50,4 +50,32 @@ class CohortTests(unittest.TestCase):
   r.update(status='blocked',reason='remote_error',identityOnly=True);r['targets'][0].update(status='identity_verified',profiles=[],profileCollection='not_requested');r['requests']=r['requests'][:1]
   self.assertEqual(slice_report(r,item)['status'],'completed');self.assertIsNone(slice_report(r,{'id':'b'}))
   r['identityFileUnchanged']=False;self.assertEqual(slice_report(r,item)['status'],'blocked')
+ # 「被挡住」＝问过但没拿到平台的回答：必须能重试，而且每一次尝试的取证不能互相覆盖。
+ def test_a_blocked_item_is_claimed_again_with_its_own_attempt_directory(self):
+  store=self.store;item_id=self.store.detail(self.batch)['items'][0]['id']
+  with store.transaction():
+   store._db.execute("UPDATE discovery_item SET status='blocked',reason='request_or_signer_error',retry_at=0,attempt_no=1 WHERE id=?",(item_id,))
+  # 单条路径（soak/旧入口）默认不碰被挡住的项；补 OECID 走的 claim_cohort 开着重试。
+  off={r['id'] for r in store._next_items(20,[self.batch],distinct=True,retry_blocked=False)}
+  self.assertNotIn(item_id,off)
+  on={r['id'] for r in store._next_items(20,[self.batch],distinct=True,retry_blocked=True)}
+  self.assertIn(item_id,on)
+  # 领到 = 又尝试了一次：attempt_no +1，于是这一轮的取证写进 attempt-2/，上一次的原样留档。
+  group=store.claim_cohort('w',[self.batch],1)
+  self.assertEqual(group['items'][0]['attempt_no'],2)
+  self.assertEqual(store.detail(self.batch)['batch']['counts']['retryableBlocked'],0)
+
+ def test_attempts_are_capped_so_a_hopeless_item_stops_holding_the_batch(self):
+  store=self.store;item_id=self.store.detail(self.batch)['items'][0]['id']
+  with store.transaction():
+   store._db.execute("UPDATE discovery_item SET status='blocked',reason='request_or_signer_error',retry_at=0,attempt_no=2 WHERE id=?",(item_id,))
+  # 还有一次机会：批次不算结束，outbox 不能结算掉。
+  self.assertEqual(store.detail(self.batch)['batch']['counts']['retryableBlocked'],1)
+  self.assertIn(item_id,{r['id'] for r in store._next_items(20,[self.batch],distinct=True,retry_blocked=True)})
+  with store.transaction():
+   store._db.execute("UPDATE discovery_item SET attempt_no=3 WHERE id=?",(item_id,))
+  # 三次用尽：不再自动重试，也不再吊着 outbox。
+  self.assertNotIn(item_id,{r['id'] for r in store._next_items(20,[self.batch],distinct=True,retry_blocked=True)})
+  self.assertEqual(store.detail(self.batch)['batch']['counts']['retryableBlocked'],0)
+
 if __name__=='__main__':unittest.main()

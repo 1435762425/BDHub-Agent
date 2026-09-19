@@ -6,7 +6,7 @@ ROOT=Path(__file__).resolve().parents[1];sys.dont_write_bytecode=True;sys.path.i
 from lib.global_source import GlobalSources,GlobalSourceError
 from lib.global_source_transport import opportunity_reader,DETAIL,SELECTED
 from lib.second_cycle import digest,assess_offer
-from lib.cycle_catalog import normalize
+from lib.cycle_catalog import normalize,commission_rule,commission_calculator
 
 def main():
  p=argparse.ArgumentParser();p.add_argument('--run-id',default='it-global-20260914');p.add_argument('--limit',type=int,default=3);a=p.parse_args()
@@ -15,8 +15,7 @@ def main():
  try:
   rows=s.db.execute('SELECT p.* FROM global_source_product p LEFT JOIN global_source_stock st ON st.run_id=p.run_id AND st.pid=p.pid AND st.listing_fingerprint=p.fingerprint WHERE p.run_id=? AND st.pid IS NULL ORDER BY p.first_page,p.pid LIMIT ?',(a.run_id,a.limit)).fetchall()
   with opportunity_reader(report) as t:
-   from bdhub.research.catalog_rules import link_rules_for,engine_for
-   rule=link_rules_for('it','selected')[0];calculator=engine_for(rule).calculate
+   rule=commission_rule(ROOT);calculator=commission_calculator(rule)
    for row in rows:
     pid=row['pid'];r=t._xhr(method='GET',path=DETAIL,params=t._params()|{'product_id':pid},payload=None,write=False);data=t.require_read(r)['data'];details=data.get('product_campaign_detail');s.detail(a.run_id,pid,row['fingerprint'],details)
     cids={str(x['campaign']['campaign_id']) for x in details if str(x.get('campaign',{}).get('crs_campaign_type')) in ('8','9')}

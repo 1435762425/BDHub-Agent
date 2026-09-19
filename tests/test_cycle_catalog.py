@@ -2,7 +2,7 @@ import unittest,sys,json
 from pathlib import Path
 from types import SimpleNamespace
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'scripts'))
-from lib.cycle_catalog import normalize,new_state,step
+from lib.cycle_catalog import normalize,new_state,step,commission_rule,commission_calculator
 from lib.second_cycle import CycleError,assess_offer
 AT=1789257600
 RULE={'id':'saved-rule'}
@@ -52,4 +52,45 @@ class CatalogTests(unittest.TestCase):
  def test_unverified_pagination_stops(self):
   s=new_state('selected',RULE,{},AT)
   with self.assertRaisesRegex(CycleError,'total_missing'):step(s,lambda *a:({'data':[]},'x'),calc,AT)
+class CommissionRule(unittest.TestCase):
+ '''佣金只走已确认的新规则；旧版 link_rules_for 的"平均分佣"不再参与。'''
+
+ def setUp(self):
+  self.root=Path(__file__).resolve().parents[1]
+  self.rule=commission_rule(self.root)
+
+ def test_rule_is_the_confirmed_policy_and_is_fingerprinted(self):
+  self.assertEqual(self.rule['id'],'commission-1-to-2-v1')
+  self.assertEqual(self.rule['agencyMinPoints'],'1')
+  self.assertEqual(self.rule['agencyPreferredPoints'],'2')
+  self.assertEqual(self.rule['newCreatorMinBoostPoints'],'1')
+
+ def test_calculator_implements_agency_one_to_two_points(self):
+  calc=commission_calculator(self.rule)
+  # 总15/公开12 → 差3点：机构留 min(2, 3-1)=2，达人 13
+  self.assertEqual(calc('1500','1200').creator_pct,13)
+  # 差2点：机构只能留 1，达人 = 总-1（且仍高于公开 1 点）
+  self.assertEqual(calc('1400','1200').creator_pct,13)
+  # 差6点：机构仍然只留 2
+  self.assertEqual(calc('1800','1200').creator_pct,16)
+
+ def test_an_unusable_gap_is_invalid_not_a_crash(self):
+  calc=commission_calculator(self.rule)
+  self.assertFalse(calc('1300','1200').valid);self.assertEqual(calc('1300','1200').error,'insufficient_commission_gap')
+  self.assertFalse(calc('1200','1200').valid)
+  self.assertFalse(calc(None,'1200').valid)
+
+ def test_normalize_records_the_new_rule_and_its_number(self):
+  calc=commission_calculator(self.rule)
+  r=normalize(P,C,'campaign',self.rule,calc,'ref',AT)
+  self.assertEqual(r['creatorPercent'],'13');self.assertEqual(r['commissionRuleId'],'commission-1-to-2-v1')
+  self.assertEqual(r['commissionRuleFingerprint'],__import__('lib.second_cycle',fromlist=['digest']).digest(self.rule))
+  self.assertTrue(assess_offer(r,AT)['eligible'])
+
+ def test_a_thin_gap_offer_has_no_creator_percent(self):
+  calc=commission_calculator(self.rule)
+  r=normalize(P|{'total_commission_percent':'1300','plan_commission_percent':'1200'},C,'campaign',self.rule,calc,'ref',AT)
+  self.assertIsNone(r['creatorPercent']);self.assertIn('missing_creatorPercent',assess_offer(r,AT)['reasons'])
+
+
 if __name__=='__main__':unittest.main()

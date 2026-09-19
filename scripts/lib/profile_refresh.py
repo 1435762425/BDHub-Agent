@@ -31,6 +31,7 @@ SAFE_ERRORS = frozenset({
     "remote_error", "request_or_signer_error", "probe_initialization_or_validation_error",
     "stale_lease", "profile_identity_mismatch", "profile_market_mismatch", "supplement_identity_mismatch",
     "supplement_market_mismatch", "merged_identity_not_confirmed", "internal_error",
+    "identity_policy_unreadable", "published_identity_policy_invalid",
 })
 
 

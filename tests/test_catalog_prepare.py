@@ -3,7 +3,7 @@ from decimal import Decimal
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT/'scripts'));sys.path.insert(0,str(ROOT.parent/'01-BDSystem-V2'))
-from lib.catalog_prepare import (CatalogPreparation,assess_existing,choose_existing_batch,new_offer,classify_pid,search_cards,card_facts,rate_text,CARD,MEMBERS)
+from lib.catalog_prepare import (CatalogPreparation,assess_existing,choose_existing_batch,new_offer,classify_pid,search_cards,card_facts,rate_text,CARD,MEMBERS,TaplinkInventory,new_offer,reconcile_from_inventory)
 from lib.catalog_links import CatalogLinks
 from lib.second_cycle import digest
 POLICY=json.loads((ROOT/'config/catalog-link-policy.json').read_text())
@@ -157,5 +157,88 @@ class BatchLinkTests(unittest.TestCase):
                 'creatorPercent':pct,'listName':name,'shortName':'Quaderno','policyFingerprint':digest(POLICY),'searchTotal':0,
                 'offer':{'pid':pid,'campaignId':cid,'creatorPercent':pct,'publicPercent':'12','totalPercent':'15','agencyPercent':'2','title':'Quaderno'},
                 'payload':create_payload(pid=pid,campaign_id=cid,creator_pct=pct,name=name,route='selected')}
+
+class ScanListsShapeTests(unittest.TestCase):
+    """平台在 total=0 时**整个省略 lists 键**：那是「一张卡都没有」，不是响应格式错误。
+
+    实测来源：IT 的 43 个 campaign 里 41 个只返回 ``{"total": 0}``，旧写法把它们全部
+    报成 ``taplink_inventory_malformed``；但 total>0 却缺键必须继续报错。
+    """
+    def reader(self,pages):
+        def read(path,extra):
+            body=pages[int(extra['cur_page'])]
+            return body,digest(body)
+        return read
+    def test_zero_total_with_omitted_lists_is_empty(self):
+        from lib.catalog_prepare import scan_lists
+        total,rows=scan_lists(self.reader({1:{'code':0,'data':{'total':0}}}),source='1',campaign_id='9')
+        self.assertEqual((total,rows),(0,[]))
+    def test_missing_lists_with_nonzero_total_is_still_malformed(self):
+        from lib.catalog_prepare import scan_lists
+        with self.assertRaises(ValueError) as ctx:
+            scan_lists(self.reader({1:{'code':0,'data':{'total':3}}}),source='1',campaign_id='9')
+        self.assertEqual(str(ctx.exception),'taplink_inventory_malformed')
+
+class CampaignChannelTests(unittest.TestCase):
+    """非全托读卡：活动号在**卡**上，成员行没有活动号（实测 24/24 全是 None）。
+
+    只按成员行匹配会把每一张非全托卡判成"卡在别的活动"，于是已有的非全托链接全部被挡住——
+    实测就是这么把 24 个可复用商品报成 review 的。
+    """
+    CID='7666370360582260502'
+    LID='8650756273145355030'
+    PID='1729474628908391280'
+    def setUp(self):
+        self.tmp=tempfile.TemporaryDirectory();self.root=Path(self.tmp.name)
+        (self.root/'var').mkdir();(self.root/'config').mkdir()
+        (self.root/'config/catalog-link-policy.json').write_text(json.dumps(POLICY))
+        self.prep=CatalogPreparation(self.root)
+        self.scope={'market':'it','account':'acc9','institution':'bjn-local-research','sourceRun':'pool-1','route':'campaign'}
+        self.run=self.prep.open_run(self.scope)
+        self.prep.seed(self.run,[{'pid':self.PID,'campaignId':self.CID,'catalogSource':'campaign'}],self.scope)
+        self.offer=new_offer({'title':'x','stock':321,'product_status':2},self.PID,self.CID,'campaign',
+                             total=1300,public=1000,policy=POLICY)
+    def tearDown(self):self.prep.close();self.tmp.cleanup()
+    def member(self,list_id,campaign_id):
+        return {'product_id':self.PID,'campaign_id':campaign_id,'creator_commission_percent':1100,
+                'plan_commission_percent':1000,'product_status':2,'is_under_governed':False,
+                'unavailable_type':None,'stock':321}
+    def judge(self):
+        inv=TaplinkInventory(self.root)
+        try:
+            items=[dict(r) for r in self.prep.db.execute('SELECT * FROM catalog_prepare_item WHERE run_id=?',(self.run,))]
+            return reconcile_from_inventory(self.prep,inv,items,{self.PID:self.offer})
+        finally:inv.close()
+    def test_member_without_campaign_id_is_matched_by_the_card_itself(self):
+        inv=TaplinkInventory(self.root)
+        try:
+            inv.save_list({'list_id':self.LID,'name':'BJN x 11% abcdef','url':'','product_total':1,'platform_updated_at':None},
+                          source='1',campaign_id=self.CID)
+            inv.save_members(self.LID,'BJN x 11% abcdef',[self.member(self.LID,None)])
+        finally:inv.close()
+        self.assertEqual(self.judge(),{'reuse':1})
+        card=json.loads(self.prep.db.execute("SELECT payload FROM catalog_prepare_readback WHERE run_id=? AND kind='reusedLink'",(self.run,)).fetchone()[0])
+        # 复用卡片的线上活动号必须是非全托自己的活动，不能写成全托的 '0'。
+        self.assertEqual((card['wireCampaignId'],card['sourceCampaignId']),(self.CID,self.CID))
+        self.assertTrue(card['reused'])
+    def test_a_card_from_another_campaign_is_never_reused(self):
+        inv=TaplinkInventory(self.root)
+        try:
+            inv.save_list({'list_id':self.LID,'name':'BJN x 11% abcdef','url':'','product_total':1,'platform_updated_at':None},
+                          source='1',campaign_id='7683821197913540374')
+            inv.save_members(self.LID,'BJN x 11% abcdef',[self.member(self.LID,None)])
+        finally:inv.close()
+        self.assertEqual(self.judge(),{'review':1})
+        self.assertEqual(self.prep.db.execute('SELECT blocker FROM catalog_prepare_item WHERE run_id=?',(self.run,)).fetchone()[0],
+                         'existing_links_other_campaign')
+    def test_a_selected_card_does_not_satisfy_a_campaign_plan(self):
+        """全托卡是非全托的**另一个平台对象**，不能拿来当非全托的链接。"""
+        inv=TaplinkInventory(self.root)
+        try:
+            inv.save_list({'list_id':self.LID,'name':'BJN x 11% abcdef','url':'','product_total':1,'platform_updated_at':None},
+                          source='2',campaign_id='0')
+            inv.save_members(self.LID,'BJN x 11% abcdef',[self.member(self.LID,self.CID)])
+        finally:inv.close()
+        self.assertEqual(self.judge(),{'review':1})
 
 if __name__=='__main__':unittest.main()

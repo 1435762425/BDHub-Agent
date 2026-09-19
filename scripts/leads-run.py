@@ -1,0 +1,221 @@
+#!/usr/bin/env python3
+"""Run one batch of the lead query queue against Kalodata.
+
+    python scripts/leads-run.py [--limit N] [--max-pages 2]
+
+Takes the top of the queue computed by ``lib.leads_queue`` and asks Kalodata for each product's
+creator list. Everything that touches the platform is reused, not reimplemented: the transport and
+its endpoint/scope validation come from ``batch_source_runtime.kalodata_provider``, the response
+parsing and the daily-quota detection come from ``cycle_kalodata.parse_page``, and the leads land in
+the same ``source_edge`` store the rest of the system already reads.
+
+Discipline kept from the existing reader: one page per request, the page receipt is persisted before
+anything is imported, the batch runs under the provider's own exclusive browser lock, and it stops
+immediately on quota exhaustion or an authentication failure, leaving the rest of the queue untouched
+for next time.
+
+This is a read. It never sends a message and never writes platform business data.
+"""
+import argparse
+import json
+import os
+import sqlite3
+import sys
+import time
+from contextlib import closing
+from datetime import date, timedelta
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+LEGACY = ROOT.parent / '01-BDSystem-V2'
+sys.dont_write_bytecode = True
+sys.path.insert(0, str(ROOT / 'scripts'))
+
+from lib.cycle_kalodata import PATH, parse_page  # noqa: E402
+from lib.leads_queue import Ledger, config_path, load, plan  # noqa: E402
+from lib.second_cycle import CycleError, digest, encoded  # noqa: E402
+
+BROWSER_LOCK = LEGACY / 'data/research/kalodata/.browser.lock'
+PAYLOAD_KEYS = ('id', 'handle', 'nickname', 'sale', 'revenue', 'video_revenue', 'live_revenue', 'followers')
+STOP_CODES = ('kalodata_daily_quota_exhausted', 'kalodata_auth_required')
+
+
+def state_path(root):
+    return Path(root) / 'var/leads-run.json'
+
+
+def write_state(root, payload):
+    path = state_path(root)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix('.json.tmp')
+    temporary.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+    temporary.replace(path)
+
+
+def plan_id(root):
+    """The IT research plan the leads belong to, so the rest of the system can read them."""
+    db = Path(root) / 'var/second-cycle.sqlite'
+    if not db.exists():
+        raise CycleError('plan_store_missing')
+    with closing(sqlite3.connect(db.resolve().as_uri() + '?mode=ro', uri=True)) as conn:
+        conn.execute('BEGIN')
+        row = conn.execute("SELECT id FROM plan WHERE institution='bjn-local-research' AND market='it'").fetchone()
+    if not row:
+        raise CycleError('plan_missing')
+    return row[0]
+
+
+def offers(root, pids):
+    """Campaign binding per product, used only as a stable offer key on the recorded lead."""
+    db = Path(root) / 'var/catalog-links.sqlite'
+    if not db.exists():
+        return {}
+    marks = ','.join('?' * len(pids))
+    with closing(sqlite3.connect(db.resolve().as_uri() + '?mode=ro', uri=True)) as conn:
+        conn.execute('BEGIN')
+        return {row[0]: str(row[1]) for row in conn.execute(
+            f'SELECT pid,campaign_id FROM catalog_prepare_item WHERE pid IN ({marks})', list(pids))}
+
+
+def store_edges(root, edges):
+    """Insert leads into the same store the identity and outreach stages already read."""
+    if not edges:
+        return 0
+    db = Path(root) / 'var/second-cycle.sqlite'
+    target = plan_id(root)
+    with closing(sqlite3.connect(db, timeout=30)) as conn:
+        conn.execute('BEGIN IMMEDIATE')
+        added = 0
+        for edge in edges:
+            added += conn.execute('INSERT OR IGNORE INTO source_edge(plan_id,source_id,payload) '
+                                  'VALUES(?,?,?)', (target, edge['sourceId'], encoded(edge))).rowcount
+        conn.commit()
+    return added
+
+
+def claim_for(root, pid, cursor, offer_key, window):
+    return {'id': 'leads-' + digest(['leads-queue', pid, window[0], window[1]])[:28], 'pid': pid,
+            'offer_key': offer_key, 'cursor': cursor,
+            'window_start': window[0], 'window_end': window[1]}
+
+
+def run(root, *, limit=None, max_pages=2, provider_factory=None, clock=time.time, on_progress=None,
+        browser_lock=None):
+    """Execute the top of the queue. Returns a report; never raises for a platform refusal."""
+    root = Path(root)
+    config = load(root)
+    planned = plan(root, config=config, batch_size=limit)
+    items = planned['items']
+    end = date.today() - timedelta(days=2)
+    window = (str(end - timedelta(days=13)), str(end))
+    report = {'startedAt': clock(), 'batchSize': planned['batchSize'], 'dueQueue': planned['dueQueue'],
+              'targets': len(items), 'done': 0, 'leads': 0, 'networkRequests': 0, 'stopped': None,
+              'errors': [], 'skipped': {}, 'platformWrites': 0}
+    if not items:
+        report['stopped'] = 'queue_empty'
+        return report
+    if provider_factory is None:
+        from lib.batch_source_runtime import kalodata_provider
+        provider_factory = kalodata_provider
+    ledger = Ledger(root)
+    binds = offers(root, [row['pid'] for row in items])
+    lock_path = Path(browser_lock) if browser_lock else BROWSER_LOCK
+    if not lock_path.exists():
+        report['stopped'] = 'browser_lock_missing'
+        ledger.close()
+        return report
+    try:
+        # Do NOT take the browser lock here. ``kalodata_provider`` already takes the exact same
+        # exclusive lock the existing Kalodata reader uses, and flock is owned by the open file
+        # description -- a second fd in the *same* process is refused too. Taking it here as well
+        # made every real batch stop instantly with ``browser_lock_busy`` while the tests passed,
+        # because the test factory never locks. One owner, one lock.
+        with provider_factory(root) as provider:
+            for row in items:
+                pid = row['pid']
+                offer_key = 'campaign:' + binds.get(pid, 'unknown')
+                cursor, done = '', False
+                try:
+                    while not done:
+                        saved = ledger.db.execute('SELECT payload FROM leads_page WHERE pid=? AND cursor=?',
+                                                  (pid, cursor)).fetchone()
+                        if saved:
+                            receipt = json.loads(saved[0])
+                        else:
+                            claim = claim_for(root, pid, cursor, offer_key, window)
+                            payload = {'startDate': window[0], 'endDate': window[1], 'authority': True,
+                                       'pageSize': 50, 'pageNo': int(cursor or '1'),
+                                       'sort': [{'field': 'revenue', 'type': 'DESC'}], 'id': pid}
+                            report['networkRequests'] += 1
+                            body = provider.request(PATH, payload)
+                            receipt = parse_page(body, claim, clock(), max_pages=max_pages)
+                            # The receipt is durable before anything is imported.
+                            with ledger.db:
+                                ledger.db.execute('INSERT OR REPLACE INTO leads_page VALUES(?,?,?)',
+                                                  (pid, cursor, encoded(receipt)))
+                        report['leads'] += store_edges(root, receipt['edges'])
+                        for reason, count in (receipt.get('skipped') or {}).items():
+                            report['skipped'][reason] = report['skipped'].get(reason, 0) + count
+                        done = receipt['done']
+                        cursor = receipt['nextCursor']
+                    ledger.succeeded(pid, window_end=window[1], note='队列查询', at=clock())
+                    report['done'] += 1
+                except CycleError as error:
+                    code = str(error)
+                    # No queried_at on a failure: the product keeps its place at the head of
+                    # the queue instead of being locked out for a whole refresh cycle.
+                    ledger.failed(pid, code, at=clock())
+                    if code in STOP_CODES:
+                        report['stopped'] = code
+                        break
+                    report['errors'].append({'pid': pid, 'code': code})
+                except Exception as error:  # noqa: BLE001 - one bad product must not stop the batch
+                    ledger.failed(pid, type(error).__name__, at=clock())
+                    report['errors'].append({'pid': pid, 'code': type(error).__name__})
+                if on_progress:
+                    on_progress(report)
+    except BlockingIOError:
+        # The provider's flock refused: another Kalodata reader owns the browser right now. Nothing
+        # was requested for this batch, so nothing was spent and the queue is untouched.
+        report['stopped'] = 'browser_lock_busy'
+    except FileNotFoundError:
+        report['stopped'] = 'browser_lock_missing'
+    finally:
+        ledger.close()
+    report['finishedAt'] = clock()
+    return report
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--limit', type=int, help='override the configured batch ceiling')
+    parser.add_argument('--max-pages', type=int, default=2)
+    args = parser.parse_args()
+    try:
+        if args.limit is not None and not 1 <= args.limit <= 5000:
+            raise ValueError('leads_run_limit_invalid')
+        if not 1 <= args.max_pages <= 20:
+            raise ValueError('leads_run_pages_invalid')
+
+        def progress(report):
+            write_state(ROOT, report | {'running': True})
+
+        progress({'startedAt': time.time(), 'targets': 0, 'done': 0, 'leads': 0,
+                  'networkRequests': 0, 'stopped': None, 'errors': [], 'platformWrites': 0,
+                  'batchSize': args.limit or load(ROOT)['batchSize'], 'dueQueue': 0})
+        report = run(ROOT, limit=args.limit, max_pages=args.max_pages, on_progress=progress)
+        write_state(ROOT, report | {'running': False})
+        print(json.dumps(report, ensure_ascii=False))
+        return 0
+    except (CycleError, ValueError) as error:
+        write_state(ROOT, {'running': False, 'stopped': str(error), 'done': 0, 'leads': 0})
+        print(json.dumps({'error': str(error)}, ensure_ascii=False))
+        return 2
+    except Exception as error:  # noqa: BLE001 - the page must never be left claiming "running"
+        write_state(ROOT, {'running': False, 'stopped': type(error).__name__, 'done': 0, 'leads': 0})
+        print(json.dumps({'error': type(error).__name__}, ensure_ascii=False))
+        return 1
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())

@@ -7,7 +7,7 @@ sys.dont_write_bytecode=True;sys.path.insert(0,str(LEGACY));sys.path.insert(0,st
 from lib.second_cycle import CycleStore,CycleError,digest,assess_offer
 from lib.cycle_materials import Materials
 from lib.cycle_card_creation import CardCreation
-from lib.cycle_catalog import normalize,read_current_offer,CAMPAIGNS,PRODUCTS
+from lib.cycle_catalog import normalize,read_current_offer,CAMPAIGNS,PRODUCTS,commission_rule,commission_calculator
 SPEC=importlib.util.spec_from_file_location('cycle_card_inspection',ROOT/'scripts/prepare-cycle-materials.py');inspection=importlib.util.module_from_spec(SPEC);SPEC.loader.exec_module(inspection)
 CREATE='/api/v1/affiliate/partner/campaign/product_list/create';SELECTED='/api/v1/affiliate/partner/product/pick_up/list'
 
@@ -36,7 +36,6 @@ def main():
   from bdhub.hub.markets import MARKETS,identity_for
   from bdhub.send.taplink.transport import account_for
   from bdhub.send.taplink.protocol import create_payload,creation_receipt
-  from bdhub.research.catalog_rules import link_rules_for,engine_for
   from bdhub.enrich.identity_store import load_identity
   from lib.italy_cards import legacy_params
   import requests
@@ -79,9 +78,9 @@ def main():
      if intent['state']!='prepared':raise CycleError('verify_existing_attempt_first')
      current={o['offerKey']:o for _,o in store._offers(plan)}
      if offer['offerKey'] not in current or digest(current[offer['offerKey']])!=digest(offer):raise CycleError('offer_snapshot_changed')
-     rule=link_rules_for('it',offer['catalogSource'])[0]
+     rule=commission_rule(ROOT)
      if digest(rule)!=offer['commissionRuleFingerprint']:raise CycleError('commission_rule_changed')
-     fresh=read_current_offer(offer,rule,engine_for(rule).calculate,request,time.time)
+     fresh=read_current_offer(offer,rule,commission_calculator(rule),request,time.time)
      if not assess_offer(fresh,time.time())['eligible'] or fresh['creatorPercent']!=offer['creatorPercent']:
       ledger.invalidate_preflight(intent['id'],fresh)
       report.update(status='invalidated',reason='current_offer_changed',currentAssessment=assess_offer(fresh,time.time()),currentCreatorPercent=fresh['creatorPercent']);save();return

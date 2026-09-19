@@ -6,6 +6,7 @@ secrets/
 credentials/
 /runtime/
 /var/
+/outputs/
 private-data/
 *.log
 __pycache__/
@@ -13,6 +14,10 @@ __pycache__/
 # vendored legacy layer: real runtime config stays local (template is committed)
 /vendor/config.yaml
 /vendor/data/
+
+# 本机业务身份与联系方式（仅提交 *.example.json）
+/config/kalodata-identity.json
+/config/campaign-join.json
 .venv/
 node_modules/
 dist/
