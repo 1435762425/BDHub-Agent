@@ -263,14 +263,14 @@ Jev 不能因为获得账号权限就直接上线。必须使用相同的用户�
 2. 当前 `cycle_agent.py` 仍包含佣金和关系事实工具合同，`cycle_reply_facts.py` 与自动回复执行路径仍面向事实型回答；目标规则要求移除这类自动回答。
 3. 当前分类枚举、动作和模板尚未收敛为本页五种动作；三条固定模板尚未成为版本化、可审计的唯一回复正文。
 4. DeepSeek provider 已有影子能力，但尚无统一 `ReplyClassifier` adapter；Jev 权限、模型合同和对照评测尚未完成。
-5. 正式发送桥尚未冻结完整达人×PID×Offer×`currentListId` 位置，现有执行器仍会在发送前调用 `fresh_card()`。
+5. 正式发送桥已冻结完整达人×PID×Offer×`currentListId`、话术与顺序；frozen-v2 执行只读本地当前绑定并调用 `descriptor()`，不再运行时重选 PID 或调用 `fresh_card()`。平台明确拒卡只让对应 PID 等刷新，unknown 仍停批核验。旧 legacy-only 批次保留兼容路径。
 6. 当前自动回复开关必须继续关闭。完成代码不等于允许真实回复。
 
 ## 13. 后续实施顺序
 
 1. 线索数量、统一排序、三结果投影和标准链接已完成，继续保持回放验收；
-2. 完成冻结批次、start/stop 和移除发送前 `fresh_card()`；
-3. 建立 `outbound_episode / inbound_turn / turn_episode_link / service_case` 的幂等迁移与只读回填；
+2. 冻结批次、start/stop 和移除发送前 `fresh_card()` 已完成，保持真实发送由页面单独启动；
+3. 下一步建立 `outbound_episode / inbound_turn / turn_episode_link / service_case` 的幂等迁移与只读回填；
 4. 实现 provider 无关分类合同和确定性守卫，先接 DeepSeek 影子模式；
 5. 把三条模板做成版本化资源，建立用户审核页面和固定测试集；
 6. Jev 获权后跑同一测试集并由用户审阅；只有用户另行明确开启后，才接真实自动回复发送和结果回查。

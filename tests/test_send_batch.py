@@ -10,9 +10,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'scripts'))
 from lib.second_cycle import CycleError  # noqa: E402
+from lib.schema_migrations import apply_database  # noqa: E402
 from lib.send_batch import (CONFIG_DEFAULT, NEW_CONTACT_LIMIT, _window_arg,  # noqa: E402
-                            capacity, load_config, preview, save_and_status, status,
-                            validate_config, window_state)
+                            capacity, freeze_batch, load_config, preview, save_and_status,
+                            start_batch, status, stop_batch, validate_config, window_state)
 
 # 2026-09-15 12:00 北京时间（窗口判定按北京时间，所以这个数必须算准）。
 NOON = 1789444800.0
@@ -25,8 +26,17 @@ def slot(creator, pid):
 def candidate(creator, pid):
     return {'creatorId': creator, 'pid': pid, 'handle': creator, 'oecId': '1' + creator,
             'offer': {'pid': pid, 'offerKey': f'selected:{pid}:0', 'creatorPercent': '13',
-                      'publicPercent': '10', 'campaignId': '7', 'catalogSource': 'selected'},
-            'name': {'shortNameZh': '商品' + pid}, 'relationshipUnlocked': False,
+                      'publicPercent': '10', 'totalPercent': '15', 'campaignId': '7',
+                      'catalogSource': 'selected', 'stock': '101', 'available': True,
+                      'endAt': 2000000000},
+            'offerFingerprint': 'a' * 64, 'planRevision': 1, 'controlRevision': 1,
+            'name': {'shortNameZh': '商品' + pid, 'shortNameIt': 'prodotto',
+                     'mentionIt': 'questo prodotto'}, 'nameSource': '缓存',
+            'card': {'listId': '9' + str(pid), 'pid': pid, 'sourceCampaignId': '7',
+                     'wireCampaignId': '0', 'listName': 'BJN prodotto 13%',
+                     'campaignName': '', 'checkedAt': NOON, 'evidenceRefs': ['proof'],
+                     'state': 'verified_read_only', 'creatorPercent': '13', 'publicPercent': '10'},
+            'identityEvidence': 'identity-proof', 'relationshipUnlocked': False,
             'source': {'sourceId': 's-' + pid, 'windowEnd': 1, 'units': 1}}
 
 
@@ -144,12 +154,12 @@ class Preview(unittest.TestCase):
             self.assertNotIn('local_capacity_reached', wide['skipped'])
             self.assertTrue(wide['authorization']['widenLocalGate'])
 
-    def test_a_closed_window_holds_the_whole_batch(self):
+    def test_a_closed_window_still_allows_freezing_but_not_dispatch(self):
         slots = [slot(f'c{i}', f'p{i}') for i in range(4)]
         state = self.run_preview(slots, [f'p{i}' for i in range(4)], count=4,
                                  window=('03:00', '04:00'))
-        self.assertEqual(state['sendable'], 0)
-        self.assertEqual(state['skipped'].get('outside_send_window'), 4)
+        self.assertEqual(state['sendable'], 4)
+        self.assertNotIn('outside_send_window', state['skipped'])
         self.assertFalse(state['window']['open'])
 
     def test_the_authorization_records_what_was_actually_allowed(self):
@@ -163,6 +173,67 @@ class Preview(unittest.TestCase):
         self.assertFalse(state['available'])
         self.assertEqual(state['sendable'], 0)
         self.assertEqual(state['samples'], [])
+
+
+class FrozenBatch(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = capacity_fixture(self.tmp.name)
+        apply_database(self.root, 'second-cycle', clock=lambda: NOON)
+        self.slots = [slot('creator0', '100'), slot('creator1', '200')]
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def pool_reader(self):
+        return {'available': True, 'layers': {'ready': len(self.slots)},
+                'pools': {'ready': self.slots}}
+
+    @staticmethod
+    def chooser(store, plan, person, limit, positions=None):
+        return [candidate(creator, pid) for creator, pid in positions], []
+
+    def freeze(self, request_id='request-0001'):
+        shown = preview(self.root, count=500, now=NOON, pool_reader=self.pool_reader,
+                        chooser=self.chooser)
+        return freeze_batch(self.root, request_id, shown['previewHash'], now=NOON,
+                            pool_reader=self.pool_reader, chooser=self.chooser), shown
+
+    def test_freeze_is_idempotent_and_preserves_exact_order_without_platform_effects(self):
+        batch, shown = self.freeze()
+        duplicate, _ = self.freeze()
+        self.assertEqual(batch['batchId'], duplicate['batchId'])
+        self.assertEqual(batch['previewHash'], shown['previewHash'])
+        self.assertEqual(batch['target'], 2)
+        with sqlite3.connect(self.root / 'var/second-cycle.sqlite') as db:
+            rows = list(db.execute('SELECT position_order,creator_id,pid,candidate_json,candidate_hash '
+                                   'FROM cycle_bulk_candidate ORDER BY position_order'))
+            self.assertEqual([(row[0], row[1], row[2]) for row in rows],
+                             [(0, 'creator0', '100'), (1, 'creator1', '200')])
+            self.assertFalse(db.execute("SELECT 1 FROM sqlite_master WHERE name='cycle_platform_signal'").fetchone())
+            with self.assertRaises(sqlite3.DatabaseError):
+                db.execute("UPDATE cycle_bulk_candidate SET pid='300'")
+
+    def test_a_changed_preview_is_rejected_before_any_batch_is_written(self):
+        shown = preview(self.root, count=500, now=NOON, pool_reader=self.pool_reader,
+                        chooser=self.chooser)
+        self.slots.reverse()
+        with self.assertRaisesRegex(CycleError, 'preview_conflict'):
+            freeze_batch(self.root, 'request-0002', shown['previewHash'], now=NOON,
+                         pool_reader=self.pool_reader, chooser=self.chooser)
+        with sqlite3.connect(self.root / 'var/second-cycle.sqlite') as db:
+            self.assertEqual(db.execute('SELECT count(*) FROM cycle_bulk_freeze').fetchone()[0], 0)
+
+    def test_start_and_stop_use_revisions_and_do_not_implicitly_launch(self):
+        batch, _ = self.freeze('request-0003')
+        started = start_batch(self.root, batch['batchId'], 1, confirmed=True, now=NOON)
+        self.assertEqual((started['state'], started['revision']), ('starting', 2))
+        stopped = stop_batch(self.root, batch['batchId'], 2, now=NOON + 1)
+        self.assertEqual((stopped['state'], stopped['revision']), ('stop_requested', 3))
+        duplicate = stop_batch(self.root, batch['batchId'], 2, now=NOON + 2)
+        self.assertTrue(duplicate['duplicate'])
+        with self.assertRaisesRegex(CycleError, 'revision_conflict'):
+            start_batch(self.root, batch['batchId'], 1, confirmed=True, now=NOON)
 
 
 if __name__ == '__main__':

@@ -42,6 +42,10 @@ OWNERS = """SELECT x.source_handle,min(r.creator_id) AS creator_id
  FROM cycle_identity_resolution r JOIN source_edge_index x
  ON x.plan_id=r.plan_id AND x.source_id=r.source_id
  WHERE x.source_kind='kalodata_http' GROUP BY x.source_handle HAVING count(DISTINCT r.creator_id)=1"""
+LEGACY_OWNERS = f"""SELECT {HANDLE} AS source_handle,min(r.creator_id) AS creator_id
+ FROM cycle_identity_resolution r JOIN source_edge e
+ ON e.plan_id=r.plan_id AND e.source_id=r.source_id
+ WHERE {KALODATA} GROUP BY {HANDLE} HAVING count(DISTINCT r.creator_id)=1"""
 
 
 def root_of(module_file=__file__):
@@ -218,9 +222,10 @@ def by_creator(root):
         if not plan:
             return None
         current=CURRENT if {'source_edge_index','lead_query_head','lead_query_selection'}<=tables and conn.execute('SELECT 1 FROM lead_query_head WHERE plan_id=? LIMIT 1',(plan[0],)).fetchone() else LEGACY_CURRENT
+        owners = OWNERS if current == CURRENT else LEGACY_OWNERS
         sql = f"""
         WITH K AS (SELECT source_handle AS h,source_id,pid FROM ({current}) WHERE plan_id=:plan),
-        O AS ({OWNERS}),
+        O AS ({owners}),
         R AS (SELECT DISTINCT k.h FROM K k JOIN O o ON o.source_handle=k.h),
         U AS (SELECT DISTINCT k.h FROM K k JOIN cycle_identity_outcome o ON o.source_id=k.source_id
               WHERE o.status='unresolved'),

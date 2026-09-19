@@ -57,7 +57,7 @@ const Step=({index,title,hint}:{index:string;title:string;hint?:string})=>
  * 由执行器按批跑；那一步的按钮在 ⑤ 里说明。
  */
 export default function SendBatchPanel({controller}:{controller:SendController}){
- const {data,draft,setDraft,busy,message,loaded,save}=controller;
+ const {data,draft,setDraft,busy,message,loaded,save,freeze,start,stop}=controller;
  if(!data?.available)return <Card title="发送池与发送" subtitle="池位＝达人×商品，冷却按达人算。">
   <div className="p-5"><p className="text-sm text-gray-500">{!loaded?"正在算这一批会发给谁…":"暂时无法读取发送池。"}</p></div></Card>;
  const {preview,pool}=data;
@@ -81,6 +81,15 @@ export default function SendBatchPanel({controller}:{controller:SendController})
  const widen=Boolean(draft?.widen);
  // 越界时多一档 600：账号级日额度还没拿到，先按它探。
  const choices=widen?[...SEND_COUNTS,PROBE_COUNT]:SEND_COUNTS.filter(value=>value!==PROBE_COUNT);
+ const batch=data.batch;
+ const activeBatch=Boolean(batch&&["prepared","start_failed","starting","running","stop_requested","waiting_reconciliation","local_capacity_reached","platform_rejected","material_refresh_record_failed"].includes(batch.state));
+ const canStart=Boolean(batch&&["prepared","start_failed"].includes(batch.state));
+ const canStop=Boolean(batch&&["starting","running","local_capacity_reached","platform_rejected","material_refresh_record_failed"].includes(batch.state));
+ const batchState:Record<string,string>={prepared:"已冻结，等待确认开始",start_failed:"启动失败，可重试",
+  starting:"正在启动",running:"发送中",stop_requested:"正在安全停止",stopped:"已停止",
+  waiting_reconciliation:"结果未知，等待核验",completed:"已完成",completed_with_exceptions:"已完成，有逐项例外",
+  local_capacity_reached:"本地额度已到顶",platform_rejected:"平台账号级拒绝",
+  material_refresh_record_failed:"链接刷新状态落账失败"};
  return <Card title="发送池与发送" subtitle="池位＝达人×商品，冷却按达人算。这张卡只算「下一批会发给谁」，不发消息。"
   action={preview.window.enabled?<Pill tone={preview.window.open?"success":"warning"}>窗口 {preview.window.open?"开着":"关着"}</Pill>:<Pill tone="neutral">不设窗口</Pill>}>
   <div className="space-y-5 p-5">
@@ -91,7 +100,7 @@ export default function SendBatchPanel({controller}:{controller:SendController})
     <StatTile label="可发送" value={layers.ready??preview.readyAvailable} hint="每位达人一个 sourceRank 最优位置" brand/>
     <StatTile label="等待中" value={(layers.queued??0)+(layers.cooling??0)+(layers.awaiting_reply??0)} hint="等轮次、冷却或达人问题处理"/>
     <StatTile label="暂不参与" value={(layers.excluded??0)+(layers.product_inactive??0)} hint="商品当前不合格或明确排除"/>
-    <StatTile label="已发送历史" value={layers.sent??0} hint="历史结果，不是池状态"/>
+    <StatTile label="已发送历史" value={pool.counts.sent??0} hint="历史结果，不是池状态"/>
    </div>
    <div className="flex flex-wrap gap-x-6 gap-y-2 text-sm text-gray-600 dark:text-gray-300">
     <span>等待原因：同达人其他商品 <strong>{number(layers.queued)}</strong> · 冷却 <strong>{number(layers.cooling)}</strong> · 达人问题 <strong>{number(layers.awaiting_reply)}</strong></span>
@@ -174,7 +183,7 @@ export default function SendBatchPanel({controller}:{controller:SendController})
       <Input type="time" value={draft?.window[0]??data.config.window[0]} disabled={busy||!draft||!draft.windowEnabled}
        onChange={e=>draft&&setDraft({...draft,window:[e.target.value,draft.window[1]]})}/>
       <span className="text-sm text-gray-500">到</span>
-      <Input type="time" value={draft?.window[1]??data.config.window[1]} disabled={busy||!draft||!draft.windowEnabled}
+      <Input type="text" inputMode="numeric" maxLength={5} placeholder="24:00" value={draft?.window[1]??data.config.window[1]} disabled={busy||!draft||!draft.windowEnabled}
        onChange={e=>draft&&setDraft({...draft,window:[draft.window[0],e.target.value]})}/>
      </div>
     </Field>
@@ -193,15 +202,37 @@ export default function SendBatchPanel({controller}:{controller:SendController})
    </div>
    {message&&<Notice tone="info">{message}</Notice>}
 
-   {/* ⑤ 怎么真的发出去：算清楚 → 你确认 → 执行器发 */}
-   <Step index="5" title="怎么真的发出去" hint="中间那一步是你的，最后一步还没接线。"/>
+   {/* ⑤ 冻结与明确启动：GET/save 永远不会隐式开始。 */}
+   <Step index="5" title="冻结、确认并开始" hint="先把上面的名单与材料冻结；再由你明确点击开始。"/>
    <div className="rounded-xl border border-gray-200 p-4 dark:border-gray-800">
-    <ol className="space-y-2 text-xs leading-5 text-gray-500">
-     <li><strong className="text-gray-700 dark:text-gray-300">1. 算清楚（就是上面的数字）</strong>：只读复检，不碰平台、不落库，可以反复看。</li>
-     <li><strong className="text-gray-700 dark:text-gray-300">2. 你确认这一批</strong>：确认后才落一份批次授权（多少条、发谁的、窗口、是否越界），执行器按这份授权跑。</li>
-     <li><strong className="text-gray-700 dark:text-gray-300">3. 执行器发</strong>：复用既有发送链（车道、预算、回查、未知即停）。<strong className="text-warning-600 dark:text-warning-400">这一步的按钮还没接上——
-      它要把批次授权写进 <code>cycle_bulk</code> 再交给既有执行器，是下一步的活。现在这里不会发出任何消息。</strong></li>
-    </ol>
+    {!activeBatch&&<div className="space-y-3">
+     <p className="text-xs leading-5 text-gray-500">冻结会保存达人、PID、Offer、currentListId、话术和顺序；不调用平台，也不会开始发送。预览在冻结前发生变化时会拒绝并要求重新核对。</p>
+     <div className="flex flex-wrap items-center gap-3">
+      <Button size="sm" variant="primary" disabled={busy||preview.sendable===0||!preview.previewHash} onClick={()=>void freeze()}>
+       {busy?"处理中…":`冻结本批 ${number(preview.sendable)} 人`}</Button>
+      {preview.previewHash&&<span className="text-xs text-gray-400">预览 {preview.previewHash.slice(0,12)}…</span>}
+     </div>
+    </div>}
+    {batch&&<div className="space-y-3">
+     <div className="flex flex-wrap items-center gap-2">
+      <Pill tone={batch.state==="running"?"success":batch.state==="waiting_reconciliation"?"warning":"neutral"}>
+       {batchState[batch.state]??batch.state}</Pill>
+      <span className="text-xs text-gray-500">批次 {batch.batchId} · revision {batch.revision}</span>
+     </div>
+     <div className="grid gap-2 text-xs leading-5 text-gray-600 dark:text-gray-300 sm:grid-cols-2">
+      <span>冻结人数 <strong>{number(batch.target)}</strong>；窗口 <strong>{batch.authorization.sendWindow?.join("–")??"不设窗口"}</strong></span>
+      <span>越过本地闸门 <strong>{batch.authorization.widenLocalGate?"是":"否"}</strong>；发送账号 <strong>ACC6</strong></span>
+      <span>预览指纹 <code>{batch.previewHash.slice(0,16)}…</code></span>
+      <span>结果未知时 <strong>整批暂停，只核验原发送意图</strong></span>
+     </div>
+     <p className="text-xs text-gray-500">逐项结果：{Object.keys(batch.counts).length===0?"尚未执行":Object.entries(batch.counts).map(([key,value])=>`${key} ${number(value)}`).join(" · ")}</p>
+     {batch.runtime&&<p className="text-xs text-gray-500">执行断点：{batch.runtime.phase} · worker {batch.runtime.pid??"—"} · 最近心跳 {new Date(batch.runtime.seenAt*1000).toLocaleString("zh-CN")}</p>}
+     <div className="flex flex-wrap gap-2">
+      {canStart&&<Button size="sm" variant="primary" disabled={busy} onClick={()=>void start()}>{busy?"启动中…":"确认并开始"}</Button>}
+      {canStop&&<Button size="sm" variant="outline" disabled={busy} onClick={()=>void stop()}>{busy?"处理中…":"停止本批"}</Button>}
+     </div>
+     {batch.state==="waiting_reconciliation"&&<Notice tone="warning">已有发送结果无法确认。系统不会换账号或盲目重发；需先核验原 delivery。</Notice>}
+    </div>}
    </div>
   </div>
  </Card>;

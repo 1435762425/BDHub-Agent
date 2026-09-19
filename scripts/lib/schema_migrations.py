@@ -117,9 +117,90 @@ CREATE INDEX IF NOT EXISTS source_edge_index_handle
 """)
 
 
+SECOND_CYCLE_FROZEN_SEND = Migration(3, "frozen_send_batch_v1", """
+CREATE TABLE IF NOT EXISTS cycle_bulk(
+  id TEXT PRIMARY KEY,
+  plan_id TEXT NOT NULL,
+  target INTEGER NOT NULL,
+  authorization TEXT NOT NULL,
+  state TEXT NOT NULL,
+  created REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS cycle_bulk_item(
+  batch_id TEXT NOT NULL,
+  creator_id TEXT NOT NULL,
+  handle TEXT NOT NULL,
+  state TEXT NOT NULL,
+  delivery_id TEXT,
+  reason TEXT,
+  retry_at REAL NOT NULL DEFAULT 0,
+  retry_count INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY(batch_id,creator_id)
+);
+CREATE TABLE IF NOT EXISTS cycle_bulk_runtime(
+  batch_id TEXT PRIMARY KEY,
+  pid INTEGER,
+  seen REAL,
+  phase TEXT
+);
+CREATE TABLE IF NOT EXISTS cycle_bulk_timing(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  batch_id TEXT,
+  stage TEXT,
+  seconds REAL,
+  exit_code INTEGER,
+  at REAL
+);
+CREATE TABLE IF NOT EXISTS cycle_bulk_freeze(
+  batch_id TEXT PRIMARY KEY,
+  request_id TEXT NOT NULL UNIQUE,
+  preview_hash TEXT NOT NULL,
+  config_json TEXT NOT NULL,
+  authorization_json TEXT NOT NULL,
+  revision INTEGER NOT NULL DEFAULT 1,
+  state TEXT NOT NULL,
+  authorized_at REAL,
+  stop_requested_at REAL,
+  created_at REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS cycle_bulk_candidate(
+  batch_id TEXT NOT NULL,
+  position_order INTEGER NOT NULL,
+  creator_id TEXT NOT NULL,
+  oec TEXT NOT NULL,
+  pid TEXT NOT NULL,
+  source_id TEXT NOT NULL,
+  offer_key TEXT NOT NULL,
+  offer_fingerprint TEXT NOT NULL,
+  current_list_id TEXT NOT NULL,
+  candidate_json TEXT NOT NULL,
+  candidate_hash TEXT NOT NULL,
+  PRIMARY KEY(batch_id,creator_id),
+  UNIQUE(batch_id,position_order)
+);
+CREATE INDEX IF NOT EXISTS cycle_bulk_freeze_state
+  ON cycle_bulk_freeze(state,created_at);
+CREATE INDEX IF NOT EXISTS cycle_bulk_candidate_order
+  ON cycle_bulk_candidate(batch_id,position_order);
+CREATE TRIGGER IF NOT EXISTS cycle_bulk_freeze_scope_immutable
+BEFORE UPDATE ON cycle_bulk_freeze
+WHEN OLD.batch_id != NEW.batch_id OR OLD.request_id != NEW.request_id
+  OR OLD.preview_hash != NEW.preview_hash OR OLD.config_json != NEW.config_json
+  OR OLD.authorization_json != NEW.authorization_json OR OLD.created_at != NEW.created_at
+BEGIN SELECT RAISE(ABORT,'frozen batch scope is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS cycle_bulk_candidate_no_update
+BEFORE UPDATE ON cycle_bulk_candidate
+BEGIN SELECT RAISE(ABORT,'frozen candidate is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS cycle_bulk_candidate_no_delete
+BEFORE DELETE ON cycle_bulk_candidate
+BEGIN SELECT RAISE(ABORT,'frozen candidate is immutable'); END;
+""")
+
+
 DATABASES = {
     "catalog-links": ("catalog-links.sqlite", (CATALOG_LINKS,)),
-    "second-cycle": ("second-cycle.sqlite", (SECOND_CYCLE, SECOND_CYCLE_INDEXES)),
+    "second-cycle": ("second-cycle.sqlite", (SECOND_CYCLE, SECOND_CYCLE_INDEXES,
+                                                SECOND_CYCLE_FROZEN_SEND)),
 }
 
 REGISTRY_SQL = """
@@ -168,9 +249,18 @@ def check_database(root, key):
 
 
 def _statements(sql):
-    # Migrations in this registry intentionally contain only ordinary additive statements.  Keeping
-    # them trigger-free lets the whole migration run inside one explicit transaction.
-    return [statement.strip() for statement in sql.split(";") if statement.strip()]
+    # `sqlite3.complete_statement` keeps trigger bodies together.  Splitting on every semicolon would
+    # cut ``BEGIN ...; END`` in half and make an otherwise additive migration impossible to replay.
+    statements = []
+    pending = ""
+    for line in sql.splitlines():
+        pending += line + "\n"
+        if sqlite3.complete_statement(pending):
+            statements.append(pending.strip())
+            pending = ""
+    if pending.strip():
+        raise ValueError("migration_sql_incomplete")
+    return statements
 
 
 def apply_database(root, key, *, clock=time.time):

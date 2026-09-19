@@ -7,6 +7,10 @@ const sample={handle:'nuvolablu4',pid:'1729571380453480878',name:'questi orecchi
  messageIt:'Ciao @nuvolablu4! Abbiamo una commissione migliorata al 13% per te su questi orecchini per cartilagine 👏 Ti va di dedicarci un nuovo video o LIVE?',
  messageZh:'你好！这款软骨耳环可以为你提供更高的 13% 佣金，下一条视频或直播可以再推一轮。',template:'standard',
  creatorPercent:'13',publicPercent:'12',campaignId:'7667413079080240918',catalogSource:'selected',unlocked:false};
+const hash='a'.repeat(64);
+const authorization={source:'current_user_request',scope:'pool_to_send',maxPeople:500,requestedPeople:500,
+ widenLocalGate:false,sendWindow:null,institutionNewContactRollingCap:500,
+ materialPolicy:'frozen-current-binding-v1',note:'只消费本批冻结位置'};
 
 const payload={available:true,
  config:{count:500,widen:false,windowEnabled:false,window:['09:00','24:00']},
@@ -14,8 +18,8 @@ const payload={available:true,
   samples:[sample],nameQuality:{缓存:476,取自卡名:24},
   skipped:{missing_card:797,offer_not_in_current_catalog:217,relationship_blocked:7,beyond_requested_size:248},
   capacity:{windowSeconds:86400,limit:500,used:0,remaining:500},
-  window:{enabled:false,open:true,start:null,end:null},widen:false},
- pool:{counts:{positions:6980},layers:{ready:1769,queued:3378,cooling:1333,awaiting_reply:3,excluded:2,sent:495}}};
+  window:{enabled:false,open:true,start:null,end:null},widen:false,previewHash:hash,authorization},
+ pool:{counts:{positions:6980},layers:{ready:1769,queued:3378,cooling:1333,awaiting_reply:3,excluded:2,sent:495}},batch:null};
 
 test('the send card reads the batch preview and the pool layers from one payload',()=>{
  const v=validateSendState(payload);
@@ -89,4 +93,26 @@ test('only the three settings can be saved, and only the released sizes',()=>{
  // 窗口格式要在这一层挡住，不能等 Python 抛。
  assert.throws(()=>validateSendRequest({action:'save',config:{count:500,window:['9:00','24:00']}}),/invalid_send/);
  assert.throws(()=>validateSendRequest({action:'save',config:{count:500,window:['09:00','25:00']}}),/invalid_send/);
+});
+
+test('freeze start and stop have exact explicit request shapes',()=>{
+ assert.deepEqual(validateSendRequest({action:'freeze',requestId:'web-request-0001',expectedPreviewHash:hash}),
+  {action:'freeze',requestId:'web-request-0001',expectedPreviewHash:hash});
+ assert.deepEqual(validateSendRequest({action:'start',batchId:'send-batch-0001',expectedRevision:1,confirmed:true}),
+  {action:'start',batchId:'send-batch-0001',expectedRevision:1,confirmed:true});
+ assert.deepEqual(validateSendRequest({action:'stop',batchId:'send-batch-0001',expectedRevision:2}),
+  {action:'stop',batchId:'send-batch-0001',expectedRevision:2});
+ assert.throws(()=>validateSendRequest({action:'start',batchId:'send-batch-0001',expectedRevision:1,confirmed:false}),/invalid_send_request/);
+ assert.throws(()=>validateSendRequest({action:'freeze',requestId:'web-request-0001',expectedPreviewHash:hash,extra:1}),/invalid_send_request/);
+ assert.throws(()=>validateSendRequest({action:'stop',batchId:'send-batch-0001',expectedRevision:2,confirmed:true}),/invalid_send_request/);
+});
+
+test('a frozen batch response is validated and reconciles its item counts',()=>{
+ const frozen=structuredClone(payload);
+ frozen.batch={batchId:'send-batch-0001',requestId:'web-request-0001',previewHash:hash,revision:1,
+  state:'prepared',target:500,counts:{pending:500},config:payload.config,authorization,
+  authorizedAt:null,stopRequestedAt:null,createdAt:1789838000};
+ assert.equal(validateSendState(frozen).batch.state,'prepared');
+ frozen.batch.counts.pending=499;
+ assert.throws(()=>validateSendState(frozen),/invalid_send/);
 });

@@ -14,9 +14,10 @@
   结果未知即停）
 
 `preview()` 只读：它算的就是"这一批会发给谁、发什么、为什么有人被跳过"，页面拿它给操作者看那
-2–3 条样例和总数。`create()` 才落库（`cycle_bulk`/`cycle_bulk_item`），执行仍由既有驱动器负责。
+2–3 条样例和总数。`freeze_batch()` 才落库；`start_batch()` 只登记明确授权，CLI 随后启动冻结批次 worker。
 """
 import json
+import re
 import time
 from contextlib import closing
 from datetime import datetime, timedelta, timezone
@@ -24,7 +25,7 @@ from pathlib import Path
 
 from lib.cycle_review import card_rate_gap, choose_candidates
 from lib.lead_pool import pool
-from lib.second_cycle import CycleError, encoded
+from lib.second_cycle import CycleError, digest, encoded
 
 BEIJING = timezone(timedelta(hours=8))
 # 与 `cycle_delivery.reserve_contact()` 同一个口径：滚动 24 小时、只算新联系。
@@ -165,7 +166,7 @@ def status(root, *, now=None, clock=None, pool_reader=None, chooser=None):
     layers = pool(root, now=clock() if clock else (now if now is not None else time.time())) if pool_reader is None else {}
     return {'config': config, 'preview': state,
             'pool': {'counts': layers.get('counts') or {}, 'layers': layers.get('layers') or {}},
-            'available': state.get('available', False)}
+            'batch': batch_status(root), 'available': state.get('available', False)}
 
 
 def save_and_status(root, raw, *, now=None, clock=None, pool_reader=None, chooser=None):
@@ -181,6 +182,14 @@ def save_and_status(root, raw, *, now=None, clock=None, pool_reader=None, choose
 def preview(root, *, count=500, widen=False, window=None, now=None, clock=None,
             pool_reader=None, chooser=None):
     """这一批会发给谁、发什么、谁被跳过（只读，不落库、不碰平台）。"""
+    state, _ = _preview(root, count=count, widen=widen, window=window, now=now, clock=clock,
+                        pool_reader=pool_reader, chooser=chooser)
+    return state
+
+
+def _preview(root, *, count=500, widen=False, window=None, now=None, clock=None,
+             pool_reader=None, chooser=None):
+    """Return the public preview and its private, fully frozen candidate list."""
     root = Path(root)
     if type(count) is not int or not 1 <= count <= 2000:
         raise CycleError('invalid_send_count')
@@ -191,10 +200,11 @@ def preview(root, *, count=500, widen=False, window=None, now=None, clock=None,
     read_pool = pool_reader or (lambda: pool(root, now=stamp, limit=min(4000, max(count * 4, count))))
     state = read_pool()
     if not state.get('available'):
-        return {'available': False, 'requested': count, 'sendable': 0, 'samples': [], 'skipped': {},
-                'rateGap': {'same': 0, 'lower': 0, 'lowerByOne': 0, 'higher': 0, 'noCard': 0,
-                            'examples': [], 'readable': False},
-                'capacity': None, 'window': window_state(window, stamp), 'widen': bool(widen)}
+        return ({'available': False, 'requested': count, 'sendable': 0, 'samples': [], 'skipped': {},
+                 'rateGap': {'same': 0, 'lower': 0, 'lowerByOne': 0, 'higher': 0, 'noCard': 0,
+                             'examples': [], 'readable': False},
+                 'capacity': None, 'window': window_state(window, stamp), 'widen': bool(widen),
+                 'previewHash': None, 'authorization': None}, [])
     slots = [row for row in state['pools'].get('ready', [])]
     positions = [(row['creatorId'], row['pid']) for row in slots]
     with _store(root) as store:
@@ -215,9 +225,6 @@ def preview(root, *, count=500, widen=False, window=None, now=None, clock=None,
     window_now = window_state(window, stamp)
     sendable = []
     for index, candidate in enumerate(candidates):
-        if not window_now['open']:
-            skipped.append({'sourceId': candidate['source']['sourceId'], 'reason': 'outside_send_window'})
-            continue
         # 一批就是一批：凑够 `count` 条之后剩下的都不进这一批（池子里还留着，下次再发）。
         if len(sendable) >= count:
             skipped.append({'sourceId': candidate['source']['sourceId'], 'reason': 'beyond_requested_size'})
@@ -229,14 +236,42 @@ def preview(root, *, count=500, widen=False, window=None, now=None, clock=None,
     reasons = {}
     for row in skipped:
         reasons[row.get('reason') or 'unknown'] = reasons.get(row.get('reason') or 'unknown', 0) + 1
-    return {'available': True, 'requested': count, 'sendable': len(sendable),
+    frozen = [_frozen_candidate(candidate) for candidate in sendable]
+    config = {'count': count, 'widen': bool(widen), 'windowEnabled': window is not None,
+              'window': list(window or DEFAULT_WINDOW)}
+    authorization = _authorization(count, len(frozen), widen, window)
+    preview_hash = _preview_hash(config, authorization, frozen)
+    return ({'available': True, 'requested': count, 'sendable': len(frozen),
             'positions': len(positions), 'readyAvailable': (state.get('layers') or {}).get('ready', 0),
-            'samples': [_sample(c) for c in sendable[:SAMPLE_SIZE]],
+            'samples': [_sample(c) for c in frozen[:SAMPLE_SIZE]],
             # 短名的**质量**（不是卡点）：缓存里没有就用卡名、再不行用标题兜底——不让它挡发送。
             'nameQuality': _name_quality(sendable),
             'skipped': reasons, 'rateGap': rate_gap,
             'capacity': cap, 'window': window_now, 'widen': bool(widen),
-            'authorization': _authorization(count, widen, window)}
+            'previewHash': preview_hash, 'authorization': authorization}, frozen)
+
+
+def _frozen_candidate(candidate):
+    """Freeze the actual card, text and all eligibility revisions shown in the preview."""
+    from lib.cycle_materials import render
+    frozen = json.loads(encoded(candidate))
+    frozen['message'] = render(frozen['name'], frozen['offer'], 'standard', frozen['handle'])
+    return frozen
+
+
+def _preview_hash(config, authorization, candidates):
+    return digest({'schema': 'bdhub.send-preview.v2', 'config': config,
+                   'authorization': authorization,
+                   'candidates': [{'position': index, 'creatorId': row['creatorId'],
+                                   'oec': row['oecId'], 'pid': str(row['pid']),
+                                   'sourceId': row['source']['sourceId'],
+                                   'offerKey': row['offer']['offerKey'],
+                                   'offerFingerprint': row['offerFingerprint'],
+                                   'currentListId': str(row['card']['listId']),
+                                   'planRevision': row['planRevision'],
+                                   'controlRevision': row['controlRevision'],
+                                   'candidateHash': digest(row)}
+                                  for index, row in enumerate(candidates)]})
 
 
 def _name_quality(candidates):
@@ -270,12 +305,200 @@ def _sample(candidate):
             'unlocked': bool(candidate.get('relationshipUnlocked'))}
 
 
-def _authorization(count, widen, window):
+def _authorization(requested, max_people, widen, window):
     """写进 `cycle_bulk.authorization` 的显式授权：它决定这一批到底被允许做什么。"""
-    return {'source': 'current_user_request', 'scope': 'pool_to_send', 'maxPeople': count,
+    return {'source': 'current_user_request', 'scope': 'pool_to_send', 'maxPeople': max_people,
+            'requestedPeople': requested,
             'widenLocalGate': bool(widen), 'sendWindow': list(window) if window else None,
             'institutionNewContactRollingCap': NEW_CONTACT_LIMIT,
-            'note': '位置来自发送池 ready 层；越界探测时平台原始回执必须落账'}
+            'materialPolicy': 'frozen-current-binding-v1',
+            'note': '只消费本批冻结位置；越界探测时平台原始回执必须落账'}
+
+
+def _table_exists(db, name):
+    return bool(db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (name,)).fetchone())
+
+
+def _identifier(value, code):
+    if not isinstance(value, str) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._:-]{7,119}', value):
+        raise CycleError(code)
+    return value
+
+
+def _hash(value, code):
+    if not isinstance(value, str) or not re.fullmatch(r'[0-9a-f]{64}', value):
+        raise CycleError(code)
+    return value
+
+
+def _batch_payload(db, row):
+    counts = dict(db.execute('SELECT state,count(*) FROM cycle_bulk_item WHERE batch_id=? GROUP BY state',
+                             (row['batch_id'],)))
+    runtime = None
+    if _table_exists(db, 'cycle_bulk_runtime'):
+        running = db.execute('SELECT pid,seen,phase FROM cycle_bulk_runtime WHERE batch_id=?',
+                             (row['batch_id'],)).fetchone()
+        if running:
+            runtime = {'pid': running['pid'], 'seenAt': running['seen'], 'phase': running['phase']}
+    return {'batchId': row['batch_id'], 'requestId': row['request_id'],
+            'previewHash': row['preview_hash'], 'revision': row['revision'], 'state': row['state'],
+            'target': sum(counts.values()), 'counts': counts,
+            'config': json.loads(row['config_json']),
+            'authorization': json.loads(row['authorization_json']),
+            'authorizedAt': row['authorized_at'], 'stopRequestedAt': row['stop_requested_at'],
+            'createdAt': row['created_at'], 'runtime': runtime}
+
+
+def batch_status(root, batch_id=None):
+    """Read the latest frozen-v2 batch without exposing private candidates to the browser."""
+    path = Path(root) / 'var/second-cycle.sqlite'
+    if not path.exists():
+        return None
+    with closing(_connect(path)) as db:
+        if not _table_exists(db, 'cycle_bulk_freeze'):
+            return None
+        if batch_id is not None:
+            _identifier(batch_id, 'invalid_batch_id')
+            row = db.execute('SELECT * FROM cycle_bulk_freeze WHERE batch_id=?', (batch_id,)).fetchone()
+        else:
+            row = db.execute("SELECT * FROM cycle_bulk_freeze ORDER BY created_at DESC LIMIT 1").fetchone()
+        return _batch_payload(db, row) if row else None
+
+
+def _require_freeze_schema(store):
+    required = {'cycle_bulk', 'cycle_bulk_item', 'cycle_bulk_freeze', 'cycle_bulk_candidate'}
+    if any(not _table_exists(store.db, table) for table in required):
+        raise CycleError('send_batch_schema_migration_required')
+
+
+def freeze_batch(root, request_id, expected_preview_hash, *, now=None, clock=None,
+                 pool_reader=None, chooser=None):
+    """Persist exactly the preview the user saw.  This never starts a worker or calls a platform."""
+    root = Path(root)
+    request_id = _identifier(request_id, 'invalid_request_id')
+    expected_preview_hash = _hash(expected_preview_hash, 'invalid_preview_hash')
+    config = load_config(root)
+    window = config['window'] if config['windowEnabled'] else None
+    preview_state, candidates = _preview(root, count=config['count'], widen=config['widen'], window=window,
+                                         now=now, clock=clock, pool_reader=pool_reader, chooser=chooser)
+    if preview_state.get('previewHash') != expected_preview_hash:
+        raise CycleError('preview_conflict')
+    if not candidates:
+        raise CycleError('batch_empty')
+    stamp = clock() if clock is not None else (now if now is not None else time.time())
+    batch_id = 'send-' + digest([request_id, expected_preview_hash])[:24]
+    from lib.catalog_binding import offer_fingerprint
+    with _store(root) as store, store.tx():
+        _require_freeze_schema(store)
+        prior = store.db.execute('SELECT * FROM cycle_bulk_freeze WHERE request_id=?',
+                                 (request_id,)).fetchone()
+        if prior:
+            if prior['preview_hash'] != expected_preview_hash:
+                raise CycleError('freeze_request_conflict')
+            return _batch_payload(store.db, prior)
+        active = store.db.execute("SELECT batch_id FROM cycle_bulk_freeze WHERE state IN "
+                                  "('prepared','starting','running','stop_requested','waiting_reconciliation',"
+                                  "'local_capacity_reached','platform_rejected','material_refresh_record_failed') "
+                                  "ORDER BY created_at DESC LIMIT 1").fetchone()
+        if active:
+            raise CycleError('active_batch_exists')
+        plan = _plan(store)
+        authorization = preview_state['authorization']
+        store.db.execute("INSERT INTO cycle_bulk VALUES(?,?,?,?, 'prepared', ?)",
+                         (batch_id, plan, len(candidates), encoded(authorization), stamp))
+        store.db.execute("INSERT INTO cycle_bulk_freeze(batch_id,request_id,preview_hash,config_json,"
+                         "authorization_json,revision,state,created_at) VALUES(?,?,?,?,?,1,'prepared',?)",
+                         (batch_id, request_id, expected_preview_hash, encoded(config),
+                          encoded(authorization), stamp))
+        for position, candidate in enumerate(candidates):
+            candidate_json = encoded(candidate)
+            candidate_hash = digest(candidate)
+            store.db.execute("INSERT INTO cycle_bulk_candidate VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                             (batch_id, position, candidate['creatorId'], candidate['oecId'],
+                              str(candidate['pid']), candidate['source']['sourceId'],
+                              candidate['offer']['offerKey'], offer_fingerprint(candidate['offer']),
+                              str(candidate['card']['listId']), candidate_json, candidate_hash))
+            store.db.execute("INSERT INTO cycle_bulk_item(batch_id,creator_id,handle,state) "
+                             "VALUES(?,?,?,'pending')",
+                             (batch_id, candidate['creatorId'], candidate['handle']))
+        row = store.db.execute('SELECT * FROM cycle_bulk_freeze WHERE batch_id=?', (batch_id,)).fetchone()
+        return _batch_payload(store.db, row)
+
+
+def start_batch(root, batch_id, expected_revision, *, confirmed=False, now=None, clock=None):
+    """Record the explicit user authorization.  Process launch remains in the CLI boundary."""
+    root = Path(root)
+    batch_id = _identifier(batch_id, 'invalid_batch_id')
+    if type(expected_revision) is not int or expected_revision < 1 or confirmed is not True:
+        raise CycleError('start_confirmation_required')
+    stamp = clock() if clock is not None else (now if now is not None else time.time())
+    with _store(root) as store, store.tx():
+        _require_freeze_schema(store)
+        row = store.db.execute('SELECT * FROM cycle_bulk_freeze WHERE batch_id=?', (batch_id,)).fetchone()
+        if not row:
+            raise CycleError('batch_missing')
+        if row['state'] in ('starting', 'running') and row['revision'] == expected_revision + 1:
+            return _batch_payload(store.db, row) | {'duplicate': True}
+        if row['revision'] != expected_revision:
+            raise CycleError('revision_conflict')
+        if row['state'] not in ('prepared', 'start_failed'):
+            raise CycleError('batch_not_startable')
+        target = store.db.execute('SELECT count(*) FROM cycle_bulk_candidate WHERE batch_id=?',
+                                  (batch_id,)).fetchone()[0]
+        if target <= 0 or target != store.db.execute('SELECT target FROM cycle_bulk WHERE id=?',
+                                                     (batch_id,)).fetchone()[0]:
+            raise CycleError('frozen_batch_incomplete')
+        if store._plan(store.db.execute('SELECT plan_id FROM cycle_bulk WHERE id=?',
+                                       (batch_id,)).fetchone()[0])['state'] != 'active':
+            raise CycleError('plan_paused')
+        store.db.execute("UPDATE cycle_bulk_freeze SET state='starting',revision=revision+1,authorized_at=?,"
+                         "stop_requested_at=NULL WHERE batch_id=?", (stamp, batch_id))
+        store.db.execute("UPDATE cycle_bulk SET state='starting' WHERE id=?", (batch_id,))
+        row = store.db.execute('SELECT * FROM cycle_bulk_freeze WHERE batch_id=?', (batch_id,)).fetchone()
+        return _batch_payload(store.db, row) | {'duplicate': False}
+
+
+def mark_batch_running(root, batch_id):
+    """Publish a successfully launched worker without spending another user-visible revision."""
+    with _store(Path(root)) as store, store.tx():
+        row = store.db.execute('SELECT * FROM cycle_bulk_freeze WHERE batch_id=?', (batch_id,)).fetchone()
+        if not row or row['state'] != 'starting':
+            raise CycleError('batch_not_starting')
+        store.db.execute("UPDATE cycle_bulk_freeze SET state='running' WHERE batch_id=?", (batch_id,))
+        store.db.execute("UPDATE cycle_bulk SET state='running' WHERE id=?", (batch_id,))
+        return _batch_payload(store.db, store.db.execute(
+            'SELECT * FROM cycle_bulk_freeze WHERE batch_id=?', (batch_id,)).fetchone())
+
+
+def mark_batch_start_failed(root, batch_id):
+    with _store(Path(root)) as store, store.tx():
+        store.db.execute("UPDATE cycle_bulk_freeze SET state='start_failed' WHERE batch_id=? "
+                         "AND state='starting'", (batch_id,))
+        store.db.execute("UPDATE cycle_bulk SET state='start_failed' WHERE id=? AND state='starting'", (batch_id,))
+
+
+def stop_batch(root, batch_id, expected_revision, *, now=None, clock=None):
+    batch_id = _identifier(batch_id, 'invalid_batch_id')
+    if type(expected_revision) is not int or expected_revision < 1:
+        raise CycleError('invalid_revision')
+    stamp = clock() if clock is not None else (now if now is not None else time.time())
+    with _store(Path(root)) as store, store.tx():
+        _require_freeze_schema(store)
+        row = store.db.execute('SELECT * FROM cycle_bulk_freeze WHERE batch_id=?', (batch_id,)).fetchone()
+        if not row:
+            raise CycleError('batch_missing')
+        if row['state'] in ('stop_requested', 'stopped') and row['revision'] == expected_revision + 1:
+            return _batch_payload(store.db, row) | {'duplicate': True}
+        if row['revision'] != expected_revision:
+            raise CycleError('revision_conflict')
+        if row['state'] in ('completed', 'completed_with_exceptions', 'waiting_reconciliation'):
+            raise CycleError('batch_not_stoppable')
+        state = 'stop_requested' if row['state'] in ('starting', 'running') else 'stopped'
+        store.db.execute('UPDATE cycle_bulk_freeze SET state=?,revision=revision+1,stop_requested_at=? '
+                         'WHERE batch_id=?', (state, stamp, batch_id))
+        store.db.execute('UPDATE cycle_bulk SET state=? WHERE id=?', (state, batch_id))
+        row = store.db.execute('SELECT * FROM cycle_bulk_freeze WHERE batch_id=?', (batch_id,)).fetchone()
+        return _batch_payload(store.db, row) | {'duplicate': False}
 
 
 def _store(root):

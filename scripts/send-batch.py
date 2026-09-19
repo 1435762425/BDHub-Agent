@@ -5,6 +5,9 @@
     python scripts/send-batch.py preview --count 600 --widen
     python scripts/send-batch.py preview --count 500 --window 09:00-24:00
     python scripts/send-batch.py status
+    python scripts/send-batch.py freeze --request-id <uuid> --expected-preview-hash <sha256>
+    python scripts/send-batch.py start --batch-id <id> --expected-revision 1 --confirmed
+    python scripts/send-batch.py stop --batch-id <id> --expected-revision 2
 
 `preview` **只读**：不落库、不碰平台。它算的就是"如果现在发这一批，会发给谁、发什么商品、为什么
 有人被跳过"。`--widen` 是**显式越界探测**：越过本地 24 小时 500 个新联系的保守闸门，去拿平台自己的
@@ -14,13 +17,16 @@
 """
 import argparse
 import json
+import subprocess
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(ROOT / 'scripts'))
-from lib.send_batch import capacity, preview, save_and_status, status  # noqa: E402
+from lib.second_cycle import CycleError  # noqa: E402
+from lib.send_batch import (freeze_batch, mark_batch_running, mark_batch_start_failed, preview,  # noqa: E402
+                            save_and_status, start_batch, status, stop_batch)
 
 
 def parse_window(raw):
@@ -35,11 +41,16 @@ def parse_window(raw):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action', choices=['preview', 'status', 'save'])
+    parser.add_argument('action', choices=['preview', 'status', 'save', 'freeze', 'start', 'stop'])
     parser.add_argument('--count', type=int, default=500)
     parser.add_argument('--widen', action='store_true', help='显式越过本地 24h 500 新联系闸门')
     parser.add_argument('--window', help='发送窗口，形如 09:00-24:00；不填＝不设窗口')
     parser.add_argument('--json', help='配置 JSON（save 用），如 {"count":500,"widen":true}')
+    parser.add_argument('--request-id')
+    parser.add_argument('--expected-preview-hash')
+    parser.add_argument('--batch-id')
+    parser.add_argument('--expected-revision', type=int)
+    parser.add_argument('--confirmed', action='store_true')
     args = parser.parse_args()
     try:
         window = parse_window(args.window)
@@ -51,10 +62,40 @@ def main():
                    if args.json and args.json.startswith('@') else json.loads(args.json or '{}'))
             print(json.dumps(save_and_status(ROOT, raw), ensure_ascii=False))
             return 0
+        if args.action == 'freeze':
+            batch = freeze_batch(ROOT, args.request_id, args.expected_preview_hash)
+            print(json.dumps(status(ROOT) | {'batch': batch}, ensure_ascii=False))
+            return 0
+        if args.action == 'start':
+            batch = start_batch(ROOT, args.batch_id, args.expected_revision, confirmed=args.confirmed)
+            if batch.get('duplicate') and batch['state'] in ('starting', 'running'):
+                print(json.dumps(status(ROOT) | {'batch': batch}, ensure_ascii=False))
+                return 0
+            log_dir = ROOT / 'var/bulk-second'
+            log_dir.mkdir(parents=True, exist_ok=True)
+            log = (log_dir / f"{args.batch_id}.worker.log").open('a', encoding='utf-8')
+            try:
+                process = subprocess.Popen(
+                    [sys.executable, str(ROOT / 'scripts/send-batch-worker.py'),
+                     '--batch-id', args.batch_id, '--lanes', '2'],
+                    cwd=ROOT, stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
+                    start_new_session=True, close_fds=True)
+                batch = mark_batch_running(ROOT, args.batch_id) | {'workerPid': process.pid}
+            except BaseException:
+                mark_batch_start_failed(ROOT, args.batch_id)
+                raise CycleError('send_worker_launch_failed') from None
+            finally:
+                log.close()
+            print(json.dumps(status(ROOT) | {'batch': batch}, ensure_ascii=False))
+            return 0
+        if args.action == 'stop':
+            batch = stop_batch(ROOT, args.batch_id, args.expected_revision)
+            print(json.dumps(status(ROOT) | {'batch': batch}, ensure_ascii=False))
+            return 0
         state = preview(ROOT, count=args.count, widen=args.widen, window=window)
         print(json.dumps(state, ensure_ascii=False))
         return 0
-    except ValueError as error:
+    except (CycleError, ValueError) as error:
         print(json.dumps({'error': str(error)}, ensure_ascii=False))
         return 2
 

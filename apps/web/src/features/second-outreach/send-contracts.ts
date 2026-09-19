@@ -19,11 +19,19 @@ export type SendSample={handle:string;pid:string;name:string;nameZh:string;nameS
  creatorPercent:string;publicPercent:string;campaignId:string;catalogSource:string;unlocked:boolean};
 export type SendCapacity={windowSeconds:number;limit:number;used:number;remaining:number};
 export type SendWindow={enabled:boolean;open:boolean;start:string|null;end:string|null};
+export type SendAuthorization={source:"current_user_request";scope:"pool_to_send";maxPeople:number;
+ requestedPeople:number;widenLocalGate:boolean;sendWindow:[string,string]|null;
+ institutionNewContactRollingCap:number;materialPolicy:"frozen-current-binding-v1";note:string};
 /** 台账里的卡与**当前计划**的佣金差距：差 1 点的那批是旧卡（`🚀 Incentivo Boost` 那套名字）。 */
 export type SendRateGap={same:number;lower:number;lowerByOne:number;higher:number;noCard:number;
  examples:{pid:string;listName:string;cardPercent:string;planPercent:string;campaignId:string}[]};
 export type SendPreview={available:boolean;requested:number;sendable:number;positions:number;
  readyAvailable:number;samples:SendSample[];nameQuality:Record<string,number>;
- skipped:Record<string,number>;rateGap:SendRateGap;capacity:SendCapacity|null;window:SendWindow;widen:boolean};
+ skipped:Record<string,number>;rateGap:SendRateGap;capacity:SendCapacity|null;window:SendWindow;widen:boolean;
+ previewHash:string|null;authorization:SendAuthorization|null};
+export type SendBatch={batchId:string;requestId:string;previewHash:string;revision:number;state:string;
+ target:number;counts:Record<string,number>;config:SendConfig;authorization:SendAuthorization;
+ authorizedAt:number|null;stopRequestedAt:number|null;createdAt:number;
+ runtime:{pid:number|null;seenAt:number;phase:string}|null;workerPid?:number;duplicate?:boolean};
 export type SendState={available:boolean;config:SendConfig;preview:SendPreview;
- pool:{counts:Record<string,number>;layers:Record<string,number>};configInvalid?:boolean};
+ pool:{counts:Record<string,number>;layers:Record<string,number>};batch:SendBatch|null;configInvalid?:boolean};

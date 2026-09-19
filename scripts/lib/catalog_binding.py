@@ -147,6 +147,33 @@ class CatalogBindings:
             "SELECT DISTINCT pid FROM catalog_current_binding WHERE market=? AND state=?",
             (market, ACTIVE))}
 
+    def mark_waiting_refresh(self, offer, *, reason, evidence_ref=None, now=None, market="it"):
+        """Remove one explicitly rejected material from the sendable projection, with audit evidence."""
+        row = self.active_for_offer(offer, market=market)
+        if not row:
+            return None
+        stamp = time.time() if now is None else now
+        payload = {"market": market, "catalogSource": row["catalog_source"], "pid": row["pid"],
+                   "campaignId": row["campaign_id"], "listId": row["list_id"],
+                   "state": "waiting_refresh", "reason": _text(reason, "catalog_binding_reason_invalid"),
+                   "evidenceRef": evidence_ref}
+        event_id = "catalog-binding-" + digest(payload)[:28]
+        def write():
+            self.db.execute("INSERT OR IGNORE INTO catalog_current_binding_event VALUES(?,?,?,?,?,?,?,?)",
+                            (event_id, market, row["catalog_source"], row["pid"], row["campaign_id"],
+                             "waiting_refresh", encoded(payload), stamp))
+            self.db.execute("UPDATE catalog_current_binding SET state='waiting_refresh',updated_at=? "
+                            "WHERE market=? AND catalog_source=? AND pid=? AND campaign_id=? "
+                            "AND list_id=? AND offer_fingerprint=?",
+                            (stamp, market, row["catalog_source"], row["pid"], row["campaign_id"],
+                             row["list_id"], row["offer_fingerprint"]))
+        if self.db.in_transaction:
+            write()
+        else:
+            with self.db:
+                write()
+        return self.get(market, row["catalog_source"], row["pid"], row["campaign_id"])
+
 
 def audit_existing(root, *, apply=False, now=None):
     """Recognize provably exact standard cards from verified local intents; never calls a platform."""

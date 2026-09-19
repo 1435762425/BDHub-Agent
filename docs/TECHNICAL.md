@@ -107,7 +107,7 @@ React 组件不能直接读写 SQLite、启动任意命令或实现资格规则�
 
 当前已由 `catalog_current_binding` 提供唯一前向绑定：普通旧卡只保留在准备/库存历史表，不再进入线索或发送；创建意图按商品方案、分佣规则和命名规则冻结，历史卡存在不再阻止补建标准卡。`scripts/backfill-current-bindings.py` 可以只读检查或从已核验意图中本地回填可证明完全一致的标准卡；回填不调用平台、不创建或删除链接。动态回填数量见当前交接页。
 
-目标刷新合同按来源只有两条：Campaign 每日来源刷新时一并核验对应 TapLink；全托已选商品的 TapLink 每周统一核验一次。最后一次成功结果持续生效，达人查询、组批和发送不另做远程预检；确认失效的链接进入清理并在删除后回读。新建后回读属于写入结果结算，不属于周期核验。当前发送实现仍会调用 `cycle_send_runtime.fresh_card()`，与目标合同不一致；本轮只更新业务文档和演示页，后端实施时应移除该发送前门禁，并把平台明确拒卡收敛为单 PID 等待刷新。
+刷新合同按来源只有两条：Campaign 每日来源刷新时一并核验对应 TapLink；全托已选商品的 TapLink 每周统一核验一次。最后一次成功结果持续生效，达人查询、组批和正式发送不另做远程预检；确认失效的链接进入清理并在删除后回读。新建后回读属于写入结果结算，不属于周期核验。冻结批次执行器只用本地 `catalog_current_binding` 校验冻结的 Offer 指纹与 `currentListId`，再用 `cycle_send_runtime.descriptor()` 构造发送材料；不调用 `fresh_card()`。若平台明确拒绝商品卡，仅将该 PID 的当前绑定转为 `waiting_refresh` 并继续其他 PID；结果未知仍整批停下核验。
 
 ### 5.3 线索与身份
 
@@ -131,17 +131,18 @@ React 组件不能直接读写 SQLite、启动任意命令或实现资格规则�
 | 模块 | 作用 |
 | --- | --- |
 | `lead_pool.py` | 按当前时间重算位置、达人冷却和状态分层 |
-| `send_batch.py` | 发送批次只读预检、容量、窗口和样例 |
+| `send_batch.py` | 发送预览指纹、不可变批次、revision 及 start/stop 控制 |
 | `cycle_review.py` | 候选复检、冻结与跳过原因 |
 | `cycle_delivery.py` | 发送意图、组件状态、平台信号和额度预留 |
 | `cycle_burst.py` / `cycle_executor.py` | 既有分批执行与外部调用协调 |
+| `send-batch-worker.py` | 只消费指定冻结批次、检查窗口/停止/unknown 和完成状态 |
 | `cycle_inbox.py` / `poll-cycle-inbox.py` | 只读收信水位、事件和待处理内容 |
 | `cycle_service.py` | 服务案件、事实、人工接管与处理结果 |
 | `cycle_stats.py` | 按北京时间聚合确认发送、回复和橱窗事件 |
 
-当前 `/api/send` 只支持 GET 状态和 POST 保存 `count/widen/window`，没有 start 路由。`scripts/send-batch.py` 只有 `preview/status/save`；真正执行桥尚未完成。
+`/api/send` 的 GET 只读状态；POST 只接受四种精确动作：保存设置、按 `expectedPreviewHash` 冻结、携带 `confirmed=true + expectedRevision` 启动、按 revision 停止。多一个字段即拒绝。冻结把完整达人×PID×Offer×`currentListId`、话术和顺序写入 `cycle_bulk_candidate`，同时兼容旧 `cycle_bulk/cycle_bulk_item` 状态；重复 `requestId` 幂等，预览变化返回冲突。窗口关闭不阻塞只读预览或冻结；start 后 worker 留在 `waiting_window`，到窗口内才允许 dispatch。只有 start 会启动 `send-batch-worker.py`，GET、save、freeze、构建和测试均不会唤醒执行器。
 
-`lead_pool.py` 与 `/api/lead-pool` 已使用 `bdhub.lead-pool.v2`：业务只投影 `sendable / waiting / inactive`，`sent` 单列历史；内部原因仍用于排障。达人排序和达人内部 PID 选择统一使用 `sourceRank → units DESC → pid ASC`，同一达人只有一个可发送槽位。发送预览按池子顺序复检；尚未接通的正式执行器仍需在冻结批次后完全消费该顺序，不能执行时重新挑选。
+`lead_pool.py` 与 `/api/lead-pool` 已使用 `bdhub.lead-pool.v2`：业务只投影 `sendable / waiting / inactive`，`sent` 单列历史；内部原因仍用于排障。达人排序和达人内部 PID 选择统一使用 `sourceRank → units DESC → pid ASC`，同一达人只有一个可发送槽位。发送预览按池子顺序复检；冻结批次执行器按 `position_order` 消费，不再执行时重新挑选或补满。
 
 ### 5.5 Agent 与语义能力
 
@@ -176,9 +177,9 @@ React 组件不能直接读写 SQLite、启动任意命令或实现资格规则�
 | `var/it-conversations.sqlite` | IT/ACC6 会话索引 |
 | `var/matching*.sqlite` | 独立匹配研究数据集和结果 |
 
-新增当前投影：`catalog-links.sqlite.catalog_current_binding*` 保存唯一标准卡；`second-cycle.sqlite.lead_query_*` 保存每 PID 当前 20 条范围，`source_edge_index` 为历史证据提供规范化索引。原准备记录、page receipt 和 `source_edge` 都不删除。
+新增当前投影：`catalog-links.sqlite.catalog_current_binding*` 保存唯一标准卡；`second-cycle.sqlite.lead_query_*` 保存每 PID 当前 20 条范围，`source_edge_index` 为历史证据提供规范化索引；`cycle_bulk_freeze/cycle_bulk_candidate` 保存用户确认的不可变发送范围、revision 与完整材料。原准备记录、page receipt、`source_edge` 和旧批次都不删除。
 
-表结构当前由各 `scripts/lib/*.py` 的 schema 初始化维护，还没有统一 migration registry。新增表/字段必须提供幂等升级和旧库兼容测试，不能只靠删除本地 DB 重建。
+`scripts/lib/schema_migrations.py` 当前以增量 registry 管理 `catalog-links.sqlite` 和 `second-cycle.sqlite` 的本轮新投影；其他历史表仍由各领域模块初始化。新增表/字段必须继续提供幂等升级和旧库兼容测试，不能靠删除本地 DB 重建。
 
 ### 6.2 状态原则
 
@@ -249,7 +250,7 @@ pending → started/submitted → confirmed
 | `/api/leads-queue` | Kalodata 查询队列与运行 |
 | `/api/identity-queue` | 达人级 OECID 分类与补齐 |
 | `/api/lead-pool` | 发送池分层 |
-| `/api/send` | 发送预检和设置保存；当前无 start |
+| `/api/send` | 发送预览、设置保存、冻结、明确 start/stop 和批次状态 |
 | `/api/inbox` | 收信 worker、今日/历史统计和待人工 |
 | `/api/jobs` | 手动作业与定时意向 |
 
@@ -322,6 +323,17 @@ PYTHONDONTWRITEBYTECODE=1 \
 ```
 
 手动作业统一优先走页面或 `scripts/job-run.py`，因为它保存配置、检查同名进程并在安全点停止。不要同时另开同一底层 CLI 绕过作业锁。
+
+冻结发送的 CLI 仅用于诊断或页面 bridge；真实 start 仍应从页面明确点击：
+
+```bash
+python scripts/send-batch.py status
+python scripts/send-batch.py freeze --request-id <id> --expected-preview-hash <sha256>
+python scripts/send-batch.py start --batch-id <id> --expected-revision <n> --confirmed
+python scripts/send-batch.py stop --batch-id <id> --expected-revision <n>
+```
+
+`freeze` 只写本机 SQLite；`start` 会启动真实发送 worker，不能用于只读检查、构建或部署验收。
 
 ### 数据迁移与本地回填
 
@@ -404,8 +416,8 @@ PYTHONDONTWRITEBYTECODE=1 \
 - `batch-tasks.sqlite` 长事务影响并发读取；需独立完成事务/WAL 设计与验证。
 - Python 测试仍有未关闭 SQLite connection 的 `ResourceWarning`。
 - Web Node 测试存在 module type warning；Next.js 构建有上游 deprecation warning。
-- 发送预检尚未接持久批次、start/stop 和执行器。
-- 线索、身份和发送池读侧已经切到当前 20 条、统一排序和三结果投影；正式 `cycle_bulk` 执行仍需冻结完整位置并禁止运行时重新选品。
+- 冻结批次、start/stop 和 frozen-v2 执行桥已接通；账号级平台日额度的原生信号仍未取得，不能用本地 500 闸门冒充。
+- 旧 legacy-only `cycle_bulk` 仍保留旧执行兼容路径；新 `/api/send` 只创建 frozen-v2 批次。
 - 回复链仍是 60 秒 debounce、事实工具和旧分类合同，尚未迁移到事件级上下文、五动作、固定模板和 provider adapter。
 - 本机 `var/` 缺正式备份、恢复和跨机器迁移方案。
 - 新项目仍依赖旧 Python 环境与部分协议层；最终需要独立依赖和凭据管理。
