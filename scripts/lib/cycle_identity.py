@@ -18,7 +18,20 @@ class IdentityBridge:
   with self.store.tx():
    if self.store._plan(plan)['market']!='it':raise CycleError('identity_market_not_enabled')
    if self.store._plan(plan)['state']!='active':raise CycleError('plan_paused')
-   rows=self.store.db.execute("SELECT e.source_id,e.payload FROM source_edge e LEFT JOIN cycle_identity_handoff h USING(plan_id,source_id) WHERE e.plan_id=? AND h.source_id IS NULL AND json_extract(e.payload,'$.sourceKind')='kalodata_http' AND json_extract(e.payload,'$.creatorId') IS NULL AND (? IS NULL OR e.source_id IN (SELECT value FROM json_each(?))) ORDER BY e.source_id LIMIT 500",(plan,encoded(source_ids) if source_ids is not None else None,encoded(source_ids) if source_ids is not None else None)).fetchall()
+   tables={r[0] for r in self.store.db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+   current={'lead_query_head','lead_query_selection'}<=tables and self.store.db.execute('SELECT 1 FROM lead_query_head WHERE plan_id=? LIMIT 1',(plan,)).fetchone()
+   sql="""SELECT e.source_id,e.payload FROM lead_query_head q
+    JOIN lead_query_selection s ON s.query_id=q.query_id
+    JOIN source_edge e ON e.plan_id=q.plan_id AND e.source_id=s.source_id
+    LEFT JOIN cycle_identity_handoff h ON h.plan_id=e.plan_id AND h.source_id=e.source_id
+    WHERE e.plan_id=? AND h.source_id IS NULL AND json_extract(e.payload,'$.creatorId') IS NULL
+    AND (? IS NULL OR e.source_id IN (SELECT value FROM json_each(?)))
+    ORDER BY s.source_rank,e.source_id LIMIT 500""" if current else """SELECT e.source_id,e.payload FROM source_edge e
+    LEFT JOIN cycle_identity_handoff h ON h.plan_id=e.plan_id AND h.source_id=e.source_id
+    WHERE e.plan_id=? AND h.source_id IS NULL AND json_extract(e.payload,'$.sourceKind')='kalodata_http'
+    AND json_extract(e.payload,'$.creatorId') IS NULL
+    AND (? IS NULL OR e.source_id IN (SELECT value FROM json_each(?))) ORDER BY e.source_id LIMIT 500"""
+   rows=self.store.db.execute(sql,(plan,encoded(source_ids) if source_ids is not None else None,encoded(source_ids) if source_ids is not None else None)).fetchall()
    if not rows:return None
    edges=[{'sourceId':r['source_id'],'handle':json.loads(r['payload'])['sourceHandle']} for r in rows]
    payload={'edges':edges,'handles':sorted(set(e['handle'] for e in edges))};oid='cycle-identity-'+digest([plan,payload])[:32]

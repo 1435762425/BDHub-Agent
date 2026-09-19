@@ -3,7 +3,7 @@
   "agencyMinPoints": "1",
   "agencyPreferredPoints": "2",
   "newCreatorMinBoostPoints": "1",
-  "preserveExistingLinks": true,
+  "preserveExistingLinks": false,
   "oldCreatorMustExceedPublic": true,
   "oldLinkOrder": ["creatorCommissionDescending", "previouslyUsed"]
 }

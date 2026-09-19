@@ -7,7 +7,7 @@ import type {SendController} from "./useSendBatch";
  * 发送池与发送。
  *
  * 池位＝达人×商品，冷却按达人算。这张卡按**四个问题**排：
- *   ① 现在能不能发（窗口、额度、池子六层）
+ *   ① 现在能不能发（窗口、额度、三种业务结果）
  *   ② 这一批发给谁、发什么话（真实话术样例）
  *   ③ 发不了的是为什么（三种性质完全不同的卡点）
  *   ④ 这一批怎么定（规模、窗口、越界）
@@ -18,6 +18,9 @@ import type {SendController} from "./useSendBatch";
  * 说成要动平台的活，也把真该发的人挡在外面。
  */
 const BLOCKERS:Record<string,{label:string;detail:string;tone?:"warning"|"neutral"}> = {
+ standard_link_missing:{label:"等待当前标准链接",detail:"历史卡不参与发送；需要按统一分佣和命名规则确认或创建 currentListId。",tone:"warning"},
+ standard_link_terms_changed:{label:"标准链接与当前方案不一致",detail:"商品方案已经变化，需要重新生成当前标准链接；旧卡继续保留历史。",tone:"warning"},
+ standard_link_unreadable:{label:"暂时无法读取标准链接台账",detail:"保留位置，等待台账恢复；不使用历史卡兜底。",tone:"warning"},
  // 卡拿不到时必须分清三种完全不同的事：**读一次就有** ≠ **要平台写入** ≠ **台账里根本没这个商品**。
  // 混成一个"备链缺口"会把只读的事说成平台写入——用户就是被这个误导的。
  card_not_read:{label:"台账没存下卡",detail:"这个商品在平台上本来就有链接（有 OECID 的线索就是这么来的），但台账里这一行没有可定位的卡。补一次只读复读就有——不需要建链、不写平台。",tone:"warning"},
@@ -68,15 +71,9 @@ export default function SendBatchPanel({controller}:{controller:SendController})
   : outsideWindow>0
    ? `其中 ${number(outsideWindow)} 条要等到窗口内才发`
    : `池子里只有 ${number(preview.sendable)} 条过得了复检`;
- const rereadGap=(preview.skipped.card_not_read??0)+(preview.skipped.card_unverified??0)+(preview.skipped.missing_card??0);
- const rateGap=preview.skipped.card_rate_changed??0;
- const linkGap=(preview.skipped.no_card_needs_link??0)+(preview.skipped.card_campaign_changed??0)+(preview.skipped.no_link_in_ledger??0);
  // 池子口径的"可发位置"（不在冷却/没被挡/有 OECID）**不等于**过完卡检真能发的数。
  // 两个数都要显示，并且相等关系要写出来：positions = passable + 真卡点。
- const blocked=rereadGap+rateGap+linkGap+(preview.skipped.offer_not_in_current_catalog??0)
-  +(preview.skipped.relationship_blocked??0)+(preview.skipped.current_identity_missing??0)
-  +(preview.skipped.marketing_cooldown??0)+(preview.skipped.delivery_already_exists??0)
-  +(preview.skipped.duplicate_creator??0)+(preview.skipped.missing_short_name??0);
+ const blocked=blockers.reduce((sum,[,value])=>sum+value,0);
  const passable=Math.max(0,preview.positions-blocked);
  // 卡点的性质必须分开报：台账没存下卡（复读就好） ≠ 卡佣金不一致（业务决定） ≠ 平台上没有卡（平台写入）。
  const names=Object.entries(preview.nameQuality);
@@ -89,16 +86,15 @@ export default function SendBatchPanel({controller}:{controller:SendController})
   <div className="space-y-5 p-5">
 
    {/* ① 现在能不能发 */}
-   <Step index="1" title="现在能不能发" hint="窗口、额度、池子六层。这一层只读，不碰平台。"/>
+   <Step index="1" title="现在能不能发" hint="窗口、额度和三种业务结果。这一层只读，不碰平台。"/>
    <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-    <StatTile label="可发位置" value={layers.ready??preview.readyAvailable} hint="不在冷却、关系没被挡、有 OECID" brand/>
-    <StatTile label="池中等待" value={layers.queued??0} hint="同一达人的其它商品排在后面；一条发完自动上位"/>
-    <StatTile label="冷却中" value={layers.cooling??0} hint="按达人算（已解锁 24h / 未解锁 48h），到点自动回池"/>
-    <StatTile label="已发送" value={layers.sent??0} hint="发出去过的达人×商品，记录保留不删"/>
+    <StatTile label="可发送" value={layers.ready??preview.readyAvailable} hint="每位达人一个 sourceRank 最优位置" brand/>
+    <StatTile label="等待中" value={(layers.queued??0)+(layers.cooling??0)+(layers.awaiting_reply??0)} hint="等轮次、冷却或达人问题处理"/>
+    <StatTile label="暂不参与" value={(layers.excluded??0)+(layers.product_inactive??0)} hint="商品当前不合格或明确排除"/>
+    <StatTile label="已发送历史" value={layers.sent??0} hint="历史结果，不是池状态"/>
    </div>
    <div className="flex flex-wrap gap-x-6 gap-y-2 text-sm text-gray-600 dark:text-gray-300">
-    <span>等达人回复 <strong>{number(layers.awaiting_reply)}</strong>（等人，不是等时间）</span>
-    <span>已排除 <strong>{number(layers.excluded)}</strong></span>
+    <span>等待原因：同达人其他商品 <strong>{number(layers.queued)}</strong> · 冷却 <strong>{number(layers.cooling)}</strong> · 达人问题 <strong>{number(layers.awaiting_reply)}</strong></span>
     <span>近 24 小时新联系 <strong>{number(preview.capacity?.used)}</strong> / {number(preview.capacity?.limit)}（还剩 {number(preview.capacity?.remaining)}）</span>
     <span>发送窗口 <strong>{preview.window.enabled?`${preview.window.start}\u2013${preview.window.end}`:"没启用"}</strong>（北京时间）</span>
    </div>
@@ -147,36 +143,7 @@ export default function SendBatchPanel({controller}:{controller:SendController})
      另外 {deferred.map(([reason,value])=>`${reason==="beyond_requested_size"?"超出这一批的规模":reason==="local_capacity_reached"?"超出 24 小时本地额度":"还没到窗口"} ${number(value)} 条`).join("、")}——
      这些不是卡点，池子里留着，下一批或换个规模就能发。
     </p>}
-    {(rereadGap+rateGap+linkGap)>0&&<div className="mt-3"><Notice tone="warning">
-     <p>卡点分成<strong>三种性质完全不同的</strong>事，处理它们要花的代价完全不同：</p>
-     <ul className="mt-1 list-disc space-y-1 pl-5">
-      {rereadGap>0&&<li><strong>台账没存下卡 {number(rereadGap)}</strong>：商品在平台上本来就有链接（不然线索根本查不出来），缺一次<strong>只读复读</strong>。</li>}
-      {rateGap>0&&<li><strong>卡的佣金与计划不一致 {number(rateGap)}</strong>：旧卡比计划低 1 点。要么按卡上的佣金发（不写平台），要么重建链——<strong>这是业务决定</strong>，见下面那一块。</li>}
-      {linkGap>0&&<li><strong>平台上没有卡 {number(linkGap)}</strong>：抽样问过发送用的那个卡搜索，有卡的是 0 个。这一档才是真·<strong>建链缺口（平台写入）</strong>。</li>}
-     </ul>
-    </Notice></div>}
    </div>
-
-   {/* 卡的佣金与当前计划：旧卡比计划低 1 点，这是**业务决定**，不能由代码替用户选。 */}
-   {(preview.rateGap.lower+preview.rateGap.higher>0||preview.rateGap.same>0)&&<div className="rounded-xl border border-warning-200 p-4 dark:border-warning-900">
-    <p className="text-sm font-medium text-gray-700 dark:text-gray-200">台账里的卡，佣金与当前计划一致吗</p>
-    <div className="mt-2 flex flex-wrap gap-x-6 gap-y-1 text-sm text-gray-600 dark:text-gray-300">
-     <span>一致 <strong>{number(preview.rateGap.same)}</strong>（这些就能发）</span>
-     <span className={preview.rateGap.lower>0?"text-warning-600 dark:text-warning-400":""}>卡上更低 <strong>{number(preview.rateGap.lower)}</strong>{preview.rateGap.lowerByOne>0&&<span className="text-xs">（其中低 1 点 {number(preview.rateGap.lowerByOne)}）</span>}</span>
-     {preview.rateGap.higher>0&&<span>卡上更高 <strong>{number(preview.rateGap.higher)}</strong></span>}
-     <span>台账里还没卡 <strong>{number(preview.rateGap.noCard)}</strong></span>
-    </div>
-    {preview.rateGap.examples.length>0&&<ul className="mt-2 space-y-1 text-xs leading-5 text-gray-500">
-     {preview.rateGap.examples.map(row=><li key={row.pid}>{row.listName||"（没有卡名）"}：卡上 <strong>{row.cardPercent}%</strong> / 计划 <strong>{row.planPercent}%</strong></li>)}
-    </ul>}
-    {preview.rateGap.lower>0&&<Notice tone="warning">
-     这些是<strong>旧卡</strong>（卡名多为 <code className="rounded bg-white/60 px-1 dark:bg-black/20">🚀 Incentivo Boost disponibile | BJN</code>），
-     达人佣金比现在的计划<strong>低 1 个点</strong>。发送时读卡那一步要求「卡上的佣金 == 我们声明的佣金」，
-     所以声明计划佣金、卡上却是旧数，会被它挡下（实测：同一个商品在发送读卡端返回 12%，计划是 13%）。
-     两条路，得你定：<strong>①按卡上的佣金发</strong>（话术里说卡上那个数，不写平台，立刻可发）；
-     <strong>②按计划的佣金重建链</strong>（话术说计划那个数，属于平台写入）。在你定之前，这一批不会动它们。
-    </Notice>}
-   </div>}
 
    {/* 短名质量：卡点里的"缺短名"已经打通，这里报的是名字从哪来。 */}
    <div className="rounded-xl border border-gray-200 p-4 dark:border-gray-800">

@@ -4,7 +4,9 @@ from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT/'scripts'));sys.path.insert(0,str(ROOT.parent/'01-BDSystem-V2'))
 from lib.catalog_prepare import (CatalogPreparation,assess_existing,choose_existing_batch,new_offer,classify_pid,search_cards,card_facts,rate_text,CARD,MEMBERS,TaplinkInventory,new_offer,reconcile_from_inventory)
-from lib.catalog_links import CatalogLinks
+from lib.catalog_links import CatalogLinks,policy_fingerprint
+from lib.catalog_binding import CatalogBindings
+from lib.schema_migrations import apply_database
 from lib.second_cycle import digest
 POLICY=json.loads((ROOT/'config/catalog-link-policy.json').read_text())
 
@@ -13,6 +15,7 @@ class BatchLinkTests(unittest.TestCase):
         self.tmp=tempfile.TemporaryDirectory();self.root=Path(self.tmp.name)
         (self.root/'var').mkdir();(self.root/'config').mkdir()
         (self.root/'config/catalog-link-policy.json').write_text(json.dumps(POLICY))
+        sqlite3.connect(self.root/'var/catalog-links.sqlite').close();apply_database(self.root,'catalog-links')
         self.prep=CatalogPreparation(self.root)
         self.scope={'market':'it','account':'acc9','institution':'bjn-local-research','sourceRun':'run-1','route':'selected'}
         self.run=self.prep.open_run(self.scope)
@@ -34,9 +37,14 @@ class BatchLinkTests(unittest.TestCase):
             return {'code':0,'data':{'total_num':len(rows),'campaign_products':rows}},digest(rows)
         return read
     def verified_card(self,pid,cid,list_id='8650756273145355030',creator='1300',public='1200'):
-        return {'state':'verified_read_only','pid':pid,'verifiedListName':'BJN Quaderno 13.35% abcdef','listName':'BJN Quaderno 13.35% abcdef','campaignName':'x',
+        pct=format(Decimal(creator)/100,'f');name=f'🔥 BJN Quaderno {pct}% abcdef'
+        return {'state':'verified_read_only','pid':pid,'verifiedListName':name,'listName':name,'campaignName':'x',
                 'stock':None,'stockRequired':False,'publicPercent':format(Decimal(public)/100,'f'),'listId':list_id,'wireCampaignId':'0','sourceCampaignId':cid,
                 'creatorPercent':format(Decimal(creator)/100,'f'),'checkedAt':1.0,'evidenceRefs':['a','b'],'executionAllowed':False}
+    def promote(self,spec,card):
+        bindings=CatalogBindings(self.root)
+        try:return bindings.promote(spec,card)
+        finally:bindings.close()
     # ---- queue behaviour ---------------------------------------------------------
     def test_seed_is_idempotent_and_read_requires_complete_search(self):
         self.seed('1','2');self.seed('1','2');self.assertEqual(self.prep.summary(self.run)['total'],1)
@@ -56,12 +64,28 @@ class BatchLinkTests(unittest.TestCase):
         again=self.prep.claim_read(self.run,now=1011,lease=10)
         self.assertEqual([i['pid'] for i in again],['1'])
     # ---- reuse rules -------------------------------------------------------------
-    def test_existing_valid_old_link_is_reused_and_missing_is_created_only_when_absent(self):
+    def test_existing_valid_old_link_is_historical_and_standard_is_still_missing(self):
         self.seed('1','2')
         members={'8650756273145355030':[{'product_id':'1','campaign_id':'2','creator_commission_percent':'1335','plan_commission_percent':'1200','product_status':2,'unavailable_type':None,'stock':500}]}
         cards={'1':[('8650756273145355030','0',[{'product_id':'1','creator_commission_percent':'1335'}])]}
         out=classify_pid('1',self.make_offer('1','2'),self.reader(cards,members),POLICY)
-        self.assertEqual(out['state'],'reuse');self.assertEqual(out['card']['listId'],'8650756273145355030')
+        self.assertEqual(out['state'],'missing');self.assertEqual(out['reuse'][0]['listId'],'8650756273145355030')
+    def test_exact_standard_link_is_promoted_without_creating_another(self):
+        offer=self.make_offer('1','2');spec=self.spec('1','2',offer['creatorPercent'])
+        member={'product_id':'1','campaign_id':'2','creator_commission_percent':'1300',
+                'plan_commission_percent':'1200','product_status':2,'unavailable_type':None,'stock':500}
+        def read(path,extra):
+            if path==CARD:
+                row={'product_list_id':'99','campaign_id':'0','product_list_name':spec['listName'],
+                     'campaign_products':[{'product_id':'1','creator_commission_percent':'1300'}]}
+                return {'code':0,'data':{'total':1,'list':[row]}},'card-proof'
+            return {'code':0,'data':{'total_num':1,'campaign_products':[member]}},'member-proof'
+        outcome=classify_pid('1',offer,read,POLICY,spec)
+        self.assertEqual(outcome['state'],'standard')
+        self.seed('1','2');self.prep.claim_read(self.run,limit=1)
+        outcome['listing']=self.plan_listing();self.prep.apply_read(self.run,'1','2','selected',outcome,now=10)
+        self.assertEqual(self.prep.item(self.run,'1','2')['state'],'ready')
+        self.assertEqual(self.prep.verified_link('1','2','selected')['listId'],'99')
     def test_creator_not_above_public_or_agency_below_one_point_is_not_reused(self):
         # Plan is 17%/12%: creator must exceed 12 and the agency must keep at least one point.
         cases=[({'creator_commission_percent':'1200'},'link_creator_not_above_public'),
@@ -69,7 +93,7 @@ class BatchLinkTests(unittest.TestCase):
         for member,reason in cases:
             base={'product_id':'1','campaign_id':'2','plan_commission_percent':'1200','product_status':2,'unavailable_type':None,'stock':500}|member
             out=classify_pid('1',self.make_offer('1','2',total='1700',public='1200'),self.reader({'1':[('99','0',[{'product_id':'1','creator_commission_percent':'1200'}])]},{'99':[base]}),POLICY)
-            self.assertEqual(out['state'],'review');self.assertEqual(out['reuse'][0]['reason'],reason)
+            self.assertEqual(out['state'],'missing');self.assertEqual(out['reuse'][0]['reason'],reason)
     def test_unavailable_or_non_two_status_link_is_not_reused(self):
         for member,reason in [({'product_status':3},'link_not_platform_valid'),({'unavailable_type':5,'product_status':2},'link_product_not_eligible')]:
             base={'product_id':'1','campaign_id':'2','creator_commission_percent':'1335','plan_commission_percent':'1200','product_status':2,'unavailable_type':None,'stock':500}|member
@@ -85,15 +109,15 @@ class BatchLinkTests(unittest.TestCase):
     def test_cards_from_another_campaign_never_authorize_a_new_link(self):
         self.seed('1','2')
         out=classify_pid('1',self.make_offer('1','2'),self.reader({'1':[('77','999',[{'product_id':'1'}])]}),POLICY)
-        self.assertEqual(out['state'],'review');self.assertEqual(out['blocker'],'existing_links_other_campaign')
+        self.assertEqual(out['state'],'missing')
     def test_multi_campaign_pid_binds_one_plan_and_keeps_bands_apart(self):
         a=self.make_offer('1','2',total='1500',public='1200');b=self.make_offer('1','3',total='1700',public='1200')
         self.assertEqual((a['creatorPercent'],b['creatorPercent']),('13','15'))
         members={'50':[{'product_id':'1','campaign_id':'3','creator_commission_percent':'1500','plan_commission_percent':'1200','product_status':2,'unavailable_type':None,'stock':500}]}
         out=classify_pid('1',b,self.reader({'1':[('50','0',[{'product_id':'1'}])]},members),POLICY)
-        self.assertEqual(out['state'],'reuse');self.assertEqual(out['card']['campaignId'],'3')
+        self.assertEqual(out['state'],'missing')
         other=classify_pid('1',a,self.reader({'1':[('50','0',[{'product_id':'1'}])]},members),POLICY)
-        self.assertEqual(other['state'],'review')
+        self.assertEqual(other['state'],'missing')
     # ---- frozen intent and durability -------------------------------------------
     def test_freeze_creates_one_intent_and_replay_is_idempotent(self):
         self.seed('1','2');self.prep.claim_read(self.run,limit=5)
@@ -108,6 +132,7 @@ class BatchLinkTests(unittest.TestCase):
         self.seed(pid,cid);self.prep.claim_read(self.run,limit=5)
         self.prep.apply_read(self.run,pid,cid,'selected',{'state':'missing','listing':self.plan_listing()})
         card=self.verified_card(pid,cid)
+        self.promote(self.spec(pid,cid,self.offer['creatorPercent']),card)
         self.prep.mark_progress(self.run,pid,cid,'selected','ready',card=card)
         self.assertEqual(self.prep.offer_status(self.offer)['state'],'ready')
         self.assertEqual(self.prep.verified_link(pid,cid,'selected')['listId'],card['listId'])
@@ -131,7 +156,8 @@ class BatchLinkTests(unittest.TestCase):
         for pid in ('1','2'):self.seed(pid,'2')
         self.prep.claim_read(self.run,limit=5)
         for pid in ('1','2'):self.prep.apply_read(self.run,pid,'2','selected',{'state':'missing','listing':{'product_id':pid}})
-        self.prep.mark_progress(self.run,'1','2','selected','ready',card=self.verified_card('1','2'))
+        card=self.verified_card('1','2');self.promote(self.spec('1','2','13'),card)
+        self.prep.mark_progress(self.run,'1','2','selected','ready',card=card)
         s=self.prep.summary(self.run)
         self.assertEqual((s['verifiedLinkCount'],s['verifiedPidCount'],s['pendingCount']),(1,1,1))
     def test_legacy_creator_cannot_create_for_a_catalog_owned_pid(self):
@@ -152,10 +178,11 @@ class BatchLinkTests(unittest.TestCase):
     def spec(self,pid,cid,pct):
         from lib.catalog_prepare import rate_text
         from bdhub.send.taplink.protocol import create_payload
-        name='BJN Quaderno '+pct+'% abcdef'
+        name='🔥 BJN Quaderno '+pct+'% abcdef'
         return {'market':'it','account':'acc9','route':'selected','purpose':'catalog_batch_link','sourceRun':self.run,'pid':pid,'campaignId':cid,
-                'creatorPercent':pct,'listName':name,'shortName':'Quaderno','policyFingerprint':digest(POLICY),'searchTotal':0,
-                'offer':{'pid':pid,'campaignId':cid,'creatorPercent':pct,'publicPercent':'12','totalPercent':'15','agencyPercent':'2','title':'Quaderno'},
+                'creatorPercent':pct,'listName':name,'shortName':'Quaderno','policyVersion':POLICY['version'],'policyFingerprint':policy_fingerprint(POLICY),'searchTotal':0,'standardSearchComplete':True,
+                'namingVersion':'link-naming-v1','namingFingerprint':'a'*64,
+                'offer':{'pid':pid,'campaignId':cid,'catalogSource':'selected','creatorPercent':pct,'publicPercent':'12','totalPercent':'15','agencyPercent':'2','title':'Quaderno'},
                 'payload':create_payload(pid=pid,campaign_id=cid,creator_pct=pct,name=name,route='selected')}
 
 class ScanListsShapeTests(unittest.TestCase):
@@ -216,11 +243,10 @@ class CampaignChannelTests(unittest.TestCase):
                           source='1',campaign_id=self.CID)
             inv.save_members(self.LID,'BJN x 11% abcdef',[self.member(self.LID,None)])
         finally:inv.close()
-        self.assertEqual(self.judge(),{'reuse':1})
-        card=json.loads(self.prep.db.execute("SELECT payload FROM catalog_prepare_readback WHERE run_id=? AND kind='reusedLink'",(self.run,)).fetchone()[0])
-        # 复用卡片的线上活动号必须是非全托自己的活动，不能写成全托的 '0'。
-        self.assertEqual((card['wireCampaignId'],card['sourceCampaignId']),(self.CID,self.CID))
-        self.assertTrue(card['reused'])
+        self.assertEqual(self.judge(),{'missing':1})
+        self.assertIsNone(self.prep.db.execute(
+            "SELECT payload FROM catalog_prepare_readback WHERE run_id=? AND kind='verifiedLink'",
+            (self.run,)).fetchone())
     def test_a_card_from_another_campaign_is_never_reused(self):
         inv=TaplinkInventory(self.root)
         try:
@@ -228,9 +254,7 @@ class CampaignChannelTests(unittest.TestCase):
                           source='1',campaign_id='7683821197913540374')
             inv.save_members(self.LID,'BJN x 11% abcdef',[self.member(self.LID,None)])
         finally:inv.close()
-        self.assertEqual(self.judge(),{'review':1})
-        self.assertEqual(self.prep.db.execute('SELECT blocker FROM catalog_prepare_item WHERE run_id=?',(self.run,)).fetchone()[0],
-                         'existing_links_other_campaign')
+        self.assertEqual(self.judge(),{'missing':1})
     def test_a_selected_card_does_not_satisfy_a_campaign_plan(self):
         """全托卡是非全托的**另一个平台对象**，不能拿来当非全托的链接。"""
         inv=TaplinkInventory(self.root)
@@ -239,6 +263,6 @@ class CampaignChannelTests(unittest.TestCase):
                           source='2',campaign_id='0')
             inv.save_members(self.LID,'BJN x 11% abcdef',[self.member(self.LID,self.CID)])
         finally:inv.close()
-        self.assertEqual(self.judge(),{'review':1})
+        self.assertEqual(self.judge(),{'missing':1})
 
 if __name__=='__main__':unittest.main()

@@ -5,11 +5,13 @@ from datetime import datetime,timedelta
 from zoneinfo import ZoneInfo
 from lib.second_cycle import CycleError,assess_offer,digest,encoded
 from lib.cycle_kalodata import PATH,parse_page
+from lib.lead_selection import select_top_leads
 
 SCHEMA='''
 CREATE TABLE IF NOT EXISTS batch_source_plan(task_id TEXT PRIMARY KEY,window_start TEXT NOT NULL,window_end TEXT NOT NULL,expected_per_pid INTEGER NOT NULL,max_pages INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS batch_source_job(id TEXT PRIMARY KEY,task_id TEXT NOT NULL,pid TEXT NOT NULL,offer TEXT NOT NULL,state TEXT NOT NULL DEFAULT 'queued',cursor TEXT NOT NULL DEFAULT '',fence INTEGER NOT NULL DEFAULT 0,lease_until REAL NOT NULL DEFAULT 0,error TEXT,next_attempt REAL NOT NULL DEFAULT 0,UNIQUE(task_id,pid));
 CREATE TABLE IF NOT EXISTS batch_source_page(job_id TEXT NOT NULL,cursor TEXT NOT NULL,payload TEXT NOT NULL,imported INTEGER NOT NULL DEFAULT 0,PRIMARY KEY(job_id,cursor));
+CREATE TABLE IF NOT EXISTS batch_source_selection(job_id TEXT NOT NULL,source_id TEXT NOT NULL,payload TEXT NOT NULL,PRIMARY KEY(job_id,source_id));
 CREATE TABLE IF NOT EXISTS batch_source_identity(task_id TEXT NOT NULL,outbox_id TEXT NOT NULL,PRIMARY KEY(task_id,outbox_id));
 '''
 AUTHORIZED='full_preparation_no_messages'
@@ -89,14 +91,16 @@ class BatchSources:
    if not self.permitted(id):
     with self.tasks.tx():self._owned(claim);self.db.execute("UPDATE batch_source_job SET state='queued',lease_until=0 WHERE id=?",(claim['id'],))
     return {'status':'paused_receipt_saved','networkRequests':calls}
-   # Receipts survive a process failure between the two independent local stores.
-   prior={e['sourceId'] for r in self.db.execute('SELECT payload FROM batch_source_page WHERE job_id=? AND cursor<>?',(claim['id'],claim['cursor'])) for e in json.loads(r[0])['edges']}
-   edges=[e for e in receipt['edges'] if e['sourceId'] not in prior]
-   import_edges(edges)
+   # Publish only after the complete bounded query is present. Raw page receipts remain intact.
+   receipts=[json.loads(r[0]) for r in self.db.execute('SELECT payload FROM batch_source_page WHERE job_id=? ORDER BY rowid',(claim['id'],))]
+   edges=select_top_leads([e for page in receipts for e in page['edges']],20) if receipt['done'] else []
+   if receipt['done']:import_edges(edges)
    with self.tasks.tx():
     self._owned(claim)
-    self.db.execute('UPDATE batch_source_page SET imported=1 WHERE job_id=? AND cursor=?',(claim['id'],claim['cursor']))
-    self.db.execute('UPDATE batch_source_job SET state=?,cursor=?,lease_until=0,error=NULL WHERE id=?',('awaiting_identity' if receipt['done'] and (edges or prior) else 'completed' if receipt['done'] else 'queued',receipt['nextCursor'],claim['id']))
+    if receipt['done']:
+     for edge in edges:self.db.execute('INSERT OR IGNORE INTO batch_source_selection VALUES(?,?,?)',(claim['id'],edge['sourceId'],encoded(edge)))
+     self.db.execute('UPDATE batch_source_page SET imported=1 WHERE job_id=?',(claim['id'],))
+    self.db.execute('UPDATE batch_source_job SET state=?,cursor=?,lease_until=0,error=NULL WHERE id=?',('awaiting_identity' if receipt['done'] and edges else 'completed' if receipt['done'] else 'queued',receipt['nextCursor'],claim['id']))
    return {'status':'page_saved','networkRequests':calls,'addedEdges':len(edges),'coverage':receipt['coverage']}
   except Exception as error:
    code=str(error) if isinstance(error,CycleError) else 'kalodata_read_failed'
@@ -108,9 +112,9 @@ class BatchSources:
      self.db.execute('UPDATE batch_source_job SET state=?,error=?,lease_until=0,next_attempt=? WHERE id=?',('blocked' if fatal else 'queued',code,self.tasks.clock()+(86400 if code=='kalodata_daily_quota_exhausted' else 60),claim['id']))
    return {'status':'blocked' if fatal else 'retry_wait','error':code,'networkRequests':calls}
  def edges(self,id):
-  return [e for row in self.db.execute('SELECT p.payload FROM batch_source_page p JOIN batch_source_job j ON j.id=p.job_id WHERE j.task_id=? AND p.imported=1',(id,)) for e in json.loads(row[0])['edges']]
+  return [json.loads(row[0]) for row in self.db.execute('SELECT s.payload FROM batch_source_selection s JOIN batch_source_job j ON j.id=s.job_id WHERE j.task_id=?',(id,))]
  def status(self,id):
   counts={r[0]:r[1] for r in self.db.execute('SELECT state,count(*) FROM batch_source_job WHERE task_id=? GROUP BY state',(id,))}
   errors=[r[0] for r in self.db.execute('SELECT DISTINCT error FROM batch_source_job WHERE task_id=? AND error IS NOT NULL',(id,))]
   pages=self.db.execute('SELECT count(*) FROM batch_source_page p JOIN batch_source_job j ON j.id=p.job_id WHERE j.task_id=?',(id,)).fetchone()[0]
-  return {'pids':sum(counts.values()),'states':counts,'pages':pages,'edges':self.db.execute("SELECT count(DISTINCT json_extract(e.value,'$.sourceId')) FROM batch_source_page p JOIN batch_source_job j ON j.id=p.job_id, json_each(p.payload,'$.edges') e WHERE j.task_id=? AND p.imported=1",(id,)).fetchone()[0],'errors':errors,'dailyQuotaUsed':0}
+  return {'pids':sum(counts.values()),'states':counts,'pages':pages,'edges':self.db.execute('SELECT count(*) FROM batch_source_selection s JOIN batch_source_job j ON j.id=s.job_id WHERE j.task_id=?',(id,)).fetchone()[0],'errors':errors,'dailyQuotaUsed':0}

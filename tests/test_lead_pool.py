@@ -1,5 +1,6 @@
 """The sending pool: layers, the creator-level cooldown, and the rolling order."""
 import sqlite3
+import json
 import sys
 import tempfile
 import unittest
@@ -8,6 +9,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'scripts'))
 from lib.lead_pool import LAYER_ORDER, LOCKED_COOLDOWN, UNLOCKED_COOLDOWN, pool  # noqa: E402
+from lib.schema_migrations import apply_database  # noqa: E402
 
 NOW = 1_800_000_000.0
 
@@ -24,6 +26,10 @@ def fixture(folder, positions, relationships, deliveries=(), cases=()):
             CREATE TABLE cycle_delivery(id TEXT,plan_id TEXT,creator_id TEXT,pid TEXT,state TEXT);
             CREATE TABLE cycle_delivery_part(delivery_id TEXT,kind TEXT,started REAL);
             CREATE TABLE service_case(plan_id TEXT,creator_id TEXT,state TEXT,updated REAL);''')
+        conn.commit()
+    apply_database(folder,'second-cycle')
+    with sqlite3.connect(var / 'second-cycle.sqlite') as conn:
+        grouped={}
         for index, (creator, pid, rank) in enumerate(positions):
             sid = f's{index}'
             conn.execute('INSERT INTO source_edge VALUES(?,?,?)', ('p', sid,
@@ -31,6 +37,16 @@ def fixture(folder, positions, relationships, deliveries=(), cases=()):
                          % (pid, rank, creator)))
             conn.execute('INSERT INTO cycle_identity_resolution VALUES(?,?,?)', ('p', sid, creator))
             conn.execute('INSERT INTO cycle_identity_outcome VALUES(?,?,?)', ('p', sid, 'completed'))
+            conn.execute('INSERT INTO source_edge_index VALUES(?,?,?,?,?,?,?,?,?)',
+                         ('p',sid,pid,creator,rank,10,'2026-09-01','2026-09-14','kalodata_http'))
+            grouped.setdefault(pid,[]).append((sid,rank))
+        for pid,rows in grouped.items():
+            query='q-'+pid
+            conn.execute('INSERT INTO lead_query_run VALUES(?,?,?,?,?,?,?,?,?,?)',
+                         (query,'p',pid,'2026-09-01','2026-09-14','v2','published',len(rows),'fp',1))
+            conn.execute('INSERT INTO lead_query_head VALUES(?,?,?)',('p',pid,query))
+            for position,(sid,rank) in enumerate(sorted(rows,key=lambda row:row[1]),start=1):
+                conn.execute('INSERT INTO lead_query_selection VALUES(?,?,?,?,?)',(query,sid,rank,10,position))
         for creator, unlocked, mode, rejected in relationships:
             conn.execute('INSERT INTO relationship VALUES(?,?,?,?,?)', ('p', creator, unlocked, mode, rejected))
         for index, (creator, pid, started) in enumerate(deliveries):
@@ -66,6 +82,17 @@ class Layers(unittest.TestCase):
             self.assertEqual(counts['queued'], 2)
             # The strongest lead is the one that would go out.
             self.assertEqual(state['pools']['ready'][0]['rank'], 2)
+
+    def test_equal_source_rank_uses_higher_sales_then_pid(self):
+        with tempfile.TemporaryDirectory() as folder:
+            low='1'*19;high='2'*19
+            fixture(folder,[('a',low,1),('a',high,1)],[('a',0,'auto',0)])
+            with sqlite3.connect(Path(folder)/'var/second-cycle.sqlite') as db:
+                db.execute("UPDATE source_edge_index SET units=5 WHERE pid=?",(low,))
+                db.execute("UPDATE source_edge_index SET units=20 WHERE pid=?",(high,))
+            state=pool(folder,now=NOW)
+            self.assertEqual(state['pools']['ready'][0]['pid'],high)
+            self.assertEqual(state['pools']['queued'][0]['pid'],low)
 
     def test_a_recent_send_puts_every_position_of_that_creator_on_cooldown(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -139,6 +166,30 @@ class Partition(unittest.TestCase):
             self.assertEqual(set(state['layers']), set(LAYER_ORDER))
             self.assertEqual(state['counts']['unsent'] + state['counts']['sent'],
                              state['counts']['positions'])
+            self.assertEqual(state['business']['sendable']+state['business']['waiting']+
+                             state['business']['inactive'],state['business']['total'])
+            self.assertEqual(state['business']['total']+state['history']['sent'],state['counts']['positions'])
+
+    def test_product_invalidation_affects_only_that_pid_and_projects_inactive(self):
+        with tempfile.TemporaryDirectory() as folder:
+            active='1'*19;inactive='2'*19
+            fixture(folder,[('a',active,1),('a',inactive,2),('b',inactive,1)],
+                    [('a',0,'auto',0),('b',0,'auto',0)])
+            path=Path(folder)/'var/second-cycle.sqlite'
+            with sqlite3.connect(path) as db:
+                db.executescript('CREATE TABLE plan(id TEXT,institution TEXT,market TEXT);'
+                                 'CREATE TABLE catalog(id TEXT PRIMARY KEY,plan_id TEXT,source TEXT,observed REAL,state TEXT,payload TEXT);'
+                                 'CREATE TABLE catalog_head(plan_id TEXT,source TEXT,snapshot_id TEXT);')
+                offer={'pid':active,'campaignId':'9','catalogSource':'selected','creatorPercent':'13',
+                       'publicPercent':'10','totalPercent':'15','endAt':'2099-01-01T00:00:00+00:00',
+                       'available':True,'managementType':'full_managed','managementEvidenceRef':'fixture'}
+                db.execute("INSERT INTO plan VALUES('p','bjn-local-research','it')")
+                db.execute("INSERT INTO catalog VALUES('cat','p','live-it-selected',1,'complete',?)",(json.dumps([offer]),))
+                db.execute("INSERT INTO catalog_head VALUES('p','live-it-selected','cat')")
+            state=pool(folder,now=NOW)
+            self.assertEqual(state['business'],{'sendable':1,'waiting':0,'inactive':2,'total':3})
+            self.assertEqual(state['layers']['product_inactive'],2)
+            self.assertEqual({row['creatorId'] for row in state['pools']['product_inactive']},{'a','b'})
 
     def test_a_missing_database_is_reported_not_raised(self):
         with tempfile.TemporaryDirectory() as folder:

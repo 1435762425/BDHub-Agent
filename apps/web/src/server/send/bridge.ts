@@ -17,8 +17,8 @@ export type {SendConfig,SendCapacity,SendPreview,SendRateGap,SendSample,SendStat
  * 由执行器按批次授权跑，页面上的「确认并开始」是那一步的入口。
  */
 
-/** 池子的六个层，顺序就是它们被看到的顺序。 */
-const LAYERS=["ready","queued","cooling","awaiting_reply","excluded","sent"];
+/** Internal reasons remain detailed; the page projects them to three business outcomes. */
+const LAYERS=["ready","queued","cooling","awaiting_reply","excluded","product_inactive","sent"];
 
 function int(value:unknown,code:string,max=Number.MAX_SAFE_INTEGER):number{
  if(typeof value!=="number"||!Number.isSafeInteger(value)||value<0||value>max)throw Error(code);

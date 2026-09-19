@@ -11,6 +11,7 @@ sys.path.insert(0, str(ROOT / 'scripts'))
 from lib.leads_queue import (DEFAULTS, Ledger, build, config_path, eligible_products,  # noqa: E402
                              linked_products, load, plan, queried_from_jobs, queue_items,
                              save_config, status, sync, validate)
+from lib.schema_migrations import apply_database  # noqa: E402
 
 DAY = 86400
 NOW = 1_789_400_000.0
@@ -32,11 +33,12 @@ def fixture(folder, *, eligible=None, linked=None, products=None):
                        'sales': f'{products.get(pid, 0)} 已售'}
             conn.execute('INSERT INTO global_source_product VALUES(?,?,?)', ('r1', pid, json.dumps(payload)))
         conn.commit()
+    sqlite3.connect(var / 'catalog-links.sqlite').close()
+    apply_database(folder,'catalog-links')
     with sqlite3.connect(var / 'catalog-links.sqlite') as conn:
-        conn.execute('CREATE TABLE catalog_prepare_item(pid TEXT,state TEXT)')
-        conn.executemany('INSERT INTO catalog_prepare_item VALUES(?,?)',
-                         list((linked or {}).items()))
-        conn.commit()
+        for pid,state in (linked or {}).items():
+            conn.execute("INSERT INTO catalog_current_binding VALUES('it','selected',?,'1','f',?,'commission-1-to-2-v1','link-naming-v1','13','name','{}',NULL,?,1,1)",
+                         (pid,'list-'+pid,state))
 
 
 def campaign_fixture(folder, *, chosen=None, sales=None, with_sales=True):
@@ -68,7 +70,7 @@ def campaign_fixture(folder, *, chosen=None, sales=None, with_sales=True):
 class ConfigFile(unittest.TestCase):
     def test_defaults_are_the_confirmed_policy(self):
         self.assertEqual(DEFAULTS['refreshDays'], 7)
-        self.assertEqual(validate({})['leadsPerPid'], 10)
+        self.assertEqual(validate({})['leadsPerPid'], 20)
 
     def test_out_of_range_values_are_refused(self):
         for bad in [{'refreshDays': 0}, {'refreshDays': 91}, {'leadsPerPid': 51},
@@ -90,23 +92,23 @@ class Scope(unittest.TestCase):
     def test_only_eligible_products_with_a_valid_link_enter_the_queue(self):
         with tempfile.TemporaryDirectory() as folder:
             fixture(folder, eligible=['a', 'b', 'c'],
-                    linked={'a': 'ready', 'b': 'missing', 'c': 'review'})
+                    linked={'a': 'active', 'b': 'waiting_refresh', 'c': 'inactive'})
             built = build(folder, now=NOW)
             self.assertEqual(built['eligible'], 3)
             self.assertEqual(built['linked'], 1)
             self.assertEqual([row['pid'] for row in built['firstTime']], ['a'])
             self.assertEqual(built['scope'], 1)
 
-    def test_both_link_states_that_count_as_valid_are_included(self):
+    def test_only_active_standard_bindings_are_included(self):
         with tempfile.TemporaryDirectory() as folder:
-            fixture(folder, eligible=['a', 'b'], linked={'a': 'ready', 'b': 'reuse'})
+            fixture(folder, eligible=['a', 'b'], linked={'a': 'active', 'b': 'waiting_refresh'})
             built = build(folder, now=NOW)
-            self.assertEqual(sorted(row['pid'] for row in built['firstTime']), ['a', 'b'])
+            self.assertEqual([row['pid'] for row in built['firstTime']], ['a'])
 
     def test_first_time_work_is_ordered_by_cumulative_sales(self):
         with tempfile.TemporaryDirectory() as folder:
             fixture(folder, eligible=['low', 'high', 'mid'],
-                    linked={'low': 'ready', 'high': 'ready', 'mid': 'reuse'},
+                    linked={'low': 'active', 'high': 'active', 'mid': 'active'},
                     products={'low': 120, 'high': 9000, 'mid': 800})
             built = build(folder, now=NOW)
             self.assertEqual([row['pid'] for row in built['firstTime']], ['high', 'mid', 'low'])
@@ -116,7 +118,7 @@ class Scope(unittest.TestCase):
 class RefreshAge(unittest.TestCase):
     def test_a_fresh_query_waits_and_an_old_one_is_due(self):
         with tempfile.TemporaryDirectory() as folder:
-            fixture(folder, eligible=['fresh', 'old'], linked={'fresh': 'ready', 'old': 'ready'})
+            fixture(folder, eligible=['fresh', 'old'], linked={'fresh': 'active', 'old': 'active'})
             ledger = Ledger(folder)
             try:
                 ledger.record('fresh', at=NOW - 2 * DAY)
@@ -130,7 +132,7 @@ class RefreshAge(unittest.TestCase):
 
     def test_the_refresh_age_comes_from_the_config(self):
         with tempfile.TemporaryDirectory() as folder:
-            fixture(folder, eligible=['p'], linked={'p': 'ready'})
+            fixture(folder, eligible=['p'], linked={'p': 'active'})
             ledger = Ledger(folder)
             try:
                 ledger.record('p', at=NOW - 8 * DAY)
@@ -142,7 +144,7 @@ class RefreshAge(unittest.TestCase):
 
     def test_due_work_is_oldest_first(self):
         with tempfile.TemporaryDirectory() as folder:
-            fixture(folder, eligible=['a', 'b'], linked={'a': 'ready', 'b': 'ready'})
+            fixture(folder, eligible=['a', 'b'], linked={'a': 'active', 'b': 'active'})
             ledger = Ledger(folder)
             try:
                 ledger.record('a', at=NOW - 9 * DAY)
@@ -181,7 +183,7 @@ class LedgerClock(unittest.TestCase):
 
     def test_a_queried_product_outside_the_current_scope_is_reported_not_dropped(self):
         with tempfile.TemporaryDirectory() as folder:
-            fixture(folder, eligible=['a'], linked={'a': 'ready'})
+            fixture(folder, eligible=['a'], linked={'a': 'active'})
             ledger = Ledger(folder)
             try:
                 ledger.record('gone', at=NOW - DAY)
@@ -264,7 +266,7 @@ class Batch(unittest.TestCase):
 
     def _queue(self, folder):
         fixture(folder, eligible=['a', 'b', 'c', 'd'],
-                linked={'a': 'ready', 'b': 'ready', 'c': 'ready', 'd': 'ready'},
+                linked={'a': 'active', 'b': 'active', 'c': 'active', 'd': 'active'},
                 products={'a': 400, 'b': 300, 'c': 200, 'd': 100})
         ledger = Ledger(folder)
         try:
@@ -323,7 +325,7 @@ class Batch(unittest.TestCase):
 class Reporting(unittest.TestCase):
     def test_status_counts_add_up_to_the_scope(self):
         with tempfile.TemporaryDirectory() as folder:
-            fixture(folder, eligible=['a', 'b', 'c'], linked={'a': 'ready', 'b': 'reuse', 'c': 'ready'},
+            fixture(folder, eligible=['a', 'b', 'c'], linked={'a': 'active', 'b': 'active', 'c': 'active'},
                     products={'a': 10, 'b': 20, 'c': 30})
             ledger = Ledger(folder)
             try:
@@ -364,8 +366,7 @@ class BothChannels(unittest.TestCase):
             campaign_fixture(folder, chosen=['1729474628908391280'], sales={'1729474628908391280': 777})
             # 给它一条可用链接：这是进队列的前提（先备链再找达人）
             with sqlite3.connect(Path(folder) / 'var/catalog-links.sqlite') as conn:
-                conn.execute("INSERT INTO catalog_prepare_item VALUES('1729474628908391280','ready')")
-                conn.commit()
+                conn.execute("INSERT INTO catalog_current_binding VALUES('it','campaign','1729474628908391280','900','f','9','commission-1-to-2-v1','link-naming-v1','13','name','{}',NULL,'active',1,1)")
             products = eligible_products(folder)
             self.assertIn('1729474628908391280', products)
             self.assertEqual(products['1729474628908391280']['channel'], 'campaign')
@@ -380,8 +381,7 @@ class BothChannels(unittest.TestCase):
             fixture(folder, eligible=[], linked={})
             campaign_fixture(folder, chosen=['1729474628908391280'], with_sales=False)
             with sqlite3.connect(Path(folder) / 'var/catalog-links.sqlite') as conn:
-                conn.execute("INSERT INTO catalog_prepare_item VALUES('1729474628908391280','ready')")
-                conn.commit()
+                conn.execute("INSERT INTO catalog_current_binding VALUES('it','campaign','1729474628908391280','900','f','9','commission-1-to-2-v1','link-naming-v1','13','name','{}',NULL,'active',1,1)")
             built = build(folder)
             # 没有销量就按 0 排序，但必须**如实标记**，不能假装有数据。
             self.assertEqual(built['unitsUnknown'], 1)
@@ -390,7 +390,7 @@ class BothChannels(unittest.TestCase):
     def test_a_product_in_both_channels_keeps_the_full_managed_row(self):
         """同一个商品两条渠道都有时，保留全托那条：它带真实销量数据。"""
         with tempfile.TemporaryDirectory() as folder:
-            fixture(folder, eligible=['1729474628908391280'], linked={'1729474628908391280': 'ready'},
+            fixture(folder, eligible=['1729474628908391280'], linked={'1729474628908391280': 'active'},
                     products={'1729474628908391280': 999})
             campaign_fixture(folder, chosen=['1729474628908391280'], sales={'1729474628908391280': 1})
             products = eligible_products(folder)

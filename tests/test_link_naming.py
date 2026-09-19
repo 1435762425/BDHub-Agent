@@ -13,7 +13,7 @@ from lib.link_naming import DEFAULTS, fingerprint, load, name_for, render, rende
 class NamingConfig(unittest.TestCase):
     def test_default_template_matches_the_existing_cards(self):
         name = render(DEFAULTS, short_name='quaderni di calligrafia', creator_percent='13', tail='0ce672')
-        self.assertEqual(name, 'BJN quaderni di calligrafia 13% 0ce672')
+        self.assertEqual(name, '🔥 BJN quaderni di calligrafia 13% 0ce672')
 
     def test_unknown_placeholder_and_length_limits_are_rejected(self):
         for bad in [{'template': 'BJN {pid} {tail}'},
@@ -30,7 +30,7 @@ class NamingConfig(unittest.TestCase):
         long_title = 'pantaloni cargo da donna in denim con stampa floreale'
         rendered = render_full(DEFAULTS, short_name=long_title, creator_percent='13', tail='abcdef')
         self.assertLessEqual(len(rendered['name']), 50)
-        self.assertTrue(rendered['name'].startswith('BJN pantaloni'))
+        self.assertTrue(rendered['name'].startswith('🔥 BJN pantaloni'))
         self.assertTrue(rendered['name'].endswith('13% abcdef'))
 
     def test_a_template_that_cannot_fit_is_refused(self):
@@ -59,7 +59,7 @@ class NamingConfig(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             rendered = name_for(tmp, pid='1729480061238089885', campaign='7685262119046498070',
                                 creator_percent='13', short_name='quaderni', public_percent='12', total_percent='14')
-            self.assertEqual(rendered['name'], 'BJN quaderni 13% ' + tail_for('1729480061238089885', '7685262119046498070', '13', DEFAULTS))
+            self.assertEqual(rendered['name'], '🔥 BJN quaderni 13% ' + tail_for('1729480061238089885', '7685262119046498070', '13', DEFAULTS))
             self.assertEqual(rendered['shortName'], 'quaderni')
             # No cache database present: the title itself is used, never an empty name.
             self.assertEqual(short_name_for(tmp, '1', 'Tavolo da giardino in teak'), 'Tavolo da giardino in teak')

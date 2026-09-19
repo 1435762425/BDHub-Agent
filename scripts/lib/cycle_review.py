@@ -108,12 +108,7 @@ def _ledger_cards(links, pid, campaign):
 
 
 def ledger_card(store, offer):
-    """从建链台账（`catalog-links.sqlite`）派生这张卡的定位信息；拿不到才是 None。
-
-    三个来源都只接受**同一个商品、同一个活动、同一个达人佣金**且 listId 非空的那一行：换过佣金或
-    换过活动的旧卡不能拿来顶替（那正是"佣金变了"这类事故的来源）。返回的卡带
-    `requiresFreshReadBeforeSend`，提醒调用方：真正发之前仍要按 listId 去平台复读。
-    """
+    """Read the one canonical standard binding for this exact current offer."""
     import sqlite3
     from contextlib import closing
     var = Path(store.db.execute('PRAGMA database_list').fetchone()[2]).parent
@@ -122,17 +117,20 @@ def ledger_card(store, offer):
         return None
     pid = str(offer['pid'])
     campaign = str(offer.get('campaignId') or '')
-    percent = str(offer.get('creatorPercent') or '')
     try:
         with closing(sqlite3.connect(path.resolve().as_uri() + '?mode=ro', uri=True, timeout=5)) as links:
             links.row_factory = sqlite3.Row
-            if not links.execute("SELECT 1 FROM sqlite_master WHERE name='catalog_prepare_item'").fetchone():
+            if not links.execute("SELECT 1 FROM sqlite_master WHERE name='catalog_current_binding'").fetchone():
                 return None
-            for card in _ledger_cards(links, pid, campaign):
-                value = _usable(card=card, pid=pid, campaign=campaign, percent=percent)
-                if value:
-                    source = value.pop('_ledgerSource', 'catalog-links')
-                    return value | {'derivedFrom': source}
+            row=links.execute("SELECT * FROM catalog_current_binding WHERE market='it' AND catalog_source=? "
+                              "AND pid=? AND campaign_id=? AND state='active'",
+                              (str(offer.get('catalogSource') or ''),pid,campaign)).fetchone()
+            if not row:return None
+            from lib.catalog_binding import offer_fingerprint
+            if row['offer_fingerprint']!=offer_fingerprint(offer) or row['commission_rule_version']!='commission-1-to-2-v1' or row['naming_rule_version']!='link-naming-v1':return None
+            card=json.loads(row['card_payload'])
+            value=_usable(card=card,pid=pid,campaign=campaign,percent=str(offer.get('creatorPercent') or ''))
+            return value|{'derivedFrom':'catalog-current-binding'} if value else None
     except sqlite3.Error:
         return None
     return None
@@ -148,7 +146,7 @@ def _usable(*, card, pid, campaign, percent):
         return None
     if not str(card.get('listId') or '').strip():
         return None
-    return card | {'requiresFreshReadBeforeSend': True}
+    return card | {'requiresFreshReadBeforeSend': False}
 
 
 def _reuse_card(row, *, pid, campaign, percent, source=None):
@@ -179,17 +177,7 @@ def _reuse_card(row, *, pid, campaign, percent, source=None):
 
 
 def card_rate_gap(store, plan, positions, limit_examples=3):
-    """台账里的卡与**当前计划**的佣金差多少——`card_rate_changed` 的事实摊开。
-
-    实测量到的是：一批旧卡的达人佣金比当前计划**低 1 个点**（卡名 `🚀 Incentivo Boost disponibile | BJN`）。
-    于是只有两条路，且是**业务决定**，不是代码能替用户选的：
-      ① 按**卡上的**佣金发（话术里说卡上的数）——不写平台，立刻可发；
-      ② 按计划的佣金**重建链**（平台写入）——话术说计划的数。
-    `inspect_card()`（发送时真正读卡的那条路）要求"卡上的佣金 == 我们声明的佣金"，所以声明计划佣金
-    而卡上是旧数，发送时会被它挡下（实测：CARD 端点对同一个 pid 返回 1200，而计划是 1300）。
-    """
-    import sqlite3
-    from contextlib import closing
+    """Compatibility summary: a canonical binding either matches exactly or is absent."""
     from decimal import Decimal, InvalidOperation
     pids = {str(pid) for _, pid in positions}
     counts = {'same': 0, 'lower': 0, 'lowerByOne': 0, 'higher': 0, 'noCard': 0}
@@ -199,41 +187,18 @@ def card_rate_gap(store, plan, positions, limit_examples=3):
     except Exception as error:  # noqa: BLE001 - 这一块算不出来**不该让整张卡读不出来**
         # 如实说"没读到"，而不是报一串 0（那会让人以为"没有差距"）。
         return counts | {'examples': [], 'readable': False, 'error': type(error).__name__}
-    var = Path(store.db.execute('PRAGMA database_list').fetchone()[2]).parent
-    path = var / 'catalog-links.sqlite'
-    if not path.exists():
-        # 台账都没有：这些位置当然都没有卡（不要报成"零差距"）。
-        return counts | {'noCard': len(offers), 'examples': examples, 'readable': True}
-    try:
-        with closing(sqlite3.connect(path.resolve().as_uri() + '?mode=ro', uri=True, timeout=5)) as links:
-            links.row_factory = sqlite3.Row
-            for pid, offer in sorted(offers.items()):
-                campaign = str(offer.get('campaignId') or '')
-                plan_rate = str(offer.get('creatorPercent') or '')
-                cards = [c for c in _ledger_cards(links, pid, campaign)
-                         if str(c.get('listId') or '').strip() and c.get('creatorPercent') not in (None, '')]
-                if not cards:
-                    counts['noCard'] += 1
-                    continue
-                card = cards[0]
-                card_rate = str(card.get('creatorPercent'))
-                try:
-                    delta = Decimal(card_rate) - Decimal(plan_rate)
-                except (InvalidOperation, ValueError):
-                    continue
-                if delta == 0:
-                    counts['same'] += 1
-                    continue
-                key = 'higher' if delta > 0 else 'lower'
-                counts[key] += 1
-                if delta == -1:
-                    counts['lowerByOne'] += 1
-                if len(examples) < limit_examples:
-                    examples.append({'pid': pid, 'listName': str(card.get('listName') or '')[:60],
-                                     'cardPercent': card_rate, 'planPercent': plan_rate,
-                                     'campaignId': campaign})
-    except sqlite3.Error as error:
-        return counts | {'examples': examples, 'readable': False, 'error': type(error).__name__}
+    for pid, offer in sorted(offers.items()):
+        card=ledger_card(store,offer)
+        if not card:
+            counts['noCard']+=1;continue
+        plan_rate=str(offer.get('creatorPercent') or '');card_rate=str(card.get('creatorPercent') or '')
+        try:delta=Decimal(card_rate)-Decimal(plan_rate)
+        except (InvalidOperation,ValueError):counts['noCard']+=1;continue
+        if delta==0:counts['same']+=1;continue
+        key='higher' if delta>0 else 'lower';counts[key]+=1
+        if delta==-1:counts['lowerByOne']+=1
+        if len(examples)<limit_examples:examples.append({'pid':pid,'listName':str(card.get('listName') or '')[:60],
+            'cardPercent':card_rate,'planPercent':plan_rate,'campaignId':str(offer.get('campaignId') or '')})
     return counts | {'examples': examples, 'readable': True}
 
 
@@ -257,64 +222,22 @@ def ledger_gap(store, offer):
     path = var / 'catalog-links.sqlite'
     if not path.exists():
         return 'no_link_in_ledger'
-    pid = str(offer['pid'])
-    campaign = str(offer.get('campaignId') or '')
-    percent = str(offer.get('creatorPercent') or '')
+    pid = str(offer['pid']);campaign = str(offer.get('campaignId') or '')
     try:
         with closing(sqlite3.connect(path.resolve().as_uri() + '?mode=ro', uri=True, timeout=5)) as links:
             links.row_factory = sqlite3.Row
-            rows = [dict(r) for r in links.execute(
-                "SELECT state,campaign_id,creator_percent,card FROM catalog_prepare_item WHERE pid=?", (pid,))]
-            readback = [dict(r) for r in links.execute(
-                "SELECT campaign_id,payload FROM catalog_prepare_readback WHERE pid=? "
-                "AND kind IN ('reusedLink','verifiedLink')", (pid,))] \
-                if links.execute("SELECT 1 FROM sqlite_master WHERE name='catalog_prepare_readback'").fetchone() else []
-            reuse = [dict(r) for r in links.execute(
-                "SELECT campaign_id FROM catalog_prepare_reuse WHERE pid=? AND reusable=1", (pid,))] \
-                if links.execute("SELECT 1 FROM sqlite_master WHERE name='catalog_prepare_reuse'").fetchone() else []
+            if not links.execute("SELECT 1 FROM sqlite_master WHERE name='catalog_current_binding'").fetchone():return 'standard_link_missing'
+            row=links.execute("SELECT offer_fingerprint,state,card_payload FROM catalog_current_binding WHERE market='it' "
+                              "AND catalog_source=? AND pid=? AND campaign_id=?",
+                              (str(offer.get('catalogSource') or ''),pid,campaign)).fetchone()
     except sqlite3.Error:
-        return 'card_not_read'
-    if not rows and not readback and not reuse:
-        return 'no_link_in_ledger'
-    cards = []
-    for row in readback:
-        try:
-            cards.append(json.loads(row['payload']))
-        except ValueError:
-            pass
-    for row in rows:
-        if row['card']:
-            try:
-                cards.append(json.loads(row['card']))
-            except ValueError:
-                pass
-    if any(_usable(card=card, pid=pid, campaign=campaign, percent=percent) for card in cards):
-        # 有能用的卡就不算缺口（调用方只在 ledger_card 返回 None 时才问，这里是双保险）。
-        return ''
-    # 只有**卡片真的带了这一项**才算"不一致"：摘要卡什么都没有，那不是改过佣金，是没读卡。
-    for card in cards:
-        rate = card.get('creatorPercent')
-        if rate not in (None, '') and str(rate) != percent:
-            return 'card_rate_changed'
-    for card in cards:
-        bound = card.get('sourceCampaignId')
-        if bound not in (None, '') and str(bound) != campaign:
-            return 'card_campaign_changed'
-    if any(str(card.get('listId') or '').strip() for card in cards):
-        # 有定位信息，但状态不是可用的核验卡（例如旧格式、被作废）。
-        return 'card_unverified'
-    campaigns = {str(r['campaign_id']) for r in rows}
-    if campaigns and campaign not in campaigns:
-        return 'card_campaign_changed'
-    # 台账里连一张卡都没有时，**不能一律说"复读一次就有"**：行状态说明了它走过哪条路。
-    #   `review`/`reuse` —— 判定过但卡没存下来（复读能救回来，实测救回 1193 行）；
-    #   `missing`/`reading`/`pending`/`read_incomplete` —— 读卡从来没确认过有卡。抽样 30 个这类
-    #   位置去问发送时用的那个卡搜索（CARD 端点按 pid 搜）：**19 个返回 0 张、其余响应形状异常，
-    #   有卡的一个都没有**。所以这一档是"平台上没有卡"——要建链（平台写入）或人工核实。
-    states = {str(r['state']) for r in rows}
-    if states & {'missing', 'reading', 'pending', 'read_incomplete'}:
-        return 'no_card_needs_link'
-    return 'card_not_read'
+        return 'standard_link_unreadable'
+    if not row:return 'standard_link_missing'
+    from lib.catalog_binding import offer_fingerprint
+    if row['state']!='active' or row['offer_fingerprint']!=offer_fingerprint(offer):return 'standard_link_terms_changed'
+    try:card=json.loads(row['card_payload'])
+    except (TypeError,ValueError):return 'standard_link_terms_changed'
+    return '' if _usable(card=card,pid=pid,campaign=campaign,percent=str(offer.get('creatorPercent') or '')) else 'standard_link_terms_changed'
 
 
 def _position_rows(store, plan, offers, identity_reader, order):
@@ -407,20 +330,7 @@ def choose_candidates(store,plan,identity_reader,limit=3,positions=None):
   if not person or not person.get('handle'):
    skipped.append({'sourceId':edge['sourceId'],'reason':'current_identity_missing'});continue
   name=product_name(store,o);name_source='缓存' if name else None
-  check=store.db.execute('SELECT payload FROM cycle_card_check WHERE plan_id=? AND offer_key=? AND offer_fingerprint=?',(plan,o['offerKey'],digest(o))).fetchone()
-  card=json.loads(check[0]) if check else None
-  if card is None:
-   # Cached card locates the native object only. Every actual send re-reads it.
-   prior=store.db.execute('SELECT payload FROM cycle_card_check WHERE plan_id=? AND offer_key=? ORDER BY rowid DESC',(plan,o['offerKey'])).fetchall()
-   for saved in prior:
-    value=json.loads(saved[0])
-    if value.get('state')=='verified_read_only' and value.get('pid')==o['pid'] and value.get('sourceCampaignId')==o['campaignId'] and value.get('creatorPercent')==o['creatorPercent']:
-     card=value|{'requiresFreshReadBeforeSend':True};break
-  if card is None:
-   # 这个商品在建链台账里已经有一张核验过的卡（`catalog_prepare_item.card`，ACC9 读的）。
-   # 发送时 `fresh_card()` 反正会**再去平台复读一次**并强制校验佣金，所以那张预读记录的价值只是
-   # "卡片定位（listId）+ 提前筛掉不合格的"——定位信息我们已经有了，不必为了它再发一轮平台请求。
-   card=ledger_card(store,o)
+  card=ledger_card(store,o)
   if name is None and card is not None:
    # 卡名是建链时**冻结**的 `BJN {短名} {佣金}% {tail}`——短名就在里面，而且和卡上写的是同一个。
    # 用它比重新生成更一致，也不花一次模型调用。

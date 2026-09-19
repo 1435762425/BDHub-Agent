@@ -11,6 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'scripts'))
 sys.path.insert(0, str(ROOT / 'scripts/lib'))
 from lib.leads_queue import Ledger, build, status  # noqa: E402
+from lib.schema_migrations import apply_database  # noqa: E402
 from lib.second_cycle import CycleError  # noqa: E402
 
 import importlib.util  # noqa: E402
@@ -68,16 +69,17 @@ def fixture(folder, pids, *, body=None, campaign='7600438925614876449'):
             conn.execute('INSERT INTO global_source_product VALUES(?,?,?)',
                          ('r1', pid, json.dumps({'product_id': pid, 'title': f't-{pid}', 'sales': '900 已售'})))
         conn.commit()
+    sqlite3.connect(var / 'catalog-links.sqlite').close();apply_database(folder,'catalog-links')
     with sqlite3.connect(var / 'catalog-links.sqlite') as conn:
-        conn.execute('CREATE TABLE catalog_prepare_item(pid TEXT,state TEXT,campaign_id TEXT)')
-        conn.executemany('INSERT INTO catalog_prepare_item VALUES(?,?,?)',
-                         [(pid, 'ready', campaign) for pid in pids])
-        conn.commit()
+        for pid in pids:
+            conn.execute("INSERT INTO catalog_current_binding VALUES('it','selected',?,?,?,'9','commission-1-to-2-v1','link-naming-v1','13','name','{}',NULL,'active',1,1)",
+                         (pid,campaign,'f-'+pid))
     with sqlite3.connect(var / 'second-cycle.sqlite') as conn:
         conn.executescript("CREATE TABLE plan(id TEXT,institution TEXT,market TEXT);"
                            "CREATE TABLE source_edge(plan_id TEXT,source_id TEXT,payload TEXT,PRIMARY KEY(plan_id,source_id));")
         conn.execute("INSERT INTO plan VALUES('plan-it','bjn-local-research','it')")
         conn.commit()
+    apply_database(folder,'second-cycle')
     lock = Path(folder) / 'browser.lock'
     lock.write_bytes(b'')
     return lock

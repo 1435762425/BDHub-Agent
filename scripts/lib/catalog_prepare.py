@@ -124,17 +124,30 @@ DROP TABLE catalog_prepare_reuse_old;''')
                 if n==1:claimed.append(self.item(run_id,r['pid'],r['campaign_id'],r['catalog_source']))
         return claimed
     def apply_read(self,run_id,pid,cid,src,outcome,now=None):
-        """outcome: {state, listing, card, blocker, error, reuse:[...]}"""
+        """Persist a complete read. Historical cards are evidence, never current material."""
         now=now if now is not None else time.time();state=outcome['state']
-        if state not in ('reuse','review','missing','read_incomplete'):raise ValueError('catalog_prepare_state_invalid')
+        if state not in ('standard','missing','read_incomplete'):raise ValueError('catalog_prepare_state_invalid')
         listing=outcome.get('listing') or {}
+        card=outcome.get('card')
+        stored_state='ready' if state=='standard' else state
+        if state=='missing' and not card:
+            card={'state':'standard_missing','pid':str(pid),'campaignId':str(cid),'catalogSource':src,
+                  'searchTotal':int(outcome.get('total') or 0),'historicalCount':len(outcome.get('reuse') or []),
+                  'standardSearchComplete':True,'checkedAt':now}
         with self.db:
             self.db.execute("UPDATE catalog_prepare_item SET state=?,attempts=attempts+1,lease_until=0,title=?,creator_percent=?,public_percent=?,total_percent=?,end_at=?,listing=?,card=?,blocker=?,error=?,read_at=?,updated=? WHERE run_id=? AND pid=? AND campaign_id=? AND catalog_source=?",
-                (state,str(listing.get('title') or outcome.get('title') or '')[:500],listing.get('creatorPercent'),listing.get('publicPercent'),listing.get('totalPercent'),listing.get('endAt'),
-                 encoded(listing) if listing else None,encoded(outcome.get('card')) if outcome.get('card') else None,outcome.get('blocker'),outcome.get('error'),now,now,run_id,str(pid),str(cid),src))
+                (stored_state,str(listing.get('title') or outcome.get('title') or '')[:500],listing.get('creatorPercent'),listing.get('publicPercent'),listing.get('totalPercent'),listing.get('endAt'),
+                 encoded(listing) if listing else None,encoded(card) if card else None,outcome.get('blocker'),outcome.get('error'),now,now,run_id,str(pid),str(cid),src))
             for c in outcome.get('reuse') or []:
                 self.db.execute('INSERT OR REPLACE INTO catalog_prepare_reuse VALUES(?,?,?,?,?,?,?,?,?,?)',
                     (run_id,str(pid),str(cid),src,str(c['listId']),str(c['creatorRaw']) if c.get('creatorRaw') is not None else None,c.get('publicRaw'),1 if c.get('reusable') else 0,c.get('reason'),now))
+            if state=='standard':
+                spec=outcome.get('standardSpec')
+                if not isinstance(spec,dict) or not isinstance(card,dict):raise ValueError('catalog_standard_binding_missing')
+                self.db.execute('INSERT OR REPLACE INTO catalog_prepare_readback VALUES(?,?,?,?,?,?,?)',
+                    (run_id,str(pid),str(cid),src,'verifiedLink',encoded(card),now))
+                from lib.catalog_binding import CatalogBindings
+                CatalogBindings(self.root,connection=self.db).promote(spec,card,None,now=now)
     def reuse_rows(self,run_id,pid,cid,src):
         return [dict(r) for r in self.db.execute('SELECT * FROM catalog_prepare_reuse WHERE run_id=? AND pid=? AND campaign_id=? AND catalog_source=? ORDER BY observed_at DESC,list_id',(run_id,str(pid),str(cid),src))]
     # ---- freeze and execute -----------------------------------------------------
@@ -143,8 +156,12 @@ DROP TABLE catalog_prepare_reuse_old;''')
         now=now if now is not None else time.time()
         row=self.item(run_id,pid,cid,src)
         if row['state'] not in ('missing','prepared','submitted','unknown'):raise ValueError('catalog_prepare_not_missing')
+        proof=row['card'] or {}
+        if proof.get('state')!='standard_missing' or proof.get('standardSearchComplete') is not True:
+            raise ValueError('catalog_standard_search_required')
+        spec=dict(spec)|{'searchTotal':int(proof.get('searchTotal') or 0),'standardSearchComplete':True}
         if not row['card']:
-            accept={'pid':str(pid),'campaignId':str(cid),'catalogSource':src,'searchTotal':0,'state':'confirmed_missing'}
+            accept={'pid':str(pid),'campaignId':str(cid),'catalogSource':src,'searchTotal':0,'state':'standard_missing','standardSearchComplete':True}
             with self.db:
                 self.db.execute('INSERT OR REPLACE INTO catalog_prepare_readback VALUES(?,?,?,?,?,?,?)',(run_id,str(pid),str(cid),src,'missingProof',encoded(self._missing_proof(row)),now))
                 self.db.execute("UPDATE catalog_prepare_item SET card=?,updated=? WHERE run_id=? AND pid=? AND campaign_id=? AND catalog_source=?",(encoded(accept),now,run_id,str(pid),str(cid),src))
@@ -184,13 +201,15 @@ DROP TABLE catalog_prepare_reuse_old;''')
         with self.db:self.db.execute("UPDATE catalog_prepare_item SET lease_until=0,updated=? WHERE run_id=? AND pid=? AND campaign_id=? AND catalog_source=?",(time.time(),run_id,str(pid),str(cid),src))
     # ---- read contracts ---------------------------------------------------------
     def verified_link(self,pid,campaign_id,catalog_source):
-        """Consumer contract: exact verified link for one product plan, else None with a reason."""
-        row=self.db.execute("SELECT * FROM catalog_prepare_readback WHERE pid=? AND campaign_id=? AND catalog_source=? AND kind='verifiedLink' ORDER BY observed_at DESC LIMIT 1",(str(pid),str(campaign_id),catalog_source)).fetchone()
-        if not row:return None
-        card=json.loads(row['payload'])
-        return card|{'contract':{'pid':str(pid),'campaignId':str(campaign_id),'catalogSource':catalog_source,'verifiedAt':row['observed_at']}}
+        """Consumer contract: the unique canonical current standard card, never a historical card."""
+        from lib.catalog_binding import CatalogBindings
+        row=CatalogBindings(self.root,connection=self.db).get('it',catalog_source,str(pid),str(campaign_id))
+        if not row or row['state']!='active':return None
+        return row['card']|{'contract':{'pid':str(pid),'campaignId':str(campaign_id),'catalogSource':catalog_source,
+            'verifiedAt':row['verified_at'],'commissionRuleVersion':row['commission_rule_version'],
+            'namingRuleVersion':row['naming_rule_version']}}
     def reused_link(self,pid,campaign_id,catalog_source):
-        """Consumer contract: best acceptable existing platform link for one plan, else None."""
+        """Historical compatibility reader. Never use this result for new sending."""
         row=self.db.execute("SELECT * FROM catalog_prepare_readback WHERE pid=? AND campaign_id=? AND catalog_source=? AND kind='reusedLink' ORDER BY observed_at DESC LIMIT 1",(str(pid),str(campaign_id),catalog_source)).fetchone()
         if not row:return None
         card=json.loads(row['payload'])
@@ -199,15 +218,15 @@ DROP TABLE catalog_prepare_reuse_old;''')
         """Read-only view for one offer: ready | pending | blocked with a precise reason."""
         rows=self.db.execute("SELECT state,blocker,error,intent_id,updated FROM catalog_prepare_item WHERE pid=? AND campaign_id=? AND catalog_source=? ORDER BY updated DESC",(str(offer['pid']),str(offer.get('campaignId')),offer.get('catalogSource'))).fetchall()
         if not rows:return {'state':'unprepared','reason':'catalog_link_not_prepared'}
-        created=self.verified_link(offer['pid'],offer.get('campaignId'),offer.get('catalogSource'))
+        from lib.catalog_binding import CatalogBindings
+        bindings=CatalogBindings(self.root,connection=self.db)
+        raw_binding=bindings.get('it',offer.get('catalogSource'),offer['pid'],offer.get('campaignId'))
+        binding=bindings.active_for_offer(offer)
+        created=(binding or {}).get('card') if binding else None
         if created:
             if created.get('creatorPercent')==offer.get('creatorPercent'):return {'state':'ready','card':created}
             return {'state':'blocked','reason':'catalog_link_terms_changed','cardCreatorPercent':created.get('creatorPercent')}
-        # An existing platform link is reusable when the inventory reconcile accepted it under the
-        # confirmed rule (creator above public, agency at least one point); its creator share does
-        # not have to equal what a brand-new link would be given.
-        reused=self.reused_link(offer['pid'],offer.get('campaignId'),offer.get('catalogSource'))
-        if reused:return {'state':'ready','card':reused,'reused':True}
+        if raw_binding:return {'state':'blocked','reason':'catalog_link_terms_changed'}
         best=rows[0]
         reason={'missing':'catalog_link_creation_pending','prepared':'catalog_link_creation_pending','submitted':'catalog_link_creation_unresolved','unknown':'catalog_link_creation_unresolved',
                 'reading':'catalog_link_lookup_running','pending':'catalog_link_lookup_pending','read_incomplete':'catalog_link_lookup_incomplete',
@@ -230,7 +249,9 @@ DROP TABLE catalog_prepare_reuse_old;''')
             return self.db.execute("UPDATE catalog_prepare_item SET state='retired',blocker='superseded_by_live_binding',lease_until=0,updated=? WHERE run_id=? AND state<>'ready' AND error='selected_campaign_changed'",(now,run_id)).rowcount
     def summary(self,run_id):
         counts={r[0]:r[1] for r in self.db.execute("SELECT state,count(*) FROM catalog_prepare_item WHERE run_id=? AND state<>'retired' GROUP BY state",(run_id,))}
-        links=self.db.execute("SELECT count(*),count(DISTINCT pid) FROM catalog_prepare_readback WHERE run_id=? AND kind='verifiedLink'",(run_id,)).fetchone()
+        links=self.db.execute("""SELECT count(*),count(DISTINCT b.pid) FROM catalog_current_binding b
+          WHERE b.state='active' AND EXISTS(SELECT 1 FROM catalog_prepare_item i WHERE i.run_id=?
+          AND i.pid=b.pid AND i.campaign_id=b.campaign_id AND i.catalog_source=b.catalog_source)""",(run_id,)).fetchone()
         retired=self.db.execute("SELECT count(*) FROM catalog_prepare_item WHERE run_id=? AND state='retired'",(run_id,)).fetchone()[0]
         reuse=self.db.execute('SELECT count(DISTINCT pid) FROM catalog_prepare_reuse WHERE run_id=? AND reusable=1',(run_id,)).fetchone()[0]
         # Only unsettled problems are reported as outstanding. A product sitting in ``missing`` with
@@ -308,11 +329,8 @@ def search_cards(read,pid):
     else:raise ValueError('card_search_incomplete')
     return total,list(seen.items())
 
-def classify_pid(pid,offer,read,policy):
-    """Read one PID's existing links and decide reuse / review / missing for one offer.
-
-    Only a complete search with no card at all may become `missing`.
-    """
+def classify_pid(pid,offer,read,policy,standard_spec=None):
+    """Read all cards, recognize only an exact current standard card, and ignore the rest."""
     wanted=str(offer['campaignId']);wire='0' if offer['catalogSource']=='selected' else wanted
     total,cards=search_cards(read,pid)
     facts=[];rates=[];matched=[]
@@ -323,11 +341,7 @@ def classify_pid(pid,offer,read,policy):
         matched.append((lid,sha,row,products[0]))
         raw=Decimal(str(products[0]['creator_commission_percent']))/100 if products[0].get('creator_commission_percent') is not None else None
         if raw is not None:rates.append(format(raw,'f'))
-    if not matched:
-        if total==0:return {'state':'missing','total':0,'rates':[],'reuse':[],'listing':offer['listing']}
-        # Cards exist for this PID but none carries this plan's campaign binding: never a new link.
-        return {'state':'review','total':total,'rates':sorted(set(rates)),'reuse':[],'blocker':'existing_links_other_campaign','listing':offer['listing']}
-    best=None;observed=[]
+    observed=[];standard=None
     for lid,sha,row,product in matched:
         body,members_sha=read(MEMBERS,{'list_id':lid,'source':2 if wire=='0' else 1})
         data=body.get('data');rows=list_rows(data,'total_num','campaign_products')
@@ -347,9 +361,15 @@ def classify_pid(pid,offer,read,policy):
                     productEligible=fact['productEligible'] and unavailable_allowed(product.get('unavailable_type'),merged))
         ok,reason=assess_existing(fact,policy)
         observed.append(fact|{'reusable':ok,'reason':reason})
-        if ok and (best is None or Decimal(fact['creatorRaw'])>Decimal(best['creatorRaw'])):best=fact
-    if best:return {'state':'reuse','total':total,'rates':sorted(set(rates)),'reuse':observed,'card':best,'listing':offer['listing']}
-    return {'state':'review','total':total,'rates':sorted(set(rates)),'reuse':observed,'blocker':'existing_links_require_review','listing':offer['listing']}
+        if standard_spec and fact.get('listName')==standard_spec.get('listName') and \
+                rate_text(fact.get('creatorRaw'))==str(standard_spec.get('creatorPercent')):
+            card=reused_card(fact,pid,wanted,offer['catalogSource'],time.time())
+            card['reused']=False
+            if standard is None or str(card['listId'])<str(standard['listId']):standard=card
+    if standard:return {'state':'standard','total':total,'rates':sorted(set(rates)),'reuse':observed,
+                        'card':standard,'standardSpec':standard_spec,'listing':offer['listing']}
+    return {'state':'missing','total':total,'rates':sorted(set(rates)),'reuse':observed,
+            'listing':offer['listing'],'standardSearchComplete':True}
 
 def scan_lists(read,source='2',campaign_id='0',page_size=100,max_pages=500):
     """Every TapLink of one account route. Incomplete pagination is never treated as absence."""
@@ -513,18 +533,15 @@ def reconcile_from_inventory(prep,inv,items,offers,diag=None,now=None):
                 state='missing'
             else:
                 reason=diag.get(pid) or 'listing_read_unresolved'
-                if reason=='product_no_longer_eligible':
-                    state='review';blocker=reason
-                else:
-                    state='read_incomplete';error=reason
+                state='read_incomplete';error=reason
         elif not matching:
-            state='review';blocker='existing_links_other_campaign'
+            # A card in another activity is historical evidence, not the standard material for this
+            # offer.  It must not prevent creating the current standard card.
+            state='missing' if offer else 'read_incomplete'
+            if not offer:error=diag.get(pid) or 'listing_read_unresolved'
         elif not offer:
             reason=diag.get(pid) or 'listing_read_unresolved'
-            if reason=='product_no_longer_eligible':
-                state='review';blocker=reason
-            else:
-                state='read_incomplete';error=reason
+            state='read_incomplete';error=reason
         else:
             stats=offer.get('stats') or {};total=stats.get('totalRaw');public_plan=stats.get('publicRaw')
             merged={'managementType':offer.get('managementType') or 'full_managed','managementEvidenceRef':offer.get('managementEvidenceRef') or 'catalog-prepare:full_managed_source'}
@@ -537,8 +554,10 @@ def reconcile_from_inventory(prep,inv,items,offers,diag=None,now=None):
                 ok,why=assess_existing(fact,policy)
                 observed.append(fact|{'reusable':ok,'reason':why})
                 if ok and (best is None or (fact['creatorRaw'] and Decimal(fact['creatorRaw'])>Decimal(best['creatorRaw']))):best=fact
-            state='reuse' if best else 'review'
-            if state=='review':blocker='existing_links_require_review'
+            # Even a healthy old card stays historical.  Exact-standard detection happens in the
+            # complete PID read / last pre-create search where the frozen name and rule versions are
+            # available.
+            state='missing'
         # Always persist the plan facts when the plan was read: creation needs the commission
         # split, so a card-less product must still carry its plan.
         plan={}

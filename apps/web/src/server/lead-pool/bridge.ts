@@ -8,10 +8,12 @@ export type LeadPoolCounts={leads:number;merged:number;unresolved:number;queued:
  queuedPositions:number;cooling:number;awaitingReply:number;excluded:number;creatorsWithRelationship:number};
 export type LeadPosition={creatorId:string;handle:string;pid:string;rank:number|null;units:number|null;
  unlocked:boolean;sentAt:number|null;readyAt:number|null;layer:string;caseUpdatedAt?:number|null};
-export type LeadPoolState={available:boolean;now?:number;counts:LeadPoolCounts;
- cooldown:{unlocked:number;locked:number};layers:Record<string,number>;pools:Record<string,LeadPosition[]>};
+export type LeadPoolState={schema:"bdhub.lead-pool.v2";available:boolean;now?:number;counts:LeadPoolCounts;
+ cooldown:{unlocked:number;locked:number};layers:Record<string,number>;pools:Record<string,LeadPosition[]>;
+ business:{sendable:number;waiting:number;inactive:number;total:number};reasons:Record<string,number>;
+ history:{sent:number}};
 
-const LAYERS=new Set(["ready","queued","cooling","awaiting_reply","excluded","sent"]);
+const LAYERS=new Set(["ready","queued","cooling","awaiting_reply","excluded","product_inactive","sent"]);
 
 function count(value:unknown,name:string):number{
  if(typeof value!=="number"||!Number.isSafeInteger(value)||value<0)throw Error('invalid_lead_pool');
@@ -34,7 +36,8 @@ function validatePositions(value:unknown):LeadPosition[]{
 export function validateLeadPool(value:unknown):LeadPoolState{
  if(!value||typeof value!=="object")throw Error('invalid_lead_pool');
  const v=value as Record<string,unknown>;
- if(v.available!==true)return {available:false,counts:{} as LeadPoolCounts,cooldown:{unlocked:0,locked:0},layers:{},pools:{}};
+ if(v.available!==true)return {schema:"bdhub.lead-pool.v2",available:false,counts:{} as LeadPoolCounts,cooldown:{unlocked:0,locked:0},layers:{},pools:{},business:{sendable:0,waiting:0,inactive:0,total:0},reasons:{},history:{sent:0}};
+ if(v.schema!=="bdhub.lead-pool.v2")throw Error('invalid_lead_pool');
  const raw=v.counts as Record<string,unknown>;
  const names=["leads","merged","unresolved","queued","positions","creators","handles","sent","unsent",
   "ready","readyCreators","cooling","awaitingReply","excluded","creatorsWithRelationship"];
@@ -50,9 +53,25 @@ export function validateLeadPool(value:unknown):LeadPoolState{
   pools[name]=validatePositions(rows);
  }
  const cooldown=v.cooldown as Record<string,unknown>;
- return {available:true,now:typeof v.now==="number"?v.now:undefined,counts:counts as unknown as LeadPoolCounts,
+ const business=v.business as Record<string,unknown>,history=v.history as Record<string,unknown>;
+ const projected={sendable:count(business?.sendable,"sendable"),waiting:count(business?.waiting,"waiting"),
+  inactive:count(business?.inactive,"inactive"),total:count(business?.total,"total")};
+ const sent=count(history?.sent,"sent");
+ if(projected.sendable+projected.waiting+projected.inactive!==projected.total||projected.total+sent!==counts.positions||sent!==counts.sent)throw Error('invalid_lead_pool');
+ return {schema:"bdhub.lead-pool.v2",available:true,now:typeof v.now==="number"?v.now:undefined,counts:counts as unknown as LeadPoolCounts,
   cooldown:{unlocked:count(cooldown?.unlocked,"unlocked"),locked:count(cooldown?.locked,"locked")},
-  layers:(v.layers as Record<string,number>)??{},pools};
+  layers:(v.layers as Record<string,number>)??{},pools,business:projected,
+  reasons:countsRecord(v.reasons),history:{sent}};
+}
+
+function countsRecord(raw:unknown):Record<string,number>{
+ if(raw==null)return {};
+ if(typeof raw!=="object"||Array.isArray(raw))throw Error('invalid_lead_pool');
+ const result:Record<string,number>={};
+ for(const [key,value] of Object.entries(raw as Record<string,unknown>)){
+  if(!LAYERS.has(key))throw Error('invalid_lead_pool');result[key]=count(value,key);
+ }
+ return result;
 }
 
 function run():Promise<LeadPoolState>{

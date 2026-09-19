@@ -4,9 +4,9 @@ The name is the only human-visible label of a card on the platform, so the opera
 able to change it without a code change. Two rules keep that safe:
 
 * the template is validated before it is stored (known placeholders, platform length limit);
-* the name is NOT part of the creation idempotency key (that key is pid/account/market/route/
-  campaign/commission/policy), so changing the template can never create a second link for a
-  product, and an intent already frozen keeps the name it was frozen with.
+* the naming rule fingerprint is part of the standard-material idempotency key.  A frozen intent
+  never changes, while a later naming-rule version creates a new standard card and leaves the old
+  one as history.
 """
 import json
 import re
@@ -16,7 +16,7 @@ from lib.second_cycle import digest
 
 PLACEHOLDERS = {'short_name', 'creator_percent', 'public_percent', 'total_percent', 'tail', 'pid_last6', 'campaign_last6', 'market'}
 DEFAULTS = {'version': 'link-naming-v1',
-            'template': 'BJN {short_name} {creator_percent}% {tail}',
+            'template': '🔥 BJN {short_name} {creator_percent}% {tail}',
             'tailLength': 6, 'maxLength': 50, 'shortNameMaxLength': 30}
 
 

@@ -11,7 +11,7 @@ export function buildFunnel(input:{collected:number|null;screened:number|null;sc
  return [
   {key:"card-collect",label:"采集",value:input.collected,hint:"去重商品"},
   {key:"card-screen",label:"筛出",value:input.screened,hint:rate},
-  {key:"card-links",label:"已备链",value:input.linked,hint:"已核验 + 可复用"},
+  {key:"card-links",label:"标准链接",value:input.linked,hint:"当前规则已核验"},
   {key:"card-leads",label:"待查线索",value:input.leadsPending,hint:"未查过，按销量降序"},
  ];
 }

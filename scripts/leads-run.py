@@ -32,6 +32,7 @@ sys.dont_write_bytecode = True
 sys.path.insert(0, str(ROOT / 'scripts'))
 
 from lib.cycle_kalodata import PATH, parse_page  # noqa: E402
+from lib.lead_selection import publish_query  # noqa: E402
 from lib.leads_queue import Ledger, config_path, load, plan  # noqa: E402
 from lib.second_cycle import CycleError, digest, encoded  # noqa: E402
 
@@ -74,7 +75,8 @@ def offers(root, pids):
     with closing(sqlite3.connect(db.resolve().as_uri() + '?mode=ro', uri=True)) as conn:
         conn.execute('BEGIN')
         return {row[0]: str(row[1]) for row in conn.execute(
-            f'SELECT pid,campaign_id FROM catalog_prepare_item WHERE pid IN ({marks})', list(pids))}
+            f"SELECT pid,campaign_id FROM catalog_current_binding WHERE market='it' AND state='active' "
+            f'AND pid IN ({marks})', list(pids))}
 
 
 def store_edges(root, edges):
@@ -109,7 +111,7 @@ def run(root, *, limit=None, max_pages=2, provider_factory=None, clock=time.time
     end = date.today() - timedelta(days=2)
     window = (str(end - timedelta(days=13)), str(end))
     report = {'startedAt': clock(), 'batchSize': planned['batchSize'], 'dueQueue': planned['dueQueue'],
-              'targets': len(items), 'done': 0, 'leads': 0, 'networkRequests': 0, 'stopped': None,
+              'targets': len(items), 'done': 0, 'leads': 0, 'rawPositive': 0, 'networkRequests': 0, 'stopped': None,
               'errors': [], 'skipped': {}, 'platformWrites': 0}
     if not items:
         report['stopped'] = 'queue_empty'
@@ -136,6 +138,7 @@ def run(root, *, limit=None, max_pages=2, provider_factory=None, clock=time.time
                 offer_key = 'campaign:' + binds.get(pid, 'unknown')
                 cursor, done = '', False
                 try:
+                    gathered=[];fingerprints=[]
                     while not done:
                         saved = ledger.db.execute('SELECT payload FROM leads_page WHERE pid=? AND cursor=?',
                                                   (pid, cursor)).fetchone()
@@ -153,12 +156,17 @@ def run(root, *, limit=None, max_pages=2, provider_factory=None, clock=time.time
                             with ledger.db:
                                 ledger.db.execute('INSERT OR REPLACE INTO leads_page VALUES(?,?,?)',
                                                   (pid, cursor, encoded(receipt)))
-                        report['leads'] += store_edges(root, receipt['edges'])
+                        gathered.extend(receipt['edges']);fingerprints.append(receipt['rowsFingerprint'])
                         for reason, count in (receipt.get('skipped') or {}).items():
                             report['skipped'][reason] = report['skipped'].get(reason, 0) + count
                         done = receipt['done']
                         cursor = receipt['nextCursor']
-                    ledger.succeeded(pid, window_end=window[1], note='队列查询', at=clock())
+                    target=plan_id(root);query=claim_for(root,pid,'',offer_key,window)['id']
+                    published=publish_query(root,plan_id=target,query_id=query,pid=pid,edges=gathered,
+                                            receipt_fingerprints=fingerprints,
+                                            policy_version=config['version'],limit=config['leadsPerPid'],at=clock())
+                    report['rawPositive']+=published['rawPositive'];report['leads']+=published['selected']
+                    ledger.succeeded(pid, window_end=window[1], leads=published['selected'],note='队列查询', at=clock())
                     report['done'] += 1
                 except CycleError as error:
                     code = str(error)

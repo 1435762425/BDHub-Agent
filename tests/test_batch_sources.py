@@ -48,6 +48,13 @@ class SourceTests(unittest.TestCase):
   self.assertEqual(self.q.once(self.id,p,fail)['status'],'retry_wait');self.assertEqual(p.calls,1)
   self.now+=61;self.s.close();self.s=TaskService(self.path,lambda:self.now);self.q=BatchSources(self.s)
   added=[];r=self.q.once(self.id,p,lambda edges:added.extend(edges));self.assertEqual(p.calls,1);self.assertEqual(len(added),1);self.assertEqual(r['status'],'page_saved')
+ def test_completed_pid_publishes_at_most_twenty_positive_gmv_ranked_leads(self):
+  self.q.plan(self.id,self.offers[:1],0)
+  rows=[{'id':f'k{i}','handle':f'creator{i}','sale':i+1,'revenue':100-i} for i in range(25)]
+  added=[];result=self.q.once(self.id,Provider(rows),added.extend)
+  self.assertEqual(result['addedEdges'],20);self.assertEqual(len(added),20)
+  self.assertEqual([edge['sourceRank'] for edge in added],list(range(1,21)))
+  self.assertEqual(len(self.q.edges(self.id)),20)
  def test_pause_during_http_saves_receipt_without_import_then_resume(self):
   self.q.plan(self.id,self.offers[:1],0);base=Provider();s=self.s;id=self.id
   class Pausing:

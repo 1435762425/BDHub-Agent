@@ -229,7 +229,16 @@ class CycleStore:
             data=encoded(e);old=self.db.execute('SELECT payload FROM source_edge WHERE plan_id=? AND source_id=?',(p,e['sourceId'])).fetchone()
             if old:
                 if old[0]!=data:raise CycleError('edge_conflict')
-                continue
+            else:self.db.execute('INSERT INTO source_edge VALUES(?,?,?)',(p,e['sourceId'],data))
+            if self.db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='source_edge_index'").fetchone() and e.get('sourceKind')=='kalodata_http':
+                rank=e.get('sourceRank');handle=e.get('sourceHandle')
+                if type(rank) is not int or rank<1 or not isinstance(handle,str) or not handle:raise CycleError('lead_edge_invalid')
+                self.db.execute("""INSERT INTO source_edge_index VALUES(?,?,?,?,?,?,?,?,?)
+                  ON CONFLICT(plan_id,source_id) DO UPDATE SET pid=excluded.pid,source_handle=excluded.source_handle,
+                  source_rank=excluded.source_rank,units=excluded.units,window_start=excluded.window_start,
+                  window_end=excluded.window_end,source_kind=excluded.source_kind""",
+                  (p,e['sourceId'],e['pid'],handle,rank,e['units'],e['windowStart'],e['windowEnd'],e['sourceKind']))
+            if old:continue
             person=e.get('creatorId');oec=e.get('oec')
             if bool(person)!=bool(oec):raise CycleError('identity_incomplete')
             if person:
@@ -240,7 +249,6 @@ class CycleStore:
                 previous=self.db.execute('SELECT payload FROM opportunity WHERE plan_id=? AND creator_id=? AND pid=? AND offer_key=?',(p,person,e['pid'],e['offerKey'])).fetchone()
                 if not previous or epoch(e['observedAt'])>epoch(json.loads(previous[0])['observedAt']):
                     self.db.execute('INSERT INTO opportunity VALUES(?,?,?,?,?,?) ON CONFLICT(plan_id,creator_id,pid,offer_key) DO UPDATE SET units=excluded.units,payload=excluded.payload',(p,person,e['pid'],e['offerKey'],e['units'],data))
-            self.db.execute('INSERT INTO source_edge VALUES(?,?,?)',(p,e['sourceId'],data))
     def _eligible_people(self,p,window_end=None):
         eligible={(o['pid'],o['offerKey']) for _,o in self._offers(p) if assess_offer(o,self.clock())['eligible']}
         consumed=set();cooldown=set()

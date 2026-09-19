@@ -33,6 +33,11 @@ def _iso(seconds):
 SCOPE = {'institution': 'bjn-local-research', 'market': 'it'}
 KALODATA = "json_extract(e.payload,'$.sourceKind')='kalodata_http'"
 HANDLE = "json_extract(e.payload,'$.sourceHandle')"
+CURRENT = """SELECT h.plan_id,s.source_id,x.pid,x.source_handle
+ FROM lead_query_head h JOIN lead_query_selection s ON s.query_id=h.query_id
+ JOIN source_edge_index x ON x.plan_id=h.plan_id AND x.source_id=s.source_id"""
+LEGACY_CURRENT = f"""SELECT e.plan_id,e.source_id,json_extract(e.payload,'$.pid') AS pid,
+ {HANDLE} AS source_handle FROM source_edge e WHERE {KALODATA}"""
 
 
 def root_of(module_file=__file__):
@@ -79,20 +84,22 @@ def _counts_once(root):
     with closing(sqlite3.connect(db.resolve().as_uri() + '?mode=ro', uri=True, timeout=5)) as conn:
         conn.execute('BEGIN')
         found = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-        if not {'plan', 'source_edge', 'cycle_identity_resolution', 'cycle_identity_outcome'} <= found:
+        if not {'plan','source_edge','cycle_identity_resolution','cycle_identity_outcome'} <= found:
             return None
         plan = conn.execute('SELECT id FROM plan WHERE institution=? AND market=? AND state=?',
                             (SCOPE['institution'], SCOPE['market'], 'active')).fetchone()
         if not plan:
             return None
         plan_id = plan[0]
-        leads = conn.execute(f'SELECT count(*) FROM source_edge e WHERE {KALODATA} AND e.plan_id=?',
-                             (plan_id,)).fetchone()[0]
+        current=CURRENT if {'source_edge_index','lead_query_head','lead_query_selection'}<=found and conn.execute('SELECT 1 FROM lead_query_head WHERE plan_id=? LIMIT 1',(plan_id,)).fetchone() else LEGACY_CURRENT
+        leads = conn.execute(f'SELECT count(*) FROM ({current}) k WHERE k.plan_id=?',(plan_id,)).fetchone()[0]
         resolved_leads, resolved_creators = conn.execute(
-            'SELECT count(*),count(DISTINCT creator_id) FROM cycle_identity_resolution WHERE plan_id=?',
+            f'SELECT count(*),count(DISTINCT r.creator_id) FROM ({current}) k JOIN cycle_identity_resolution r '
+            'ON r.plan_id=k.plan_id AND r.source_id=k.source_id WHERE k.plan_id=?',
             (plan_id,)).fetchone()
         outcomes = {row[0]: row[1] for row in conn.execute(
-            'SELECT status,count(*) FROM cycle_identity_outcome WHERE plan_id=? GROUP BY status', (plan_id,))}
+            f'SELECT o.status,count(*) FROM ({current}) k JOIN cycle_identity_outcome o '
+            'ON o.plan_id=k.plan_id AND o.source_id=k.source_id WHERE k.plan_id=? GROUP BY o.status',(plan_id,))}
         unresolved_leads = outcomes.get('unresolved', 0)
         # The three ways a lead can still be undecided, kept apart because the next action differs:
         # nothing submitted yet, waiting in the Find queue, and blocked by the account.
@@ -100,12 +107,12 @@ def _counts_once(root):
                                      - outcomes.get('blocked', 0)),
                      'queued': outcomes.get('queued', 0), 'blocked': outcomes.get('blocked', 0)}
         pending_leads = sum(breakdown.values())
-        unresolved_creators = conn.execute(f"""SELECT count(DISTINCT {HANDLE}) FROM source_edge e
-            JOIN cycle_identity_outcome o ON o.plan_id=e.plan_id AND o.source_id=e.source_id
-            WHERE {KALODATA} AND e.plan_id=? AND o.status='unresolved'""", (plan_id,)).fetchone()[0]
-        pending_creators = conn.execute(f"""SELECT count(DISTINCT {HANDLE}) FROM source_edge e
-            LEFT JOIN cycle_identity_outcome o ON o.plan_id=e.plan_id AND o.source_id=e.source_id
-            WHERE {KALODATA} AND e.plan_id=? AND (o.status IS NULL OR o.status IN ('queued','blocked'))""",
+        unresolved_creators = conn.execute(f"""SELECT count(DISTINCT k.source_handle) FROM ({current}) k
+            JOIN cycle_identity_outcome o ON o.plan_id=k.plan_id AND o.source_id=k.source_id
+            WHERE k.plan_id=? AND o.status='unresolved'""", (plan_id,)).fetchone()[0]
+        pending_creators = conn.execute(f"""SELECT count(DISTINCT k.source_handle) FROM ({current}) k
+            LEFT JOIN cycle_identity_outcome o ON o.plan_id=k.plan_id AND o.source_id=k.source_id
+            WHERE k.plan_id=? AND (o.status IS NULL OR o.status IN ('queued','blocked'))""",
             (plan_id,)).fetchone()[0]
     return {'plan': plan_id, 'leads': leads, 'resolvedLeads': resolved_leads, 'resolvedCreators': resolved_creators,
             'pendingLeads': pending_leads, 'pendingCreators': pending_creators,
@@ -193,15 +200,15 @@ def by_creator(root):
     with closing(sqlite3.connect(db.resolve().as_uri() + '?mode=ro', uri=True, timeout=5)) as conn:
         conn.execute('BEGIN')
         tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-        if not {'plan', 'source_edge', 'cycle_identity_resolution', 'cycle_identity_outcome'} <= tables:
+        if not {'plan','source_edge','cycle_identity_resolution','cycle_identity_outcome'} <= tables:
             return None
         plan = conn.execute('SELECT id FROM plan WHERE institution=? AND market=? AND state=?',
                             (SCOPE['institution'], SCOPE['market'], 'active')).fetchone()
         if not plan:
             return None
+        current=CURRENT if {'source_edge_index','lead_query_head','lead_query_selection'}<=tables and conn.execute('SELECT 1 FROM lead_query_head WHERE plan_id=? LIMIT 1',(plan[0],)).fetchone() else LEGACY_CURRENT
         sql = f"""
-        WITH K AS (SELECT {HANDLE} AS h, e.source_id FROM source_edge e
-                   WHERE {KALODATA} AND e.plan_id=:plan),
+        WITH K AS (SELECT source_handle AS h,source_id,pid FROM ({current}) WHERE plan_id=:plan),
         R AS (SELECT DISTINCT k.h FROM cycle_identity_resolution r
               JOIN K k ON k.source_id=r.source_id),
         U AS (SELECT DISTINCT k.h FROM K k JOIN cycle_identity_outcome o ON o.source_id=k.source_id
@@ -221,11 +228,8 @@ def by_creator(root):
           (SELECT count(*) FROM K) AS leads,
           -- 可达位置：已就位达人的**全部**线索商品，去重到 达人×商品。
           -- `json_extract` 必须先抽成列再连接：直接在 ON 里对每一行调它，3000×13000 次会把读卡住。
-          (SELECT count(*) FROM (SELECT DISTINCT e2.h, e2.pid FROM
-             (SELECT json_extract(payload,'$.sourceHandle') AS h, json_extract(payload,'$.pid') AS pid
-              FROM source_edge WHERE plan_id=:plan
-                AND json_extract(payload,'$.sourceKind')='kalodata_http') e2
-             WHERE e2.h IN (SELECT h FROM R))) AS positions
+          (SELECT count(*) FROM (SELECT DISTINCT k.h,k.pid FROM K k
+             WHERE k.h IN (SELECT h FROM R))) AS positions
         """
         row = conn.execute(sql, {'plan': plan[0]}).fetchone()
     if row is None:

@@ -6,6 +6,12 @@ from pathlib import Path
 from lib.second_cycle import digest,encoded
 
 ROUTES={'selected','campaign'}
+COMMISSION_KEYS=('version','agencyMinPoints','agencyPreferredPoints','newCreatorMinBoostPoints')
+
+def policy_fingerprint(policy):
+    """Fingerprint only commission semantics; historical-card handling is not a rate rule."""
+    if not isinstance(policy,dict) or any(policy.get(key) is None for key in COMMISSION_KEYS):raise ValueError('catalog_policy_invalid')
+    return digest({key:policy[key] for key in COMMISSION_KEYS})
 
 def basis(value):
     if value is None or isinstance(value,bool):raise ValueError('commission_missing')
@@ -33,9 +39,9 @@ def choose_existing(cards,policy):
 
 def link_decision(cards,policy,*,search_complete):
     if not search_complete:return {'state':'lookup_incomplete'}
-    selected=choose_existing(cards,policy)
-    if selected:return {'state':'reuse','card':selected}
-    if cards:return {'state':'old_links_require_review'}
+    # Historical cards remain evidence only.  The caller may separately detect an exact standard
+    # card by its frozen rule/name fingerprint, but an ordinary old card never becomes send material.
+    if cards:return {'state':'historical_links_ignored'}
     return {'state':'may_prepare_creation'}
 
 class CatalogLinks:
@@ -70,20 +76,27 @@ class CatalogLinks:
         # 渠道属于商品/线索/链接：同一个 PID 在两条渠道上是两个不同的平台对象，
         # 所以这里放开 route，但载荷必须逐字节等于**该渠道**的冻结请求。
         if spec.get('account')!='acc9' or spec.get('market')!='it' or spec.get('route') not in ROUTES:raise ValueError(scope_error)
-        if type(spec.get('searchTotal')) is not int or spec['searchTotal']!=0:raise ValueError('existing_links_preserved_requires_review' if not canary else 'existing_link_or_intent_requires_review')
+        if canary:
+            if type(spec.get('searchTotal')) is not int or spec['searchTotal']!=0:raise ValueError('existing_link_or_intent_requires_review')
+        elif type(spec.get('searchTotal')) is not int or spec['searchTotal']<0 or spec.get('standardSearchComplete') is not True:
+            raise ValueError('catalog_standard_search_required')
         if self.legacy_conflict(spec['pid']):raise ValueError('legacy_creation_in_progress' if not canary else 'existing_link_or_intent_requires_review')
-        if spec.get('policyFingerprint')!=digest(self.policy):raise ValueError('catalog_policy_changed')
+        if spec.get('policyFingerprint')!=policy_fingerprint(self.policy):raise ValueError('catalog_policy_changed')
+        if not canary:
+            if spec.get('policyVersion')!=self.policy.get('version') or spec.get('namingVersion')!='link-naming-v1' or not re.fullmatch(r'[0-9a-f]{64}',str(spec.get('namingFingerprint') or '')):raise ValueError('catalog_standard_rule_invalid')
         # 预期载荷由生成器本身给出，不再手抄一份：抄的那份在加渠道时正是最容易抄错的地方。
         from bdhub.send.taplink.protocol import create_payload
         try:expected=create_payload(pid=spec['pid'],campaign_id=spec['campaignId'],creator_pct=spec['creatorPercent'],
                                     name=spec['listName'],route=spec['route'])
         except ValueError:raise ValueError('catalog_payload_binding_invalid') from None
         if spec.get('payload')!=expected or not 1<=len(spec['listName'])<=50:raise ValueError('catalog_payload_binding_invalid')
-        key={k:spec[k] for k in ('pid','account','market','route','campaignId','creatorPercent','policyFingerprint')};id='catalog-link-'+digest(key)[:28]
+        key={k:spec[k] for k in ('pid','account','market','route','campaignId','creatorPercent','policyFingerprint')}
+        if not canary:key['namingFingerprint']=spec['namingFingerprint']
+        id='catalog-link-'+digest(key)[:28]
         old=self.db.execute('SELECT id FROM catalog_link_intent WHERE id=?',(id,)).fetchone()
         if old:return self.get(id)
-        if self.db.execute('SELECT 1 FROM catalog_link_intent WHERE pid=?',(spec['pid'],)).fetchone():raise ValueError('prior_catalog_link_requires_review')
-        self.db.execute('INSERT INTO catalog_link_intent VALUES(?,?,?,?,?,NULL,NULL,?,?)',(id,spec['pid'],spec['account'],'prepared',encoded(spec),time.time(),time.time()))
+        try:self.db.execute('INSERT INTO catalog_link_intent VALUES(?,?,?,?,?,NULL,NULL,?,?)',(id,spec['pid'],spec['account'],'prepared',encoded(spec),time.time(),time.time()))
+        except sqlite3.IntegrityError:raise ValueError('catalog_link_intent_in_progress') from None
         return self.get(id)
     def begin(self,id,account):
         if self.get(id)['account']!=account:raise ValueError('catalog_link_account_changed')
@@ -96,16 +109,31 @@ class CatalogLinks:
     def unknown(self,id,reason):
         self.db.execute("UPDATE catalog_link_intent SET state='unknown',readback=?,updated=? WHERE id=? AND state IN ('submitted','receipt_saved','unknown')",(encoded({'reason':reason}),time.time(),id))
     def confirm(self,id,card):
+        return self._confirm(id,card,allowed=('submitted','receipt_saved','unknown'),existing=False)
+    def confirm_existing_standard(self,id,card):
+        """Settle a frozen intent from a complete read that found the exact standard card."""
+        return self._confirm(id,card,allowed=('prepared',),existing=True)
+    def _confirm(self,id,card,*,allowed,existing):
         row=self.get(id);s=row['spec']
-        if row['state']=='verified':return
-        if row['state'] not in ('submitted','receipt_saved','unknown'):raise ValueError('catalog_link_not_submitted')
+        if row['state']=='verified':return self.get(id)
+        if row['state'] not in allowed:raise ValueError('catalog_link_not_submitted')
         if not re.fullmatch(r'[1-9][0-9]{0,31}',str(card.get('listId',''))):raise ValueError('catalog_link_id_missing')
         # 回读卡片的线上活动号按渠道判定：全托是账号级卡片（campaign_id='0'），
         # 非全托卡片就挂在这个活动上。用错渠道的期望值会让确认整批失败。
         wire='0' if s['route']=='selected' else s['campaignId']
         if any(str(card.get(k))!=str(v) for k,v in {'pid':s['pid'],'sourceCampaignId':s['campaignId'],'creatorPercent':s['creatorPercent'],'wireCampaignId':wire,'verifiedListName':s['listName'],'state':'verified_read_only'}.items()):raise ValueError('catalog_link_binding_mismatch')
-        if row['receipt'] and row['receipt'].get('list_id') and row['receipt']['list_id']!=card.get('listId'):raise ValueError('catalog_link_receipt_mismatch')
-        self.db.execute("UPDATE catalog_link_intent SET state='verified',readback=?,updated=? WHERE id=?",(encoded(card),time.time(),id))
+        if not existing and row['receipt'] and row['receipt'].get('list_id') and row['receipt']['list_id']!=card.get('listId'):raise ValueError('catalog_link_receipt_mismatch')
+        self.db.execute('BEGIN IMMEDIATE')
+        try:
+            if s.get('purpose')=='catalog_batch_link':
+                from lib.catalog_binding import CatalogBindings
+                CatalogBindings(self.root,connection=self.db).promote(s,card,id)
+            self.db.execute("UPDATE catalog_link_intent SET state='verified',readback=?,updated=? WHERE id=?",(encoded(card),time.time(),id))
+            self.db.execute('COMMIT')
+        except BaseException:
+            self.db.execute('ROLLBACK')
+            raise
+        return self.get(id)
 
 def catalog_owns_pid(cycle_db,pid):
     files=cycle_db.execute('PRAGMA database_list').fetchall();main=next((r[2] for r in files if r[1]=='main'),None)

@@ -1,7 +1,8 @@
 import json,sys,tempfile,unittest,sqlite3
 from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'scripts'))
-from lib.catalog_links import new_commission,choose_existing,link_decision,CatalogLinks,catalog_owns_pid
+from lib.catalog_links import new_commission,choose_existing,link_decision,CatalogLinks,catalog_owns_pid,policy_fingerprint
+from lib.schema_migrations import apply_database
 from lib.second_cycle import digest
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT.parent/'01-BDSystem-V2'))
@@ -20,12 +21,12 @@ class LinkTests(unittest.TestCase):
   old=a|{'totalRaw':1200,'creatorRaw':1050};self.assertIsNotNone(choose_existing([old],self.policy))
  def test_existing_or_incomplete_lookup_never_authorizes_new_creation(self):
   self.assertEqual(link_decision([],self.policy,search_complete=False)['state'],'lookup_incomplete')
-  self.assertEqual(link_decision([{'listId':'old'}],self.policy,search_complete=True)['state'],'old_links_require_review')
+  self.assertEqual(link_decision([{'listId':'old'}],self.policy,search_complete=True)['state'],'historical_links_ignored')
   self.assertEqual(link_decision([],self.policy,search_complete=True)['state'],'may_prepare_creation')
  def test_intent_pins_account_is_idempotent_and_blocks_replay(self):
   with tempfile.TemporaryDirectory() as d:
-   root=Path(d);(root/'var').mkdir();(root/'config').mkdir();(root/'config/catalog-link-policy.json').write_text(json.dumps(self.policy));l=CatalogLinks(root)
-   s={'pid':'123','account':'acc9','market':'it','route':'selected','purpose':'acc9_single_card_canary','campaignId':'456','creatorPercent':'13','listName':'BJN test','policyFingerprint':digest(self.policy),'searchTotal':0,'payload':{'name':'BJN test','campaign_id':'0','source':2,'items':[{'product_id':'123','campaign_id':'456','creator_commission_rate':'1300'}]}}
+   root=Path(d);(root/'var').mkdir();(root/'config').mkdir();(root/'config/catalog-link-policy.json').write_text(json.dumps(self.policy));sqlite3.connect(root/'var/catalog-links.sqlite').close();apply_database(root,'catalog-links');l=CatalogLinks(root)
+   s={'pid':'123','account':'acc9','market':'it','route':'selected','purpose':'acc9_single_card_canary','campaignId':'456','creatorPercent':'13','listName':'BJN test','policyFingerprint':policy_fingerprint(self.policy),'searchTotal':0,'payload':{'name':'BJN test','campaign_id':'0','source':2,'items':[{'product_id':'123','campaign_id':'456','creator_commission_rate':'1300'}]}}
    r=l.prepare(s);self.assertEqual(l.prepare(s|{'preparedAt':999})['id'],r['id'])
    with self.assertRaises(ValueError):l.begin(r['id'],'acc6')
    l.begin(r['id'],'acc9');l.unknown(r['id'],'timeout')
@@ -43,15 +44,17 @@ class LinkTests(unittest.TestCase):
   """
   from bdhub.send.taplink.protocol import create_payload
   with tempfile.TemporaryDirectory() as d:
-   root=Path(d);(root/'var').mkdir();(root/'config').mkdir();(root/'config/catalog-link-policy.json').write_text(json.dumps(self.policy));l=CatalogLinks(root)
+   root=Path(d);(root/'var').mkdir();(root/'config').mkdir();(root/'config/catalog-link-policy.json').write_text(json.dumps(self.policy));sqlite3.connect(root/'var/catalog-links.sqlite').close();apply_database(root,'catalog-links');l=CatalogLinks(root)
    payload=create_payload(pid='123',campaign_id='456',creator_pct='13',name='BJN test',route='campaign')
    self.assertEqual(payload,{'name':'BJN test','campaign_id':'456','items':[{'product_id':'123','creator_commission_rate':'1300'}]})
    s={'pid':'123','account':'acc9','market':'it','route':'campaign','purpose':'catalog_batch_link','campaignId':'456','creatorPercent':'13',
-      'listName':'BJN test','shortName':'test','policyFingerprint':digest(self.policy),'searchTotal':0,'sourceRun':'run-1','payload':payload}
+      'listName':'BJN test','shortName':'test','policyVersion':self.policy['version'],'policyFingerprint':policy_fingerprint(self.policy),
+      'namingVersion':'link-naming-v1','namingFingerprint':'a'*64,'searchTotal':0,'standardSearchComplete':True,'sourceRun':'run-1',
+      'offer':{'pid':'123','campaignId':'456','catalogSource':'campaign','creatorPercent':'13','publicPercent':'10','totalPercent':'15'},'payload':payload}
    r=l.prepare(s);self.assertEqual(r['state'],'prepared')
    with self.assertRaises(ValueError):l.prepare(s|{'pid':'124','payload':create_payload(pid='124',campaign_id='456',creator_pct='13',name='BJN test',route='selected')})
    l.begin(r['id'],'acc9')
-   card={'state':'verified_read_only','listId':'789','pid':'123','sourceCampaignId':'456','creatorPercent':'13','wireCampaignId':'456','verifiedListName':'BJN test'}
+   card={'state':'verified_read_only','listId':'789','pid':'123','sourceCampaignId':'456','creatorPercent':'13','wireCampaignId':'456','verifiedListName':'BJN test','checkedAt':1.0,'evidenceRefs':['proof']}
    with self.assertRaises(ValueError):l.confirm(r['id'],card|{'wireCampaignId':'0'})
    l.confirm(r['id'],card);self.assertEqual(l.get(r['id'])['state'],'verified')
    with self.assertRaises(ValueError):l.prepare(s|{'pid':'125','route':'bogus','campaignId':'456'})

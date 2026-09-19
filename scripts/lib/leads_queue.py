@@ -24,10 +24,8 @@ from pathlib import Path
 
 from lib.global_screen import sales
 
-DEFAULTS = {'version': 'leads-queue-v1', 'refreshDays': 7, 'leadsPerPid': 10, 'windowDays': 14,
+DEFAULTS = {'version': 'leads-queue-v2', 'refreshDays': 7, 'leadsPerPid': 20, 'windowDays': 14,
             'batchSize': 200, 'maxAttempts': 3}
-
-LINKED_STATES = ('ready', 'reuse')
 
 SCHEMA = '''
 CREATE TABLE IF NOT EXISTS leads_query(
@@ -250,9 +248,10 @@ def _campaign_products(root, already):
 
 def linked_products(root):
     db = Path(root) / 'var/catalog-links.sqlite'
-    marks = ','.join('?' * len(LINKED_STATES))
-    return {row[0]: row[1] for row in
-            _read(db, f'SELECT pid,state FROM catalog_prepare_item WHERE state IN ({marks})', LINKED_STATES)}
+    # Only the canonical standard binding is material.  Preparation states and historical reuse
+    # rows are evidence, not sendable links.
+    return {row[0]: row[1] for row in _read(
+        db, "SELECT pid,state FROM catalog_current_binding WHERE market='it' AND state='active'")}
 
 
 def build(root, *, config=None, now=None, ledger=None):

@@ -36,7 +36,7 @@ const tone=(state:string)=>state==="eligible"||state==="completed"?"success"
  *
  * 步骤与全托页一一对应，因为**漏一步就等于那段流程不受控**：
  *   ① 加入与采集：加入活动（平台写入，手动确认）→ 刷新采集（只读，读完自动重新筛分入池）
- *   ② 准备链接：读卡复用 / 新建缺链（平台写入，手动确认）＋ 商品短名（卡名来源）
+ *   ② 准备链接：识别标准卡 / 补建标准卡（平台写入，手动确认）＋ 商品短名（卡名来源）
  *   ③ 达人线索：查询队列 / 达人身份 / 发送池——**这两步跨渠道共用**，不是非全托独有
  *      （位置＝达人×商品，渠道只挂在商品与链接上，绝不按渠道拆达人）。
  */
@@ -48,11 +48,11 @@ export default function CampaignPanel({onOpenLeads}:{onOpenLeads?:()=>void}={}){
  const pool=panel.data, ledger=join.data;
  const joinable=(ledger?.items??[]).filter(item=>item.state==="eligible");
  const unresolved=ledger?.unresolved??[];
- // 链接准备：目标＝已入池商品，已有可复用 / 待新建分开报，绝不把"缺链"说成"已备链"。
+ // 链接准备：只有当前标准链接算完成；旧卡只保留历史。
  const linkStates=links.data?.states??{};
  const linkTargets=links.data?.targets??0;
  const judged=Math.max(0,linkTargets-(linkStates.pending??0)-(linkStates.reading??0));
- const linkOk=(links.data?.verifiedPids??0)+(links.data?.reusePids??0);
+ const linkOk=links.data?.verifiedPids??0;
  const other=ledger?.otherCategories;
  const linkRun=jobs.data?.linksCampaign?.run;
  // 采集作业：进度是另一种形状（轮次/请求数/商品数），按 phase==="collect" 区分。
@@ -66,7 +66,7 @@ export default function CampaignPanel({onOpenLeads}:{onOpenLeads?:()=>void}={}){
   {key:"card-campaign-pool",label:"采集",value:pool?.distinctPids??null,hint:"去重商品（PID）"},
   {key:"card-campaign-pool",label:"合格",value:pool?.eligiblePids??null,
    hint:pool?.distinctPids?`合格率 ${(((pool.eligiblePids??0)/(pool.distinctPids||1))*100).toFixed(1)}%`:"按已确认门槛"},
-  {key:"card-campaign-links",label:"已备链",value:links.data?.available?linkOk:null,hint:"已核验 + 可复用"},
+  {key:"card-campaign-links",label:"标准链接",value:links.data?.available?linkOk:null,hint:"当前规则已核验"},
   // 线索现在是独立页签：这里只指路，不再在这一页读线索账本（避免两处各读一份）。
   {key:"card-leads",label:"达人线索",value:null,hint:"已移到独立页签（两条渠道共用）"},
  ];
@@ -145,7 +145,7 @@ export default function CampaignPanel({onOpenLeads}:{onOpenLeads?:()=>void}={}){
      <div className="grid grid-cols-2 gap-4 lg:grid-cols-3">
       <StatTile label="采集到的商品（去重）" value={pool.distinctPids??0} hint="同一个商品可能出现在多个活动里，这里只算一次"/>
       <StatTile label="合格商品" value={pool.eligiblePids??0} hint="通过下面这套门槛的商品数" brand/>
-      <StatTile label="已备链" value={linkOk} hint="已核验 + 可复用，下一步就是拿它们去找达人"/>
+      <StatTile label="标准链接已就绪" value={linkOk} hint="只有这些商品可以进入达人线索查询"/>
      </div>
      {!pool.poolReconciled&&<Notice tone="warning">合格商品数与去重商品数对不上，先别据此判断池子大小。</Notice>}
      <Progress done={pool.eligiblePids??0} total={pool.distinctPids??0} label="合格比例（合格商品 / 去重商品）"/>
@@ -173,34 +173,34 @@ export default function CampaignPanel({onOpenLeads}:{onOpenLeads?:()=>void}={}){
   </Section>
 
   <Section id="stage-campaign-links" index="②" title="准备链接"
-   summary={<>待备链 {linkTargets.toLocaleString()} · 可复用 {links.data?.reusePids??"—"} · 已核验 {links.data?.verifiedPids??"—"}</>}>
+   summary={<>待准备 {linkTargets.toLocaleString()} · 历史卡记录 {links.data?.reusePids??"—"} · 当前标准 {links.data?.verifiedPids??"—"}</>}>
    <div id="card-campaign-links" className="scroll-mt-6"><Card title="链接准备"
     action={links.data?.available?<Pill tone="success">已读卡</Pill>:<Pill tone="neutral">未开始</Pill>}>
     <div className="space-y-4 p-5">
     <p className="text-sm leading-6 text-gray-500">
-     非全托的卡片是**挂在活动上**的（全托是账号级），所以这里按活动逐个读卡：已有可用卡片一律复用、不重建；
-     确实没有卡片的才新建，新建前会按活动重新核一遍商业事实。
+     非全托卡片挂在活动上。系统只识别统一分佣、命名和活动绑定完全一致的标准卡；其他旧卡保留历史，
+     但不参与新发送。没有标准卡时才补建，新建前会按活动重新核一遍商业事实。
     </p>
     {!links.data?.available&&<p className="text-sm text-gray-500">{links.loaded?"还没有为非全托读过卡。先点下面的「准备链接（只查不建）」。":"读取中…"}</p>}
     {links.data?.available&&<>
      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
       <StatTile label="待备链商品" value={linkTargets} hint={(links.data.excluded??0)>0?`已排除跨渠道重叠 ${links.data.excluded} 个（全托优先）`:"已入池商品，一个商品只出一条"}/>
-      <StatTile label="已有可复用链接" value={links.data.reusePids??0} hint="卡片就挂在这个活动上，按保留底线复用，不重建"/>
-      <StatTile label="确实缺链" value={linkStates.missing??0} hint="没有任何卡片，需要新建"/>
-      <StatTile label="已核验" value={links.data.verifiedPids??0} hint="本项目建出并回读确认的链接" brand/>
+      <StatTile label="历史卡记录" value={links.data.reusePids??0} hint="只用于追溯，不进入发送材料"/>
+      <StatTile label="缺标准链接" value={linkStates.missing??0} hint="需要确认或创建当前标准卡"/>
+      <StatTile label="当前标准链接" value={links.data.verifiedPids??0} hint="统一规则并已回读确认" brand/>
      </div>
      <Progress done={judged} total={linkTargets} label="准备进展（已判定 / 待备链商品）"/>
      {linkRun?.running&&<Progress done={linkRun.progress?.created??0} total={(linkRun.progress?.created??0)+((linkRun.progress?.states?.missing)??0)} label="本批建链进展（本批已建 / 本批已建＋还缺）"/>}
      {(links.data.planMissing??0)>0&&<Notice tone="warning">有 {links.data.planMissing} 个已入池商品在快照里找不到对应活动事实，已跳过——不按猜的活动建链。</Notice>}
      {(links.data.commissionInvalid??0)>0&&<Notice tone="warning">有 {links.data.commissionInvalid} 个商品按当前规则算不出佣金，已跳过。</Notice>}
      {(linkStates.read_incomplete??0)>0&&<Notice tone="warning">有 {linkStates.read_incomplete} 个商品所在活动这次没读到：按未判定处理，不会当成"没有卡"。</Notice>}
-     {(linkStates.review??0)>0&&<Notice tone="warning">有 {linkStates.review} 个商品有卡但不符合复用条件，需要人工判断——不会自动新建第二条。</Notice>}
+     {(linkStates.review??0)>0&&<Notice tone="warning">有 {linkStates.review} 条旧口径记录等待按标准链接规则重新检查。</Notice>}
     </>}
     <div className="grid gap-4 lg:grid-cols-3">
      <Field label="每次读取条数" hint="非全托一次就把未判定读完，通常点一次就够。">
       <Input type="number" min={1} max={200} value={jobs.draft.linksCampaign?.readLimit??15}
        onChange={e=>jobs.setDraft("linksCampaign",{...jobs.draft.linksCampaign,readLimit:Number(e.target.value)})}/></Field>
-     <Field label="每批新建条数" hint="0＝只查不建。填了就是**平台写入**：先查已有卡并复用，再一批批继续，**直到把缺的都建完**（中途可以点「停止」）。">
+     <Field label="每批新建条数" hint="0＝只查不建。填了就是平台写入：完全一致的标准卡不会重复建，其余按上限补建。">
       <Input type="number" min={0} max={200} value={jobs.draft.linksCampaign?.creates??0}
        onChange={e=>jobs.setDraft("linksCampaign",{...jobs.draft.linksCampaign,creates:Number(e.target.value)})}/></Field>
      <div className="flex flex-wrap items-end gap-2">
@@ -214,7 +214,7 @@ export default function CampaignPanel({onOpenLeads}:{onOpenLeads?:()=>void}={}){
     </div>
     {jobs.message&&<Notice tone="info">{jobs.message}</Notice>}
     <p className="text-xs leading-5 text-gray-400">
-     新建非全托链接是<b>平台写入</b>：每个商品先冻结意图再提交，提交后逐条回读确认；已有可用卡片一律复用、不重建，结果未知的按原意图回查、绝不重复提交。
+     新建非全托链接是<b>平台写入</b>：每个商品先冻结意图再提交，提交后逐条回读确认；旧卡不删除、不复用，结果未知按原意图回查，绝不重复提交。
      上限填 0 时这个按钮只查不建。
     </p>
     {/* 卡名来源：缺短名就会退化成截断标题，所以这一步必须和"新建链接"放在一起，

@@ -20,6 +20,7 @@ Layers, hardest constraint first:
 Replying is what makes ``awaiting_reply`` different from ``cooling``: one is a matter of time, the
 other is a matter of work, and showing them together would make a person wait for nothing.
 """
+import json
 import sqlite3
 import time
 from contextlib import closing
@@ -29,7 +30,7 @@ UNLOCKED_COOLDOWN = 86400   # one message per creator per day
 LOCKED_COOLDOWN = 172800    # four weeks without a reply: at least 48 hours between products
 # ``ready`` holds one position per creator -- the slot that would be sent next. A creator's other
 # positions stay in ``queued``: they are not lost, they simply are not the next thing to do.
-LAYER_ORDER = ('ready', 'queued', 'cooling', 'awaiting_reply', 'excluded', 'sent')
+LAYER_ORDER = ('ready', 'queued', 'cooling', 'awaiting_reply', 'excluded', 'product_inactive', 'sent')
 
 
 def root_of(module_file=__file__):
@@ -48,16 +49,37 @@ def pool(root, *, now=None, limit=20):
         return {'available': False, 'counts': {}, 'layers': {}, 'pools': {}}
     now = time.time() if now is None else now
     with closing(sqlite3.connect(db.resolve().as_uri() + '?mode=ro', uri=True)) as conn:
-        conn.row_factory = sqlite3.Row
-        conn.execute('BEGIN')
-        return _build(conn, now, limit)
+        conn.row_factory = sqlite3.Row;conn.execute('BEGIN')
+        tables={row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        required={'source_edge_index','lead_query_run','lead_query_selection','lead_query_head'}
+        if not required<=tables:return {'available':False,'counts':{},'layers':{},'pools':{},'schema':'bdhub.lead-pool.v2'}
+        eligible=_eligible_pids(conn,now,tables)
+        return _build(conn, now, limit, eligible_pids=eligible)
 
 
-def _build(conn, now, limit):
-    leads = _rows(conn, "SELECT count(*) FROM source_edge WHERE json_extract(payload,'$.sourceKind')='kalodata_http'")[0][0]
-    outcomes = {row[0]: row[1] for row in _rows(conn, 'SELECT status,count(*) FROM cycle_identity_outcome GROUP BY status')}
-    handles = _rows(conn, "SELECT count(DISTINCT json_extract(payload,'$.sourceHandle')) FROM source_edge "
-                          "WHERE json_extract(payload,'$.sourceKind')='kalodata_http'")
+def _eligible_pids(conn,now,tables):
+    if not {'plan','catalog','catalog_head'}<=tables:return None
+    from lib.second_cycle import assess_offer
+    pids=set()
+    rows=conn.execute("SELECT c.payload FROM catalog_head h JOIN catalog c ON c.id=h.snapshot_id "
+                      "JOIN plan p ON p.id=h.plan_id WHERE p.market='it'").fetchall()
+    for row in rows:
+        try:offers=json.loads(row[0])
+        except (TypeError,ValueError):continue
+        for offer in offers if isinstance(offers,list) else []:
+            if isinstance(offer,dict) and offer.get('pid') is not None and assess_offer(offer,now)['eligible']:
+                pids.add(str(offer['pid']))
+    return pids
+
+
+def _build(conn, now, limit, eligible_pids=None):
+    current="""SELECT h.plan_id,s.source_id,x.pid,x.source_handle,x.source_rank,x.units
+      FROM lead_query_head h JOIN lead_query_selection s ON s.query_id=h.query_id
+      JOIN source_edge_index x ON x.plan_id=h.plan_id AND x.source_id=s.source_id"""
+    leads = _rows(conn, f"SELECT count(*) FROM ({current})")[0][0]
+    outcomes = {row[0]: row[1] for row in _rows(conn, f"SELECT o.status,count(*) FROM ({current}) k "
+        "JOIN cycle_identity_outcome o ON o.plan_id=k.plan_id AND o.source_id=k.source_id GROUP BY o.status")}
+    handles = _rows(conn, f"SELECT count(DISTINCT source_handle) FROM ({current})")
     # A position only exists once the lead has been matched to a real creator.
     #
     # 达人级一次（2026-09-15 用户确认）：平台回答的是"这个 handle 是谁"，**与商品无关**；商品卡也只按
@@ -67,22 +89,15 @@ def _build(conn, now, limit):
     # 位置：**达人 × 商品**。先取"已就位达人 → 他的 handle"（2,000 多行），再按 handle 取他名下的
     # 全部线索商品；两段都是单次扫描 + 一次 IN 查找。**不要**写成两张大表按 JSON 字段连接：那会对
     # 每行都调 json_extract，2,000×13,000 次，实测把接口拖到 60 秒超时。
-    resolved = _rows(conn, """
-        SELECT DISTINCT r.creator_id AS creator_id, json_extract(e.payload,'$.sourceHandle') AS handle
-        FROM cycle_identity_resolution r
-        JOIN source_edge e ON e.plan_id = r.plan_id AND e.source_id = r.source_id
-        WHERE json_extract(e.payload,'$.sourceKind')='kalodata_http'""")
+    resolved = _rows(conn, """SELECT x.source_handle AS handle,min(r.creator_id) AS creator_id,
+        count(DISTINCT r.creator_id) AS owners FROM cycle_identity_resolution r
+        JOIN source_edge_index x ON x.plan_id=r.plan_id AND x.source_id=r.source_id
+        WHERE x.source_kind='kalodata_http' GROUP BY x.source_handle HAVING owners=1""")
     owner = {row['handle']: row['creator_id'] for row in resolved}
     if owner:
         marks = ','.join('?' * len(owner))
-        edges = _rows(conn, f"""
-            SELECT json_extract(payload,'$.sourceHandle') AS handle, json_extract(payload,'$.pid') AS pid,
-                   min(CAST(json_extract(payload,'$.sourceRank') AS INTEGER)) AS rank,
-                   max(CAST(json_extract(payload,'$.units') AS INTEGER)) AS units
-            FROM source_edge
-            WHERE json_extract(payload,'$.sourceKind')='kalodata_http'
-              AND json_extract(payload,'$.sourceHandle') IN ({marks})
-            GROUP BY handle, pid""", tuple(owner))
+        edges = _rows(conn, f"""SELECT source_handle AS handle,pid,min(source_rank) AS rank,max(units) AS units
+            FROM ({current}) WHERE source_handle IN ({marks}) GROUP BY source_handle,pid""", tuple(owner))
         positions = [{'creator_id': owner[row['handle']], 'handle': row['handle'], 'pid': row['pid'],
                       'rank': row['rank'], 'units': row['units']} for row in edges]
     else:
@@ -115,8 +130,11 @@ def _build(conn, now, limit):
         previously = last_sent.get(creator)
         ready_at = None if previously is None else previously + (UNLOCKED_COOLDOWN if unlocked else LOCKED_COOLDOWN)
         pair_sent = sent_pairs.get((creator, str(row['pid'])))
+        product_active=eligible_pids is None or str(row['pid']) in eligible_pids
         if pair_sent is not None:
             layer = 'sent'
+        elif not product_active:
+            layer = 'product_inactive'
         elif excluded:
             layer = 'excluded'
         elif blocked:
@@ -133,7 +151,8 @@ def _build(conn, now, limit):
 
     # Ready positions: strongest lead first, one slot per creator so a single creator cannot fill
     # the whole page while others never surface. Cooling follows the clock, not the lead strength.
-    layers['ready'].sort(key=lambda r: (r['rank'] if r['rank'] is not None else 10 ** 9, r['creatorId'], r['pid']))
+    strength=lambda r:(r['rank'] if r['rank'] is not None else 10 ** 9,-(r['units'] or 0),r['pid'],r['creatorId'])
+    layers['ready'].sort(key=strength)
     # One slot per creator: sending the best lead first, the rest wait their turn in the pool.
     seen = set()
     queued = []
@@ -145,11 +164,12 @@ def _build(conn, now, limit):
         else:
             seen.add(row['creatorId'])
             slots.append(row)
-    layers['queued'] = sorted(queued, key=lambda r: (r['creatorId'], r['rank'] if r['rank'] is not None else 10 ** 9))
+    layers['queued'] = sorted(queued, key=lambda r: (r['creatorId'],)+strength(r))
     layers['ready'] = slots
     layers['cooling'].sort(key=lambda r: (r['readyAt'] or 0, r['rank'] if r['rank'] is not None else 10 ** 9))
     layers['awaiting_reply'].sort(key=lambda r: (r['caseUpdatedAt'] or 0, r['creatorId']))
     layers['excluded'].sort(key=lambda r: (r['creatorId'], r['pid']))
+    layers['product_inactive'].sort(key=strength)
     layers['sent'].sort(key=lambda r: -(r['sentAt'] or 0))
 
     sent = len(layers['sent'])
@@ -170,7 +190,13 @@ def _build(conn, now, limit):
               'awaitingReply': len(layers['awaiting_reply']),
               'excluded': len(layers['excluded']),
               'creatorsWithRelationship': len(creators)}
-    return {'available': True, 'now': now, 'counts': counts,
+    business={'sendable':len(layers['ready']),
+              'waiting':len(layers['queued'])+len(layers['cooling'])+len(layers['awaiting_reply']),
+              'inactive':len(layers['excluded'])+len(layers['product_inactive'])}
+    business['total']=business['sendable']+business['waiting']+business['inactive']
+    return {'schema':'bdhub.lead-pool.v2','available': True, 'now': now, 'counts': counts,
             'cooldown': {'unlocked': UNLOCKED_COOLDOWN, 'locked': LOCKED_COOLDOWN},
             'layers': {name: len(rows) for name, rows in layers.items()},
-            'pools': {name: rows[:limit] for name, rows in layers.items()}}
+            'pools': {name: rows[:limit] for name, rows in layers.items()},
+            'business':business,'reasons':{name:len(rows) for name,rows in layers.items() if name not in ('ready','sent')},
+            'history':{'sent':sent}}

@@ -56,13 +56,14 @@ def main():
                     from bdhub.send.taplink.protocol import create_payload
                     name=f"BJN {a.short_name} {offer['creatorPercent']}% "+digest([pid,offer['campaignId'],offer['creatorPercent']])[:6]
                     payload=create_payload(pid=pid,campaign_id=offer['campaignId'],creator_pct=offer['creatorPercent'],name=name,route='selected')
-                    planned={'market':'it','account':'acc9','route':'selected','purpose':'acc9_single_card_canary','pid':pid,'campaignId':offer['campaignId'],'creatorPercent':offer['creatorPercent'],'listName':name,'shortName':a.short_name,'policyFingerprint':digest(ledger.policy),'searchTotal':0,'offer':offer,'payload':payload,'preparedAt':time.time()}
+                    from lib.catalog_links import policy_fingerprint
+                    planned={'market':'it','account':'acc9','route':'selected','purpose':'acc9_single_card_canary','pid':pid,'campaignId':offer['campaignId'],'creatorPercent':offer['creatorPercent'],'listName':name,'shortName':a.short_name,'policyFingerprint':policy_fingerprint(ledger.policy),'searchTotal':0,'offer':offer,'payload':payload,'preparedAt':time.time()}
                     row=ledger.prepare(planned);report.update(intentId=row['id'],state=row['state'],planned=planned)
                 else:
                     planned=row['spec'];offer=planned['offer']
                     if a.action=='execute':
                         if row['state']!='prepared':raise ValueError('verify_existing_attempt_first')
-                        if planned['policyFingerprint']!=digest(ledger.policy):raise ValueError('policy_changed')
+                        if planned['policyFingerprint']!=policy_fingerprint(ledger.policy):raise ValueError('policy_changed')
                         fresh=fresh_offer()
                         if any(fresh.get(k)!=offer.get(k) for k in ('campaignId','creatorPercent','totalPercent','publicPercent')):raise ValueError('commercial_facts_changed')
                         if search()!=0:raise ValueError('existing_links_preserved_no_creation')

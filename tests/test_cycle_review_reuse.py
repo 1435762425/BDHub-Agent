@@ -12,10 +12,13 @@ from lib.cycle_materials import name_key  # noqa: E402
 from lib.cycle_materials import select_offers  # noqa: E402
 from lib.cycle_review import (card_rate_gap, ledger_card, ledger_gap,  # noqa: E402
                               name_from_card, name_from_title, product_name)
+from lib.catalog_binding import offer_fingerprint  # noqa: E402
+from lib.schema_migrations import apply_database  # noqa: E402
 from lib.second_cycle import CycleStore  # noqa: E402
 
 OFFER = {'pid': '1729', 'title': 'Cuscino morbido per il collo', 'offerKey': 'selected:1729:0',
-         'campaignId': '7685', 'creatorPercent': '13', 'publicPercent': '10'}
+         'campaignId': '7685', 'catalogSource':'selected', 'creatorPercent': '13',
+         'publicPercent': '10', 'totalPercent':'15'}
 
 
 def fixture(folder, *, name_pid=None, card=None, state='ready', readback=None, reuse=None):
@@ -34,6 +37,8 @@ def fixture(folder, *, name_pid=None, card=None, state='ready', readback=None, r
                          (name_key(other), OFFER['pid'], 'it-IT', other['title'],
                           json.dumps({'shortNameIt': 'Cuscino', 'shortNameZh': '颈枕',
                                       'mentionIt': 'questo cuscino', 'ref': '0'}), 'job'))
+    sqlite3.connect(var / 'catalog-links.sqlite').close()
+    apply_database(root,'catalog-links')
     if card is not None or readback is not None or reuse is not None:
         with sqlite3.connect(var / 'catalog-links.sqlite') as links:
             links.execute('CREATE TABLE catalog_prepare_item(pid TEXT,campaign_id TEXT,creator_percent TEXT,'
@@ -46,6 +51,11 @@ def fixture(folder, *, name_pid=None, card=None, state='ready', readback=None, r
                 links.execute('INSERT INTO catalog_prepare_item VALUES(?,?,?,?,?,?)',
                               (OFFER['pid'], OFFER['campaignId'], OFFER['creatorPercent'], state,
                                json.dumps(card), 1.0))
+                links.execute("INSERT INTO catalog_current_binding VALUES('it','selected',?,?,?,?,"
+                              "'commission-1-to-2-v1','link-naming-v1','13',?,?,NULL,?,1,1)",
+                              (OFFER['pid'],OFFER['campaignId'],offer_fingerprint(OFFER),
+                               str(card.get('listId') or '0'),str(card.get('listName') or ''),json.dumps(card),
+                               'active' if state=='ready' else state))
             if readback is not None:
                 links.execute('INSERT INTO catalog_prepare_readback VALUES(?,?,?,?,?)',
                               (OFFER['pid'], OFFER['campaignId'], 'reusedLink',
@@ -61,7 +71,8 @@ def fixture(folder, *, name_pid=None, card=None, state='ready', readback=None, r
 def card_payload(**overrides):
     value = {'state': 'verified_read_only', 'pid': OFFER['pid'], 'sourceCampaignId': OFFER['campaignId'],
              'creatorPercent': '13', 'publicPercent': '10', 'listId': '8650765182615984918',
-             'listName': 'BJN Cuscino 13% 66dcf9'}
+             'listName': '🔥 BJN Cuscino 13% 66dcf9','verifiedListName':'🔥 BJN Cuscino 13% 66dcf9',
+             'checkedAt':1.0,'evidenceRefs':['proof']}
     return value | overrides
 
 
@@ -89,8 +100,8 @@ class LedgerCard(unittest.TestCase):
             store = fixture(folder, card=card_payload())
             card = ledger_card(store, OFFER)
             self.assertEqual(card['listId'], '8650765182615984918')
-            self.assertTrue(card['requiresFreshReadBeforeSend'])
-            self.assertEqual(card['derivedFrom'], 'catalog-links')
+            self.assertFalse(card['requiresFreshReadBeforeSend'])
+            self.assertEqual(card['derivedFrom'], 'catalog-current-binding')
             store.close()
 
     def test_a_card_for_another_commission_or_campaign_is_refused(self):
@@ -117,10 +128,7 @@ class LedgerCard(unittest.TestCase):
 
 
 class LedgerCardSources(unittest.TestCase):
-    """**台账把可复用的卡写在三处**，只读一处时一千多个"其实有链接"的商品会被报成备链缺口。
-
-    用户问的就是这个："我先建完链接才去找线索，怎么可能没有卡？"
-    """
+    """Historical cards stay queryable as evidence but never become current material."""
 
     def test_a_reused_link_readback_supplies_the_card_when_item_card_is_only_a_summary(self):
         # 读卡那一步（历史行为）会把卡覆盖成只有 total 的摘要；真卡在 readback 里。
@@ -128,10 +136,7 @@ class LedgerCardSources(unittest.TestCase):
             store = fixture(folder, card={'state': 'existing_links_observed', 'total': 1},
                             readback=card_payload())
             card = ledger_card(store, OFFER)
-            self.assertIsNotNone(card)
-            self.assertEqual(card['listId'], '8650765182615984918')
-            self.assertEqual(card['derivedFrom'], 'catalog-links-readback')
-            self.assertTrue(card['requiresFreshReadBeforeSend'])
+            self.assertIsNone(card)
             store.close()
 
     def test_the_reuse_observation_supplies_the_card_with_raw_rates(self):
@@ -140,11 +145,7 @@ class LedgerCardSources(unittest.TestCase):
             store = fixture(folder, state='reuse',
                             reuse={'listId': '8650747538196765462', 'creatorRaw': '1300', 'publicRaw': '1000'})
             card = ledger_card(store, OFFER)
-            self.assertIsNotNone(card)
-            self.assertEqual(card['listId'], '8650747538196765462')
-            self.assertEqual(card['creatorPercent'], '13')
-            self.assertEqual(card['publicPercent'], '10')
-            self.assertEqual(card['derivedFrom'], 'catalog-links-reuse')
+            self.assertIsNone(card)
             store.close()
 
     def test_a_readback_for_another_commission_is_still_refused(self):
@@ -174,15 +175,15 @@ class LedgerCardSources(unittest.TestCase):
 
 
 class LedgerGap(unittest.TestCase):
-    """卡拿不到时必须说清是**哪一种缺**：复读一次就有 ≠ 要建链 ≠ 台账里根本没这个商品。"""
+    """Only current standard material affects the forward gap."""
 
     def test_each_kind_of_gap_has_its_own_name(self):
         cases = [
-            ({'card': {'state': 'existing_links_observed', 'total': 1}}, 'card_not_read'),
-            ({'card': card_payload(creatorPercent='9')}, 'card_rate_changed'),
-            ({'card': card_payload(sourceCampaignId='999')}, 'card_campaign_changed'),
-            ({'card': card_payload(state='reusable_old')}, 'card_unverified'),
-            ({}, 'no_link_in_ledger'),
+            ({'card': {'state': 'existing_links_observed', 'total': 1}}, 'standard_link_terms_changed'),
+            ({'card': card_payload(creatorPercent='9')}, 'standard_link_terms_changed'),
+            ({'card': card_payload(sourceCampaignId='999')}, 'standard_link_terms_changed'),
+            ({'card': card_payload(state='reusable_old')}, 'standard_link_terms_changed'),
+            ({}, 'standard_link_missing'),
         ]
         for kwargs, expected in cases:
             with tempfile.TemporaryDirectory() as folder:
@@ -241,9 +242,7 @@ class OfferScope(unittest.TestCase):
 
 
 class CardRateGap(unittest.TestCase):
-    """旧卡的达人佣金比当前计划**低 1 个点**——这是业务决定（按卡上的数发 / 重建链），
-    代码只负责把事实摊开。发送时读卡那条路要求"卡上的佣金 == 我们声明的佣金"，所以假装一致会失败。
-    """
+    """Historical commission differences no longer enter the send-material summary."""
 
     def _store_with_ledger(self, folder, card_percent):
         store = catalog_fixture(folder)
@@ -261,23 +260,24 @@ class CardRateGap(unittest.TestCase):
             links.commit()
         return store
 
-    def test_a_card_below_the_plan_is_reported_with_the_example(self):
+    def test_a_historical_card_below_the_plan_is_not_current_material(self):
         with tempfile.TemporaryDirectory() as folder:
             store = self._store_with_ledger(folder, '12')
             gap = card_rate_gap(store, PLAN, [(OFFER['pid'], OFFER['pid'])])
-            self.assertEqual(gap['lower'], 1)
-            self.assertEqual(gap['lowerByOne'], 1)
+            self.assertEqual(gap['lower'], 0)
+            self.assertEqual(gap['lowerByOne'], 0)
             self.assertEqual(gap['same'], 0)
-            self.assertEqual(gap['examples'][0]['cardPercent'], '12')
-            self.assertEqual(gap['examples'][0]['planPercent'], '13')
+            self.assertEqual(gap['noCard'],1)
+            self.assertEqual(gap['examples'],[])
             store.close()
 
-    def test_a_card_at_the_plan_rate_is_not_a_gap(self):
+    def test_a_historical_card_at_the_plan_rate_is_still_not_current(self):
         with tempfile.TemporaryDirectory() as folder:
             store = self._store_with_ledger(folder, '13')
             gap = card_rate_gap(store, PLAN, [(OFFER['pid'], OFFER['pid'])])
-            self.assertEqual(gap['same'], 1)
+            self.assertEqual(gap['same'], 0)
             self.assertEqual(gap['lower'], 0)
+            self.assertEqual(gap['noCard'],1)
             self.assertEqual(gap['examples'], [])
             store.close()
 

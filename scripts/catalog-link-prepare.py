@@ -19,8 +19,9 @@ ROUTES=('selected','campaign')
 CAMPAIGN_SOURCE='1'
 
 def scope():
+    from lib.catalog_links import policy_fingerprint
     policy=json.loads((ROOT/'config/catalog-link-policy.json').read_text())
-    return SCOPE|{'policyVersion':policy['version'],'policyFingerprint':digest(policy)}
+    return SCOPE|{'policyVersion':policy['version'],'policyFingerprint':policy_fingerprint(policy)}
 
 def plan_bounds(offer):
     """Full binding used by creation, card inspection and the material consumer."""
@@ -132,6 +133,10 @@ def step_read(prep,run_id,limit,report,lanes=1,qps=3):
                     for it in by_pid[pid]:prep.apply_read(run_id,it['pid'],it['campaign_id'],it['catalog_source'],{'state':'read_incomplete','error':code})
                     states['read_incomplete']=states.get('read_incomplete',0)+len(by_pid[pid])
         targets=[(pid,items) for pid,items in by_pid.items() if pid in group_offers]
+        from lib.link_naming import load as load_naming
+        naming=load_naming(ROOT)
+        standard_specs={pid:create_spec(prep,run_id,offer,short_name_for(pid,offer.get('title','')),naming)
+                        for pid,offer in group_offers.items()}
         # Classification is network-bound and dominates the run. Fan it across same-account
         # lanes, but apply every ledger write on this thread: one connection, one writer.
         outcomes=[];lane_transports=[]
@@ -143,13 +148,13 @@ def step_read(prep,run_id,limit,report,lanes=1,qps=3):
                 lane_transports=[transport]+[transport.fork_lane(pacer.acquire) for _ in range(lanes-1)]
                 lane_reads=[reader(transport,pacer.acquire)]+[reader(on,pacer.acquire) for on in lane_transports[1:]]
                 def classify(index,pid):
-                    try:return classify_pid(pid,group_offers[pid],lane_reads[index%lanes],prep.policy),None
+                    try:return classify_pid(pid,group_offers[pid],lane_reads[index%lanes],prep.policy,standard_specs[pid]),None
                     except Exception as error:return None,error
                 with ThreadPoolExecutor(max_workers=lanes) as executor:
                     outcomes=[f.result() for f in [executor.submit(classify,i,pid) for i,(pid,_) in enumerate(targets)]]
             else:
                 for pid,_ in targets:
-                    try:outcomes.append((classify_pid(pid,group_offers[pid],read,prep.policy),None))
+                    try:outcomes.append((classify_pid(pid,group_offers[pid],read,prep.policy,standard_specs[pid]),None))
                     except Exception as error:outcomes.append((None,error))
         finally:
             for on in lane_transports[1:]:
@@ -169,14 +174,6 @@ def step_read(prep,run_id,limit,report,lanes=1,qps=3):
                     states['read_incomplete']=states.get('read_incomplete',0)+1;continue
                 outcome=dict(outcome)
                 outcome['listing']={'product_id':pid,'title':offer['title'],'creatorPercent':offer['creatorPercent'],'publicPercent':offer['publicPercent'],'totalPercent':offer['totalPercent'],'agencyPercent':offer['agencyPercent'],'planFingerprint':plan_bounds(offer)['planFingerprint'],'managementType':offer.get('managementType'),'managementEvidenceRef':offer.get('managementEvidenceRef')}
-                # **别把已经读到的卡丢掉**：`classify_pid` 算出的是"复用事实"（listId ＋ 佣金原始值），
-                # 不是卡片形状。以前这里无条件换成 `{'state':'existing_links_observed','total':N}`——
-                # 一个没有 listId 的摘要，于是"我们明明在平台上读到过这张卡"被扔掉，发送池里就冒出
-                # 一大批假的"备链缺口"。现在按卡片契约 `reused_card()` 转好再存。
-                fact=outcome.get('card')
-                outcome['card']=(reused_card(fact,pid,str(it['campaign_id']),it['catalog_source'],time.time())
-                                 if isinstance(fact,dict) and fact.get('listId')
-                                 else {'state':'existing_links_observed','total':outcome['total']})
                 prep.apply_read(run_id,it['pid'],it['campaign_id'],it['catalog_source'],outcome)
                 states[outcome['state']]=states.get(outcome['state'],0)+1
     return {'claimed':len(claimed),'states':states}
@@ -306,17 +303,11 @@ def step_reconcile(prep,inv,run_id,report,limit=None):
     return reconcile_from_inventory(prep,inv,rows,offers,diag)
 
 def requeue_cardless(prep,route):
-    """把"台账里有行、但没有可定位卡片"的行**重新排进读卡队列**。
-
-    读卡只领 `pending/read_incomplete`，所以 `review`/`reuse` 的行以前**永远不会再被读**
-    ——这正是"卡点"的由来：一次判定把一个位置永久钉住，哪怕平台上卡就在那里。
-    这一步只改本地队列状态，然后照常走 `step_read`（**只读卡，不建链**）。
-    """
+    """Requeue every legacy reuse/review decision under the standard-card policy."""
     src='campaign' if route=='campaign' else 'selected'
     with prep.db:
         n=prep.db.execute("""UPDATE catalog_prepare_item SET state='pending',blocker=NULL,error=NULL,lease_until=0,
-            updated=? WHERE catalog_source=? AND state IN ('review','reuse')
-            AND (card IS NULL OR json_extract(card,'$.listId') IS NULL OR json_extract(card,'$.listId')='')""",
+            updated=? WHERE catalog_source=? AND state IN ('review','reuse')""",
             (time.time(),src)).rowcount
     return n
 
@@ -511,8 +502,10 @@ def create_spec(prep,run_id,offer,short_name,naming=None,route=None):
     # 载荷由生成器按渠道给出，不在这里手拼：两条渠道的形状不同（非全托没有 source、活动在顶层）。
     from bdhub.send.taplink.protocol import create_payload
     payload=create_payload(pid=pid,campaign_id=campaign,creator_pct=offer['creatorPercent'],name=name,route=route)
+    from lib.catalog_links import policy_fingerprint
     return {'market':'it','account':'acc9','route':route,'purpose':'catalog_batch_link','sourceRun':run_id,'pid':pid,'campaignId':campaign,
-            'creatorPercent':offer['creatorPercent'],'listName':name,'shortName':rendered['shortName'],'policyFingerprint':digest(prep.policy),'searchTotal':0,
+            'creatorPercent':offer['creatorPercent'],'listName':name,'shortName':rendered['shortName'],
+            'policyVersion':prep.policy['version'],'policyFingerprint':policy_fingerprint(prep.policy),'searchTotal':0,'standardSearchComplete':True,
             'namingVersion':naming['version'],'namingFingerprint':naming_fingerprint(naming),
             'offer':plan_bounds(offer)|{'observedAt':time.time()},'payload':payload,'preparedAt':time.time()}
 
@@ -580,8 +573,7 @@ def step_create(prep,run_id,limit,report,pace=0.0,lanes=1,qps=5):
                 return read
             read=reader(transport)
             pids=[str(intent['spec']['pid']) for _,intent in work]
-            cards_in_channel={str(intent['spec']['pid']):(str(intent['spec'].get('route') or 'selected'),
-                                                          str(intent['spec']['campaignId'])) for _,intent in work}
+            intents_by_pid={str(intent['spec']['pid']):intent for _,intent in work}
             t=time.time()
             if route=='campaign':
                 fresh_all=campaign_fresh_offers(transport,[intent['spec']['offer'] for _,intent in work],time.time())
@@ -590,7 +582,7 @@ def step_create(prep,run_id,limit,report,pace=0.0,lanes=1,qps=5):
             report.setdefault('phaseSeconds',{})['plans']=round(time.time()-t,2)
             # Card pre-search for the whole batch across read lanes: a product that already has a
             # card is blocked before any write, and the write loop keeps no search of its own.
-            t=time.time();totals={}
+            t=time.time();preflight={}
             from concurrent.futures import ThreadPoolExecutor
             from lib.cohort_find import SharedPacer
             pacer=SharedPacer(qps)
@@ -599,16 +591,16 @@ def step_create(prep,run_id,limit,report,pace=0.0,lanes=1,qps=5):
                 lane_reads=[read]+[reader(on) for on in lane_transports[1:]]
                 def look(index,pid):
                     try:
-                        source,cid=cards_in_channel[pid]
-                        # 只数**这条渠道**下的卡：非全托要建链的商品几乎都有全托卡（2,289 个），
-                        # 按账号里的卡片总数判会把每一次非全托建链都拦掉。
-                        wire='0' if source=='selected' else cid
-                        total,cards=search_cards(lane_reads[index%max(1,lanes)],pid)
-                        return pid,sum(1 for _,row in cards if str(row.get('campaign_id') or '0')==wire),None
+                        intent=intents_by_pid[pid];source=intent['spec'].get('route') or 'selected'
+                        raw=fresh_all.get(pid)
+                        if not raw:raise ValueError('product_no_longer_eligible')
+                        current=(raw if source=='campaign' else new_offer(raw,pid,intent['spec']['campaignId'],'selected',policy=prep.policy))
+                        outcome=classify_pid(pid,current,lane_reads[index%max(1,lanes)],prep.policy,intent['spec'])
+                        return pid,outcome,None
                     except Exception as error:return pid,None,error
                 with ThreadPoolExecutor(max_workers=max(1,lanes)) as executor:
-                    for pid,total,error in (f.result() for f in [executor.submit(look,i,p) for i,p in enumerate(pids)]):
-                        if error is None:totals[pid]=total
+                    for pid,outcome,error in (f.result() for f in [executor.submit(look,i,p) for i,p in enumerate(pids)]):
+                        preflight[pid]=(outcome,error)
             finally:
                 for on in lane_transports[1:]:
                     try:on.session.close()
@@ -643,8 +635,25 @@ def step_create(prep,run_id,limit,report,pace=0.0,lanes=1,qps=5):
                     try:prep.mark_progress(pitem['run_id'],ppid,pcid,psrc,'unknown',error=code)
                     except Exception:pass
                     blocked.append({'pid':ppid,'error':code,'seconds':round(time.time()-pt0,2)})
-            t=time.time()
+            remaining=[]
             for item,intent in work:
+                pid=item['pid'];outcome,error=preflight.get(pid,(None,ValueError('card_search_unresolved')))
+                if error is not None:
+                    code=str(error) if isinstance(error,ValueError) else f'{type(error).__name__}:{str(error)[:80]}'
+                    prep.mark_progress(run_id,pid,item['campaign_id'],item['catalog_source'],'missing',error=code)
+                    blocked.append({'pid':pid,'error':code,'seconds':0.0});prep.release(run_id,pid,item['campaign_id'],item['catalog_source']);continue
+                if outcome.get('state')=='standard':
+                    ledger.confirm_existing_standard(intent['id'],outcome['card'])
+                    prep.mark_progress(run_id,pid,item['campaign_id'],item['catalog_source'],'ready',card=outcome['card'])
+                    created.append({'pid':pid,'state':'existing_standard','listId':outcome['card']['listId'],
+                                    'creatorPercent':outcome['card']['creatorPercent'],'seconds':0.0})
+                    prep.release(run_id,pid,item['campaign_id'],item['catalog_source']);continue
+                if outcome.get('state')!='missing':
+                    prep.mark_progress(run_id,pid,item['campaign_id'],item['catalog_source'],'missing',error='catalog_standard_search_unresolved')
+                    blocked.append({'pid':pid,'error':'catalog_standard_search_unresolved','seconds':0.0});prep.release(run_id,pid,item['campaign_id'],item['catalog_source']);continue
+                remaining.append((item,intent))
+            t=time.time()
+            for item,intent in remaining:
                 t0=time.time()
                 pid,cid,src=item['pid'],item['campaign_id'],item['catalog_source']
                 try:
@@ -662,9 +671,6 @@ def step_create(prep,run_id,limit,report,pace=0.0,lanes=1,qps=5):
                     # a transient platform answer looks exactly like a real change.
                     moved={k:(str(intent['spec']['offer'].get(k)),str(current.get(k))) for k in ('campaignId','creatorPercent','totalPercent','publicPercent') if str(current.get(k))!=str(intent['spec']['offer'].get(k))}
                     if moved:raise ValueError('commercial_facts_changed:'+(';'.join(f'{k} {a}->{b}' for k,(a,b) in moved.items()))[:180])
-                    total=totals.get(pid)
-                    if total is None:raise ValueError('card_search_unresolved')
-                    if total!=0:raise ValueError('existing_links_preserved_no_creation')
                     ledger.begin(intent['id'],'acc9');prep.mark_progress(run_id,pid,cid,src,'submitted')
                     r=transport._xhr(method='POST',path=CREATE,params=transport._params(),payload=intent['spec']['payload'],write=True)
                     report.setdefault('nativeReceipts',[]).append({'pid':pid,'http':r.http_status,'code':r.code if type(r.code) is int else None,'verification':r.has_turing,'ambiguous':r.ambiguous})
