@@ -38,6 +38,10 @@ CURRENT = """SELECT h.plan_id,s.source_id,x.pid,x.source_handle
  WHERE s.query_id=h.query_id AND x.plan_id=h.plan_id AND x.source_id=s.source_id"""
 LEGACY_CURRENT = f"""SELECT e.plan_id,e.source_id,json_extract(e.payload,'$.pid') AS pid,
  {HANDLE} AS source_handle FROM source_edge e WHERE {KALODATA}"""
+OWNERS = """SELECT x.source_handle,min(r.creator_id) AS creator_id
+ FROM cycle_identity_resolution r JOIN source_edge_index x
+ ON x.plan_id=r.plan_id AND x.source_id=r.source_id
+ WHERE x.source_kind='kalodata_http' GROUP BY x.source_handle HAVING count(DISTINCT r.creator_id)=1"""
 
 
 def root_of(module_file=__file__):
@@ -93,13 +97,20 @@ def _counts_once(root):
         plan_id = plan[0]
         current=CURRENT if {'source_edge_index','lead_query_head','lead_query_selection'}<=found and conn.execute('SELECT 1 FROM lead_query_head WHERE plan_id=? LIMIT 1',(plan_id,)).fetchone() else LEGACY_CURRENT
         leads = conn.execute(f'SELECT count(*) FROM ({current}) k WHERE k.plan_id=?',(plan_id,)).fetchone()[0]
-        resolved_leads, resolved_creators = conn.execute(
-            f'SELECT count(*),count(DISTINCT r.creator_id) FROM ({current}) k JOIN cycle_identity_resolution r '
-            'ON r.plan_id=k.plan_id AND r.source_id=k.source_id WHERE k.plan_id=?',
-            (plan_id,)).fetchone()
+        if current==CURRENT:
+            resolved_leads,resolved_creators=conn.execute(
+                f'SELECT count(*),count(DISTINCT o.creator_id) FROM ({current}) k JOIN ({OWNERS}) o '
+                'ON o.source_handle=k.source_handle WHERE k.plan_id=?',(plan_id,)).fetchone()
+            owner_filter=f"LEFT JOIN ({OWNERS}) own ON own.source_handle=k.source_handle"
+            owner_missing='AND own.creator_id IS NULL'
+        else:
+            resolved_leads,resolved_creators=conn.execute(
+                f'SELECT count(*),count(DISTINCT r.creator_id) FROM ({current}) k JOIN cycle_identity_resolution r '
+                'ON r.plan_id=k.plan_id AND r.source_id=k.source_id WHERE k.plan_id=?',(plan_id,)).fetchone()
+            owner_filter='';owner_missing=''
         outcomes = {row[0]: row[1] for row in conn.execute(
             f'SELECT o.status,count(*) FROM ({current}) k JOIN cycle_identity_outcome o '
-            'ON o.plan_id=k.plan_id AND o.source_id=k.source_id WHERE k.plan_id=? GROUP BY o.status',(plan_id,))}
+            f'ON o.plan_id=k.plan_id AND o.source_id=k.source_id {owner_filter} WHERE k.plan_id=? {owner_missing} GROUP BY o.status',(plan_id,))}
         unresolved_leads = outcomes.get('unresolved', 0)
         # The three ways a lead can still be undecided, kept apart because the next action differs:
         # nothing submitted yet, waiting in the Find queue, and blocked by the account.
@@ -109,10 +120,10 @@ def _counts_once(root):
         pending_leads = sum(breakdown.values())
         unresolved_creators = conn.execute(f"""SELECT count(DISTINCT k.source_handle) FROM ({current}) k
             JOIN cycle_identity_outcome o ON o.plan_id=k.plan_id AND o.source_id=k.source_id
-            WHERE k.plan_id=? AND o.status='unresolved'""", (plan_id,)).fetchone()[0]
+            {owner_filter} WHERE k.plan_id=? AND o.status='unresolved' {owner_missing}""", (plan_id,)).fetchone()[0]
         pending_creators = conn.execute(f"""SELECT count(DISTINCT k.source_handle) FROM ({current}) k
             LEFT JOIN cycle_identity_outcome o ON o.plan_id=k.plan_id AND o.source_id=k.source_id
-            WHERE k.plan_id=? AND (o.status IS NULL OR o.status IN ('queued','blocked'))""",
+            {owner_filter} WHERE k.plan_id=? AND (o.status IS NULL OR o.status IN ('queued','blocked')) {owner_missing}""",
             (plan_id,)).fetchone()[0]
     return {'plan': plan_id, 'leads': leads, 'resolvedLeads': resolved_leads, 'resolvedCreators': resolved_creators,
             'pendingLeads': pending_leads, 'pendingCreators': pending_creators,
@@ -209,8 +220,8 @@ def by_creator(root):
         current=CURRENT if {'source_edge_index','lead_query_head','lead_query_selection'}<=tables and conn.execute('SELECT 1 FROM lead_query_head WHERE plan_id=? LIMIT 1',(plan[0],)).fetchone() else LEGACY_CURRENT
         sql = f"""
         WITH K AS (SELECT source_handle AS h,source_id,pid FROM ({current}) WHERE plan_id=:plan),
-        R AS (SELECT DISTINCT k.h FROM cycle_identity_resolution r
-              JOIN K k ON k.source_id=r.source_id),
+        O AS ({OWNERS}),
+        R AS (SELECT DISTINCT k.h FROM K k JOIN O o ON o.source_handle=k.h),
         U AS (SELECT DISTINCT k.h FROM K k JOIN cycle_identity_outcome o ON o.source_id=k.source_id
               WHERE o.status='unresolved'),
         -- 「被挡住」＝问过但没拿到平台的真实回答（请求/签名失败、账号起不来、被远端挡回）。它不是
