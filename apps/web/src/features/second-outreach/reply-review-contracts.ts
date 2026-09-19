@@ -9,7 +9,8 @@ export type ReplyReviewState={classification_id:string;revision:number;verdict:"
 export type ReplyReviewItem={turnId:string;messageId:string;creatorId:string;format:string;text:string|null;
  historical:boolean;occurredMs:number|null;episodes:Array<{episode_id:string;pid:string;list_id:string;
  candidate_rank:number;confidence:string}>;classificationId:string|null;decision:ReplyDecision|null;
- review:ReplyReviewState|null};
+ review:ReplyReviewState|null;comparisons:Array<{classificationId:string;provider:string;model:string;
+ action:ReplyAction;confidence:number;intentCode:string}>};
 export type ReplyReviewStatus={schema:"bdhub.reply-review.v1";policyVersion:string;
  processingIntervalSeconds:number;automaticReplies:false;providers:{deepseek:{mode:string};jev:{mode:string}};
  counts:{turns:number;episodes:number;linkedTurns:number;classified:number;reviewed:number};items:ReplyReviewItem[]};

@@ -177,9 +177,10 @@ def _validated_decision(value, context):
     if not isinstance(ids,list) or not ids or len(ids)>3 or any(str(mid) not in by_id for mid in ids):
         raise CycleError('reply_evidence_invalid')
     selected_text=[by_id[str(mid)] for mid in ids]
-    if not isinstance(quotes,list) or not quotes or len(quotes)>5 or any(
+    unsupported=value['action']=='human' and context['turn'].get('format')!='text' and quotes==[]
+    if not isinstance(quotes,list) or (not unsupported and (not quotes or len(quotes)>5 or any(
             not isinstance(quote,str) or not quote.strip() or not any(quote in text for text in selected_text)
-            for quote in quotes):
+            for quote in quotes))):
         raise CycleError('reply_evidence_invalid')
     if not isinstance(value['intentCode'],str) or not re.fullmatch(r'[a-z][a-z0-9_]{1,47}',value['intentCode']):
         raise CycleError('reply_classification_invalid')
@@ -228,12 +229,38 @@ class DeepSeekClassifier:
 
 
 class JevClassifier:
-    """Provider-neutral adapter slot; no guessed endpoint or credential contract."""
-    provider='jev';model='jev-unconfigured'
-    def __init__(self, call=None):self.call=call
+    """Official TypeSafe System One Choice adapter; still shadow-only."""
+    provider='jev';model='jev-1.13.0'
+    def __init__(self, root=None, call=None):
+        self.root=Path(root or Path(__file__).resolve().parents[2]);self.call=call
     def classify(self, context):
-        if self.call is None:raise CycleError('jev_not_configured')
-        return self.call(context)
+        if self.call is None:
+            from lib.typesafe_provider import status as provider_status,system_one
+            if not provider_status(self.root)['ready']:raise CycleError('jev_not_configured')
+            call=lambda state,questions:system_one(self.root,state,questions)
+        else:call=self.call
+        criteria={
+          'no_reply':'Pure thanks, emoji, or a closing message with no collaboration commitment and no unresolved request.',
+          'sample_self_service':'Sample application, approval, shipping, missing sample, used-up, damaged, or replacement sample.',
+          'collaboration_ack':'Clear agreement to collaborate, add the product to showcase, make a video or LIVE, or confirmation content was published.',
+          'link_usage':'The creator only asks how to use the one clearly related product card or link.',
+          'human':'Paid collaboration, budget, catalog request, WhatsApp, Boost, complaint, refusal or stop-contact, broken link, commission anomaly, multiple or ambiguous products, multiple intents, attachment, or uncertainty.'}
+        questions={'action':{'type':'choice','instructions':'Choose the single permitted action for this creator reply using the policy criteria. Prefer human whenever the evidence is ambiguous.',
+                             'criteria':criteria}}
+        response=call(context,questions);answer=(response.get('answers') or {}).get('action')
+        if not isinstance(answer,dict) or answer.get('type')!='choice' or answer.get('choice') not in ACTIONS:
+            raise CycleError('typesafe_response_invalid')
+        confidence=answer.get('confidence')
+        if isinstance(confidence,bool) or not isinstance(confidence,(int,float)) or not 0<=confidence<=1:
+            raise CycleError('typesafe_response_invalid')
+        action=answer['choice'];turn=context['turn'];text=str(turn.get('text') or '')
+        return ({'schemaVersion':SCHEMA_VERSION,'action':action,'intentCode':'jev_'+action,
+                 'evidenceMessageIds':[str(turn['messageId'])],
+                 'evidenceQuotes':[text] if text else [],'confidence':confidence,
+                 'humanReason':'Jev 判定需要人工接管；具体原因由人工结合上下文确认。' if action=='human' else None,
+                 'templateKey':TEMPLATE_FOR.get(action),
+                 'meaningZh':'Jev 只进行动作分类；中文语义请与 DeepSeek 结果和原文对照。'},
+                response.get('usage'))
 
 
 def classify(store, turn_id, request_id, classifier):
@@ -258,7 +285,12 @@ def classify(store, turn_id, request_id, classifier):
             (classification_id,request_id,input_hash,context['policyVersion'],classifier.provider,classifier.model,
              'request_started',encoded(context),store.clock()))
         try:
-            raw,usage=classifier.classify(context)
+            if context['turn'].get('format')!='text' or not str(context['turn'].get('text') or '').strip():
+                raw={'schemaVersion':SCHEMA_VERSION,'action':'human','intentCode':'unsupported_attachment',
+                     'evidenceMessageIds':[str(context['turn']['messageId'])],'evidenceQuotes':[],
+                     'confidence':1.0,'humanReason':'图片或附件必须由人工查看原会话。',
+                     'templateKey':None,'meaningZh':'图片或附件，无法仅靠文本分类。'};usage=None
+            else:raw,usage=classifier.classify(context)
             with store.tx():store.db.execute("UPDATE reply_classification SET state='response_saved',response_json=? "
                                              "WHERE classification_id=?",(encoded({'decision':raw,'usage':usage}),classification_id))
         except CycleError as error:
@@ -307,27 +339,40 @@ def status(store, limit=12):
     counts={'turns':store.db.execute('SELECT count(*) FROM inbound_turn').fetchone()[0],
             'episodes':store.db.execute('SELECT count(*) FROM outbound_episode').fetchone()[0],
             'linkedTurns':store.db.execute('SELECT count(DISTINCT turn_id) FROM turn_episode_link').fetchone()[0],
-            'classified':store.db.execute("SELECT count(*) FROM reply_classification WHERE state='ready'").fetchone()[0],
+            'classified':store.db.execute("SELECT count(DISTINCT json_extract(input_json,'$.turn.turnId')) "
+                                          "FROM reply_classification WHERE state='ready'").fetchone()[0],
             'reviewed':store.db.execute('SELECT count(DISTINCT classification_id) FROM reply_review').fetchone()[0]}
     items=[]
     for turn in store.db.execute('SELECT * FROM inbound_turn ORDER BY coalesce(occurred_ms,observed_at*1000) DESC '
                                  'LIMIT ?', (limit,)):
-        classification=store.db.execute("SELECT * FROM reply_classification WHERE state='ready' "
-            "AND json_extract(input_json,'$.turn.turnId')=? ORDER BY created_at DESC LIMIT 1",
-            (turn['turn_id'],)).fetchone()
+        classifications=list(store.db.execute("SELECT * FROM reply_classification WHERE state='ready' "
+            "AND json_extract(input_json,'$.turn.turnId')=? ORDER BY created_at DESC",
+            (turn['turn_id'],)))
+        by_provider={}
+        for row in classifications:by_provider.setdefault(row['provider'],row)
+        classification=classifications[0] if classifications else None
         decision=json.loads(classification['decision_json']) if classification else None
         review_row=store.db.execute('SELECT * FROM reply_review WHERE classification_id=? ORDER BY revision DESC LIMIT 1',
                                     (classification['classification_id'],)).fetchone() if classification else None
         links=[dict(row) for row in store.db.execute("SELECT e.episode_id,e.pid,e.list_id,l.candidate_rank,l.confidence "
             "FROM turn_episode_link l JOIN outbound_episode e ON e.episode_id=l.episode_id "
             "WHERE l.turn_id=? ORDER BY l.candidate_rank",(turn['turn_id'],))]
+        comparisons=[]
+        for provider,row in sorted(by_provider.items()):
+            candidate=json.loads(row['decision_json'])
+            comparisons.append({'classificationId':row['classification_id'],'provider':provider,
+                                'model':row['model'],'action':candidate['action'],
+                                'confidence':candidate['confidence'],'intentCode':candidate['intentCode']})
         items.append({'turnId':turn['turn_id'],'messageId':turn['message_id'],'creatorId':turn['creator_id'],
                       'format':turn['format'],'text':turn['text'],'historical':bool(turn['historical']),
                       'occurredMs':turn['occurred_ms'],'episodes':links,
                       'classificationId':classification['classification_id'] if classification else None,
-                      'decision':decision,'review':dict(review_row) if review_row else None})
+                      'decision':decision,'review':dict(review_row) if review_row else None,
+                      'comparisons':comparisons})
+    from lib.typesafe_provider import status as typesafe_status
+    jev=typesafe_status(Path(store.db.execute('PRAGMA database_list').fetchone()[2]).parent.parent)
     return {'schema':'bdhub.reply-review.v1','policyVersion':policy['version'],
             'processingIntervalSeconds':policy['processingIntervalSeconds'],
             'automaticReplies':False,'providers':{'deepseek':{'mode':'shadow'},
-                                                   'jev':{'mode':'unconfigured'}},
+                                                   'jev':{'mode':'shadow' if jev['ready'] else 'unconfigured'}},
             'counts':counts,'items':items}

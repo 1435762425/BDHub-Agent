@@ -18,6 +18,7 @@ __pycache__/
 # 本机业务身份与联系方式（仅提交 *.example.json）
 /config/kalodata-identity.json
 /config/campaign-join.json
+/config/typesafe.json
 .venv/
 node_modules/
 dist/

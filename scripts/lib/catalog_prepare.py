@@ -156,15 +156,16 @@ DROP TABLE catalog_prepare_reuse_old;''')
         now=now if now is not None else time.time()
         row=self.item(run_id,pid,cid,src)
         if row['state'] not in ('missing','prepared','submitted','unknown'):raise ValueError('catalog_prepare_not_missing')
-        proof=row['card'] or {}
-        if proof.get('state')!='standard_missing' or proof.get('standardSearchComplete') is not True:
-            raise ValueError('catalog_standard_search_required')
-        spec=dict(spec)|{'searchTotal':int(proof.get('searchTotal') or 0),'standardSearchComplete':True}
         if not row['card']:
             accept={'pid':str(pid),'campaignId':str(cid),'catalogSource':src,'searchTotal':0,'state':'standard_missing','standardSearchComplete':True}
             with self.db:
                 self.db.execute('INSERT OR REPLACE INTO catalog_prepare_readback VALUES(?,?,?,?,?,?,?)',(run_id,str(pid),str(cid),src,'missingProof',encoded(self._missing_proof(row)),now))
                 self.db.execute("UPDATE catalog_prepare_item SET card=?,updated=? WHERE run_id=? AND pid=? AND campaign_id=? AND catalog_source=?",(encoded(accept),now,run_id,str(pid),str(cid),src))
+            proof=accept
+        else:proof=row['card']
+        if proof.get('state')!='standard_missing' or proof.get('standardSearchComplete') is not True:
+            raise ValueError('catalog_standard_search_required')
+        spec=dict(spec)|{'searchTotal':int(proof.get('searchTotal') or 0),'standardSearchComplete':True}
         from lib.catalog_links import CatalogLinks
         ledger=CatalogLinks(self.root)
         try:
@@ -267,6 +268,19 @@ DROP TABLE catalog_prepare_reuse_old;''')
                 'incompleteCount':counts.get('read_incomplete',0),'errors':errors,'blockers':blockers,
                 'retryableErrors':retryable,'errorsUpdatedAt':error_age}
 
+
+def needs_standard_reread(state, card):
+    """Legacy reuse/review and pre-standard missing rows must be searched under the canonical rule."""
+    if state in ('review','reuse'):
+        return True
+    if state!='missing':
+        return False
+    if isinstance(card,str):
+        try:card=json.loads(card)
+        except ValueError:return True
+    return not isinstance(card,dict) or card.get('state')!='standard_missing' or \
+           card.get('standardSearchComplete') is not True
+
 def new_offer(listing,pid,campaign_id,source='selected',total=None,public=None,policy=None):
     """Fresh commercial facts for one selected/campaign plan, computed with the confirmed policy."""
     from lib.catalog_links import new_commission
@@ -332,6 +346,7 @@ def search_cards(read,pid):
 def classify_pid(pid,offer,read,policy,standard_spec=None):
     """Read all cards, recognize only an exact current standard card, and ignore the rest."""
     wanted=str(offer['campaignId']);wire='0' if offer['catalogSource']=='selected' else wanted
+    listing=offer.get('listing') or {}
     total,cards=search_cards(read,pid)
     facts=[];rates=[];matched=[]
     for lid,(sha,row) in cards:
@@ -354,7 +369,7 @@ def classify_pid(pid,offer,read,policy,standard_spec=None):
         merged=offer|{'managementType':offer.get('managementType') or 'full_managed','managementEvidenceRef':offer.get('managementEvidenceRef') or 'catalog-prepare:full_managed_source'}
         if require_stock(merged) and (member.get('stock') is None or Decimal(str(member.get('stock')))<=100):
             observed.append({'listId':lid,'reusable':False,'reason':'link_stock_below_rule'});continue
-        try:fact=card_facts(list_id=lid,campaign_id=wanted,wire=wire,product=row,member=member,listing=offer['listing'],policy=policy)
+        try:fact=card_facts(list_id=lid,campaign_id=wanted,wire=wire,product=row,member=member,listing=listing,policy=policy)
         except ValueError:
             observed.append({'listId':lid,'reusable':False,'reason':'link_creator_rate_missing'});continue
         fact.update(memberEvidenceRefs=[sha,members_sha],publicRaw=fact['publicRaw'] or offer['publicPercent'],
@@ -367,9 +382,9 @@ def classify_pid(pid,offer,read,policy,standard_spec=None):
             card['reused']=False
             if standard is None or str(card['listId'])<str(standard['listId']):standard=card
     if standard:return {'state':'standard','total':total,'rates':sorted(set(rates)),'reuse':observed,
-                        'card':standard,'standardSpec':standard_spec,'listing':offer['listing']}
+                        'card':standard,'standardSpec':standard_spec,'listing':listing}
     return {'state':'missing','total':total,'rates':sorted(set(rates)),'reuse':observed,
-            'listing':offer['listing'],'standardSearchComplete':True}
+            'listing':listing,'standardSearchComplete':True}
 
 def scan_lists(read,source='2',campaign_id='0',page_size=100,max_pages=500):
     """Every TapLink of one account route. Incomplete pagination is never treated as absence."""

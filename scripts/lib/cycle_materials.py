@@ -1,7 +1,7 @@
 """Product-level names and fixed v4 templates. No per-creator model calls."""
 import json,re,time
 from decimal import Decimal
-from lib.second_cycle import CycleError,digest,encoded,assess_offer
+from lib.second_cycle import CycleError,digest,encoded,assess_offer,epoch
 SCHEMA='''
 CREATE TABLE IF NOT EXISTS cycle_name_job(id TEXT PRIMARY KEY,state TEXT NOT NULL,inputs TEXT NOT NULL,response TEXT,error TEXT);
 CREATE TABLE IF NOT EXISTS cycle_name_reservation(id TEXT PRIMARY KEY,job_id TEXT NOT NULL);
@@ -56,10 +56,18 @@ def select_offers(store,plan,limit=5,require_demand=False,scoped_pids=None):
  else:
   pids={str(p) for p in scoped_pids}
  chosen={}
+ def order(offer):
+  # Offer choice must match the Campaign pool contract: creator share highest, expiry later,
+  # selected route wins an exact cross-channel tie, then campaign id smallest.
+  try:end=epoch(offer.get('endAt'))
+  except (ValueError,TypeError):end=-1
+  return (-Decimal(str(offer['creatorPercent'])),-end,
+          0 if offer.get('catalogSource')=='selected' else 1,str(offer.get('campaignId') or ''),
+          str(offer.get('offerKey') or ''))
  for _,offer in store._offers(plan):
   if offer['pid'] not in pids or not assess_offer(offer,store.clock())['eligible']:continue
   old=chosen.get(offer['pid'])
-  if old is None or (Decimal(offer['creatorPercent']),offer['endAt'],offer['offerKey'])>(Decimal(old['creatorPercent']),old['endAt'],old['offerKey']):chosen[offer['pid']]=offer
+  if old is None or order(offer)<order(old):chosen[offer['pid']]=offer
  people=store._eligible_people(plan);demand={}
  for row in store.db.execute('SELECT creator_id,pid,units FROM opportunity WHERE plan_id=?',(plan,)):
   if row['creator_id'] in people:demand.setdefault(row['pid'],set()).add(row['creator_id'])

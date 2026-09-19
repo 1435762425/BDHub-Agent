@@ -3,7 +3,7 @@ from decimal import Decimal
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT/'scripts'));sys.path.insert(0,str(ROOT.parent/'01-BDSystem-V2'))
-from lib.catalog_prepare import (CatalogPreparation,assess_existing,choose_existing_batch,new_offer,classify_pid,search_cards,card_facts,rate_text,CARD,MEMBERS,TaplinkInventory,new_offer,reconcile_from_inventory)
+from lib.catalog_prepare import (CatalogPreparation,assess_existing,choose_existing_batch,new_offer,classify_pid,search_cards,card_facts,rate_text,CARD,MEMBERS,TaplinkInventory,new_offer,reconcile_from_inventory,needs_standard_reread)
 from lib.catalog_links import CatalogLinks,policy_fingerprint
 from lib.catalog_binding import CatalogBindings
 from lib.schema_migrations import apply_database
@@ -46,6 +46,18 @@ class BatchLinkTests(unittest.TestCase):
         try:return bindings.promote(spec,card)
         finally:bindings.close()
     # ---- queue behaviour ---------------------------------------------------------
+    def test_only_legacy_or_unproven_rows_are_requeued_for_the_standard_search(self):
+        self.assertTrue(needs_standard_reread('reuse',{}));self.assertTrue(needs_standard_reread('review',{}))
+        self.assertTrue(needs_standard_reread('missing',{'state':'existing_links_observed'}))
+        self.assertFalse(needs_standard_reread('missing',{'state':'standard_missing','standardSearchComplete':True}))
+        self.assertFalse(needs_standard_reread('ready',{}))
+    def test_inventory_reconciled_missing_row_without_card_can_freeze_once(self):
+        self.seed('1','2')
+        self.prep.db.execute("UPDATE catalog_prepare_item SET listing=?,state='missing' WHERE run_id=? AND pid='1'",
+                             (json.dumps(self.plan_listing()),self.run))
+        intent=self.prep.freeze(self.run,'1','2','selected',self.spec('1','2','13'))
+        self.assertEqual(intent['state'],'prepared')
+        self.assertTrue(self.prep.item(self.run,'1','2')['card']['standardSearchComplete'])
     def test_seed_is_idempotent_and_read_requires_complete_search(self):
         self.seed('1','2');self.seed('1','2');self.assertEqual(self.prep.summary(self.run)['total'],1)
         claimed=self.prep.claim_read(self.run,limit=5)
@@ -264,5 +276,12 @@ class CampaignChannelTests(unittest.TestCase):
             inv.save_members(self.LID,'BJN x 11% abcdef',[self.member(self.LID,self.CID)])
         finally:inv.close()
         self.assertEqual(self.judge(),{'missing':1})
+    def test_campaign_preflight_accepts_normalized_offer_without_nested_listing(self):
+        normalized={key:value for key,value in self.offer.items() if key!='listing'}
+        def read(path,extra):
+            if path==CARD:return {'code':0,'data':{'total':0}},'sha'
+            raise AssertionError('no member read for an empty search')
+        result=classify_pid(self.PID,normalized,read,POLICY,standard_spec={'listName':'x','creatorPercent':'11'})
+        self.assertEqual(result['state'],'missing');self.assertTrue(result['standardSearchComplete'])
 
 if __name__=='__main__':unittest.main()

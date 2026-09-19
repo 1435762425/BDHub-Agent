@@ -6,7 +6,7 @@ from decimal import Decimal
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1];sys.dont_write_bytecode=True;sys.path.insert(0,str(ROOT/'scripts'))
 from lib.catalog_links import CatalogLinks,new_commission
-from lib.catalog_prepare import CatalogPreparation,READ_EXTRA,MEMBERS,list_rows,new_offer,classify_pid,search_cards,scan_lists,read_members,member_facts,TaplinkInventory,reconcile_from_inventory,reused_card
+from lib.catalog_prepare import CatalogPreparation,READ_EXTRA,MEMBERS,list_rows,new_offer,classify_pid,search_cards,scan_lists,read_members,member_facts,TaplinkInventory,reconcile_from_inventory,reused_card,needs_standard_reread
 from lib.global_selection import selected_rows,assess
 from lib.global_source import clean_product
 from lib.global_source_transport import opportunity_reader,opportunity_card_creator_batch,CREATE
@@ -123,15 +123,29 @@ def step_read(prep,run_id,limit,report,lanes=1,qps=3):
             for pid in by_pid:
                 for it in by_pid[pid]:prep.apply_read(run_id,it['pid'],it['campaign_id'],it['catalog_source'],{'state':'read_incomplete','error':code})
             return {'claimed':len(claimed),'states':{'read_incomplete':len(claimed)},'error':code}
-        group_offers={}
+        group_offers={};plan_diag={};failed_pids=set()
         for start in range(0,len(by_pid),15):
             group=list(by_pid)[start:start+15]
-            try:group_offers|=live_plans(transport,prep,group,pool)
+            try:group_offers|=live_plans(transport,prep,group,pool,plan_diag)
             except Exception as error:
                 code=str(error) if isinstance(error,ValueError) else 'listing_read_unresolved'
+                failed_pids.update(group)
                 for pid in group:
                     for it in by_pid[pid]:prep.apply_read(run_id,it['pid'],it['campaign_id'],it['catalog_source'],{'state':'read_incomplete','error':code})
                     states['read_incomplete']=states.get('read_incomplete',0)+len(by_pid[pid])
+        # Every claimed PID must settle.  A product absent/ineligible in the complete current pool is
+        # retired from this run; leaving it as `reading` made the driver loop forever and later looked
+        # like an unprocessed link gap (the old run accumulated 1,154 such rows).
+        with prep.db:
+            for pid,items in by_pid.items():
+                if pid in group_offers or pid in failed_pids:continue
+                reason=plan_diag.get(pid) or 'selected_plan_missing'
+                for item in items:
+                    prep.db.execute("UPDATE catalog_prepare_item SET state='retired',blocker=?,error=NULL,"
+                                    "lease_until=0,updated=? WHERE run_id=? AND pid=? AND campaign_id=? "
+                                    "AND catalog_source=?",(reason,time.time(),run_id,item['pid'],
+                                    item['campaign_id'],item['catalog_source']))
+                    states['retired']=states.get('retired',0)+1
         targets=[(pid,items) for pid,items in by_pid.items() if pid in group_offers]
         from lib.link_naming import load as load_naming
         naming=load_naming(ROOT)
@@ -306,10 +320,33 @@ def requeue_cardless(prep,route):
     """Requeue every legacy reuse/review decision under the standard-card policy."""
     src='campaign' if route=='campaign' else 'selected'
     with prep.db:
-        n=prep.db.execute("""UPDATE catalog_prepare_item SET state='pending',blocker=NULL,error=NULL,lease_until=0,
-            updated=? WHERE catalog_source=? AND state IN ('review','reuse')""",
-            (time.time(),src)).rowcount
+        rows=prep.db.execute("SELECT run_id,pid,campaign_id,catalog_source,state,card FROM catalog_prepare_item "
+                             "WHERE catalog_source=? AND state IN ('review','reuse','missing')",(src,)).fetchall()
+        n=0
+        for row in rows:
+            if not needs_standard_reread(row['state'],row['card']):continue
+            n+=prep.db.execute("UPDATE catalog_prepare_item SET state='pending',blocker=NULL,error=NULL,lease_until=0,"
+                               "updated=? WHERE run_id=? AND pid=? AND campaign_id=? AND catalog_source=?",
+                               (time.time(),row['run_id'],row['pid'],row['campaign_id'],row['catalog_source'])).rowcount
     return n
+
+
+def requeue_binding_mismatches(prep,run_id):
+    """A ready row whose current offer fingerprint moved must be re-read, not shown as complete."""
+    from lib.catalog_binding import CatalogBindings
+    bindings=CatalogBindings(ROOT,connection=prep.db);changed=0
+    with prep.db:
+        rows=prep.db.execute("SELECT * FROM catalog_prepare_item WHERE run_id=? AND state='ready'",(run_id,)).fetchall()
+        for row in rows:
+            try:listing=json.loads(row['listing']) if row['listing'] else {};offer=listing|{'pid':row['pid'],'campaignId':row['campaign_id'],'catalogSource':row['catalog_source']}
+            except (TypeError,ValueError):continue
+            raw=bindings.get('it',row['catalog_source'],row['pid'],row['campaign_id'])
+            if not raw or bindings.active_for_offer(offer):continue
+            changed+=prep.db.execute("UPDATE catalog_prepare_item SET state='pending',blocker='catalog_link_terms_changed',"
+                                     "error=NULL,lease_until=0,updated=? WHERE run_id=? AND pid=? AND campaign_id=? "
+                                     "AND catalog_source=? AND state='ready'",(time.time(),run_id,row['pid'],
+                                     row['campaign_id'],row['catalog_source'])).rowcount
+    return changed
 
 
 def step_read_campaign(prep,run_id,limit,report):
@@ -539,7 +576,23 @@ def step_create(prep,run_id,limit,report,pace=0.0,lanes=1,qps=5):
                 if item['state']=='missing':
                     offer=listing|{'pid':pid,'campaignId':cid,'catalogSource':src}
                     if not offer.get('creatorPercent'):raise ValueError('catalog_prepare_offer_missing')
+                    from lib.catalog_binding import CatalogBindings
+                    current=CatalogBindings(ROOT,connection=prep.db).active_for_offer(offer)
+                    if current:
+                        ledger.supersede_redundant_prepared()
+                        prep.mark_progress(run_id,pid,cid,src,'ready',card=current['card'])
+                        created.append({'pid':pid,'state':'existing_current_binding','seconds':0.0});continue
                     planned=create_spec(prep,run_id,offer,short_name_for(pid,offer.get('title','')),naming)
+                    observed=item.get('card') or {}
+                    if observed.get('state')=='verified_read_only' and \
+                            str(observed.get('verifiedListName') or observed.get('listName'))==planned['listName'] and \
+                            str(observed.get('creatorPercent'))==str(planned['creatorPercent']) and \
+                            str(observed.get('pid'))==str(pid) and str(observed.get('sourceCampaignId'))==str(cid):
+                        from lib.catalog_binding import CatalogBindings
+                        CatalogBindings(ROOT,connection=prep.db).promote(planned,observed,None)
+                        prep.mark_progress(run_id,pid,cid,src,'ready',card=observed)
+                        created.append({'pid':pid,'state':'existing_standard','listId':observed['listId'],
+                                        'creatorPercent':observed['creatorPercent'],'seconds':0.0});continue
                     intent=prep.freeze(run_id,pid,cid,src,planned)
                 else:
                     intent=ledger.get(item['intent_id'])
@@ -843,6 +896,7 @@ def main():
             report['selectedPoolTotal']=pool['total'];report['candidates']=len(universe) if universe is not None else pool['total']
             report['scopeMode']=a.scope
         report['seeded']=prep.seed(run_id,items,s)
+        report['requeuedTermsChanged']=requeue_binding_mismatches(prep,run_id)
         report['retired']=prep.retire_mismatched_bindings(run_id)
     elif a.action=='read':
         if a.route=='campaign':

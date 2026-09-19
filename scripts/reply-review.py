@@ -30,7 +30,7 @@ def main():
             elif action=='classify':
                 if set(request)!={'action','turnId','requestId','provider'}:raise CycleError('invalid_input')
                 provider=request['provider']
-                classifier=DeepSeekClassifier() if provider=='deepseek' else JevClassifier() if provider=='jev' else None
+                classifier=DeepSeekClassifier() if provider=='deepseek' else JevClassifier(ROOT) if provider=='jev' else None
                 if classifier is None:raise CycleError('reply_provider_invalid')
                 result=classify(store,request['turnId'],request['requestId'],classifier)
             else:

@@ -154,7 +154,7 @@ React 组件不能直接读写 SQLite、启动任意命令或实现资格规则�
 
 当前 V1 回复实现已新增 `reply_events.py` 和 `config/reply-policy.json`：前者把已确认外发投影为 `outbound_episode`，把达人入站正文投影为不可变 `inbound_turn`，并保存最多三个 `turn_episode_link` 候选；后者唯一保存五种动作、两小时集中周期、自动回复关闭和三条固定意大利语模板。`reply-review.py` 只允许本地回填、影子分类和人工审核；分类输出必须引用真实 message ID 与原文片段，`link_usage` 还必须只有一个关联 PID/listId，否则确定性守卫改为 `human`。
 
-DeepSeek 当前为可用的影子 provider；Jev 只有 provider-neutral adapter，占位状态为 `unconfigured`，在用户获得正式接口合同前不猜 endpoint、凭据或模型 ID。收信 worker 不再调用旧 `cycle_agent.py`，也不执行 `process_due()`；它只保存事件并立即冻结达人。旧事实工具、60 秒服务代码和已存在的旧评估记录继续保留历史兼容，但不再位于当前收信运行路径。
+DeepSeek 与 TypeSafe Jev 当前都只作为影子 provider。Jev 使用官方 System One 合同 `POST https://api.typesafe.ai/v1/systemone`，固定模型 `jev-1.13.0`，五动作由一个 `Choice` 问题返回完整概率分布；API key 只从本机 `config/typesafe.json`（0600、Git 忽略）或 `TYPESAFE_API_KEY` 读取。收信 worker 不再调用旧 `cycle_agent.py`，也不执行 `process_due()`；它只保存事件并立即冻结达人。旧事实工具、60 秒服务代码和已存在的旧评估记录继续保留历史兼容，但不再位于当前收信运行路径。
 
 模型输出不能直接进入 transport，也不能写达人、PID、冷却、拒联或案件状态。身份、金额、资格、额度、去重、暂停、授权和外部结果继续由代码和台账执行。当前影子审核页只写 `reply_classification/reply_review`，不创建 `service_reply`。
 
@@ -291,6 +291,7 @@ pending → started/submitted → confirmed
 | `config/link-prepare*.json` | 链接读取/创建运行参数 |
 | `config/send-batch.json` | 发送预检数量、窗口和越界档 |
 | `config/reply-policy.json` | 五种回复动作、两小时集中周期、自动回复关闭和三条固定模板 |
+| `config/typesafe.example.json` / 本机 `config/typesafe.json` | TypeSafe 官方 endpoint、固定 Jev 模型和本机 API key；真实文件 0600 且不入 Git |
 | `config/jobs.json` | 可选定时意向；默认关闭 |
 | `config/market-accounts.json` | 市场账号角色和维护目标 |
 | `config/*.example.json` | 敏感本机配置样例 |
@@ -347,7 +348,7 @@ printf '%s' '{"action":"backfill"}' | python scripts/reply-review.py
 printf '%s' '{"action":"status","limit":12}' | python scripts/reply-review.py
 ```
 
-`backfill` 只读取本机既有发送、收信和案件证据并写新投影，`platformWrites=0`、`modelCalls=0`。影子分类只能由页面逐条明确触发；Jev 未配置时返回具名错误。
+`backfill` 只读取本机既有发送、收信和案件证据并写新投影，`platformWrites=0`、`modelCalls=0`。影子分类只能由页面逐条明确触发；DeepSeek 与 Jev 的动作、置信度和模型版本并列展示，任何一方的结果都不能发送回复。
 
 ### 数据迁移与本地回填
 
@@ -432,7 +433,7 @@ PYTHONDONTWRITEBYTECODE=1 \
 - Web Node 测试存在 module type warning；Next.js 构建有上游 deprecation warning。
 - 冻结批次、start/stop 和 frozen-v2 执行桥已接通；账号级平台日额度的原生信号仍未取得，不能用本地 500 闸门冒充。
 - 旧 legacy-only `cycle_bulk` 仍保留旧执行兼容路径；新 `/api/send` 只创建 frozen-v2 批次。
-- 事件级回复账本、五动作、固定模板、DeepSeek 影子分类与人工审核页已完成；Jev 仍未配置，真实自动回复 transport 仍保持关闭且尚未接入新合同。
+- 事件级回复账本、五动作、固定模板、DeepSeek/Jev 同集影子分类与人工审核页已完成；真实自动回复 transport 仍保持关闭且尚未接入新合同。
 - 本机 `var/` 缺正式备份、恢复和跨机器迁移方案。
 - 新项目仍依赖旧 Python 环境与部分协议层；最终需要独立依赖和凭据管理。
 

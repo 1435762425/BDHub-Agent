@@ -11,15 +11,18 @@ function ReviewItem({item,onChanged}:{item:ReplyReviewItem;onChanged:()=>void}){
  const [busy,setBusy]=useState(false),[message,setMessage]=useState("");
  const [correctAction,setCorrectAction]=useState<ReplyAction>("human"),[note,setNote]=useState("");
  const post=async(body:Record<string,unknown>)=>{setBusy(true);setMessage("");try{const response=await fetch("/api/reply-review",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});if(!response.ok){const problem=await response.json().catch(()=>({})) as {error?:string};throw Error(problem.error);}onChanged();}catch(error){setMessage(error instanceof Error&&error.message==="jev_not_configured"?"Jev 尚未配置；当前只能用 DeepSeek 做影子分类。":"操作没有落账，请刷新后重试。");}finally{setBusy(false);}};
- const classify=()=>post({action:"classify",turnId:item.turnId,requestId:`web-${crypto.randomUUID()}`,provider:"deepseek"});
+ const classify=(provider:"deepseek"|"jev")=>post({action:"classify",turnId:item.turnId,requestId:`web-${crypto.randomUUID()}`,provider});
  const submit=(verdict:"correct"|"incorrect")=>post({action:"review",classificationId:item.classificationId,
   expectedRevision:item.review?.revision??0,verdict,correctAction:verdict==="correct"?null:correctAction,note});
  const decision=item.decision;
+ const compared=new Set(item.comparisons.map(row=>row.provider));
  return <article className="space-y-3 rounded-xl border border-gray-200 p-4 dark:border-gray-800">
   <div className="flex flex-wrap items-center gap-2"><Pill tone={item.historical?"neutral":"brand"}>{item.historical?"历史样本":"当前消息"}</Pill>
    <span className="text-xs text-gray-500">消息 {item.messageId} · 关联 PID {item.episodes.map(row=>row.pid).join(" / ")||"未确定"}</span></div>
   <p className="whitespace-pre-wrap text-sm leading-6 text-gray-800 dark:text-gray-200">{item.format==="text"?item.text:"[图片或附件：必须人工处理]"}</p>
-  {!decision?<Button size="sm" variant="outline" disabled={busy} onClick={()=>void classify()}>{busy?"分类中…":"DeepSeek 影子分类"}</Button>:<div className="space-y-2 rounded-lg bg-gray-50 p-3 dark:bg-white/[0.04]">
+  {item.comparisons.length>0&&<div className="flex flex-wrap gap-2 text-xs">{item.comparisons.map(row=><Pill key={row.classificationId} tone={row.provider==="jev"?"brand":"neutral"}>{row.provider==="jev"?"Jev":"DeepSeek"}：{labels[row.action]} {(row.confidence*100).toFixed(0)}%</Pill>)}</div>}
+  {(!compared.has("deepseek")||!compared.has("jev"))&&<div className="flex flex-wrap gap-2">{!compared.has("deepseek")&&<Button size="sm" variant="outline" disabled={busy} onClick={()=>void classify("deepseek")}>{busy?"分类中…":"DeepSeek 影子分类"}</Button>}{!compared.has("jev")&&<Button size="sm" variant="outline" disabled={busy} onClick={()=>void classify("jev")}>{busy?"分类中…":"Jev 对照分类"}</Button>}</div>}
+  {decision&&<div className="space-y-2 rounded-lg bg-gray-50 p-3 dark:bg-white/[0.04]">
    <div className="flex flex-wrap items-center gap-2"><Pill tone={decision.action==="human"?"warning":"success"}>{labels[decision.action]}</Pill><span className="text-xs text-gray-500">置信度 {(decision.confidence*100).toFixed(0)}% · {decision.intentCode}</span></div>
    <p className="text-xs leading-5 text-gray-600 dark:text-gray-300">中文理解：{decision.meaningZh}</p>
    {decision.templateText&&<p className="rounded-md border border-gray-200 bg-white p-2 text-xs leading-5 text-gray-700 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200">候选固定回复：{decision.templateText}</p>}
@@ -43,7 +46,7 @@ export default function ReplyReviewPanel(){
   <div className="space-y-4 p-5">
    {error?<Notice tone="warning">暂时无法读取回复审核账本。</Notice>:!data?<p className="text-sm text-gray-500">正在读取真实回复…</p>:<>
     <div className="grid grid-cols-2 gap-3 lg:grid-cols-5"><StatTile label="入站 turn" value={data.counts.turns} hint="每条消息独立保存"/><StatTile label="外发 episode" value={data.counts.episodes} hint="当时的 PID 与链接"/><StatTile label="已关联" value={data.counts.linkedTurns} hint="有候选外发上下文"/><StatTile label="已分类" value={data.counts.classified} hint="影子判断，不执行"/><StatTile label="已审核" value={data.counts.reviewed} hint="人工确认的正反例" brand/></div>
-    <p className="text-xs leading-5 text-gray-500">每 {data.processingIntervalSeconds/3600} 小时集中处理一次；DeepSeek 目前只做影子分类，Jev 尚未配置。固定模板也只是候选，<strong>自动回复始终关闭</strong>。</p>
+    <p className="text-xs leading-5 text-gray-500">每 {data.processingIntervalSeconds/3600} 小时集中处理一次；DeepSeek 与 Jev 都只做影子分类，同一条可直接对照。固定模板也只是候选，<strong>自动回复始终关闭</strong>。</p>
     <div className="space-y-3">{data.items.map(item=><ReviewItem key={`${item.turnId}-${item.classificationId}-${item.review?.revision??0}`} item={item} onChanged={()=>setRevision(value=>value+1)}/>)}</div>
    </>}
   </div>

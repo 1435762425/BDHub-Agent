@@ -81,7 +81,7 @@ class ReplyEvents(unittest.TestCase):
    with self.assertRaisesRegex(CycleError,'evidence'):
     classify(s,turn,'request-shadow-0002',DeepSeekClassifier(lambda *_a,**_k:{'content':json.dumps(bad)}))
    with self.assertRaisesRegex(CycleError,'jev_not_configured'):
-    classify(s,turn,'request-jev-0001',JevClassifier())
+    classify(s,turn,'request-jev-0001',JevClassifier(self.root))
    self.assertEqual(load_policy()['automaticRepliesEnabled'],False)
 
 

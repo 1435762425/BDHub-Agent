@@ -2,6 +2,7 @@ import json,sys,tempfile,unittest,sqlite3
 from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'scripts'))
 from lib.catalog_links import new_commission,choose_existing,link_decision,CatalogLinks,catalog_owns_pid,policy_fingerprint
+from lib.catalog_binding import CatalogBindings
 from lib.schema_migrations import apply_database
 from lib.second_cycle import digest
 ROOT=Path(__file__).resolve().parents[1]
@@ -57,6 +58,27 @@ class LinkTests(unittest.TestCase):
    card={'state':'verified_read_only','listId':'789','pid':'123','sourceCampaignId':'456','creatorPercent':'13','wireCampaignId':'456','verifiedListName':'BJN test','checkedAt':1.0,'evidenceRefs':['proof']}
    with self.assertRaises(ValueError):l.confirm(r['id'],card|{'wireCampaignId':'0'})
    l.confirm(r['id'],card);self.assertEqual(l.get(r['id'])['state'],'verified')
+   changed=l.prepare(s|{'offer':s['offer']|{'publicPercent':'11'}})
+   self.assertNotEqual(changed['id'],r['id']);self.assertEqual(changed['state'],'prepared')
    with self.assertRaises(ValueError):l.prepare(s|{'pid':'125','route':'bogus','campaignId':'456'})
+   l.db.close()
+ def test_unsubmitted_legacy_intent_is_superseded_but_attempted_one_still_blocks(self):
+  from bdhub.send.taplink.protocol import create_payload
+  with tempfile.TemporaryDirectory() as d:
+   root=Path(d);(root/'var').mkdir();(root/'config').mkdir();(root/'config/catalog-link-policy.json').write_text(json.dumps(self.policy));sqlite3.connect(root/'var/catalog-links.sqlite').close();apply_database(root,'catalog-links')
+   with sqlite3.connect(root/'var/second-cycle.sqlite') as db:
+    db.execute("CREATE TABLE cycle_card_creation(id TEXT,plan_id TEXT,pid TEXT,offer_key TEXT,offer_json TEXT,plan_revision INTEGER,list_name TEXT,state TEXT,receipt TEXT,readback TEXT,created_at REAL)")
+    db.execute("INSERT INTO cycle_card_creation VALUES('old','p','123','o','{}',1,'old','prepared',NULL,NULL,1)")
+   l=CatalogLinks(root);payload=create_payload(pid='123',campaign_id='456',creator_pct='13',name='BJN test',route='selected')
+   s={'pid':'123','account':'acc9','market':'it','route':'selected','purpose':'catalog_batch_link','campaignId':'456','creatorPercent':'13','listName':'BJN test','shortName':'test','policyVersion':self.policy['version'],'policyFingerprint':policy_fingerprint(self.policy),'namingVersion':'link-naming-v1','namingFingerprint':'a'*64,'searchTotal':0,'standardSearchComplete':True,'sourceRun':'run','offer':{'pid':'123','campaignId':'456','catalogSource':'selected','creatorPercent':'13','publicPercent':'10','totalPercent':'15'},'payload':payload}
+   current=l.prepare(s);self.assertEqual(current['state'],'prepared')
+   with sqlite3.connect(root/'var/second-cycle.sqlite') as db:self.assertEqual(db.execute("SELECT state FROM cycle_card_creation WHERE id='old'").fetchone()[0],'superseded')
+   bindings=CatalogBindings(root)
+   try:bindings.promote(s,{'state':'verified_read_only','pid':'123','sourceCampaignId':'456','creatorPercent':'13','verifiedListName':'BJN test','listId':'789','checkedAt':2.0,'evidenceRefs':['proof']})
+   finally:bindings.close()
+   self.assertEqual(l.supersede_redundant_prepared(),1);self.assertEqual(l.get(current['id'])['state'],'superseded')
+   with sqlite3.connect(root/'var/second-cycle.sqlite') as db:db.execute("INSERT INTO cycle_card_creation VALUES('active','p','124','o','{}',1,'old','started','{}',NULL,1)")
+   s2=s|{'pid':'124','payload':create_payload(pid='124',campaign_id='456',creator_pct='13',name='BJN test',route='selected')}
+   with self.assertRaisesRegex(ValueError,'legacy_creation_in_progress'):l.prepare(s2)
    l.db.close()
 if __name__=='__main__':unittest.main()

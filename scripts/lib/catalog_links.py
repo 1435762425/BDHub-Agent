@@ -64,6 +64,38 @@ class CatalogLinks:
         with closing(sqlite3.connect(path.as_uri()+'?mode=ro',uri=True)) as c:
             if not c.execute("SELECT 1 FROM sqlite_master WHERE name='cycle_card_creation'").fetchone():return False
             return bool(c.execute("SELECT 1 FROM cycle_card_creation WHERE pid=? AND state IN ('prepared','started','response_saved','unknown')",(pid,)).fetchone())
+    def supersede_unsubmitted_legacy(self,pid,replacement_id):
+        """Retire only legacy intents that provably never reached a platform call."""
+        path=self.root/'var/second-cycle.sqlite'
+        if not path.exists():return 0
+        with closing(sqlite3.connect(path,timeout=10,isolation_level=None)) as c:
+            if not c.execute("SELECT 1 FROM sqlite_master WHERE name='cycle_card_creation'").fetchone():return 0
+            c.execute('BEGIN IMMEDIATE')
+            try:
+                if c.execute("SELECT 1 FROM cycle_card_creation WHERE pid=? AND state IN ('started','response_saved','unknown')",(pid,)).fetchone():
+                    c.execute('ROLLBACK');return 0
+                rows=c.execute("SELECT id FROM cycle_card_creation WHERE pid=? AND state='prepared' AND receipt IS NULL",(pid,)).fetchall()
+                evidence=encoded({'reason':'superseded_by_catalog_standard','replacementId':replacement_id,
+                                  'platformCreateAttempts':0})
+                for row in rows:c.execute("UPDATE cycle_card_creation SET state='superseded',readback=? WHERE id=?",(evidence,row[0]))
+                c.execute('COMMIT');return len(rows)
+            except BaseException:
+                c.execute('ROLLBACK');raise
+    def supersede_redundant_prepared(self):
+        """Close local-only catalog intents already satisfied by the exact current binding."""
+        from lib.catalog_binding import CatalogBindings
+        bindings=CatalogBindings(self.root,connection=self.db);settled=0
+        for row in self.db.execute("SELECT id,spec FROM catalog_link_intent WHERE state='prepared' "
+                                   "AND receipt IS NULL AND readback IS NULL").fetchall():
+            try:spec=json.loads(row['spec']);binding=bindings.active_for_offer(spec.get('offer') or {})
+            except (ValueError,TypeError):continue
+            if not binding:continue
+            evidence=encoded({'reason':'satisfied_by_current_binding','listId':binding['list_id'],
+                              'platformCreateAttempts':0})
+            settled+=self.db.execute("UPDATE catalog_link_intent SET state='superseded',readback=?,updated=? "
+                                     "WHERE id=? AND state='prepared' AND receipt IS NULL",
+                                     (evidence,time.time(),row['id'])).rowcount
+        return settled
     def prepare(self,spec):
         """Freeze one creation intent. Purpose decides how strictly the spec is bound."""
         purpose=spec.get('purpose')
@@ -80,7 +112,6 @@ class CatalogLinks:
             if type(spec.get('searchTotal')) is not int or spec['searchTotal']!=0:raise ValueError('existing_link_or_intent_requires_review')
         elif type(spec.get('searchTotal')) is not int or spec['searchTotal']<0 or spec.get('standardSearchComplete') is not True:
             raise ValueError('catalog_standard_search_required')
-        if self.legacy_conflict(spec['pid']):raise ValueError('legacy_creation_in_progress' if not canary else 'existing_link_or_intent_requires_review')
         if spec.get('policyFingerprint')!=policy_fingerprint(self.policy):raise ValueError('catalog_policy_changed')
         if not canary:
             if spec.get('policyVersion')!=self.policy.get('version') or spec.get('namingVersion')!='link-naming-v1' or not re.fullmatch(r'[0-9a-f]{64}',str(spec.get('namingFingerprint') or '')):raise ValueError('catalog_standard_rule_invalid')
@@ -91,8 +122,13 @@ class CatalogLinks:
         except ValueError:raise ValueError('catalog_payload_binding_invalid') from None
         if spec.get('payload')!=expected or not 1<=len(spec['listName'])<=50:raise ValueError('catalog_payload_binding_invalid')
         key={k:spec[k] for k in ('pid','account','market','route','campaignId','creatorPercent','policyFingerprint')}
-        if not canary:key['namingFingerprint']=spec['namingFingerprint']
+        if not canary:
+            from lib.catalog_binding import offer_fingerprint
+            key['offerFingerprint']=offer_fingerprint(spec.get('offer'))
+            key['namingFingerprint']=spec['namingFingerprint']
         id='catalog-link-'+digest(key)[:28]
+        if not canary:self.supersede_unsubmitted_legacy(spec['pid'],id)
+        if self.legacy_conflict(spec['pid']):raise ValueError('legacy_creation_in_progress' if not canary else 'existing_link_or_intent_requires_review')
         old=self.db.execute('SELECT id FROM catalog_link_intent WHERE id=?',(id,)).fetchone()
         if old:return self.get(id)
         try:self.db.execute('INSERT INTO catalog_link_intent VALUES(?,?,?,?,?,NULL,NULL,?,?)',(id,spec['pid'],spec['account'],'prepared',encoded(spec),time.time(),time.time()))

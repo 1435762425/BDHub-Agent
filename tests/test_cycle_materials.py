@@ -1,7 +1,7 @@
 import sys,tempfile,unittest,json,importlib.util
 from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'scripts'))
-from lib.cycle_materials import Materials,checked_names,name_key,render,material_status
+from lib.cycle_materials import Materials,checked_names,name_key,render,material_status,select_offers
 from lib.second_cycle import CycleStore,CycleError
 from test_second_cycle import offer,edge,NOW
 class MaterialTests(unittest.TestCase):
@@ -16,6 +16,12 @@ class MaterialTests(unittest.TestCase):
   self.m.prepare_names(offers[:5],model)
   for o in offers[:5]:self.s.db.execute('INSERT INTO cycle_card_check VALUES(?,?,?,?)',(plan,o['offerKey'],digest(o),encoded({'state':'verified_read_only'})))
   self.assertEqual([o['pid'] for o in self.m.candidates(plan)],['6'])
+ def test_campaign_offer_tie_uses_smallest_campaign_id_like_the_pool(self):
+  self.s.clock=lambda:NOW;plan=self.s.plan('test','it')
+  offers=[offer('1',offerKey='campaign:1:9',campaignId='9',catalogSource='campaign',endAt=NOW+90*86400),
+          offer('1',offerKey='campaign:1:2',campaignId='2',catalogSource='campaign',endAt=NOW+90*86400)]
+  self.s.publish(plan,'campaign',NOW,offers)
+  self.assertEqual(select_offers(self.s,plan,None,scoped_pids={'1'})[0]['campaignId'],'2')
  def test_product_cache_ignores_offer_and_creator_changes(self):
   self.assertEqual(self.m.prepare_names([self.o],self.model)['modelCalls'],1)
   self.assertEqual(self.m.prepare_names([self.o|{'creatorPercent':'15'}],lambda *a:1/0)['modelCalls'],0)

@@ -14,7 +14,7 @@ const payload={schema:'bdhub.reply-review.v1',policyVersion:'creator-reply-actio
  counts:{turns:35,episodes:10,linkedTurns:20,classified:1,reviewed:0},items:[{turnId:turn,messageId:'1001',
  creatorId:'creator-1',format:'text',text:'Certo, farò un video',historical:true,occurredMs:1789257600000,
  episodes:[{episode_id:'episode-'+'c'.repeat(24),pid:'1729571380453480001',list_id:'8650765182615984910',candidate_rank:1,confidence:'high'}],
- classificationId:classification,decision,review:null}]};
+ classificationId:classification,decision,review:null,comparisons:[{classificationId:classification,provider:'deepseek',model:'deepseek-flash',action:'collaboration_ack',confidence:.98,intentCode:'collaboration_confirmed'}]}]};
 
 test('reply review decoder keeps event links and refuses executable classifications',()=>{
  const value=validateReplyReviewStatus(payload);assert.equal(value.items[0].decision.action,'collaboration_ack');
