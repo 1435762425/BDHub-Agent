@@ -13,6 +13,12 @@ export interface DemoScenario{
 
 export interface DemoGateResult{key:string;label:string;state:"pass"|"stop"|"wait";detail:string;}
 
+export const BUSINESS_PHASES=[
+ {key:"product",index:"01",title:"商品准备",question:"这个 PID 现在能用吗？",count:2140,unit:"个 PID 已备好",summary:"商品合格、方案完整，并且已有当前可用 TapLink。",steps:["采集并筛出合格 PID","选定唯一当前方案","复用或创建 TapLink"]},
+ {key:"creator",index:"02",title:"达人准备",question:"这个达人是真实可联系的人吗？",count:2930,unit:"个达人已识别",summary:"同 PID 正销量线索已经取得，并解析到稳定 OECID。",steps:["按 PID 查询正销量达人","handle 去重判定一次","绑定市场 × OECID"]},
+ {key:"send",index:"03",title:"发送安排",question:"这一条现在可以进入发送批次吗？",count:1880,unit:"条当前可发送",summary:"达人关系清晰、没有冷却或未结问题，并冻结精确材料。",steps:["生成达人 × PID 位置","每达人选择一个最优商品","组批并冻结 Offer + listId"]},
+] as const;
+
 export const FLOW_STAGES:DemoStage[]=[
  {key:"collect",index:"01",title:"PID 采集",unit:"商品 PID",input:"全托高机会 / Campaign 活动",output:"来源快照 + PID 去重",rule:"每条 PID 保留来源、活动、事实时间和版本。",failure:"读取中断保留游标，不生成半份生效快照。",refresh:"手动主动采集；定时为可选开关。"},
  {key:"screen",index:"02",title:"商品筛选",unit:"PID / Offer",input:"当前来源快照",output:"合格商品方案",rule:"全托销量≥300；有评分≥4.0，无评分允许；佣金差≥2点。Campaign 使用独立期限与库存规则。",failure:"进入不合格层，历史事实保留。",refresh:"采集完成、规则变化或商品事实变化时重算。"},
@@ -87,3 +93,18 @@ export const DEMO_COUNTS={
 };
 
 export function poolReconciles(){return Object.values(DEMO_COUNTS.pool).reduce((a,b)=>a+b,0)===DEMO_COUNTS.positions;}
+
+export const SIMPLE_POOL={
+ sendable:DEMO_COUNTS.pool.ready,
+ waiting:DEMO_COUNTS.pool.queued+DEMO_COUNTS.pool.cooling+DEMO_COUNTS.pool.reply+DEMO_COUNTS.pool.waitingLink,
+ unavailable:DEMO_COUNTS.pool.invalid,
+ total:DEMO_COUNTS.positions,
+};
+
+export function simpleScenario(s:DemoScenario){
+ const evaluated=evaluateScenario(s);
+ const product=evaluated.gates.slice(0,3).every(gate=>gate.state==="pass");
+ const creator=evaluated.gates.find(gate=>gate.key==="identity")?.state==="pass";
+ const send=product&&creator&&evaluated.gates.find(gate=>gate.key==="relation")?.state==="pass";
+ return {product,creator,send,layer:evaluated.layer,summary:evaluated.summary,gates:evaluated.gates};
+}

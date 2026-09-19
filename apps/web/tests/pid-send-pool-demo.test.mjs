@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import {DEMO_COUNTS,FLOW_STAGES,SCENARIOS,evaluateScenario,poolReconciles} from "../src/features/demo/pid-send-pool-demo.ts";
+import {BUSINESS_PHASES,DEMO_COUNTS,FLOW_STAGES,SCENARIOS,SIMPLE_POOL,evaluateScenario,poolReconciles,simpleScenario} from "../src/features/demo/pid-send-pool-demo.ts";
 
 const scenario=key=>SCENARIOS.find(item=>item.key===key);
 
@@ -8,6 +8,12 @@ test("the demo follows the confirmed PID to strict-pool order",()=>{
  assert.deepEqual(FLOW_STAGES.map(item=>item.key),["collect","screen","offer","link","leads","identity","position","pool"]);
  assert.match(FLOW_STAGES[3].rule,/旧卡保留/);
  assert.match(FLOW_STAGES[4].rule,/7 天/);
+});
+
+test("the default experience reduces the flow to three business questions",()=>{
+ assert.deepEqual(BUSINESS_PHASES.map(item=>item.key),["product","creator","send"]);
+ assert.deepEqual(Object.keys(SIMPLE_POOL),["sendable","waiting","unavailable","total"]);
+ assert.equal(SIMPLE_POOL.sendable+SIMPLE_POOL.waiting+SIMPLE_POOL.unavailable,SIMPLE_POOL.total);
 });
 
 test("the fake pool counts reconcile exactly",()=>{
@@ -33,6 +39,13 @@ test("a rate mismatch waits for a new card without deleting the old one",()=>{
  assert.equal(result.layer,"待重建");
  assert.match(result.summary,/旧卡继续保留/);
  assert.equal(result.gates.find(item=>item.key==="link")?.state,"wait");
+});
+
+test("the simplified scenario answers only product creator and send readiness",()=>{
+ const clean=simpleScenario(scenario("clean"));
+ const rateChanged=simpleScenario(scenario("rate_changed"));
+ assert.deepEqual([clean.product,clean.creator,clean.send],[true,true,true]);
+ assert.deepEqual([rateChanged.product,rateChanged.creator,rateChanged.send],[false,true,false]);
 });
 
 test("an invalid product and an unresolved reply leave ready for different reasons",()=>{
