@@ -1,0 +1,29 @@
+{
+  "schemaVersion": "bdhub.state-backup-policy.v1",
+  "databases": [
+    "batch-tasks.sqlite",
+    "campaign-join.sqlite",
+    "campaign-screen.sqlite",
+    "catalog-links.sqlite",
+    "creator-discovery.sqlite",
+    "creator-identities.sqlite",
+    "creator-profile-refresh.sqlite",
+    "global-selection.sqlite",
+    "global-source.sqlite",
+    "it-conversations.sqlite",
+    "kalodata-leads.sqlite",
+    "kalodata-source-cache.sqlite",
+    "matching-italy-profiles.sqlite",
+    "matching-italy.sqlite",
+    "matching.sqlite",
+    "outreach-drafts.sqlite",
+    "runtime.sqlite",
+    "second-cycle.sqlite",
+    "second-italy.sqlite",
+    "second-live-trials.sqlite",
+    "second-outreach.sqlite"
+  ],
+  "ignoredSnapshots": [
+    "*-before-*.sqlite"
+  ]
+}
