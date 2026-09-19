@@ -33,6 +33,7 @@ DeepSeek/Agent 已经把 9 月 14 日的“货盘批量备链”继续推进到�
 | 任意 N＋候补 | `54df9b9`（send-preview v3、冻结 formal/reserve、unknown 不补位） |
 | 显式回复真值 | `b76d407`（模型不预选、政策模板直出、append-only 修订） |
 | TapLink 周期调度 | `71035e8`（Campaign 日检、全托周检、只读 creates=0） |
+| SQLite 测试资源 | `ad1f373`（夹具显式 close，未关闭连接 warning 归零） |
 | 上一个已提交开发头 | `4cdb759`（`agent/p0-catalog-links`） |
 | 继承工作区固化提交 | `cd81dff` |
 | 继承标签 | `takeover-20260919-inherited` |
@@ -100,7 +101,7 @@ DeepSeek/Agent 已经把 9 月 14 日的“货盘批量备链”继续推进到�
 3. **新发送执行器尚未做真实平台验收**：冻结、start/stop 和离线故障合同已完成，但账号级日额度原生信号仍未取得；第一次真实执行仍需用户在页面单独启动并观察。
 4. **本机 Git 无远端**：已有提交和标签可以本机回滚，但机器损坏时没有远端恢复点。配置 GitHub/GitLab 远端需要用户提供目标仓库或明确创建位置。
 5. **文档曾混入大量动态流水**：原 `AGENTS.md` 已由本轮收敛；以后不得继续把每次数字和事故追加回根规则。
-6. **测试资源释放告警**：Python 全量测试通过，但未隐藏 warning 时可见多处未关闭 SQLite connection 的 `ResourceWarning`。它不阻断本次文档交付，后续应按模块修复，避免长驻进程积累连接。
+6. **测试资源释放告警已解决**：tracemalloc 证明告警来自测试夹具把连接事务上下文误当成 close；20 个夹具文件已显式关闭，`-W default` 全量 1069 项未关闭数据库 warning 为 0，生产 migration 本身没有泄漏。
 7. **旧批次仍有 legacy 兼容路径**：新 `/api/send` 只创建 frozen-v2 批次，不重选 PID、不远程复读 TapLink；历史 legacy-only `cycle_bulk` 仍保留旧路径，只用于追溯/兼容，不能拿旧授权恢复发送。
 8. **回复仍处于影子验收**：35 条已完成 DeepSeek/Jev 同集对照，9 条分歧；`Certo!` 上 DeepSeek=`human`、Jev=`collaboration_ack`。必须由用户审核形成真值后才能报告准确率，真实回复 transport 未接新合同。
 9. **收信监控当前未运行**：代码与断点都保留，但没有常驻 `poll-cycle-inbox.py --worker` 进程；这是运行状态，不授权本轮自动恢复。
@@ -164,6 +165,12 @@ DeepSeek/Agent 已经把 9 月 14 日的“货盘批量备链”继续推进到�
 - 调度失败保留 `lastSuccess`，记录错误并一小时后重试；手动作业占用时不并发抢同一链接账号；
 - `/ops` 可分别设置周期并启动/停止本机调度器；未启动时页面明确说明即使保存周期也不会执行；
 - 本轮只运行一次全关闭的 `--once`，子作业启动数 0、平台写入 0，正式调度器未启动。
+
+### 已完成：SQLite 测试连接清理
+
+- 用 tracemalloc 追到真实分配栈，确认高频告警来自测试中的 `with sqlite3.connect(...)`（只提交/回滚、不关闭），不是 migration 循环；
+- 20 个测试文件改为事务退出后确定性 close，并修复一次重启测试覆盖旧 `CatalogPreparation` 对象；
+- 未关闭数据库 `ResourceWarning` 从 265 → 45 → 13 → 0；`-W default` 下全量 1069 项通过。
 
 ### 下一步：用户审核与评测
 

@@ -449,7 +449,7 @@ PYTHONDONTWRITEBYTECODE=1 \
 
 - 当前增量 migration registry 只覆盖 `catalog-links.sqlite` 和 `second-cycle.sqlite` 的本轮新投影；其他 SQLite schema 仍分散在领域模块。
 - 历史 `batch-tasks.sqlite` 曾有长事务；当前 UI 已停止唤醒旧准备 worker。若未来为迁移/追溯再次运行它，仍需先完成事务/WAL 与恢复语义验证。
-- Python 测试仍有未关闭 SQLite connection 的 `ResourceWarning`。
+- Python 全量测试夹具已显式关闭 SQLite connection；`-W default` 下 1069 项通过且未关闭数据库 `ResourceWarning` 为 0。
 - Web Node 测试存在 module type warning；Next.js 构建有上游 deprecation warning。
 - 冻结批次、start/stop 和 frozen-v2 执行桥已接通；账号级平台日额度的原生信号仍未取得，不能用本地 500 闸门冒充。
 - 旧 legacy-only `cycle_bulk` 仍保留旧执行兼容路径；新 `/api/send` 只创建 frozen-v2 批次。
