@@ -180,7 +180,7 @@ DeepSeek 与 TypeSafe Jev 当前都只作为影子 provider。Jev 使用官方 S
 | `var/creator-discovery.sqlite` | handle 发现 batch/item/cohort/request |
 | `var/creator-identities.sqlite` | 稳定 OECID、别名与来源 |
 | `var/creator-profile-refresh.sqlite` | 画像刷新 job/request/heartbeat |
-| `var/batch-tasks.sqlite` | 任务卡、成员、来源、材料和事件 |
+| `var/batch-tasks.sqlite` | 早期指定数量任务卡、成员、来源、材料和事件；当前页面只读追溯 |
 | `var/second-cycle.sqlite` | plan、关系、发送、收信、服务和回复事实 |
 | `var/it-conversations.sqlite` | IT/ACC6 会话索引 |
 | `var/matching*.sqlite` | 独立匹配研究数据集和结果 |
@@ -188,6 +188,8 @@ DeepSeek 与 TypeSafe Jev 当前都只作为影子 provider。Jev 使用官方 S
 新增当前投影：`catalog-links.sqlite.catalog_current_binding*` 保存唯一标准卡；`second-cycle.sqlite.lead_query_*` 保存每 PID 当前 20 条范围，`source_edge_index` 为历史证据提供规范化索引；`cycle_bulk_freeze/cycle_bulk_candidate` 保存用户确认的不可变发送范围、revision 与完整材料；`outbound_episode/inbound_turn/turn_episode_link/service_case_turn` 保存事件级回复上下文，`reply_classification/reply_review` 分开保存模型影子结果和人工判断。原准备记录、page receipt、`source_edge`、旧批次和旧回复评估都不删除。
 
 `scripts/lib/schema_migrations.py` 当前以增量 registry 管理 `catalog-links.sqlite` 和 `second-cycle.sqlite` 的本轮新投影；其他历史表仍由各领域模块初始化。新增表/字段必须继续提供幂等升级和旧库兼容测试，不能靠删除本地 DB 重建。
+
+早期 `batch-tasks.sqlite` 与当前 `cycle_bulk_freeze/cycle_bulk_candidate` 是两套不同台账。工作台不再从旧任务卡创建、暂停、恢复或唤醒 `batch-preparation-worker`；旧卡只读展示，当前新批次只走 `/api/send` 的预览、冻结、明确 start/stop。旧数据库可能没有后来新增的 `batch_source_selection`，读侧必须返回 `edges=null + selectionRecorded=false`，不能创建空表后把未知冒充为 0。项目文档要求的“任意 N＋10% 候补”仍需在当前冻结发送台账上实现，不能重新启用旧并行入口。
 
 ### 6.2 状态原则
 
@@ -265,6 +267,7 @@ pending → started/submitted → confirmed
 | `/api/send` | 发送预览、设置保存、冻结、明确 start/stop 和批次状态 |
 | `/api/reply-review` | 事件级样本、双模型影子分类、turn 标准动作和受控案件应用；无发送动作 |
 | `/api/inbox` | 收信 worker、今日/最近 14 日统计、可分页日明细和待人工 |
+| `/api/batch-tasks` | 早期任务台账兼容接口；当前工作台只使用 GET 做历史追溯 |
 | `/api/jobs` | 手动作业与定时意向 |
 
 `/flow-demo` 是纯前端业务沙盘：判断函数位于 `apps/web/src/features/demo/`，页面运行时不调用任何 `/api`、SQLite、CLI、平台或模型。PID 生命周期页内的数量是 2026-09-19 只读台账静态快照，达人案例为虚构数据；两者都不作为实时运行证据。页面只展示两条 TapLink 周期：Campaign 每日随来源核验、全托已选每周核验；两次刷新之间以上次成功结果为准，不做发送前远程预检，确认失效的链接进入清理。达人页必须说明每 PID 近 14 天最多 20 条、OECID 改名归并、统一 `sourceRank` 排序和三种业务结果，不能继续把佣金优先或六层内部枚举表现为现行规则。实测耗时必须注明样本、并发与非 SLA 边界；同时与 `schedulerReady=false`、作业开关关闭的当前运行事实分开。
@@ -441,7 +444,7 @@ PYTHONDONTWRITEBYTECODE=1 \
 ## 14. 当前技术债与演进方向
 
 - 当前增量 migration registry 只覆盖 `catalog-links.sqlite` 和 `second-cycle.sqlite` 的本轮新投影；其他 SQLite schema 仍分散在领域模块。
-- `batch-tasks.sqlite` 长事务影响并发读取；需独立完成事务/WAL 设计与验证。
+- 历史 `batch-tasks.sqlite` 曾有长事务；当前 UI 已停止唤醒旧准备 worker。若未来为迁移/追溯再次运行它，仍需先完成事务/WAL 与恢复语义验证。
 - Python 测试仍有未关闭 SQLite connection 的 `ResourceWarning`。
 - Web Node 测试存在 module type warning；Next.js 构建有上游 deprecation warning。
 - 冻结批次、start/stop 和 frozen-v2 执行桥已接通；账号级平台日额度的原生信号仍未取得，不能用本地 500 闸门冒充。
