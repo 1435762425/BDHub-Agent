@@ -109,6 +109,8 @@ React 组件不能直接读写 SQLite、启动任意命令或实现资格规则�
 
 刷新合同按来源只有两条：Campaign 每日来源刷新时一并核验对应 TapLink；全托已选商品的 TapLink 每周统一核验一次。最后一次成功结果持续生效，达人查询、组批和正式发送不另做远程预检；确认失效的链接进入清理并在删除后回读。新建后回读属于写入结果结算，不属于周期核验。冻结批次执行器只用本地 `catalog_current_binding` 校验冻结的 Offer 指纹与 `currentListId`，再用 `cycle_send_runtime.descriptor()` 构造发送材料；不调用 `fresh_card()`。若平台明确拒绝商品卡，仅将该 PID 的当前绑定转为 `waiting_refresh` 并继续其他 PID；结果未知仍整批停下核验。
 
+`material_maintenance.py` 与 `lib/material_maintenance.py` 实现上述两个来源周期，配置入口仍为 `config/jobs.json`：`campaign_material_refresh` 是每日链（`campaignCollect` 完成且进度为 done 后，才启动 `linksCampaign`），`selected_taplink_verify` 是可配置星期的周检（启动 `links`）。调度器调用既有 `job_run.start()`，两种链接作业强制覆盖 `creates=0`，不删除卡；失败写 `retryAt=+1h`，不清空 `lastSuccess`。周期和调度器都默认关闭，`/api/jobs` 只有用户明确启用周期并启动 scheduler 后才会执行；一次 `--once` 在全关闭配置下只发布状态，不启动任何子作业。
+
 ### 5.3 线索与身份
 
 | 模块 | 作用 |
@@ -306,7 +308,7 @@ pending → started/submitted → confirmed
 | `config/send-batch.json` | 发送预检数量、窗口和越界档 |
 | `config/reply-policy.json` | 五种回复动作、两小时集中周期、自动回复关闭和三条固定模板 |
 | `config/typesafe.example.json` / 本机 `config/typesafe.json` | TypeSafe 官方 endpoint、固定 Jev 模型和本机 API key；真实文件 0600 且不入 Git |
-| `config/jobs.json` | 可选定时意向；默认关闭 |
+| `config/jobs.json` | 手动作业与材料维护周期；Campaign 日检、全托周检及调度器均默认关闭 |
 | `config/market-accounts.json` | 市场账号角色和维护目标 |
 | `config/*.example.json` | 敏感本机配置样例 |
 

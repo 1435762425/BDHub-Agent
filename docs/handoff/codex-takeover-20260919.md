@@ -32,6 +32,7 @@ DeepSeek/Agent 已经把 9 月 14 日的“货盘批量备链”继续推进到�
 | 历史任务收敛 | `8b317e3`（旧任务只读、缺失选择明细保持未知） |
 | 任意 N＋候补 | `54df9b9`（send-preview v3、冻结 formal/reserve、unknown 不补位） |
 | 显式回复真值 | `b76d407`（模型不预选、政策模板直出、append-only 修订） |
+| TapLink 周期调度 | `71035e8`（Campaign 日检、全托周检、只读 creates=0） |
 | 上一个已提交开发头 | `4cdb759`（`agent/p0-catalog-links`） |
 | 继承工作区固化提交 | `cd81dff` |
 | 继承标签 | `takeover-20260919-inherited` |
@@ -70,6 +71,7 @@ DeepSeek/Agent 已经把 9 月 14 日的“货盘批量备链”继续推进到�
 | 全托货盘 | 主来源采集、可配置筛分、选入账本、已选池回读 | 真实数字随台账变化；全托不使用库存门槛 |
 | Campaign | IT Campaign 读取、筛分、加入活动、页面/API 和合同测试 | 仍按非全托规则核对期限、库存与额外条款；不与全托合并资格 |
 | TapLink | `catalog_current_binding` 是唯一前向材料；当前 selected 2,297/2,297、campaign 474/474 精确绑定 | 旧卡仍完整保留；本轮 1,548 次创建均有 intent+回读，当前 prepared/submitted/unknown 为 0 |
+| TapLink 周期维护 | Campaign 每日来源刷新→资格重算→链接只读核验；全托已选按周只读核验；失败保留上次成功 | 两个周期和材料调度器当前均关闭；creates 固定为 0，不自动建链或删卡 |
 | 商品短名 | DeepSeek 批量生成与 PID 级缓存；发送预检可按 PID 复用 | 失败不自动重复调用模型；短名质量不应冒充发送资格 |
 | Kalodata 线索 | `leads-queue-v2`、完整 receipt、当前前 20 条发布、历史规范化索引和无平台回填 | 失败不写 `queried_at`；额度耗尽停止并保留断点 |
 | OECID | 达人级一次查询、blocked 重开、结果互斥分类、页面卡片 | 已明确查无的不自动重复；无 OECID 不进入发送位置 |
@@ -154,6 +156,15 @@ DeepSeek/Agent 已经把 9 月 14 日的“货盘批量备链”继续推进到�
 - 明确 `recipient_limit/material_stale/needs_review` 等非触达终态可按冻结顺序提升候补；存在 unknown delivery 时提升为 0，整批先进入核验；
 - 真实只读预检：N=500 → 500＋50、N=137 → 137＋14、600 越界 → 600＋60，均完整备齐；本轮没有冻结或启动真实批次。
 
+### 已完成：来源化 TapLink 周期调度
+
+- `jobs-v2` 新增 `campaign_material_refresh`（每日）和 `selected_taplink_verify`（每周、默认周一），两者默认关闭；
+- Campaign 严格串行：先只读全量采集并重新筛分，成功后才启动非全托链接核验；全托周检独立运行；
+- 所有周期链接作业强制 `creates=0`，不自动建链、不删卡；底层链接作业继续互斥并使用现有台账/断点；
+- 调度失败保留 `lastSuccess`，记录错误并一小时后重试；手动作业占用时不并发抢同一链接账号；
+- `/ops` 可分别设置周期并启动/停止本机调度器；未启动时页面明确说明即使保存周期也不会执行；
+- 本轮只运行一次全关闭的 `--once`，子作业启动数 0、平台写入 0，正式调度器未启动。
+
 ### 下一步：用户审核与评测
 
 1. 用户在“回复预演与训练”审核 35 条样本，页面优先展示 9 条模型分歧，并在确认标准动作后滚到下一批；特别校准简短合作确认、礼貌拒绝和多消息合并；
@@ -188,7 +199,7 @@ DeepSeek/Agent 已经把 9 月 14 日的“货盘批量备链”继续推进到�
 
 2026-09-20 在统计日历聚合页完成后：
 
-- Python：`1065` 项 `unittest` 通过。
+- Python：`1069` 项 `unittest` 通过。
 - Web：`381` 项 Node 测试通过。
 - TypeScript：`npm run typecheck` 通过。
 - Next.js：`npm run build` 通过，14 个静态页面（含 `/flow-demo`）及当前 API 路由生成成功。
