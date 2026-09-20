@@ -92,7 +92,7 @@ class Scopes(unittest.TestCase):
         for name, build in cases.items():
             with self.subTest(scope=name):
                 calls = self.enter(build)
-                self.assertEqual(calls['account_name'], 'acc6' if name == 'selector' else 'acc9')
+                self.assertEqual(calls['account_name'], 'acc9')
 
     def test_every_declared_write_scope_really_enables_writes(self):
         """`allow_write` 必须由**所有**写入作用域推导，一条都不能漏。

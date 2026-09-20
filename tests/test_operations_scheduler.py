@@ -99,12 +99,18 @@ class StageWiring(unittest.TestCase):
 
     def test_full_managed_catalog_uses_first_level_category_partitions(self):
         def answers(args,_label):
-            return {'state':'completed','itemCount':31809,'complete':True,'platformWrites':0,
-                    'payload':{'state':'completed','published':True,'products':31809}}
+            if args[0]=='scripts/collect-global-opportunity.py':payload={'state':'completed','published':True,'products':31809};writes=0
+            elif args[1]=='prepare':payload={'states':{'pending':21},'error':None};writes=0
+            else:payload={'states':{'confirmed':21},'error':None};writes=21
+            return {'state':'completed','itemCount':31809,'complete':True,'platformWrites':writes,'payload':payload}
         executor,calls=self.executor(answers)
         result=executor.execute(None,{'runId':'workflow-test','applicableSources':['selected']},'catalog',{'jobs':{}})
         self.assertEqual((result['state'],result['itemCount']),('completed',31809))
         self.assertIn('--by-category',calls[0][0])
+        self.assertEqual(result['platformWrites'],21)
+        self.assertEqual([call[0][0] for call in calls],
+                         ['scripts/collect-global-opportunity.py','scripts/select-global-products.py',
+                          'scripts/select-global-products.py'])
 
     def test_oecid_hands_off_every_current_batch_before_resolving(self):
         submissions=iter((['discovery_'+'1'*32],[]))

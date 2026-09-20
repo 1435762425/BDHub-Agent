@@ -55,7 +55,9 @@ def opportunity_reader(report,*,stopped=lambda:False,extra_read_endpoints=frozen
 def opportunity_selector(report,selection_scope,*,stopped=lambda:False):
     """Explicit PID/Campaign allowlist for user-authorized selection; never links or IM."""
     if not isinstance(selection_scope,dict):raise ValueError('selection_scope_required')
-    with _opportunity_transport(report,stopped=stopped,selection_scope=selection_scope,account_name='acc6') as t:yield t
+    from lib.market_accounts import catalog_read_account
+    if catalog_read_account(ROOT,'acc9')!='acc9':raise ValueError('selection_account_not_validated')
+    with _opportunity_transport(report,stopped=stopped,selection_scope=selection_scope,account_name='acc9') as t:yield t
 
 @contextmanager
 def opportunity_card_creator(report,payload,*,stopped=lambda:False,wait_seconds=15):
@@ -141,7 +143,7 @@ def _opportunity_transport(report,*,stopped=lambda:False,extra_read_endpoints=fr
     from bdhub.research.commerce_transport import CommerceTransport
     from lib.second_cycle import digest
     import json
-    if selection_scope is not None and account_name!='acc6':raise ValueError('selection_account_not_validated')
+    if selection_scope is not None and account_name!='acc9':raise ValueError('selection_account_not_validated')
     if creation_scope is not None:
         if selection_scope is not None or account_name!='acc9':raise ValueError('card_canary_account_invalid')
         from bdhub.hub.markets import MARKETS

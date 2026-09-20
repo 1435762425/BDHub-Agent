@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""User-authorized IT intake only; no link creation, Kalodata, IM, or old DB writes."""
+"""Authorized IT/ACC9 full-managed intake; no link creation, Kalodata, IM, or old DB writes."""
 import argparse,fcntl,json,signal,sys,time
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1];sys.dont_write_bytecode=True;sys.path.insert(0,str(ROOT/'scripts'))
@@ -15,11 +15,11 @@ def main():
     if not 1<=a.limit<=600:p.error('limit 1..600')
     signal.signal(signal.SIGTERM,stop);signal.signal(signal.SIGINT,stop)
     with (ROOT/'var/global-selection.lock').open('a') as lock:
-        fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB);ledger=Selection(ROOT);id=ledger.prepare();report={'id':id,'action':a.action,'scope':'IT ACC6 select only','realSends':0,'linkCreates':0,'started':time.time()}
+        fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB);ledger=Selection(ROOT);id=ledger.prepare();report={'id':id,'action':a.action,'scope':'IT ACC9 select only','realSends':0,'linkCreates':0,'platformWrites':0,'started':time.time()}
         path=ROOT/'var/global-selection-status.json'
         def save():
             report.update(states=ledger.status(id),elapsedSeconds=round(time.time()-report['started'],2));tmp=path.with_suffix('.tmp');tmp.write_text(json.dumps(report,ensure_ascii=False,indent=2));tmp.replace(path)
-            print(json.dumps({'id':id,'states':report['states'],'elapsedSeconds':report['elapsedSeconds'],'error':report.get('error')}),flush=True)
+            print(json.dumps({'id':id,'states':report['states'],'elapsedSeconds':report['elapsedSeconds'],'platformWrites':report.get('platformWrites',0),'error':report.get('error')}),flush=True)
         if a.action=='status':
             print(json.dumps({'id':id,'states':ledger.status(id)}));ledger.db.close();return
         counts=ledger.status(id)

@@ -158,6 +158,27 @@ class SubprocessStageExecutor:
                 if (result.get('payload') or {}).get('state')!='completed' or (result.get('payload') or {}).get('published') is not True:
                     return {**result,'state':'failed','complete':False,'errorCode':'global_catalog_not_published'}
                 outputs.append(result);count+=int((result.get('payload') or {}).get('products') or 0)
+                prepared=self._call(['scripts/select-global-products.py','prepare'],'global-selection-prepare')
+                outputs.append(prepared)
+                if prepared['state']!='completed':return prepared|{'platformWrites':writes}
+                for _ in range(20):
+                    selected=self._call(['scripts/select-global-products.py','execute-fast','--limit','600','--native-listing'],
+                                        'global-selection')
+                    outputs.append(selected);writes+=selected.get('platformWrites',0)
+                    if selected['state']!='completed':return selected|{'platformWrites':writes}
+                    payload=selected.get('payload') or {};states=payload.get('states') or {};error=payload.get('error')
+                    if error:
+                        return {**selected,'state':'needs_human','complete':False,
+                                'errorCode':str(error)[:120],'platformWrites':writes}
+                    unresolved=sum(int(states.get(key) or 0) for key in
+                      ('submitting','awaiting_verification','result_unknown','needs_review'))
+                    if unresolved:
+                        return {**selected,'state':'needs_human','complete':False,
+                                'errorCode':'global_selection_unresolved','platformWrites':writes}
+                    if not int(states.get('pending') or 0):break
+                else:
+                    return {'state':'failed','itemCount':count,'complete':False,'platformWrites':writes,
+                            'errorCode':'global_selection_iteration_limit','scope':{'sources':sources},'payload':{}}
             if 'campaign' in sources:
                 join_status=self._call(['scripts/campaign-join.py','status'],'campaign-join-status')
                 if join_status['state']!='completed':return join_status|{'platformWrites':writes}
