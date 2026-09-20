@@ -9,8 +9,8 @@ class AccountPolicyTests(unittest.TestCase):
   c=self.config();self.assertEqual(validate_config(c)['markets']['it']['accounts'],['acc6','acc9'])
   c['markets']['mx']=copy.deepcopy(c['markets']['it'])
   with self.assertRaises(ValueError):validate_config(c)
- def test_double_maintenance_and_unimplemented_switch_rejected(self):
-  c=self.config();c['lifecycle']['enableNewMaintenanceWorker']=True
+ def test_maintenance_authority_mismatch_and_unimplemented_switch_rejected(self):
+  c=self.config();c['lifecycle']['enableNewMaintenanceWorker']=False
   with self.assertRaises(ValueError):validate_config(c)
   c=self.config();c['markets']['it']['automaticRoleSwitchEnabled']=True
   with self.assertRaises(ValueError):validate_config(c)
@@ -21,8 +21,8 @@ class AccountPolicyTests(unittest.TestCase):
    self.assertEqual(maintenance_plan(now=100+72*3600,**(args|{'role':role}))['decision'],'maintenance_ready')
   self.assertEqual(maintenance_plan(now=100+72*3600,**(args|{'active_writes':1}))['decision'],'drain_inflight')
   self.assertEqual(maintenance_plan(now=100+72*3600,**(args|{'other_maintaining':True}))['decision'],'wait_maintenance_slot')
-  self.assertEqual(maintenance_plan(now=100+48*3600-1,operation='identity_refresh',**args)['decision'],'not_due')
-  self.assertEqual(maintenance_plan(now=100+48*3600,operation='identity_refresh',**args)['decision'],'maintenance_ready')
+  self.assertEqual(maintenance_plan(now=100+72*3600-1,operation='identity_refresh',**args)['decision'],'not_due')
+  self.assertEqual(maintenance_plan(now=100+72*3600,operation='identity_refresh',**args)['decision'],'maintenance_ready')
  def test_periodic_checks_and_early_login_stay_disabled(self):
   c=self.config();self.assertIsNone(c['lifecycle']['healthPollMinutes']);self.assertIsNone(c['lifecycle']['deepCheckHours'])
   for key,value in [('healthPollMinutes',5),('deepCheckHours',6),('standbyEarlyMaintenanceHours',2)]:

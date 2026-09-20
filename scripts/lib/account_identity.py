@@ -1,13 +1,13 @@
 """Project-owned account identity generations and the global maintenance queue.
 
-The current account secrets still live under the read-only legacy authority.  This module may
-observe and version those identities locally, but it will not mutate that authority.  A production
-maintenance adapter must explicitly declare a project-owned credential authority before refresh or
-re-login can execute.
+Saved login credentials are read from the legacy authority without modifying or copying them. New
+browser profiles and HTTP/IM identities are staged and published only under this project's ``var``
+directory.  A failed candidate never replaces the last published generation.
 """
 from __future__ import annotations
 
 import json
+import os
 import re
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -21,8 +21,22 @@ REQUEST_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{7,119}")
 OPERATIONS = {"refresh", "relogin"}
 ROLE_ORDER = {"communications": 0, "supply": 1}
 ROLE_SLOT = {"communications": (14, 30), "supply": (14, 40)}
+ROLE_RESPONSIBILITIES = {
+    "communications": ("inbox_read", "message_send", "agent_reply", "oecid_find", "creator_profile"),
+    "supply": ("catalog_read", "campaign", "product_select", "taplink"),
+}
 INTERVAL_SECONDS = 72 * 3600
 TERMINAL = {"completed", "failed_known", "needs_human", "cancelled"}
+
+
+def _worker_alive(pid):
+    if type(pid) is not int or pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+        return True
+    except (OSError, ValueError):
+        return False
 
 
 def _required(store):
@@ -47,6 +61,7 @@ def assignments(root):
     for market, pair in config["markets"].items():
         for role in ("communications", "supply"):
             rows.append({"market": market, "account": pair["roles"][role], "role": role,
+                         "responsibilities": list(ROLE_RESPONSIBILITIES[role]),
                          "credentialAuthority": pair["credentialAuthority"]})
     return rows
 
@@ -261,10 +276,24 @@ def claim_next(store, *, now=None, active_writes=False):
     if active_writes:
         return None
     with store.tx():
-        if store.db.execute(
-            "SELECT 1 FROM account_maintenance_intent WHERE state IN ('draining','running')"
-        ).fetchone():
-            return None
+        active = list(store.db.execute(
+            "SELECT * FROM account_maintenance_intent WHERE state IN ('draining','running')"
+        ))
+        for current in active:
+            checkpoint = json.loads(current["checkpoint_json"] or "{}")
+            worker_pid = checkpoint.get("workerPid")
+            abandoned = (worker_pid is not None and not _worker_alive(worker_pid)) or (
+                worker_pid is None and current["started_at"] is not None and current["started_at"] < stamp - 60
+            )
+            if not abandoned:
+                return None
+            store.db.execute(
+                "UPDATE account_maintenance_intent SET state='failed_known',finished_at=?,error_code=?,"
+                "checkpoint_json=? WHERE intent_id=?",
+                (stamp, "account_maintenance_worker_exited",
+                 encoded({"stage": "failed_known", "errorCode": "account_maintenance_worker_exited"}),
+                 current["intent_id"]),
+            )
         rows = list(store.db.execute(
             "SELECT * FROM account_maintenance_intent WHERE state='queued' AND scheduled_at<=?",
             (stamp,),
@@ -281,8 +310,21 @@ def claim_next(store, *, now=None, active_writes=False):
                                            (row["intent_id"],)).fetchone())
 
 
+def _intent_checkpoint(store, intent_id, stage, **details):
+    checkpoint = {"stage": stage, "workerPid": os.getpid(), **details}
+    with store.tx():
+        store.db.execute(
+            "UPDATE account_maintenance_intent SET checkpoint_json=? WHERE intent_id=?",
+            (encoded(checkpoint), intent_id),
+        )
+
+
 def execute_claimed(store, root, intent_id, adapter=None):
-    """Run refresh then optional re-login.  No adapter means the legacy authority stays untouched."""
+    """Execute one claimed intent against project-owned identity storage.
+
+    An explicit re-login always opens the login flow. Refresh may fall back to re-login when the
+    existing project profile cannot be refreshed silently.
+    """
     _required(store)
     row = store.db.execute("SELECT * FROM account_maintenance_intent WHERE intent_id=?", (intent_id,)).fetchone()
     if not row or row["state"] != "draining":
@@ -300,31 +342,52 @@ def execute_claimed(store, root, intent_id, adapter=None):
     previous = current_generation(store, row["market"], row["account"])
     with store.tx():
         store.db.execute("UPDATE account_maintenance_intent SET state='running' WHERE intent_id=?", (intent_id,))
+    result = None
     try:
+        _intent_checkpoint(store, intent_id, "draining")
         adapter.drain(row["account"])
-        result = adapter.refresh(row["account"])
-        reason = "refresh"
-        if not result.get("ok"):
+        if row["operation"] == "relogin":
+            _intent_checkpoint(store, intent_id, "browser_login", visibleBrowser=True)
             result = adapter.relogin(row["account"])
             reason = "relogin"
+        else:
+            _intent_checkpoint(store, intent_id, "refreshing_identity", visibleBrowser=False)
+            result = adapter.refresh(row["account"])
+            reason = "refresh"
+            if not result.get("ok"):
+                _intent_checkpoint(store, intent_id, "browser_login", visibleBrowser=True)
+                result = adapter.relogin(row["account"])
+                reason = "relogin"
         if not result.get("ok"):
-            raise CycleError("account_maintenance_failed")
+            raise CycleError(result.get("errorCode") or "account_maintenance_failed")
+        _intent_checkpoint(store, intent_id, "validating_capabilities", visibleBrowser=False)
         generated = publish_generation(store, market=row["market"], account=row["account"], role=row["role"],
                                        reason=reason, identity=result["identity"],
                                        capabilities=adapter.validate(row["account"], result))
-        adapter.reconnect_inbox(row["account"], previous, generated)
+        _intent_checkpoint(store, intent_id, "publishing_generation", generationId=generated["generationId"])
+        reconnected = adapter.reconnect_inbox(row["account"], previous, generated)
         with store.tx():
             store.db.execute(
                 "UPDATE account_maintenance_intent SET state='completed',result_generation_id=?,finished_at=?,"
                 "checkpoint_json=? WHERE intent_id=?",
-                (generated["generationId"], store.clock(), encoded({"inboxReconnected": True}), intent_id),
+                (generated["generationId"], store.clock(), encoded({"stage": "completed",
+                 "inboxReconnected": bool(reconnected)}), intent_id),
             )
     except BaseException as error:
         code = str(error) if isinstance(error, CycleError) else type(error).__name__
+        if result is not None and hasattr(adapter, "discard"):
+            try:
+                adapter.discard(result)
+            except BaseException:
+                pass
+        state = "needs_human" if code in {
+            "account_login_timeout", "account_manual_verification_required", "saved_credentials_missing",
+        } else "failed_known"
         with store.tx():
             store.db.execute(
-                "UPDATE account_maintenance_intent SET state='failed_known',finished_at=?,error_code=? "
-                "WHERE intent_id=?", (store.clock(), code, intent_id),
+                "UPDATE account_maintenance_intent SET state=?,finished_at=?,error_code=?,checkpoint_json=? "
+                "WHERE intent_id=?", (state, store.clock(), code,
+                encoded({"stage": state, "errorCode": code}), intent_id),
             )
     return intent_payload(store.db.execute("SELECT * FROM account_maintenance_intent WHERE intent_id=?",
                                            (intent_id,)).fetchone())
@@ -346,8 +409,11 @@ def status(store, root):
                      "nextMaintenanceAt": next_due(current["publishedAt"] if current else None,
                                                    assignment["role"], now)})
     queue = [intent_payload(row) for row in store.db.execute(
-        "SELECT * FROM account_maintenance_intent WHERE state IN ('queued','draining','running','needs_human') "
-        "ORDER BY CASE role WHEN 'communications' THEN 0 ELSE 1 END,scheduled_at,created_at"
+        "SELECT i.* FROM account_maintenance_intent i "
+        "WHERE i.state IN ('queued','draining','running') OR (i.state='needs_human' AND NOT EXISTS ("
+        "SELECT 1 FROM account_maintenance_intent newer WHERE newer.market=i.market "
+        "AND newer.account=i.account AND newer.created_at>i.created_at)) "
+        "ORDER BY CASE i.role WHEN 'communications' THEN 0 ELSE 1 END,i.scheduled_at,i.created_at"
     )]
     return {"schemaVersion": "bdhub.account-identity.v1", "accounts": rows, "queue": queue,
             "intervalHours": 72, "globalConcurrency": 1, "platformWrites": 0, "realSends": 0}

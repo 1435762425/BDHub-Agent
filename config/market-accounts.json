@@ -11,9 +11,9 @@
         "supply": "acc9"
       },
       "assignmentState": "catalog_reads_enabled",
-      "validationEvidence": "var/italy-account-pair-20260914-v2.json",
-      "credentialAuthority": "legacy_readonly",
-      "maintenanceExecutor": "legacy_lifecycle",
+      "validationEvidence": "var/italy-account-pair-project-20260921-v2.json",
+      "credentialAuthority": "project_owned",
+      "maintenanceExecutor": "agent_identity_generation",
       "automaticRoleSwitchEnabled": false,
       "catalogRoutingEvidence": "var/catalog-read-routing-1789375843/summary.json",
       "linkCreationCanary": {
@@ -25,10 +25,10 @@
   "lifecycle": {
     "healthPollMinutes": null,
     "deepCheckHours": null,
-    "identityRefreshHours": 48,
+    "identityRefreshHours": 72,
     "loginMaintenanceHours": 72,
     "standbyEarlyMaintenanceHours": 0,
     "globalLoginConcurrency": 1,
-    "enableNewMaintenanceWorker": false
+    "enableNewMaintenanceWorker": true
   }
 }

@@ -7,7 +7,8 @@
 - 根路由默认进入 `/it` 运营首页；主链按货盘 → TapLink → Kalodata → OECID → 发送池 → 持续二发 → Agent 回复展示，同一 workflow run/stage/generation 对账。首页三个开关均为持久 revision，当前全部关闭。
 - migration v11–v13 已在 21 库在线备份 `var/backups/state/20260920T161947Z-before-ops-v11-v13` 验证通过后应用；schema check 当前 ready。备份 322,461,696 字节、凭据 0、`valid=true`。
 - 本地合作状态回填 2,293 位达人：`normal=2,256`、`collaborated=36`、`paid=0`、`rejected=1`；paid 没有从消息文本猜测。重复 apply 为 0。
-- ACC6/ACC9 已各建立一份无敏感值的 baseline identity generation，固定角色分别为 communications/supply；现有能力证据保留 `verified/not_tested`。凭据权威仍为旧系统只读域，刷新/重登执行会明确停在 `project_identity_authority_required`，不会修改旧目录。
+- ACC6/ACC9 固定角色分别为 communications/supply；页面已把固定职责与共同只读探针拆开。项目身份权威现由 `agent_identity_generation` 承担：立即重登直接打开可见浏览器并自动填写旧配置中只读读取的保存凭据，候选 profile/HTTP/IM 只写 `var/account-identities`，联合验证通过后原子发布；旧目录不修改，失败不覆盖上一代。
+- 两个账号已分别完成一次真实可见浏览器自动重登并发布项目代次；随后从机构账号页面再次点击 ACC6“立即重登”，API→后台 worker→浏览器→联合验证→发布在约 13 秒内完成。项目身份双账号只读复核 `passed=true`、同机构/同市场/同 sender，Partner info、IM ID、IM token、选中货盘和商品卡均通过，平台写入 0、消息发送 0。
 - 自动工作流调度、十个真实作业、完整货盘发布屏障、Kalodata 额度终态、OECID 后统一发池均已接通；`config/jobs.json` 全部作业仍为关闭，调度器未运行，workflow run 为 0。
 - TapLink 创建 unknown 改为单 PID 隔离：整批结束后公共回读，再按 30/120 秒两次轮询；未找到记 `skipped_unknown`，不重复 POST。同账号验证码成功后只重放原冻结请求一次，重放仍挑战则暂停作业。清洗对平台明确失效卡建立意图，批后完整回读仍存在记 `failed_known`，不重复 DELETE。
 - 用户可见 frozen-v2 已退役；持续发送在领取每位达人前把 OECID、PID、Offer、`currentListId`、模板 revision、最终正文与控制 revision 冻结进 `cycle_delivery`。旧 `cycle_bulk*` 只读保留，旧 freeze/start/stop/reconcile CLI 固定拒绝。
@@ -15,7 +16,7 @@
 - 页面已重构为运营首页、合作工作台、会话、货盘、达人、运行与设置；结果页支持 7/14/30 天三条趋势线，货盘含命名 Tab，运行设置拆为 Kalodata/作业/机构账号。持续发送页已恢复二发模板的新增、revision 修改、删除、中文翻译与真实例子，当前模板删除门禁读取 `continuous_send_control`。
 - 运营控制已按用户反馈收敛：标准主链只需开启首页“自动运营总开关”，作业页不再重复展示逐项启动/立即运行；全托周更新、持续发送、Agent 仍是独立开关。作业时间改为本地编辑后明确“保存时间”，不会再被轮询回写覆盖。
 - 当前只读回读：持续发送 `off`、池剩余 1,391、24 小时额度使用 0、unknown 0；Agent `enabled=false`；自动设置 0 行、workflow 0 行、连续发送控制/运行 0 行、旧活动冻结批次 0。
-- 代码验证：Python 984 项、Web 143 项、TypeScript、Next 生产构建均通过；平台写入、真实 IM、自动回复、自动清洗、自动建链、账号重登均为 0。
+- 代码验证：Python 987 项、Web 143 项、TypeScript、Next 生产构建均通过；平台写入、真实 IM、自动回复、自动清洗和自动建链均为 0。账号重登的真实浏览器结果已在本节单独记录。
 
 本轮逻辑提交：`a8fbabd`（状态合同与 migration）、`a1e7d47`（账号身份代次）、`348e7a1`（自动工作流与 TapLink unknown）、`e4086e9`（持续发送）、`328400d`（首页与全页面重构）。
 
@@ -150,7 +151,7 @@ DeepSeek/Agent 已经把 9 月 14 日的“货盘批量备链”继续推进到�
 - 卡片和文字都精确回查成功才算完整触达；单卡、单达人限额、平台拒绝和结果未知分别记账。
 - `flight < 0` 是单达人触达限制，只结束该达人；账号级日额度信号尚未取得，不能编造或用本地 500 闸门替代。
 - 发送超时或不明回执必须停批核验；不重新生成意图或换账号盲发。
-- ACC9 负责货盘/备链，ACC6 负责选入、身份和通信；已验的单品/只读能力不自动推广到未验的批量写动作。
+- ACC6 固定负责收信、IM 发送、Agent 回复、OECID 和达人画像；ACC9 固定负责货盘、Campaign、商品选入和 TapLink；已验的只读能力不自动推广到未验的批量写动作。
 - 旧 BDHub 只读；不迁移凭据、不写旧数据库、不恢复旧任务。
 
 ## 6. 当前技术风险
@@ -165,7 +166,7 @@ DeepSeek/Agent 已经把 9 月 14 日的“货盘批量备链”继续推进到�
 8. **回复执行链已接但仍未做真实平台验收**：DeepSeek 28/35、Jev 22/35；双模型一致仍有 2 条误自动处理，且本批没有 `link_usage` 真值。人工 `turn_review` 已优先，Jev 保持 challenger；Agent 开关必须维持关闭，直到用户明确启用并按小范围案例验收真实回执。
 9. **收信监控当前未运行**：代码与断点都保留，但没有常驻 `poll-cycle-inbox.py --worker` 进程；这是运行状态，不授权本轮自动恢复。
 10. **异机副本仍未配置**：21 库正式备份、校验和空目录恢复已经可用，但首份基线仍在本机；机器损坏时仍需要外部保存位置。
-11. **凭据尚未完全独立**：解释器、包依赖和协议源码已迁入本项目，但画像、IM、TapLink 的账号配置、身份文件和锁仍按既有只读边界取自旧 BDHub；不能把代码独立误报成账号迁移完成。
+11. **保存凭据尚未迁移**：解释器、包依赖、协议源码和新身份发布目录已迁入本项目；用户名/密码仍只在登录时从旧配置读取，不复制。没有成功发布项目代次的账号仍继续使用旧只读基线，不能把单个账号重登成功外推为全部市场迁移完成。
 
 ## 7. 建议接续顺序
 
@@ -319,7 +320,7 @@ DeepSeek/Agent 已经把 9 月 14 日的“货盘批量备链”继续推进到�
 
 ## 9. 本轮执行边界
 
-本轮已将本项目 `second-cycle.sqlite` additive migration 推进到 v13，并完成合作状态与账号 baseline 代次的本地回填。迁移前备份为 `var/backups/state/20260920T161947Z-before-ops-v11-v13`。没有发送 TikTok IM、创建/删除真实 TapLink、启动持续发送/收信/Agent/自动运营 worker、开启任何自动开关、账号重登、修改旧 BDHub 或恢复其他 worker。
+本轮已将本项目 `second-cycle.sqlite` additive migration 推进到 v13，并完成合作状态与账号 baseline 代次的本地回填。迁移前备份为 `var/backups/state/20260920T161947Z-before-ops-v11-v13`。本次后续修复真实执行了 ACC6/ACC9 项目自有浏览器重登并发布身份代次；没有发送 TikTok IM、创建/删除真实 TapLink、启动持续发送/收信/Agent/自动运营 worker、开启任何自动开关或修改旧 BDHub。
 
 ## 10. 接管验证
 

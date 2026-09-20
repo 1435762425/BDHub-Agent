@@ -159,6 +159,7 @@ Pure HTTP 验证依赖 `Pillow==12.3.0`、`opencv-python-headless==4.14.0.94` �
 | `run-agent-replies.py` | 独立窗口内的五动作 Agent 执行、持久意图和原意图回查 |
 | `operations_workflow.py` | 自动运营开关、不可变 workflow run、阶段屏障、generation 和断点 |
 | `account_identity.py` | 账号身份代次、72 小时维护意图、能力观察和原子发布 |
+| `project_account_identity.py` | 项目自有可见浏览器重登、只读凭据自动填充、候选 profile/HTTP/IM 联合验证 |
 | `collaboration_status.py` | 四态合作事件、人工优先当前投影与 showcase 自动升级 |
 
 `/api/send` 的 GET 只读当前控制、窗口、24 小时额度、池余量、真实话术例子和进程；POST 只接受 revision 化的保存、发送、停止与原 unknown 核验。多一个字段即拒绝。保存、GET、构建和重启都不启动 worker；只有用户“发送”、显式自动发送开关或已启用调度器在窗口内启动 `continuous-send-worker.py`。
@@ -306,7 +307,7 @@ pending → started/submitted → confirmed
 | `/api/reply-review` | 事件级样本、双模型影子分类、turn 标准动作和受控案件应用；无发送动作 |
 | `/api/inbox` | 收信 worker、今日/最近 14 日统计、可分页日明细和待人工 |
 | `/api/jobs` | 手动作业与定时意向 |
-| `/api/market-accounts` | 当前意大利账号、能力证据与维护状态，只读 |
+| `/api/market-accounts` | 当前意大利账号固定职责、能力证据、启停与刷新/重登维护意图 |
 
 Web 不再构建 `/flow-demo`、浏览器演示页、旧 local runtime、second-pilot、second-live trial、second-outreach history、matching 或 outreach-drafts 路由。对应 SQLite 作为历史数据保留，未从备份清单移除。
 
@@ -318,10 +319,11 @@ Web 不再构建 `/flow-demo`、浏览器演示页、旧 local runtime、second-
 
 ### TikTok
 
-- ACC9：意大利货盘读取和 TapLink 准备主账号。
-- ACC6：意大利商品选入、OECID/Profile、IM 和收信主账号。
+- ACC6：意大利通信账号，固定负责收信、IM 发送、Agent 回复、OECID 和达人画像。
+- ACC9：意大利货盘账号，固定负责货盘、Campaign、商品选入和 TapLink。
 - 两账号属于同机构/市场并共享同一 IM sender 语义；不能据此把新联系额度翻倍。
-- 当前身份刷新/登录维护仍由旧 BDHub 服务负责；新项目不复制凭据、不启动第二套维护 worker。
+- 项目按全局单并发维护队列执行 72 小时身份维护；显式重登直接启动可见 Playwright 浏览器，运行时只读读取旧账号文件中的已保存用户名/密码并自动填充，但不复制凭据或旧 profile。候选 profile、headers 与 IM 证据写入 `var/account-identities/<account>/generations/`，浏览器、HTTP、IM 只读验证全部通过后才由 `account_identity_generation` 原子发布。失败候选删除，上一代发布身份继续生效。
+- `legacy_runtime.configure_vendored_bdhub()` 仍只从本仓库加载协议代码；账号 loader 仅在数据库存在完整 `project-browser/http/im:<candidate>` 发布代次且对应本地文件齐全时，把该账号运行路径投影到项目自有 profile/headers，否则继续读取旧只读基线。
 
 ### Kalodata
 
@@ -350,7 +352,7 @@ Web 不再构建 `/flow-demo`、浏览器演示页、旧 local runtime、second-
 | `config/state-backup.json` | 当前 SQLite 明确清单与历史快照排除规则 |
 | `config/typesafe.example.json` / 本机 `config/typesafe.json` | TypeSafe 官方 endpoint、固定 Jev 模型和本机 API key；真实文件 0600 且不入 Git |
 | `config/jobs.json` | 十个真实运营作业的北京时间；Agent 独立开关保留在作业页 |
-| `config/market-accounts.json` | 市场账号角色和维护目标 |
+| `config/market-accounts.json` | 市场账号固定角色、项目身份权威和维护目标 |
 | `config/*.example.json` | 敏感本机配置样例 |
 
 业务配置不得另建第二来源。敏感配置、邮箱、激活码、Cookie 和身份文件不入 Git。
@@ -520,7 +522,7 @@ PYTHONDONTWRITEBYTECODE=1 \
 - 历史 `cycle_bulk*` 只读保留用于追溯；旧 CLI 与动态选人回退均已退役，新执行不读取旧授权。
 - 35 条意大利 turn 已完成人工真值审核：DeepSeek 28/35（80.00%，误自动处理 2、误转人工 3），Jev 22/35（62.86%，误自动处理 3、误转人工 1）；双模型一致也仍有 2 条误自动处理。DeepSeek 暂作 Agent 分类器、Jev 保持 challenger，人工 `turn_review` 优先。真实回复 transport、持久意图和回查合同已经接入，但 Agent 设置仍为 `enabled=false`，本轮真实发送为 0；详细证据见 [最终人工评测](implementation/reply-model-evaluation-20260920.md)。
 - SQLite 备份、校验和空目录恢复工具已完成；当前首份基线仍只在本机，尚未配置异机副本、保留周期或自动调度。
-- 项目 Python 环境、依赖锁和协议源码已独立；画像、IM、TapLink 等账号配置、身份文件和锁仍只读复用旧 BDHub，后续需逐项迁移凭据管理和身份维护，不能一次性复制旧配置。
+- 项目 Python 环境、依赖锁、协议源码和 ACC6/ACC9 新身份发布目录已独立；保存的登录账号密码仍只在运行时从旧账号配置只读使用，不复制进新仓库。其他账号与市场仍需逐项迁移和验收。
 - vendored `pure_http_canary.py` 依赖同目录 `pure_http_runtime_manifest.json` 校验旧 `data/runtime` 的逐文件哈希；JSON 清单属于协议闭包，缺失时所有 OECID cohort 会在网络请求前以 manifest 无效失败。当前清单已随 vendor 提交，runtime/身份文件本身仍只读留在旧 BDHub。
 
 ## 15. 技术文档变更规则

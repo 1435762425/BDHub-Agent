@@ -100,6 +100,20 @@ class AccountIdentityTests(unittest.TestCase):
         self.assertEqual((claimed["account"], claimed["role"]), ("acc6", "communications"))
         self.assertIsNone(claim_next(self.store, now=NOW))
 
+    def test_dead_maintenance_worker_is_recovered_before_the_next_claim(self):
+        intent = request_maintenance(self.store, self.root, market="it", account="acc6",
+                                     operation="relogin", request_id="maintenance-dead-worker",
+                                     scheduled_at=NOW)
+        claim_next(self.store, now=NOW)
+        with self.store.tx():
+            self.store.db.execute("UPDATE account_maintenance_intent SET checkpoint_json=? WHERE intent_id=?",
+                                  (json.dumps({"stage": "browser_login", "workerPid": 2147483647}),
+                                   intent["intentId"]))
+        self.assertIsNone(claim_next(self.store, now=NOW))
+        latest = status(self.store, self.root)["accounts"][0]["maintenance"]
+        self.assertEqual(latest["state"], "failed_known")
+        self.assertEqual(latest["errorCode"], "account_maintenance_worker_exited")
+
     def test_readonly_authority_never_executes_refresh_or_relogin(self):
         request_maintenance(self.store, self.root, market="it", account="acc6", operation="relogin",
                             request_id="maintenance-request-readonly", scheduled_at=NOW)
@@ -127,6 +141,17 @@ class AccountIdentityTests(unittest.TestCase):
                          ("browser:acc6:2", "http:acc6:2", "im:acc6:2"))
         self.assertIn(("reconnect", "acc6"), adapter.calls)
 
+    def test_explicit_relogin_opens_relogin_without_silent_refresh_first(self):
+        (self.root / "config/market-accounts.json").write_text(json.dumps(config("project_owned")))
+        request_maintenance(self.store, self.root, market="it", account="acc6", operation="relogin",
+                            request_id="maintenance-explicit-relogin", scheduled_at=NOW)
+        claimed = claim_next(self.store, now=NOW)
+        adapter = Adapter(refresh=True, relogin=True)
+        result = execute_claimed(self.store, self.root, claimed["intentId"], adapter)
+        self.assertEqual(result["state"], "completed")
+        self.assertIn(("relogin", "acc6"), adapter.calls)
+        self.assertNotIn(("refresh", "acc6"), adapter.calls)
+
     def test_failed_new_generation_does_not_replace_last_published(self):
         first = publish_generation(self.store, market="it", account="acc6", role="communications",
                                    reason="baseline", identity={"browserRef": "browser:1", "httpRef": "http:1",
@@ -150,6 +175,11 @@ class AccountIdentityTests(unittest.TestCase):
         supply = datetime.fromtimestamp(next_due(base, "supply", NOW), zone)
         self.assertEqual((communication.hour, communication.minute), (14, 30))
         self.assertEqual((supply.hour, supply.minute), (14, 40))
+        rows = {row["account"]: row for row in status(self.store, self.root)["accounts"]}
+        self.assertEqual(rows["acc6"]["responsibilities"],
+                         ["inbox_read", "message_send", "agent_reply", "oecid_find", "creator_profile"])
+        self.assertEqual(rows["acc9"]["responsibilities"],
+                         ["catalog_read", "campaign", "product_select", "taplink"])
 
 
 if __name__ == "__main__":
