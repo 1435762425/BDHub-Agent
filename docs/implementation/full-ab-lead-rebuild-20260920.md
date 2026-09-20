@@ -46,6 +46,8 @@ A 类续跑批次自身为1,678次网络读取、错误0，并因真实额度信
 
 ## OECID 接续
 
-当前4,504条 A 类线索包含2,038个唯一 handle：1,260个达人已解析 OECID，778个待补。第一次全量身份批次发现 vendored 协议源码缺少 `pure_http_runtime_manifest.json`，网络请求前即失败；已补回与旧只读 runtime 完全匹配的哈希清单，并通过20人只读 cohort 验证 runtime 可启动。
+当前4,504条 A 类线索包含2,038个唯一 handle。第一次全量身份批次发现 vendored 协议源码缺少 `pure_http_runtime_manifest.json`，网络请求前即失败；已补回与旧只读 runtime 完全匹配的哈希清单。
 
-随后 ACC6 Find 返回连续验证挑战：HTTP 200/code0，但 `verificationRequired=true`、`systemError3=true`，验证码重放没有成功，报告为 `request_or_signer_error`。批次已停止，未把这些达人误判为搜索不到。现有旧生命周期服务 `io.bdhub.account-identity-lifecycle` 每5分钟检查，ACC6下一维护点为2026-09-20 15:27 CST；项目不绕过该服务修改旧凭据。heartbeat 已增加 OECID 阶段，只处理与当前发送池待补 handle 重合的 outbox batch，账号未恢复时不硬重试。
+随后确认新项目虚拟环境漏装 Pillow/OpenCV，导致滑块图片下载成功但识别模块不可用；补齐并锁定依赖后，ACC6 单目标验证一次成功，原 Find 重放返回 HTTP 200/code0、无验证头。账号到期后由既有 `io.bdhub.account-identity-lifecycle` 完成维护，再用 `--only-batch` 只处理与当前池重合的 outbox。
+
+用户在15:38明确要求停止。停止前共判定50个当前 handle：36个 resolved、14个明确 unresolved；待补达人从778降到728。最终当前状态：1,296个达人已有 OECID、3,281个达人×PID位置、1,222个ready、495个历史 sent；A类仍剩1,233个PID，B类仍停在首PID的5页列表/detail断点。全部 worker 已停止，heartbeat 已暂停，未发送消息。

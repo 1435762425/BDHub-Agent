@@ -127,6 +127,12 @@ React 组件不能直接读写 SQLite、启动任意命令或实现资格规则�
 
 身份按达人去重，线索按达人×商品保留。明确 `unresolved` 与尚未请求/技术 blocked 分开；只允许技术未提交项有界重试，明确未找到不自动重问。
 
+OECID 批次固定带 `--skip-judged`，身份库中已经 resolved/unresolved 的 handle 不再进入远端请求。全量重建时还必须用 `--only-batch discovery_<id>` 限定到与当前 `lead_query_head` 待补 handle 有交集的 `cycle_identity_outbox`，不能让历史未结 outbox 抢占当前批次。`cycle_identity_outcome` 只在精确成功、精确 miss 或明确技术 blocked 后更新；账号挑战不得冒充 miss。
+
+Pure HTTP 验证依赖 `Pillow==12.3.0`、`opencv-python-headless==4.14.0.94` 和 NumPy；缺少图像依赖时背景图与拼图虽能下载，求解器仍会在识别前失败。账号内多个 Find lane 共用一次串行验证结果：首个 lane 求解滑块，把验证后的 session Cookie/fp同步给其他 lane，再分别重放原业务请求；重放再次挑战时才重新求解。报告只保存 `runtime/captcha_get/template_size/image_decode/contour/verify_http/network/solver` 等脱敏错误类别，不保存异常原文、Cookie或验证载荷。
+
+当前真实验证证据：ACC6 单目标首次 Find 返回 `verificationRequired=true + systemError3=true`，项目求解器一次成功，原请求重放后 HTTP 200/code0且无验证头；`captcha_success_count=1`、`replay_code0=1`、身份文件未变、旧业务库写入0、真实发送0。随后当前 outbox 共判定50个 handle：36 resolved、14 unresolved；结果已回填发送池。
+
 线索合同已升级为 `leads-queue-v2`：每 PID 近 14 天、Kalodata `revenue DESC`，完整 page receipt 和全部正销量 `source_edge` 继续保留；`lead_query_head + lead_query_selection` 只发布当前最多 20 条。排序消费 `sourceRank`，并列时用 `units DESC, pid ASC`；原始 GMV 字符串只作证据，不跨币种直接比较。`scripts/backfill-current-leads.py` 可从本机历史 receipt 重建当前范围，不调用平台。
 
 零销量视频证据是已确认但尚未接入真实发送池的 B 类输入：商品视频表按 `create_time DESC` 逐页读取，直到越过发布时间窗口或自然结束；窗口内所有达到播放量门槛的视频都调用详情解析作者，不使用“播放量前 20 条”，也不设置固定页数/视频数业务上限。列表没有作者，详情返回 Kalodata creator ID 与 handle；来源关联优先用稳定 creator ID，OECID 仍只接受当前精确 handle 的身份结果。重复页、日期不可解析、作者缺失、平台额度耗尽或中断都必须停止并保留明确状态，不得把不完整结果冒充正式统计。实测与成本见 [零销量视频证据](implementation/kalodata-zero-sale-video-evidence-20260920.md)。

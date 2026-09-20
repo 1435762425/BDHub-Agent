@@ -243,7 +243,7 @@ DeepSeek/Agent 已经把 9 月 14 日的“货盘批量备链”继续推进到�
 - migration v9 和 durable B crawler 已应用；A 类使用数值 GMV，B 类有逐页/逐视频断点和作者缓存，真实池已经支持 A 优先、B 最高单条播放量；
 - 首日因真实 Kalodata 日额度停止：A 类完成1,523/2,756 PID，当前4,504条线索、3,213个A类位置、1,186个ready；B 类首个PID保存5页后停在详情断点，尚未发布不完整结果；
 - heartbeat `BDHub A/B线索全量重建` 每日00:15自动续跑，正常额度暂停不通知；没有发送、冻结、建链、删卡或开启自动回复。详见 [全量重建](../implementation/full-ab-lead-rebuild-20260920.md)。
-- 当前 OECID：2,038个唯一 handle 中1,260已解析、778待补。vendored runtime 清单缺失已修复并通过20人只读 cohort；ACC6随后出现 `verificationRequired + systemError3` 挑战，身份批次已停止等待既有生命周期服务在15:27维护，不把挑战失败写成 unresolved。自动续跑只处理与当前池重合的 outbox batch。
+- 当前 OECID：2,038个唯一 handle 中1,296已解析、14个明确搜索不到、728待补。已补齐 vendored runtime 清单及 Pillow/OpenCV，ACC6滑块验证与原Find重放真实成功；当前 outbox 的50个判定为36 resolved/14 unresolved，已判定 handle 由 `--skip-judged` 永久跳过。用户15:38要求停止，全部 worker 与 heartbeat 已暂停；发送池当前3,281个位置、1,222个ready、495个sent。
 
 旧 `batch-tasks.sqlite` 只作迁移证据，不再作为执行入口；后续批次能力继续只在 frozen-v2 上扩展。
 
