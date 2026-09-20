@@ -50,6 +50,8 @@ DeepSeek/Agent 已经把 9 月 14 日的“货盘批量备链”继续推进到�
 | 回复审核深链接 | `8335e4a`（`tab=reply` 直达审核队列，未知页签回退） |
 | 回复审核长原因修复 | `81c94fb`（Python/Web 统一500字符，保留已审核22条） |
 | Kalodata 身份探针恢复 | `b23be8d`（迁移路径回退、列表计数、T−2窗口） |
+| 意大利生产工作台收敛 | `db8e138`（market-scoped 路由、A/B 冻结、unknown verify-only、旧演示/试点退役） |
+| 多市场参考标准 | `75e7817`（意大利基准、14 市场逐能力验收和当前文档对齐） |
 | 上一个已提交开发头 | `4cdb759`（`agent/p0-catalog-links`） |
 | 继承工作区固化提交 | `cd81dff` |
 | 继承标签 | `takeover-20260919-inherited` |
