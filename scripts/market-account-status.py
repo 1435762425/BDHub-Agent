@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Local account-center readback. Does not refresh identity or claim accounts."""
-import json,sys,time
+import json,sqlite3,sys,time
 from datetime import datetime,timedelta
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1];sys.dont_write_bytecode=True;sys.path.insert(0,str(ROOT/'scripts'))
@@ -9,6 +9,14 @@ from lib.catalog_links import canary_summary
 
 def status():
     data=load_config(ROOT)
+    identity_control=None
+    try:
+        from lib.account_identity import status as identity_status
+        from lib.second_cycle import CycleStore
+        with CycleStore(ROOT/'var/second-cycle.sqlite',readonly=True) as local_store:
+            identity_control=identity_status(local_store,ROOT)
+    except (OSError,ValueError,sqlite3.Error):
+        identity_control=None
     from lib.legacy_runtime import configure_vendored_bdhub
     configure_vendored_bdhub(root=ROOT,legacy_root=ROOT.parent/'01-BDSystem-V2')
     from bdhub import config,scheduled_relogin
@@ -29,8 +37,14 @@ def status():
                     legacyOperation=owner.get('operation') if owner else None,lastLogin=mt['last_scheduled_relogin_at'],nextMaintenance=mt['scheduled_relogin_due_at'],
                     identityUpdatedAt=Path(a.headers_json).stat().st_mtime if Path(a.headers_json).exists() else None)
                 row['plannedLoginMaintenance']=(datetime.fromisoformat(row['lastLogin'])+timedelta(hours=data['lifecycle']['loginMaintenanceHours'])).isoformat() if row['lastLogin'] else None
+            local=next((item for item in (identity_control or {}).get('accounts',[]) if item['market']==market and item['account']==name),None)
+            if local:
+                row.update(identityGeneration=local.get('generation'),localEnabled=local['setting']['enabled'],
+                           localRevision=local['setting']['revision'],maintenanceIntent=local.get('maintenance'),
+                           plannedLoginMaintenance=local.get('nextMaintenanceAt'))
             rows.append(row)
         result.append({'market':market,'state':pair['assignmentState'],'accounts':rows,'pairEvidence':{k:v for k,v in evidence.items() if k!='accounts'},'linkCanary':canary_summary(ROOT,pair.get('linkCreationCanary')),'maintenanceExecutor':pair['maintenanceExecutor'],'autoSwitchEnabled':False})
-    return {'markets':result,'lifecycle':data['lifecycle'],'checkedAt':time.time(),'executionEnabled':False,'realSends':0}
+    return {'markets':result,'lifecycle':data['lifecycle'],'identityControl':identity_control,
+            'checkedAt':time.time(),'executionEnabled':False,'realSends':0}
 
 if __name__=='__main__':print(json.dumps(status(),ensure_ascii=False))

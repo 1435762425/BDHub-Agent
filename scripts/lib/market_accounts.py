@@ -10,11 +10,16 @@ def validate_config(value):
         if not re.fullmatch(r'[a-z]{2}',market) or not isinstance(accounts,list) or len(accounts)!=2 or len(set(accounts))!=2:raise ValueError('market_requires_two_distinct_accounts')
         if any(not isinstance(a,str) or not re.fullmatch(r'acc[1-9][0-9]*',a) or a in used for a in accounts):raise ValueError('account_assigned_to_multiple_markets_or_invalid')
         if set(roles)!= {'communications','supply'} or set(roles.values())!=set(accounts):raise ValueError('account_role_assignment_invalid')
-        if pair.get('credentialAuthority')!='legacy_readonly' or pair.get('maintenanceExecutor')!='legacy_lifecycle':raise ValueError('credential_handoff_not_implemented')
+        authority=pair.get('credentialAuthority');executor=pair.get('maintenanceExecutor')
+        if (authority,executor) not in {('legacy_readonly','legacy_lifecycle'),
+                                       ('project_owned','agent_identity_generation')}:
+            raise ValueError('credential_handoff_not_implemented')
         if pair.get('automaticRoleSwitchEnabled') is not False:raise ValueError('automatic_role_switch_not_implemented')
         used.update(accounts)
     lifecycle=value.get('lifecycle',{})
-    if lifecycle.get('enableNewMaintenanceWorker') is not False:raise ValueError('duplicate_maintenance_executor_forbidden')
+    project_owned=any(pair.get('credentialAuthority')=='project_owned' for pair in value['markets'].values())
+    if lifecycle.get('enableNewMaintenanceWorker') is not project_owned:
+        raise ValueError('duplicate_maintenance_executor_forbidden')
     if lifecycle.get('healthPollMinutes') is not None or lifecycle.get('deepCheckHours') is not None:raise ValueError('periodic_health_checks_disabled')
     if lifecycle.get('standbyEarlyMaintenanceHours')!=0:raise ValueError('early_maintenance_disabled')
     if any(type(lifecycle.get(k)) is not int or lifecycle[k]<=0 for k in ('identityRefreshHours','loginMaintenanceHours')):raise ValueError('maintenance_interval_invalid')

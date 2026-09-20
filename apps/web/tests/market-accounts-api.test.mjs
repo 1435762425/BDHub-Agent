@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {createAccountsGet} from '../src/server/market-accounts/bridge.ts';
+import {createAccountsGet,validateAccountMutation} from '../src/server/market-accounts/bridge.ts';
 const url='http://127.0.0.1:5198/api/market-accounts';
 test('account observation rejects remote origins and mutation-shaped requests before reading',async()=>{
  let calls=0;const get=createAccountsGet(async()=>{calls++;return {executionEnabled:false,markets:[],realSends:0};});
@@ -14,3 +14,4 @@ test('backend failure has a bounded public error',async()=>{
  const get=createAccountsGet(async()=>{throw Error('private backend detail');});
  const r=await get(new Request(url,{headers:{host:'127.0.0.1:5198'}}));assert.equal(r.status,503);assert.deepEqual(await r.json(),{error:'account_status_unavailable'});
 });
+test('account mutations are fixed to assigned accounts and revisioned enable controls',()=>{assert.deepEqual(validateAccountMutation({action:'refresh',account:'acc6',requestId:'refresh-0001'}),{action:'refresh',account:'acc6',requestId:'refresh-0001'});assert.deepEqual(validateAccountMutation({action:'set_enabled',account:'acc9',requestId:'setting-0001',expectedRevision:2,enabled:false}),{action:'set_enabled',account:'acc9',requestId:'setting-0001',expectedRevision:2,enabled:false});assert.throws(()=>validateAccountMutation({action:'relogin',account:'acc7',requestId:'relogin-0001'}),/invalid_account_request/);assert.throws(()=>validateAccountMutation({action:'refresh',account:'acc6',requestId:'refresh-0001',path:'/tmp/secret'}),/invalid_account_request/);});
