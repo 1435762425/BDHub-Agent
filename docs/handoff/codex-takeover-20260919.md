@@ -51,6 +51,7 @@
 - 真实发送前备份 `var/backups/state/20260920T202310Z-pre-real-send-canary-20260921`、类目全量前备份 `var/backups/state/20260920T205718Z-pre-cat-full-20260921` 均为 21 库、凭据 0、`valid=true`。
 - 最终验证：Python 1,017 项在 `PYTHONWARNINGS=default` 下通过；Web 144 项、TypeScript、Next 生产构建和 121 份 Markdown 链接检查通过。补充提交：`ffdda74`、`363adc4`、`bcabceb`、`6c6d212`、`d37b8b9`、`4809af7`、`30db9f9`、`5c92a96`、`2e91a09`、`d9057ff`、`fbe637c`、`ee914d4`、`0299904`。
 - 验收后备份 `var/backups/state/20260920T220554Z-post-send-cat-20260921` 已独立 verify：21 库、420,352,000 字节、凭据 0、`valid=true`；5198 Web 与 operations scheduler 均已用最新代码重启。
+- 完成 ACC9 选入与能力发布后的最终备份 `var/backups/state/20260920T222422Z-post-full-live-20260921` 已独立 verify：21 库、420,401,152 字节、凭据 0、`valid=true`。
 
 ## 0A. 2026-09-20 会话工作台、模板与互斥窗口
 
