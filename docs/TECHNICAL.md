@@ -111,6 +111,8 @@ Campaign 每日完整刷新，全托按周完整刷新；货盘 generation 发�
 
 `operations_scheduler.py` 按不可变 `workflow_run/workflow_stage_run` 串行执行清洗、完整货盘、链接准备、Kalodata、OECID 与发送池发布；每阶段记录输入/输出 generation、断点、计数和平台写入数。标准主链只由 `market_automation_setting` 总开关授权，`config/jobs.json` 保存各作业北京时间，不再要求逐项重复启用；全托、持续发送和 Agent 保留各自独立开关。旧 `material_maintenance.py` 只保留历史兼容，不再由 `/api/jobs` 启动。
 
+外层批处理报告必须汇总每个内部 pass 的 `platformWrites`，阶段 item count 取最终队列 summary，不能把重复 pass 相加。Kalodata 的 B 类完成数读取视频 generation 的 `counts.completed`；额度耗尽仍发布已完成的 A/B 数和断点。OECID 阶段先循环 `IdentityBridge.freeze/dispatch` 到当前 head 无未交接 source edge，再本地复用既有终态证据，最后运行精确 batch；`pending>0`、`queue_stalled` 或技术 blocked 一律 `needs_human`，不得发布 OECID generation 或提前进入发送池。
+
 Campaign 货盘阶段固定执行 `status/verify unresolved → join-all --confirm → campaign-collect --screen`；默认联系邮箱只在本机配置读取，不进入 argv。`join-all` 以最多 100 个活动为一个持久批次，验证码成功后只重放同一 Campaign 加入请求一次，unknown 阻断后续采集。TapLink 阶段固定执行 `seed/read → catalog-names prepare --all → create`，短名缺口非零时 fail closed。调度器保留跨 tick 的 lastSuccess/lastAttempt，并在到期账号维护意图排队后启动项目维护 worker。
 
 ### 5.3 线索与身份
@@ -130,6 +132,8 @@ Campaign 货盘阶段固定执行 `status/verify unresolved → join-all --confi
 身份按达人去重，线索按达人×商品保留。明确 `unresolved` 与尚未请求/技术 blocked 分开；只允许技术未提交项有界重试，明确未找到不自动重问。
 
 OECID 批次固定带 `--skip-judged`，身份库中已经 resolved/unresolved 的 handle 不再进入远端请求。同一 handle 的既有终态会由 `IdentityBridge` 本地复用到当前 source edge：resolved 必须保留原始不可变发现证据且不得存在身份冲突，unresolved 只复用明确精确 miss；复用不会伪造新的发现回执。全量重建的驱动器每轮都会从当前 `lead_query_head` 待补 handle 与未结 `cycle_identity_outbox` 的交集生成若干精确 `discovery_<id>` 白名单，再以重复的 `--only-batch` 参数凑成最多 50 位的 cohort，不能让历史未结 outbox 抢占当前批次。`cycle_identity_outcome` 只在精确成功、精确 miss 或明确技术 blocked 后更新；账号挑战不得冒充 miss。
+
+当前 head 的身份交接固定以 `lead_query_head → lead_query_selection → source_edge` 的索引顺序执行；这里使用 `CROSS JOIN` 固定 SQLite 循环次序，避免查询规划器按每个 PID 扫全部历史 edge 并在写事务内重复解析 JSON。ACC6/ACC9 已为 `project_owned` 后，Find/Profile 探针的 startable 判定只读本项目 `account_runtime_setting + published identity generation + capability observations`；旧 8787 账号池的停用状态不再反向关闭新项目账号。
 
 Pure HTTP 验证依赖 `Pillow==12.3.0`、`opencv-python-headless==4.14.0.94` 和 NumPy；缺少图像依赖时背景图与拼图虽能下载，求解器仍会在识别前失败。账号内多个 Find lane 共用一次串行验证结果：首个 lane 求解滑块，把验证后的 session Cookie/fp同步给其他 lane，再分别重放原业务请求；重放再次挑战时才重新求解。报告只保存 `runtime/captcha_get/template_size/image_decode/contour/verify_http/network/solver` 等脱敏错误类别，不保存异常原文、Cookie或验证载荷。
 

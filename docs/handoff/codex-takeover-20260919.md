@@ -4,19 +4,19 @@
 
 ## 0. 2026-09-21 自动运营首页与持续经营
 
-- 根路由默认进入 `/it` 运营首页；主链按货盘 → TapLink → Kalodata → OECID → 发送池 → 持续二发 → Agent 回复展示，同一 workflow run/stage/generation 对账。首页三个开关均为持久 revision，当前全部关闭。
+- 根路由默认进入 `/it` 运营首页；主链按货盘 → TapLink → Kalodata → OECID → 发送池 → 持续二发 → Agent 回复展示，同一 workflow run/stage/generation 对账。首页三个开关均为持久 revision；当前自动运营已开启，全托周更新与持续二发关闭。
 - migration v11–v13 已在 21 库在线备份 `var/backups/state/20260920T161947Z-before-ops-v11-v13` 验证通过后应用；schema check 当前 ready。备份 322,461,696 字节、凭据 0、`valid=true`。
 - 本地合作状态回填 2,293 位达人：`normal=2,256`、`collaborated=36`、`paid=0`、`rejected=1`；paid 没有从消息文本猜测。重复 apply 为 0。
 - ACC6/ACC9 固定角色分别为 communications/supply；页面已把固定职责与共同只读探针拆开。项目身份权威现由 `agent_identity_generation` 承担：立即重登直接打开可见浏览器并自动填写旧配置中只读读取的保存凭据，候选 profile/HTTP/IM 只写 `var/account-identities`，联合验证通过后原子发布；旧目录不修改，失败不覆盖上一代。
 - 两个账号已分别完成一次真实可见浏览器自动重登并发布项目代次；随后从机构账号页面再次点击 ACC6“立即重登”，API→后台 worker→浏览器→联合验证→发布在约 13 秒内完成。项目身份双账号只读复核 `passed=true`、同机构/同市场/同 sender，Partner info、IM ID、IM token、选中货盘和商品卡均通过，平台写入 0、消息发送 0。
-- 自动工作流调度、十个真实作业、完整货盘发布屏障、Kalodata 额度终态、OECID 后统一发池均已接通；`config/jobs.json` 的主链作业仍为关闭，workflow run 为 0。Agent durable setting 已明确开启，独立于旧 jobs 子开关。
+- 自动工作流调度、十个真实作业、完整货盘发布屏障、Kalodata 额度终态、OECID 后统一发池均已接通；标准主链由总开关统一授权，`config/jobs.json` 的逐项 `enabled` 继续关闭且不再形成第二层门禁。Agent durable setting 已明确开启，独立于旧 jobs 子开关。
 - TapLink 创建 unknown 改为单 PID 隔离：整批结束后公共回读，再按 30/120 秒两次轮询；未找到记 `skipped_unknown`，不重复 POST。同账号验证码成功后只重放原冻结请求一次，重放仍挑战则暂停作业。清洗对平台明确失效卡建立意图，批后完整回读仍存在记 `failed_known`，不重复 DELETE。
 - 用户可见 frozen-v2 已退役；持续发送在领取每位达人前把 OECID、PID、Offer、`currentListId`、模板 revision、最终正文与控制 revision 冻结进 `cycle_delivery`。旧 `cycle_bulk*` 只读保留，旧 freeze/start/stop/reconcile CLI 固定拒绝。
 - 会话加入 `normal/collaborated/paid/rejected` 四态、人工优先与 showcase 自动升级；人工事项可直接确认且不要求先发送。三条 Agent 动作 key 不变，正文支持不可变 revision 编辑。
 - 页面已重构为运营首页、合作工作台、会话、货盘、达人、运行与设置；结果页支持 7/14/30 天三条趋势线，货盘含命名 Tab，运行设置拆为 Kalodata/作业/机构账号。持续发送页已恢复二发模板的新增、revision 修改、删除、中文翻译与真实例子，当前模板删除门禁读取 `continuous_send_control`。
 - 运营控制已按用户反馈收敛：标准主链只需开启首页“自动运营总开关”，作业页不再重复展示逐项启动/立即运行；全托周更新、持续发送、Agent 仍是独立开关。作业时间改为本地编辑后明确“保存时间”，不会再被轮询回写覆盖。
-- 当前只读回读：持续发送 `off`、池剩余 1,391、24 小时额度使用 0、unknown 0；Agent `enabled=true`、固定窗口 15:00–16:00；自动 workflow 0 行、连续发送控制/运行 0 行、旧活动冻结批次 0。
-- 账号重登的真实浏览器结果已在本节单独记录；本轮后续又按用户明确授权真实发送 6 条 Agent 固定模板回复，全部 confirmed、unknown 0。自动清洗、自动建链、Campaign 自动加入和持续发送仍未启动。
+- 当前只读回读：持续发送 `off`、24 小时额度使用 0、unknown 0；Agent `enabled=true`、固定窗口 15:00–16:00；最新发送池为位置 4,731、可发送 1,643、等待 2,794、暂不参与 11、历史已发送 495。
+- 账号重登的真实浏览器结果已在本节单独记录；本轮后续又按用户明确授权真实发送 6 条 Agent 固定模板回复，全部 confirmed、unknown 0。自动清洗、Campaign、自动建链已在下方完整实测；持续发送仍未启动。
 
 本轮逻辑提交：`a8fbabd`（状态合同与 migration）、`a1e7d47`（账号身份代次）、`348e7a1`（自动工作流与 TapLink unknown）、`e4086e9`（持续发送）、`328400d`（首页与全页面重构）。
 
@@ -28,6 +28,17 @@
 - 旧 BDHub 的 ACC6/ACC9 已在空闲、无租约状态下停用并退出全部旧业务池/身份生命周期；新项目 overlay 独立覆盖 enabled、角色和池，不继承旧停用字段。
 - 自动运营修复：Campaign 先 verify unknown、再自动 join eligible、再采集筛分；加入验证码只重放同一冻结请求一次且最多 100 个/批；TapLink 在 create 前强制补齐全部短名；到期账号排队后自动启动维护 worker；Agent 由 durable setting 自恢复；scheduler 的 lastSuccess/lastAttempt 不再每 tick 清空。详见[复查记录](../implementation/automated-operations-audit-20260921.md)。
 - 本轮代码验证：Python 994 项、Web 143 项、TypeScript、Next 生产构建和 121 份 Markdown 链接检查通过；旧项目账号相关 80 项测试与 8787 Dashboard/PostgreSQL 健康检查通过。
+
+## 0C. 2026-09-21 自动运营真实全链验收
+
+- 运行前在线备份 `var/backups/state/20260920T182149Z-pre-auto-ops-20260921`：21 库、约 324 MB、凭据 0、`valid=true`。自动运营总开关开启，全托周更新与持续二发关闭。
+- 主运行 `workflow-e7b6aed0fba94d912b4acbdbdc65`：TapLink 当前库存 4,086 张，全部 valid、删除候选 0；历史 13 条删除意图保留为 verified。Campaign 已加入总数 86，完整读取 123 请求/7,054 offer，筛出 chosen 500、held 2,509。
+- Campaign TapLink 目标 499 个全部 ready：复用当前标准绑定 232 个，真实新建并回读确认 267 个；新增短名 88 个、DeepSeek 18 次、错误 0，创建 unknown 0。A 类 Kalodata 完成 1,261/1,261 PID、1,487 条当前线索、1,515 请求、错误 0；B 类在真实日额度耗尽前完整完成 20 PID、297 条视频线索，并保存第 21 个 PID 的 6 页/112 详情断点。
+- 实测发现并修复四个主链缺口：同日清洗投影残留旧卡；嵌套 TapLink 写入和 B 类完成数漏计；OECID 未冻结新 current edge 却误报 completed；身份探针仍受旧项目停用状态控制。OECID current handoff 的慢查询同时从 PID×全部历史 edge 改为索引点查。
+- OECID 修复运行 `workflow-979d201b7799b0b39133f43d5394`：本地先复用既有 handle 终态，再对剩余 101 位执行真实 Find，60 resolved、41 unresolved、pending 0、错误 0；发送池修复运行 `workflow-b6f6fb7116382a2c12c40e8d8bf0` 随后重新发布。主运行的不可变旧 generation 仍保留修复前 `TapLink writes=0 / B completed=0` 的错误投影，真实子报告为 267/20；后续调度器已按子报告正确汇总。
+- 最终验证：Python 1,003 项在 `PYTHONWARNINGS=default` 下通过；Web 143 项、TypeScript、Next 生产构建通过。整段验收的真实业务写入合计为 13 张失效 TapLink 删除、6 次 Campaign 加入请求和 267 张新标准 TapLink，均已回查明确、unknown 0；未发送二发 IM，持续发送控制仍为 `automaticEnabled=false / runRequested=false`。
+
+本轮补充提交：`184a12a`、`f67983b`、`7139379`、`fceac2d`、`889a565`、`4edd6a9`、`a01cc5d`。
 
 ## 0A. 2026-09-20 会话工作台、模板与互斥窗口
 
