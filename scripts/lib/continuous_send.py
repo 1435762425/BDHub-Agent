@@ -30,6 +30,12 @@ from lib.template_library import render_send_template, resolve_send_template, se
 ROOT = Path(__file__).resolve().parents[2]
 REQUEST_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{7,119}")
 ACTIVE_RUNTIME = {"waiting_window", "sending", "waiting_capacity", "waiting_reconciliation", "paused"}
+PREFLIGHT_TERMINAL = frozenset({
+    'conversation_needs_content_review','unknown_message_needs_review','history_incomplete',
+    'message_time_missing','recent_contact_needs_allowance_review','conversation_index_conflict',
+    'relationship_changed','offer_not_eligible','offer_currently_ineligible','offer_changed',
+    'marketing_cooldown','delivery_expired','card_binding_changed',
+})
 _spec = importlib.util.spec_from_file_location('continuous_send_history', ROOT/'scripts/cycle-send.py')
 _history = importlib.util.module_from_spec(_spec);_spec.loader.exec_module(_history)
 
@@ -255,6 +261,10 @@ def execute_once(root,store,*,authenticated=None,authorized_now=None):
             if latest['state']=='unknown':return publish_runtime(store,plan,'waiting_reconciliation',delivery=active,stop_reason=code,unknown=1)
             if getattr(error,'check_code',None) is not None and error.check_code<0:
                 return publish_runtime(store,plan,'sending',delivery=None,stop_reason='recipient_limit',failed_delta=1)
+            if code in PREFLIGHT_TERMINAL:
+                try:deliveries.cancel_unsubmitted(delivery['id'],code)
+                except CycleError:pass
+                else:return publish_runtime(store,plan,'sending',delivery=None,stop_reason=code,failed_delta=1)
             return publish_runtime(store,plan,'paused',delivery=active,stop_reason=code,failed_delta=1)
     if result['state']=='confirmed':return publish_runtime(store,plan,'sending',delivery=None,confirmed_delta=1,unknown=0)
     if result['state']=='unknown':return publish_runtime(store,plan,'waiting_reconciliation',delivery=active,stop_reason='result_unknown',unknown=1)

@@ -38,7 +38,7 @@ def execute(deliveries,id,runtime_factory,authorize,preflight,*,verify_only=Fals
    adapter=rt['adapter'];card=rt['card']
    with rt.get('component_gate', nullcontext)():
     if not recovering:
-     authorize(c);deliveries.reserve_contact(id);preflight(c,rt,conv)
+     authorize(c);preflight(c,rt,conv)
      if kind=='card':card=rt['validate_card'](card)
      else:rt['validate_card'](card)
      def permit(scope):
@@ -46,6 +46,7 @@ def execute(deliveries,id,runtime_factory,authorize,preflight,*,verify_only=Fals
       if scope.get('market')!='it' or scope.get('account')!='acc6':raise CycleError('dispatch_scope_mismatch')
       if kind=='card' and (scope.get('productId'),scope.get('listId'),scope.get('bindingSha256'))!=(card.product_id,card.list_id,card.binding_sha256):raise CycleError('card_binding_changed')
       authorize(c)
+      deliveries.reserve_contact(id)
       permit=deliveries.begin(id,kind,authorized_snapshot_hash=digest(c),recipient_verified=True,allowance_verified=True)
       mark()
       return {**permit,'stage':scope['stage'],'componentKind':kind,**{k:scope[k] for k in ('productId','listId','campaignId','bindingSha256') if k in scope}}

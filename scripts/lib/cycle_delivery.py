@@ -1,5 +1,5 @@
 """Plan-owned card/text outbox. External effects require explicit runtime permits."""
-import json,uuid
+import json,re,uuid
 from lib.second_cycle import CycleError,digest,encoded,assess_offer
 SCHEMA='''CREATE TABLE IF NOT EXISTS cycle_platform_signal(id INTEGER PRIMARY KEY AUTOINCREMENT,delivery_id TEXT NOT NULL,at REAL NOT NULL,outcome TEXT,code TEXT,native_status INTEGER,check_code INTEGER,check_message TEXT,response_ref TEXT);
 CREATE TABLE IF NOT EXISTS cycle_conversation_intent(delivery_id TEXT PRIMARY KEY,request_ref TEXT NOT NULL UNIQUE,state TEXT NOT NULL,cid TEXT,receipt TEXT);
@@ -63,6 +63,21 @@ class Deliveries:
    pending=self.s.db.execute('SELECT 1 FROM inbox_pending WHERE plan_id=? AND creator_id=?',(d['plan_id'],d['creator_id'])).fetchone()
    if not pending or d['parts'][0]['state']!='confirmed' or d['parts'][1]['started'] is not None:return False
    self.s.db.execute("UPDATE cycle_delivery_part SET state='cancelled' WHERE delivery_id=? AND kind='text' AND started IS NULL",(id,));self.s.db.execute("UPDATE cycle_delivery SET state='partial_delivery' WHERE id=?",(id,));return True
+ def cancel_unsubmitted(self,id,reason):
+  """Settle a known preflight exclusion only when no component could have reached the platform."""
+  if not isinstance(reason,str) or not re.fullmatch(r'[A-Za-z0-9_]{1,100}',reason):raise CycleError('delivery_cancel_reason_invalid')
+  with self.s.tx():
+   d=self.get(id)
+   if d['state']=='cancelled':return d
+   if any(p['state']!='ready' or p['started'] is not None or p['receipt'] is not None or p['confirmation'] is not None for p in d['parts']):
+    raise CycleError('delivery_cancel_not_safe')
+   self.s.db.execute("UPDATE cycle_delivery_part SET state='cancelled' WHERE delivery_id=?",(id,))
+   self.s.db.execute("UPDATE cycle_delivery SET state='cancelled' WHERE id=?",(id,))
+   self.s.db.execute("INSERT INTO cycle_delivery_check VALUES(?,?,?,?)",
+     (id,'preflight',self.s.clock(),encoded({'status':'failed_known','reason':reason,'platformWrites':0})))
+   self.s.db.execute("DELETE FROM cycle_contact_reservation WHERE plan_id=? AND oec=? AND reserved>=?",
+     (d['plan_id'],d['oec'],d['created']))
+  return self.get(id)
  def reserve_contact(self,id):
   with self.s.tx():
    d=self.get(id);r=self.s.db.execute('SELECT unlocked FROM relationship WHERE plan_id=? AND creator_id=?',(d['plan_id'],d['creator_id'])).fetchone()

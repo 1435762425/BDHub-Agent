@@ -39,6 +39,19 @@ class DeliveryTests(unittest.TestCase):
   self.s.db.executemany('INSERT INTO cycle_contact_reservation VALUES(?,?,?)',[(self.p,'other'+str(i),self.now) for i in range(500)])
   with self.assertRaisesRegex(CycleError,'capacity_reached'):self.d.reserve_contact(self.id)
   self.assertTrue(all(p['started'] is None for p in self.d.get(self.id)['parts']))
+ def test_known_preflight_exclusion_cancels_only_an_unsubmitted_delivery(self):
+  self.d.reserve_contact(self.id)
+  cancelled=self.d.cancel_unsubmitted(self.id,'conversation_needs_content_review')
+  self.assertEqual(cancelled['state'],'cancelled')
+  self.assertTrue(all(p['state']=='cancelled' and p['started'] is None for p in cancelled['parts']))
+  self.assertEqual(self.s.db.execute('SELECT count(*) FROM cycle_contact_reservation').fetchone()[0],0)
+  evidence=self.s.db.execute("SELECT payload FROM cycle_delivery_check WHERE delivery_id=? AND kind='preflight'",(self.id,)).fetchone()[0]
+  self.assertEqual(__import__('json').loads(evidence)['reason'],'conversation_needs_content_review')
+  self.assertEqual(self.d.cancel_unsubmitted(self.id,'conversation_needs_content_review')['state'],'cancelled')
+  # Once a component started, cancellation cannot erase an uncertain external effect.
+  self.s.import_edges(self.p,[edge(person='c2',source='e2')]);candidate=self.c|{'creatorId':'c2','oecId':'456','source':{'sourceId':'e2'}}
+  did=self.d.prepare(self.p,candidate)['id'];self.d.begin(did,'card',authorized_snapshot_hash=digest(candidate),recipient_verified=True,allowance_verified=True)
+  with self.assertRaisesRegex(CycleError,'cancel_not_safe'):self.d.cancel_unsubmitted(did,'conversation_needs_content_review')
  def test_missing_quota_evidence_no_dispatch(self):
   with self.assertRaisesRegex(CycleError,'execution_evidence_missing'):self.d.begin(self.id,'card',authorized_snapshot_hash=digest(self.c),recipient_verified=True)
  def test_reserved_source_exits_ready_supply_without_deleting_history(self):
