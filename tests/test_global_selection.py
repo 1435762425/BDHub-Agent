@@ -112,3 +112,16 @@ class PrepareSkipsSettled(unittest.TestCase):
                 self.assertEqual([item['pid'] for item in ledger.items(second)], ['3' * 19])
             finally:
                 ledger.db.close()
+
+    def test_an_unknown_write_is_carried_forward_for_readback_not_resubmission(self):
+        with tempfile.TemporaryDirectory() as folder:
+            pid='4'*19;root=self._root(folder,[pid]);self._threshold(root,300)
+            ledger=Selection(folder)
+            try:
+                first=ledger.prepare();item=ledger.items(first)[0]
+                ledger.update(item,'result_unknown',receipt={'http':200,'code':0},campaign={'campaign':{'campaign_id':'7'*19}})
+                self._threshold(root,200);second=ledger.prepare();copied=ledger.items(second)
+                self.assertEqual(len(copied),1);self.assertEqual(copied[0]['state'],'result_unknown')
+                self.assertEqual(copied[0]['payload']['recoveredFromRun'],first)
+                self.assertEqual(copied[0]['payload']['receipt'],{'http':200,'code':0})
+            finally:ledger.db.close()

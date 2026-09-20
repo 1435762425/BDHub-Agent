@@ -51,10 +51,21 @@ class Selection:
         # then had to be read back one by one just to be told so.
         settled={row[0] for row in self.db.execute(
             "SELECT DISTINCT pid FROM intake_item WHERE state IN ('confirmed','already_selected')")}
+        unresolved={}
+        for row in self.db.execute("SELECT run_id,pid,state,payload FROM intake_item WHERE state IN "
+                                   "('submitting','awaiting_verification','result_unknown','needs_review') "
+                                   "ORDER BY updated DESC"):
+            unresolved.setdefault(row['pid'],row)
         with self.db:
             self.db.execute('INSERT OR IGNORE INTO intake_run VALUES(?,?,?,?)',(id,encoded(config),rid,time.time()))
             for p in rows:
                 if p['product_id'] in settled:continue
+                prior=unresolved.get(p['product_id'])
+                if prior:
+                    payload=json.loads(prior['payload'])|{'recoveredFromRun':prior['run_id']}
+                    self.db.execute('INSERT OR IGNORE INTO intake_item VALUES(?,?,?,?,?)',
+                      (id,p['product_id'],prior['state'],encoded(payload),time.time()))
+                    continue
                 if assess(p,config)['eligible'] and p.get('fs_is_selected') is False:
                     self.db.execute('INSERT OR IGNORE INTO intake_item VALUES(?,?,?,?,?)',(id,p['product_id'],'pending',encoded({'snapshot':p}),time.time()))
         return id
