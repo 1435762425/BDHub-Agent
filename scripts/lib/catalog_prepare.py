@@ -183,7 +183,7 @@ DROP TABLE catalog_prepare_reuse_old;''')
                 'search':json.loads(row['card']) if isinstance(row['card'],str) and row['card'] else row['card'],'listing':listing or {},'readAt':row['read_at']}
     def mark_progress(self,run_id,pid,cid,src,state,*,card=None,error=None,now=None):
         now=now if now is not None else time.time()
-        if state not in ('reuse','review','missing','ready','submitted','unknown'):raise ValueError('catalog_prepare_state_invalid')
+        if state not in ('reuse','review','missing','ready','submitted','unknown','skipped_unknown'):raise ValueError('catalog_prepare_state_invalid')
         with self.db:
             self.db.execute("UPDATE catalog_prepare_item SET state=?,card=COALESCE(?,card),error=?,lease_until=0,updated=? WHERE run_id=? AND pid=? AND campaign_id=? AND catalog_source=?",
                 (state,encoded(card) if card else None,error,now,run_id,str(pid),str(cid),src))
@@ -192,7 +192,7 @@ DROP TABLE catalog_prepare_reuse_old;''')
     def claim_create(self,run_id,now=None,lease=300):
         now=now if now is not None else time.time()
         with self.db:
-            r=self.db.execute("SELECT * FROM catalog_prepare_item WHERE run_id=? AND state IN ('missing','prepared','submitted','unknown') AND lease_until<=? ORDER BY CASE state WHEN 'prepared' THEN 0 WHEN 'missing' THEN 1 WHEN 'submitted' THEN 2 ELSE 3 END,updated,pid LIMIT 1",(run_id,now)).fetchone()
+            r=self.db.execute("SELECT * FROM catalog_prepare_item WHERE run_id=? AND state IN ('missing','prepared') AND lease_until<=? ORDER BY CASE state WHEN 'prepared' THEN 0 ELSE 1 END,updated,pid LIMIT 1",(run_id,now)).fetchone()
             if not r:return None
             n=self.db.execute("UPDATE catalog_prepare_item SET lease_until=?,fence=fence+1,updated=? WHERE run_id=? AND pid=? AND campaign_id=? AND catalog_source=? AND fence=?",
                 (now+lease,now,run_id,r['pid'],r['campaign_id'],r['catalog_source'],r['fence'])).rowcount
@@ -229,7 +229,7 @@ DROP TABLE catalog_prepare_reuse_old;''')
             return {'state':'blocked','reason':'catalog_link_terms_changed','cardCreatorPercent':created.get('creatorPercent')}
         if raw_binding:return {'state':'blocked','reason':'catalog_link_terms_changed'}
         best=rows[0]
-        reason={'missing':'catalog_link_creation_pending','prepared':'catalog_link_creation_pending','submitted':'catalog_link_creation_unresolved','unknown':'catalog_link_creation_unresolved',
+        reason={'missing':'catalog_link_creation_pending','prepared':'catalog_link_creation_pending','submitted':'catalog_link_creation_unresolved','unknown':'catalog_link_creation_unresolved','skipped_unknown':'catalog_link_creation_unresolved',
                 'reading':'catalog_link_lookup_running','pending':'catalog_link_lookup_pending','read_incomplete':'catalog_link_lookup_incomplete',
                 'reuse':'catalog_link_reuse_missing','review':'catalog_link_requires_review'}.get(best['state'],'catalog_link_'+str(best['state']))
         return {'state':'pending' if best['state'] in ('pending','reading','missing','prepared') else 'blocked','reason':best['error'] or best['blocker'] or reason,'prepareState':best['state'],'intentId':best['intent_id']}
@@ -267,6 +267,74 @@ DROP TABLE catalog_prepare_reuse_old;''')
                 'pendingCount':sum(counts.get(k,0) for k in ('pending','reading','missing','prepared','submitted','unknown')),
                 'incompleteCount':counts.get('read_incomplete',0),'errors':errors,'blockers':blockers,
                 'retryableErrors':retryable,'errorsUpdatedAt':error_age}
+
+
+ACCOUNT_FATAL_RECONCILE = {
+    'source_maintenance_due', 'taplink_account_maintenance_due', 'http_auth_maintenance_due',
+    'account_disabled', 'login_required', 'transport_unavailable', 'verification_failed',
+}
+
+
+def reconcile_unknown_batch(root, prep, run_id, lookup, *, delays=(30, 120), sleeper=time.sleep,
+                            clock=time.time, fatal_codes=ACCOUNT_FATAL_RECONCILE):
+    """Settle attempted TapLink creates after the whole write batch.
+
+    ``lookup`` is read-only and receives the preparation row plus its original frozen intent.  One
+    immediate batch readback is followed by the configured two polls.  No path calls ``begin`` or
+    creates a replacement intent.
+    """
+    if not isinstance(delays,(list,tuple)) or len(delays)!=2 or any(type(v) is not int or v<0 or v>900 for v in delays):
+        raise ValueError('taplink_reconcile_delays_invalid')
+    root=Path(root)
+    second=root/'var/second-cycle.sqlite'
+    if not second.exists():raise ValueError('taplink_reconcile_ledger_missing')
+    with closing(sqlite3.connect(second)) as tracking:
+        if not tracking.execute("SELECT 1 FROM sqlite_master WHERE name='taplink_reconcile_attempt'").fetchone():
+            raise ValueError('taplink_reconcile_schema_required')
+    from lib.catalog_links import CatalogLinks
+    ledger=CatalogLinks(root);settled=[];remaining={
+        row['intent_id']:dict(row) for row in prep.db.execute(
+            "SELECT * FROM catalog_prepare_item WHERE run_id=? AND state='unknown' AND intent_id IS NOT NULL ORDER BY pid",
+            (run_id,))}
+    attempts=[]
+    try:
+        for attempt_no,delay in enumerate((0,*delays)):
+            if not remaining:break
+            if delay:sleeper(delay)
+            for intent_id,row in list(remaining.items()):
+                evidence={};state='not_found'
+                try:
+                    intent=ledger.get(intent_id)
+                    card=lookup(row,intent)
+                    if card:
+                        ledger.confirm(intent_id,card)
+                        prep.mark_progress(run_id,row['pid'],row['campaign_id'],row['catalog_source'],'ready',card=card,now=clock())
+                        evidence={'listId':str(card.get('listId') or ''),'reason':'original_intent_verified'}
+                        state='verified';settled.append({'pid':row['pid'],'intentId':intent_id,'listId':evidence['listId']})
+                        remaining.pop(intent_id,None)
+                    else:evidence={'reason':'standard_card_not_found'}
+                except Exception as error:
+                    code=str(error) if isinstance(error,ValueError) else type(error).__name__
+                    evidence={'reason':code[:120]};state='read_unknown'
+                    _record_reconcile(root,intent_id,run_id,row['pid'],attempt_no,delay,state,evidence,clock())
+                    attempts.append({'intentId':intent_id,'attempt':attempt_no,'state':state,'reason':evidence['reason']})
+                    if code in fatal_codes:raise
+                    continue
+                _record_reconcile(root,intent_id,run_id,row['pid'],attempt_no,delay,state,evidence,clock())
+                attempts.append({'intentId':intent_id,'attempt':attempt_no,'state':state})
+        for intent_id,row in remaining.items():
+            prep.mark_progress(run_id,row['pid'],row['campaign_id'],row['catalog_source'],'skipped_unknown',
+                               error='created_card_not_found_after_reconcile',now=clock())
+    finally:ledger.db.close()
+    return {'settled':settled,'skippedUnknown':[{'pid':row['pid'],'intentId':intent_id}
+             for intent_id,row in remaining.items()],'attempts':attempts,'platformWrites':0}
+
+
+def _record_reconcile(root,intent_id,run_id,pid,attempt_no,delay,state,evidence,observed_at):
+    attempt_id='taplink-reconcile-'+digest([intent_id,attempt_no])[:24]
+    with closing(sqlite3.connect(Path(root)/'var/second-cycle.sqlite')) as db,db:
+        db.execute('INSERT OR IGNORE INTO taplink_reconcile_attempt VALUES(?,?,?,?,?,?,?,?,?)',
+                   (attempt_id,intent_id,run_id,str(pid),attempt_no,delay,state,encoded(evidence),observed_at))
 
 
 def needs_standard_reread(state, card):

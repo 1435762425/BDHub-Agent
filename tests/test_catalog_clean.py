@@ -45,9 +45,9 @@ class HealthRule(unittest.TestCase):
 
 
 class DecisionTable(unittest.TestCase):
-    def test_only_a_fully_invalid_unused_card_is_a_delete_candidate(self):
+    def test_platform_confirmed_invalid_is_a_delete_candidate_even_when_used(self):
         self.assertEqual(decide('invalid', False)[0], 'delete_candidate')
-        self.assertEqual(decide('invalid', True), ('keep', '已使用过的链接不自动删除'))
+        self.assertEqual(decide('invalid', True)[0], 'delete_candidate')
         self.assertEqual(decide('mixed', False)[0], 'keep')
         self.assertEqual(decide('unknown', False)[0], 'review')
         self.assertEqual(decide('valid', False)[0], 'keep')
@@ -68,14 +68,14 @@ class DeleteGuards(unittest.TestCase):
                 clean.save_item(run, '3' * 19, health='invalid', reason='治理', decision='delete_candidate', used=True)
                 with self.assertRaisesRegex(ValueError, 'catalog_clean_not_eligible'):
                     clean.freeze_delete(run, '1' * 19)
-                with self.assertRaisesRegex(ValueError, 'catalog_clean_not_eligible'):
-                    clean.freeze_delete(run, '3' * 19)
                 first = clean.freeze_delete(run, '2' * 19)
                 again = clean.freeze_delete(run, '2' * 19)
                 self.assertEqual(first['id'], again['id'])
                 self.assertEqual(first['state'], 'prepared')
                 self.assertEqual(json.loads(first['payload']), {'list_id': '2' * 19})
-                self.assertEqual(len(clean.pending_deletes(run)), 1)
+                used = clean.freeze_delete(run, '3' * 19)
+                self.assertEqual(used['state'], 'prepared')
+                self.assertEqual(len(clean.pending_deletes(run)), 2)
             finally:
                 clean.close()
 

@@ -8,8 +8,9 @@
     python scripts/catalog-clean.py verify      --report var/...
 
 Design: the health rules and the delete protocol come from the legacy implementation and are
-reused verbatim. A card is deleted only when the whole list is invalid, it has never carried a
-send, it is re-checked immediately before the delete, and the result is confirmed by re-listing.
+reused verbatim. A card is deleted only when the whole list is platform-confirmed invalid, it is
+re-checked immediately before the delete, and the result is confirmed by re-listing. Prior use is
+kept as audit evidence but does not keep an already-invalid platform object alive.
 """
 import argparse
 import json
@@ -205,6 +206,7 @@ def step_delete(clean, report, max_deletes=None):
                     clean.mark(intent['id'], 'submitted')
                     r = transport._xhr(method='POST', path='/api/v1/affiliate/partner/campaign/product_list/delete',
                                        params=transport._params(), payload={'list_id': list_id}, write=True)
+                    report['platformWrites'] = int(report.get('platformWrites') or 0) + 1
                     body = transport.require_read(r)
                     receipt = {'http': r.http_status, 'code': r.code if type(r.code) is int else None,
                                'verification': r.has_turing, 'responseHash': digest(body)}
@@ -246,13 +248,13 @@ def verify_deleted(clean, read, report):
         if intent['list_id'] not in present:
             clean.mark(intent['id'], 'verified', readback={'reason': '平台回查确认已删除'})
             states['verified'] = states.get('verified', 0) + 1
-        elif intent.get('receipt'):
-            # A submitted delete whose list survives needs a human look, never an automatic retry.
-            clean.mark(intent['id'], 'unknown', readback={'reason': '删除结果待核验，不自动重试'})
-            states['delete_unknown'] = states.get('delete_unknown', 0) + 1
         else:
-            clean.mark(intent['id'], 'prepared', readback={'reason': '平台仍存在，未提交过删除，可重试'})
-            states['requeued'] = states.get('requeued', 0) + 1
+            # The POST may have reached the platform. A complete post-batch inventory that still
+            # contains the list is a known non-deletion/needs-review result, never permission to
+            # submit the DELETE again.
+            clean.mark(intent['id'], 'failed_known',
+                       readback={'reason': '批后完整回读仍存在，不自动重复删除'})
+            states['failed_known'] = states.get('failed_known', 0) + 1
     report['verifyStates'] = states
     return states
 

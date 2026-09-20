@@ -6,7 +6,10 @@ from decimal import Decimal
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1];sys.dont_write_bytecode=True;sys.path.insert(0,str(ROOT/'scripts'))
 from lib.catalog_links import CatalogLinks,new_commission
-from lib.catalog_prepare import CatalogPreparation,READ_EXTRA,MEMBERS,list_rows,new_offer,classify_pid,search_cards,scan_lists,read_members,member_facts,TaplinkInventory,reconcile_from_inventory,reused_card,needs_standard_reread
+from lib.catalog_prepare import (CatalogPreparation,READ_EXTRA,MEMBERS,list_rows,new_offer,classify_pid,
+                                 search_cards,scan_lists,read_members,member_facts,TaplinkInventory,
+                                 reconcile_from_inventory,reconcile_unknown_batch,reused_card,
+                                 needs_standard_reread)
 from lib.global_selection import selected_rows,assess
 from lib.global_source import clean_product
 from lib.global_source_transport import opportunity_reader,opportunity_card_creator_batch,CREATE
@@ -753,6 +756,20 @@ def step_create(prep,run_id,limit,report,pace=0.0,lanes=1,qps=5):
                 timings.append(round(time.time()-t0,2))
                 if pace:time.sleep(pace)
             if pending is not None:finalize(pending)
+            # Unknown is isolated per PID.  Once every create request has been attempted, perform
+            # one common readback and the two configured delayed polls.  This never calls the POST
+            # path again and therefore cannot create a replacement intent.
+            def lookup_unknown(row,intent):
+                pid=str(row['pid']);raw=fresh_all.get(pid)
+                if not raw:raise ValueError('product_no_longer_eligible')
+                current=raw if route=='campaign' else new_offer(
+                    raw,pid,intent['spec']['campaignId'],'selected',policy=prep.policy)
+                outcome=classify_pid(pid,current,rb_read,prep.policy,intent['spec'])
+                return outcome.get('card') if outcome.get('state')=='standard' else None
+            delays=tuple(prep.policy.get('unknownReadbackDelaysSeconds') or (30,120))
+            report['unknownReconcile']=reconcile_unknown_batch(
+                ROOT,prep,run_id,lookup_unknown,delays=delays)
+            rb_pool.shutdown(wait=True)
             rb_lane_close()
             report.setdefault('phaseSeconds',{})['writesAndReadback']=round(time.time()-t,2)
     finally:

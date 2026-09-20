@@ -1,34 +1,15 @@
 {
-  "version": "jobs-v2",
+  "version": "jobs-v3",
   "jobs": {
-    "catalog_collect": {
-      "enabled": false,
-      "at": "03:00"
-    },
-    "catalog_screen": {
-      "enabled": false,
-      "at": "03:30"
-    },
-    "creator_leads": {
-      "enabled": false,
-      "at": "04:00"
-    },
-    "creator_profile_refresh": {
-      "enabled": false,
-      "at": "04:30"
-    },
-    "link_prepare": {
-      "enabled": false,
-      "at": "05:00"
-    },
-    "campaign_material_refresh": {
-      "enabled": false,
-      "at": "03:00"
-    },
-    "selected_taplink_verify": {
-      "enabled": false,
-      "at": "05:00",
-      "weekday": 0
-    }
+    "taplink_clean": {"enabled": false, "at": "04:30", "weekday": 0},
+    "full_catalog_update": {"enabled": false, "at": "04:40", "weekday": 0},
+    "campaign_catalog_update": {"enabled": false, "at": "07:00"},
+    "taplink_prepare": {"enabled": false, "at": "07:20"},
+    "kalodata_leads": {"enabled": false, "at": "08:00"},
+    "oecid": {"enabled": false, "at": "09:00"},
+    "send_pool_publish": {"enabled": false, "at": "10:00"},
+    "inbox_monitor": {"enabled": false, "at": "00:00"},
+    "agent_reply": {"enabled": false, "at": "15:00"},
+    "continuous_send": {"enabled": false, "at": "16:30"}
   }
 }

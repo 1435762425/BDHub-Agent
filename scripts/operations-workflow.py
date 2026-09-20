@@ -28,12 +28,22 @@ def main():
                                       body.get("changes"))
                 result = status(store) | {"saved": result}
             elif args.action == "run":
+                job=body.get('jobId');mapping={'taplink_clean':('taplink_clean',None),
+                  'full_catalog_update':('catalog',['selected']),'campaign_catalog_update':('catalog',['campaign']),
+                  'taplink_prepare':('taplink_prepare',None),'kalodata_leads':('kalodata',None),
+                  'oecid':('oecid',None),'send_pool_publish':('send_pool',None)}
+                if job is not None and job not in mapping:raise CycleError('workflow_job_invalid')
+                only,sources=mapping.get(job,(None,None))
                 result = create_run(store, market="it", trigger_source="manual",
-                                    request_id=body.get("requestId"))
-                result = status(store) | {"created": result}
+                                    request_id=body.get("requestId"),only_stage=only,sources=sources)
+                created=result
+                result = status(store) | {"created": created}
             else:
                 result = request_stop(store, body.get("runId"), body.get("expectedState", "running"))
                 result = status(store) | {"stopped": result}
+        if args.action == "run":
+            from lib.operations_scheduler import scheduler_state,start_scheduler
+            if not scheduler_state(ROOT)['running']:start_scheduler(ROOT)
         print(json.dumps(result, ensure_ascii=False))
         return 0
     except (CycleError, ValueError, TypeError, json.JSONDecodeError) as error:

@@ -16,7 +16,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(ROOT / 'scripts'))
 from lib.jobs import load, save, status  # noqa: E402
-from lib.material_maintenance import start_scheduler, stop_scheduler  # noqa: E402
+from lib.operations_scheduler import start_scheduler, stop_scheduler  # noqa: E402
 
 
 def main():

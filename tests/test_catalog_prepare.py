@@ -1,9 +1,12 @@
 import json,sqlite3,sys,tempfile,unittest
+from contextlib import closing
 from decimal import Decimal
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT/'scripts'));sys.path.insert(0,str(ROOT/'vendor'))
-from lib.catalog_prepare import (CatalogPreparation,assess_existing,choose_existing_batch,new_offer,classify_pid,search_cards,card_facts,rate_text,CARD,MEMBERS,TaplinkInventory,new_offer,reconcile_from_inventory,needs_standard_reread)
+from lib.catalog_prepare import (CatalogPreparation,assess_existing,choose_existing_batch,new_offer,
+ classify_pid,search_cards,card_facts,rate_text,CARD,MEMBERS,TaplinkInventory,new_offer,
+ reconcile_from_inventory,reconcile_unknown_batch,needs_standard_reread)
 from lib.catalog_links import CatalogLinks,policy_fingerprint
 from lib.catalog_binding import CatalogBindings
 from lib.schema_migrations import apply_database
@@ -16,6 +19,7 @@ class BatchLinkTests(unittest.TestCase):
         (self.root/'var').mkdir();(self.root/'config').mkdir()
         (self.root/'config/catalog-link-policy.json').write_text(json.dumps(POLICY))
         sqlite3.connect(self.root/'var/catalog-links.sqlite').close();apply_database(self.root,'catalog-links')
+        sqlite3.connect(self.root/'var/second-cycle.sqlite').close();apply_database(self.root,'second-cycle')
         self.prep=CatalogPreparation(self.root)
         self.scope={'market':'it','account':'acc9','institution':'bjn-local-research','sourceRun':'run-1','route':'selected'}
         self.run=self.prep.open_run(self.scope)
@@ -161,9 +165,40 @@ class BatchLinkTests(unittest.TestCase):
         self.prep.mark_progress(self.run,pid,cid,'selected','submitted')
         self.prep.mark_progress(self.run,pid,cid,'selected','unknown',error='card_read_unresolved')
         self.prep.close();self.prep=CatalogPreparation(self.root)  # restart
-        item=self.prep.claim_create(self.run)
-        self.assertEqual(item['state'],'unknown');self.assertEqual(item['intent_id'],intent['id'])
+        self.assertIsNone(self.prep.claim_create(self.run))
         self.assertEqual(self.prep.offer_status(self.offer)['reason'],'card_read_unresolved')
+    def test_unknown_is_reconciled_after_batch_without_a_second_post(self):
+        pid,cid=self.offer['pid'],self.offer['campaignId']
+        self.seed(pid,cid);self.prep.claim_read(self.run,limit=5)
+        self.prep.apply_read(self.run,pid,cid,'selected',{'state':'missing','listing':self.plan_listing()})
+        intent=self.prep.freeze(self.run,pid,cid,'selected',self.spec(pid,cid,self.offer['creatorPercent']))
+        ledger=CatalogLinks(self.root);ledger.begin(intent['id'],'acc9');ledger.unknown(intent['id'],'created_card_not_verified');ledger.db.close()
+        self.prep.mark_progress(self.run,pid,cid,'selected','unknown',error='created_card_not_verified')
+        sleeps=[];calls=[]
+        def lookup(row,frozen):
+            calls.append((row['pid'],frozen['id']))
+            return self.verified_card(pid,cid) if len(calls)==2 else None
+        result=reconcile_unknown_batch(self.root,self.prep,self.run,lookup,delays=(30,120),
+                                       sleeper=sleeps.append,clock=lambda:123)
+        self.assertEqual(len(calls),2);self.assertEqual(sleeps,[30])
+        self.assertEqual(result['settled'][0]['pid'],pid)
+        self.assertEqual(self.prep.item(self.run,pid,cid)['state'],'ready')
+        ledger=CatalogLinks(self.root);self.assertEqual(ledger.get(intent['id'])['state'],'verified');ledger.db.close()
+        with closing(sqlite3.connect(self.root/'var/second-cycle.sqlite')) as db,db:
+            self.assertEqual(db.execute('SELECT count(*) FROM taplink_reconcile_attempt').fetchone()[0],2)
+    def test_unknown_finally_becomes_skipped_and_keeps_original_intent(self):
+        pid,cid=self.offer['pid'],self.offer['campaignId']
+        self.seed(pid,cid);self.prep.claim_read(self.run,limit=5)
+        self.prep.apply_read(self.run,pid,cid,'selected',{'state':'missing','listing':self.plan_listing()})
+        intent=self.prep.freeze(self.run,pid,cid,'selected',self.spec(pid,cid,self.offer['creatorPercent']))
+        ledger=CatalogLinks(self.root);ledger.begin(intent['id'],'acc9');ledger.unknown(intent['id'],'created_card_not_verified');ledger.db.close()
+        self.prep.mark_progress(self.run,pid,cid,'selected','unknown',error='created_card_not_verified')
+        calls=[]
+        result=reconcile_unknown_batch(self.root,self.prep,self.run,
+          lambda *_:(calls.append(1) and None),delays=(30,120),sleeper=lambda _:None,clock=lambda:123)
+        self.assertEqual(len(calls),3);self.assertEqual(len(result['skippedUnknown']),1)
+        self.assertEqual(self.prep.item(self.run,pid,cid)['state'],'skipped_unknown')
+        ledger=CatalogLinks(self.root);self.assertEqual(ledger.get(intent['id'])['state'],'unknown');ledger.db.close()
     def test_summary_separates_links_from_covered_pids(self):
         for pid in ('1','2'):self.seed(pid,'2')
         self.prep.claim_read(self.run,limit=5)

@@ -119,6 +119,25 @@ def save_setting(store, market, request_id, expected_revision, changes):
             "INSERT INTO market_automation_request VALUES(?,?,?,?,?,?)",
             (request_id, market, expected_revision, payload, revision, now),
         )
+        if "continuousSendEnabled" in changes and store.db.execute(
+            "SELECT 1 FROM sqlite_master WHERE name='continuous_send_control'"
+        ).fetchone():
+            plan = store.db.execute(
+                "SELECT id FROM plan WHERE institution='bjn-local-research' AND market=?", (market,),
+            ).fetchone()
+            if plan:
+                control = store.db.execute(
+                    "SELECT revision FROM continuous_send_control WHERE plan_id=?", (plan[0],),
+                ).fetchone()
+                control_revision = (control[0] if control else 0) + 1
+                store.db.execute(
+                    """INSERT INTO continuous_send_control VALUES(?,?,?,?,?,?,?,?,?)
+                    ON CONFLICT(plan_id) DO UPDATE SET
+                      automatic_enabled=excluded.automatic_enabled,
+                      revision=excluded.revision,updated_at=excluded.updated_at""",
+                    (plan[0], int(changes["continuousSendEnabled"]), 0, 0, "16:30", "24:00",
+                     "standard", control_revision, now),
+                )
     return setting(store, market) | {"duplicate": False}
 
 
@@ -132,7 +151,8 @@ def applicable_sources(store, market="it", scheduled_at=None):
     return sources
 
 
-def create_run(store, *, market="it", trigger_source="manual", scheduled_at=None, request_id=None):
+def create_run(store, *, market="it", trigger_source="manual", scheduled_at=None, request_id=None,
+               only_stage=None, sources=None):
     """Create one immutable run scope.  A manual run is allowed while the schedule switch is off."""
     _required(store)
     market = _market(market)
@@ -142,11 +162,14 @@ def create_run(store, *, market="it", trigger_source="manual", scheduled_at=None
         request_id = _request_id(request_id)
     stamp = store.clock() if scheduled_at is None else float(scheduled_at)
     current = setting(store, market)
-    sources = applicable_sources(store, market, stamp)
+    sources = list(sources) if sources is not None else applicable_sources(store, market, stamp)
+    if not sources or any(source not in ('selected','campaign') for source in sources) or len(set(sources))!=len(sources):
+        raise CycleError('workflow_sources_invalid')
+    if only_stage is not None and only_stage not in STAGES:raise CycleError('workflow_stage_invalid')
     if trigger_source == "schedule" and not current["automaticOperationsEnabled"]:
         raise CycleError("workflow_automation_disabled")
     key = request_id or f"{market}:{trigger_source}:{int(stamp)}"
-    run_id = "workflow-" + digest([key, market, trigger_source, stamp, sources, current["revision"]])[:28]
+    run_id = "workflow-" + digest([key, market, trigger_source, stamp, sources, current["revision"],only_stage])[:28]
     with store.tx():
         existing = store.db.execute("SELECT * FROM workflow_run WHERE run_id=?", (run_id,)).fetchone()
         if existing:
@@ -162,9 +185,10 @@ def create_run(store, *, market="it", trigger_source="manual", scheduled_at=None
             (run_id, market, trigger_source, stamp, encoded(sources), current["revision"], store.clock()),
         )
         for position, stage in enumerate(STAGES):
-            state = "skipped" if stage == "taplink_clean" and not (
-                datetime.fromtimestamp(stamp, BEIJING).weekday() == 0
-            ) else "waiting_upstream"
+            state = ('skipped' if only_stage is not None and stage!=only_stage else
+                     "skipped" if stage == "taplink_clean" and not (
+                         datetime.fromtimestamp(stamp, BEIJING).weekday() == 0
+                     ) else "waiting_upstream")
             finished = store.clock() if state == "skipped" else None
             store.db.execute(
                 "INSERT INTO workflow_stage_run(stage_run_id,run_id,stage,position,state,finished_at) "

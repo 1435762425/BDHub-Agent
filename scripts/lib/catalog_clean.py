@@ -3,8 +3,8 @@
 The health rules and the delete protocol are reused verbatim from the legacy implementation
 (``bdhub.send.taplink.cleanup``: ``product_health`` / ``classify_list`` / delete endpoint).
 What lives here is the durable ledger, the join with the account-wide inventory and the
-guards: a card may only be deleted when the whole list is invalid, it has never carried a
-send, and it is re-checked immediately before the delete.
+guards: a card may only be deleted when the platform proves the whole list invalid, and it is
+re-checked immediately before the delete. Prior use remains evidence but is not a deletion veto.
 """
 import json
 import sqlite3
@@ -84,11 +84,9 @@ def classify_card(members, campaigns=None):
 
 
 def decide(health, used):
-    """Confirmed policy: only a fully invalid, never-used card becomes a delete candidate."""
+    """Confirmed policy: platform-proven invalid is sufficient; prior use remains audit evidence."""
     if health == 'invalid':
-        if used:
-            return 'keep', '已使用过的链接不自动删除'
-        return 'delete_candidate', '整条列表已失效'
+        return 'delete_candidate', '平台已确认整条列表失效'
     if health == 'mixed':
         return 'keep', '混合有效，保留整条列表'
     if health == 'unknown':
@@ -177,7 +175,7 @@ class CatalogClean:
         row = self.db.execute('SELECT health,decision,used FROM catalog_clean_item WHERE run_id=? AND list_id=?', (run_id, str(list_id))).fetchone()
         if not row:
             raise ValueError('catalog_clean_item_missing')
-        if row['decision'] != 'delete_candidate' or row['used']:
+        if row['decision'] != 'delete_candidate':
             raise ValueError('catalog_clean_not_eligible')
         intent_id = 'catalog-clean-' + digest([str(list_id), 'delete'])[:24]
         old = self.db.execute('SELECT * FROM catalog_clean_intent WHERE id=?', (intent_id,)).fetchone()
