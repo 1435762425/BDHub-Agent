@@ -277,7 +277,18 @@ def network_child(account_name: str, target_file: Path, output: Path) -> int:
                             verification["status"] = "returned"
                             return result
                         except (Exception, ProbeDeadline) as error:
-                            verification.update(status="error", errorType=type(error).__name__)
+                            message=str(error)
+                            category=("runtime" if "运行时" in message else "captcha_get" if "captcha/get" in message
+                                      else "template_size" if "模板尺寸大于背景图" in message
+                                      else "image_decode" if "图片解码失败" in message
+                                      else "contour_missing" if "透明通道中未找到" in message
+                                      else "contour_empty" if "轮廓为空" in message
+                                      else "background_width" if "背景图宽度无效" in message
+                                      else "verified_product_missing" if "验证后仍未返回商品结构化数据" in message
+                                      else "image" if "图" in message or "轮廓" in message else "node" if "Node.js" in message
+                                      else "verify_http" if message.startswith("slider_verify_failed_http_")
+                                      else "network" if "HTTP 请求失败" in message else "solver")
+                            verification.update(status="error", errorType=type(error).__name__,errorCategory=category)
                             raise
                         finally:
                             report["counters"] = collect_counters(client)

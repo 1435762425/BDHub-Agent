@@ -12,7 +12,8 @@ class SharedPacer:
 def run_find_cohort(probe,child,identity,scratch,targets,client,report,save,classify,summarize,collect,allowed,lanes=3,qps=3):
  if type(qps) is not int or qps not in (3,5,8,12):raise ValueError('invalid_cohort_qps')
  if type(lanes) is not int or lanes not in (3,6,9):raise ValueError('invalid_cohort_lanes')
- lock=threading.RLock();stop=threading.Event();work=queue.Queue();clients=[client];pacer=SharedPacer(qps)
+ lock=threading.RLock();verification_lock=threading.Lock();shared_verification={'result':None,'client':None}
+ stop=threading.Event();work=queue.Queue();clients=[client];pacer=SharedPacer(qps)
  try:
   for _ in range(lanes-1):
    c=probe.PureHttpPartnerClient(client.config,identity,scratch)
@@ -57,8 +58,17 @@ def run_find_cohort(probe,child,identity,scratch,targets,client,report,save,clas
     v={'attempt':attempt,'status':'inflight'}
     with lock:entry['verificationAttempts'].append(v);persist()
     try:
-     result=solve(data,attempt)
-     with lock:v['status']='returned';persist()
+     with verification_lock:
+      previous=shared_verification['result'] if attempt==1 else None
+      source=shared_verification['client'] if previous is not None else None
+      if previous is None:
+       result=solve(data,attempt);shared_verification.update(result=result,client=c);source=c
+      else:result=previous
+      if source is not None and source is not c and hasattr(source,'session') and hasattr(c,'session') and \
+         hasattr(source.session,'cookies') and hasattr(c.session,'cookies'):
+       for name,value in source.session.cookies.get_dict().items():c.session.cookies.set(name,value)
+       if hasattr(source,'fp'):c.fp=source.fp
+     with lock:v['status']='shared' if previous is not None else 'returned';persist()
      return result
     except BaseException:
      with lock:v['status']='error';persist()

@@ -2,7 +2,9 @@
 # inside this repository's own .venv and never installed into the legacy BDHub environment.
 curl_cffi==0.7.4
 openpyxl==3.1.5
+opencv-python-headless==4.14.0.94
 pandas==3.0.5
+Pillow==12.3.0
 playwright==1.62.0
 psycopg[binary]==3.3.4
 pydantic==2.13.4
