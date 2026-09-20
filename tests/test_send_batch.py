@@ -62,6 +62,16 @@ class Window(unittest.TestCase):
                 with self.assertRaises(CycleError):
                     _window_arg(bad)
 
+    def test_send_window_cannot_overlap_the_saved_agent_reply_window(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder);(root/'config').mkdir();(root/'var').mkdir()
+            with closing(sqlite3.connect(root/'var/second-cycle.sqlite')) as db,db:
+                db.execute('CREATE TABLE agent_reply_setting(reply_end TEXT,buffer_minutes INTEGER)')
+                db.execute("INSERT INTO agent_reply_setting VALUES('16:00',30)")
+            with self.assertRaisesRegex(CycleError,'reply_schedule_overlap'):
+                save_config(root,{'windowEnabled':True,'window':['16:15','24:00']})
+            self.assertEqual(save_config(root,{'windowEnabled':True,'window':['16:30','24:00']})['window'],['16:30','24:00'])
+
 
 def capacity_fixture(folder, *, reserved=0, delivered=0):
     root = Path(folder)
@@ -338,6 +348,8 @@ def test_save_answers_with_the_new_config_already_applied(tmp_path):
     assert out['config']['template'] == 'standard'
     # 预检按新配置算：池子读不到时 requested/widen 也必须已经是新值，不能是旧的 600/True。
     assert out['preview']['requested'] == 500
+
+
     assert out['preview']['widen'] is False
     assert out['config'] == status(tmp_path, pool_reader=lambda: {'available': False})['config']
 

@@ -155,12 +155,15 @@ Pure HTTP 验证依赖 `Pillow==12.3.0`、`opencv-python-headless==4.14.0.94` �
 | `cycle_inbox.py` / `poll-cycle-inbox.py` | 只读收信水位、事件和待处理内容 |
 | `cycle_service.py` | 服务案件、事实、人工接管与处理结果 |
 | `cycle_stats.py` | 按北京时间聚合确认发送、回复和橱窗事件 |
+| `template_library.py` | 二发模板、人工模板和 Agent 时间窗的版本化合同 |
+| `conversation_workbench.py` | 会话队列、完整时间线、草稿和人工操作读写模型 |
+| `run-agent-replies.py` | 独立窗口内的五动作 Agent 执行、持久意图和原意图回查 |
 
 `/api/send` 的 GET 只读状态；POST 只接受五种精确动作：保存设置、按 `expectedPreviewHash` 冻结、携带 `confirmed=true + expectedRevision` 启动、按 revision 停止、对一个原 `deliveryId` 执行只读 unknown 核验。多一个字段即拒绝。冻结把完整达人×PID×Offer×`currentListId`、话术和顺序写入 `cycle_bulk_candidate`，继续使用旧 `cycle_bulk/cycle_bulk_item` 表承载状态但不继承其历史执行授权；重复 `requestId` 幂等，预览变化返回冲突。窗口关闭不阻塞只读预览或冻结；start 后 worker 留在 `waiting_window`，到窗口内才允许 dispatch。只有 start 会启动 `send-batch-worker.py`；unknown 核验固定进入 `verify_only` recovery，遇到后续仍为 ready 的组件立即停止，不会发送。GET、save、freeze、reconcile、构建和测试均不会唤醒批量执行器。
 
 `cycle_burst.run_cohort()` 强制同时存在 state=`running` 且 authorization 完全相等的 `cycle_bulk_freeze`，并要求每个待执行 item 都有不可变 `cycle_bulk_candidate`；没有冻结范围时在认证/平台调用前返回 `frozen_batch_required`，不再调用 `choose_candidates()` 或远程 `fresh_card()`。旧 `bulk-second-send.py` 固定返回 `legacy_bulk_sender_retired`，不会建表、恢复或发送；历史 `cycle_bulk` 行只读保留。
 
-发送话术由 `cycle_materials.py` 的版本化模板目录统一渲染，当前新批次可选 `standard / brief / reconnect / video_focus / live_focus`。`config/send-batch.json` 保存当前模板；模板 ID 进入预览 config、authorization、preview hash 和每个冻结 candidate 的 `message`，因此切换模板必须重新预览并保存，冻结后执行器只读取已冻结的最终 `textIt`，不会运行时再选模板。旧 `video_live` 仅保留历史材料读取兼容，不出现在新批次选择器中。
+发送话术由 `cycle_materials.py` 的五个内置模板与 `send_message_template*` 的自定义 revision 统一投影。自定义正文只允许 `{creator_handle}`、`{product_name}`、`{creator_commission}`，后二者必需；二发模板卡在保存批次前就展示完整正文和参数预览。`config/send-batch.json` 保存当前模板 ID；模板 ID、revision 和最终正文进入预览 config、authorization、preview hash 和每个冻结 candidate 的 `message`，因此切换或修订模板必须重新预览并保存，冻结后执行器只读取已冻结的最终 `textIt`。正在使用的自定义模板不能归档。旧 `video_live` 仅保留历史材料读取兼容，不出现在新批次选择器中。
 
 `lead_pool.py` 与 `/api/lead-pool` 使用 `bdhub.lead-pool.v3`：业务只投影 `sendable / waiting / inactive`，`sent` 单列历史；Web 合同同时保留 A/B 来源证据、数值 GMV、代表视频和来源计数。发送预览按池子顺序复检；B-only 位置从 `video_lead_current` 冻结代表视频 source，而不是伪造 A 类 `source_edge`。冻结批次执行器按 `position_order` 消费，不在执行时重新挑选或补满。
 
@@ -178,15 +181,17 @@ Pure HTTP 验证依赖 `Pillow==12.3.0`、`opencv-python-headless==4.14.0.94` �
 - `draft_provider.py`：商品短名和回复影子分类可复用的受控模型 provider；已退役的一发草稿队列不再位于 Web/worker 运行路径。
 - `ReplyClassifier`：接收受限的事件上下文，返回五种动作、意图、消息证据和关联 episode；provider 可为 DeepSeek 或 Jev。
 - `ReplyPolicyGuard`：检查多意图、附件、PID/listId 唯一性、模板版本和人工条件，并把不满足的结果强制收敛为 `human`。
-- `ReplyTemplateRegistry`：只提供版本化的 `sample_self_service`、`collaboration_ack`、`link_usage` 三条人工确认模板。
+- `ReplyTemplateRegistry`：只提供版本化的 `sample_self_service`、`collaboration_ack`、`link_usage` 三条 Agent 固定模板；它与二发批量模板、人工回复模板完全分离。
 
-当前 V1 回复实现已新增 `reply_events.py` 和 `config/reply-policy.json`：前者把已确认外发投影为 `outbound_episode`，把达人入站正文投影为不可变 `inbound_turn`，并保存最多三个 `turn_episode_link` 候选；后者唯一保存五种动作、两小时集中周期、自动回复关闭和三条固定意大利语模板。`reply-review.py` 只允许本地回填、单条/批量影子分类和人工审核；批量任务用输入哈希生成稳定 request ID，同一批 turn 对两个 provider 分别结算，不重复请求。分类输出必须引用真实 message ID 与原文片段，`link_usage` 还必须只有一个关联 PID/listId，否则确定性守卫改为 `human`。
+当前 V1 回复实现由 `reply_events.py`、`config/reply-policy.json`、`template_library.py` 和 `run-agent-replies.py` 组成：事件层把已确认外发投影为 `outbound_episode`，把达人入站正文投影为不可变 `inbound_turn`，并保存最多三个 `turn_episode_link` 候选；政策文件唯一保存五种动作和三条固定意大利语模板；设置表保存 Agent 开关、回复窗口和缓冲约束，二发窗口的当前值仍以 `config/send-batch.json` 为执行真相。分类输出必须引用真实 message ID 与原文片段，`link_usage` 还必须只有一个关联 PID/listId，否则确定性守卫改为 `human`。
 
-DeepSeek 与 TypeSafe Jev 当前都只作为影子 provider。Jev 使用官方 System One 合同 `POST https://api.typesafe.ai/v1/systemone`，固定模型 `jev-1.13.0`，五动作由一个 `Choice` 问题返回完整概率分布；API key 只从本机 `config/typesafe.json`（0600、Git 忽略）或 `TYPESAFE_API_KEY` 读取。收信 worker 不再调用旧 `cycle_agent.py`，也不执行 `process_due()`；它只保存事件并立即冻结达人。旧事实工具、60 秒服务代码和已存在的旧评估记录继续保留历史兼容，但不再位于当前收信运行路径。
+DeepSeek 是当前 Agent 分类器，人工 `turn_review` 存在时人工结论优先；TypeSafe Jev 保持影子 challenger。Jev 使用官方 System One 合同 `POST https://api.typesafe.ai/v1/systemone`，固定模型 `jev-1.13.0`；API key 只从本机 `config/typesafe.json`（0600、Git 忽略）或 `TYPESAFE_API_KEY` 读取。收信 worker 不再调用旧 `cycle_agent.py`，也不执行旧 `process_due()`；它只保存事件并立即冻结达人。旧事实工具、60 秒服务代码和既有评估记录只保留历史兼容。
+
+Agent 与二发没有优先级关系，只有互斥窗口：默认北京时间 `15:00–16:00` 集中回复、30 分钟缓冲、`16:30–24:00` 二发；`validate_agent_setting()` 和 `send_batch.save_config()` 双向拒绝重叠。等待二发窗口的 `cycle_bulk_freeze=running/runtime=waiting_window` 不阻塞 Agent；实际 `cohort` 或 `cycle_delivery_part in (inflight,accepted)` 才阻塞回复 dispatch，随后仍复用同一 ACC6 写门禁。Agent 每轮最多分类 20 个 pending turn、发送或恢复 1 个持久 `service_reply`；恢复 `inflight/accepted/unknown` 只读回查原意图，不创建新发送。
 
 `cycle_scheduler.PERIODS` 同样不再包含 `reply_facts`：既有 `cycle_schedule` 历史行保留，但 claim、running/recover 判断和状态投影只接受当前五个供给阶段，`run-second-cycle.py` 也不再为该旧阶段生成命令。这样以后启动供给调度器也不会意外恢复事实型回复路径。
 
-模型输出不能直接进入 transport，也不能写达人、PID、冷却、拒联或案件状态。身份、金额、资格、额度、去重、暂停、授权和外部结果继续由代码和台账执行。当前影子审核页只写 `reply_classification/reply_review`，不创建 `service_reply`。
+模型只选择受控动作，不能生成自由正文或直接构造 transport 参数。`no_reply`、固定模板和 `human` 的状态变化由确定性代码执行；身份、金额、资格、额度、去重、暂停、授权和外部结果继续由台账保证。当前 Agent 开关为关闭；GET、构建、发布和服务重启都不会启动回复 worker。
 
 ## 6. 数据与状态
 
@@ -209,7 +214,7 @@ DeepSeek 与 TypeSafe Jev 当前都只作为影子 provider。Jev 使用官方 S
 | `var/it-conversations.sqlite` | IT/ACC6 会话索引 |
 | `var/matching*.sqlite` | 已退出生产构建的独立匹配研究历史数据；仍纳入备份 |
 
-新增当前投影：`catalog-links.sqlite.catalog_current_binding*` 保存唯一标准卡；`second-cycle.sqlite.lead_query_*` 保存每 PID 当前 A 类范围，`source_edge_index` 为历史证据保存数值 GMV、币种及规范化索引；`kalodata_video_run/evidence/head` 保存完整视频证据，`kalodata_video_generation/scan_job/scan_page/scan_item` 保存全量 B 类断点，`kalodata_video_author_cache` 避免重复查作者，`video_lead_current` 保存每个达人×PID最高单条视频；`cycle_bulk_freeze/cycle_bulk_candidate` 保存用户确认的不可变发送范围、revision 与完整材料。原准备记录、page receipt、`source_edge`、旧批次、已发送记录和旧回复评估都不删除。
+新增当前投影：`catalog-links.sqlite.catalog_current_binding*` 保存唯一标准卡；`second-cycle.sqlite.lead_query_*` 保存每 PID 当前 A 类范围，`source_edge_index` 为历史证据保存数值 GMV、币种及规范化索引；`kalodata_video_run/evidence/head` 保存完整视频证据，`kalodata_video_generation/scan_job/scan_page/scan_item` 保存全量 B 类断点，`kalodata_video_author_cache` 避免重复查作者，`video_lead_current` 保存每个达人×PID最高单条视频；`cycle_bulk_freeze/cycle_bulk_candidate` 保存用户确认的不可变发送范围、revision 与完整材料；`send_message_template* / manual_reply_template*` 保存两个独立模板域的不可变 revision，`conversation_draft` 保存会话草稿，`agent_reply_setting/run` 保存 Agent 开关、窗口与运行结果。原准备记录、page receipt、`source_edge`、旧批次、已发送记录和旧回复评估都不删除。
 
 `scripts/lib/schema_migrations.py` 当前以增量 registry 管理 `catalog-links.sqlite` 和 `second-cycle.sqlite` 的本轮新投影；其他历史表仍由各领域模块初始化。新增表/字段必须继续提供幂等升级和旧库兼容测试，不能靠删除本地 DB 重建。
 
@@ -239,6 +244,8 @@ DeepSeek 与 TypeSafe Jev 当前都只作为影子 provider。Jev 使用官方 S
 | `turn_review` | turn ID、revision、正确动作、备注 | 当前唯一人工真值；与 provider 解耦、append-only，可同时评估 DeepSeek/Jev |
 | `turn_review_application` | request ID、turn/review/control/pending revision、动作和结果 | 用户单独确认后把真值映射到当前案件；不可变、幂等、平台写入固定为 0 |
 | `review_reply_candidate` | turn/review revision、固定模板 key/text、状态 | 三种模板动作只形成 `reviewed_ready` 候选，保持达人冻结，不发送 |
+| `conversation_draft` | `plan_id, cid, revision` | 人工回复草稿；乐观 revision 防止覆盖另一窗口的更新 |
+| `service_reply` | request ref、kind、正文/卡片、控制 revision、回执和 proof | 人工与 Agent 共用的持久单次发送意图；unknown 只恢复原意图 |
 
 分类器只读取当前未处理 turn、少量相邻 turn、候选 episode、达人全局控制和政策版本。原始事件是事实源；任何模型摘要只是可重建缓存。新增表/字段必须提供幂等升级、旧库回填与多 PID 会话测试。
 
@@ -290,6 +297,8 @@ pending → started/submitted → confirmed
 | `/api/identity-queue` | 达人级 OECID 分类与补齐 |
 | `/api/lead-pool` | 发送池分层 |
 | `/api/send` | 发送预览、设置保存、冻结、明确 start/stop 和批次状态 |
+| `/api/template-library` | 二发模板、人工模板、Agent 固定模板和互斥窗口；所有 mutation 使用字段白名单与 revision |
+| `/api/conversations` | 默认需人工队列、会话详情、草稿、翻译、人工文本/商品卡发送；图片入口当前明确禁用 |
 | `/api/reply-review` | 事件级样本、双模型影子分类、turn 标准动作和受控案件应用；无发送动作 |
 | `/api/inbox` | 收信 worker、今日/最近 14 日统计、可分页日明细和待人工 |
 | `/api/jobs` | 手动作业与定时意向 |
@@ -297,7 +306,7 @@ pending → started/submitted → confirmed
 
 Web 不再构建 `/flow-demo`、浏览器演示页、旧 local runtime、second-pilot、second-live trial、second-outreach history、matching 或 outreach-drafts 路由。对应 SQLite 作为历史数据保留，未从备份清单移除。
 
-合作工作台 canonical route 为 `/it/workspace/send`、`/it/workspace/inbox` 和 `/it/workspace/history`；每个页面只挂载自己的 controller，隐藏页面不轮询。回复影子评测迁到 `/ops/reply-evaluation`，账号就绪迁到 `/ops/accounts?market=it`。
+合作工作台 canonical route 为 `/it/workspace/send` 和 `/it/workspace/history`；旧 `/it/workspace/inbox` 只做重定向。会话 canonical route 为 `/it/conversations`、`/it/conversations/templates` 和 `/it/conversations/agent`，默认 view=`human`。回复影子评测保留在 `/ops/reply-evaluation`，账号就绪保留在 `/ops/accounts?market=it`。
 
 ## 9. 账号与外部系统
 
@@ -330,8 +339,8 @@ Web 不再构建 `/flow-demo`、浏览器演示页、旧 local runtime、second-
 | `config/leads-queue.json` | 查询周期、批大小和失败上限 |
 | `config/identity-run.json` | OECID 批大小和 cohort |
 | `config/link-prepare*.json` | 链接读取/创建运行参数 |
-| `config/send-batch.json` | 发送预检数量、话术模板、窗口和越界档 |
-| `config/reply-policy.json` | 五种回复动作、两小时集中周期、自动回复关闭和三条固定模板 |
+| `config/send-batch.json` | 发送预检数量、当前二发模板、二发窗口和越界档；二发窗口的执行真相 |
+| `config/reply-policy.json` | 五种回复动作和三条 Agent 固定模板；不保存人工或二发自定义模板 |
 | `config/state-backup.json` | 当前 SQLite 明确清单与历史快照排除规则 |
 | `config/typesafe.example.json` / 本机 `config/typesafe.json` | TypeSafe 官方 endpoint、固定 Jev 模型和本机 API key；真实文件 0600 且不入 Git |
 | `config/jobs.json` | 手动作业与材料维护周期；Campaign 日检、全托周检及调度器均默认关闭 |
@@ -340,7 +349,7 @@ Web 不再构建 `/flow-demo`、浏览器演示页、旧 local runtime、second-
 
 业务配置不得另建第二来源。敏感配置、邮箱、激活码、Cookie 和身份文件不入 Git。
 
-回复政策统一由版本化的 `config/reply-policy.json` 保存五种动作、模板版本、自动回复开关和集中批处理周期；provider 的连接配置分别从本机敏感配置读取。不得把这些值散落在 prompt、React 组件和 worker 常量中，API key 继续只放本机敏感配置。
+回复政策统一由版本化的 `config/reply-policy.json` 保存五种动作和固定模板；`agent_reply_setting` 保存开关、回复时间和缓冲，`config/send-batch.json` 保存二发窗口。模板正文、设置 revision 和批次冻结正文都可追溯；provider 的连接配置分别从本机敏感配置读取，API key 继续只放本机敏感配置。
 
 ## 11. 运行方式
 
@@ -397,6 +406,16 @@ printf '%s' '{"action":"batch_classify","providers":["deepseek","jev"],"limit":3
 `backfill` 只读取本机既有发送、收信和案件证据并写新投影，`platformWrites=0`、`modelCalls=0`。批量影子分类只写模型评估，不创建回复 intent；页面并列展示 DeepSeek/Jev 的完整动作、置信度、原因和固定模板候选，中文理解固定取 DeepSeek 的翻译字段，不被 Jev 占位文案覆盖。审核队列优先展示两模型分歧且尚未审核的 turn；用户必须显式选择独立的五动作标准答案，模型一致也不会预选，写入 append-only `turn_review` 后自动滚到下一项。已审核真值可通过当前 revision 追加修订，旧 revision 和既有业务应用不被改写。三条固定模板直接从 `config/reply-policy.json` 投影到状态接口，选择模板动作时始终可见，不依赖某个模型是否碰巧选择它。结构化 `humanReason` 在 Python 落库与 Web 解码两层统一限制为 500 字符，避免合法长原因让整个审核队列不可读。系统再用同一份 turn 最新真值计算两个 provider 的准确率、误自动处理（真值为 `human`）和误转人工；模型自己的输出不能成为真值。
 
 审核与业务状态是两个动作。`apply_review` 还必须携带当前 review、relationship control 和 inbox pending 三个 revision：历史样本、消息已编辑、控制已变化或非当前案件全部拒绝。`no_reply` 只有在该达人没有更新未处理 turn 和开放案件时才推进 cursor 并解除冻结；`human` 创建/复用人工案件并保持冻结；三种模板只写固定候选并保持冻结。任何分支都不调用 transport，`automaticReply=false`、`platformWrites=0`。
+
+模板与会话只读回读：
+
+```bash
+printf '%s' '{"action":"status"}' | .venv/bin/python scripts/template-library.py
+.venv/bin/python scripts/conversation-workbench.py list --view human --limit 30
+.venv/bin/python scripts/job-run.py status --name agentReply
+```
+
+前两条只读本机台账，第三条只看 Agent worker 进程。不要把 `run-agent-replies.py` 当作状态命令：开关已启用且处于回复窗口时，它会进入真实回复执行链。
 
 状态备份与空目录恢复：
 
@@ -493,7 +512,7 @@ PYTHONDONTWRITEBYTECODE=1 \
 - Web package 已显式声明 ESM，Node 测试不再产生 module type warning；Next.js 构建仍有上游 `module.register()` deprecation warning。
 - 冻结批次、start/stop 和 frozen-v2 执行桥已接通；账号级平台日额度的原生信号仍未取得，不能用本地 500 闸门冒充。
 - 历史 legacy-only `cycle_bulk` 仍保留用于追溯，但旧 CLI 与 `cycle_burst` 动态选人回退均已退役；执行只接受当前冻结批次。
-- 35 条意大利 turn 已完成人工真值审核：DeepSeek 28/35（80.00%，误自动处理 2、误转人工 3），Jev 22/35（62.86%，误自动处理 3、误转人工 1）；双模型一致也仍有 2 条误自动处理。DeepSeek 暂作主影子分类器，Jev 保持 challenger，`collaboration_ack/link_usage` 继续人工；详细证据见 [最终人工评测](implementation/reply-model-evaluation-20260920.md)。真实自动回复 transport 保持关闭且尚未接入新合同。
+- 35 条意大利 turn 已完成人工真值审核：DeepSeek 28/35（80.00%，误自动处理 2、误转人工 3），Jev 22/35（62.86%，误自动处理 3、误转人工 1）；双模型一致也仍有 2 条误自动处理。DeepSeek 暂作 Agent 分类器、Jev 保持 challenger，人工 `turn_review` 优先。真实回复 transport、持久意图和回查合同已经接入，但 Agent 设置仍为 `enabled=false`，本轮真实发送为 0；详细证据见 [最终人工评测](implementation/reply-model-evaluation-20260920.md)。
 - SQLite 备份、校验和空目录恢复工具已完成；当前首份基线仍只在本机，尚未配置异机副本、保留周期或自动调度。
 - 项目 Python 环境、依赖锁和协议源码已独立；画像、IM、TapLink 等账号配置、身份文件和锁仍只读复用旧 BDHub，后续需逐项迁移凭据管理和身份维护，不能一次性复制旧配置。
 - vendored `pure_http_canary.py` 依赖同目录 `pure_http_runtime_manifest.json` 校验旧 `data/runtime` 的逐文件哈希；JSON 清单属于协议闭包，缺失时所有 OECID cohort 会在网络请求前以 manifest 无效失败。当前清单已随 vendor 提交，runtime/身份文件本身仍只读留在旧 BDHub。

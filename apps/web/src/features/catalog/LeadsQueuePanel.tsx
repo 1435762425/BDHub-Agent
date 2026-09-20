@@ -1,5 +1,5 @@
 "use client";
-import {Button,Card,Field,Input,MetricTable,Notice,Pill,Progress} from "../bdhub/ui";
+import {Button,Card,MetricTable,Notice,Pill,Progress} from "../bdhub/ui";
 import type {LeadsRunState} from "../../server/leads-queue/bridge";
 import type {LeadsQueueController} from "./useLeadsQueue";
 
@@ -17,14 +17,14 @@ function runLine(run:LeadsRunState){
 
 /** The PID -> creator-lead queue. State is owned by the page so the funnel bar reads the same numbers. */
 export default function LeadsQueuePanel({controller}:{controller:LeadsQueueController}){
- const {data,draft,setDraft,busy,message,save,startRun,loaded}=controller;
+ const {data,busy,message,startRun,loaded}=controller;
  const due=data?.nextDue?.[0];
  // "Already queried" has to exclude both never-asked products and the ones parked after repeated
  // failures, or the coverage bar would count work that never reached the platform as done.
  const queried=data?Math.max(0,data.scope-data.firstTime-data.stuck):0;
  return <Card title="达人线索查询队列"><div className="space-y-4 p-5">
-  {!draft&&<p className="text-sm text-gray-500">{loaded?"暂时无法读取查询队列。":"读取中…"}</p>}
-  {draft&&data&&<>
+  {!data&&<p className="text-sm text-gray-500">{loaded?"暂时无法读取查询队列。":"读取中…"}</p>}
+  {data&&<>
   <MetricTable rows={[
    {label:"队列 PID（总数）",value:data.scope.toLocaleString(),detail:`合格 ${data.eligible.toLocaleString()} ∩ 有链接 ${data.linked.toLocaleString()}`},
    {label:"首次待查",value:data.firstTime.toLocaleString(),detail:"从没问过平台，按累计销量降序",accent:true},
@@ -34,16 +34,14 @@ export default function LeadsQueuePanel({controller}:{controller:LeadsQueueContr
    {label:"本次将跑",value:data.taken.toLocaleString(),detail:`上限 ${data.batchSize.toLocaleString()}；不使用冷却中的 PID 补足`},
   ]}/>
   <Progress done={queried} total={data.scope} label="线索覆盖（已查过 / 队列总数）"/>
-  <div className="grid gap-4 lg:grid-cols-3">
-   <Field label="刷新周期（天）" hint="已查过的 PID 多久重查一次。"><Input type="number" min={1} max={90} value={draft.refreshDays} onChange={e=>setDraft({...draft,refreshDays:Number(e.target.value)})}/></Field>
-   <Field label="每 PID 线索数" hint="平台按 GMV 排序，取销量大于 0 的前若干位。"><Input type="number" min={1} max={50} value={draft.leadsPerPid} onChange={e=>setDraft({...draft,leadsPerPid:Number(e.target.value)})}/></Field>
-   <Field label="统计窗口（天）" hint="沿用平台 T−2 窗口，首尾都计入。"><Input type="number" min={1} max={30} value={draft.windowDays} onChange={e=>setDraft({...draft,windowDays:Number(e.target.value)})}/></Field>
-  </div>
-  <div className="grid gap-4 lg:grid-cols-2">
-   <Field label="一次跑多少条（上限）" hint="从队首往下取这么多条。这是上限不是目标——队列不够就少跑，绝不用未到期的 PID 补足。"><Input type="number" min={1} max={5000} value={draft.batchSize} onChange={e=>setDraft({...draft,batchSize:Number(e.target.value)})}/></Field>
-   <Field label="连续失败几次后暂停该商品" hint="查询失败的不会记成已查，会留在队首重试；连续失败到次数后移出队列，避免一直消耗额度。"><Input type="number" min={1} max={20} value={draft.maxAttempts} onChange={e=>setDraft({...draft,maxAttempts:Number(e.target.value)})}/></Field>
-  </div>
-  <div className="flex flex-wrap items-center gap-2"><Button size="sm" variant="outline" disabled={busy} onClick={()=>void save()}>{busy?"保存中…":"保存队列设置"}</Button><Button size="sm" disabled={busy||Boolean(data.run?.running)} onClick={()=>void startRun()}>{data.run?.running?"正在跑…":"立即运行这一批"}</Button>{data.run?.running?<Pill tone="brand">查询中</Pill>:<Pill tone="neutral">就绪</Pill>}</div>
+  <MetricTable rows={[
+   {label:"A 类销售线索",value:"14 天",detail:"每 PID 最多 20 位正销量达人；按数值 GMV 降序，未查 PID 按商品累计销量优先"},
+   {label:"A 类刷新",value:"7 天",detail:"到期后重读最近 14 天；历史证据保留，当前 head 原子切换"},
+   {label:"B 类内容线索",value:"30 天",detail:"精确 PID 视频当前播放量 ≥1,000；同达人×PID只留最高播放量代表视频"},
+   {label:"B 类刷新",value:"7 天",detail:"完整重读最近 30 天视频列表，发现后来跨过 1,000 的视频"},
+   {label:"请求边界",value:"真实额度",detail:"不设每天500次或单 PID 50个视频的业务截断；额度耗尽保存断点"},
+  ]}/>
+  <div className="flex flex-wrap items-center gap-2"><Button size="sm" disabled={busy||Boolean(data.run?.running)} onClick={()=>void startRun()}>{data.run?.running?"正在跑…":"继续运行线索任务"}</Button>{data.run?.running?<Pill tone="brand">查询中</Pill>:<Pill tone="neutral">就绪</Pill>}</div>
   {message&&<Notice tone="info">{message}</Notice>}
   {data.run&&<div className="rounded-xl border border-gray-200 p-4 dark:border-gray-700">
    {(data.run.targets??0)>0

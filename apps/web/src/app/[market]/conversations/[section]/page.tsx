@@ -1,0 +1,2 @@
+import {notFound} from "next/navigation";import ConversationWorkspace,{type ConversationSection} from "@/features/conversations/ConversationWorkspace";
+export default async function Page({params}:{params:Promise<{market:string;section:string}>}){const {market,section}=await params;if(market!=="it"||!['templates','agent'].includes(section))notFound();return <ConversationWorkspace section={section as ConversationSection}/>;}

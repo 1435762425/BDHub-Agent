@@ -108,6 +108,14 @@ class Launch(unittest.TestCase):
             self.assertTrue(record['platformWrites'])
             self.assertIn('--seed', spawn.calls[0][0])
 
+    def test_agent_reply_worker_is_explicitly_flagged_as_platform_writing(self):
+        with tempfile.TemporaryDirectory() as folder:
+            spawn=Spawn();record=start(folder,'agentReply',{'interval':60},spawn=spawn)
+            self.assertTrue(record['platformWrites'])
+            command=spawn.calls[0][0]
+            self.assertTrue(command[1].endswith('scripts/run-agent-replies.py'))
+            self.assertIn('--worker',command)
+
     def test_a_second_copy_of_the_same_job_is_refused(self):
         with tempfile.TemporaryDirectory() as folder:
             spawn = Spawn()

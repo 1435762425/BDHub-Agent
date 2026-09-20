@@ -36,5 +36,21 @@ class AutoReplyTests(unittest.TestCase):
   with self.assertRaisesRegex(CycleError,'context_changed'):self.auto.begin(q['id'])
  def test_history_does_not_reply_even_when_enabled(self):
   self.enable();self.add('1','Il link non funziona');self.service.process_due(self.p);self.assertIsNone(self.auto.prepare(self.p,self.creator))
+ def test_manual_text_is_idempotent_and_does_not_need_agent_switch(self):
+  self.ingest([]);revision=self.rel()['revision']
+  q=self.auto.prepare_manual(self.p,self.creator,'10','Ciao',revision,'manual-request')
+  self.assertEqual(self.auto.prepare_manual(self.p,self.creator,'10','Ciao',revision,'manual-request')['id'],q['id'])
+  with self.assertRaisesRegex(CycleError,'request_conflict'):
+   self.auto.prepare_manual(self.p,self.creator,'10','Testo diverso',revision,'manual-request')
+  self.assertEqual(self.auto.begin(q['id'])['componentKind'],'text')
+ def test_manual_card_has_its_own_component_scope(self):
+  self.ingest([]);q=self.auto.prepare_manual_card(self.p,self.creator,'10',{'pid':'1','listId':'2'},self.rel()['revision'],'manual-card-request')
+  self.assertEqual(self.auto.begin(q['id'])['componentKind'],'card')
+ def test_existing_manual_intent_can_be_recovered_after_control_changes(self):
+  self.ingest([]);revision=self.rel()['revision'];q=self.auto.prepare_manual(self.p,self.creator,'10','Ciao',revision,'manual-recovery')
+  self.s.db.execute('UPDATE relationship SET revision=revision+1')
+  self.assertEqual(self.auto.prepare_manual(self.p,self.creator,'10','Ciao',revision,'manual-recovery')['id'],q['id'])
+  with self.assertRaisesRegex(CycleError,'request_conflict'):
+   self.auto.prepare_manual(self.p,self.creator,'10','Altro',revision,'manual-recovery')
 del ServiceTests
 if __name__=='__main__':unittest.main()

@@ -24,10 +24,11 @@ from contextlib import closing
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from lib.cycle_materials import TEMPLATES, template_catalog
+from lib.cycle_materials import TEMPLATES
 from lib.cycle_review import card_rate_gap, choose_candidates
 from lib.lead_pool import pool
 from lib.second_cycle import CycleError, digest, encoded
+from lib.template_library import CUSTOM_ID,render_send_template,resolve_send_template,send_templates
 
 BEIJING = timezone(timedelta(hours=8))
 # 与 `cycle_delivery.reserve_contact()` 同一个口径：滚动 24 小时、只算新联系。
@@ -136,7 +137,7 @@ def validate_config(raw):
         raise CycleError('invalid_send_count')
     if type(value['widen']) is not bool or type(value['windowEnabled']) is not bool:
         raise CycleError('invalid_send_config')
-    if value['template'] not in TEMPLATES:
+    if value['template'] not in TEMPLATES and not (isinstance(value['template'],str) and CUSTOM_ID.fullmatch(value['template'])):
         raise CycleError('template_missing')
     value['window'] = list(_window_arg(value['window'] if value['windowEnabled'] else None) or DEFAULT_WINDOW)
     return value
@@ -154,6 +155,18 @@ def load_config(root):
 
 def save_config(root, raw):
     value = validate_config({**load_config(root), **(raw or {})})
+    if value['windowEnabled']:
+        db=Path(root)/'var/second-cycle.sqlite'
+        if db.exists():
+            with closing(_connect(db)) as conn:
+                if conn.execute("SELECT 1 FROM sqlite_master WHERE name='agent_reply_setting'").fetchone():
+                    row=conn.execute('SELECT reply_end,buffer_minutes FROM agent_reply_setting LIMIT 1').fetchone()
+                    if row:
+                        def minutes(v):
+                            if v=='24:00':return 1440
+                            h,m=map(int,v.split(':'));return h*60+m
+                        if minutes(value['window'][0])<minutes(row['reply_end'])+row['buffer_minutes']:
+                            raise CycleError('reply_schedule_overlap')
     path = config_path(root)
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix('.json.tmp')
@@ -170,7 +183,8 @@ def status(root, *, now=None, clock=None, pool_reader=None, chooser=None):
                     template=config['template'],
                     now=now, clock=clock, pool_reader=pool_reader, chooser=chooser)
     layers = pool(root, now=clock() if clock else (now if now is not None else time.time())) if pool_reader is None else {}
-    return {'market': 'it', 'account': 'acc6', 'config': config, 'templates': template_catalog(), 'preview': state,
+    with _store(root) as store:templates=send_templates(store)
+    return {'market': 'it', 'account': 'acc6', 'config': config, 'templates': templates, 'preview': state,
             'pool': {'counts': layers.get('counts') or {}, 'layers': layers.get('layers') or {}},
             'batch': batch_status(root), 'available': state.get('available', False)}
 
@@ -199,7 +213,7 @@ def _preview(root, *, count=500, widen=False, window=None, template='standard', 
     root = Path(root)
     if type(count) is not int or not 1 <= count <= 2000:
         raise CycleError('invalid_send_count')
-    if template not in TEMPLATES:
+    if template not in TEMPLATES and not (isinstance(template,str) and CUSTOM_ID.fullmatch(template)):
         raise CycleError('template_missing')
     window = _window_arg(window)
     stamp = clock() if clock is not None else (now if now is not None else time.time())
@@ -221,6 +235,7 @@ def _preview(root, *, count=500, widen=False, window=None, template='standard', 
     positions = [(row['creatorId'], row['pid']) for row in slots]
     with _store(root) as store:
         plan = _plan(store)
+        template_spec=resolve_send_template(store,template)
         with closing(_identities(root)) as ids:
             def person(creator, oec):
                 row = ids.execute("SELECT current_handle FROM creator_identity WHERE market='it' "
@@ -252,8 +267,8 @@ def _preview(root, *, count=500, widen=False, window=None, template='standard', 
     reasons = {}
     for row in skipped:
         reasons[row.get('reason') or 'unknown'] = reasons.get(row.get('reason') or 'unknown', 0) + 1
-    formal_frozen = [_frozen_candidate(candidate, 'formal', template) for candidate in sendable]
-    reserve_frozen = [_frozen_candidate(candidate, 'reserve', template) for candidate in reserves]
+    formal_frozen = [_frozen_candidate(candidate, 'formal', template_spec) for candidate in sendable]
+    reserve_frozen = [_frozen_candidate(candidate, 'reserve', template_spec) for candidate in reserves]
     frozen = formal_frozen + reserve_frozen
     config = {'count': count, 'widen': bool(widen), 'windowEnabled': window is not None, 'template': template,
               'window': list(window or DEFAULT_WINDOW)}
@@ -273,12 +288,11 @@ def _preview(root, *, count=500, widen=False, window=None, template='standard', 
             'previewHash': preview_hash, 'authorization': authorization}, frozen)
 
 
-def _frozen_candidate(candidate, role, template):
+def _frozen_candidate(candidate, role, template_spec):
     """Freeze the actual card, text and all eligibility revisions shown in the preview."""
-    from lib.cycle_materials import render
     frozen = json.loads(encoded(candidate))
     frozen['batchRole'] = role
-    frozen['message'] = render(frozen['name'], frozen['offer'], template, frozen['handle'])
+    frozen['message'] = render_send_template(template_spec,frozen['name'],frozen['offer'],frozen['handle'])
     return frozen
 
 

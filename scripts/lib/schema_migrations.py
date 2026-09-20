@@ -500,6 +500,85 @@ CREATE INDEX IF NOT EXISTS video_lead_current_order
 """)
 
 
+SECOND_CYCLE_CONVERSATION_WORKBENCH = Migration(10, "conversation_workbench_and_templates_v1", """
+CREATE TABLE IF NOT EXISTS send_message_template(
+  template_id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  state TEXT NOT NULL,
+  current_revision INTEGER NOT NULL,
+  created_at REAL NOT NULL,
+  updated_at REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS send_message_template_revision(
+  template_id TEXT NOT NULL,
+  revision INTEGER NOT NULL,
+  body_it TEXT NOT NULL,
+  created_at REAL NOT NULL,
+  PRIMARY KEY(template_id,revision)
+);
+CREATE TRIGGER IF NOT EXISTS send_message_template_revision_no_update
+BEFORE UPDATE ON send_message_template_revision BEGIN SELECT RAISE(ABORT,'send template revision is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS send_message_template_revision_no_delete
+BEFORE DELETE ON send_message_template_revision BEGIN SELECT RAISE(ABORT,'send template revision is immutable'); END;
+CREATE TABLE IF NOT EXISTS manual_reply_template(
+  template_id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  category TEXT NOT NULL,
+  state TEXT NOT NULL,
+  current_revision INTEGER NOT NULL,
+  created_at REAL NOT NULL,
+  updated_at REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS manual_reply_template_revision(
+  template_id TEXT NOT NULL,
+  revision INTEGER NOT NULL,
+  body TEXT NOT NULL,
+  created_at REAL NOT NULL,
+  PRIMARY KEY(template_id,revision)
+);
+CREATE TRIGGER IF NOT EXISTS manual_reply_template_revision_no_update
+BEFORE UPDATE ON manual_reply_template_revision BEGIN SELECT RAISE(ABORT,'manual template revision is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS manual_reply_template_revision_no_delete
+BEFORE DELETE ON manual_reply_template_revision BEGIN SELECT RAISE(ABORT,'manual template revision is immutable'); END;
+CREATE TABLE IF NOT EXISTS conversation_draft(
+  plan_id TEXT NOT NULL,
+  cid TEXT NOT NULL,
+  text TEXT NOT NULL,
+  revision INTEGER NOT NULL,
+  updated_at REAL NOT NULL,
+  PRIMARY KEY(plan_id,cid)
+);
+CREATE TABLE IF NOT EXISTS agent_reply_setting(
+  plan_id TEXT PRIMARY KEY,
+  enabled INTEGER NOT NULL,
+  timezone TEXT NOT NULL,
+  reply_start TEXT NOT NULL,
+  reply_end TEXT NOT NULL,
+  send_start TEXT NOT NULL,
+  send_end TEXT NOT NULL,
+  buffer_minutes INTEGER NOT NULL,
+  actions_json TEXT NOT NULL,
+  revision INTEGER NOT NULL,
+  updated_at REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS agent_reply_run(
+  run_id TEXT PRIMARY KEY,
+  plan_id TEXT NOT NULL,
+  state TEXT NOT NULL,
+  started_at REAL NOT NULL,
+  finished_at REAL,
+  claimed INTEGER NOT NULL,
+  no_reply INTEGER NOT NULL,
+  prepared INTEGER NOT NULL,
+  human INTEGER NOT NULL,
+  confirmed INTEGER NOT NULL,
+  unknown INTEGER NOT NULL,
+  error TEXT
+);
+CREATE INDEX IF NOT EXISTS agent_reply_run_plan_time ON agent_reply_run(plan_id,started_at DESC);
+""")
+
+
 DATABASES = {
     "catalog-links": ("catalog-links.sqlite", (CATALOG_LINKS,)),
     "second-cycle": ("second-cycle.sqlite", (SECOND_CYCLE, SECOND_CYCLE_INDEXES,
@@ -509,7 +588,8 @@ DATABASES = {
                                                 SECOND_CYCLE_REVIEW_APPLICATION,
                                                 SECOND_CYCLE_VIDEO_EVIDENCE,
                                                 SECOND_CYCLE_VIDEO_PAGING,
-                                                SECOND_CYCLE_AB_LEADS)),
+                                                SECOND_CYCLE_AB_LEADS,
+                                                SECOND_CYCLE_CONVERSATION_WORKBENCH)),
 }
 
 REGISTRY_SQL = """

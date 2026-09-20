@@ -1,5 +1,5 @@
 """Automatic policy replies with durable single attempts. No public draft workflow."""
-import json,uuid
+import json,re,uuid
 from lib.second_cycle import CycleError,digest,encoded
 from lib.cycle_service import Service
 SCHEMA='''CREATE TABLE IF NOT EXISTS service_reply_fact_failure(plan_id TEXT NOT NULL,creator_id TEXT NOT NULL,revision INTEGER NOT NULL,attempts INTEGER NOT NULL,PRIMARY KEY(plan_id,creator_id,revision));
@@ -58,11 +58,57 @@ class AutoReplies:
    self.s.db.execute('UPDATE service_reply SET control_revision=? WHERE id=?',(r['revision'],id))
    if facts and category=='commission_question':self.s.db.execute('INSERT OR REPLACE INTO service_reply_fact VALUES(?,?)',(id,encoded(facts)))
    return self.get(id)
+ def prepare_manual(self,plan,creator,cid,text,expected_control_revision,request_id):
+  if not isinstance(text,str) or not text.strip() or len(text)>4000 or not isinstance(cid,str) or not cid.isdigit() or \
+     not isinstance(request_id,str) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._:-]{7,119}',request_id) or \
+     type(expected_control_revision) is not int or expected_control_revision<1:raise CycleError('manual_reply_invalid')
+  reply_id='manual-reply-'+digest([plan,creator,request_id])[:24]
+  with self.s.tx():
+   old=self.get(reply_id)
+   if old:
+    if old['text']!=text.strip() or old['cid']!=cid or old['kind']!='manual':raise CycleError('manual_reply_request_conflict')
+    return old
+   rel=self.s.db.execute('SELECT * FROM relationship WHERE plan_id=? AND creator_id=?',(plan,creator)).fetchone()
+   cp=self.s.db.execute('SELECT oec FROM inbox_checkpoint WHERE plan_id=? AND cid=?',(plan,cid)).fetchone()
+   if not rel or rel['revision']!=expected_control_revision or rel['mode']=='paused' or not cp or cp['oec']!=rel['oec']:raise CycleError('manual_reply_context_changed')
+   pending=self.s.db.execute('SELECT revision FROM inbox_pending WHERE plan_id=? AND creator_id=?',(plan,creator)).fetchone()
+   context=self.service.context(plan,creator)
+   self.s.db.execute("INSERT INTO service_reply(id,plan_id,creator_id,pending_revision,oec,cid,kind,case_id,text,context_hash,state,request_ref,receipt,proof,created,started,control_revision) VALUES(?,?,?,?,?,?,\'manual\',NULL,?,?,\'ready\',?,NULL,NULL,?,NULL,?)",(reply_id,plan,creator,pending[0] if pending else 0,rel['oec'],cid,text.strip(),digest(context),request_id,self.s.clock(),rel['revision']))
+   return self.get(reply_id)
+ def prepare_manual_card(self,plan,creator,cid,card,expected_control_revision,request_id):
+  if not isinstance(card,dict) or not card.get('pid') or not card.get('listId') or not isinstance(cid,str) or not cid.isdigit() or \
+     type(expected_control_revision) is not int or expected_control_revision<1 or not isinstance(request_id,str) or \
+     not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._:-]{7,119}',request_id):raise CycleError('manual_reply_invalid')
+  reply_id='manual-card-'+digest([plan,creator,request_id])[:24];payload=encoded(card)
+  with self.s.tx():
+   old=self.get(reply_id)
+   if old:
+    if old['text']!=payload or old['cid']!=cid or old['kind']!='manual_card':raise CycleError('manual_reply_request_conflict')
+    return old
+   rel=self.s.db.execute('SELECT * FROM relationship WHERE plan_id=? AND creator_id=?',(plan,creator)).fetchone();cp=self.s.db.execute('SELECT oec FROM inbox_checkpoint WHERE plan_id=? AND cid=?',(plan,cid)).fetchone()
+   if not rel or rel['revision']!=expected_control_revision or rel['mode']=='paused' or not cp or cp['oec']!=rel['oec']:raise CycleError('manual_reply_context_changed')
+   context=self.service.context(plan,creator)
+   self.s.db.execute("INSERT INTO service_reply(id,plan_id,creator_id,pending_revision,oec,cid,kind,case_id,text,context_hash,state,request_ref,receipt,proof,created,started,control_revision) VALUES(?,?,?,?,?,?,\'manual_card\',NULL,?,?,\'ready\',?,NULL,NULL,?,NULL,?)",(reply_id,plan,creator,0,rel['oec'],cid,payload,digest(context),request_id,self.s.clock(),rel['revision']))
+   return self.get(reply_id)
+ def prepare_policy(self,plan,creator,cid,pending_revision,action,template_key,text,turn_id,policy_version):
+  if action not in ('sample_self_service','collaboration_ack','link_usage') or not isinstance(text,str) or not text.strip():raise CycleError('reply_policy_invalid')
+  with self.s.tx():
+   rel=self.s.db.execute('SELECT * FROM relationship WHERE plan_id=? AND creator_id=?',(plan,creator)).fetchone();pending=self.s.db.execute('SELECT * FROM inbox_pending WHERE plan_id=? AND creator_id=?',(plan,creator)).fetchone()
+   if not rel or rel['mode']!='auto' or rel['rejected'] or not pending or pending['revision']!=pending_revision:raise CycleError('reply_context_changed')
+   context=self.service.context(plan,creator);cids={row['cid'] for row in context if not row['historical']}
+   if cids!={cid}:raise CycleError('reply_context_changed')
+   reply_id='agent-reply-'+digest([plan,creator,action,turn_id,policy_version])[:24];old=self.get(reply_id)
+   if old:return old
+   self.s.db.execute("INSERT INTO service_reply(id,plan_id,creator_id,pending_revision,oec,cid,kind,case_id,text,context_hash,state,request_ref,receipt,proof,created,started,control_revision) VALUES(?,?,?,?,?,?,?,NULL,?,?,\'ready\',?,NULL,NULL,?,NULL,?)",(reply_id,plan,creator,pending_revision,rel['oec'],cid,action,text.strip(),digest(context),str(uuid.uuid4()),self.s.clock(),rel['revision']))
+   return self.get(reply_id)
  def begin(self,id):
   with self.s.tx():
    q=self.get(id);p=self.s.db.execute('SELECT * FROM inbox_pending WHERE plan_id=? AND creator_id=?',(q['plan_id'],q['creator_id'])).fetchone();r=self.s.db.execute('SELECT * FROM relationship WHERE plan_id=? AND creator_id=?',(q['plan_id'],q['creator_id'])).fetchone()
    if q['state']!='ready':raise CycleError('reply_not_ready')
-   if not self.enabled(q['plan_id']) or self.s._plan(q['plan_id'])['state']!='active' or not p or p['revision']!=q['pending_revision'] or p['due_at']>self.s.clock() or r['revision']!=q['control_revision'] or r['mode']=='paused' or digest(self.service.context(q['plan_id'],q['creator_id']))!=q['context_hash']:raise CycleError('reply_context_changed')
+   manual=q['kind'] in ('manual','manual_card')
+   if (not manual and not self.enabled(q['plan_id'])) or self.s._plan(q['plan_id'])['state']!='active' or \
+      (not manual and (not p or p['revision']!=q['pending_revision'] or p['due_at']>self.s.clock())) or \
+      not r or r['revision']!=q['control_revision'] or r['mode']=='paused' or digest(self.service.context(q['plan_id'],q['creator_id']))!=q['context_hash']:raise CycleError('reply_context_changed')
    if q['kind']=='answer' and r['mode']!='auto':raise CycleError('reply_human_control')
    if q['case_id']:
     case=self.s.db.execute('SELECT * FROM service_case WHERE id=?',(q['case_id'],)).fetchone()
@@ -70,7 +116,8 @@ class AutoReplies:
    if self.s.db.execute("SELECT 1 FROM cycle_delivery WHERE state='unknown' AND plan_id=?",(q['plan_id'],)).fetchone():raise CycleError('delivery_unknown')
    if self.s.db.execute("SELECT 1 FROM service_reply WHERE plan_id=? AND state IN ('inflight','unknown','accepted')",(q['plan_id'],)).fetchone():raise CycleError('reply_unknown')
    self.s.db.execute("UPDATE service_reply SET state='inflight',started=? WHERE id=?",(self.s.clock(),id))
-   return {'dispatchAllowed':True,'requestRef':q['request_ref'],'stage':'send_message','componentKind':'text'}
+   return {'dispatchAllowed':True,'requestRef':q['request_ref'],'stage':'send_message',
+           'componentKind':'card' if q['kind']=='manual_card' else 'text'}
  def accepted(self,id,receipt):
   with self.s.tx():
    q=self.get(id)
@@ -84,6 +131,7 @@ class AutoReplies:
    if q['state'] not in ('inflight','accepted','unknown') or proof.get('status')!='confirmed' or proof.get('requestRef')!=q['request_ref'] or proof.get('conversationId')!=q['cid'] or not proof.get('messageId'):raise CycleError('reply_proof_invalid')
    self.s.db.execute("UPDATE service_reply SET state='confirmed',proof=? WHERE id=?",(encoded(proof),id))
    if q['case_id']:self.s.db.execute("UPDATE service_case SET ack_state='confirmed' WHERE id=?",(q['case_id'],))
+   elif q['kind'] in ('manual','manual_card'):pass
    else:
     p=self.s.db.execute('SELECT revision FROM inbox_pending WHERE plan_id=? AND creator_id=?',(q['plan_id'],q['creator_id'])).fetchone()
     if p and p[0]==q['pending_revision']:

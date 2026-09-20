@@ -1,8 +1,9 @@
 "use client";
 
-import {Button,Card,Field,Input,Notice,Pill,Select,StatTile,Toggle} from "../bdhub/ui";
+import {Button,Card,Field,Input,Notice,Pill,StatTile,Toggle} from "../bdhub/ui";
 import {PROBE_COUNT,SEND_COUNTS} from "./send-contracts";
 import type {SendController} from "./useSendBatch";
+import SendTemplateCard from "./SendTemplateCard";
 
 const number=(value:number|undefined|null)=>value==null?"—":value.toLocaleString("zh-CN");
 const batchLabels:Record<string,string>={prepared:"已冻结，等待明确启动",start_failed:"启动失败，可重试",starting:"正在启动",running:"发送中",stop_requested:"正在安全停止",stopped:"已停止",waiting_reconciliation:"结果未知，等待核验",completed:"已完成",completed_with_exceptions:"已完成，有逐项例外",local_capacity_reached:"本地 24 小时额度已到顶",platform_rejected:"平台账号级拒绝",material_refresh_record_failed:"材料状态落账失败"};
@@ -32,9 +33,10 @@ export default function SendBatchPanel({controller}:{controller:SendController})
  const blockers=groupBlockers(preview.skipped);
  const waiting=(layers.queued??0)+(layers.cooling??0)+(layers.awaiting_reply??0);
  const inactive=(layers.excluded??0)+(layers.product_inactive??0);
- const selectedTemplate=data.templates.find(item=>item.id===(draft?.template??data.config.template));
  return <div className="space-y-5">
   {batch?.state==="waiting_reconciliation"&&<Notice tone="warning"><strong>本批有结果未知的发送意图。</strong> 新发送和候补提升均已暂停；只允许使用原账号、原 requestRef 和原冻结材料核验，不得换号或重发。</Notice>}
+
+  <SendTemplateCard controller={controller}/>
 
   <Card title="意大利发送资格" subtitle="A 类销售线索整体优先；B 类只在没有同对 A 证据时按代表视频进入。">
    <div className="space-y-4 p-5">
@@ -52,9 +54,8 @@ export default function SendBatchPanel({controller}:{controller:SendController})
 
   <Card title="本批设置与操作" subtitle="先保存设置并取得新预览，再冻结；冻结不会调用平台，只有“确认并开始”会启动真实 worker。" action={preview.window.enabled?<Pill tone={preview.window.open?"success":"warning"}>窗口{preview.window.open?"已打开":"等待开放"}</Pill>:<Pill tone="neutral">未设置窗口</Pill>}>
    <div className="space-y-5 p-5">
-    <div className="grid gap-4 lg:grid-cols-[1fr_1.1fr_1fr_1.2fr]">
+    <div className="grid gap-4 lg:grid-cols-[1fr_1fr_1.2fr]">
      <Field label="正式目标人数" hint={`允许 1–2000；候补自动为 ${number(reserve)} 人。`}><div className="space-y-2"><Input type="number" min={1} max={2000} value={count} disabled={busy||!draft||active} onChange={event=>draft&&setDraft({...draft,count:Number(event.target.value)})}/><div className="flex flex-wrap gap-2">{SEND_COUNTS.map(value=><Button key={value} size="sm" variant={count===value?"primary":"outline"} disabled={busy||!draft||active} onClick={()=>draft&&setDraft({...draft,count:value})}>{value}</Button>)}</div></div></Field>
-     <Field label="发送话术模板" hint={selectedTemplate?.description??"选择后先重新预览，冻结时把模板和最终正文一起保存。"}><Select value={draft?.template??data.config.template} disabled={busy||!draft||active} onChange={event=>draft&&setDraft({...draft,template:event.target.value as typeof draft.template})}>{data.templates.map(item=><option key={item.id} value={item.id}>{item.label}</option>)}</Select></Field>
      <Field label="发送窗口（北京时间）" hint="未启用时可先备料和冻结；启动后按窗口等待。"><div className="space-y-2"><div className="flex items-center gap-2"><Input type="time" value={draft?.window[0]??data.config.window[0]} disabled={busy||!draft||!draft.windowEnabled||active} onChange={event=>draft&&setDraft({...draft,window:[event.target.value,draft.window[1]]})}/><span className="text-sm text-gray-400">至</span><Input type="text" maxLength={5} value={draft?.window[1]??data.config.window[1]} disabled={busy||!draft||!draft.windowEnabled||active} onChange={event=>draft&&setDraft({...draft,window:[draft.window[0],event.target.value]})}/></div><Toggle label="启用发送窗口" checked={Boolean(draft?.windowEnabled)} disabled={busy||!draft||active} onChange={value=>draft&&setDraft({...draft,windowEnabled:value})}/></div></Field>
      <div className="rounded-xl border border-gray-200 p-4 dark:border-gray-800"><p className="text-sm font-medium text-gray-700 dark:text-gray-200">滚动 24 小时新联系额度</p><p className="mt-2 text-2xl font-semibold">{number(preview.capacity?.remaining)} <span className="text-sm font-normal text-gray-400">可用 / {number(preview.capacity?.limit)}</span></p><p className="mt-2 text-xs leading-5 text-gray-500">本地 500 是保护闸门，不等于平台公布额度。越界探测只在高级设置中显式开启。</p><details className="mt-3"><summary className="cursor-pointer text-xs font-medium text-brand-500">高级：平台额度探测</summary><div className="mt-2"><Toggle label={`允许越过本地闸门（快捷探测 ${PROBE_COUNT}）`} description="真实回执逐条落账；单达人限制不停止整批，账号级拒绝才停止。" checked={Boolean(draft?.widen)} disabled={busy||!draft||active} onChange={value=>draft&&setDraft({...draft,widen:value,count:value&&count<PROBE_COUNT?PROBE_COUNT:count})}/></div></details></div>
     </div>
@@ -64,7 +65,7 @@ export default function SendBatchPanel({controller}:{controller:SendController})
    </div>
   </Card>
 
-  <Card title="本次预览" subtitle="页面只展示 1–3 条正式成员样例；完整正式成员、候补和选定话术只在服务端冻结。" action={<div className="flex flex-wrap gap-2"><Pill tone="brand">{data.templates.find(item=>item.id===data.config.template)?.label??data.config.template}</Pill><Pill tone={preview.fullPreparation?"success":"warning"}>正式 {number(preview.sendable)}/{number(preview.requested)}</Pill><Pill tone={preview.reserveReady===preview.reserveRequested?"success":"warning"}>候补 {number(preview.reserveReady)}/{number(preview.reserveRequested)}</Pill></div>}>
+  <Card title="本次预览" subtitle="页面只展示 1–3 条正式成员样例；完整正式成员、候补和选定话术只在服务端冻结。" action={<div className="flex flex-wrap gap-2"><Pill tone="brand">{data.templates.find(item=>item.id===data.config.template)?.name??data.config.template}</Pill><Pill tone={preview.fullPreparation?"success":"warning"}>正式 {number(preview.sendable)}/{number(preview.requested)}</Pill><Pill tone={preview.reserveReady===preview.reserveRequested?"success":"warning"}>候补 {number(preview.reserveReady)}/{number(preview.reserveRequested)}</Pill></div>}>
    <div className="space-y-4 p-5">
     <div className="grid gap-3 md:grid-cols-3">{preview.samples.map(row=><article key={`${row.oecId}-${row.pid}`} className="rounded-xl border border-gray-200 p-4 dark:border-gray-800"><div className="flex flex-wrap items-center justify-between gap-2"><strong className="text-sm text-gray-800 dark:text-white">@{row.handle}</strong><Pill tone={row.sourceClass==="A"?"brand":"neutral"}>{row.sourceClass} 类</Pill></div><p className="mt-2 text-xs leading-5 text-gray-500">{row.sourceClass==="A"?`GMV ${row.gmv??"未解析"} EUR · 销量 ${number(row.units)} · sourceRank ${number(row.sourceRank)}`:`代表视频 ${number(row.videoViews)} 播放 · ${row.videoReleasedAt??"发布时间未记录"}`}</p><p className="mt-2 break-all text-[11px] text-gray-400">OECID …{row.oecId.slice(-8)} · PID {row.pid}<br/>currentListId …{row.currentListId.slice(-8)}</p><p lang="it" className="mt-3 rounded-lg bg-gray-50 p-3 text-sm leading-6 text-gray-700 dark:bg-gray-800 dark:text-gray-200">{row.messageIt||"材料渲染异常；此成员不能冻结。"}</p>{row.messageZh&&<p className="mt-2 text-xs leading-5 text-gray-500">中文辅助：{row.messageZh}</p>}</article>)}</div>
     {!preview.samples.length&&<p className="py-5 text-center text-sm text-gray-500">当前没有可展示的正式成员样例。</p>}

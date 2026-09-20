@@ -3,6 +3,6 @@
   "refreshDays": 7,
   "leadsPerPid": 20,
   "windowDays": 14,
-  "batchSize": 500,
+  "batchSize": 5000,
   "maxAttempts": 3
 }

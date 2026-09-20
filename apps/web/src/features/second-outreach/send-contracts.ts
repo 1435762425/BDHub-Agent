@@ -9,8 +9,9 @@
 export const SEND_COUNTS=[500,1000];
 export const PROBE_COUNT=600;
 export const SEND_TEMPLATE_IDS=["standard","brief","reconnect","video_focus","live_focus"] as const;
-export type SendTemplateId=typeof SEND_TEMPLATE_IDS[number];
-export type SendTemplateOption={id:SendTemplateId;label:string;description:string};
+export type SendTemplateId=string;
+export type SendTemplateOption={id:SendTemplateId;name:string;description:string;bodyIt:string;revision:number;
+ builtIn:boolean;state:"active"|"archived";parameters:string[]};
 
 /** 这几条不是卡点，是"这一批装不下/还没到点"，页面要把它们跟真卡点分开说。 */
 export const NOT_A_BLOCKER=new Set(["beyond_requested_size","local_capacity_reached","outside_send_window"]);

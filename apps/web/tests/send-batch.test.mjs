@@ -12,13 +12,8 @@ const authorization={source:'current_user_request',scope:'pool_to_send',maxPeopl
  reservePeople:50,frozenPeople:550,reservePolicy:'ceil-10-percent-v1',
  widenLocalGate:false,sendWindow:null,messageTemplate:'standard',institutionNewContactRollingCap:500,
  materialPolicy:'frozen-current-binding-v1',note:'只消费本批冻结位置'};
-const templates=[
- {id:'standard',label:'佣金提升',description:'先说明更高佣金，再邀请制作短视频或直播。'},
- {id:'brief',label:'简短直接',description:'一句话说明商品、佣金和合作动作。'},
- {id:'reconnect',label:'再次合作',description:'强调这是同一商品的再次合作邀请。'},
- {id:'video_focus',label:'短视频优先',description:'明确邀请达人优先制作新的短视频。'},
- {id:'live_focus',label:'直播优先',description:'明确邀请达人在下一场直播中再次推广。'},
-];
+const template=(id,name,description)=>({id,name,description,bodyIt:'Ciao @{creator_handle}! {product_name} {creator_commission}%',revision:1,builtIn:true,state:'active',parameters:['creator_handle','product_name','creator_commission']});
+const templates=[template('standard','佣金提升','先说明更高佣金，再邀请制作短视频或直播。'),template('brief','简短直接','一句话说明商品、佣金和合作动作。'),template('reconnect','再次合作','强调这是同一商品的再次合作邀请。'),template('video_focus','短视频优先','明确邀请达人优先制作新的短视频。'),template('live_focus','直播优先','明确邀请达人在下一场直播中再次推广。')];
 
 const payload={market:'it',account:'acc6',available:true,
  config:{count:500,widen:false,windowEnabled:false,window:['09:00','24:00'],template:'standard'},templates,

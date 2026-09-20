@@ -2,6 +2,16 @@
 
 更新时间：2026-09-20（Asia/Shanghai）。本文件是当前开发交接入口；产品规则以 [项目文档](../PROJECT.md) 为准，技术结构以 [技术文档](../TECHNICAL.md) 为准。动态数量是本次只读快照，后续以 `var/` 台账和页面 API 回读为准。
 
+## 0. 2026-09-20 会话工作台、模板与互斥窗口
+
+- 新增一级 `/it/conversations`，默认打开“需人工”，二级页为人工回复模板和 Agent AI 回复设置；旧 `/it/workspace/inbox` 重定向到新入口，合作工作台只保留发送与结果历史。
+- 当前真实只读队列为 33 条：需人工 5、处理中 6、Agent 已处理 1、已完成 21。需人工只计算当前仍有 pending/开放案件的会话，不把无 pending 的历史审核样本混入；详情展示原因、达人原文、等待时间、完整时间线、相关 PID/listId 和草稿。审核结论为人工但尚无实体 case 的 4 条会话会投影为可完成的人工事项，用户记录结果后才原子落账并解除本次冻结。
+- 人工操作已接文本、人工模板、商品卡、草稿 revision、中→意翻译和事项完成；图片入口明确禁用，因为当前 Pure HTTP 适配器没有图片写端点。人工文字/卡片共用持久 `service_reply`、同账号写门禁、request ref 和精确回查，失败后复用同一意图，不生成盲目重发。
+- 二发模板已经成为发送页独立卡片：五个内置模板无需保存批次即可看全文，并支持三参数自定义模板的创建、修订和归档；正在使用的模板不能归档。二发、人工回复和 Agent 固定模板三个域完全分离。
+- Agent 执行链已接 `no_reply` 本地结案、三条固定模板、`human` 人工案件、持久回复意图和原意图回查；人工 `turn_review` 优先于模型。默认北京时间回复 `15:00–16:00`、缓冲 30 分钟、二发 `16:30–24:00`，保存时双向拒绝重叠；等待二发窗口不会挡住回复窗口。
+- migration v10 已在备份 `var/backups/state/20260920T114352Z-before-conversation-workbench` 后应用，21 库校验通过。当前 `agent_reply_setting` 尚无持久行，页面读取默认设置；`service_reply_config.enabled=0`，Agent worker 未运行，真实回复与二发发送均为 0。
+- 货盘达人线索页已去掉与当前政策冲突的可编辑条件，集中展示 A 类 14 天/20 位/7 天刷新、B 类 30 天/1,000 播放/7 天完整重读和“只按真实平台额度停”的固定规则；`batchSize=5000` 仅作技术上限。
+
 ## 1. 接管结论
 
 DeepSeek/Agent 已经把 9 月 14 日的“货盘批量备链”继续推进到一条较完整的意大利二发准备链：Campaign/全托货盘、筛分与选入、TapLink 复用/创建、线索队列、达人级 OECID、发送池、收信监控、发送前预检和页面分区均已有代码与测试。
@@ -9,13 +19,13 @@ DeepSeek/Agent 已经把 9 月 14 日的“货盘批量备链”继续推进到�
 当前发送桥已经接通，但仍不是自动经营态：
 
 - `/api/send` 已支持预览指纹、不可变冻结、明确 start/stop 和批次状态；只有用户在页面点击“确认并开始”才会启动真实 worker。本轮没有点击，真实发送仍暂停。
-- 事件级回复账本、五动作影子分类和人工审核页已上线；AI 自动回复仍关闭，分类和审核都不会创建 `service_reply`。
+- 事件级回复账本、五动作审核、会话工作台和受控 Agent 执行链已上线；Agent 开关仍关闭，当前没有创建新的真实回复发送意图。
 - 工作台“统计日历”已接通现有 `/api/inbox`：直接展示最近 14 个北京自然日的确认触达、确认卡片、回复、加橱窗和未确认，不增加轮询或后台任务。
 - 2026-09-20 01:xx 未发现批次准备、二发、冻结发送或收信 worker；代码与断点保留，但本轮没有擅自恢复。
 
 2026-09-20 意大利 V1 工作台已完成代码侧收敛，尚未在本节把构建成功误写成新的真实发送验收：
 
-- 生产页面改为 `/it/workspace/{send,inbox,history}`、`/it/catalog`、`/it/creators` 与 `/ops/*`；根页进入意大利发送工作台。
+- 生产页面为 `/it/workspace/{send,history}`、`/it/conversations{,/templates,/agent}`、`/it/catalog`、`/it/creators` 与 `/ops/*`；根页进入意大利发送工作台。
 - `/flow-demo`、浏览器演示页、local runtime、matching/outreach-drafts、second-pilot、second-live trial、旧二发历史和早期 batch task Web 入口已退出生产构建；历史 SQLite 未删除并继续备份。
 - `lead-pool.v3` 把真实 A/B 来源证据发布到 Web；B-only 位置现在能以代表视频 source 进入冻结复检，不再因只有 A 类 `source_edge` 才能冻结而静默丢失。
 - `/api/send` 增加一个明确的 verify-only unknown 核验动作：只读原 delivery，遇到后续未提交的 ready 组件立即停止；核验完成后仍需用户再次明确 start 才继续批次。
@@ -101,10 +111,11 @@ DeepSeek/Agent 已经把 9 月 14 日的“货盘批量备链”继续推进到�
 | 收信与统计 | 现有 inbox worker 接入作业面板，按北京时间统计并排除历史补录 | 盘点中出现过一次 `im_transport_error`，最终回读已清除；继续观察而不是重启掩盖 |
 | 统计日历 | 最近 14 日汇总、每日紧凑日历、今日高亮、未确认单列、点击日期查看分页明细 | 明细严格只读并只投影白名单字段；原始 snapshot、平台 payload 和回执不下发 |
 | 早期指定数量任务 | 历史任务卡改为只读，缺失的选择明细显示“历史未记录”而不是 0；当前页面不再唤醒旧 worker | 任意 N＋10% 候补已迁入 frozen-v2，旧任务权限不再参与当前执行 |
-| 回复分类 | 不可变 episode/turn/关联、五种动作、三条固定回复、DeepSeek/Jev 并列动作与置信度、中文理解和用户正误审核页 | 真实自动回复关闭；`Certo!` 的模型分歧仍需用户审核 |
-| 生产导航 | 意大利合作工作台、货盘与材料、达人、运行与设置四个入口 | 旧体验导航与 `/flow-demo` 已退出构建；后续市场按意大利接入标准逐项验收，不提供“全部市场”执行页 |
+| 回复分类与执行 | 不可变 episode/turn/关联、五种动作、三条固定回复、人工真值优先、持久意图和精确回查 | Agent 开关关闭；`human` 永不自动发送，DeepSeek/Jev 仍继续影子评测 |
+| 会话工作台 | 默认需人工队列、三栏时间线、草稿、人工模板、文本/卡片、翻译、事项完成和 Agent 设置 | 图片发送未接端点，入口保持禁用；人工发送只在用户点击后执行 |
+| 生产导航 | 意大利合作工作台、会话工作台、货盘与材料、达人、运行与设置五个入口 | 旧体验导航与 `/flow-demo` 已退出构建；后续市场按意大利接入标准逐项验收，不提供“全部市场”执行页 |
 | 货盘决策密度 | 采集、筛选、链接、线索、身份和发送池的核心数字统一为阶段表格 | 大容器仅保留阶段和动作；明细继续按需展开，不再为每个数字铺独立小卡 |
-| 发送话术 | 新批次可切换 5 种意大利语模板，预览同时展示中文辅助 | 模板 ID 与最终正文进入 preview hash 和冻结候选；当前未冻结或启动新批次，真实发送仍为 0 |
+| 发送话术 | 独立模板卡展示 5 个内置全文，并支持三参数自定义模板与 revision | 模板 ID、revision 与最终正文进入 preview hash 和冻结候选；当前 `video_focus` 保持选中，真实发送仍为 0 |
 
 ## 5. 当前必须保持的业务门禁
 
@@ -125,7 +136,7 @@ DeepSeek/Agent 已经把 9 月 14 日的“货盘批量备链”继续推进到�
 5. **文档曾混入大量动态流水**：原 `AGENTS.md` 已由本轮收敛；以后不得继续把每次数字和事故追加回根规则。
 6. **测试资源释放告警已解决**：tracemalloc 证明告警来自测试夹具把连接事务上下文误当成 close；20 个夹具文件已显式关闭，`-W default` 全量 1081 项未关闭数据库 warning 为 0，生产 migration 本身没有泄漏。
 7. **旧批次执行路径已退役**：`bulk-second-send.py` 固定拒绝；`cycle_burst` 缺少 running freeze 或不可变候选时在认证前拒绝。历史 legacy-only `cycle_bulk` 只读保留，不能拿旧授权恢复发送。
-8. **回复真值集已完成但不能启用自动回复**：DeepSeek 28/35、Jev 22/35；双模型一致仍有 2 条误自动处理，且本批没有 `link_usage` 真值。DeepSeek 暂作主影子、Jev 保持 challenger，真实回复 transport 未接新合同。
+8. **回复执行链已接但仍未做真实平台验收**：DeepSeek 28/35、Jev 22/35；双模型一致仍有 2 条误自动处理，且本批没有 `link_usage` 真值。人工 `turn_review` 已优先，Jev 保持 challenger；Agent 开关必须维持关闭，直到用户明确启用并按小范围案例验收真实回执。
 9. **收信监控当前未运行**：代码与断点都保留，但没有常驻 `poll-cycle-inbox.py --worker` 进程；这是运行状态，不授权本轮自动恢复。
 10. **异机副本仍未配置**：21 库正式备份、校验和空目录恢复已经可用，但首份基线仍在本机；机器损坏时仍需要外部保存位置。
 11. **凭据尚未完全独立**：解释器、包依赖和协议源码已迁入本项目，但画像、IM、TapLink 的账号配置、身份文件和锁仍按既有只读边界取自旧 BDHub；不能把代码独立误报成账号迁移完成。
@@ -150,8 +161,8 @@ DeepSeek/Agent 已经把 9 月 14 日的“货盘批量备链”继续推进到�
 
 - migration v4 建立 `outbound_episode / inbound_turn / turn_episode_link / service_case_turn / reply_classification / reply_review`，备份位于 `var/backups/20260920-p4-reply-events/second-cycle.sqlite`；
 - 本机历史证据回填 495 episode、35 turn、26 个有关联，`platformWrites=0`、回填 `modelCalls=0`；
-- 收信 worker 删除 60 秒逐达人模型调用，改为只保存事件、立即冻结达人、两小时集中待处理；
-- DeepSeek 与 TypeSafe Jev 都只做五动作影子分类；Jev 固定官方 `jev-1.13.0`，固定模板与模型判断分离；
+- 收信 worker 删除 60 秒逐达人模型调用，改为只保存事件、立即冻结达人；最初的两小时建议已由本轮 `15:00–16:00` 独立集中窗口取代；
+- TypeSafe Jev 继续只做五动作影子分类；DeepSeek 已接 Agent 分类入口，但人工 `turn_review` 优先且 Agent 开关仍关闭。Jev 固定官方 `jev-1.13.0`，固定模板与模型判断分离；
 - 回复预演页并列展示两模型完整判断、固定显示中文理解，并让用户直接选择独立的五动作标准答案；migration v5 的 append-only `turn_review` 已应用。
 - migration v6 将审核与业务应用拆开：`no_reply` 安全解除已处理冻结、`human` 进入人工案件、模板动作只生成候选不发送；备份位于 `var/backups/20260920-review-application-v6/second-cycle.sqlite`。
 - 旧 `reply_facts` 已从供给调度器的 active stage 集合和命令路由移除；本机历史行仍保留且只读可追溯，不再被 claim、recover 或页面状态投影。工作台同时移除“60 秒合并、事实工具自动答、发送前远程重验”等过期口径。
@@ -228,11 +239,11 @@ DeepSeek/Agent 已经把 9 月 14 日的“货盘批量备链”继续推进到�
 - 20 个测试文件改为事务退出后确定性 close，并修复一次重启测试覆盖旧 `CatalogPreparation` 对象；
 - 未关闭数据库 `ResourceWarning` 从 265 → 45 → 13 → 0；`-W default` 下全量 1081 项通过。
 
-### 下一步：扩大影子集与真实发送验收
+### 下一步：保持开关关闭并准备小范围验收
 
 1. 35 条人工真值已完成并形成 [最终人工评测](../implementation/reply-model-evaluation-20260920.md)；不应用历史样本，不生成或发送回复；
 2. 下一轮真实入站样本重点补齐 `link_usage`、拒绝/停联、佣金异常、多意图和简短肯定词；DeepSeek 主影子、Jev challenger，继续比较误自动处理；
-3. 只有用户另行明确开启后，才设计真实自动回复 transport；当前 `collaboration_ack/link_usage` 固定人工；
+3. 真实自动回复 transport 已接通，但当前 `enabled=false`；只有用户在 Agent 设置页明确启用后，才在 `15:00–16:00` 窗口执行，并先核对固定模板动作的原意图回执；
 4. 第一次 frozen-v2 真实发送和账号级日额度探测仍由用户另行在页面明确启动。
 
 ### 已完成：零销量视频证据可行性与完整分页
@@ -273,6 +284,7 @@ DeepSeek/Agent 已经把 9 月 14 日的“货盘批量备链”继续推进到�
 | 冻结发送 | `scripts/lib/send_batch.py`、`scripts/send-batch.py`、`scripts/send-batch-worker.py`、`scripts/lib/cycle_burst.py`、`apps/web/src/server/send/bridge.ts` |
 | 收信与日历 | `scripts/poll-cycle-inbox.py`、`scripts/lib/cycle_stats.py`、`apps/web/src/server/inbox/bridge.ts` |
 | 回复事件与审核 | `scripts/lib/reply_events.py`、`scripts/reply-review.py`、`config/reply-policy.json`、`apps/web/src/server/reply-review/bridge.ts` |
+| 会话与模板 | `scripts/lib/conversation_workbench.py`、`scripts/lib/template_library.py`、`scripts/run-agent-replies.py`、`apps/web/src/features/conversations/` |
 | 状态备份与恢复 | `config/state-backup.json`、`scripts/lib/state_backup.py`、`scripts/state-backup.py` |
 | 作业控制 | `scripts/lib/job_run.py`、`apps/web/src/features/ops/` |
 | 身份 | `scripts/lib/identity_queue.py`、`scripts/identity-batch.py` |
@@ -281,16 +293,16 @@ DeepSeek/Agent 已经把 9 月 14 日的“货盘批量备链”继续推进到�
 
 ## 9. 本轮执行边界
 
-本轮应用了本项目 `second-cycle.sqlite` 的 additive migration v3–v8，构建并重启了 5198 Web 服务；完成 DeepSeek/Jev 全 35 条同集影子分类、turn 级人工真值与受控应用合同、统计日历聚合页、零销量视频只读证据探针，并按用户授权为意大利当前货盘执行 1,548 次 TapLink 创建与逐条回读。没有发送 TikTok IM、冻结业务批次、启动发送/收信 worker、开启 AI 自动回复、创建真实回复发送意图、把视频候选接入发送池、删除历史 TapLink、修改旧 BDHub 或恢复其他 worker。
+本轮已将本项目 `second-cycle.sqlite` 的 additive migration 推进到 v10；新增模板库、会话草稿、Agent 设置/运行表，以及新一级会话工作台和独立 Agent 回复执行器。迁移前备份为 `var/backups/state/20260920T114352Z-before-conversation-workbench`。没有发送 TikTok IM、冻结业务批次、启动发送/收信/Agent worker、开启 Agent 自动回复、创建新的真实回复发送意图、删除历史 TapLink、修改旧 BDHub 或恢复其他 worker。
 
 ## 10. 接管验证
 
 2026-09-20 意大利工作台收敛验证：
 
-- Python：删除已退役模拟/试点测试后，`939` 项当前 `unittest` 通过。
-- Web：删除已退役演示/模拟合同后，`135` 项当前 Node 测试通过。
+- Python：删除已退役模拟/试点测试后，`960` 项当前 `unittest` 通过。
+- Web：删除已退役演示/模拟合同后，`145` 项当前 Node 测试通过。
 - TypeScript：`npm run typecheck` 通过。
 - Next.js：`npm run build` 通过；只生成意大利 market-scoped 页面、`/ops/*` 和保留 API，旧体验/模拟 API 不在 route manifest。
-- 文档：116 个 Markdown 文件的本地链接检查通过；`git diff --check` 通过。
+- 文档：119 个 Markdown 文件的本地链接检查通过；`git diff --check` 通过。
 
 以上均为本机代码与只读合同验证，不是新的平台写入或真实发送验收。

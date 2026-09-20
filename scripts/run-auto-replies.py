@@ -28,7 +28,10 @@ def escalate(store,plan,creator,revision,reason):
   store.db.execute("UPDATE inbox_pending SET state='human' WHERE plan_id=? AND creator_id=?",(plan,creator));store.db.execute("UPDATE relationship SET mode='human',revision=revision+1 WHERE plan_id=? AND creator_id=? AND mode='auto'",(plan,creator))
 
 def run_reply(store,replies,q):
- report={};recovering=q['state'] in ('inflight','accepted','unknown')
+ report={};recovering=q['state'] in ('inflight','accepted','unknown');card=None
+ if q['kind']=='manual_card':
+  from lib.cycle_send_runtime import descriptor
+  card=descriptor(json.loads(q['text']))
  with (ROOT/'var/cycle-send.lock').open('a') as lock:
   fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
   if not recovering:
@@ -44,10 +47,13 @@ def run_reply(store,replies,q):
     h=rt['reads'].history_summary(conv,include_contents=True)
     Inbox(store).ingest(q['plan_id'],conv.conversation_id,q['oec'],h);replies.service.capture(q['plan_id'],conv.conversation_id,q['oec'],h['contents'])
     def permit(scope):
-     if scope.get('oecId')!=q['oec'] or scope.get('conversationId')!=q['cid'] or scope.get('componentKind')!='text' or scope.get('requestRef')!=q['request_ref'] or scope.get('textSha256')!=hashlib.sha256(q['text'].encode()).hexdigest():raise CycleError('reply_scope_mismatch')
+     kind='card' if card else 'text'
+     if scope.get('oecId')!=q['oec'] or scope.get('conversationId')!=q['cid'] or scope.get('componentKind')!=kind or scope.get('requestRef')!=q['request_ref']:raise CycleError('reply_scope_mismatch')
+     if card and (scope.get('productId'),scope.get('listId'),scope.get('bindingSha256'))!=(card.product_id,card.list_id,card.binding_sha256):raise CycleError('reply_scope_mismatch')
+     if not card and scope.get('textSha256')!=hashlib.sha256(q['text'].encode()).hexdigest():raise CycleError('reply_scope_mismatch')
      allowed=replies.begin(q['id']);mark();return allowed
     try:
-     with rt['write_gate']() as mark:receipt=rt['adapter'].send_once(conv,q['text'],q['request_ref'],before_dispatch=permit)
+     with rt['write_gate']() as mark:receipt=rt['adapter'].send_card_once(conv,card,q['request_ref'],before_dispatch=permit) if card else rt['adapter'].send_once(conv,q['text'],q['request_ref'],before_dispatch=permit)
      replies.accepted(q['id'],receipt)
     except Exception:
      if replies.get(q['id'])['state']=='inflight':replies.unknown(q['id'])
@@ -57,7 +63,7 @@ def run_reply(store,replies,q):
        store.db.execute("UPDATE inbox_pending SET revision=revision+1,state='awaiting_content',due_at=? WHERE plan_id=? AND creator_id=? AND revision=?",(time.time()+60,q['plan_id'],q['creator_id'],q['pending_revision']))
      raise
    current=replies.get(q['id']);receipt=json.loads(current['receipt']) if current['receipt'] else {}
-   proof=rt['adapter'].readback(conv,q['text'],q['request_ref'],message_id=receipt.get('messageId'))
+   proof=rt['adapter'].readback_card(conv,card,q['request_ref'],message_id=receipt.get('messageId')) if card else rt['adapter'].readback(conv,q['text'],q['request_ref'],message_id=receipt.get('messageId'))
    if proof['status']=='confirmed':replies.confirm(q['id'],proof)
    else:replies.unknown(q['id'])
  return replies.get(q['id'])['state']

@@ -2,9 +2,9 @@
   "count": 500,
   "widen": false,
   "windowEnabled": true,
-  "template": "standard",
+  "template": "video_focus",
   "window": [
-    "09:00",
+    "16:30",
     "24:00"
   ]
 }

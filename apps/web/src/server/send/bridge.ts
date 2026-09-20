@@ -120,18 +120,21 @@ function validateConfig(raw:unknown):SendConfig{
   if(!/^([01]\d|2[0-4]):[0-5]\d$/.test(t))throw Error('invalid_send');
   return t;
  };
- const template=(v.template??"standard") as SendTemplateId;
- if(!SEND_TEMPLATE_IDS.includes(template))throw Error('invalid_send');
+ const template=text(v.template??"standard",40) as SendTemplateId;
+ if(!SEND_TEMPLATE_IDS.includes(template as typeof SEND_TEMPLATE_IDS[number])&&!/^custom-[a-f0-9]{24}$/.test(template))throw Error('invalid_send');
  return {count,widen:v.widen,windowEnabled:v.windowEnabled,window:[edge(v.window[0]),edge(v.window[1])],template};
 }
 
 function validateTemplates(raw:unknown):SendTemplateOption[]{
- if(!Array.isArray(raw)||raw.length<2||raw.length>8)throw Error('invalid_send');
+ if(!Array.isArray(raw)||raw.length<2||raw.length>200)throw Error('invalid_send');
  const seen=new Set<string>();
- const rows=raw.map(value=>{const row=(value??{}) as Record<string,unknown>;const id=text(row.id,24) as SendTemplateId;
-  if(!SEND_TEMPLATE_IDS.includes(id)||seen.has(id))throw Error('invalid_send');seen.add(id);
-  return {id,label:text(row.label,40),description:text(row.description,160)};});
- if(rows.length!==SEND_TEMPLATE_IDS.length||SEND_TEMPLATE_IDS.some(id=>!seen.has(id)))throw Error('invalid_send');
+ const rows=raw.map(value=>{const row=(value??{}) as Record<string,unknown>;const id=text(row.id,40) as SendTemplateId;
+  if((!SEND_TEMPLATE_IDS.includes(id as typeof SEND_TEMPLATE_IDS[number])&&!/^custom-[a-f0-9]{24}$/.test(id))||seen.has(id)||
+   typeof row.builtIn!=="boolean"||(row.state!=="active"&&row.state!=="archived")||!Array.isArray(row.parameters))throw Error('invalid_send');seen.add(id);
+  const parameters=row.parameters.map(item=>text(item,40));
+  return {id,name:text(row.name,60),description:text(row.description,160),bodyIt:text(row.bodyIt,600),
+   revision:int(row.revision,'invalid_send',100000),builtIn:row.builtIn,state:row.state as "active"|"archived",parameters};});
+ if(SEND_TEMPLATE_IDS.some(id=>!seen.has(id)))throw Error('invalid_send');
  return rows;
 }
 
@@ -152,9 +155,10 @@ function validateAuthorization(raw:unknown):SendAuthorization{
  const reservePeople=int(v.reservePeople??0,'invalid_send',200);
  const frozenPeople=int(v.frozenPeople??maxPeople,'invalid_send',2200);
  const reservePolicy=v.reservePolicy??(reservePeople?"ceil-10-percent-v1":"none");
- const messageTemplate=(v.messageTemplate??"standard") as SendTemplateId;
+ const messageTemplate=text(v.messageTemplate??"standard",40) as SendTemplateId;
  if(frozenPeople!==maxPeople+reservePeople||(reservePolicy!=="ceil-10-percent-v1"&&reservePolicy!=="none")||
-   (reservePeople>0)!==(reservePolicy==="ceil-10-percent-v1")||!SEND_TEMPLATE_IDS.includes(messageTemplate))throw Error('invalid_send');
+   (reservePeople>0)!==(reservePolicy==="ceil-10-percent-v1")||
+   (!SEND_TEMPLATE_IDS.includes(messageTemplate as typeof SEND_TEMPLATE_IDS[number])&&!/^custom-[a-f0-9]{24}$/.test(messageTemplate)))throw Error('invalid_send');
  return {source:v.source,scope:v.scope,maxPeople,
   requestedPeople:int(v.requestedPeople,'invalid_send',2000),reservePeople,frozenPeople,reservePolicy,widenLocalGate:v.widenLocalGate,
   sendWindow,messageTemplate,institutionNewContactRollingCap:int(v.institutionNewContactRollingCap,'invalid_send',2000),

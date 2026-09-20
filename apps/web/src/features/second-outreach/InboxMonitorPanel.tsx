@@ -36,7 +36,7 @@ export default function InboxMonitorPanel({controller}:{controller:InboxControll
     {Boolean(step?.gaps)&&<span className="text-warning-600">历史缺口 {step?.gaps} 个会话</span>}
    </div>
    <p className="text-xs leading-5 text-gray-500">
-    自动回复现在是<strong>{step?.automaticRepliesEnabled?"开启":"关闭"}</strong>状态。新消息先冻结该达人，再进入两小时集中预演：
+    Agent 回复现在是<strong>{step?.automaticRepliesEnabled?"开启":"关闭"}</strong>状态。新消息先冻结该达人；自动外发只按会话工作台设置的独立集中窗口执行：
     Agent 只选五种动作和引用证据，回复正文只能取固定模板；你判「正确 / 不正确」。<strong>预演阶段一条消息都不发</strong>。
    </p>
    {/* 为什么这一轮没读到东西：不说清楚，一个常驻作业看起来就像坏了。 */}

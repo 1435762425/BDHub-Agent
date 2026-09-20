@@ -62,7 +62,7 @@ export default function ReplyReviewPanel(){
      <span className="ml-3">待你审核 <strong>{data.evaluation.pendingReview}</strong> 条。</span>
      {data.evaluation.reviewedTurns>0&&<span className="ml-3">DeepSeek 准确率 {data.evaluation.providers.deepseek.accuracy==null?"—":`${(data.evaluation.providers.deepseek.accuracy*100).toFixed(1)}%`}；Jev 准确率 {data.evaluation.providers.jev.accuracy==null?"—":`${(data.evaluation.providers.jev.accuracy*100).toFixed(1)}%`}。</span>}
     </div>
-    <p className="text-xs leading-5 text-gray-500">每 {data.processingIntervalSeconds/3600} 小时集中处理一次；DeepSeek 与 Jev 都只做影子分类，同一条可直接对照。固定模板也只是候选，<strong>自动回复始终关闭</strong>。</p>
+    <p className="text-xs leading-5 text-gray-500">这里保留每 {data.processingIntervalSeconds/3600} 小时一轮的影子评测口径，用于 DeepSeek/Jev 同集对照，不是 Agent 外发时间。真实 Agent 开关与 15:00–16:00 集中窗口在会话工作台单独管理。</p>
     <div className="space-y-3">{data.items.map(item=><ReviewItem key={`${item.turnId}-${item.classificationId}-${item.review?.revision??0}`} item={item} templates={data.templates} onChanged={()=>setRevision(value=>value+1)}/>)}</div>
    </>}
   </div>

@@ -32,6 +32,7 @@ JOBS = {
     # 定时是可选的开关。它和补身份/链接抢同一把 ACC6 live 锁，靠退避让路（不设互斥：监控本来就该
     # 一直开着，把它设成互斥等于让收信停摆）。
     'inbox': {'label': '收信监控', 'log': 'cycle-inbox-run.log', 'config': 'cycle-inbox.json'},
+    'agentReply': {'label': 'Agent 集中回复', 'log': 'agent-reply-run.log', 'config': 'agent-reply-run.json'},
 }
 
 # 链接作业互斥：两者会开同一个账号的会话，也写同一份链接账本。
@@ -43,6 +44,7 @@ ALLOWED = {'selection': {'limit'}, 'links': {'readLimit', 'creates', 'lanes', 'q
            'campaignCollect': {'maxRequests', 'passes'},
            'identity': {'batchSize', 'cohortSize'},
            'inbox': {'limit', 'interval'}}
+ALLOWED['agentReply']={'interval'}
 LANES = (1, 3, 6, 9)
 QPS = (3, 5, 8, 12)
 READ_MAX = 200
@@ -74,6 +76,8 @@ def progress_path(root, name):
     if name == 'inbox':
         # 收信监控本来就在写这份状态（页面也一直在读它）；再写一份就成了两个真相。
         return Path(root) / 'var/cycle-inbox-status.json'
+    if name == 'agentReply':
+        return Path(root) / 'var/agent-reply-status.json'
     return Path(root) / f'var/job-{name}-progress.json'
 
 
@@ -118,6 +122,11 @@ def read_progress(root, name):
             return _collect_step(payload)
         if name == 'inbox':
             return _inbox_step(payload)
+        if name == 'agentReply':
+            return {'state':str(payload.get('state') or ''),'claimed':int(payload.get('claimed') or 0),
+                    'prepared':int(payload.get('prepared') or 0),'human':int(payload.get('human') or 0),
+                    'confirmed':int(payload.get('confirmed') or 0),'unknown':int(payload.get('unknown') or 0),
+                    'error':str(payload['error']) if payload.get('error') else None}
         return _link_step(payload)
     except (TypeError, ValueError):
         return None
@@ -229,6 +238,8 @@ def validate(name, raw):
         return {'limit': _bounded(raw.get('limit', 6), 1, INBOX_LIMIT_MAX, 'job_inbox_limit_invalid'),
                 'interval': _bounded(raw.get('interval', 60), INBOX_INTERVAL[0], INBOX_INTERVAL[1],
                                      'job_inbox_interval_invalid')}
+    if name == 'agentReply':
+        return {'interval':_bounded(raw.get('interval',60),30,3600,'job_agent_reply_interval_invalid')}
     lanes = raw.get('lanes', 9)
     qps = raw.get('qps', 12)
     if lanes not in LANES or qps not in QPS:
@@ -325,6 +336,9 @@ def command_for(root, name, config, stamp):
         return [str(python_bin(root)), str(root / 'scripts/poll-cycle-inbox.py'), '--worker',
                 '--limit', str(config['limit']), '--interval', str(config['interval']),
                 '--stop', str(stop_path(root, name))]
+    if name == 'agentReply':
+        return [str(python_bin(root)),str(root/'scripts/run-agent-replies.py'),'--worker',
+                '--interval',str(config['interval']),'--stop',str(stop_path(root,name))]
     report = root / f'var/catalog-link-run-{stamp}.json'
     # 非全托：目标来自已入池商品，读卡按活动逐个进行；同一套驱动器，只换渠道。
     route = 'campaign' if name == 'linksCampaign' else 'selected'
@@ -365,7 +379,8 @@ def start(root, name, raw=None, *, clock=time.time, spawn=subprocess.Popen):
                       stdout=handle, stderr=subprocess.STDOUT, start_new_session=True,
                       env={**os.environ, 'PYTHONDONTWRITEBYTECODE': '1'})
     record = {'name': name, 'label': JOBS[name]['label'], 'pid': child.pid, 'startedAt': clock(),
-              'config': config, 'log': str(log), 'platformWrites': name in LINK_JOBS and config['creates'] > 0}
+              'config': config, 'log': str(log),
+              'platformWrites': name == 'agentReply' or (name in LINK_JOBS and config['creates'] > 0)}
     # Clear the previous run's step and any stop request: the new process publishes its own step,
     # and a leftover stop file would end this run before its first round.
     for stale in (progress_path(root, name), stop_path(root, name)):

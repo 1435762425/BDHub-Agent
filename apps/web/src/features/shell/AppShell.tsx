@@ -8,6 +8,7 @@ import {Button,Icon,type IconName} from "@/features/bdhub/ui";
 
 const navigation:{href:string;label:string;icon:IconName;match:string}[]=[
  {href:"/it/workspace/send",label:"合作工作台",icon:"chat",match:"/it/workspace"},
+ {href:"/it/conversations",label:"会话工作台",icon:"bell",match:"/it/conversations"},
  {href:"/it/catalog",label:"货盘与材料",icon:"grid",match:"/it/catalog"},
  {href:"/it/creators",label:"达人",icon:"users",match:"/it/creators"},
  {href:"/ops/jobs",label:"运行与设置",icon:"settings",match:"/ops"},
@@ -38,7 +39,7 @@ export default function AppShell({children}:{children:ReactNode}){
    </nav>
    <div className={`mb-5 mx-2 rounded-xl border border-gray-200 px-3 py-3 text-xs leading-5 text-gray-500 dark:border-gray-800 ${collapsed?"lg:hidden":""}`}>
     <p className="font-medium text-gray-700 dark:text-gray-200">运行边界</p>
-    <p className="mt-1">真实发送需冻结后明确启动；AI 自动回复保持关闭。</p>
+    <p className="mt-1">二发需冻结后明确启动；Agent 回复当前关闭，启用后只在独立集中窗口运行。</p>
    </div>
   </aside>
   <div className={`min-h-screen transition-[margin] duration-200 ${collapsed?"lg:ml-[84px]":"lg:ml-[272px]"}`}>

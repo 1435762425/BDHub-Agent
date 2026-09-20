@@ -1,7 +1,7 @@
 """Content versions and durable service routing. No outbound transport or implicit reply."""
 import json,re
 from lib.second_cycle import CycleError,digest,encoded
-from lib.cycle_inbox import REPLY_BATCH_SECONDS
+from lib.cycle_inbox import REPLY_BATCH_SECONDS,REPLY_FREEZE_SECONDS
 SCHEMA='''CREATE TABLE IF NOT EXISTS service_cursor(plan_id TEXT NOT NULL,creator_id TEXT NOT NULL,event_rowid INTEGER NOT NULL,PRIMARY KEY(plan_id,creator_id));
 CREATE TABLE IF NOT EXISTS service_resolution(case_id TEXT NOT NULL,revision INTEGER NOT NULL,note TEXT NOT NULL,created REAL NOT NULL,PRIMARY KEY(case_id,revision));
 CREATE TABLE IF NOT EXISTS inbox_content_version(plan_id TEXT NOT NULL,cid TEXT NOT NULL,message_id TEXT NOT NULL,hash TEXT NOT NULL,payload TEXT NOT NULL,observed REAL NOT NULL,PRIMARY KEY(plan_id,cid,message_id,hash));
@@ -60,7 +60,7 @@ class Service:
      self.s.db.execute('UPDATE service_cursor SET event_rowid=min(event_rowid,?) WHERE plan_id=? AND creator_id=(SELECT creator_id FROM relationship WHERE plan_id=? AND oec=?)',(event['event_rowid']-1,plan,plan,oec))
      rel=self.s.db.execute('SELECT * FROM relationship WHERE plan_id=? AND oec=?',(plan,oec)).fetchone()
      self.s.db.execute("UPDATE inbox_pending SET revision=revision+1,due_at=?,state='awaiting_classification' WHERE plan_id=? AND creator_id=?",(self.s.clock()+REPLY_BATCH_SECONDS,plan,rel['creator_id']))
-     self.s.db.execute('UPDATE relationship SET inbox_until=?,revision=revision+1 WHERE plan_id=? AND creator_id=?',(self.s.clock()+REPLY_BATCH_SECONDS,plan,rel['creator_id']))
+     self.s.db.execute('UPDATE relationship SET inbox_until=?,revision=revision+1 WHERE plan_id=? AND creator_id=?',(self.s.clock()+REPLY_FREEZE_SECONDS,plan,rel['creator_id']))
   return changed
  def context(self,plan,creator):
   rel=self.s.db.execute('SELECT * FROM relationship WHERE plan_id=? AND creator_id=?',(plan,creator)).fetchone()

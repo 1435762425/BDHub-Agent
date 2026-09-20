@@ -1,22 +1,19 @@
 "use client";
 
 import Link from "next/link";
-import InboxMonitorPanel from "./InboxMonitorPanel";
 import SendBatchPanel from "./SendBatchPanel";
 import StatsCalendarPanel from "./StatsCalendarPanel";
 import {useInboxMonitor} from "./useInboxMonitor";
 import {useSendBatch} from "./useSendBatch";
 import {PageHeading,Pill} from "../bdhub/ui";
 
-export type WorkspaceSection="send"|"inbox"|"history";
+export type WorkspaceSection="send"|"history";
 const tabs:{section:WorkspaceSection;label:string}[]=[
  {section:"send",label:"发送"},
- {section:"inbox",label:"回复与人工事项"},
  {section:"history",label:"结果与历史"},
 ];
 
 function SendWorkspace(){const controller=useSendBatch();return <SendBatchPanel controller={controller}/>;}
-function InboxWorkspace(){const controller=useInboxMonitor();return <InboxMonitorPanel controller={controller}/>;}
 function HistoryWorkspace(){const controller=useInboxMonitor();return <StatsCalendarPanel controller={controller}/>;}
 
 export default function SecondOutreachWorkspace({section}:{section:WorkspaceSection}){
@@ -25,6 +22,6 @@ export default function SecondOutreachWorkspace({section}:{section:WorkspaceSect
   <nav aria-label="合作工作台" className="flex max-w-full gap-1 overflow-x-auto rounded-xl bg-gray-100 p-1 dark:bg-gray-800">
    {tabs.map(item=><Link key={item.section} href={`/it/workspace/${item.section}`} aria-current={section===item.section?"page":undefined} className={`whitespace-nowrap rounded-lg px-4 py-2.5 text-sm font-medium transition ${section===item.section?"bg-white text-gray-800 shadow-theme-xs dark:bg-gray-700 dark:text-white":"text-gray-500 hover:text-gray-800 dark:hover:text-gray-200"}`}>{item.label}</Link>)}
   </nav>
-  {section==="send"?<SendWorkspace/>:section==="inbox"?<InboxWorkspace/>:<HistoryWorkspace/>}
+  {section==="send"?<SendWorkspace/>:<HistoryWorkspace/>}
  </div>;
 }

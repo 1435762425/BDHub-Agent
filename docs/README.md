@@ -66,6 +66,7 @@
 - [意大利回复分类最终人工评测](implementation/reply-model-evaluation-20260920.md)
 - [Kalodata 意大利 PID GMV 实时口径探查](implementation/kalodata-gmv-live-probe-20260920.md)
 - [12 QPS / 500 人身份验收](implementation/identity-12qps-500-release.md)
+- [会话工作台、模板库与互斥回复窗口](implementation/conversation-workbench-and-template-library-20260920.md)
 
 ### 接口、研究与归档
 
