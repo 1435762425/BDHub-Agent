@@ -15,7 +15,7 @@ from lib.schema_migrations import apply_database  # noqa: E402
 NOW = 1_800_000_000.0
 
 
-def fixture(folder, positions, relationships, deliveries=(), cases=()):
+def fixture(folder, positions, relationships, deliveries=(), cases=(), pending=()):
     var = Path(folder) / 'var'
     var.mkdir(parents=True, exist_ok=True)
     with closing(sqlite3.connect(var / 'second-cycle.sqlite')) as conn, conn:
@@ -23,10 +23,11 @@ def fixture(folder, positions, relationships, deliveries=(), cases=()):
             CREATE TABLE source_edge(plan_id TEXT,source_id TEXT,payload TEXT);
             CREATE TABLE cycle_identity_resolution(plan_id TEXT,source_id TEXT,creator_id TEXT);
             CREATE TABLE cycle_identity_outcome(plan_id TEXT,source_id TEXT,status TEXT);
-            CREATE TABLE relationship(plan_id TEXT,creator_id TEXT,unlocked INTEGER,mode TEXT,rejected INTEGER);
+            CREATE TABLE relationship(plan_id TEXT,creator_id TEXT,unlocked INTEGER,mode TEXT,rejected INTEGER,inbox_until REAL);
             CREATE TABLE cycle_delivery(id TEXT,plan_id TEXT,creator_id TEXT,pid TEXT,state TEXT);
             CREATE TABLE cycle_delivery_part(delivery_id TEXT,kind TEXT,started REAL);
-            CREATE TABLE service_case(plan_id TEXT,creator_id TEXT,state TEXT,updated REAL);''')
+            CREATE TABLE service_case(plan_id TEXT,creator_id TEXT,state TEXT,updated REAL);
+            CREATE TABLE inbox_pending(plan_id TEXT,creator_id TEXT,revision INTEGER,due_at REAL,state TEXT);''')
         conn.commit()
     apply_database(folder,'second-cycle')
     with closing(sqlite3.connect(var / 'second-cycle.sqlite')) as conn, conn:
@@ -51,12 +52,14 @@ def fixture(folder, positions, relationships, deliveries=(), cases=()):
             for position,(sid,rank) in enumerate(sorted(rows,key=lambda row:row[1]),start=1):
                 conn.execute('INSERT INTO lead_query_selection VALUES(?,?,?,?,?)',(query,sid,rank,10,position))
         for creator, unlocked, mode, rejected in relationships:
-            conn.execute('INSERT INTO relationship VALUES(?,?,?,?,?)', ('p', creator, unlocked, mode, rejected))
+            conn.execute('INSERT INTO relationship VALUES(?,?,?,?,?,0)', ('p', creator, unlocked, mode, rejected))
         for index, (creator, pid, started) in enumerate(deliveries):
             conn.execute('INSERT INTO cycle_delivery VALUES(?,?,?,?,?)', (f'd{index}', 'p', creator, pid, 'confirmed'))
             conn.execute('INSERT INTO cycle_delivery_part VALUES(?,?,?)', (f'd{index}', 'card', started))
         for creator, state, updated in cases:
             conn.execute('INSERT INTO service_case VALUES(?,?,?,?)', ('p', creator, state, updated))
+        for creator,state,due_at in pending:
+            conn.execute('INSERT INTO inbox_pending VALUES(?,?,1,?,?)',('p',creator,due_at,state))
         conn.commit()
 
 
@@ -165,6 +168,18 @@ class Layers(unittest.TestCase):
             fixture(folder, [('a', '1' * 19, 1)], [('a', 0, 'auto', 0)],
                     cases=[('a', 'resolved', NOW - 60)])
             self.assertEqual(layers(pool(folder, now=NOW))['ready'], 1)
+
+    def test_persistent_pending_blocks_after_the_short_freeze_expires(self):
+        with tempfile.TemporaryDirectory() as folder:
+            fixture(folder,[('a','1'*19,1)],[('a',1,'auto',0)],
+                    pending=[('a','awaiting_classification',NOW-60)])
+            state=pool(folder,now=NOW)
+            self.assertEqual(state['counts']['awaitingReply'],1)
+            self.assertEqual(state['counts']['ready'],0)
+        with tempfile.TemporaryDirectory() as folder:
+            fixture(folder,[('a','1'*19,1)],[('a',1,'auto',0)],
+                    pending=[('a','resolved_no_reply',NOW-60)])
+            self.assertEqual(pool(folder,now=NOW)['counts']['ready'],1)
 
     def test_a_rejection_is_a_permanent_exclusion_not_a_wait(self):
         with tempfile.TemporaryDirectory() as folder:

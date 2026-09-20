@@ -123,6 +123,18 @@ class ContinuousSendTests(unittest.TestCase):
                 continuous.execute_once(self.root,self.store,authorized_now='short')
         finally:continuous.window_state,continuous._candidate=original_window,original_candidate
 
+    def test_live_history_uses_current_cooldown_not_the_retired_32_day_canary_rule(self):
+        base={'identityVerified':True,'hasMore':False,'senderCounts':{
+          'ourMessages':1,'creatorReplies':1,'showcaseNotifications':1,'otherOrUnknown':0},
+          'outboundCreateTimeRaw':[int((NOW-90000)*1000)],'outboundTimeMissingCount':0}
+        continuous._continuous_history_eligible(base,NOW,True)
+        with self.assertRaisesRegex(Exception,'recent_contact'):
+            continuous._continuous_history_eligible(
+              base|{'outboundCreateTimeRaw':[int((NOW-3600)*1000)]},NOW,True)
+        with self.assertRaisesRegex(Exception,'unknown_message'):
+            continuous._continuous_history_eligible(
+              base|{'senderCounts':base['senderCounts']|{'otherOrUnknown':1}},NOW,True)
+
     def test_local_card_checks_both_offer_and_material_fingerprints_in_their_own_domains(self):
         current=candidate('c1','1729480061238089885')
         current['card']['listId']='8650756273145355030'

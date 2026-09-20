@@ -6,7 +6,6 @@ that delivery may execute or be reconciled.
 """
 from __future__ import annotations
 
-import importlib.util
 import json
 import os
 import re
@@ -34,10 +33,30 @@ PREFLIGHT_TERMINAL = frozenset({
     'conversation_needs_content_review','unknown_message_needs_review','history_incomplete',
     'message_time_missing','recent_contact_needs_allowance_review','conversation_index_conflict',
     'relationship_changed','offer_not_eligible','offer_currently_ineligible','offer_changed',
-    'marketing_cooldown','delivery_expired','card_binding_changed',
+    'marketing_cooldown','delivery_expired','card_binding_changed','recipient_message_limit',
 })
-_spec = importlib.util.spec_from_file_location('continuous_send_history', ROOT/'scripts/cycle-send.py')
-_history = importlib.util.module_from_spec(_spec);_spec.loader.exec_module(_history)
+ACTIVE_PENDING_STATES = frozenset({
+    'awaiting_classification','awaiting_content','review_partial','template_ready','reviewed_ready',
+    'policy_review','facts_ready_for_review','needs_facts','human',
+})
+
+
+def _continuous_history_eligible(history,now,unlocked,own_current_refs=0):
+    """Live preflight aligned with the current 24/48-hour relationship policy."""
+    if history.get('identityVerified') is not True or history.get('hasMore') is True:
+        raise CycleError('history_incomplete')
+    counts=history.get('senderCounts')
+    if not isinstance(counts,dict):raise CycleError('history_incomplete')
+    if counts.get('otherOrUnknown'):raise CycleError('unknown_message_needs_review')
+    times=history.get('outboundCreateTimeRaw') or []
+    own=int(counts.get('ourMessages') or 0)
+    if any(type(stamp) is not int or not 946684800000<=stamp<=int(now*1000)+300000 for stamp in times) or \
+       len(times)!=own or history.get('outboundTimeMissingCount'):
+        raise CycleError('message_time_missing')
+    cooldown=86400 if unlocked else 172800
+    recent=[stamp for stamp in times if stamp>=int((now-cooldown)*1000)]
+    if len(recent)>own_current_refs:raise CycleError('recent_contact_needs_allowance_review')
+    if not unlocked and own>=5:raise CycleError('recipient_message_limit')
 
 
 def _required(store):
@@ -256,7 +275,16 @@ def execute_once(root,store,*,authenticated=None,authorized_now=None):
                 if prior and prior[0]!=c['oecId']:raise CycleError('conversation_index_conflict')
                 index.execute("INSERT OR IGNORE INTO conversation VALUES('it:acc6',?,?,2,?)",(conversation.conversation_id,c['oecId'],store.clock()))
             confirmed=sum(part['state']=='confirmed' for part in deliveries.get(delivery['id'])['parts'])
-            _history.history_eligible(history,store.clock(),confirmed)
+            _continuous_history_eligible(history,store.clock(),bool(c.get('relationshipUnlocked')),confirmed)
+            relation=store.db.execute('SELECT mode,rejected,inbox_until FROM relationship WHERE plan_id=? AND creator_id=?',
+              (plan,c['creatorId'])).fetchone()
+            pending=store.db.execute('SELECT state FROM inbox_pending WHERE plan_id=? AND creator_id=?',
+              (plan,c['creatorId'])).fetchone()
+            open_case=store.db.execute("SELECT 1 FROM service_case WHERE plan_id=? AND creator_id=? AND state='open'",
+              (plan,c['creatorId'])).fetchone()
+            if not relation or relation['mode']=='human' or relation['rejected'] or \
+               relation['inbox_until']>store.clock() or open_case or pending and pending['state'] in ACTIVE_PENDING_STATES:
+                raise CycleError('conversation_needs_content_review')
         try:
             result=execute(deliveries,delivery['id'],runtime,authorize,preflight,verify_only=delivery['state']=='unknown')
         except BaseException as error:

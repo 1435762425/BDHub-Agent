@@ -30,6 +30,7 @@ from pathlib import Path
 
 UNLOCKED_COOLDOWN = 86400   # one message per creator per day
 LOCKED_COOLDOWN = 172800    # four weeks without a reply: at least 48 hours between products
+RESOLVED_PENDING = frozenset({'resolved_by_human','suppressed_no_reply','resolved_no_reply','answered','no_reply'})
 # ``ready`` holds one position per creator -- the slot that would be sent next. A creator's other
 # positions stay in ``queued``: they are not lost, they simply are not the next thing to do.
 LAYER_ORDER = ('ready', 'queued', 'cooling', 'awaiting_reply', 'excluded', 'product_inactive', 'sent')
@@ -148,7 +149,7 @@ def _build(conn, now, limit, eligible_pids=None,root=None):
             merged[key]=row
     positions=list(merged.values())
     relationships = {row['creator_id']: row for row in _rows(
-        conn, 'SELECT creator_id,unlocked,mode,rejected FROM relationship')}
+        conn, 'SELECT creator_id,unlocked,mode,rejected,inbox_until FROM relationship')}
     collaboration = (
         {row['creator_id']: row['status'] for row in _rows(
             conn, 'SELECT creator_id,status FROM creator_collaboration_current')}
@@ -165,6 +166,9 @@ def _build(conn, now, limit, eligible_pids=None,root=None):
               "WHERE d.state IN ('confirmed','partial_delivery') GROUP BY d.creator_id,d.pid")}
     open_cases = {row[0]: row[1] for row in _rows(
         conn, "SELECT creator_id,updated FROM service_case WHERE state='open'")}
+    pending = ({row[0]: (row[1],row[2]) for row in _rows(
+        conn, 'SELECT creator_id,state,due_at FROM inbox_pending')}
+        if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='inbox_pending'").fetchone() else {})
     creators = {row['creator_id'] for row in _rows(conn, 'SELECT DISTINCT creator_id FROM relationship')}
 
     layers = {name: [] for name in LAYER_ORDER}
@@ -178,7 +182,10 @@ def _build(conn, now, limit, eligible_pids=None,root=None):
         unlocked = bool(relationship['unlocked'])
         collaboration_status = collaboration.get(creator, 'rejected' if relationship['rejected'] else 'normal')
         excluded = bool(relationship['rejected']) or collaboration_status in ('paid', 'rejected')
-        blocked = creator in open_cases or relationship['mode'] == 'human'
+        pending_row=pending.get(creator)
+        blocked = creator in open_cases or relationship['mode'] == 'human' or \
+                  bool(relationship['inbox_until'] and relationship['inbox_until']>now) or \
+                  bool(pending_row and pending_row[0] not in RESOLVED_PENDING)
         previously = last_sent.get(creator)
         ready_at = None if previously is None else previously + (UNLOCKED_COOLDOWN if unlocked else LOCKED_COOLDOWN)
         pair_sent = sent_pairs.get((creator, str(row['pid'])))
@@ -203,7 +210,7 @@ def _build(conn, now, limit, eligible_pids=None,root=None):
                               'unlocked': unlocked, 'sentAt': pair_sent,
                               'collaborationStatus': collaboration_status,
                               'readyAt': ready_at, 'layer': layer,
-                              'caseUpdatedAt': open_cases.get(creator)})
+                              'caseUpdatedAt': open_cases.get(creator) or (pending_row[1] if pending_row else None)})
 
     # Ready positions: strongest lead first, one slot per creator so a single creator cannot fill
     # the whole page while others never surface. Cooling follows the clock, not the lead strength.
