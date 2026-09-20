@@ -37,3 +37,5 @@ authority, endDate, id, pageNo, pageSize, sort, startDate
 4. `source_edge.currency='EUR'` 只能说明当前意大利业务口径，不能反向证明旧 `revenueRaw` 已是欧元。若后续需要跨 PID 使用绝对 GMV，必须在采集时固化可验证的币种/会话口径并刷新旧数据，不能对旧混币字符串直接换算。
 
 本轮只做少量有界单页读取，用于认证、两个 PID 币种复测、集合交叉核对和健康探针校准；没有批量刷新现有 1,150 个 PID，也没有改写线索池。
+
+网页实际可见的完整字段已另行通过已登录 Chrome for Testing 核对，见 [Kalodata 网页字段清单](../research/kalodata-web-fields-20260920.md)。

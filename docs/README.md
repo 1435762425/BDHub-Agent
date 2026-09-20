@@ -71,6 +71,7 @@
 - `contracts/tiktok/`：TikTok 接口、字段和工具边界。
 - `contracts/legacy-interface-inventory.md`：旧 BDHub 能力索引，仅供只读借鉴。
 - `research/`：模型、旧逻辑、匹配数据和 UI 调查；不自动成为业务规则。
+- [Kalodata 网页可见字段清单](research/kalodata-web-fields-20260920.md)：直接基于已登录 IT 网页整理，不以当前接口字段代替网页口径。
 - `archive/`：已被当前口径取代的状态流水和旧入口，只用于追溯。
 
 ## 更新规则
