@@ -50,6 +50,7 @@
 | 账号与维护 | [账号调度](architecture/account-scheduling.md)、[双账号生命周期](architecture/dual-account-lifecycle.md) |
 | 多市场扩展 | [多市场接入标准](architecture/market-rollout-standard-v1.md) |
 | Agent 与系统 | [Agent runtime](architecture/agent-runtime.md)、[系统设计](architecture/system-design.md) |
+| 自动运营首页与持续工作流 | [开发计划 v1](architecture/automated-operations-workflow-v1.md) |
 
 ### 实现与验收证据
 
