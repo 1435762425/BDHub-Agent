@@ -1,6 +1,6 @@
 # BDHub-Agent 技术文档
 
-状态：当前技术真相源。最后整理：2026-09-19。
+状态：当前技术真相源。最后整理：2026-09-20。
 
 本文回答“系统如何实现、模块如何协作、状态存在哪里、怎样运行和验证”。产品目标与业务规则见 [项目文档](PROJECT.md)，当前 Git/进程/数量和未解风险见 [Codex 接管状态](handoff/codex-takeover-20260919.md)。
 
@@ -144,7 +144,7 @@ Pure HTTP 验证依赖 `Pillow==12.3.0`、`opencv-python-headless==4.14.0.94` �
 | 模块 | 作用 |
 | --- | --- |
 | `lead_pool.py` | 按当前时间重算位置、达人冷却和状态分层 |
-| `lead_priority.py` | 纯函数模拟已确认的 A/B 合并、最高单条视频和最终发送顺序；当前不读取真实池 |
+| `lead_priority.py` | A/B 合并、最高单条视频和最终发送顺序的纯函数合同；真实池由 `lead_pool.py` 按同一规则实现 |
 | `send_batch.py` | 发送预览指纹、不可变批次、revision 及 start/stop 控制 |
 | `cycle_review.py` | 候选复检、冻结与跳过原因 |
 | `cycle_delivery.py` | 发送意图、组件状态、平台信号和额度预留 |
@@ -154,11 +154,11 @@ Pure HTTP 验证依赖 `Pillow==12.3.0`、`opencv-python-headless==4.14.0.94` �
 | `cycle_service.py` | 服务案件、事实、人工接管与处理结果 |
 | `cycle_stats.py` | 按北京时间聚合确认发送、回复和橱窗事件 |
 
-`/api/send` 的 GET 只读状态；POST 只接受四种精确动作：保存设置、按 `expectedPreviewHash` 冻结、携带 `confirmed=true + expectedRevision` 启动、按 revision 停止。多一个字段即拒绝。冻结把完整达人×PID×Offer×`currentListId`、话术和顺序写入 `cycle_bulk_candidate`，继续使用旧 `cycle_bulk/cycle_bulk_item` 表承载状态但不继承其历史执行授权；重复 `requestId` 幂等，预览变化返回冲突。窗口关闭不阻塞只读预览或冻结；start 后 worker 留在 `waiting_window`，到窗口内才允许 dispatch。只有 start 会启动 `send-batch-worker.py`，GET、save、freeze、构建和测试均不会唤醒执行器。
+`/api/send` 的 GET 只读状态；POST 只接受五种精确动作：保存设置、按 `expectedPreviewHash` 冻结、携带 `confirmed=true + expectedRevision` 启动、按 revision 停止、对一个原 `deliveryId` 执行只读 unknown 核验。多一个字段即拒绝。冻结把完整达人×PID×Offer×`currentListId`、话术和顺序写入 `cycle_bulk_candidate`，继续使用旧 `cycle_bulk/cycle_bulk_item` 表承载状态但不继承其历史执行授权；重复 `requestId` 幂等，预览变化返回冲突。窗口关闭不阻塞只读预览或冻结；start 后 worker 留在 `waiting_window`，到窗口内才允许 dispatch。只有 start 会启动 `send-batch-worker.py`；unknown 核验固定进入 `verify_only` recovery，遇到后续仍为 ready 的组件立即停止，不会发送。GET、save、freeze、reconcile、构建和测试均不会唤醒批量执行器。
 
 `cycle_burst.run_cohort()` 强制同时存在 state=`running` 且 authorization 完全相等的 `cycle_bulk_freeze`，并要求每个待执行 item 都有不可变 `cycle_bulk_candidate`；没有冻结范围时在认证/平台调用前返回 `frozen_batch_required`，不再调用 `choose_candidates()` 或远程 `fresh_card()`。旧 `bulk-second-send.py` 固定返回 `legacy_bulk_sender_retired`，不会建表、恢复或发送；历史 `cycle_bulk` 行只读保留。
 
-`lead_pool.py` 与 `/api/lead-pool` 已使用 `bdhub.lead-pool.v2`：业务只投影 `sendable / waiting / inactive`，`sent` 单列历史；内部原因仍用于排障。达人排序和达人内部 PID 选择统一使用 `sourceRank → units DESC → pid ASC`，同一达人只有一个可发送槽位。发送预览按池子顺序复检；冻结批次执行器按 `position_order` 消费，不再执行时重新挑选或补满。
+`lead_pool.py` 与 `/api/lead-pool` 使用 `bdhub.lead-pool.v3`：业务只投影 `sendable / waiting / inactive`，`sent` 单列历史；Web 合同同时保留 A/B 来源证据、数值 GMV、代表视频和来源计数。发送预览按池子顺序复检；B-only 位置从 `video_lead_current` 冻结代表视频 source，而不是伪造 A 类 `source_edge`。冻结批次执行器按 `position_order` 消费，不在执行时重新挑选或补满。
 
 已确认的排序合同已由 `lead_priority.py` 用合成数据验证并接入 `lead_pool.py`：A 类整体优先，按同市场数值 `GMV DESC → units DESC → sourceRank → pid`；B 类只取同一达人×PID中播放量最高的一条达标视频，按 `views DESC → releasedAt DESC → pid`。A/B 同对合并为 A，同达人仍只有一个发送槽；身份、回复、冷却、拒联与商品门禁继续生效。真实顺序以本轮全量重建完成后的当前投影为准，不能用模拟数量代替；详见 [排序模拟](implementation/lead-priority-simulation-20260920.md)。
 
@@ -171,7 +171,7 @@ Pure HTTP 验证依赖 `Pillow==12.3.0`、`opencv-python-headless==4.14.0.94` �
 ### 5.5 Agent 与语义能力
 
 - `catalog_names.py`：批量商品短名；失败不自动无限重试。
-- `outreach_drafts.py` / `draft_provider.py`：主动邀约草稿、模型用量和持久结果；不等于达人入站回复能力。
+- `draft_provider.py`：商品短名和回复影子分类可复用的受控模型 provider；已退役的一发草稿队列不再位于 Web/worker 运行路径。
 - `ReplyClassifier`：接收受限的事件上下文，返回五种动作、意图、消息证据和关联 episode；provider 可为 DeepSeek 或 Jev。
 - `ReplyPolicyGuard`：检查多意图、附件、PID/listId 唯一性、模板版本和人工条件，并把不满足的结果强制收敛为 `human`。
 - `ReplyTemplateRegistry`：只提供版本化的 `sample_self_service`、`collaboration_ack`、`link_usage` 三条人工确认模板。
@@ -200,16 +200,16 @@ DeepSeek 与 TypeSafe Jev 当前都只作为影子 provider。Jev 使用官方 S
 | `var/creator-discovery.sqlite` | handle 发现 batch/item/cohort/request |
 | `var/creator-identities.sqlite` | 稳定 OECID、别名与来源 |
 | `var/creator-profile-refresh.sqlite` | 画像刷新 job/request/heartbeat |
-| `var/batch-tasks.sqlite` | 早期指定数量任务卡、成员、来源、材料和事件；当前页面只读追溯 |
+| `var/batch-tasks.sqlite` | 早期指定数量任务卡、成员、来源、材料和事件；Web 已退役，仅作历史追溯 |
 | `var/second-cycle.sqlite` | plan、关系、发送、收信、服务和回复事实 |
 | `var/it-conversations.sqlite` | IT/ACC6 会话索引 |
-| `var/matching*.sqlite` | 独立匹配研究数据集和结果 |
+| `var/matching*.sqlite` | 已退出生产构建的独立匹配研究历史数据；仍纳入备份 |
 
 新增当前投影：`catalog-links.sqlite.catalog_current_binding*` 保存唯一标准卡；`second-cycle.sqlite.lead_query_*` 保存每 PID 当前 A 类范围，`source_edge_index` 为历史证据保存数值 GMV、币种及规范化索引；`kalodata_video_run/evidence/head` 保存完整视频证据，`kalodata_video_generation/scan_job/scan_page/scan_item` 保存全量 B 类断点，`kalodata_video_author_cache` 避免重复查作者，`video_lead_current` 保存每个达人×PID最高单条视频；`cycle_bulk_freeze/cycle_bulk_candidate` 保存用户确认的不可变发送范围、revision 与完整材料。原准备记录、page receipt、`source_edge`、旧批次、已发送记录和旧回复评估都不删除。
 
 `scripts/lib/schema_migrations.py` 当前以增量 registry 管理 `catalog-links.sqlite` 和 `second-cycle.sqlite` 的本轮新投影；其他历史表仍由各领域模块初始化。新增表/字段必须继续提供幂等升级和旧库兼容测试，不能靠删除本地 DB 重建。
 
-早期 `batch-tasks.sqlite` 与当前 `cycle_bulk_freeze/cycle_bulk_candidate` 是两套不同台账。工作台不再从旧任务卡创建、暂停、恢复或唤醒 `batch-preparation-worker`；旧卡只读展示，当前新批次只走 `/api/send` 的预览、冻结、明确 start/stop。旧数据库可能没有后来新增的 `batch_source_selection`，读侧必须返回 `edges=null + selectionRecorded=false`，不能创建空表后把未知冒充为 0。项目文档要求的“任意 N＋10% 候补”已迁入当前冻结发送台账，不再依赖旧并行入口。
+早期 `batch-tasks.sqlite` 与当前 `cycle_bulk_freeze/cycle_bulk_candidate` 是两套不同台账。Web 的 `/api/batch-tasks`、容量预检卡和旧 worker 唤醒入口已删除；历史数据库继续只读保留并纳入备份。当前新批次只走 `/api/send` 的预览、冻结、明确 start/stop/reconcile。项目文档要求的“任意 N＋10% 候补”已迁入当前冻结发送台账，不再依赖旧并行入口。
 
 ### 6.2 状态原则
 
@@ -288,12 +288,12 @@ pending → started/submitted → confirmed
 | `/api/send` | 发送预览、设置保存、冻结、明确 start/stop 和批次状态 |
 | `/api/reply-review` | 事件级样本、双模型影子分类、turn 标准动作和受控案件应用；无发送动作 |
 | `/api/inbox` | 收信 worker、今日/最近 14 日统计、可分页日明细和待人工 |
-| `/api/batch-tasks` | 早期任务台账兼容接口；当前工作台只使用 GET 做历史追溯 |
 | `/api/jobs` | 手动作业与定时意向 |
+| `/api/market-accounts` | 当前意大利账号、能力证据与维护状态，只读 |
 
-`/flow-demo` 是纯前端业务沙盘：判断函数位于 `apps/web/src/features/demo/`，页面运行时不调用任何 `/api`、SQLite、CLI、平台或模型。PID 生命周期页内的数量是 2026-09-19 只读台账静态快照，达人案例为虚构数据；两者都不作为实时运行证据。页面只展示两条 TapLink 周期：Campaign 每日随来源核验、全托已选每周核验；两次刷新之间以上次成功结果为准，不做发送前远程预检，确认失效的链接进入清理。达人页必须说明每 PID 近 14 天最多 20 条、OECID 改名归并、统一 `sourceRank` 排序和三种业务结果，不能继续把佣金优先或六层内部枚举表现为现行规则。实测耗时必须注明样本、并发与非 SLA 边界；同时与 `schedulerReady=false`、作业开关关闭的当前运行事实分开。
+Web 不再构建 `/flow-demo`、浏览器演示页、旧 local runtime、second-pilot、second-live trial、second-outreach history、matching 或 outreach-drafts 路由。对应 SQLite 作为历史数据保留，未从备份清单移除。
 
-合作工作台允许用 `/workspace?mode=second-live&tab=reply` 直接进入“回复预演与训练”；`tab` 只接受五个既有页签枚举，缺失或未知值回到发送池。该参数只控制前端初始展示，不提交审核、应用真值、启动 worker 或发送回复。
+合作工作台 canonical route 为 `/it/workspace/send`、`/it/workspace/inbox` 和 `/it/workspace/history`；每个页面只挂载自己的 controller，隐藏页面不轮询。回复影子评测迁到 `/ops/reply-evaluation`，账号就绪迁到 `/ops/accounts?market=it`。
 
 ## 9. 账号与外部系统
 

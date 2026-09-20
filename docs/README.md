@@ -48,6 +48,7 @@
 | 旧发送池/工作台实施记录 | [线索发送池](architecture/lead-sending-pool.md)、[工作台方案](architecture/send-monitor-reply-calendar-v1.md)（仅用于追溯，冲突处以当前策略为准） |
 | 身份与关系 | [稳定身份](architecture/creator-identity-and-rename.md)、[二发确认规则](architecture/second-cycle-confirmed-policy.md) |
 | 账号与维护 | [账号调度](architecture/account-scheduling.md)、[双账号生命周期](architecture/dual-account-lifecycle.md) |
+| 多市场扩展 | [多市场接入标准](architecture/market-rollout-standard-v1.md) |
 | Agent 与系统 | [Agent runtime](architecture/agent-runtime.md)、[系统设计](architecture/system-design.md) |
 
 ### 实现与验收证据

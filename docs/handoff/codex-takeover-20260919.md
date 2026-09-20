@@ -13,6 +13,14 @@ DeepSeek/Agent 已经把 9 月 14 日的“货盘批量备链”继续推进到�
 - 工作台“统计日历”已接通现有 `/api/inbox`：直接展示最近 14 个北京自然日的确认触达、确认卡片、回复、加橱窗和未确认，不增加轮询或后台任务。
 - 2026-09-20 01:xx 未发现批次准备、二发、冻结发送或收信 worker；代码与断点保留，但本轮没有擅自恢复。
 
+2026-09-20 意大利 V1 工作台已完成代码侧收敛，尚未在本节把构建成功误写成新的真实发送验收：
+
+- 生产页面改为 `/it/workspace/{send,inbox,history}`、`/it/catalog`、`/it/creators` 与 `/ops/*`；根页进入意大利发送工作台。
+- `/flow-demo`、浏览器演示页、local runtime、matching/outreach-drafts、second-pilot、second-live trial、旧二发历史和早期 batch task Web 入口已退出生产构建；历史 SQLite 未删除并继续备份。
+- `lead-pool.v3` 把真实 A/B 来源证据发布到 Web；B-only 位置现在能以代表视频 source 进入冻结复检，不再因只有 A 类 `source_edge` 才能冻结而静默丢失。
+- `/api/send` 增加一个明确的 verify-only unknown 核验动作：只读原 delivery，遇到后续未提交的 ready 组件立即停止；核验完成后仍需用户再次明确 start 才继续批次。
+- 最新生产构建已通过 `io.bdhub.agent.web` 重启到 `127.0.0.1:5198`；新工作台、旧路由 404/308 和保留 API 已回读。本轮未冻结、未启动、未发送、未恢复自动回复或业务 worker，也未修改旧 BDHub。
+
 ## 2. Git 基线
 
 | 项目 | 当前值 |
@@ -63,13 +71,15 @@ DeepSeek/Agent 已经把 9 月 14 日的“货盘批量备链”继续推进到�
 | --- | --- |
 | 身份 | 稳定身份库累计 3,069 个 handle；当前 20 条范围内 963 个 handle：728 已解析、235 明确未解析、0 blocked、0 未判定；`reconciled=true` |
 | 当前线索 | 1,150 个 PID 的本机回执共 1,803 条正销量证据，按 v2 发布 1,617 条当前线索；另为身份复用建立 12,996 条历史索引，50 条旧记录因字段不完整未索引 |
-| 发送池 v2 | 当前预览扫描 711 个 ready 位置；累计已发送历史 495 |
+| 发送池 v3 | 当前 A 类 3,281、B 类已完整发布 0；ready 1,222、累计已发送历史 495 |
 | 发送预检 | 默认请求 500，当前可冻结 500；链接缺失/条款变化均为 0，仅达人关系冻结 5、超出本批规模 206 |
 | 冻结批次 | migration v3 已应用；`cycle_bulk_freeze=0`、`cycle_bulk_candidate=0`，说明本轮没有代用户冻结或启动批次 |
 | 收信 | 555 个索引会话、1,354 个事件、25 个待取内容；累计 live 回复 26、加橱窗 36；当前 open case 1 |
 | 回复事件 | 495 个外发 episode、35 个入站 turn、26 个有关联；人工真值 35/35 完成。DeepSeek 80.00%（误自动 2），Jev 62.86%（误自动 3） |
 | 凭据 | Kalodata 本机激活码已保存为 0600，刷新后真实探测 `ready/rows=50`；TypeSafe key 已保存为 0600，官方 models 接口可用，均不入 Git |
 | 自动回复 | 关闭；DeepSeek/Jev 的影子分类结果都不授权恢复 |
+
+最新意大利工作台只读回读：`lead-pool.v3` 当前 A 类位置 3,281、B 类已发布位置 0、可发送 1,222、等待 1,821、暂不参与 5、历史 sent 495；send preview 为正式 500＋候补 50，冻结批次仍为 0。B=0 是数据 generation 尚未完整发布，不是代码把 B 隐藏：A 类仍有 1,233 PID，B 类停在首 PID detail 断点；本轮恢复尝试 1 次请求后再次得到真实 `kalodata_daily_quota_exhausted`，完成数未被推进。
 
 这些数字会随 worker 和时间变化，不应写入 UI 常量或业务规则。规范化索引与固定 JOIN 顺序完成后，`lead-pool.py status` 本机约 0.45 秒、`send-batch.py status` 约 1.69 秒；这是本机观测，不是 SLA。
 
@@ -90,7 +100,7 @@ DeepSeek/Agent 已经把 9 月 14 日的“货盘批量备链”继续推进到�
 | 统计日历 | 最近 14 日汇总、每日紧凑日历、今日高亮、未确认单列、点击日期查看分页明细 | 明细严格只读并只投影白名单字段；原始 snapshot、平台 payload 和回执不下发 |
 | 早期指定数量任务 | 历史任务卡改为只读，缺失的选择明细显示“历史未记录”而不是 0；当前页面不再唤醒旧 worker | 任意 N＋10% 候补已迁入 frozen-v2，旧任务权限不再参与当前执行 |
 | 回复分类 | 不可变 episode/turn/关联、五种动作、三条固定回复、DeepSeek/Jev 并列动作与置信度、中文理解和用户正误审核页 | 真实自动回复关闭；`Certo!` 的模型分歧仍需用户审核 |
-| PID→发送池演示 | `/flow-demo` 展示 PID 生命周期树、每 PID 最多 20 条线索、OECID、统一 `sourceRank` 排序和三种业务结果 | 纯前端，PID 数量为 2026-09-19 只读静态快照，达人案例为虚构数据；页面运行时不连接 API、SQLite、平台或模型 |
+| 生产导航 | 意大利合作工作台、货盘与材料、达人、运行与设置四个入口 | 旧体验导航与 `/flow-demo` 已退出构建；后续市场按意大利接入标准逐项验收，不提供“全部市场”执行页 |
 
 ## 5. 当前必须保持的业务门禁
 
@@ -271,12 +281,12 @@ DeepSeek/Agent 已经把 9 月 14 日的“货盘批量备链”继续推进到�
 
 ## 10. 接管验证
 
-2026-09-20 本轮收尾验证：
+2026-09-20 意大利工作台收敛验证：
 
-- Python：`1081` 项 `unittest` 通过，未关闭数据库 `ResourceWarning` 为 0。
-- Web：`383` 项 Node 测试通过，module type warning 已消除。
+- Python：删除已退役模拟/试点测试后，`939` 项当前 `unittest` 通过。
+- Web：删除已退役演示/模拟合同后，`135` 项当前 Node 测试通过。
 - TypeScript：`npm run typecheck` 通过。
-- Next.js：`npm run build` 通过，14 个静态页面（含 `/flow-demo`）及当前 API 路由生成成功。
-- 文档：109 个 Markdown 文件的本地链接检查通过；`git diff --check` 通过。
+- Next.js：`npm run build` 通过；只生成意大利 market-scoped 页面、`/ops/*` 和保留 API，旧体验/模拟 API 不在 route manifest。
+- 文档：116 个 Markdown 文件的本地链接检查通过；`git diff --check` 通过。
 
 以上均为本机代码与只读合同验证，不是新的平台写入或真实发送验收。
