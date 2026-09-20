@@ -234,6 +234,8 @@ class SubprocessStageExecutor:
             else:
                 return {'state':'failed','itemCount':0,'complete':False,'platformWrites':0,
                         'errorCode':'identity_handoff_limit','scope':{'sources':sources},'payload':{}}
+            reconciled=self._call(['scripts/second-cycle-identities.py','reconcile'],'oecid-reconcile')
+            if reconciled['state']!='completed':return reconciled
             result=self._call(['scripts/identity-batch.py','--limit','200000','--cohort-size','50'],'oecid')
             payload=result.get('payload') or {};pending=int(payload.get('pending') or 0)
             result['itemCount']=int(payload.get('claimed') or 0)

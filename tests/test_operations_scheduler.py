@@ -101,7 +101,8 @@ class StageWiring(unittest.TestCase):
         submissions=iter((['discovery_'+'1'*32],[]))
         def answers(args,_label):
             if args[0]=='scripts/second-cycle-identities.py':
-                payload={'submittedBatches':next(submissions)}
+                payload=({'submittedBatches':next(submissions)} if args[1]=='submit' else
+                         {'newBindings':0,'batches':{}})
             else:
                 payload={'pendingAtStart':3,'pending':0,'claimed':3,'stopReason':'backlog_clear'}
             return {'state':'completed','itemCount':0,'complete':True,'platformWrites':0,'payload':payload}
@@ -112,11 +113,13 @@ class StageWiring(unittest.TestCase):
         self.assertEqual(result['scope']['handoffBatches'],1)
         self.assertEqual([args[0] for args,_ in calls],
                          ['scripts/second-cycle-identities.py','scripts/second-cycle-identities.py',
+                          'scripts/second-cycle-identities.py',
                           'scripts/identity-batch.py'])
 
     def test_oecid_never_publishes_with_a_stalled_pending_queue(self):
         def answers(args,_label):
-            payload=({'submittedBatches':[]} if args[0]=='scripts/second-cycle-identities.py' else
+            payload=({'submittedBatches':[]} if args[:2]==['scripts/second-cycle-identities.py','submit'] else
+                     {'newBindings':0,'batches':{}} if args[0]=='scripts/second-cycle-identities.py' else
                      {'pendingAtStart':4,'pending':4,'claimed':0,'stopReason':'queue_stalled'})
             return {'state':'completed','itemCount':0,'complete':True,'platformWrites':0,'payload':payload}
         result=self.executor(answers)[0].execute(
