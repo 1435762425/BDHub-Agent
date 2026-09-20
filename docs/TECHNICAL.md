@@ -158,6 +158,10 @@ Pure HTTP 验证依赖 `Pillow==12.3.0`、`opencv-python-headless==4.14.0.94` �
 | `template_library.py` | 二发模板、人工模板和 Agent 时间窗的版本化合同 |
 | `conversation_workbench.py` | 会话队列、完整时间线、草稿和人工操作读写模型 |
 | `run-agent-replies.py` | 独立窗口内的五动作 Agent 执行、持久意图和原意图回查 |
+| `operations_workflow.py` | 自动运营开关、不可变 workflow run、阶段屏障、generation 和断点 |
+| `account_identity.py` | 账号身份代次、72 小时维护意图、能力观察和原子发布 |
+| `collaboration_status.py` | 四态合作事件、人工优先当前投影与 showcase 自动升级 |
+| `continuous_send.py` | 持续发送控制、单条不可变 delivery 快照、跨日恢复和进程统计 |
 
 `/api/send` 的 GET 只读状态；POST 只接受五种精确动作：保存设置、按 `expectedPreviewHash` 冻结、携带 `confirmed=true + expectedRevision` 启动、按 revision 停止、对一个原 `deliveryId` 执行只读 unknown 核验。多一个字段即拒绝。冻结把完整达人×PID×Offer×`currentListId`、话术和顺序写入 `cycle_bulk_candidate`，继续使用旧 `cycle_bulk/cycle_bulk_item` 表承载状态但不继承其历史执行授权；重复 `requestId` 幂等，预览变化返回冲突。窗口关闭不阻塞只读预览或冻结；start 后 worker 留在 `waiting_window`，到窗口内才允许 dispatch。只有 start 会启动 `send-batch-worker.py`；unknown 核验固定进入 `verify_only` recovery，遇到后续仍为 ready 的组件立即停止，不会发送。GET、save、freeze、reconcile、构建和测试均不会唤醒批量执行器。
 
@@ -214,9 +218,9 @@ Agent 与二发没有优先级关系，只有互斥窗口：默认北京时间 `
 | `var/it-conversations.sqlite` | IT/ACC6 会话索引 |
 | `var/matching*.sqlite` | 已退出生产构建的独立匹配研究历史数据；仍纳入备份 |
 
-新增当前投影：`catalog-links.sqlite.catalog_current_binding*` 保存唯一标准卡；`second-cycle.sqlite.lead_query_*` 保存每 PID 当前 A 类范围，`source_edge_index` 为历史证据保存数值 GMV、币种及规范化索引；`kalodata_video_run/evidence/head` 保存完整视频证据，`kalodata_video_generation/scan_job/scan_page/scan_item` 保存全量 B 类断点，`kalodata_video_author_cache` 避免重复查作者，`video_lead_current` 保存每个达人×PID最高单条视频；`cycle_bulk_freeze/cycle_bulk_candidate` 保存用户确认的不可变发送范围、revision 与完整材料；`send_message_template* / manual_reply_template*` 保存两个独立模板域的不可变 revision，`conversation_draft` 保存会话草稿，`agent_reply_setting/run` 保存 Agent 开关、窗口与运行结果。原准备记录、page receipt、`source_edge`、旧批次、已发送记录和旧回复评估都不删除。
+新增当前投影：`catalog-links.sqlite.catalog_current_binding*` 保存唯一标准卡；`second-cycle.sqlite.lead_query_*` 保存每 PID 当前 A 类范围，`source_edge_index` 为历史证据保存数值 GMV、币种及规范化索引；`kalodata_video_run/evidence/head` 保存完整视频证据，`kalodata_video_generation/scan_job/scan_page/scan_item` 保存全量 B 类断点，`kalodata_video_author_cache` 避免重复查作者，`video_lead_current` 保存每个达人×PID最高单条视频；`workflow_*` 保存自动主链的 run/stage/generation/checkpoint；`account_identity_generation/account_maintenance_intent/account_capability_observation` 保存账号身份代次；`creator_collaboration_*` 保存四态合作投影；`continuous_send_*` 保存持续发送控制与运行状态；`taplink_reconcile_attempt` 保存 unknown 批后只读轮询。`cycle_bulk*`、原准备记录、page receipt、`source_edge`、已发送记录和旧回复评估都不删除。
 
-`scripts/lib/schema_migrations.py` 当前以增量 registry 管理 `catalog-links.sqlite` 和 `second-cycle.sqlite` 的本轮新投影；其他历史表仍由各领域模块初始化。新增表/字段必须继续提供幂等升级和旧库兼容测试，不能靠删除本地 DB 重建。
+`scripts/lib/schema_migrations.py` 当前以增量 registry 管理 `catalog-links.sqlite` 和 `second-cycle.sqlite`；自动工作流、账号身份与合作/持续发送分别使用 v11、v12、v13 三组 additive migration。其他历史表仍由各领域模块初始化。新增表/字段必须继续提供幂等升级和旧库兼容测试，不能靠删除本地 DB 重建。
 
 早期 `batch-tasks.sqlite` 与当前 `cycle_bulk_freeze/cycle_bulk_candidate` 是两套不同台账。Web 的 `/api/batch-tasks`、容量预检卡和旧 worker 唤醒入口已删除；历史数据库继续只读保留并纳入备份。当前新批次只走 `/api/send` 的预览、冻结、明确 start/stop/reconcile。项目文档要求的“任意 N＋10% 候补”已迁入当前冻结发送台账，不再依赖旧并行入口。
 

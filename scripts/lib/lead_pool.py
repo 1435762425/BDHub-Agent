@@ -149,6 +149,12 @@ def _build(conn, now, limit, eligible_pids=None,root=None):
     positions=list(merged.values())
     relationships = {row['creator_id']: row for row in _rows(
         conn, 'SELECT creator_id,unlocked,mode,rejected FROM relationship')}
+    collaboration = (
+        {row['creator_id']: row['status'] for row in _rows(
+            conn, 'SELECT creator_id,status FROM creator_collaboration_current')}
+        if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' "
+                        "AND name='creator_collaboration_current'").fetchone() else {}
+    )
     last_sent = {row[0]: row[1] for row in _rows(
         conn, "SELECT d.creator_id,max(p.started) FROM cycle_delivery d "
               "JOIN cycle_delivery_part p ON p.delivery_id=d.id "
@@ -170,7 +176,8 @@ def _build(conn, now, limit, eligible_pids=None,root=None):
         if relationship is None:
             continue
         unlocked = bool(relationship['unlocked'])
-        excluded = bool(relationship['rejected'])
+        collaboration_status = collaboration.get(creator, 'rejected' if relationship['rejected'] else 'normal')
+        excluded = bool(relationship['rejected']) or collaboration_status in ('paid', 'rejected')
         blocked = creator in open_cases or relationship['mode'] == 'human'
         previously = last_sent.get(creator)
         ready_at = None if previously is None else previously + (UNLOCKED_COOLDOWN if unlocked else LOCKED_COOLDOWN)
@@ -194,6 +201,7 @@ def _build(conn, now, limit, eligible_pids=None,root=None):
                               'videoViews':row['videoViews'],'videoId':row['videoId'],
                               'videoReleasedAt':row['videoReleasedAt'],
                               'unlocked': unlocked, 'sentAt': pair_sent,
+                              'collaborationStatus': collaboration_status,
                               'readyAt': ready_at, 'layer': layer,
                               'caseUpdatedAt': open_cases.get(creator)})
 

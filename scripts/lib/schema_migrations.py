@@ -579,6 +579,280 @@ CREATE INDEX IF NOT EXISTS agent_reply_run_plan_time ON agent_reply_run(plan_id,
 """)
 
 
+SECOND_CYCLE_AUTOMATED_WORKFLOW = Migration(11, "automated_operations_workflow_v1", """
+CREATE TABLE IF NOT EXISTS market_automation_setting(
+  market TEXT PRIMARY KEY,
+  automatic_operations_enabled INTEGER NOT NULL DEFAULT 0,
+  full_catalog_weekly_enabled INTEGER NOT NULL DEFAULT 0,
+  continuous_send_enabled INTEGER NOT NULL DEFAULT 0,
+  revision INTEGER NOT NULL DEFAULT 0,
+  updated_at REAL NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS market_automation_request(
+  request_id TEXT PRIMARY KEY,
+  market TEXT NOT NULL,
+  expected_revision INTEGER NOT NULL,
+  payload_json TEXT NOT NULL,
+  result_revision INTEGER NOT NULL,
+  created_at REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS workflow_run(
+  run_id TEXT PRIMARY KEY,
+  market TEXT NOT NULL,
+  trigger_source TEXT NOT NULL,
+  scheduled_at REAL NOT NULL,
+  applicable_sources_json TEXT NOT NULL,
+  config_revision INTEGER NOT NULL,
+  state TEXT NOT NULL,
+  started_at REAL NOT NULL,
+  finished_at REAL,
+  stop_requested_at REAL,
+  error_code TEXT
+);
+CREATE INDEX IF NOT EXISTS workflow_run_market_time
+  ON workflow_run(market,started_at DESC);
+CREATE INDEX IF NOT EXISTS workflow_run_active
+  ON workflow_run(market,state,started_at DESC);
+CREATE TABLE IF NOT EXISTS workflow_stage_run(
+  stage_run_id TEXT PRIMARY KEY,
+  run_id TEXT NOT NULL,
+  stage TEXT NOT NULL,
+  position INTEGER NOT NULL,
+  state TEXT NOT NULL,
+  input_generation_id TEXT,
+  output_generation_id TEXT,
+  checkpoint_json TEXT NOT NULL DEFAULT '{}',
+  counts_json TEXT NOT NULL DEFAULT '{}',
+  platform_writes INTEGER NOT NULL DEFAULT 0,
+  started_at REAL,
+  finished_at REAL,
+  error_code TEXT,
+  UNIQUE(run_id,stage)
+);
+CREATE INDEX IF NOT EXISTS workflow_stage_run_queue
+  ON workflow_stage_run(run_id,position,state);
+CREATE TABLE IF NOT EXISTS workflow_generation(
+  generation_id TEXT PRIMARY KEY,
+  run_id TEXT NOT NULL,
+  stage TEXT NOT NULL,
+  market TEXT NOT NULL,
+  scope_fingerprint TEXT NOT NULL,
+  state TEXT NOT NULL,
+  item_count INTEGER NOT NULL,
+  payload_json TEXT NOT NULL,
+  created_at REAL NOT NULL,
+  published_at REAL
+);
+CREATE INDEX IF NOT EXISTS workflow_generation_current
+  ON workflow_generation(market,stage,state,published_at DESC);
+CREATE TABLE IF NOT EXISTS workflow_checkpoint(
+  run_id TEXT NOT NULL,
+  stage TEXT NOT NULL,
+  checkpoint_key TEXT NOT NULL,
+  value_json TEXT NOT NULL,
+  updated_at REAL NOT NULL,
+  PRIMARY KEY(run_id,stage,checkpoint_key)
+);
+CREATE TRIGGER IF NOT EXISTS workflow_generation_no_update
+BEFORE UPDATE ON workflow_generation
+WHEN OLD.generation_id != NEW.generation_id OR OLD.run_id != NEW.run_id
+  OR OLD.stage != NEW.stage OR OLD.market != NEW.market
+  OR OLD.scope_fingerprint != NEW.scope_fingerprint OR OLD.item_count != NEW.item_count
+  OR OLD.payload_json != NEW.payload_json OR OLD.created_at != NEW.created_at
+BEGIN SELECT RAISE(ABORT,'workflow generation facts are immutable'); END;
+CREATE TRIGGER IF NOT EXISTS workflow_generation_no_delete
+BEFORE DELETE ON workflow_generation
+BEGIN SELECT RAISE(ABORT,'workflow generation is append only'); END;
+""")
+
+
+SECOND_CYCLE_ACCOUNT_IDENTITY = Migration(12, "account_identity_generation_v1", """
+CREATE TABLE IF NOT EXISTS account_runtime_setting(
+  market TEXT NOT NULL,
+  account TEXT NOT NULL,
+  role TEXT NOT NULL,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  revision INTEGER NOT NULL DEFAULT 0,
+  updated_at REAL NOT NULL DEFAULT 0,
+  PRIMARY KEY(market,account)
+);
+CREATE TABLE IF NOT EXISTS account_identity_generation(
+  generation_id TEXT PRIMARY KEY,
+  market TEXT NOT NULL,
+  account TEXT NOT NULL,
+  role TEXT NOT NULL,
+  reason TEXT NOT NULL,
+  browser_ref TEXT,
+  http_ref TEXT,
+  im_ref TEXT,
+  institution_fingerprint TEXT,
+  capability_json TEXT NOT NULL,
+  state TEXT NOT NULL,
+  created_at REAL NOT NULL,
+  published_at REAL,
+  error_code TEXT
+);
+CREATE INDEX IF NOT EXISTS account_identity_generation_current
+  ON account_identity_generation(market,account,state,published_at DESC);
+CREATE TABLE IF NOT EXISTS account_maintenance_intent(
+  intent_id TEXT PRIMARY KEY,
+  request_id TEXT NOT NULL UNIQUE,
+  market TEXT NOT NULL,
+  account TEXT NOT NULL,
+  role TEXT NOT NULL,
+  operation TEXT NOT NULL,
+  state TEXT NOT NULL,
+  expected_generation_id TEXT,
+  result_generation_id TEXT,
+  scheduled_at REAL NOT NULL,
+  started_at REAL,
+  finished_at REAL,
+  checkpoint_json TEXT NOT NULL DEFAULT '{}',
+  error_code TEXT,
+  created_at REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS account_maintenance_queue
+  ON account_maintenance_intent(state,scheduled_at,role,created_at);
+CREATE TABLE IF NOT EXISTS account_capability_observation(
+  observation_id TEXT PRIMARY KEY,
+  generation_id TEXT NOT NULL,
+  capability TEXT NOT NULL,
+  state TEXT NOT NULL,
+  evidence_ref TEXT,
+  observed_at REAL NOT NULL,
+  UNIQUE(generation_id,capability)
+);
+CREATE TRIGGER IF NOT EXISTS account_identity_generation_no_update
+BEFORE UPDATE ON account_identity_generation
+WHEN OLD.generation_id != NEW.generation_id OR OLD.market != NEW.market
+  OR OLD.account != NEW.account OR OLD.role != NEW.role OR OLD.reason != NEW.reason
+  OR COALESCE(OLD.browser_ref,'') != COALESCE(NEW.browser_ref,'')
+  OR COALESCE(OLD.http_ref,'') != COALESCE(NEW.http_ref,'')
+  OR COALESCE(OLD.im_ref,'') != COALESCE(NEW.im_ref,'')
+  OR COALESCE(OLD.institution_fingerprint,'') != COALESCE(NEW.institution_fingerprint,'')
+  OR OLD.capability_json != NEW.capability_json OR OLD.created_at != NEW.created_at
+BEGIN SELECT RAISE(ABORT,'account identity generation facts are immutable'); END;
+CREATE TRIGGER IF NOT EXISTS account_identity_generation_no_delete
+BEFORE DELETE ON account_identity_generation
+BEGIN SELECT RAISE(ABORT,'account identity generation is append only'); END;
+CREATE TRIGGER IF NOT EXISTS account_capability_observation_no_update
+BEFORE UPDATE ON account_capability_observation
+BEGIN SELECT RAISE(ABORT,'account capability observation is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS account_capability_observation_no_delete
+BEFORE DELETE ON account_capability_observation
+BEGIN SELECT RAISE(ABORT,'account capability observation is append only'); END;
+""")
+
+
+SECOND_CYCLE_CONTINUOUS_OPERATIONS = Migration(13, "collaboration_and_continuous_send_v1", """
+CREATE TABLE IF NOT EXISTS creator_collaboration_event(
+  event_id TEXT PRIMARY KEY,
+  request_id TEXT UNIQUE,
+  plan_id TEXT NOT NULL,
+  market TEXT NOT NULL,
+  creator_id TEXT NOT NULL,
+  source TEXT NOT NULL,
+  old_status TEXT NOT NULL,
+  new_status TEXT NOT NULL,
+  evidence_json TEXT NOT NULL,
+  revision INTEGER NOT NULL,
+  created_at REAL NOT NULL,
+  UNIQUE(plan_id,creator_id,revision)
+);
+CREATE TABLE IF NOT EXISTS creator_collaboration_current(
+  plan_id TEXT NOT NULL,
+  market TEXT NOT NULL,
+  creator_id TEXT NOT NULL,
+  status TEXT NOT NULL,
+  source TEXT NOT NULL,
+  revision INTEGER NOT NULL,
+  updated_at REAL NOT NULL,
+  PRIMARY KEY(plan_id,creator_id)
+);
+CREATE TABLE IF NOT EXISTS agent_reply_template(
+  template_key TEXT PRIMARY KEY,
+  action TEXT NOT NULL UNIQUE,
+  current_revision INTEGER NOT NULL,
+  updated_at REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS agent_reply_template_revision(
+  template_key TEXT NOT NULL,
+  revision INTEGER NOT NULL,
+  body TEXT NOT NULL,
+  created_at REAL NOT NULL,
+  PRIMARY KEY(template_key,revision)
+);
+CREATE TABLE IF NOT EXISTS continuous_send_control(
+  plan_id TEXT PRIMARY KEY,
+  automatic_enabled INTEGER NOT NULL DEFAULT 0,
+  run_requested INTEGER NOT NULL DEFAULT 0,
+  stop_requested INTEGER NOT NULL DEFAULT 0,
+  window_start TEXT NOT NULL DEFAULT '16:30',
+  window_end TEXT NOT NULL DEFAULT '24:00',
+  template_id TEXT NOT NULL DEFAULT 'standard',
+  revision INTEGER NOT NULL DEFAULT 0,
+  updated_at REAL NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS continuous_send_control_request(
+  request_id TEXT PRIMARY KEY,
+  plan_id TEXT NOT NULL,
+  expected_revision INTEGER NOT NULL,
+  action TEXT NOT NULL,
+  payload_json TEXT NOT NULL,
+  result_revision INTEGER NOT NULL,
+  created_at REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS continuous_send_runtime(
+  plan_id TEXT PRIMARY KEY,
+  state TEXT NOT NULL,
+  current_delivery_id TEXT,
+  current_creator_id TEXT,
+  current_pid TEXT,
+  confirmed_today INTEGER NOT NULL DEFAULT 0,
+  failed_known INTEGER NOT NULL DEFAULT 0,
+  unknown INTEGER NOT NULL DEFAULT 0,
+  started_at REAL,
+  seen_at REAL,
+  last_success_at REAL,
+  stopped_at REAL,
+  stop_reason TEXT,
+  worker_pid INTEGER
+);
+CREATE TABLE IF NOT EXISTS taplink_reconcile_attempt(
+  attempt_id TEXT PRIMARY KEY,
+  intent_id TEXT NOT NULL,
+  run_id TEXT NOT NULL,
+  pid TEXT NOT NULL,
+  attempt_no INTEGER NOT NULL,
+  scheduled_delay_seconds INTEGER NOT NULL,
+  state TEXT NOT NULL,
+  evidence_json TEXT NOT NULL,
+  observed_at REAL NOT NULL,
+  UNIQUE(intent_id,attempt_no)
+);
+CREATE INDEX IF NOT EXISTS taplink_reconcile_intent
+  ON taplink_reconcile_attempt(intent_id,attempt_no);
+CREATE TRIGGER IF NOT EXISTS creator_collaboration_event_no_update
+BEFORE UPDATE ON creator_collaboration_event
+BEGIN SELECT RAISE(ABORT,'collaboration event is append only'); END;
+CREATE TRIGGER IF NOT EXISTS creator_collaboration_event_no_delete
+BEFORE DELETE ON creator_collaboration_event
+BEGIN SELECT RAISE(ABORT,'collaboration event is append only'); END;
+CREATE TRIGGER IF NOT EXISTS agent_reply_template_revision_no_update
+BEFORE UPDATE ON agent_reply_template_revision
+BEGIN SELECT RAISE(ABORT,'agent template revision is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS agent_reply_template_revision_no_delete
+BEFORE DELETE ON agent_reply_template_revision
+BEGIN SELECT RAISE(ABORT,'agent template revision is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS taplink_reconcile_attempt_no_update
+BEFORE UPDATE ON taplink_reconcile_attempt
+BEGIN SELECT RAISE(ABORT,'taplink reconcile attempt is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS taplink_reconcile_attempt_no_delete
+BEFORE DELETE ON taplink_reconcile_attempt
+BEGIN SELECT RAISE(ABORT,'taplink reconcile attempt is append only'); END;
+""")
+
+
 DATABASES = {
     "catalog-links": ("catalog-links.sqlite", (CATALOG_LINKS,)),
     "second-cycle": ("second-cycle.sqlite", (SECOND_CYCLE, SECOND_CYCLE_INDEXES,
@@ -589,7 +863,10 @@ DATABASES = {
                                                 SECOND_CYCLE_VIDEO_EVIDENCE,
                                                 SECOND_CYCLE_VIDEO_PAGING,
                                                 SECOND_CYCLE_AB_LEADS,
-                                                SECOND_CYCLE_CONVERSATION_WORKBENCH)),
+                                                SECOND_CYCLE_CONVERSATION_WORKBENCH,
+                                                SECOND_CYCLE_AUTOMATED_WORKFLOW,
+                                                SECOND_CYCLE_ACCOUNT_IDENTITY,
+                                                SECOND_CYCLE_CONTINUOUS_OPERATIONS)),
 }
 
 REGISTRY_SQL = """
