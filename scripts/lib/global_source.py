@@ -15,15 +15,40 @@ class GlobalSourceError(ValueError):pass
 
 def source_lineage_key(scope):
     # Keep the original v1 source hash stable while actors move between the IT pair.
-    # Account is a reserved compatibility slot in this hash, not the executing actor;
-    # each immutable run.scope still records its real account.
-    return digest({**scope,'account':'acc6'})
+    # Account and collection mechanics are compatibility slots, not the executing actor or a
+    # second business source.  Category-partitioned runs therefore replace the old 10k-window head
+    # only after they are complete, while preserving the exact v1 lineage hash.
+    return digest({'market':scope['market'],'account':'acc6',
+      'institutionFingerprint':scope['institutionFingerprint'],'source':scope.get('source',SOURCE),
+      'filter':scope.get('filter',FILTER),'pageSize':scope.get('pageSize',15)})
 
-def list_request(page,total=None):
+def list_request(page,total=None,category_id=None):
     if type(page) is not int or not 1<=page<=2000:raise GlobalSourceError('invalid_page')
+    if category_id is not None and (not isinstance(category_id,str) or not re.fullmatch(r'[0-9]{1,20}',category_id)):
+        raise GlobalSourceError('invalid_category')
     # Live-verified tail: 9990 offset + 10 rows stays inside the 10000-result window.
     native_page,size=(1000,10) if page==667 and total==10000 else (page,15)
-    return {'filter':deepcopy(FILTER),'page':native_page,'page_size':size}
+    request={'filter':deepcopy(FILTER),'page':native_page,'page_size':size}
+    if category_id is not None:request['filter']['category_id']=[category_id]
+    return request
+
+def clean_categories(rows):
+    if not isinstance(rows,list) or not 1<=len(rows)<=100:raise GlobalSourceError('category_tree_invalid')
+    result=[];seen=set()
+    for row in rows:
+        category_id=str(row.get('category_id') or '') if isinstance(row,dict) else ''
+        name=row.get('name') if isinstance(row,dict) else None;leaf=row.get('is_leaf') if isinstance(row,dict) else None
+        if not re.fullmatch(r'[0-9]{1,20}',category_id) or category_id in seen or \
+           not isinstance(name,str) or not name.strip() or len(name)>200 or type(leaf) is not bool:
+            raise GlobalSourceError('category_tree_invalid')
+        seen.add(category_id);result.append({'categoryId':category_id,'name':name.strip(),'isLeaf':leaf})
+    return result
+
+def normalize_page(data):
+    """The category endpoint omits products for an explicit zero-result terminal page."""
+    if isinstance(data,dict) and data.get('total')==0 and data.get('has_more') is False and data.get('products') is None:
+        return {**data,'products':[]}
+    return data
 
 def clean_product(row):
     if not isinstance(row,dict) or not isinstance(row.get('product_id'),str) or not re.fullmatch(r'[0-9]{19}',row['product_id']):raise GlobalSourceError('product_identity_invalid')
@@ -62,6 +87,21 @@ CREATE TABLE IF NOT EXISTS global_source_head(scope_hash TEXT PRIMARY KEY,run_id
 CREATE TABLE IF NOT EXISTS global_source_detail(run_id TEXT NOT NULL,pid TEXT NOT NULL,listing_fingerprint TEXT NOT NULL,payload TEXT NOT NULL,response_hash TEXT NOT NULL,observed REAL NOT NULL,PRIMARY KEY(run_id,pid));
 CREATE TABLE IF NOT EXISTS global_source_stock(run_id TEXT NOT NULL,pid TEXT NOT NULL,listing_fingerprint TEXT NOT NULL,payload TEXT NOT NULL,response_hash TEXT NOT NULL,observed REAL NOT NULL,PRIMARY KEY(run_id,pid));
 CREATE TABLE IF NOT EXISTS global_source_attempt(id INTEGER PRIMARY KEY AUTOINCREMENT,run_id TEXT NOT NULL,page INTEGER,at REAL NOT NULL,code TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS global_source_partition(
+ run_id TEXT NOT NULL,category_id TEXT NOT NULL,category_name TEXT NOT NULL,position INTEGER NOT NULL,
+ state TEXT NOT NULL,next_page INTEGER NOT NULL DEFAULT 1,reported_total INTEGER,page_count INTEGER NOT NULL DEFAULT 0,
+ unique_count INTEGER NOT NULL DEFAULT 0,created REAL NOT NULL,updated REAL NOT NULL,terminal_reason TEXT,
+ PRIMARY KEY(run_id,category_id),UNIQUE(run_id,position));
+CREATE TABLE IF NOT EXISTS global_source_partition_page(
+ run_id TEXT NOT NULL,category_id TEXT NOT NULL,page INTEGER NOT NULL,count INTEGER NOT NULL,
+ category_new_count INTEGER NOT NULL,global_new_count INTEGER NOT NULL,has_more INTEGER NOT NULL,
+ reported_total INTEGER NOT NULL,response_hash TEXT NOT NULL,pids_hash TEXT NOT NULL,observed REAL NOT NULL,
+ request_payload TEXT NOT NULL,PRIMARY KEY(run_id,category_id,page));
+CREATE TABLE IF NOT EXISTS global_source_product_category(
+ run_id TEXT NOT NULL,pid TEXT NOT NULL,category_id TEXT NOT NULL,category_name TEXT NOT NULL,
+ first_page INTEGER NOT NULL,last_page INTEGER NOT NULL,observed REAL NOT NULL,
+ PRIMARY KEY(run_id,pid,category_id));
+CREATE INDEX IF NOT EXISTS global_partition_state ON global_source_partition(run_id,state,position);
 '''
 class GlobalSources:
     def __init__(self,path,*,clock=time.time,readonly=False):
@@ -92,7 +132,87 @@ class GlobalSources:
             elif self.db.execute("SELECT 1 FROM global_source_run WHERE scope_hash=? AND state='collecting'",(source_lineage_key(frozen),)).fetchone():raise GlobalSourceError('scan_already_collecting')
             else:self.db.execute("INSERT INTO global_source_run(id,scope,scope_hash,state,created,updated) VALUES(?,?,?,'collecting',?,?)",(id,encoded(frozen),source_lineage_key(frozen),self.clock(),self.clock()))
         return self.get(id)
+    def start_partitioned(self,id,scope,categories):
+        if not re.fullmatch(r'[A-Za-z0-9_-]{1,100}',id):raise GlobalSourceError('invalid_run_id')
+        if not isinstance(scope,dict) or set(scope)!={'market','account','institutionFingerprint'} or scope.get('market')!='it' or scope.get('account') not in ('acc6','acc9') or not re.fullmatch(r'[a-f0-9]{64}',scope.get('institutionFingerprint','')):raise GlobalSourceError('unsupported_source_scope')
+        categories=clean_categories(categories)
+        frozen={**scope,'source':SOURCE,'filter':FILTER,'pageSize':15,
+                'partitionMode':'category_l1_v1','categories':categories}
+        with self.tx():
+            previous=self.db.execute('SELECT scope FROM global_source_run WHERE id=?',(id,)).fetchone()
+            if previous:
+                if previous[0]!=encoded(frozen):raise GlobalSourceError('run_scope_changed')
+            elif self.db.execute("SELECT 1 FROM global_source_run WHERE scope_hash=? AND state='collecting'",(source_lineage_key(frozen),)).fetchone():
+                raise GlobalSourceError('scan_already_collecting')
+            else:
+                now=self.clock();self.db.execute("INSERT INTO global_source_run(id,scope,scope_hash,state,created,updated) VALUES(?,?,?,'collecting',?,?)",(id,encoded(frozen),source_lineage_key(frozen),now,now))
+                for position,row in enumerate(categories):
+                    self.db.execute("INSERT INTO global_source_partition VALUES(?,?,?,?, 'queued',1,NULL,0,0,?,?,NULL)",
+                      (id,row['categoryId'],row['name'],position,now,now))
+        return self.get(id)
+    def next_partition(self,id):
+        with self.tx():
+            run=self.get(id)
+            if run['state']!='collecting' or run['scope'].get('partitionMode')!='category_l1_v1':
+                return None
+            row=self.db.execute("SELECT * FROM global_source_partition WHERE run_id=? AND state='collecting' ORDER BY position LIMIT 1",(id,)).fetchone()
+            if not row:
+                row=self.db.execute("SELECT * FROM global_source_partition WHERE run_id=? AND state='queued' ORDER BY position LIMIT 1",(id,)).fetchone()
+                if row:
+                    self.db.execute("UPDATE global_source_partition SET state='collecting',updated=? WHERE run_id=? AND category_id=?",(self.clock(),id,row['category_id']))
+                    row=self.db.execute("SELECT * FROM global_source_partition WHERE run_id=? AND category_id=?",(id,row['category_id'])).fetchone()
+        return dict(row) if row else None
+    def partition_page(self,id,category_id,page,data,*,request_payload):
+        data=normalize_page(data)
+        if not isinstance(data,dict) or type(data.get('has_more')) is not bool or type(data.get('total')) is not int or data['total']<0 or not isinstance(data.get('products'),list):raise GlobalSourceError('page_shape_invalid')
+        cleaned=[clean_product(row) for row in data['products']];pids=[row['product_id'] for row in cleaned]
+        if len(set(pids))!=len(pids):raise GlobalSourceError('duplicate_pid_in_page')
+        if len(cleaned)>15 or (not cleaned and data['has_more']):raise GlobalSourceError('page_no_progress')
+        fingerprint=digest(data);pid_hash=digest(pids)
+        with self.tx():
+            run=self.get(id);scope=run['scope']
+            if run['state']!='collecting' or scope.get('partitionMode')!='category_l1_v1':raise GlobalSourceError('unexpected_page')
+            part=self.db.execute('SELECT * FROM global_source_partition WHERE run_id=? AND category_id=?',(id,str(category_id))).fetchone()
+            old=self.db.execute('SELECT response_hash FROM global_source_partition_page WHERE run_id=? AND category_id=? AND page=?',(id,str(category_id),page)).fetchone()
+            if old:
+                if old[0]!=fingerprint:raise GlobalSourceError('page_replay_changed')
+                return self.status(id)
+            if not part or part['state']!='collecting' or page!=part['next_page']:raise GlobalSourceError('unexpected_page')
+            expected=list_request(page,part['reported_total'],str(category_id))
+            if request_payload!=expected:raise GlobalSourceError('page_request_scope_changed')
+            if len(cleaned)>expected['page_size']:raise GlobalSourceError('page_size_mismatch')
+            if pids and self.db.execute('SELECT 1 FROM global_source_partition_page WHERE run_id=? AND category_id=? AND pids_hash=?',(id,str(category_id),pid_hash)).fetchone():raise GlobalSourceError('repeated_page')
+            global_added=category_added=0;sequence=part['position']*2000+page;now=self.clock()
+            for product in cleaned:
+                pid=product['product_id']
+                exists=self.db.execute('SELECT 1 FROM global_source_product WHERE run_id=? AND pid=?',(id,pid)).fetchone();global_added+=not bool(exists)
+                member=self.db.execute('SELECT 1 FROM global_source_product_category WHERE run_id=? AND pid=? AND category_id=?',(id,pid,str(category_id))).fetchone();category_added+=not bool(member)
+                self.db.execute('''INSERT INTO global_source_product VALUES(?,?,?,?,?,?,?)
+                  ON CONFLICT(run_id,pid) DO UPDATE SET payload=excluded.payload,fingerprint=excluded.fingerprint,
+                    last_page=excluded.last_page,observed=excluded.observed''',
+                  (id,pid,encoded(product),digest(product),sequence,sequence,now))
+                self.db.execute('''INSERT INTO global_source_product_category VALUES(?,?,?,?,?,?,?)
+                  ON CONFLICT(run_id,pid,category_id) DO UPDATE SET last_page=excluded.last_page,observed=excluded.observed''',
+                  (id,pid,str(category_id),part['category_name'],page,page,now))
+            if not category_added and data['has_more']:raise GlobalSourceError('page_no_progress')
+            self.db.execute('INSERT INTO global_source_partition_page VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',
+              (id,str(category_id),page,len(cleaned),category_added,global_added,int(data['has_more']),data['total'],fingerprint,pid_hash,now,encoded(expected)))
+            unique=self.db.execute('SELECT count(*) FROM global_source_product_category WHERE run_id=? AND category_id=?',(id,str(category_id))).fetchone()[0]
+            totals={row[0] for row in self.db.execute('SELECT DISTINCT reported_total FROM global_source_partition_page WHERE run_id=? AND category_id=?',(id,str(category_id)))}
+            state='collecting' if data['has_more'] else 'completed';reason=None if data['has_more'] else 'endpoint_end'
+            if state=='completed' and (len(totals)>1 or unique!=data['total']):state='partial';reason='category_endpoint_total_mismatch'
+            self.db.execute('UPDATE global_source_partition SET next_page=?,reported_total=?,page_count=page_count+1,unique_count=?,state=?,updated=?,terminal_reason=? WHERE run_id=? AND category_id=?',
+              (page+1,data['total'],unique,state,now,reason,id,str(category_id)))
+            pages=self.db.execute('SELECT coalesce(sum(page_count),0) FROM global_source_partition WHERE run_id=?',(id,)).fetchone()[0]
+            if state=='partial':
+                self.db.execute("UPDATE global_source_run SET state='partial',next_page=?,updated=?,terminal_reason='category_endpoint_total_mismatch' WHERE id=?",(pages+1,now,id))
+            elif state=='completed' and not self.db.execute("SELECT 1 FROM global_source_partition WHERE run_id=? AND state<>'completed'",(id,)).fetchone():
+                reported=self.db.execute('SELECT coalesce(sum(reported_total),0) FROM global_source_partition WHERE run_id=?',(id,)).fetchone()[0]
+                self.db.execute("UPDATE global_source_run SET state='completed',next_page=?,reported_total=?,updated=?,terminal_reason='category_endpoints_complete' WHERE id=?",(pages+1,reported,now,id))
+            else:self.db.execute('UPDATE global_source_run SET next_page=?,updated=? WHERE id=?',(pages+1,now,id))
+        return self.status(id)
     def page(self,id,page,data,*,request_payload=None):
+        data=normalize_page(data)
         if not isinstance(data,dict) or type(data.get('has_more')) is not bool or type(data.get('total')) is not int or data['total']<0 or not isinstance(data.get('products'),list):raise GlobalSourceError('page_shape_invalid')
         cleaned=[clean_product(row) for row in data['products']];pids=[r['product_id'] for r in cleaned]
         if len(set(pids))!=len(pids):raise GlobalSourceError('duplicate_pid_in_page')
@@ -143,6 +263,8 @@ class GlobalSources:
         if not re.fullmatch(r'[A-Za-z0-9_]{1,100}',code):code='source_read_failed'
         with self.tx():
             row=self.get(id);self.db.execute('INSERT INTO global_source_attempt(run_id,page,at,code) VALUES(?,?,?,?)',(id,row['next_page'],self.clock(),code))
+            if row['scope'].get('partitionMode')=='category_l1_v1':
+                self.db.execute("UPDATE global_source_partition SET state='blocked',terminal_reason=?,updated=? WHERE run_id=? AND state='collecting'",(code,self.clock(),id))
             self.db.execute("UPDATE global_source_run SET state='blocked',terminal_reason=?,updated=? WHERE id=?",(code,self.clock(),id))
     def detail(self,id,pid,listing_fingerprint,rows):
         clean=clean_details(rows)
@@ -185,6 +307,16 @@ class GlobalSources:
         selected=self.db.execute("SELECT count(*) FROM global_source_product WHERE run_id=? AND json_extract(payload,'$.fs_is_selected')=1",(id,)).fetchone()[0]
         unselected=self.db.execute("SELECT count(*) FROM global_source_product WHERE run_id=? AND json_extract(payload,'$.fs_is_selected')=0",(id,)).fetchone()[0]
         active=self.db.execute("SELECT r.id,r.updated,(SELECT count(*) FROM global_source_product p WHERE p.run_id=r.id) products FROM global_source_head h JOIN global_source_run r ON r.id=h.run_id WHERE h.scope_hash=? AND r.state='completed' AND r.identity_unchanged=1",(r['scope_hash'],)).fetchone()
-        return {'activePublished':dict(active) if active else None,'listedSelectedProducts':selected,'listedUnselectedProducts':unselected,'platformWrites':0,'modelCalls':0,'available':True,'id':id,'market':r['scope']['market'],'account':r['scope']['account'],'source':SOURCE,'state':r['state'],'products':count,'pages':r['next_page']-1,'reportedTotal':r['reported_total'],'nextPage':r['next_page'],'detailProducts':detail_count,'reason':r['terminal_reason'],
-            'identityFileUnchanged':bool(r['identity_unchanged']),'published':bool(self.db.execute('SELECT 1 FROM global_source_head WHERE run_id=?',(id,)).fetchone()),'coverage':'current_query_endpoint_and_total' if r['state']=='completed' else 'partial_query',
+        partitioned=r['scope'].get('partitionMode')=='category_l1_v1';partitions=[]
+        if partitioned:partitions=[dict(row) for row in self.db.execute('SELECT * FROM global_source_partition WHERE run_id=? ORDER BY position',(id,))]
+        pages=sum(row['page_count'] for row in partitions) if partitioned else r['next_page']-1
+        reported=sum((row['reported_total'] or 0) for row in partitions) if partitioned else r['reported_total']
+        memberships=self.db.execute('SELECT count(*) FROM global_source_product_category WHERE run_id=?',(id,)).fetchone()[0] if partitioned else count
+        next_partition=next((row for row in partitions if row['state'] in ('collecting','queued','blocked')),None)
+        return {'activePublished':dict(active) if active else None,'listedSelectedProducts':selected,'listedUnselectedProducts':unselected,'platformWrites':0,'modelCalls':0,'available':True,'id':id,'market':r['scope']['market'],'account':r['scope']['account'],'source':SOURCE,'state':r['state'],'products':count,'pages':pages,'reportedTotal':reported,'nextPage':next_partition['next_page'] if next_partition else r['next_page'],'detailProducts':detail_count,'reason':r['terminal_reason'],
+            'identityFileUnchanged':bool(r['identity_unchanged']),'published':bool(self.db.execute('SELECT 1 FROM global_source_head WHERE run_id=?',(id,)).fetchone()),'coverage':('category_l1_endpoint_and_totals' if partitioned else 'current_query_endpoint_and_total') if r['state']=='completed' else 'partial_query',
+            'partitionMode':r['scope'].get('partitionMode'),'categoryCount':len(partitions) if partitioned else None,
+            'categoriesCompleted':sum(row['state']=='completed' for row in partitions) if partitioned else None,
+            'categoryMemberships':memberships if partitioned else None,'categoryOverlap':memberships-count if partitioned else None,
+            'nextCategory':({'categoryId':next_partition['category_id'],'name':next_partition['category_name'],'state':next_partition['state'],'nextPage':next_partition['next_page']} if next_partition else None),
             'updatedAt':r['updated'],'listingOnly':True,'stockVerified':False,'stockRequired':False,'executionAllowed':False,'sample':[{'pid':x['pid'],'title':json.loads(x['payload']).get('title'),'listedSelected':json.loads(x['payload']).get('fs_is_selected')} for x in self.db.execute('SELECT pid,payload FROM global_source_product WHERE run_id=? ORDER BY first_page,pid LIMIT 6',(id,))]}

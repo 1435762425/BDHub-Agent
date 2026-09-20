@@ -12,6 +12,7 @@ class SourceTests(unittest.TestCase):
  def tearDown(self):self.s.close();self.t.cleanup()
  def test_exact_source_and_no_private_fields(self):
   self.assertEqual(list_request(1)['filter']['campaign_type'],[8]);self.assertEqual(list_request(1)['page_size'],15)
+  self.assertEqual(list_request(1,category_id='600001')['filter']['category_id'],['600001'])
   first=list_request(1);first['filter']['campaign_type'].append(9);self.assertEqual(list_request(2)['filter']['campaign_type'],[8])
   p=clean_product(product(1));self.assertNotIn('PRIVATE',json.dumps(p));self.assertNotIn('stock',p)
  def test_pages_durable_replay_and_completed_head_requires_identity(self):
@@ -79,4 +80,40 @@ class SourceTests(unittest.TestCase):
   with self.assertRaises(GlobalSourceError):self.s.stock('one',row['pid'],'stale',offers,'proof')
  def test_identity_change_blocks_publication(self):
   self.s.page('one',1,page([1]));self.s.finish_session('one',False);self.assertEqual(self.s.status()['state'],'blocked');self.assertFalse(self.s.status()['published'])
+ def test_category_partitions_finish_independently_and_publish_one_deduplicated_head(self):
+  old_hash=self.s.get('one')['scope_hash'];self.s.blocked('one','fixture_end')
+  categories=[{'category_id':'600001','name':'家居用品','is_leaf':False},
+              {'category_id':'600002','name':'女装','is_leaf':False}]
+  self.s.start_partitioned('bycat',self.scope,categories)
+  self.assertEqual(self.s.get('bycat')['scope_hash'],old_hash)
+  first=self.s.next_partition('bycat');self.assertEqual(first['category_id'],'600001')
+  request=list_request(1,category_id='600001')
+  first_page=page([1,2],False,2)
+  self.s.partition_page('bycat','600001',1,first_page,request_payload=request)
+  self.s.partition_page('bycat','600001',1,first_page,request_payload=request)
+  second=self.s.next_partition('bycat');self.assertEqual(second['category_id'],'600002')
+  self.s.partition_page('bycat','600002',1,page([2,3],False,2),
+                        request_payload=list_request(1,category_id='600002'))
+  before=self.s.status('bycat');self.assertEqual(before['state'],'completed');self.assertFalse(before['published'])
+  self.s.finish_session('bycat',True);result=self.s.status('bycat')
+  self.assertEqual((result['products'],result['reportedTotal'],result['categoryMemberships'],result['categoryOverlap']),(3,4,4,1))
+  self.assertEqual((result['categoryCount'],result['categoriesCompleted'],result['pages']),(2,2,2))
+  self.assertEqual(result['coverage'],'category_l1_endpoint_and_totals');self.assertTrue(result['published'])
+ def test_zero_result_category_may_omit_products(self):
+  self.s.blocked('one','fixture_end')
+  self.s.start_partitioned('emptycat',self.scope,[{'category_id':'600099','name':'空类目','is_leaf':False}])
+  self.s.next_partition('emptycat')
+  self.s.partition_page('emptycat','600099',1,{'total':0,'has_more':False},
+                        request_payload=list_request(1,category_id='600099'))
+  self.s.finish_session('emptycat',True);result=self.s.status('emptycat')
+  self.assertEqual((result['state'],result['products'],result['reportedTotal']),('completed',0,0))
+  self.assertTrue(result['published'])
+ def test_one_incomplete_category_never_replaces_the_published_head(self):
+  self.s.page('one',1,page([9]));self.s.finish_session('one',True);old=self.s.status('one')['activePublished']['id']
+  self.now+=10;self.s.start_partitioned('badcat',self.scope,[{'category_id':'600001','name':'家居用品','is_leaf':False}])
+  self.s.next_partition('badcat')
+  self.s.partition_page('badcat','600001',1,page([1],False,2),request_payload=list_request(1,category_id='600001'))
+  self.s.finish_session('badcat',True);result=self.s.status('badcat')
+  self.assertEqual(result['state'],'partial');self.assertFalse(result['published'])
+  self.assertEqual(result['activePublished']['id'],old)
 if __name__=='__main__':unittest.main()
