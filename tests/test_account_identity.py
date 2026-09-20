@@ -11,7 +11,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 from lib.account_identity import (apply_bootstrap, claim_next, current_generation, execute_claimed,
                                   next_due, publish_generation, request_maintenance, set_enabled,
-                                  status)  # noqa:E402
+                                  project_runtime_readiness, status)  # noqa:E402
 from lib.schema_migrations import apply_database  # noqa:E402
 from lib.second_cycle import CycleStore  # noqa:E402
 
@@ -140,6 +140,32 @@ class AccountIdentityTests(unittest.TestCase):
         self.assertEqual((current["browserRef"], current["httpRef"], current["imRef"]),
                          ("browser:acc6:2", "http:acc6:2", "im:acc6:2"))
         self.assertIn(("reconnect", "acc6"), adapter.calls)
+
+    def test_project_readiness_is_authoritative_after_legacy_account_retirement(self):
+        (self.root / "config/market-accounts.json").write_text(json.dumps(config("project_owned")))
+        capabilities = {name: {"state": "verified", "evidenceRef": "project-proof"}
+                        for name in ("browser_session", "partner_http", "institution_market", "im_identity")}
+        publish_generation(self.store, market="it", account="acc6", role="communications",
+                           reason="relogin", identity={"browserRef": "browser:acc6", "httpRef": "http:acc6",
+                           "imRef": "im:acc6", "institutionFingerprint": "i" * 64},
+                           capabilities=capabilities)
+        readiness = project_runtime_readiness(self.root)
+        acc6 = next(row for row in readiness["accounts"] if row["name"] == "acc6")
+        acc9 = next(row for row in readiness["accounts"] if row["name"] == "acc9")
+        self.assertTrue(acc6["startable"])
+        self.assertEqual(acc6["authority"], "project_owned")
+        self.assertFalse(acc9["startable"])
+        self.assertEqual(acc9["blockers"], [{"code": "project_identity_missing"},
+                                             {"code": "project_identity_capability_unverified",
+                                              "capabilities": sorted(("browser_session", "partner_http",
+                                                                      "institution_market", "im_identity"))}])
+
+        set_enabled(self.store, self.root, "it", "acc6", False,
+                    "disable-project-acc6", 0)
+        disabled = next(row for row in project_runtime_readiness(self.root)["accounts"]
+                        if row["name"] == "acc6")
+        self.assertFalse(disabled["startable"])
+        self.assertIn({"code": "project_account_disabled"}, disabled["blockers"])
 
     def test_explicit_relogin_opens_relogin_without_silent_refresh_first(self):
         (self.root / "config/market-accounts.json").write_text(json.dumps(config("project_owned")))

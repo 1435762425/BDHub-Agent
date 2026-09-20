@@ -112,6 +112,10 @@ def write_json(path: Path, value: dict) -> None:
 
 
 def get_readiness() -> dict:
+    from lib.account_identity import project_runtime_readiness
+    project = project_runtime_readiness(ROOT, "it")
+    if project is not None:
+        return project
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
     with opener.open("http://127.0.0.1:8787/api/account-readiness?market=it&capability=collect&transport=pure_http", timeout=10) as response:
         return json.load(response)

@@ -9,7 +9,10 @@ from __future__ import annotations
 import json
 import os
 import re
+import sqlite3
+from contextlib import closing
 from datetime import datetime, timedelta
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from lib.market_accounts import load_config
@@ -27,6 +30,9 @@ ROLE_RESPONSIBILITIES = {
 }
 INTERVAL_SECONDS = 72 * 3600
 TERMINAL = {"completed", "failed_known", "needs_human", "cancelled"}
+START_REQUIRED_CAPABILITIES = frozenset({
+    "browser_session", "partner_http", "institution_market", "im_identity",
+})
 
 
 def _worker_alive(pid):
@@ -64,6 +70,59 @@ def assignments(root):
                          "responsibilities": list(ROLE_RESPONSIBILITIES[role]),
                          "credentialAuthority": pair["credentialAuthority"]})
     return rows
+
+
+def project_runtime_readiness(root, market="it"):
+    """Read the project-owned runtime authority without consulting the retired legacy pools."""
+    root = Path(root)
+    pair = load_config(root)["markets"].get(market)
+    if not pair or pair.get("credentialAuthority") != "project_owned":
+        return None
+    path = root / "var/second-cycle.sqlite"
+    rows = []
+    try:
+        with closing(sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True, timeout=5)) as db:
+            db.row_factory = sqlite3.Row
+            tables = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+            required_tables = {"account_runtime_setting", "account_identity_generation",
+                               "account_capability_observation"}
+            readable = required_tables <= tables
+            for account in pair["accounts"]:
+                role = next(name for name, value in pair["roles"].items() if value == account)
+                setting = db.execute(
+                    "SELECT enabled FROM account_runtime_setting WHERE market=? AND account=?",
+                    (market, account),
+                ).fetchone() if readable else None
+                enabled = bool(setting["enabled"]) if setting else True
+                generation = db.execute(
+                    "SELECT * FROM account_identity_generation WHERE market=? AND account=? "
+                    "AND state='published' ORDER BY published_at DESC,rowid DESC LIMIT 1",
+                    (market, account),
+                ).fetchone() if readable else None
+                capabilities = {row[0]: row[1] for row in db.execute(
+                    "SELECT capability,state FROM account_capability_observation WHERE generation_id=?",
+                    (generation["generation_id"],),
+                )} if generation else {}
+                blockers = []
+                if not readable:
+                    blockers.append({"code": "project_identity_unreadable"})
+                if not enabled:
+                    blockers.append({"code": "project_account_disabled"})
+                if not generation or generation["role"] != role:
+                    blockers.append({"code": "project_identity_missing"})
+                missing = sorted(capability for capability in START_REQUIRED_CAPABILITIES
+                                 if capabilities.get(capability) != "verified")
+                if missing:
+                    blockers.append({"code": "project_identity_capability_unverified",
+                                     "capabilities": missing})
+                rows.append({"name": account, "startable": not blockers,
+                             "manual_paused": not enabled, "market_paused": False,
+                             "blockers": blockers, "authority": "project_owned"})
+    except (OSError, sqlite3.Error):
+        rows = [{"name": account, "startable": False, "manual_paused": False,
+                 "market_paused": False, "blockers": [{"code": "project_identity_unreadable"}],
+                 "authority": "project_owned"} for account in pair["accounts"]]
+    return {"accounts": rows, "authority": "project_owned"}
 
 
 def account_setting(store, market, account, role):
