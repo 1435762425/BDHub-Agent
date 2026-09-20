@@ -93,6 +93,8 @@ React 组件不能直接读写 SQLite、启动任意命令或实现资格规则�
 
 全托来源的正式完整模式为 `category_l1_v1`：先读取 IT 官方一级类目树，再对每个类目独立保存 `next_page / reported_total / unique_count / terminal_reason`，每个分区必须在 endpoint 末页满足 `unique_count = reported_total`。`global_source_product_category` 保存分区成员，`global_source_product` 跨类目按 PID 去重；全部分区完成后才更新同一 `global_source_head`，运行中或任一分区 partial/blocked 时继续展示上一版完整 head。2026-09-21 真实运行覆盖 28 类、2,134 页、31,809 个唯一 PID，耗时 3,524.088 秒，类目成员 31,809、重叠 0、平台写入 0。
 
+完整全托 catalog stage 随后在 ACC9 执行 `selection prepare → verify unresolved → execute-fast --native-listing`；每次最多 600 个并循环到 pending 为 0。选入请求先落持久意图，平台 code 0 后按 0/1/3/30/120 秒只读回查；任一 `result_unknown/needs_review` 阻断下游，不重发。跨 source generation 的未结意图复制为只读恢复投影并保留原 run 引用，避免新一周重新提交同一 PID。
+
 ### 5.2 TapLink
 
 | 模块 | 作用 |

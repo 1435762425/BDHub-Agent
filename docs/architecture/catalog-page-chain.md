@@ -22,7 +22,7 @@
 | --- | --- | --- | --- | --- | --- | --- |
 | 1 | 采集 | 主动采集 | `global-source-control.py` → `collect-global-opportunity.py` | **ACC9** | 只读，一次约 15 页 | `var/global-source.sqlite` |
 | 2 | 筛分 | 保存门槛并重新筛分 | `global-screen.py save` | — | 无 | 同上（`global_source_screen*`） |
-| 3 | 选入 | 一键选入（在「待入池」小卡上） | `select-global-products.py execute` | **ACC6** | **写入**，上限 600/次 | `var/global-selection.sqlite` |
+| 3 | 选入 | 一键选入（在「待入池」小卡上） | `select-global-products.py execute` | **ACC9** | **写入**，上限 600/次 | `var/global-selection.sqlite` |
 | 4 | 备链 | 准备链接（只查不建）／准备链接并新建 | `catalog-link-batch.py` → `catalog-link-prepare.py` | **ACC9** | 读＋（`creates>0` 时）**写入** | `var/catalog-links.sqlite` |
 | 4b | 商品短名 | 一键补全 | `catalog-names.py`（DeepSeek） | 模型 API | 无 | `var/second-cycle.sqlite` 的 `cycle_product_name` |
 | 5 | 查线索 | 立即运行这一批 | `leads-run.py` | **Kalodata** | 只读，吃日额度 | `var/kalodata-leads.sqlite` ＋ `second-cycle.sqlite/source_edge` |

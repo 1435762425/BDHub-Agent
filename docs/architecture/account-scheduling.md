@@ -4,7 +4,7 @@
 
 ## 现场事实
 
-- 新版货盘读取使用`global_source_transport`，新任务从登记选择IT/ACC9；选入写入暂保留ACC6。
+- 新版货盘读取与全托选入都使用`global_source_transport`并固定到IT/ACC9；通信、OECID与发送继续固定ACC6。
 - 新版IM收信和发送经`second_live_runtime._authenticated`，也固定IT/ACC6；`authenticate_it`当前直接拒绝其他账号。
 - 两条路径都通过`probe-italy-profile.readonly_guard`取得各自Profile的排他锁，并检查旧版已有owner。使用ACC9与ACC6时可并行持锁；同账号的跨模块任务仍互斥。
 - 选入的8通道和身份查询的12 QPS属于单个持有锁的任务内部并发，不表示不同任务可各自叠加请求速率。

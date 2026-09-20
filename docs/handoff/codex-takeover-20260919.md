@@ -47,8 +47,9 @@
 - 实测修复：完整 Offer 指纹与材料指纹误比较、认证 capability 报告对象丢失、ACC6 收信/发送瞬时锁竞争、明确预检拒绝未结算、终态 delivery 重复领取、旧 32 天 canary 规则与当前 24/48 小时关系政策冲突，以及发送池未读取持久 pending。所有取消项均 `started=NULL`、无回执、无平台写入。
 - 全托正式新增 `category_l1_v1`：28 个官方一级类目分别读到末页并逐分区核对，再跨类目 PID 去重。运行 `it-global-cat-20260921-01` 用时 3,524.088 秒（58 分 44 秒），2,134 页、31,809 个唯一 PID，较旧 10,000 增加 21,809（3.18 倍）；28/28 分区完成、类目成员 31,809、重叠 0、错误 0、平台写入 0。
 - 新 head 已发布并筛出合格 2,321、拒绝 29,488；其中 2,300 已在池、21 待选入。手工同步与周调度均切换到 `--by-category`；自动运营与全托周更新开关现为开启，持续二发关闭。
+- 新增 21 个合格商品使用 ACC9 选入：真实写入 21 次，20 个已回读 confirmed；PID `1729811171261324067` 为 HTTP 200/code 0、来源列表 selected=true，但精确已选池子活动仍未出现，保持 `result_unknown`。正式周更新会先 verify 原意图并在未结时 `needs_human`，不会重新提交。ACC9 当前 capability 已记录 `campaign/product_select/taplink=verified`。
 - 真实发送前备份 `var/backups/state/20260920T202310Z-pre-real-send-canary-20260921`、类目全量前备份 `var/backups/state/20260920T205718Z-pre-cat-full-20260921` 均为 21 库、凭据 0、`valid=true`。
-- 最终验证：Python 1,014 项在 `PYTHONWARNINGS=default` 下通过；Web 144 项、TypeScript、Next 生产构建和 121 份 Markdown 链接检查通过。补充提交：`ffdda74`、`363adc4`、`bcabceb`、`6c6d212`、`d37b8b9`、`4809af7`、`30db9f9`、`5c92a96`、`2e91a09`。
+- 最终验证：Python 1,017 项在 `PYTHONWARNINGS=default` 下通过；Web 144 项、TypeScript、Next 生产构建和 121 份 Markdown 链接检查通过。补充提交：`ffdda74`、`363adc4`、`bcabceb`、`6c6d212`、`d37b8b9`、`4809af7`、`30db9f9`、`5c92a96`、`2e91a09`、`d9057ff`、`fbe637c`、`ee914d4`、`0299904`。
 - 验收后备份 `var/backups/state/20260920T220554Z-post-send-cat-20260921` 已独立 verify：21 库、420,352,000 字节、凭据 0、`valid=true`；5198 Web 与 operations scheduler 均已用最新代码重启。
 
 ## 0A. 2026-09-20 会话工作台、模板与互斥窗口
