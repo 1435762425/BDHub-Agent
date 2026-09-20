@@ -152,7 +152,13 @@ def _candidate(root,store,plan,control_value):
             return {'handle':row[0]} if row else None
         candidates,_=choose_candidates(store,plan,person,len(positions),positions=positions)
     if not candidates:return None,state
-    candidate=json.loads(encoded(candidates[0]));spec=resolve_send_template(store,control_value['template'])
+    # The immutable delivery key is also the durable dedupe key.  Confirmed, rejected and
+    # preflight-cancelled rows remain audit evidence and must never be picked as a fresh delivery.
+    candidate=next((row for row in candidates if not store.db.execute(
+      'SELECT 1 FROM cycle_delivery WHERE plan_id=? AND creator_id=? AND pid=? AND source_id=?',
+      (plan,row['creatorId'],str(row['pid']),row['source']['sourceId'])).fetchone()),None)
+    if candidate is None:return None,state
+    candidate=json.loads(encoded(candidate));spec=resolve_send_template(store,control_value['template'])
     candidate['message']=render_send_template(spec,candidate['name'],candidate['offer'],candidate['handle'])
     candidate['message'].setdefault('templateRevision',spec['revision'])
     candidate['executionMode']='continuous-v1';candidate['continuousControlRevision']=control_value['revision']

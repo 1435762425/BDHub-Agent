@@ -79,6 +79,24 @@ class ContinuousSendTests(unittest.TestCase):
             self.assertEqual(self.store.db.execute('SELECT count(*) FROM cycle_bulk_candidate').fetchone()[0],0)
         finally:continuous.pool,continuous.choose_candidates=original_pool,original_choose
 
+    def test_candidate_skips_every_existing_immutable_delivery(self):
+        original_pool,original_choose=continuous.pool,continuous.choose_candidates
+        try:
+            first=candidate('c1','1729480061238089885');first['oecId']='1c1'
+            first['source']['sourceId']='source-1729480061238089885'
+            second=candidate('c2','1729480061238089886');second['oecId']='1c2'
+            second['source']['sourceId']='source-1729480061238089886'
+            continuous.pool=lambda *_args,**_kwargs:{'available':True,'layers':{'ready':2},'pools':{'ready':[
+              {'creatorId':'c1','pid':first['pid']},{'creatorId':'c2','pid':second['pid']}]}}
+            continuous.choose_candidates=lambda *_args,**_kwargs:([first,second],[])
+            with self.store.tx():
+                self.store.db.execute('INSERT INTO cycle_delivery VALUES(?,?,?,?,?,?,?,?,?,?)',
+                  ('delivery-existing',self.plan,first['creatorId'],first['oecId'],first['pid'],
+                   first['source']['sourceId'],json.dumps(first),NOW,NOW+1800,'cancelled'))
+            selected,_=continuous._candidate(self.root,self.store,self.plan,control(self.store,self.root))
+            self.assertEqual(selected['creatorId'],'c2')
+        finally:continuous.pool,continuous.choose_candidates=original_pool,original_choose
+
     def test_runtime_and_status_keep_unknown_distinct_from_failure(self):
         publish_runtime(self.store,self.plan,'waiting_reconciliation',
           delivery={'id':'delivery-x','creator_id':'c1','pid':'1729480061238089885'},
