@@ -561,6 +561,13 @@ url=excluded.url,product_total=excluded.product_total,platform_updated_at=exclud
                      str(m.get('stock')) if m.get('stock') is not None else None,
                      str(list_name or ''),now))
             self.db.execute('UPDATE catalog_tap_list SET members_at=? WHERE list_id=?',(now,str(list_id)))
+    def remove_unobserved_lists(self,observed_at):
+        """Drop stale cache rows absent from one complete account-wide list scan."""
+        with self.db:
+            stale=[row[0] for row in self.db.execute('SELECT list_id FROM catalog_tap_list WHERE observed<?',(observed_at,))]
+            self.db.execute('DELETE FROM catalog_tap_member WHERE list_id IN (SELECT list_id FROM catalog_tap_list WHERE observed<?)',(observed_at,))
+            self.db.execute('DELETE FROM catalog_tap_list WHERE observed<?',(observed_at,))
+        return len(stale)
     def lists_pending_members(self):
         return [dict(r) for r in self.db.execute('SELECT * FROM catalog_tap_list WHERE members_at IS NULL ORDER BY list_id')]
     def lists(self):

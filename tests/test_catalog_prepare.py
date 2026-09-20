@@ -329,6 +329,16 @@ class CampaignChannelTests(unittest.TestCase):
             inv.save_members(self.LID,'BJN x 11% abcdef',[self.member(self.LID,self.CID)])
         finally:inv.close()
         self.assertEqual(self.judge(),{'missing':1})
+    def test_complete_inventory_refresh_removes_lists_absent_from_platform(self):
+        inv=TaplinkInventory(self.root)
+        try:
+            inv.save_list({'list_id':'old','name':'old','url':'','product_total':1,'platform_updated_at':None},now=1)
+            inv.save_members('old','old',[self.member('old',self.CID)],now=1)
+            inv.save_list({'list_id':'current','name':'current','url':'','product_total':0,'platform_updated_at':None},now=2)
+            self.assertEqual(inv.remove_unobserved_lists(2),1)
+            self.assertEqual([row['list_id'] for row in inv.lists()],['current'])
+            self.assertEqual(inv.members_for_pid(self.PID),[])
+        finally:inv.close()
     def test_campaign_preflight_accepts_normalized_offer_without_nested_listing(self):
         normalized={key:value for key,value in self.offer.items() if key!='listing'}
         def read(path,extra):

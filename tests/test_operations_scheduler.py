@@ -93,6 +93,14 @@ class StageWiring(unittest.TestCase):
         self.assertEqual([args[:2] for args,_ in calls],[['scripts/campaign-join.py','status'],
                          ['scripts/campaign-join.py','join-all'],['scripts/campaign-collect.py','--max-requests']])
 
+    def test_stage_adapter_preserves_an_explicit_needs_human_result(self):
+        class Result:
+            returncode=0;stdout='{"state":"needs_human","error":"verification_pending"}\n';stderr=''
+        executor=SubprocessStageExecutor(ROOT,runner=lambda *_args,**_kwargs:Result())
+        result=executor._call(['scripts/campaign-join.py','status'],'needs-human-fixture')
+        self.assertEqual(result['state'],'needs_human')
+        self.assertEqual(result['errorCode'],'verification_pending')
+
 
 class FakeChild:pid=os.getpid()
 class Spawn:

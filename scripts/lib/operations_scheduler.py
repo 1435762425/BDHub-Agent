@@ -103,9 +103,9 @@ class SubprocessStageExecutor:
             try:evidence=json.loads(report.read_text(encoding='utf-8'))
             except (OSError,ValueError):evidence={}
         reported_state=str(evidence.get('state') or evidence.get('status') or payload.get('state') or payload.get('status') or '')
-        if child.returncode or reported_state in {'blocked','failed','partial'}:
+        if child.returncode or reported_state in {'blocked','failed','partial','needs_human'}:
             code=str(payload.get('error') or evidence.get('error') or f'{label}_failed')
-            return {'state':'needs_human' if 'maintenance' in code or 'auth' in code else 'failed',
+            return {'state':'needs_human' if reported_state=='needs_human' or 'maintenance' in code or 'auth' in code else 'failed',
                     'itemCount':0,'complete':False,'platformWrites':int(evidence.get('platformWrites') or 0),
                     'errorCode':code[:120],'payload':{'report':str(report.relative_to(self.root)) if report.exists() else None}}
         return {'state':'completed','itemCount':0,'complete':True,

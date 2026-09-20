@@ -76,8 +76,10 @@ def step_refresh(report, lanes=1, qps=5):
         with opportunity_reader(report, extra_read_endpoints=CLEAN_READ_EXTRA, wait_seconds=60, account_name='acc9') as transport:
             total, rows = scan_lists(reader_for(transport))
             report['inventoryLists'] = total
+            observed_at = time.time()
             for row in rows:
-                inv.save_list(row)
+                inv.save_list(row, now=observed_at)
+            report['inventoryRetired'] = inv.remove_unobserved_lists(observed_at)
             todo = inv.lists_pending_members()
             report['inventoryPending'] = len(todo)
             from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -206,7 +208,6 @@ def step_delete(clean, report, max_deletes=None):
                     clean.mark(intent['id'], 'submitted')
                     r = transport._xhr(method='POST', path='/api/v1/affiliate/partner/campaign/product_list/delete',
                                        params=transport._params(), payload={'list_id': list_id}, write=True)
-                    report['platformWrites'] = int(report.get('platformWrites') or 0) + 1
                     body = transport.require_read(r)
                     receipt = {'http': r.http_status, 'code': r.code if type(r.code) is int else None,
                                'verification': r.has_turing, 'responseHash': digest(body)}
@@ -290,18 +291,26 @@ def main():
         try:
             report['delete'] = step_delete(clean, report, max_deletes=args.max_deletes or None)
             report['summary'] = clean.summary(clean.run_id())
+            unresolved=sum(int(report['summary'].get('intents',{}).get(state) or 0)
+                           for state in ('submitted','receipt_saved','unknown'))
+            if report.get('verifyError') or unresolved:
+                report['state']='needs_human';report['error']='catalog_clean_delete_verification_pending'
         finally:
             clean.close()
     elif args.action == 'verify':
         clean = CatalogClean(ROOT)
         try:
-            with opportunity_reader(report, extra_read_endpoints=CLEAN_READ_EXTRA, wait_seconds=60, account_name='acc9') as transport:
-                report['verify'] = verify_deleted(clean, reader_for(transport), report)
+            try:
+                with opportunity_reader(report, extra_read_endpoints=CLEAN_READ_EXTRA, wait_seconds=60, account_name='acc9') as transport:
+                    report['verify'] = verify_deleted(clean, reader_for(transport), report)
+            except Exception as error:
+                report['verifyError']=str(error)[:80] if isinstance(error,ValueError) else type(error).__name__
+                report['state']='needs_human';report['error']='catalog_clean_delete_verification_pending'
             report['summary'] = clean.summary(clean.run_id())
         finally:
             clean.close()
     report['elapsedSeconds'] = round(time.time() - report['startedAt'], 2)
-    report['state'] = 'completed'
+    report.setdefault('state','completed')
     output.write_text(json.dumps(report, ensure_ascii=False, indent=2) + '\n')
     print(json.dumps({'action': args.action, 'state': report['state'],
                       'platformWrites': report.get('platformWrites'),
