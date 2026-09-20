@@ -1,0 +1,40 @@
+{
+  "schema_version": 2,
+  "source_zip_sha256": "d0b9667069377b605748f99402cb07447f6ee022e4baf0bf6f9cf05cbd54a4d0",
+  "files": {
+    "pure_http_probe.py": "3af6240348fa1ea837f63cf6b39f33cbc34f8d86150526e14a88e573aae804f6",
+    "request_control.py": "c7632a79b9156205c1bc760cd66ae4cd181da8b2275be0785b55d69a75d9d601",
+    "signer_impl.py": "c3ab52b9d83e463b86f4da075d3aae673a5a18c22d5baaf1b9e446622189f5e8",
+    "tiktok_slider_pure_http.py": "2e00877c9d6ea2f164cc9605d82d35c28363edfb8be65e14efaecf980a146e03",
+    "partner_request_signer.js": "c2a446cddb4fb87ecd8853562add4abbede7f82da909c22c8b92efcf219d6283",
+    "captcha_signer_sg.js": "c607685a46d7ad8193a4762e0db926dae5df17df6b9e38a12ae554e2fe1d05b9",
+    "config.json": "cde9ef6d440b3b0c19cebc0ed545e7465c02c27453a330a3c6c823e38fc0e469",
+    "sdk_runtime/sg_webmssdk.js": "39d7b8b5392a78695a914e1ceca108c0ef344624883f93f1c872c84c8f9fc601",
+    "sdk_runtime/sg_loader.js": "3516fed572bc5ab6a78ed243e1a5a0763cd9b5dff2c38b354502475ca8b87d9b",
+    "sdk_runtime/eu_core.js": "c8c63a8798550204233f11d196133174bc23be97eba2569d95902f1783243c22",
+    "sdk_runtime/eu_loader.js": "fead897285ff123504a0f22ab19a33e528c7160a019e5255c96e8ad8c345d43b",
+    "sdk_runtime/us_core.js": "668162780b08b045fc259f98f700ec4d261dc61ebd848d262d41d8dae50d0ce2",
+    "sdk_runtime/us_loader.js": "30fdc39d46c57aad0f474cedb5d31435f5715046fc9222981279e519abe93b0b"
+  },
+  "regions": {
+    "sg": {
+      "markets": ["mx", "br", "jp"],
+      "web_region": "ttp",
+      "unisec_region": "ttp"
+    },
+    "eu": {
+      "markets": ["uk", "it", "de"],
+      "web_region": "eu-ttp",
+      "unisec_region": "eu",
+      "core_url": "https://sf16-website-login.neutral.tiktokcdn-eu.com/obj/tiktok_web_login_static_eu/oec/unisec/web/1.0.0.40/eu/index.js",
+      "loader_url": "https://sf16-website-login.neutral.tiktokcdn-eu.com/obj/tiktok_web_login_static_eu/oec/unisec/web/loader/1.0.0.62/eu/index.js"
+    },
+    "us": {
+      "markets": ["us"],
+      "web_region": "ttp",
+      "unisec_region": "ttp",
+      "core_url": "https://lf16-cdn-tos.tiktokcdn-us.com/obj/static-tx/oec/unisec/web/2.0.0.20/ttp/index.js",
+      "loader_url": "https://lf16-cdn-tos.tiktokcdn-us.com/obj/static-tx/oec/unisec/web/loader/2.0.0.32/ttp/index.js"
+    }
+  }
+}

@@ -351,6 +351,17 @@ class SkipJudged(unittest.TestCase):
         self.assertEqual(seen['command'][seen['command'].index('--cohort-size') + 1], '20')
         self.assertTrue(outcome['ok'])
 
+    def test_a_scoped_round_passes_the_exact_discovery_batch(self):
+        class Result:
+            returncode = 0
+            stdout = json.dumps({'cohort': {'targets': 0, 'id': 'c', 'seconds': 1.0}})
+            stderr = ''
+        batch='discovery_'+'a'*32;seen={};original=identity_batch.subprocess.run
+        identity_batch.subprocess.run=lambda command,**kw:(seen.update(command=command),Result())[1]
+        try:identity_batch.one_round(ROOT,20,only_batch=batch)
+        finally:identity_batch.subprocess.run=original
+        self.assertEqual(seen['command'][seen['command'].index('--only-batch')+1],batch)
+
 
 if __name__ == '__main__':
     unittest.main()

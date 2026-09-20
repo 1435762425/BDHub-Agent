@@ -17,6 +17,7 @@ simply shorter, and it is never padded with retries of leads already judged unre
 """
 import argparse
 import json
+import re
 import subprocess
 import sys
 import time
@@ -60,12 +61,13 @@ def publish(path, payload):
     temporary.replace(path)
 
 
-def one_round(root, cohort_size, *, timeout=ROUND_TIMEOUT):
+def one_round(root, cohort_size, *, timeout=ROUND_TIMEOUT,only_batch=None):
     """Run exactly one validated round and report what it did."""
     # `--skip-judged`：达人身份一位查一次。判过的 handle（找到或找不到）不再重复问平台——补 OECID
     # 只补真正没判过的达人，不会把同一位达人的其它线索反复重查。
     command = [str(python_bin(root)), str(root / 'scripts/creator-profile-refresh.py'), 'worker',
                '--once', '--cohort-size', str(cohort_size), '--interval', '1', '--skip-judged']
+    if only_batch:command+=['--only-batch',only_batch]
     child = subprocess.run(command, cwd=str(root), capture_output=True, text=True, timeout=timeout)
     lines = [line for line in (child.stdout or '').strip().splitlines() if line.strip()]
     payload = None
@@ -95,7 +97,7 @@ def one_round(root, cohort_size, *, timeout=ROUND_TIMEOUT):
 
 
 def run(root=None, *, limit=2000, cohort_size=20, progress=None, rounds=None, clock=time.time,
-        round_runner=None, measured=None, stop=None, pause=None):
+        round_runner=None, measured=None, stop=None, pause=None,only_batch=None):
     """Consume the identity backlog. Returns a report; a refusal is a stop reason, never an exception.
 
     ``stop`` is a file the operator's stop button creates. It is checked **between** rounds, never
@@ -109,7 +111,7 @@ def run(root=None, *, limit=2000, cohort_size=20, progress=None, rounds=None, cl
         raise ValueError('identity_cohort_invalid')
     stop_path = Path(stop) if stop else None
     read = measured or (lambda: counts(root))
-    step = round_runner or (lambda size: one_round(root, size))
+    step = round_runner or (lambda size: one_round(root,size,only_batch=only_batch))
     wait = pause or time.sleep
     started = clock()
     before = read() or {}
@@ -201,6 +203,7 @@ def main():
     parser.add_argument('--progress', type=Path)
     parser.add_argument('--stop', type=Path, help='stop file the launcher creates to end the batch')
     parser.add_argument('--report', type=Path)
+    parser.add_argument('--only-batch')
     args = parser.parse_args()
     progress = args.progress.resolve() if args.progress else None
     if progress is not None and not progress.is_relative_to(ROOT / 'var'):
@@ -210,8 +213,10 @@ def main():
     if args.report is not None and not args.report.resolve().is_relative_to(ROOT / 'var'):
         parser.error('report must live under var')
     try:
+        if args.only_batch is not None and not re.fullmatch(r'discovery_[0-9a-f]{32}',args.only_batch):
+            raise ValueError('identity_batch_scope_invalid')
         report = run(ROOT, limit=args.limit, cohort_size=args.cohort_size, progress=progress,
-                     stop=args.stop)
+                     stop=args.stop,only_batch=args.only_batch)
     except ValueError as error:
         print(json.dumps({'error': str(error)}, ensure_ascii=False))
         return 2
