@@ -205,7 +205,8 @@ def execute_once(root,store,*,authenticated=None,authorized_now=None):
         if candidate is None:return publish_runtime(store,plan,'paused',stop_reason='send_pool_empty')
         if authorized_now is not None:candidate['authorizedNowRequestId']=authorized_now
     from lib.second_live_runtime import _authenticated,live_runtime,sender_binding_sha256
-    auth_context=authenticated or _authenticated({},stopped=lambda:control(store,root)['stopRequested'])
+    transport_report={} if authorized_now is None else {'authorizedSendRequestId':authorized_now}
+    auth_context=authenticated or _authenticated(transport_report,stopped=lambda:control(store,root)['stopRequested'])
     with auth_context as context:
         account,identity,headers,auth,maintenance,available=context
         if active is None:
@@ -221,7 +222,10 @@ def execute_once(root,store,*,authenticated=None,authorized_now=None):
                 current=_local_card(root,store,plan,c)
                 if current.binding_sha256!=previous.binding_sha256:raise CycleError('card_binding_changed')
                 return current
-            with live_runtime(c['senderBindingHash'],{},authenticated_context=context,card_validator=validator,
+            # Reuse the exact report populated by _authenticated: it carries the verified market
+            # send capability.  A fresh empty dict would erase that proof and make every real send
+            # fail closed as live_market_send_unavailable after authentication succeeded.
+            with live_runtime(c['senderBindingHash'],transport_report,authenticated_context=context,card_validator=validator,
                               stopped=lambda:control(store,root)['stopRequested'],send_interval=0.75) as rt:
                 yield {**rt,'card':previous}
         def authorize(c):

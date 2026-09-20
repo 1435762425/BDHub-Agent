@@ -3,8 +3,10 @@ import sqlite3
 import tempfile
 import unittest
 import sys
-from contextlib import closing
+from contextlib import closing,contextmanager
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 ROOT=Path(__file__).resolve().parents[1];sys.path.insert(0,str(ROOT/'scripts'))
 import lib.continuous_send as continuous  # noqa:E402
@@ -120,6 +122,48 @@ class ContinuousSendTests(unittest.TestCase):
             self.assertEqual(card.list_id,current['card']['listId'])
             self.assertNotEqual(current['offerFingerprint'],offer_fingerprint(current['offer']))
         finally:self.store._offers=original
+
+    def test_authenticated_send_reuses_the_capability_report_in_live_runtime(self):
+        mutate_control(self.store,self.root,action='start',request_id='continuous-start-report',expected_revision=0)
+        base=candidate('c1','1729480061238089885');base['card']['listId']='8650756273145355030'
+        base['conversationId']='88';base['authorizedNowRequestId']='continuous-canary-report-0001'
+        base['continuousControlRevision']=1;base['executionMode']='continuous-v1'
+        from lib.cycle_send_runtime import descriptor
+        card=descriptor(base['card']);seen={}
+        class FakeDeliveries:
+            snapshot=None
+            def __init__(self,_store):pass
+            def prepare(self,_plan,value):
+                FakeDeliveries.snapshot=value
+                return {'id':'delivery-test','creator_id':value['creatorId'],'pid':value['pid'],'state':'ready'}
+            def get(self,_id):return {'id':'delivery-test','state':'ready','snapshot':FakeDeliveries.snapshot,'parts':[]}
+        @contextmanager
+        def authenticated(report,**_kwargs):
+            report['sendCapability']='canary';seen['report']=report
+            yield SimpleNamespace(),SimpleNamespace(),{},SimpleNamespace(),lambda:False,lambda:None
+        @contextmanager
+        def live(_binding,report,**_kwargs):
+            self.assertIs(report,seen['report'])
+            yield {'reads':SimpleNamespace(),'write_gate':lambda:None,'adapter':SimpleNamespace(),'card':card}
+        def execute(_deliveries,_id,runtime,authorize,_preflight,**_kwargs):
+            try:
+                authorize(FakeDeliveries.snapshot)
+                with runtime(FakeDeliveries.snapshot):pass
+                return {'state':'confirmed'}
+            except BaseException as error:
+                seen['error']=repr(error);raise
+        with patch.object(continuous,'window_state',return_value={'open':False}), \
+             patch.object(continuous,'_candidate',return_value=(base,{'layers':{'ready':1}})), \
+             patch.object(continuous,'_local_card',return_value=card), \
+             patch.object(continuous,'Deliveries',FakeDeliveries), \
+             patch.object(continuous,'execute',side_effect=execute), \
+             patch.object(continuous,'publish_runtime',side_effect=lambda _store,_plan,state,**kwargs:{'state':state,**kwargs}), \
+             patch('lib.second_live_runtime._authenticated',side_effect=authenticated), \
+             patch('lib.second_live_runtime.live_runtime',side_effect=live), \
+             patch('lib.second_live_runtime.sender_binding_sha256',return_value='a'*64):
+            result=continuous.execute_once(
+                self.root,self.store,authorized_now='continuous-canary-report-0001')
+        self.assertEqual(result['state'],'sending',{'result':result,'seen':seen})
 
 
 if __name__=='__main__':unittest.main()
