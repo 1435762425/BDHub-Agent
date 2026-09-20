@@ -107,7 +107,10 @@ def _authenticated(report, *, stopped):
         before = _fingerprint(path)
         if stopped():
             raise SecondLiveRuntimeError("live_stopped")
-        guarded = guard(account)
+        # Inbox polling and outbound delivery share ACC6's canonical read/write guard.  A monitor
+        # round is short; waiting for its safe release avoids treating normal serialization as a
+        # send failure while preserving a hard bound.
+        guarded = guard(account, wait_seconds=15)
         guarded.__enter__()
     except (SecondLiveRuntimeError, ItalyImAuthError):
         raise

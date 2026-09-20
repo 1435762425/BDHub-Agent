@@ -63,7 +63,8 @@ class SecondLiveRuntimeTests(unittest.TestCase):
             identity = SimpleNamespace(market="it"); identity.require_product_search = Mock(return_value=identity)
             secret = auth(); stopped = Mock(return_value=False); maintenance = Mock(return_value=False)
             @contextmanager
-            def guard(account):
+            def guard(account, *, wait_seconds=0):
+                self.assertEqual(wait_seconds,15)
                 self.assertFalse(state["guarded"]); state["guarded"] = True
                 try: yield
                 finally: state["guarded"] = False
@@ -219,7 +220,8 @@ class SecondLiveRuntimeTests(unittest.TestCase):
     def test_guard_busy_and_deadline_release_without_exposing_private_exception_text(self):
         with self.fixture() as f:
             @contextmanager
-            def busy(_):
+            def busy(_,**kwargs):
+                self.assertEqual(kwargs.get('wait_seconds'),15)
                 raise BlockingIOError("PRIVATE_PATH")
                 yield
             runtime = list(f.loaded.return_value); runtime[3] = busy; f.loaded.return_value = tuple(runtime)
