@@ -118,6 +118,8 @@ React 组件不能直接读写 SQLite、启动任意命令或实现资格规则�
 | `leads_queue.py` | 首次/到期 PID 队列、额度和尝试台账 |
 | `leads-run.py` | 复用 Kalodata provider 的实际读取驱动 |
 | `kalodata-video-evidence.py` / `kalodata_video_evidence.py` | 按发布时间完整翻页读取精确 PID 视频、解析作者并生成零销量探索证据；不改变发送池 |
+| `kalodata-video-crawl.py` / `kalodata_video_scan.py` | 对全部标准链接 PID 做可断点 30 天视频扫描、作者缓存和 B 类当前投影 |
+| `rebuild-current-leads.py` | 经确认清空当前查询缓存与 head，保留历史 evidence、selection 和已发送记录 |
 | `creator_discovery.py` / `discovery_cohort.py` | handle Find、cohort、lease、blocked 重试和证据 |
 | `profile_refresh.py` | OECID 画像刷新与持久任务 |
 | `identity_queue.py` / `identity-batch.py` | 达人级身份分类、批量补齐和进度 |
@@ -152,7 +154,7 @@ React 组件不能直接读写 SQLite、启动任意命令或实现资格规则�
 
 `lead_pool.py` 与 `/api/lead-pool` 已使用 `bdhub.lead-pool.v2`：业务只投影 `sendable / waiting / inactive`，`sent` 单列历史；内部原因仍用于排障。达人排序和达人内部 PID 选择统一使用 `sourceRank → units DESC → pid ASC`，同一达人只有一个可发送槽位。发送预览按池子顺序复检；冻结批次执行器按 `position_order` 消费，不再执行时重新挑选或补满。
 
-已确认的下一版排序合同由 `lead_priority.py` 用合成数据独立验证：A 类整体优先并沿用 `sourceRank → units DESC → pid`；B 类只取同一达人×PID中播放量最高的一条达标视频，按 `views DESC → releasedAt DESC → pid` 排序。A/B 同对合并为 A，同达人仍只有一个发送槽；身份、回复、冷却、拒联与商品门禁继续生效。该模块尚未接入上述真实 `lead_pool.py`，不能把模拟顺序误报为当前生产顺序；详见 [排序模拟](implementation/lead-priority-simulation-20260920.md)。
+已确认的排序合同已由 `lead_priority.py` 用合成数据验证并接入 `lead_pool.py`：A 类整体优先，按同市场数值 `GMV DESC → units DESC → sourceRank → pid`；B 类只取同一达人×PID中播放量最高的一条达标视频，按 `views DESC → releasedAt DESC → pid`。A/B 同对合并为 A，同达人仍只有一个发送槽；身份、回复、冷却、拒联与商品门禁继续生效。真实顺序以本轮全量重建完成后的当前投影为准，不能用模拟数量代替；详见 [排序模拟](implementation/lead-priority-simulation-20260920.md)。
 
 当前 send preview v3 接受任意 `N=1..2000`，自动要求 `R=ceil(N×10%)`。冻结把前 N 位标为 `batchRole=formal` 并建立初始 `cycle_bulk_item`，后 R 位标为 `reserve` 且只保存在不可变 `cycle_bulk_candidate`；N＋R 未齐时 `fullPreparation=false`，服务端拒绝冻结。执行器仅在正式成员进入明确非触达终态后按 `position_order` 提升已冻结候补；`unknown` 先把整批切到 `waiting_reconciliation`，不会提升候补。`cycle_bulk.target` 始终是 N，`attempted/reservePromoted/reserveRemaining` 单独展示，候补不增加目标。页面修改目标、窗口或越界开关后先标记为未保存并禁用冻结，保存后重新预检并取得新的 preview hash，不能用旧预览冻结新设置。
 

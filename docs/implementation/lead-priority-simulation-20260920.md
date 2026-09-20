@@ -7,7 +7,7 @@
 ```text
 A 类整体在 B 类之前
 
-A 类：sourceRank ASC → units DESC → PID ASC
+A 类：达人×PID GMV DESC → units DESC → sourceRank ASC → PID ASC
 B 类：代表视频累计播放量 DESC → 代表视频发布时间 DESC → PID ASC
 
 同一达人×PID 同时命中 A/B：合并为 A，保留代表视频证据
@@ -18,8 +18,8 @@ B 类：代表视频累计播放量 DESC → 代表视频发布时间 DESC → P
 
 ## 2. 合成数据覆盖
 
-- A 类 `sourceRank=1`；
-- 两个 A 类 `sourceRank=2`，用销量决定先后；
+- A 类保存同一市场当前采集口径的数值 GMV；
+- 多个 A 类位置先按达人×PID GMV，再按销量和 sourceRank 决定先后；
 - 同一 B 类位置有两条达标视频，只取 26,000 播放的单条，不累加 12,000；
 - 两个 B 类代表视频同为 26,000 播放，用发布时间决定先后；
 - 同一达人同时有 A 类和 150,000 播放的 B 类其他 PID，A 类占发送槽；
@@ -33,9 +33,9 @@ B 类：代表视频累计播放量 DESC → 代表视频发布时间 DESC → P
 
 | 发送顺序 | 达人 | 类型 | 决定排序的证据 |
 | ---: | --- | --- | --- |
-| 1 | `creator_alba` | A | `sourceRank=1` |
-| 2 | `creator_bruno` | A | `sourceRank=2, units=50` |
-| 3 | `creator_carla` | A | `sourceRank=2, units=20` |
+| 1 | `creator_alba` | A | GMV 420 |
+| 2 | `creator_bruno` | A | GMV 300 |
+| 3 | `creator_carla` | A | GMV 200 |
 | 4 | `creator_elena` | B | 最高单条 26,000，发布时间 2026-09-14 |
 | 5 | `creator_dario` | B | 最高单条 26,000，发布时间 2026-09-11 |
 | 6 | `creator_luca` | B | 最高单条 6,000 |
@@ -50,4 +50,4 @@ B 类：代表视频累计播放量 DESC → 代表视频发布时间 DESC → P
 
 ## 4. 验证与边界
 
-`scripts/lib/lead_priority.py` 是纯函数政策模拟，`scripts/simulate-lead-priority.py` 输出上述合成结果。测试覆盖最高单条视频、A/B 合并、A 优先、B 播放量与发布时间排序、同达人单槽、身份/回复门禁、低播放与过期过滤。它尚未接入真实 `lead_pool.py`；下一步正式采集前先实现视频刷新断点和当前证据投影，再以同一合同接入真实池。
+`scripts/lib/lead_priority.py` 是纯函数政策模拟，`scripts/simulate-lead-priority.py` 输出上述合成结果。测试覆盖 A 类数值 GMV、最高单条视频、A/B 合并、A 优先、B 播放量与发布时间排序、同达人单槽、身份/回复门禁、低播放与过期过滤。真实 `lead_pool.py` 已复用同一排序合同；当前投影仍等待本轮全量重建数据。
