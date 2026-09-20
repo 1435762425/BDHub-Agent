@@ -242,11 +242,13 @@ def _background(root,store,jobs,automation,stamp):
         if plan and agent_setting(store,plan[0])['enabled'] and not (job_state(root,'agentReply') or {}).get('running'):
             try:start_job(root,'agentReply',{'interval':60})
             except ValueError:pass
-    from lib.continuous_send import control as send_control,launch_worker,worker_state
-    control=send_control(store,root)
-    if (enabled['continuous_send']['enabled'] or control['automaticEnabled']) and control['automaticEnabled'] and \
-       not control['stopRequested'] and not worker_state(root)['running']:
-        launch_worker(root)
+    tables={row[0] for row in store.db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    if {'continuous_send_control','cycle_delivery','cycle_delivery_part'}<=tables:
+        from lib.continuous_send import control as send_control,launch_worker,worker_state
+        control=send_control(store,root)
+        if (enabled['continuous_send']['enabled'] or control['automaticEnabled']) and control['automaticEnabled'] and \
+           not control['stopRequested'] and not worker_state(root)['running']:
+            launch_worker(root)
     if automation['automaticOperationsEnabled']:
         from lib.account_identity import assignments,current_generation,next_due,request_maintenance
         try:rows=assignments(root)
