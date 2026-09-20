@@ -295,6 +295,7 @@ pending → started/submitted → confirmed
 - 激活码仅保存在本机 `config/kalodata-identity.json`（0600），Git 只提交样例。
 - 读取复用既有生产身份和 browser lock，不复制 Cookie 到仓库。
 - 每日额度、认证和浏览器锁是明确停止条件；查询失败不写成功时间。
+- 2026-09-20 两个历史混币 PID 的实时读取均为同页 50/50 欧元，且其中一组新旧 creator ID/handle 重合 50/50；历史混合符号来自采集会话展示口径，不是达人集合换市场。当前继续使用同请求内 `revenue DESC` 产生的 `sourceRank`，不得跨采集批次直接比较 `revenueRaw` 绝对值；详见 [实时GMV探查](implementation/kalodata-gmv-live-probe-20260920.md)。
 
 ### 旧 BDHub
 
@@ -469,7 +470,7 @@ PYTHONDONTWRITEBYTECODE=1 \
 
 - 当前增量 migration registry 只覆盖 `catalog-links.sqlite` 和 `second-cycle.sqlite` 的本轮新投影；其他 SQLite schema 仍分散在领域模块。
 - 历史 `batch-tasks.sqlite` 曾有长事务；当前 UI 已停止唤醒旧准备 worker。若未来为迁移/追溯再次运行它，仍需先完成事务/WAL 与恢复语义验证。
-- Python 全量测试夹具已显式关闭 SQLite connection；`-W default` 下 1079 项通过且未关闭数据库 `ResourceWarning` 为 0。
+- Python 全量测试夹具已显式关闭 SQLite connection；`-W default` 下 1081 项通过且未关闭数据库 `ResourceWarning` 为 0。
 - Web package 已显式声明 ESM，Node 测试不再产生 module type warning；Next.js 构建仍有上游 `module.register()` deprecation warning。
 - 冻结批次、start/stop 和 frozen-v2 执行桥已接通；账号级平台日额度的原生信号仍未取得，不能用本地 500 闸门冒充。
 - 历史 legacy-only `cycle_bulk` 仍保留用于追溯，但旧 CLI 与 `cycle_burst` 动态选人回退均已退役；执行只接受当前冻结批次。

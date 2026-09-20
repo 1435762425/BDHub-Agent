@@ -41,6 +41,7 @@ DeepSeek/Agent 已经把 9 月 14 日的“货盘批量备链”继续推进到�
 | Web ESM 声明 | `a04c588`（消除 Node 测试的模块类型告警） |
 | 回复审核深链接 | `8335e4a`（`tab=reply` 直达审核队列，未知页签回退） |
 | 回复审核长原因修复 | `81c94fb`（Python/Web 统一500字符，保留已审核22条） |
+| Kalodata 身份探针恢复 | `b23be8d`（迁移路径回退、列表计数、T−2窗口） |
 | 上一个已提交开发头 | `4cdb759`（`agent/p0-catalog-links`） |
 | 继承工作区固化提交 | `cd81dff` |
 | 继承标签 | `takeover-20260919-inherited` |
@@ -67,7 +68,7 @@ DeepSeek/Agent 已经把 9 月 14 日的“货盘批量备链”继续推进到�
 | 冻结批次 | migration v3 已应用；`cycle_bulk_freeze=0`、`cycle_bulk_candidate=0`，说明本轮没有代用户冻结或启动批次 |
 | 收信 | 555 个索引会话、1,354 个事件、25 个待取内容；累计 live 回复 26、加橱窗 36；当前 open case 1 |
 | 回复事件 | 495 个外发 episode、35 个入站 turn、26 个有关联；人工真值 35/35 完成。DeepSeek 80.00%（误自动 2），Jev 62.86%（误自动 3） |
-| 凭据 | Kalodata 本机激活码已保存为 0600，真实探测 `ready`；TypeSafe key 已保存为 0600，官方 models 接口可用，均不入 Git |
+| 凭据 | Kalodata 本机激活码已保存为 0600，刷新后真实探测 `ready/rows=50`；TypeSafe key 已保存为 0600，官方 models 接口可用，均不入 Git |
 | 自动回复 | 关闭；DeepSeek/Jev 的影子分类结果都不授权恢复 |
 
 这些数字会随 worker 和时间变化，不应写入 UI 常量或业务规则。规范化索引与固定 JOIN 顺序完成后，`lead-pool.py status` 本机约 0.45 秒、`send-batch.py status` 约 1.69 秒；这是本机观测，不是 SLA。
@@ -108,7 +109,7 @@ DeepSeek/Agent 已经把 9 月 14 日的“货盘批量备链”继续推进到�
 3. **新发送执行器尚未做真实平台验收**：冻结、start/stop 和离线故障合同已完成，但账号级日额度原生信号仍未取得；第一次真实执行仍需用户在页面单独启动并观察。
 4. **本机 Git 无远端**：已有提交和标签可以本机回滚，但机器损坏时没有远端恢复点。配置 GitHub/GitLab 远端需要用户提供目标仓库或明确创建位置。
 5. **文档曾混入大量动态流水**：原 `AGENTS.md` 已由本轮收敛；以后不得继续把每次数字和事故追加回根规则。
-6. **测试资源释放告警已解决**：tracemalloc 证明告警来自测试夹具把连接事务上下文误当成 close；20 个夹具文件已显式关闭，`-W default` 全量 1079 项未关闭数据库 warning 为 0，生产 migration 本身没有泄漏。
+6. **测试资源释放告警已解决**：tracemalloc 证明告警来自测试夹具把连接事务上下文误当成 close；20 个夹具文件已显式关闭，`-W default` 全量 1081 项未关闭数据库 warning 为 0，生产 migration 本身没有泄漏。
 7. **旧批次执行路径已退役**：`bulk-second-send.py` 固定拒绝；`cycle_burst` 缺少 running freeze 或不可变候选时在认证前拒绝。历史 legacy-only `cycle_bulk` 只读保留，不能拿旧授权恢复发送。
 8. **回复真值集已完成但不能启用自动回复**：DeepSeek 28/35、Jev 22/35；双模型一致仍有 2 条误自动处理，且本批没有 `link_usage` 真值。DeepSeek 暂作主影子、Jev 保持 challenger，真实回复 transport 未接新合同。
 9. **收信监控当前未运行**：代码与断点都保留，但没有常驻 `poll-cycle-inbox.py --worker` 进程；这是运行状态，不授权本轮自动恢复。
@@ -186,7 +187,7 @@ DeepSeek/Agent 已经把 9 月 14 日的“货盘批量备链”继续推进到�
 
 - 新增 `requirements.txt` 和 Python 3.13/macOS arm64 的完整 `requirements.lock`，依赖安装在本仓库 Git 忽略的 `.venv`，未修改旧 BDHub 环境；
 - 25 个 Web bridge/worker 入口和 7 个 Python 子进程入口全部改为项目 `.venv/bin/python`，活跃代码中不再存在旧仓库解释器路径；
-- 项目 `.venv` 下 1079 项 Python 测试、vendored runtime check、migration check、发送池/发送预检/回复审核只读 CLI 均通过；26 个固定包与 lock 完全一致；
+- 项目 `.venv` 下 1081 项 Python 测试、vendored runtime check、migration check、发送池/发送预检/回复审核只读 CLI 均通过；26 个固定包与 lock 完全一致；
 - Web 383 项、TypeScript 和 Next 生产构建通过；真实 API 回读为发送池 ready 711、回复 turn 35/已审核 22、自动回复关闭、真实发送 0；
 - 本轮只迁移解释器与依赖，不复制旧凭据或账号文件，不启动业务 worker，也不解锁真实发送。
 
@@ -196,7 +197,7 @@ DeepSeek/Agent 已经把 9 月 14 日的“货盘批量备链”继续推进到�
 - 货盘、TapLink、画像、IM、账号状态和 Kalodata 路径共 20 个运行入口已接入适配器，活跃 Python 不再把 `01-BDSystem-V2` 加入 `sys.path`；
 - 旧 `config.yaml`、账号 headers、profile、锁和历史库继续只读使用，未复制或改写；运行核对识别 10 个账号引用且身份文件全部存在；
 - `vendor-legacy-bdhub.py --check` 证明当前协议闭包 162 模块、40,262 行，missing=0、extra=0；真实账号状态仍为 `executionEnabled=false / realSends=0`；
-- Python 全量 1079 项通过；新增测试固定 vendor 来源并阻止旧源码目录重新进入 `sys.path`。
+- Python 全量 1081 项通过；新增测试固定 vendor 来源并阻止旧源码目录重新进入 `sys.path`。
 
 ### 已完成：来源化 TapLink 周期调度
 
@@ -211,7 +212,7 @@ DeepSeek/Agent 已经把 9 月 14 日的“货盘批量备链”继续推进到�
 
 - 用 tracemalloc 追到真实分配栈，确认高频告警来自测试中的 `with sqlite3.connect(...)`（只提交/回滚、不关闭），不是 migration 循环；
 - 20 个测试文件改为事务退出后确定性 close，并修复一次重启测试覆盖旧 `CatalogPreparation` 对象；
-- 未关闭数据库 `ResourceWarning` 从 265 → 45 → 13 → 0；`-W default` 下全量 1079 项通过。
+- 未关闭数据库 `ResourceWarning` 从 265 → 45 → 13 → 0；`-W default` 下全量 1081 项通过。
 
 ### 下一步：扩大影子集与真实发送验收
 
@@ -248,7 +249,7 @@ DeepSeek/Agent 已经把 9 月 14 日的“货盘批量备链”继续推进到�
 
 2026-09-20 本轮收尾验证：
 
-- Python：`1079` 项 `unittest` 通过，未关闭数据库 `ResourceWarning` 为 0。
+- Python：`1081` 项 `unittest` 通过，未关闭数据库 `ResourceWarning` 为 0。
 - Web：`383` 项 Node 测试通过，module type warning 已消除。
 - TypeScript：`npm run typecheck` 通过。
 - Next.js：`npm run build` 通过，14 个静态页面（含 `/flow-demo`）及当前 API 路由生成成功。
