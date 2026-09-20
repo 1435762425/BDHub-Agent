@@ -29,7 +29,7 @@ function decision(value:unknown):ReplyDecision|null{
  if(v.automaticReply!==false||v.executionAllowed!==false)throw Error("invalid_reply_review");
  return {action:action as ReplyAction,intentCode:string(v.intentCode,48),
   evidenceMessageIds:ids.map(x=>string(x,32)),evidenceQuotes:quotes.map(x=>string(x,500)),confidence,
-  humanReason:nullable(v.humanReason,200),templateKey:nullable(v.templateKey,64),meaningZh:string(v.meaningZh,500),
+  humanReason:nullable(v.humanReason,500),templateKey:nullable(v.templateKey,64),meaningZh:string(v.meaningZh,500),
   relatedEpisodeIds:episodes.map(x=>string(x,40)),templateText:nullable(v.templateText,1200),
   provider:string(v.provider,32),model:string(v.model,64),policyVersion:string(v.policyVersion,64),
   automaticReply:false,executionAllowed:false};

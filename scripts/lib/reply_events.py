@@ -199,7 +199,7 @@ def _validated_decision(value, context):
     if value['templateKey']!=expected:
         raise CycleError('reply_template_contract_mismatch')
     if action=='human':
-        if not isinstance(value['humanReason'],str) or not value['humanReason'].strip():
+        if not isinstance(value['humanReason'],str) or not value['humanReason'].strip() or len(value['humanReason'])>500:
             raise CycleError('reply_human_reason_missing')
     elif value['humanReason'] is not None:
         raise CycleError('reply_classification_invalid')

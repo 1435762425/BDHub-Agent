@@ -81,6 +81,10 @@ class ReplyEvents(unittest.TestCase):
     'confidence':1,'humanReason':None,'templateKey':'collaboration_ack_v1','meaningZh':'确认'}
    with self.assertRaisesRegex(CycleError,'evidence'):
     classify(s,turn,'request-shadow-0002',DeepSeekClassifier(lambda *_a,**_k:{'content':json.dumps(bad)}))
+   too_long={**bad,'action':'human','intentCode':'needs_human','evidenceQuotes':['farò un video'],
+             'humanReason':'x'*501,'templateKey':None}
+   with self.assertRaisesRegex(CycleError,'human_reason'):
+    classify(s,turn,'request-shadow-0003',DeepSeekClassifier(lambda *_a,**_k:{'content':json.dumps(too_long)}))
    with self.assertRaisesRegex(CycleError,'jev_not_configured'):
     classify(s,turn,'request-jev-0001',JevClassifier(self.root))
    self.assertEqual(load_policy()['automaticRepliesEnabled'],False)

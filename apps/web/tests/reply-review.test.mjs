@@ -23,6 +23,9 @@ test('reply review decoder keeps event links and refuses executable classificati
  assert.equal(value.templates.link_usage.text,'Apri la scheda prodotto.');
  const bad=structuredClone(payload);bad.items[0].decision.executionAllowed=true;
  assert.throws(()=>validateReplyReviewStatus(bad),/invalid_reply_review/);
+ const bounded=structuredClone(payload);bounded.items[0].decision.humanReason='x'.repeat(500);
+ assert.equal(validateReplyReviewStatus(bounded).items[0].decision.humanReason?.length,500);
+ bounded.items[0].decision.humanReason+='x';assert.throws(()=>validateReplyReviewStatus(bounded),/invalid_reply_review/);
 });
 
 test('model consensus never becomes the default human truth',()=>{
