@@ -33,6 +33,12 @@ class ConfigFile(unittest.TestCase):
             self.assertTrue(config['jobs']['campaign_catalog_update']['enabled'])
             self.assertFalse(config['jobs']['taplink_prepare']['enabled'])
 
+    def test_taplink_prepare_time_round_trips_at_0730(self):
+        with tempfile.TemporaryDirectory() as folder:
+            saved=save(folder,{'jobs':{'taplink_prepare':{'enabled':True,'at':'07:30'}}})
+            self.assertEqual(saved['jobs']['taplink_prepare']['at'],'07:30')
+            self.assertEqual(load(folder)['jobs']['taplink_prepare']['at'],'07:30')
+
 
 class Reporting(unittest.TestCase):
     def test_all_rows_are_real_controls_and_scheduler_is_off(self):

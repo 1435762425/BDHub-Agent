@@ -39,10 +39,8 @@ class SchedulerFlow(unittest.TestCase):
         save(self.root,{'jobs':{}});executor=FakeExecutor();state=tick(self.root,now=NOW,executor=executor)
         self.assertIsNone(state['runId']);self.assertEqual(executor.calls,[])
 
-    def test_monday_chain_runs_in_order_after_explicit_enable(self):
-        save(self.root,{'jobs':{job:{'enabled':True} for job in
-          ('taplink_clean','full_catalog_update','campaign_catalog_update','taplink_prepare',
-           'kalodata_leads','oecid','send_pool_publish')}})
+    def test_master_switch_alone_runs_the_monday_chain_in_order(self):
+        save(self.root,{'jobs':{}})
         save_setting(self.store,'it','automation-setting-request',0,
                      {'automaticOperationsEnabled':True,'fullCatalogWeeklyEnabled':True})
         executor=FakeExecutor()
@@ -52,12 +50,12 @@ class SchedulerFlow(unittest.TestCase):
         current=workflow_status(self.store)['current'];self.assertEqual(current['state'],'completed')
         self.assertTrue(all(stage['outputGenerationId'] for stage in current['stages']))
 
-    def test_daily_due_uses_0700_and_monday_enabled_clean_uses_0430(self):
-        save(self.root,{'jobs':{'taplink_clean':{'enabled':True,'at':'04:30','weekday':0},
-                               'campaign_catalog_update':{'enabled':True,'at':'07:00'}}})
+    def test_daily_due_uses_0700_and_monday_clean_uses_0430(self):
+        save(self.root,{'jobs':{'taplink_clean':{'enabled':False,'at':'04:30','weekday':0},
+                               'campaign_catalog_update':{'enabled':False,'at':'07:00'}}})
         base={'fullCatalogWeeklyEnabled':False}
-        self.assertEqual(datetime.fromtimestamp(due_slot(self.root,NOW,base),TZ).strftime('%H:%M'),'07:00')
-        self.assertEqual(datetime.fromtimestamp(due_slot(self.root,NOW,{**base,'fullCatalogWeeklyEnabled':True}),TZ).strftime('%H:%M'),'04:30')
+        self.assertEqual(datetime.fromtimestamp(due_slot(self.root,NOW,base),TZ).strftime('%H:%M'),'04:30')
+        self.assertEqual(datetime.fromtimestamp(due_slot(self.root,NOW+86400,base),TZ).strftime('%H:%M'),'07:00')
 
 
 class FakeChild:pid=os.getpid()

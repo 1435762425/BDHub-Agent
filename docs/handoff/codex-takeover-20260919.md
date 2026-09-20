@@ -13,6 +13,7 @@
 - 用户可见 frozen-v2 已退役；持续发送在领取每位达人前把 OECID、PID、Offer、`currentListId`、模板 revision、最终正文与控制 revision 冻结进 `cycle_delivery`。旧 `cycle_bulk*` 只读保留，旧 freeze/start/stop/reconcile CLI 固定拒绝。
 - 会话加入 `normal/collaborated/paid/rejected` 四态、人工优先与 showcase 自动升级；人工事项可直接确认且不要求先发送。三条 Agent 动作 key 不变，正文支持不可变 revision 编辑。
 - 页面已重构为运营首页、合作工作台、会话、货盘、达人、运行与设置；结果页支持 7/14/30 天三条趋势线，货盘含命名 Tab，运行设置拆为 Kalodata/作业/机构账号。持续发送页已恢复二发模板的新增、revision 修改、删除、中文翻译与真实例子，当前模板删除门禁读取 `continuous_send_control`。
+- 运营控制已按用户反馈收敛：标准主链只需开启首页“自动运营总开关”，作业页不再重复展示逐项启动/立即运行；全托周更新、持续发送、Agent 仍是独立开关。作业时间改为本地编辑后明确“保存时间”，不会再被轮询回写覆盖。
 - 当前只读回读：持续发送 `off`、池剩余 1,391、24 小时额度使用 0、unknown 0；Agent `enabled=false`；自动设置 0 行、workflow 0 行、连续发送控制/运行 0 行、旧活动冻结批次 0。
 - 代码验证：Python 983 项、Web 143 项、TypeScript、Next 生产构建均通过；平台写入、真实 IM、自动回复、自动清洗、自动建链、账号重登均为 0。
 

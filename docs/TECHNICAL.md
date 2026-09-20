@@ -109,7 +109,7 @@ React 组件不能直接读写 SQLite、启动任意命令或实现资格规则�
 
 Campaign 每日完整刷新，全托按周完整刷新；货盘 generation 发布后统一计算应有标准链接。新建后即时回读失败的单 PID 被隔离，整批写请求结束后执行一次公共回读，再按 30/120 秒两次轮询；仍未找到记 `skipped_unknown`，原 `catalog_link_intent` 保持 unknown 且永不重复 POST。确认失效的链接由周一清洗建立删除意图，整批删除请求收口后一次重读完整列表；仍存在记 `failed_known`，不重复 DELETE。持续发送只用本地 `catalog_current_binding` 校验 Offer 指纹与 `currentListId`，不调用 `fresh_card()`。
 
-`operations_scheduler.py` 按不可变 `workflow_run/workflow_stage_run` 串行执行清洗、完整货盘、链接准备、Kalodata、OECID 与发送池发布；每阶段记录输入/输出 generation、断点、计数和平台写入数。`config/jobs.json` 的十个真实作业全部默认关闭；`market_automation_setting` 总开关关闭时不创建定时主链。旧 `material_maintenance.py` 只保留历史兼容，不再由 `/api/jobs` 启动。
+`operations_scheduler.py` 按不可变 `workflow_run/workflow_stage_run` 串行执行清洗、完整货盘、链接准备、Kalodata、OECID 与发送池发布；每阶段记录输入/输出 generation、断点、计数和平台写入数。标准主链只由 `market_automation_setting` 总开关授权，`config/jobs.json` 保存各作业北京时间，不再要求逐项重复启用；全托、持续发送和 Agent 保留各自独立开关。旧 `material_maintenance.py` 只保留历史兼容，不再由 `/api/jobs` 启动。
 
 ### 5.3 线索与身份
 
@@ -349,7 +349,7 @@ Web 不再构建 `/flow-demo`、浏览器演示页、旧 local runtime、second-
 | `config/reply-policy.json` | 五种回复动作和三条 Agent 固定模板；不保存人工或二发自定义模板 |
 | `config/state-backup.json` | 当前 SQLite 明确清单与历史快照排除规则 |
 | `config/typesafe.example.json` / 本机 `config/typesafe.json` | TypeSafe 官方 endpoint、固定 Jev 模型和本机 API key；真实文件 0600 且不入 Git |
-| `config/jobs.json` | 十个真实运营作业的开关和北京时间；全部默认关闭 |
+| `config/jobs.json` | 十个真实运营作业的北京时间；Agent 独立开关保留在作业页 |
 | `config/market-accounts.json` | 市场账号角色和维护目标 |
 | `config/*.example.json` | 敏感本机配置样例 |
 

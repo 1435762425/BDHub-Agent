@@ -2,25 +2,25 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {validateJobs,validateJobsRequest,validateJobsSave} from '../src/server/jobs/bridge.ts';
 
-const job={id:'catalog_collect',name:'商品发现 / 刷新',group:'货盘',description:'逐页采集。',manual:'global-source-sync',manualEndpoint:'/api/global-source',lastRunAt:1789318884,enabled:false,at:'03:00',schedulable:false,cadence:'daily',weekday:null};
-const unwired={...job,id:'creator_leads',name:'达人线索查询（Kalodata）',group:'达人',manual:'unwired',manualEndpoint:null,lastRunAt:null,at:'04:00'};
+const job={id:'taplink_prepare',name:'TapLink 准备',group:'材料',description:'货盘发布后准备链接。',manual:'workflow',manualEndpoint:'/api/workflow',lastRunAt:1789318884,enabled:false,at:'07:20',schedulable:true,cadence:'daily',weekday:null};
+const agent={...job,id:'agent_reply',name:'Agent 回复',group:'会话',manual:'job-control',manualEndpoint:'/api/jobs',lastRunAt:null,at:'15:00'};
 const scheduler={running:false,stopping:false,pid:null,startedAt:null,phase:null,cycle:null,checkedAt:null,lastSuccess:{},lastAttempt:{},nextDue:{},error:null};
-const payload={version:'jobs-v2',jobs:[job,unwired],schedulerReady:true,scheduler};
+const payload={version:'jobs-v3',jobs:[job,agent],schedulerReady:true,scheduler};
 
 test('a jobs state is accepted and keeps the manual endpoint and schedule intent',()=>{
  const v=validateJobs(payload);
- assert.equal(v.jobs[0].manualEndpoint,'/api/global-source');
+ assert.equal(v.jobs[0].manualEndpoint,'/api/workflow');
  assert.equal(v.jobs[0].enabled,false);
- assert.equal(v.jobs[0].at,'03:00');
- assert.equal(v.jobs[1].manualEndpoint,null);
+ assert.equal(v.jobs[0].at,'07:20');
+ assert.equal(v.jobs[1].manualEndpoint,'/api/jobs');
  assert.equal(v.schedulerReady,true);
  assert.equal(v.scheduler.running,false);
 });
 
-test('a job with no verified trigger reports no endpoint rather than a guessed one',()=>{
+test('every displayed job points to a real bounded control endpoint',()=>{
  const v=validateJobs(payload);
- assert.equal(v.jobs[1].manual,'unwired');
- assert.equal(v.jobs[1].manualEndpoint,null);
+ assert.equal(v.jobs[1].manual,'job-control');
+ assert.equal(v.jobs[1].manualEndpoint,'/api/jobs');
  assert.equal(v.jobs[1].lastRunAt,null);
 });
 
@@ -41,14 +41,14 @@ test('bad times, bad ids and duplicate jobs are rejected',()=>{
 });
 
 test('a save request carries only the fields it means to change',()=>{
- assert.deepEqual(validateJobsSave({action:'save',jobs:{catalog_collect:{enabled:true}}}),
-  {jobs:{catalog_collect:{enabled:true}}});
- assert.deepEqual(validateJobsSave({action:'save',jobs:{catalog_collect:{at:'03:30'}}}),
-  {jobs:{catalog_collect:{at:'03:30'}}});
- assert.deepEqual(validateJobsSave({action:'save',jobs:{catalog_collect:{at:null}}}),
-  {jobs:{catalog_collect:{at:null}}});
- assert.deepEqual(validateJobsSave({action:'save',jobs:{selected_taplink_verify:{weekday:0}}}),
-  {jobs:{selected_taplink_verify:{weekday:0}}});
+ assert.deepEqual(validateJobsSave({action:'save',jobs:{agent_reply:{enabled:true}}}),
+  {jobs:{agent_reply:{enabled:true}}});
+ assert.deepEqual(validateJobsSave({action:'save',jobs:{taplink_prepare:{at:'07:30'}}}),
+  {jobs:{taplink_prepare:{at:'07:30'}}});
+ assert.deepEqual(validateJobsSave({action:'save',jobs:{taplink_prepare:{at:null}}}),
+  {jobs:{taplink_prepare:{at:null}}});
+ assert.deepEqual(validateJobsSave({action:'save',jobs:{taplink_clean:{weekday:0}}}),
+  {jobs:{taplink_clean:{weekday:0}}});
  assert.deepEqual(validateJobsRequest({action:'start_scheduler'}),{action:'start_scheduler'});
  assert.deepEqual(validateJobsRequest({action:'stop_scheduler'}),{action:'stop_scheduler'});
  for(const bad of [{action:'save'},{action:'run',jobs:{catalog_collect:{enabled:true}}},

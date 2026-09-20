@@ -70,7 +70,7 @@ def stop_scheduler(root):
 def due_slot(root,now,automation):
     from lib.jobs import load
     jobs=load(root)['jobs'];local=datetime.fromtimestamp(now,BEIJING)
-    monday=local.weekday()==0 and automation['fullCatalogWeeklyEnabled'] and jobs['taplink_clean']['enabled']
+    monday=local.weekday()==0
     selected=jobs['taplink_clean'] if monday else jobs['campaign_catalog_update']
     hour,minute=map(int,selected['at'].split(':'))
     return local.replace(hour=hour,minute=minute,second=0,microsecond=0).timestamp()
@@ -115,7 +115,6 @@ class SubprocessStageExecutor:
     def execute(self,store,run,stage,jobs):
         sources=run['applicableSources'];enabled=jobs['jobs']
         if stage=='taplink_clean':
-            if not enabled['taplink_clean']['enabled']:return {'state':'skipped','itemCount':0,'complete':True,'platformWrites':0,'scope':{},'payload':{'reason':'disabled'}}
             total=0;writes=0;last={}
             for action in ('refresh','classify','delete'):
                 args=['scripts/catalog-clean.py',action,'--lanes','9','--qps','12'] if action=='refresh' else ['scripts/catalog-clean.py',action]
@@ -128,9 +127,6 @@ class SubprocessStageExecutor:
         if stage=='catalog':
             outputs=[];count=0
             if 'selected' in sources:
-                if not enabled['full_catalog_update']['enabled']:
-                    return {'state':'needs_human','itemCount':0,'complete':False,'platformWrites':0,
-                            'errorCode':'full_catalog_update_disabled','scope':{'sources':sources},'payload':{}}
                 rid='it-global-'+time.strftime('%Y%m%d')+'-'+digest([run['runId'],'selected'])[:12]
                 result=self._call(['scripts/collect-global-opportunity.py','--run-id',rid,'--pages','40','--worker'],
                                   'global-catalog')
@@ -139,9 +135,6 @@ class SubprocessStageExecutor:
                     return {**result,'state':'failed','complete':False,'errorCode':'global_catalog_not_published'}
                 outputs.append(result);count+=int((result.get('payload') or {}).get('products') or 0)
             if 'campaign' in sources:
-                if not enabled['campaign_catalog_update']['enabled']:
-                    return {'state':'needs_human','itemCount':count,'complete':False,'platformWrites':0,
-                            'errorCode':'campaign_catalog_update_disabled','scope':{'sources':sources},'payload':{}}
                 result=self._call(['scripts/campaign-collect.py','--max-requests','150','--passes','200','--screen'],
                                   'campaign-catalog')
                 if result['state']!='completed':return result
@@ -152,7 +145,6 @@ class SubprocessStageExecutor:
             return {'state':'completed','itemCount':count,'complete':True,'platformWrites':0,
                     'scope':{'sources':sources},'payload':{'sources':outputs}}
         if stage=='taplink_prepare':
-            if not enabled['taplink_prepare']['enabled']:return {'state':'skipped','itemCount':0,'complete':True,'platformWrites':0,'scope':{'sources':sources},'payload':{'reason':'disabled'}}
             writes=0;outputs=[]
             for route in sources:
                 result=self._call(['scripts/catalog-link-batch.py','--route',route,'--limit','200','--passes','80',
@@ -162,7 +154,6 @@ class SubprocessStageExecutor:
             return {'state':'completed','itemCount':sum(item.get('itemCount',0) for item in outputs),
                     'complete':True,'platformWrites':writes,'scope':{'sources':sources},'payload':{'routes':outputs}}
         if stage=='kalodata':
-            if not enabled['kalodata_leads']['enabled']:return {'state':'skipped','itemCount':0,'complete':True,'platformWrites':0,'scope':{},'payload':{'reason':'disabled'}}
             sales=self._call(['scripts/leads-run.py','--limit','5000','--max-pages','20'],'kalodata-sales')
             stopped=str((sales.get('payload') or {}).get('stopped') or sales.get('errorCode') or '')
             state='quota_exhausted' if stopped=='kalodata_daily_quota_exhausted' else sales['state']
@@ -178,11 +169,9 @@ class SubprocessStageExecutor:
             return {**videos,'state':video_state,'complete':video_state=='completed','itemCount':completed+video_done,
                     'scope':{'sources':sources,'aCompleted':completed,'bGeneration':generation,'bCompleted':video_done}}
         if stage=='oecid':
-            if not enabled['oecid']['enabled']:return {'state':'skipped','itemCount':0,'complete':True,'platformWrites':0,'scope':{},'payload':{'reason':'disabled'}}
             result=self._call(['scripts/identity-batch.py','--limit','200000','--cohort-size','50'],'oecid')
             result['itemCount']=int((result.get('payload') or {}).get('claimed') or 0);return result
         if stage=='send_pool':
-            if not enabled['send_pool_publish']['enabled']:return {'state':'skipped','itemCount':0,'complete':True,'platformWrites':0,'scope':{},'payload':{'reason':'disabled'}}
             result=self._call(['scripts/lead-pool.py','status','--limit','1'],'send-pool')
             result['itemCount']=int(((result.get('payload') or {}).get('counts') or {}).get('positions') or 0);return result
         raise CycleError('workflow_stage_invalid')
@@ -233,15 +222,15 @@ def _background(root,store,jobs,automation,stamp):
     """Keep independent monitors/runtimes alive without treating them as serial workflow stages."""
     enabled=jobs['jobs']
     from lib.job_run import start as start_job,state as job_state
-    if enabled['inbox_monitor']['enabled'] and not (job_state(root,'inbox') or {}).get('running'):
+    if (automation['automaticOperationsEnabled'] or enabled['inbox_monitor']['enabled']) and not (job_state(root,'inbox') or {}).get('running'):
         try:start_job(root,'inbox',{'limit':6,'interval':60})
-        except ValueError:pass
+        except (ValueError,OSError):pass
     if enabled['agent_reply']['enabled']:
         from lib.template_library import agent_setting
         plan=store.db.execute("SELECT id FROM plan WHERE institution='bjn-local-research' AND market='it'").fetchone()
         if plan and agent_setting(store,plan[0])['enabled'] and not (job_state(root,'agentReply') or {}).get('running'):
             try:start_job(root,'agentReply',{'interval':60})
-            except ValueError:pass
+            except (ValueError,OSError):pass
     tables={row[0] for row in store.db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     if {'continuous_send_control','cycle_delivery','cycle_delivery_part'}<=tables:
         from lib.continuous_send import control as send_control,launch_worker,worker_state
