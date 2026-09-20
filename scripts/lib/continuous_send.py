@@ -182,20 +182,25 @@ def _legacy_batch_active(store):
     return bool(store.db.execute("SELECT 1 FROM cycle_bulk_freeze WHERE state IN ('starting','running','stop_requested','waiting_reconciliation')").fetchone()) if store.db.execute("SELECT 1 FROM sqlite_master WHERE name='cycle_bulk_freeze'").fetchone() else False
 
 
-def execute_once(root,store,*,authenticated=None):
+def execute_once(root,store,*,authenticated=None,authorized_now=None):
     """Advance at most one delivery. Tests can inject an authenticated context; status calls never enter."""
     root=Path(root);_required(store);plan=_plan(store);cfg=control(store,root);now=store.clock()
+    if authorized_now is not None:_request(authorized_now)
     if cfg['stopRequested'] or not (cfg['runRequested'] or cfg['automaticEnabled']):
         return publish_runtime(store,plan,'off',stop_reason='disabled')
     window=window_state(cfg['window'],now)
-    if not window['open']:return publish_runtime(store,plan,'waiting_window',stop_reason='outside_send_window')
+    if not window['open'] and authorized_now is None:
+        return publish_runtime(store,plan,'waiting_window',stop_reason='outside_send_window')
     if _legacy_batch_active(store):return publish_runtime(store,plan,'paused',stop_reason='legacy_batch_active')
     active=_active_delivery(store,plan);candidate=None
     if active:
         delivery=Deliveries(store).get(active['id']);candidate=delivery['snapshot']
+        if candidate.get('authorizedNowRequestId')!=authorized_now:
+            raise CycleError('continuous_send_authorization_changed')
     else:
         candidate,pool_state=_candidate(root,store,plan,cfg)
         if candidate is None:return publish_runtime(store,plan,'paused',stop_reason='send_pool_empty')
+        if authorized_now is not None:candidate['authorizedNowRequestId']=authorized_now
     from lib.second_live_runtime import _authenticated,live_runtime,sender_binding_sha256
     auth_context=authenticated or _authenticated({},stopped=lambda:control(store,root)['stopRequested'])
     with auth_context as context:
@@ -220,6 +225,7 @@ def execute_once(root,store,*,authenticated=None):
             current=control(store,root)
             if current['stopRequested'] or not (current['runRequested'] or current['automaticEnabled']):raise CycleError('continuous_send_stopped')
             if c.get('continuousControlRevision')>current['revision'] or c.get('executionMode')!='continuous-v1':raise CycleError('continuous_send_scope_changed')
+            if c.get('authorizedNowRequestId')!=authorized_now:raise CycleError('continuous_send_authorization_changed')
         def preflight(c,rt,conversation):
             history=rt['reads'].history_summary(conversation,include_sender_counts=True,include_events=True,include_contents=True)
             from lib.cycle_inbox import Inbox

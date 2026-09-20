@@ -86,5 +86,21 @@ class ContinuousSendTests(unittest.TestCase):
         self.assertTrue(snapshot['legacyBatchRetired'])
         self.assertEqual(snapshot['platformWrites'],0)
 
+    def test_explicit_once_authorization_bypasses_only_the_time_window(self):
+        mutate_control(self.store,self.root,action='start',request_id='continuous-start-once',expected_revision=0)
+        original_window,original_candidate=continuous.window_state,continuous._candidate
+        try:
+            continuous.window_state=lambda *_args,**_kwargs:{'open':False}
+            continuous._candidate=lambda *_args,**_kwargs:(None,{'layers':{'ready':0}})
+            ordinary=continuous.execute_once(self.root,self.store)
+            self.assertEqual(ordinary['state'],'waiting_window')
+            authorized=continuous.execute_once(
+                self.root,self.store,authorized_now='continuous-canary-request-0001')
+            self.assertEqual(authorized['state'],'paused')
+            self.assertEqual(authorized['stopReason'],'send_pool_empty')
+            with self.assertRaisesRegex(Exception,'request_invalid'):
+                continuous.execute_once(self.root,self.store,authorized_now='short')
+        finally:continuous.window_state,continuous._candidate=original_window,original_candidate
+
 
 if __name__=='__main__':unittest.main()
