@@ -473,7 +473,7 @@ PYTHONDONTWRITEBYTECODE=1 \
 - Web package 已显式声明 ESM，Node 测试不再产生 module type warning；Next.js 构建仍有上游 `module.register()` deprecation warning。
 - 冻结批次、start/stop 和 frozen-v2 执行桥已接通；账号级平台日额度的原生信号仍未取得，不能用本地 500 闸门冒充。
 - 历史 legacy-only `cycle_bulk` 仍保留用于追溯，但旧 CLI 与 `cycle_burst` 动态选人回退均已退役；执行只接受当前冻结批次。
-- 35 条意大利 turn 已完成 DeepSeek/Jev 同集影子分类，turn 级真值、分歧统计、审核后准确率和受控案件应用已完成；当前已审核 22 条、剩余 13 条，真实自动回复 transport 保持关闭且尚未接入新合同。
+- 35 条意大利 turn 已完成人工真值审核：DeepSeek 28/35（80.00%，误自动处理 2、误转人工 3），Jev 22/35（62.86%，误自动处理 3、误转人工 1）；双模型一致也仍有 2 条误自动处理。DeepSeek 暂作主影子分类器，Jev 保持 challenger，`collaboration_ack/link_usage` 继续人工；详细证据见 [最终人工评测](implementation/reply-model-evaluation-20260920.md)。真实自动回复 transport 保持关闭且尚未接入新合同。
 - SQLite 备份、校验和空目录恢复工具已完成；当前首份基线仍只在本机，尚未配置异机副本、保留周期或自动调度。
 - 项目 Python 环境、依赖锁和协议源码已独立；画像、IM、TapLink 等账号配置、身份文件和锁仍只读复用旧 BDHub，后续需逐项迁移凭据管理和身份维护，不能一次性复制旧配置。
 

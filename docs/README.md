@@ -62,6 +62,7 @@
 - [作业面板与 Kalodata 身份](implementation/workbench-jobs-and-kalodata-identity.md)
 - [ACC9 单品建链](implementation/acc9-catalog-link-canary.md)
 - [意大利标准 TapLink 全量补齐](implementation/italy-taplink-completion-20260920.md)
+- [意大利回复分类最终人工评测](implementation/reply-model-evaluation-20260920.md)
 - [12 QPS / 500 人身份验收](implementation/identity-12qps-500-release.md)
 
 ### 接口、研究与归档
