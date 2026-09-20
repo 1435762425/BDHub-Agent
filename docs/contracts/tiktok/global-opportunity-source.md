@@ -21,7 +21,15 @@
 - 新采集器在这个已验证边界使用对齐尾页，不先触发一次错误。其他分页边界不猜测成功。
 - page_size=100在首页本轮也返回98001004，message为“invalid params; detail:Failed to fetch the GNE product status”。15通过、100拒绝是实测，不等于已证明15是平台最大page_size。
 
-10000是本账号、本筛选查询的报告数量，不声明是市场全部全托商品总量。完整性口径为`current_query_endpoint_and_total`；没有用别的入口补数。类目树已读取28个一级类目，尚未把分区采集验收成全市场覆盖。
+10000是本账号、不带类目筛选查询的结果窗口，不是市场全部全托商品总量。旧完整性口径为`current_query_endpoint_and_total`。2026-09-21 已将28个官方一级类目分区逐一跑到末页并正式切换为 `category_l1_endpoint_and_totals`；分片扩大覆盖，但仍不宣称突破任何单类目自身可能存在的结果窗口。
+
+### 一级类目分片正式验收
+
+- 类目树实时返回 28 个一级类目；请求在原固定筛选上增加 `filter.category_id=[<一级类目ID>]`。
+- 每个类目独立核对末页、稳定 reported total 与去重数；28 个分区全部完成后再跨类目按 PID 去重并原子发布。
+- 正式运行 `it-global-cat-20260921-01`：2,134 页、31,809 个唯一 PID、类目成员 31,809、跨类目重复 0；相对旧 10,000 增加 21,809，规模为 3.18 倍。
+- 总耗时 3,524.088 秒（58 分 44 秒）；最大类目女装和内衣 6,396，所有单类目均低于 10,000；4 个类目明确返回 0 商品并省略 `products`，已按 `total=0 / has_more=false` 的终态兼容。
+- 运行错误 0、身份未变化、平台业务写入 0；本地筛分合格 2,321、拒绝 29,488。
 
 ## 可取得的列表字段
 
@@ -53,7 +61,8 @@ PID、标题、价格区间与币种文本、列表活动ID、平台总佣金、
 - 首轮列表：var/global-opportunity-first-read-20260914.json。
 - 分页大小与活动字段：var/global-opportunity-contract-20260914.json。
 - 尾页与类目树：var/global-opportunity-boundary-20260914.json。
-- 正式查询：global_source_run.id=it-global-20260914，667已保存页，10000 PID，2819个列表显示已选、7181个显示未选。
+- 旧单查询：global_source_run.id=it-global-20260914，667页、10,000 PID。
+- 当前正式分片查询：global_source_run.id=it-global-cat-20260921-01，2,134页、31,809 PID，28/28类完成并发布。
 - 详情核验：var/global-source-enrichment-*.json及global_source_detail/global_source_stock。
 - 当前源状态：GET /api/global-source。采集状态不表示发送资格，executionAllowed恒为false。
 

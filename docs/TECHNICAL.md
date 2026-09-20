@@ -91,6 +91,8 @@ React 组件不能直接读写 SQLite、启动任意命令或实现资格规则�
 
 全托与 Campaign 共享后续线索/身份/发送池，但保留 `catalogSource`、活动和链接方案，不能在读取时折叠掉来源。
 
+全托来源的正式完整模式为 `category_l1_v1`：先读取 IT 官方一级类目树，再对每个类目独立保存 `next_page / reported_total / unique_count / terminal_reason`，每个分区必须在 endpoint 末页满足 `unique_count = reported_total`。`global_source_product_category` 保存分区成员，`global_source_product` 跨类目按 PID 去重；全部分区完成后才更新同一 `global_source_head`，运行中或任一分区 partial/blocked 时继续展示上一版完整 head。2026-09-21 真实运行覆盖 28 类、2,134 页、31,809 个唯一 PID，耗时 3,524.088 秒，类目成员 31,809、重叠 0、平台写入 0。
+
 ### 5.2 TapLink
 
 | 模块 | 作用 |
@@ -171,6 +173,8 @@ Pure HTTP 验证依赖 `Pillow==12.3.0`、`opencv-python-headless==4.14.0.94` �
 `/api/send` 的 GET 只读当前控制、窗口、24 小时额度、池余量、真实话术例子和进程；POST 只接受 revision 化的保存、发送、停止与原 unknown 核验。多一个字段即拒绝。保存、GET、构建和重启都不启动 worker；只有用户“发送”、显式自动发送开关或已启用调度器在窗口内启动 `continuous-send-worker.py`。
 
 持续发送按 `lead_pool.v3` 当前顺序领取一位达人，复检后把 creator/OECID、PID、Offer、`currentListId`、模板 revision、最终正文、关系控制 revision 和确定性 claim key 写入不可变 `cycle_delivery.snapshot`。执行只用本地 `catalog_current_binding` 核对材料，不远程刷新卡；`cycle_delivery` 唯一键、24 小时预留和同达人 active delivery 共同防重复。unknown 使进程进入 `waiting_reconciliation`，恢复只运行原 delivery 的 `verify_only`，不会领取下一位或重发。
+
+显式运维 canary 可带 `authorizedNowRequestId` 绕过日常时间窗一次，但仍使用同一不可变 delivery、材料/关系/额度门禁、ACC6 写锁和逐组件回查；普通 start 永远遵守 16:30–24:00。实时预检按当前关系政策执行：未结 pending/人工案件、未知消息、未回复累计 5 条以及达人级 24/48 小时冷却会阻止发送；历史已解决回复或橱窗不永久封锁。明确未提交的预检拒绝把 delivery 与两组件结算为 cancelled，保留审计但不重复领取；任一组件开始后禁止取消。2026-09-21 真实 canary 最终完成 1 位达人，卡和文字均 confirmed、unknown 0。
 
 发送话术由 `cycle_materials.py` 的五个系统默认值与 `send_message_template*` revision 统一投影。系统模板第一次编辑时把默认正文冻结为 revision 1，再写 revision 2；删除写 `archived` 覆盖，不修改代码常量。新增模板使用 `custom-*` ID。所有正文只允许 `{creator_handle}`、`{product_name}`、`{creator_commission}`，后二者必需；发送页展示当前池中下一位达人的真实渲染例子。模板 ID、revision 与最终正文进入每个 delivery 快照，历史 delivery 不随模板更新。
 
