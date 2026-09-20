@@ -10,11 +10,12 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'scripts'))
-from lib.second_cycle import CycleError  # noqa: E402
+from lib.second_cycle import CycleError,digest  # noqa: E402
 from lib.schema_migrations import apply_database  # noqa: E402
 from lib.send_batch import (CONFIG_DEFAULT, NEW_CONTACT_LIMIT, _window_arg,  # noqa: E402
                             capacity, freeze_batch, load_config, preview, save_and_status,
-                            promote_reserves, save_config, start_batch, status, stop_batch,
+                            promote_reserves, reconciliation_target, save_config, settle_reconciliation,
+                            start_batch, status, stop_batch,
                             validate_config, window_state)
 
 # 2026-09-15 12:00 北京时间（窗口判定按北京时间，所以这个数必须算准）。
@@ -70,14 +71,16 @@ def capacity_fixture(folder, *, reserved=0, delivered=0):
         conn.executescript('''
             CREATE TABLE plan(id TEXT,institution TEXT,market TEXT,state TEXT);
             CREATE TABLE cycle_contact_reservation(plan_id TEXT,oec TEXT,reserved REAL);
-            CREATE TABLE cycle_delivery(id TEXT,plan_id TEXT,creator_id TEXT,oec TEXT,state TEXT);
+            CREATE TABLE cycle_delivery(id TEXT PRIMARY KEY,plan_id TEXT,creator_id TEXT,oec TEXT,
+              pid TEXT DEFAULT '',source_id TEXT DEFAULT '',snapshot TEXT DEFAULT '{}',created REAL DEFAULT 0,
+              expires REAL DEFAULT 0,state TEXT);
             CREATE TABLE cycle_delivery_part(delivery_id TEXT,kind TEXT,state TEXT,started REAL);''')
         conn.execute("INSERT INTO plan VALUES('p','bjn-local-research','it','active')")
         for index in range(reserved):
             conn.execute('INSERT INTO cycle_contact_reservation VALUES(?,?,?)',
                          ('p', f'res{index}', NOON - 60))
         for index in range(delivered):
-            conn.execute('INSERT INTO cycle_delivery VALUES(?,?,?,?,?)',
+            conn.execute('INSERT INTO cycle_delivery(id,plan_id,creator_id,oec,state) VALUES(?,?,?,?,?)',
                          (f'd{index}', 'p', f'c{index}', f'del{index}', 'confirmed'))
             conn.execute("INSERT INTO cycle_delivery_part VALUES(?,?,?,?)",
                          (f'd{index}', 'card', 'confirmed', NOON - 120))
@@ -255,7 +258,7 @@ class FrozenBatch(unittest.TestCase):
             db.row_factory=sqlite3.Row
             db.execute("UPDATE cycle_bulk SET state='running' WHERE id=?",(batch['batchId'],))
             db.execute("UPDATE cycle_bulk_freeze SET state='running' WHERE batch_id=?",(batch['batchId'],))
-            db.execute("INSERT INTO cycle_delivery VALUES(?,?,?,?,?)",('unknown-delivery','p','creator0','1creator0','unknown'))
+            db.execute("INSERT INTO cycle_delivery(id,plan_id,creator_id,oec,state) VALUES(?,?,?,?,?)",('unknown-delivery','p','creator0','1creator0','unknown'))
             db.execute("UPDATE cycle_bulk_item SET state='sending',delivery_id='unknown-delivery' WHERE batch_id=?",(batch['batchId'],))
             db.commit()
         from lib.second_cycle import CycleStore
@@ -281,6 +284,27 @@ class FrozenBatch(unittest.TestCase):
         self.assertTrue(duplicate['duplicate'])
         with self.assertRaisesRegex(CycleError, 'revision_conflict'):
             start_batch(self.root, batch['batchId'], 1, confirmed=True, now=NOON)
+
+    def test_unknown_reconciliation_returns_to_prepared_without_promoting_or_starting(self):
+        batch,_=self.freeze('request-0006')
+        with closing(sqlite3.connect(self.root/'var/second-cycle.sqlite')) as db,db:
+            db.row_factory=sqlite3.Row
+            frozen=db.execute("SELECT candidate_json FROM cycle_bulk_candidate WHERE batch_id=? AND position_order=0",(batch['batchId'],)).fetchone()[0]
+            candidate=json.loads(frozen)
+            db.execute("UPDATE cycle_bulk SET state='waiting_reconciliation' WHERE id=?",(batch['batchId'],))
+            db.execute("UPDATE cycle_bulk_freeze SET state='waiting_reconciliation' WHERE batch_id=?",(batch['batchId'],))
+            db.execute("INSERT INTO cycle_delivery(id,plan_id,creator_id,oec,pid,source_id,snapshot,created,expires,state) VALUES(?,?,?,?,?,?,?,?,?,?)",
+                       ('delivery-unknown-0001','p','creator0','1creator0','100',candidate['source']['sourceId'],frozen,NOON,NOON+1,'unknown'))
+            db.execute("INSERT INTO cycle_delivery_part VALUES(?,?,?,?)",('delivery-unknown-0001','card','unknown',NOON))
+            db.execute("UPDATE cycle_bulk_item SET state='sending',delivery_id='delivery-unknown-0001' WHERE batch_id=?",(batch['batchId'],))
+        target=reconciliation_target(self.root,batch['batchId'],'delivery-unknown-0001',1)
+        self.assertEqual(target['snapshotHash'],digest(candidate))
+        with closing(sqlite3.connect(self.root/'var/second-cycle.sqlite')) as db,db:
+            db.execute("UPDATE cycle_delivery SET state='confirmed' WHERE id='delivery-unknown-0001'")
+        settled=settle_reconciliation(self.root,batch['batchId'],'delivery-unknown-0001',1)
+        self.assertEqual((settled['state'],settled['revision'],settled['unknownDeliveries']),('prepared',2,[]))
+        with closing(sqlite3.connect(self.root/'var/second-cycle.sqlite')) as db:
+            self.assertEqual(db.execute("SELECT state FROM cycle_bulk_item WHERE batch_id=?",(batch['batchId'],)).fetchone()[0],'confirmed')
 
 
 if __name__ == '__main__':

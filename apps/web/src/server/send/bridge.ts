@@ -2,12 +2,12 @@ import {execFile} from "node:child_process";
 import {join} from "node:path";
 import {projectRoot} from "../creator-identities/refresh.ts";
 import {PROBE_COUNT,SEND_COUNTS} from "../../features/second-outreach/send-contracts.ts";
-import type {SendAuthorization,SendBatch,SendConfig,SendCapacity,SendPreview,SendRateGap,SendSample,SendState,SendWindow} from "../../features/second-outreach/send-contracts.ts";
+import type {SendAuthorization,SendBatch,SendConfig,SendCapacity,SendPreview,SendRateGap,SendSample,SendState,SendUnknownDelivery,SendWindow} from "../../features/second-outreach/send-contracts.ts";
 
 // 类型与档位常量在 `features/second-outreach/send-contracts.ts`（客户端组件也要用，
 // 不能从这一层 import：那会把 node:child_process 打进浏览器包）。这里只留校验与调用。
 export {PROBE_COUNT,SEND_COUNTS};
-export type {SendAuthorization,SendBatch,SendConfig,SendCapacity,SendPreview,SendRateGap,SendSample,SendState,SendWindow};
+export type {SendAuthorization,SendBatch,SendConfig,SendCapacity,SendPreview,SendRateGap,SendSample,SendState,SendUnknownDelivery,SendWindow};
 
 /**
  * 发送池 → 正式发送的播种层桥接。
@@ -74,14 +74,20 @@ function validateSamples(raw:unknown):SendSample[]{
   const r=(row??{}) as Record<string,unknown>;
   const pid=text(r.pid,19);
   if(!/^\d{19}$/.test(pid))throw Error('invalid_send');
-  if(typeof r.unlocked!=="boolean")throw Error('invalid_send');
+  if(typeof r.unlocked!=="boolean"||(r.sourceClass!=="A"&&r.sourceClass!=="B"))throw Error('invalid_send');
   // 发出去的那句话必须原样带上（页面要显示的就是它），以及操作者的中文对照。
   const optional=(value:unknown,max:number)=>(typeof value==="string"&&value?text(value,max):"");
-  return {handle:text(r.handle,64),pid,name:text(r.name,120),
+  const nullableNumber=(value:unknown)=>(value==null?null:typeof value==="number"&&Number.isFinite(value)&&value>=0?value:(()=>{throw Error('invalid_send')})());
+  const nullableText=(value:unknown,max:number)=>(value==null||value===""?null:text(value,max));
+  const oecId=text(r.oecId,64),currentListId=text(r.currentListId,64);
+  if(!/^\d{1,64}$/.test(oecId)||!/^\d{1,64}$/.test(currentListId))throw Error('invalid_send');
+  const gmv=nullableText(r.gmv,80);if(gmv!==null&&!/^\d+(?:\.\d+)?$/.test(gmv))throw Error('invalid_send');
+  return {handle:text(r.handle,64),oecId,pid,sourceClass:r.sourceClass,sourceRank:nullableNumber(r.sourceRank),units:nullableNumber(r.units),gmv,
+   videoViews:nullableNumber(r.videoViews),videoId:nullableText(r.videoId,100),videoReleasedAt:nullableText(r.videoReleasedAt,40),name:text(r.name,120),
    nameZh:optional(r.nameZh,120),nameSource:text(r.nameSource,16),
    messageIt:optional(r.messageIt,600),messageZh:optional(r.messageZh,600),template:optional(r.template,24),
    creatorPercent:text(r.creatorPercent,8),publicPercent:text(r.publicPercent,8),
-   campaignId:text(r.campaignId,24),catalogSource:text(r.catalogSource,16),unlocked:r.unlocked};
+   campaignId:text(r.campaignId,24),catalogSource:text(r.catalogSource,16),currentListId,unlocked:r.unlocked};
  });
 }
 
@@ -146,9 +152,9 @@ function validateBatch(raw:unknown):SendBatch|null{
  if(raw==null)return null;
  if(typeof raw!=="object"||Array.isArray(raw))throw Error('invalid_send');
  const v=raw as Record<string,unknown>;
- const batchId=text(v.batchId,120),requestId=text(v.requestId,120),state=text(v.state,48);
+ const batchId=text(v.batchId,120),batchRequestId=text(v.requestId,120),state=text(v.state,48);
  if(!/^[A-Za-z0-9][A-Za-z0-9._:-]{7,119}$/.test(batchId)||
-   !/^[A-Za-z0-9][A-Za-z0-9._:-]{7,119}$/.test(requestId))throw Error('invalid_send');
+   !/^[A-Za-z0-9][A-Za-z0-9._:-]{7,119}$/.test(batchRequestId))throw Error('invalid_send');
  let runtime:SendBatch["runtime"]=null;
  if(v.runtime!=null){
   if(typeof v.runtime!=="object"||Array.isArray(v.runtime))throw Error('invalid_send');
@@ -159,11 +165,13 @@ function validateBatch(raw:unknown):SendBatch|null{
  const target=int(v.target,'invalid_send',2000),attempted=int(v.attempted??v.target,'invalid_send',2200);
  const reserveTotal=int(v.reserveTotal??0,'invalid_send',200),reservePromoted=int(v.reservePromoted??0,'invalid_send',200);
  const reserveRemaining=int(v.reserveRemaining??reserveTotal-reservePromoted,'invalid_send',200);
- const out:SendBatch={batchId,requestId,previewHash:sha(v.previewHash),
+ if(!Array.isArray(v.unknownDeliveries)||v.unknownDeliveries.length>20)throw Error('invalid_send');
+ const unknownDeliveries:SendUnknownDelivery[]=v.unknownDeliveries.map(rawUnknown=>{const row=rawUnknown as Record<string,unknown>;if(!row||typeof row!=="object"||!row.parts||typeof row.parts!=="object"||Array.isArray(row.parts))throw Error('invalid_send');const parts:Record<string,string>={};for(const [kind,state] of Object.entries(row.parts as Record<string,unknown>)){if(!["card","text"].includes(kind)||typeof state!=="string"||state.length>32)throw Error('invalid_send');parts[kind]=state;}const oecId=text(row.oecId,64),pid=text(row.pid,19);if(!/^\d{1,64}$/.test(oecId)||!/^\d{19}$/.test(pid))throw Error('invalid_send');return {deliveryId:requestId(row.deliveryId),creatorId:text(row.creatorId,120),oecId,pid,parts};});
+ const out:SendBatch={batchId,requestId:batchRequestId,previewHash:sha(v.previewHash),
   revision:int(v.revision,'invalid_send',1000000),state,target,attempted,reserveTotal,reservePromoted,reserveRemaining,
   counts:counts(v.counts,'invalid_send'),config:validateConfig(v.config),
   authorization:validateAuthorization(v.authorization),authorizedAt:nullableNumber(v.authorizedAt),
-  stopRequestedAt:nullableNumber(v.stopRequestedAt),createdAt:nullableNumber(v.createdAt)??0,runtime};
+  stopRequestedAt:nullableNumber(v.stopRequestedAt),createdAt:nullableNumber(v.createdAt)??0,runtime,unknownDeliveries};
  if(v.workerPid!==undefined)out.workerPid=int(v.workerPid,'invalid_send',2**31-1);
  if(v.duplicate!==undefined){if(typeof v.duplicate!=="boolean")throw Error('invalid_send');out.duplicate=v.duplicate;}
  if(Object.values(out.counts).reduce((a,b)=>a+b,0)!==out.attempted||out.attempted!==out.target+out.reservePromoted||
@@ -174,10 +182,11 @@ function validateBatch(raw:unknown):SendBatch|null{
 export function validateSendState(value:unknown):SendState{
  if(!value||typeof value!=="object")throw Error('invalid_send');
  const v=value as Record<string,unknown>;
+ if(v.market!=="it"||v.account!=="acc6")throw Error('invalid_send');
  const config=validateConfig(v.config);
  const raw=(v.preview??{}) as Record<string,unknown>;
  if(raw.available!==true){
-  return {available:false,config,pool:{counts:{},layers:{}},
+  return {market:"it",account:"acc6",available:false,config,pool:{counts:{},layers:{}},
    preview:{available:false,requested:int(raw.requested??0,'invalid_send'),
     reserveRequested:int(raw.reserveRequested??0,'invalid_send',200),required:int(raw.required??0,'invalid_send',2200),
     sendable:0,reserveReady:0,frozenTotal:0,fullPreparation:false,samples:[],
@@ -208,7 +217,7 @@ export function validateSendState(value:unknown):SendState{
  const pool=(v.pool??{}) as Record<string,unknown>;
  const layers=counts(pool.layers,'invalid_send');
  if(Object.keys(layers).some(name=>!LAYERS.includes(name)))throw Error('invalid_send');
- return {available:true,config,preview,pool:{counts:counts(pool.counts,'invalid_send'),layers},
+ return {market:"it",account:"acc6",available:true,config,preview,pool:{counts:counts(pool.counts,'invalid_send'),layers},
   batch:validateBatch(v.batch)};
 }
 
@@ -239,7 +248,8 @@ export function readSendBatch():Promise<SendState>{return run(["status"]);}
 export type SendRequest={action:"save";config:Partial<SendConfig>}|
  {action:"freeze";requestId:string;expectedPreviewHash:string}|
  {action:"start";batchId:string;expectedRevision:number;confirmed:true}|
- {action:"stop";batchId:string;expectedRevision:number};
+ {action:"stop";batchId:string;expectedRevision:number}|
+ {action:"reconcile";batchId:string;deliveryId:string;expectedRevision:number;confirmed:true};
 
 const requestId=(value:unknown)=>{
  const out=text(value,120);
@@ -262,6 +272,11 @@ export function validateSendRequest(body:unknown):SendRequest{
  if(v.action==="stop"){
   if(Object.keys(v).some(key=>!["action","batchId","expectedRevision"].includes(key)))throw Error('invalid_send_request');
   return {action:"stop",batchId:requestId(v.batchId),expectedRevision:int(v.expectedRevision,'invalid_send_request')};
+ }
+ if(v.action==="reconcile"){
+  if(Object.keys(v).some(key=>!["action","batchId","deliveryId","expectedRevision","confirmed"].includes(key))||v.confirmed!==true)
+   throw Error('invalid_send_request');
+  return {action:"reconcile",batchId:requestId(v.batchId),deliveryId:requestId(v.deliveryId),expectedRevision:int(v.expectedRevision,'invalid_send_request'),confirmed:true};
  }
  if(v.action!=="save")throw Error('invalid_send_request');
  if(Object.keys(v).some(key=>!["action","config"].includes(key)))throw Error('invalid_send_request');
@@ -292,4 +307,8 @@ export function startSendBatch(batchId:string,expectedRevision:number):Promise<S
 
 export function stopSendBatch(batchId:string,expectedRevision:number):Promise<SendState>{
  return run(["stop","--batch-id",batchId,"--expected-revision",String(expectedRevision)]);
+}
+
+export function reconcileSendBatch(batchId:string,deliveryId:string,expectedRevision:number):Promise<SendState>{
+ return run(["reconcile","--batch-id",batchId,"--delivery-id",deliveryId,"--expected-revision",String(expectedRevision),"--confirmed"]);
 }

@@ -42,6 +42,15 @@ class ExecutorTests(unittest.TestCase):
   self.assertEqual(self.d.get(self.id)['state'],'unknown')
   r=execute(self.d,self.id,rt,lambda c:None,lambda *a:None)
   self.assertEqual(r['state'],'confirmed');self.assertEqual(self.calls,['card','text'])
+ def test_verification_only_never_dispatches_the_next_ready_component(self):
+  rt=self.runtime(fail=True)
+  with self.assertRaises(RuntimeError):execute(self.d,self.id,rt,lambda c:None,lambda *a:None)
+  self.assertEqual(self.calls,['card'])
+  recovered=execute(self.d,self.id,rt,lambda c:None,lambda *a:None,verify_only=True)
+  self.assertEqual(self.calls,['card'])
+  self.assertEqual({part['kind']:part['state'] for part in recovered['parts']},{'card':'confirmed','text':'ready'})
+  finished=execute(self.d,self.id,rt,lambda c:None,lambda *a:None)
+  self.assertEqual(finished['state'],'confirmed');self.assertEqual(self.calls,['card','text'])
  def test_preflight_receives_the_verified_conversation(self):
   rt=self.runtime();observed=[]
   def check(c,rt,conv):observed.append(conv.conversation_id)

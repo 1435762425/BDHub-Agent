@@ -2,7 +2,7 @@ import sys,unittest,tempfile,json
 from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'scripts'))
 from lib.second_cycle import CycleStore,CycleError,digest
-from lib.cycle_review import ReviewBatches,latest_review
+from lib.cycle_review import ReviewBatches,_position_rows,latest_review
 from test_second_cycle import offer,edge,NOW
 class ReviewTests(unittest.TestCase):
  def setUp(self):
@@ -48,4 +48,15 @@ class ReviewTests(unittest.TestCase):
  def test_expiry_and_immutable_record(self):
   self.create();self.now+=1801;self.assertTrue(latest_review(self.s,self.p)['expired'])
   with self.assertRaises(Exception):self.s.db.execute("UPDATE cycle_review_batch SET payload='{}'")
+ def test_b_only_position_freezes_representative_video_evidence(self):
+  self.s.db.execute('''CREATE TABLE video_lead_current(
+   generation_id TEXT,pid TEXT,kalodata_creator_id TEXT,handle TEXT,run_id TEXT,video_id TEXT,
+   views INTEGER,released_at TEXT,video_sale INTEGER,observed_at REAL)''')
+  self.s.db.execute('INSERT INTO video_lead_current VALUES(?,?,?,?,?,?,?,?,?,?)',
+                    ('g','2','k1','video.handle','run-1','video-1',12000,'2026-09-18',0,self.now))
+  rows=_position_rows(self.s,self.p,{},lambda creator,oec:{'handle':'video.handle'},[('c1','2')])
+  self.assertEqual(len(rows),1)
+  source=json.loads(rows[0]['payload'])
+  self.assertEqual((source['sourceClass'],source['videoId'],source['videoViews']),('B','video-1',12000))
+  self.assertTrue(source['sourceId'].startswith('video:run-1:'))
 if __name__=='__main__':unittest.main()

@@ -3,7 +3,6 @@ import {useEffect,useId,useRef,useState,type ReactNode,type ButtonHTMLAttributes
 import {createPortal} from "react-dom";
 import * as Icons from "@/icons";
 import TemplateBadge from "@/components/ui/badge/Badge";
-import {type CooperationCase,type Market,MARKETS,STATUS} from "./model";
 
 const iconMap={grid:Icons.GridIcon,goal:Icons.TaskIcon,bolt:Icons.BoltIcon,chat:Icons.ChatIcon,chart:Icons.PieChartIcon,agent:Icons.ShootingStarIcon,settings:Icons.PlugInIcon,search:Icons.SearchIcon,plus:Icons.PlusIcon,close:Icons.CloseIcon,arrow:Icons.ArrowRightIcon,check:Icons.CheckCircleIcon,time:Icons.TimeIcon,info:Icons.InfoIcon,bell:Icons.BellIcon,file:Icons.FileIcon,down:Icons.ChevronDownIcon,edit:Icons.PencilIcon,send:Icons.PaperPlaneIcon,users:Icons.GroupIcon,lock:Icons.LockIcon,eye:Icons.EyeIcon,menu:Icons.ListIcon,box:Icons.BoxIconLine,copy:Icons.CopyIcon};
 export type IconName=keyof typeof iconMap;
@@ -17,8 +16,6 @@ export function Card({children,className="",title,subtitle,action}:{children:Rea
 export function PageHeading({title,description,action}:{title:string;description?:string;action?:ReactNode}){return <div className="mb-6 flex flex-wrap items-center justify-between gap-4"><div><h1 className="text-2xl font-semibold tracking-tight text-gray-800 dark:text-white/90">{title}</h1>{description&&<p className="mt-1.5 text-sm leading-6 text-gray-500 dark:text-gray-400">{description}</p>}</div>{action}</div>;}
 export type Tone="brand"|"success"|"warning"|"error"|"neutral"|"info";
 export function Pill({children,tone="neutral"}:{children:ReactNode;tone?:Tone}){return <TemplateBadge color={tone==="brand"?"primary":tone==="neutral"?"light":tone} size="sm">{children}</TemplateBadge>;}
-export function StatusPill({item}:{item:CooperationCase}){return <Pill tone={item.sendState==="unknown"?"warning":item.status==="closed"?(item.adopted?"success":"neutral"):item.status==="needs_operator"?"warning":item.status==="processing"?"brand":"neutral"}>{item.sendState==="unknown"?"结果待核验":STATUS[item.status]}</Pill>;}
-export function MarketPill({market}:{market:Market}){return <span className="inline-flex items-center gap-1.5 whitespace-nowrap text-xs text-gray-500"><span className="rounded border border-gray-200 bg-gray-50 px-1.5 py-0.5 font-medium dark:border-gray-700 dark:bg-gray-800">{market.toUpperCase()}</span>{MARKETS[market].name}</span>;}
 export function Avatar({src,name,size=40}:{src:string;name:string;size?:number}){return <img src={src} alt={name} width={size} height={size} className="shrink-0 rounded-full object-cover" style={{width:size,height:size}}/>;}
 export const inputClass="h-11 w-full rounded-lg border border-gray-300 bg-transparent px-3.5 text-sm text-gray-800 shadow-theme-xs outline-none transition placeholder:text-gray-400 focus:border-brand-300 focus:ring-3 focus:ring-brand-500/10 disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-700 dark:bg-gray-900 dark:text-white/90 dark:focus:border-brand-800";
 export function Input(props:InputHTMLAttributes<HTMLInputElement>){return <input {...props} className={`${inputClass} ${props.className||""}`}/>;}

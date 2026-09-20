@@ -29,7 +29,7 @@ def history_eligible(history,now,own_current_refs=0):
  if len(recent)>own_current_refs:raise CycleError('recent_contact_needs_allowance_review')
 
 def main():
- p=argparse.ArgumentParser(description=__doc__);p.add_argument('action',choices=['prepare','run']);p.add_argument('--handle');p.add_argument('--delivery-id');p.add_argument('--approved-hash');a=p.parse_args()
+ p=argparse.ArgumentParser(description=__doc__);p.add_argument('action',choices=['prepare','run']);p.add_argument('--handle');p.add_argument('--delivery-id');p.add_argument('--approved-hash');p.add_argument('--verify-only',action='store_true');a=p.parse_args()
  def deadline(*_):raise TimeoutError('cycle_send_deadline')
  signal.signal(signal.SIGALRM,deadline);signal.setitimer(signal.ITIMER_REAL,55)
  report={'realSends':0};ROOT.joinpath('var/cycle-send').mkdir(exist_ok=True)
@@ -86,7 +86,7 @@ def main():
       idx.execute("INSERT OR IGNORE INTO conversation VALUES('it:acc6',?,?,2,?)",(conv.conversation_id,candidate['oecId'],time.time()))
      confirmed=sum(p['state']=='confirmed' for p in deliveries.get(d['id'])['parts']);history_eligible(h,time.time(),confirmed)
     try:
-     result=execute(deliveries,d['id'],runtime,authorize,preflight);print(json.dumps({'deliveryId':d['id'],'state':result['state']}))
+     result=execute(deliveries,d['id'],runtime,authorize,preflight,verify_only=a.verify_only);print(json.dumps({'deliveryId':d['id'],'state':result['state'],'verificationOnly':a.verify_only}))
     except Exception as error:
      report['failure']={k:getattr(error,k,None) for k in ('code','outcome','native_status','check_code','check_message','response_ref')}
      if getattr(error,'response_ref',None):store.db.execute('INSERT INTO cycle_platform_signal(delivery_id,at,outcome,code,native_status,check_code,check_message,response_ref) VALUES(?,?,?,?,?,?,?,?)',(d['id'],time.time(),*[getattr(error,k,None) for k in ('outcome','code','native_status','check_code','check_message','response_ref')]))

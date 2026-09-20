@@ -8,6 +8,7 @@
     python scripts/send-batch.py freeze --request-id <uuid> --expected-preview-hash <sha256>
     python scripts/send-batch.py start --batch-id <id> --expected-revision 1 --confirmed
     python scripts/send-batch.py stop --batch-id <id> --expected-revision 2
+    python scripts/send-batch.py reconcile --batch-id <id> --delivery-id <id> --expected-revision 2 --confirmed
 
 `preview` **只读**：不落库、不碰平台。它算的就是"如果现在发这一批，会发给谁、发什么商品、为什么
 有人被跳过"。`--widen` 是**显式越界探测**：越过本地 24 小时 500 个新联系的保守闸门，去拿平台自己的
@@ -27,7 +28,8 @@ sys.dont_write_bytecode = True
 sys.path.insert(0, str(ROOT / 'scripts'))
 from lib.second_cycle import CycleError  # noqa: E402
 from lib.send_batch import (freeze_batch, mark_batch_running, mark_batch_start_failed, preview,  # noqa: E402
-                            save_and_status, start_batch, status, stop_batch)
+                            reconciliation_target, save_and_status, settle_reconciliation,
+                            start_batch, status, stop_batch)
 
 
 def parse_window(raw):
@@ -42,7 +44,7 @@ def parse_window(raw):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action', choices=['preview', 'status', 'save', 'freeze', 'start', 'stop'])
+    parser.add_argument('action', choices=['preview', 'status', 'save', 'freeze', 'start', 'stop', 'reconcile'])
     parser.add_argument('--count', type=int, default=500)
     parser.add_argument('--widen', action='store_true', help='显式越过本地 24h 500 新联系闸门')
     parser.add_argument('--window', help='发送窗口，形如 09:00-24:00；不填＝不设窗口')
@@ -50,6 +52,7 @@ def main():
     parser.add_argument('--request-id')
     parser.add_argument('--expected-preview-hash')
     parser.add_argument('--batch-id')
+    parser.add_argument('--delivery-id')
     parser.add_argument('--expected-revision', type=int)
     parser.add_argument('--confirmed', action='store_true')
     args = parser.parse_args()
@@ -92,6 +95,23 @@ def main():
         if args.action == 'stop':
             batch = stop_batch(ROOT, args.batch_id, args.expected_revision)
             print(json.dumps(status(ROOT) | {'batch': batch}, ensure_ascii=False))
+            return 0
+        if args.action == 'reconcile':
+            if args.confirmed is not True:
+                raise CycleError('reconciliation_confirmation_required')
+            target = reconciliation_target(ROOT, args.batch_id, args.delivery_id, args.expected_revision)
+            result = subprocess.run(
+                [sys.executable, str(ROOT / 'scripts/cycle-send.py'), 'run',
+                 '--delivery-id', target['deliveryId'], '--approved-hash', target['snapshotHash'],
+                 '--verify-only'], cwd=ROOT, capture_output=True, text=True, timeout=90)
+            try:
+                verification = json.loads((result.stdout or '').strip().splitlines()[-1])
+            except (IndexError, ValueError):
+                raise CycleError('reconciliation_result_unavailable') from None
+            if result.returncode or verification.get('verificationOnly') is not True:
+                raise CycleError('reconciliation_failed')
+            batch = settle_reconciliation(ROOT, args.batch_id, args.delivery_id, args.expected_revision)
+            print(json.dumps(status(ROOT) | {'batch': batch, 'reconciliation': verification}, ensure_ascii=False))
             return 0
         state = preview(ROOT, count=args.count, widen=args.widen, window=window)
         print(json.dumps(state, ensure_ascii=False))

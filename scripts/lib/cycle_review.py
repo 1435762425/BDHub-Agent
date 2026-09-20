@@ -247,11 +247,12 @@ def _position_rows(store, plan, offers, identity_reader, order):
     并跳过——绝不静默丢掉一个位置（"可发层有多少"和"这一批发多少"必须对得平）。
     """
     import collections
-    identity = {}
-    for row in store.db.execute('SELECT e.payload,r.creator_id,r.oec FROM cycle_identity_resolution r '
-                                'JOIN source_edge e USING(plan_id,source_id) WHERE r.plan_id=? '
-                                'ORDER BY r.source_id', (plan,)):
-        identity.setdefault(str(row['creator_id']), {'oec': row['oec']})
+    # Relationship is the creator-level identity used by the send controller.  B-only video leads
+    # may have no A-class source_edge / cycle_identity_resolution row, but they still have a
+    # verified market×OECID identity before lead_pool admits them.  Reading identity from the
+    # relationship lets A and B positions share the same deterministic send gate.
+    identity = {str(row['creator_id']): {'oec': row['oec']} for row in store.db.execute(
+        'SELECT creator_id,oec FROM relationship WHERE plan_id=?', (plan,))}
     edges = {}
     for row in store.db.execute("SELECT e.payload, json_extract(e.payload,'$.sourceHandle') AS handle "
                                 "FROM source_edge e WHERE e.plan_id=? "
@@ -267,11 +268,29 @@ def _position_rows(store, plan, offers, identity_reader, order):
         if not person or not person.get('handle'):
             continue
         payload = edges.get((str(person['handle']), str(pid)))
-        if not payload:
+        if payload:
+            edge = json.loads(payload);edge.setdefault('sourceClass','A');payload=encoded(edge)
+            rows.append({'payload': payload, 'creator_id': creator_id, 'oec': who['oec'],
+                         'evidence_ref': edge.get('evidenceRef')})
             continue
-        edge = json.loads(payload)
-        rows.append({'payload': payload, 'creator_id': creator_id, 'oec': who['oec'],
-                     'evidence_ref': edge.get('evidenceRef')})
+        # B-class positions are projected from the complete video window.  They never invent an
+        # A-class sale edge: the frozen source explicitly carries the representative video proof.
+        if not store.db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='video_lead_current'").fetchone():
+            continue
+        video = store.db.execute("SELECT * FROM video_lead_current WHERE pid=? AND lower(handle)=lower(?) "
+                                 "ORDER BY views DESC,released_at DESC,video_id LIMIT 1",
+                                 (str(pid),str(person['handle']))).fetchone()
+        if not video:
+            continue
+        edge={'sourceId':f"video:{video['run_id']}:{video['video_id']}",'pid':str(pid),
+              'sourceKind':'kalodata_video','sourceClass':'B','sourceHandle':str(video['handle']),
+              'sourceRank':None,'units':int(video['video_sale'] or 0),'gmv':None,
+              'videoId':str(video['video_id']),'videoViews':int(video['views']),
+              'videoReleasedAt':str(video['released_at']),
+              'evidenceRef':f"kalodata-video:{video['run_id']}:{video['video_id']}",
+              'observedAt':float(video['observed_at']),'historicalOwnership':'unverified'}
+        rows.append({'payload':encoded(edge),'creator_id':creator_id,'oec':who['oec'],
+                     'evidence_ref':edge['evidenceRef']})
     return rows
 
 

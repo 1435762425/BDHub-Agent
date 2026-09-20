@@ -1,61 +1,30 @@
 "use client";
-import {useSearchParams} from "next/navigation";
-import {useState} from "react";
-import BatchPreparationPanel from "./BatchPreparationPanel";
-import BatchTasksPanel from "./BatchTasksPanel";
-import CycleSupplyPanel from "./CycleSupplyPanel";
+
+import Link from "next/link";
 import InboxMonitorPanel from "./InboxMonitorPanel";
 import SendBatchPanel from "./SendBatchPanel";
-import SecondOutreachHistory from "./SecondOutreachHistory";
-import ReplyReviewPanel from "./ReplyReviewPanel";
 import StatsCalendarPanel from "./StatsCalendarPanel";
 import {useInboxMonitor} from "./useInboxMonitor";
 import {useSendBatch} from "./useSendBatch";
-import {PageHeading,Tabs} from "../bdhub/ui";
-import {initialSecondOutreachTab,type SecondOutreachTab} from "./workspace-tabs";
+import {PageHeading,Pill} from "../bdhub/ui";
 
-// 一页五件事，各占一个页签。**不堆在一页**：每块只回答一个问题，翻页签就是换问题。
-// 「一发推品 · V2」不在这里——它已经挪到「匹配研究」（/opportunities）。
-/** 历史页是另一张页面，单独一个组件：钩子不能挂在可能提前 return 的分支后面。 */
-export default function SecondOutreachWorkspace(){
- const params = useSearchParams();
- if(params.get("history") === "1") return <SecondOutreachHistory/>;
- return <Workbench initialTab={initialSecondOutreachTab(params.get("tab"))}/>;
-}
+export type WorkspaceSection="send"|"inbox"|"history";
+const tabs:{section:WorkspaceSection;label:string}[]=[
+ {section:"send",label:"发送"},
+ {section:"inbox",label:"回复与人工事项"},
+ {section:"history",label:"结果与历史"},
+];
 
-function Workbench({initialTab}:{initialTab:SecondOutreachTab}){
- const [tab, setTab] = useState<SecondOutreachTab>(initialTab);
- // 每块的读取只有它自己一个主人，卡片之外不重复轮询。
- const inbox = useInboxMonitor();
- const send = useSendBatch();
+function SendWorkspace(){const controller=useSendBatch();return <SendBatchPanel controller={controller}/>;}
+function InboxWorkspace(){const controller=useInboxMonitor();return <InboxMonitorPanel controller={controller}/>;}
+function HistoryWorkspace(){const controller=useInboxMonitor();return <StatsCalendarPanel controller={controller}/>;}
+
+export default function SecondOutreachWorkspace({section}:{section:WorkspaceSection}){
  return <div className="space-y-5">
-  <PageHeading title="合作工作台" description="从发送池发出去，盯着回复，再统计每天做了什么。"/>
-  <Tabs value={tab} onChange={setTab} items={[
-   {value:"send", label:"发送池与发送"},
-   {value:"inbox", label:"监控与回复"},
-   {value:"reply", label:"回复预演与训练"},
-   {value:"calendar", label:"统计日历"},
-   {value:"system", label:"系统状态与准备"},
-  ]}/>
-
-  {tab === "send" && <SendBatchPanel controller={send}/>}
-
-  {tab === "inbox" && <InboxMonitorPanel controller={inbox}/>}
-
-  {tab === "reply" && <ReplyReviewPanel/>}
-
-  {tab === "calendar" && <StatsCalendarPanel controller={inbox}/>}
-
-  {tab === "system" && <div className="space-y-5">
-   <CycleSupplyPanel/>
-   <details className="rounded-xl border border-gray-200 p-4 dark:border-gray-700">
-    <summary className="cursor-pointer text-sm font-medium">创建前检查准备容量</summary>
-    <div className="mt-4"><BatchPreparationPanel/></div>
-   </details>
-   <BatchTasksPanel/>
-   <p className="text-xs leading-5 text-gray-400">
-    上一批冻结实测与早期试点记录<strong>不在工作台里</strong>（入口已删）；那批账本一条没删，要追溯时按编号查 var/second-live/。
-   </p>
-  </div>}
+  <PageHeading title="合作工作台" description="按冻结批次触达，处理真实回复，并用台账核对结果。" action={<div className="flex flex-wrap items-center gap-2"><Pill tone="brand">意大利 · IT</Pill><Pill tone="warning">真实发送需明确启动</Pill><Pill tone="neutral">自动回复关闭</Pill></div>}/>
+  <nav aria-label="合作工作台" className="flex max-w-full gap-1 overflow-x-auto rounded-xl bg-gray-100 p-1 dark:bg-gray-800">
+   {tabs.map(item=><Link key={item.section} href={`/it/workspace/${item.section}`} aria-current={section===item.section?"page":undefined} className={`whitespace-nowrap rounded-lg px-4 py-2.5 text-sm font-medium transition ${section===item.section?"bg-white text-gray-800 shadow-theme-xs dark:bg-gray-700 dark:text-white":"text-gray-500 hover:text-gray-800 dark:hover:text-gray-200"}`}>{item.label}</Link>)}
+  </nav>
+  {section==="send"?<SendWorkspace/>:section==="inbox"?<InboxWorkspace/>:<HistoryWorkspace/>}
  </div>;
 }

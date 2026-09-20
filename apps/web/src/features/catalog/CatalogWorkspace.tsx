@@ -114,6 +114,6 @@ export default function CatalogWorkspace(){
  </div></Card></div>
  </Section>
  </>}
- <Link href="/workspace?mode=second-live" className="inline-block text-sm text-brand-500">进入二发批次准备 →</Link>
+ <Link href="/it/workspace/send" className="inline-block text-sm text-brand-500">进入发送工作台 →</Link>
  </div>;
 }

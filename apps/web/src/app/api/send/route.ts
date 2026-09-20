@@ -1,4 +1,4 @@
-import {freezeSendBatch,readSendBatch,saveSendConfig,startSendBatch,stopSendBatch,validateSendRequest} from "../../../server/send/bridge.ts";
+import {freezeSendBatch,readSendBatch,reconcileSendBatch,saveSendConfig,startSendBatch,stopSendBatch,validateSendRequest} from "../../../server/send/bridge.ts";
 import {isLocalRequest} from "../../../server/runtime/validation.ts";
 export const runtime="nodejs";
 export const dynamic="force-dynamic";
@@ -26,14 +26,16 @@ export async function POST(request:Request){
   const result=call.action==='save'?await saveSendConfig(call.config):
    call.action==='freeze'?await freezeSendBatch(call.requestId,call.expectedPreviewHash):
    call.action==='start'?await startSendBatch(call.batchId,call.expectedRevision):
-   await stopSendBatch(call.batchId,call.expectedRevision);
+   call.action==='stop'?await stopSendBatch(call.batchId,call.expectedRevision):
+   await reconcileSendBatch(call.batchId,call.deliveryId,call.expectedRevision);
   return Response.json(result,{headers});
  }
  catch(error){
   const code=error instanceof Error?error.message:'send_batch_unavailable';
   if(conflicts.has(code))return Response.json({error:code},{status:409,headers});
   if(['batch_empty','full_preparation_required','batch_not_startable','batch_not_stoppable','start_confirmation_required',
-      'batch_missing','frozen_batch_incomplete','plan_paused'].includes(code))
+      'batch_missing','frozen_batch_incomplete','plan_paused','batch_not_reconcilable','unknown_delivery_missing',
+      'reconciliation_confirmation_required'].includes(code))
    return Response.json({error:code},{status:422,headers});
   return Response.json({error:'send_batch_unavailable'},{status:503,headers});
  }

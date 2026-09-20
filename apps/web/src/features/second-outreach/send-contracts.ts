@@ -14,15 +14,17 @@ export const NOT_A_BLOCKER=new Set(["beyond_requested_size","local_capacity_reac
 
 /** 页面能改的只有三件。`window` 用 `24:00` 表示当天结束。 */
 export type SendConfig={count:number;widen:boolean;windowEnabled:boolean;window:[string,string]};
-export type SendSample={handle:string;pid:string;name:string;nameZh:string;nameSource:string;
+export type SendSample={handle:string;oecId:string;pid:string;sourceClass:"A"|"B";sourceRank:number|null;units:number|null;
+ gmv:string|null;videoViews:number|null;videoId:string|null;videoReleasedAt:string|null;name:string;nameZh:string;nameSource:string;
  messageIt:string;messageZh:string;template:string;
- creatorPercent:string;publicPercent:string;campaignId:string;catalogSource:string;unlocked:boolean};
+ creatorPercent:string;publicPercent:string;campaignId:string;catalogSource:string;currentListId:string;unlocked:boolean};
 export type SendCapacity={windowSeconds:number;limit:number;used:number;remaining:number};
 export type SendWindow={enabled:boolean;open:boolean;start:string|null;end:string|null};
 export type SendAuthorization={source:"current_user_request";scope:"pool_to_send";maxPeople:number;
  requestedPeople:number;reservePeople:number;frozenPeople:number;widenLocalGate:boolean;sendWindow:[string,string]|null;
  reservePolicy:"ceil-10-percent-v1"|"none";
  institutionNewContactRollingCap:number;materialPolicy:"frozen-current-binding-v1";note:string};
+export type SendUnknownDelivery={deliveryId:string;creatorId:string;oecId:string;pid:string;parts:Record<string,string>};
 /** 台账里的卡与**当前计划**的佣金差距：差 1 点的那批是旧卡（`🚀 Incentivo Boost` 那套名字）。 */
 export type SendRateGap={same:number;lower:number;lowerByOne:number;higher:number;noCard:number;
  examples:{pid:string;listName:string;cardPercent:string;planPercent:string;campaignId:string}[]};
@@ -34,7 +36,7 @@ export type SendPreview={available:boolean;requested:number;reserveRequested:num
 export type SendBatch={batchId:string;requestId:string;previewHash:string;revision:number;state:string;
  target:number;attempted:number;reserveTotal:number;reservePromoted:number;reserveRemaining:number;
  counts:Record<string,number>;config:SendConfig;authorization:SendAuthorization;
- authorizedAt:number|null;stopRequestedAt:number|null;createdAt:number;
+ authorizedAt:number|null;stopRequestedAt:number|null;createdAt:number;unknownDeliveries:SendUnknownDelivery[];
  runtime:{pid:number|null;seenAt:number;phase:string}|null;workerPid?:number;duplicate?:boolean};
-export type SendState={available:boolean;config:SendConfig;preview:SendPreview;
+export type SendState={market:"it";account:"acc6";available:boolean;config:SendConfig;preview:SendPreview;
  pool:{counts:Record<string,number>;layers:Record<string,number>};batch:SendBatch|null;configInvalid?:boolean};

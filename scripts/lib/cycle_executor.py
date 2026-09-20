@@ -4,12 +4,15 @@ from contextlib import nullcontext
 from lib.second_cycle import CycleError,digest
 from lib.cycle_delivery import Deliveries
 
-def execute(deliveries,id,runtime_factory,authorize,preflight):
+def execute(deliveries,id,runtime_factory,authorize,preflight,*,verify_only=False):
  d=deliveries.get(id);c=d['snapshot']
  for kind in ('card','text'):
   d=deliveries.get(id);part=next(p for p in d['parts'] if p['kind']==kind)
   if part['state']=='confirmed':continue
   recovering=part['state'] in ('inflight','accepted','unknown')
+  # Reconciliation only reads a component whose original intent may already exist.  It must stop
+  # before a later component that has never been submitted.
+  if verify_only and not recovering:return d
   if not recovering:authorize(c)
   with runtime_factory(c,read_only=recovering) as rt:
    cid=c.get('conversationId')

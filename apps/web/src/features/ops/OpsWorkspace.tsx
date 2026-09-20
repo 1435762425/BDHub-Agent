@@ -1,6 +1,7 @@
 "use client";
+import Link from "next/link";
 import {useEffect,useState} from "react";
-import {Button,Card,Field,Input,Notice,PageHeading} from "../bdhub/ui";
+import {Button,Card,Field,Icon,Input,Notice,PageHeading} from "../bdhub/ui";
 import type {LinkNamingConfig,LinkNamingState} from "../../server/link-naming/bridge";
 import JobsPanel from "./JobsPanel";
 import KalodataIdentityPanel from "./KalodataIdentityPanel";
@@ -16,7 +17,7 @@ export default function OpsWorkspace(){
  useEffect(()=>{const controller=new AbortController();void(async()=>{try{const r=await fetch("/api/link-naming",{signal:controller.signal,cache:"no-store"});if(!r.ok)throw Error();const v:LinkNamingState=await r.json();if(!controller.signal.aborted){setNaming(v);setNamingDraft(v.config);}}catch{if(!controller.signal.aborted)setNaming(null);}})();return()=>controller.abort();},[]);
  async function namingAction(action:"preview"|"save"){if(!namingDraft)return;setNamingBusy(true);setNamingMessage(null);try{const r=await fetch("/api/link-naming",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action,config:namingDraft})});const v=await r.json();if(!r.ok){setNamingMessage(action==="save"?"保存被拒绝：模板未通过校验（检查占位符与数值范围）。":"预览失败，请检查模板占位符。");return;}setNaming(v);setNamingDraft(v.config);setNamingMessage(action==="save"?"命名模板已保存。之后新建的链接使用新模板；已冻结的建链意图与已有链接保持原名。":"预览已按当前输入更新。");}catch{setNamingMessage("暂时无法读取或保存命名设置。");}finally{setNamingBusy(false);}}
  return <div className="space-y-5">
-  <PageHeading title="系统与运维" description="跨业务的账号身份、作业调度与命名配置。这里不放业务流水，也不授予发送权限。"/>
+  <PageHeading title="运行与设置" description="账号身份、作业调度、命名配置和回复策略评测；这里不授予发送权限。" action={<div className="flex flex-wrap gap-2"><Link href="/ops/accounts?market=it" className="inline-flex items-center gap-2 rounded-lg border border-gray-300 bg-white px-3.5 py-2.5 text-[13px] font-medium text-gray-700 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300"><Icon name="users" className="size-4"/>账号就绪</Link><Link href="/ops/reply-evaluation" className="inline-flex items-center gap-2 rounded-lg border border-gray-300 bg-white px-3.5 py-2.5 text-[13px] font-medium text-gray-700 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300"><Icon name="agent" className="size-4"/>回复策略评测</Link></div>}/>
   <Notice>这一页的东西会同时影响多个业务：抓取身份决定达人线索能否查询，作业面板决定各步骤是手动还是定时，命名模板决定之后新建链接的卡名。货盘页只保留业务流水。</Notice>
   <KalodataIdentityPanel/>
   <JobsPanel/>

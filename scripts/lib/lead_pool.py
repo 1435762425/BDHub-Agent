@@ -54,7 +54,7 @@ def pool(root, *, now=None, limit=20):
         conn.row_factory = sqlite3.Row;conn.execute('BEGIN')
         tables={row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         required={'source_edge_index','lead_query_run','lead_query_selection','lead_query_head'}
-        if not required<=tables:return {'available':False,'counts':{},'layers':{},'pools':{},'schema':'bdhub.lead-pool.v2'}
+        if not required<=tables:return {'available':False,'counts':{},'layers':{},'pools':{},'schema':'bdhub.lead-pool.v3'}
         eligible=_eligible_pids(conn,now,tables)
         return _build(conn, now, limit, eligible_pids=eligible,root=root)
 
@@ -252,7 +252,7 @@ def _build(conn, now, limit, eligible_pids=None,root=None):
               'waiting':len(layers['queued'])+len(layers['cooling'])+len(layers['awaiting_reply']),
               'inactive':len(layers['excluded'])+len(layers['product_inactive'])}
     business['total']=business['sendable']+business['waiting']+business['inactive']
-    return {'schema':'bdhub.lead-pool.v2','available': True, 'now': now, 'counts': counts,
+    return {'schema':'bdhub.lead-pool.v3','available': True, 'now': now, 'counts': counts,
             'cooldown': {'unlocked': UNLOCKED_COOLDOWN, 'locked': LOCKED_COOLDOWN},
             'layers': {name: len(rows) for name, rows in layers.items()},
             'pools': {name: rows[:limit] for name, rows in layers.items()},

@@ -9,20 +9,9 @@
     "start": "NEXT_TELEMETRY_DISABLED=1 next start --hostname 127.0.0.1 --port 5198",
     "typecheck": "tsc --noEmit",
     "test": "node --experimental-strip-types --test tests/*.test.mjs",
-    "test:runtime": "node --experimental-strip-types --test tests/runtime-*.test.mjs",
-    "runtime:worker": "node --experimental-strip-types scripts/runtime-worker.ts",
-    "test:matching": "node --experimental-strip-types --test tests/matching-*.test.mjs",
-    "benchmark:matching": "node --experimental-strip-types scripts/matching-benchmark.ts",
-    "import:italy": "node --experimental-strip-types scripts/import-italy-matching.ts",
-    "import:italy-profiles": "node --experimental-strip-types scripts/import-italy-profiles.ts",
-    "pilot:italy-second": "node --experimental-strip-types scripts/italy-second-pilot.ts",
-    "second:worker": "node --experimental-strip-types scripts/second-pilot-worker.ts",
-    "identity:worker": "PYTHONDONTWRITEBYTECODE=1 ../../.venv/bin/python ../../scripts/creator-profile-refresh.py worker",
-    "sync:identity-profiles": "node --experimental-strip-types scripts/sync-registry-profiles.ts",
-    "drafts:worker": "node --experimental-strip-types scripts/outreach-draft-worker.ts"
+    "identity:worker": "PYTHONDONTWRITEBYTECODE=1 ../../.venv/bin/python ../../scripts/creator-profile-refresh.py worker"
   },
   "dependencies": {
-    "apexcharts": "4.7.0",
     "next": "16.3.4",
     "react": "19.2.0",
     "react-dom": "19.2.0"

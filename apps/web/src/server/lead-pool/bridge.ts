@@ -5,10 +5,12 @@ import {projectRoot} from "../creator-identities/refresh.ts";
 /** Counts in 达人×商品 units, plus the four layers the pool is split into. */
 export type LeadPoolCounts={leads:number;merged:number;unresolved:number;queued:number;positions:number;
  creators:number;handles:number;sent:number;unsent:number;ready:number;readyCreators:number;
- queuedPositions:number;cooling:number;awaitingReply:number;excluded:number;creatorsWithRelationship:number};
+ cooling:number;awaitingReply:number;excluded:number;creatorsWithRelationship:number;
+ aPositions:number;bPositions:number;videoUnresolved:number};
 export type LeadPosition={creatorId:string;handle:string;pid:string;rank:number|null;units:number|null;
+ sourceClass:"A"|"B";gmv:string|null;videoViews:number|null;videoId:string|null;videoReleasedAt:string|null;
  unlocked:boolean;sentAt:number|null;readyAt:number|null;layer:string;caseUpdatedAt?:number|null};
-export type LeadPoolState={schema:"bdhub.lead-pool.v2";available:boolean;now?:number;counts:LeadPoolCounts;
+export type LeadPoolState={schema:"bdhub.lead-pool.v3";available:boolean;now?:number;counts:LeadPoolCounts;
  cooldown:{unlocked:number;locked:number};layers:Record<string,number>;pools:Record<string,LeadPosition[]>;
  business:{sendable:number;waiting:number;inactive:number;total:number};reasons:Record<string,number>;
  history:{sent:number;currentPositions:number}};
@@ -26,9 +28,13 @@ function validatePositions(value:unknown):LeadPosition[]{
   const row=raw as Record<string,unknown>;
   if(!row||typeof row!=="object"||typeof row.creatorId!=="string"||typeof row.pid!=="string")throw Error('invalid_lead_pool');
   if(!/^\d{19}$/.test(row.pid)||typeof row.layer!=="string"||!LAYERS.has(row.layer))throw Error('invalid_lead_pool');
+  if(row.sourceClass!=="A"&&row.sourceClass!=="B")throw Error('invalid_lead_pool');
   const maybe=(v:unknown)=>(v==null?null:(typeof v==="number"&&Number.isFinite(v)?v:null));
+  const optionalText=(v:unknown,max:number)=>(v==null?null:typeof v==="string"&&v.length<=max?v:(()=>{throw Error('invalid_lead_pool')})());
+  const gmv=optionalText(row.gmv,80);if(gmv!==null&&!/^\d+(?:\.\d+)?$/.test(gmv))throw Error('invalid_lead_pool');
   return {creatorId:row.creatorId,handle:typeof row.handle==="string"?row.handle:"",pid:row.pid,
-   rank:maybe(row.rank),units:maybe(row.units),unlocked:row.unlocked===true,
+   rank:maybe(row.rank),units:maybe(row.units),sourceClass:row.sourceClass,gmv,
+   videoViews:maybe(row.videoViews),videoId:optionalText(row.videoId,100),videoReleasedAt:optionalText(row.videoReleasedAt,40),unlocked:row.unlocked===true,
    sentAt:maybe(row.sentAt),readyAt:maybe(row.readyAt),layer:row.layer,caseUpdatedAt:maybe(row.caseUpdatedAt)};
  });
 }
@@ -36,11 +42,12 @@ function validatePositions(value:unknown):LeadPosition[]{
 export function validateLeadPool(value:unknown):LeadPoolState{
  if(!value||typeof value!=="object")throw Error('invalid_lead_pool');
  const v=value as Record<string,unknown>;
- if(v.available!==true)return {schema:"bdhub.lead-pool.v2",available:false,counts:{} as LeadPoolCounts,cooldown:{unlocked:0,locked:0},layers:{},pools:{},business:{sendable:0,waiting:0,inactive:0,total:0},reasons:{},history:{sent:0,currentPositions:0}};
- if(v.schema!=="bdhub.lead-pool.v2")throw Error('invalid_lead_pool');
+ if(v.available!==true)return {schema:"bdhub.lead-pool.v3",available:false,counts:{} as LeadPoolCounts,cooldown:{unlocked:0,locked:0},layers:{},pools:{},business:{sendable:0,waiting:0,inactive:0,total:0},reasons:{},history:{sent:0,currentPositions:0}};
+ if(v.schema!=="bdhub.lead-pool.v3")throw Error('invalid_lead_pool');
  const raw=v.counts as Record<string,unknown>;
  const names=["leads","merged","unresolved","queued","positions","creators","handles","sent","unsent",
-  "ready","readyCreators","cooling","awaitingReply","excluded","creatorsWithRelationship"];
+  "ready","readyCreators","cooling","awaitingReply","excluded","creatorsWithRelationship",
+  "aPositions","bPositions","videoUnresolved"];
  const counts:Record<string,number>={};
  for(const name of names)counts[name]=count(raw?.[name],name);
  // The pool is a partition: every position sits in exactly one layer.
@@ -58,7 +65,8 @@ export function validateLeadPool(value:unknown):LeadPoolState{
   inactive:count(business?.inactive,"inactive"),total:count(business?.total,"total")};
  const sent=count(history?.sent,"sent"),currentPositions=count(history?.currentPositions,"currentPositions");
  if(projected.sendable+projected.waiting+projected.inactive!==projected.total||projected.total+currentPositions!==counts.positions||sent!==counts.sent||currentPositions!==(v.layers as Record<string,number>).sent)throw Error('invalid_lead_pool');
- return {schema:"bdhub.lead-pool.v2",available:true,now:typeof v.now==="number"?v.now:undefined,counts:counts as unknown as LeadPoolCounts,
+ if(counts.aPositions+counts.bPositions!==counts.positions)throw Error('invalid_lead_pool');
+ return {schema:"bdhub.lead-pool.v3",available:true,now:typeof v.now==="number"?v.now:undefined,counts:counts as unknown as LeadPoolCounts,
   cooldown:{unlocked:count(cooldown?.unlocked,"unlocked"),locked:count(cooldown?.locked,"locked")},
   layers:(v.layers as Record<string,number>)??{},pools,business:projected,
   reasons:countsRecord(v.reasons),history:{sent,currentPositions}};

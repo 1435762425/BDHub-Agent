@@ -2,18 +2,18 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {validateSendRequest,validateSendState} from '../src/server/send/bridge.ts';
 
-const sample={handle:'nuvolablu4',pid:'1729571380453480878',name:'questi orecchini per cartilagine',
+const sample={handle:'nuvolablu4',oecId:'1234567890123456789',pid:'1729571380453480878',sourceClass:'A',sourceRank:1,units:12,gmv:'450.5',videoViews:null,videoId:null,videoReleasedAt:null,name:'questi orecchini per cartilagine',
  nameZh:'软骨耳环',nameSource:'缓存',
  messageIt:'Ciao @nuvolablu4! Abbiamo una commissione migliorata al 13% per te su questi orecchini per cartilagine 👏 Ti va di dedicarci un nuovo video o LIVE?',
  messageZh:'你好！这款软骨耳环可以为你提供更高的 13% 佣金，下一条视频或直播可以再推一轮。',template:'standard',
- creatorPercent:'13',publicPercent:'12',campaignId:'7667413079080240918',catalogSource:'selected',unlocked:false};
+ creatorPercent:'13',publicPercent:'12',campaignId:'7667413079080240918',catalogSource:'selected',currentListId:'1111111111111111111',unlocked:false};
 const hash='a'.repeat(64);
 const authorization={source:'current_user_request',scope:'pool_to_send',maxPeople:500,requestedPeople:500,
  reservePeople:50,frozenPeople:550,reservePolicy:'ceil-10-percent-v1',
  widenLocalGate:false,sendWindow:null,institutionNewContactRollingCap:500,
  materialPolicy:'frozen-current-binding-v1',note:'只消费本批冻结位置'};
 
-const payload={available:true,
+const payload={market:'it',account:'acc6',available:true,
  config:{count:500,widen:false,windowEnabled:false,window:['09:00','24:00']},
  preview:{available:true,requested:500,reserveRequested:50,required:550,sendable:500,reserveReady:50,
   frozenTotal:550,fullPreparation:true,positions:1769,readyAvailable:1769,
@@ -41,12 +41,17 @@ test('the send card reads the batch preview and the pool layers from one payload
 });
 
 test('an unavailable pool is reported as unavailable, not as zeroes that look real',()=>{
- const v=validateSendState({available:false,config:payload.config,
+ const v=validateSendState({market:'it',account:'acc6',available:false,config:payload.config,
   preview:{available:false,requested:0,skipped:{},window:{enabled:false,open:true,start:null,end:null}}});
  assert.equal(v.available,false);
  assert.equal(v.preview.sendable,0);
  // 但配置仍然要能读出来：操作者还得能改它。
  assert.deepEqual(v.config,payload.config);
+});
+
+test('send state is pinned to the enabled Italy market and ACC6 sender',()=>{
+ assert.throws(()=>validateSendState({...payload,market:'mx'}),/invalid_send/);
+ assert.throws(()=>validateSendState({...payload,account:'acc9'}),/invalid_send/);
 });
 
 test('a batch that does not add up is refused instead of shown as real numbers',()=>{
@@ -108,9 +113,12 @@ test('freeze start and stop have exact explicit request shapes',()=>{
   {action:'start',batchId:'send-batch-0001',expectedRevision:1,confirmed:true});
  assert.deepEqual(validateSendRequest({action:'stop',batchId:'send-batch-0001',expectedRevision:2}),
   {action:'stop',batchId:'send-batch-0001',expectedRevision:2});
+ assert.deepEqual(validateSendRequest({action:'reconcile',batchId:'send-batch-0001',deliveryId:'delivery-0001',expectedRevision:2,confirmed:true}),
+  {action:'reconcile',batchId:'send-batch-0001',deliveryId:'delivery-0001',expectedRevision:2,confirmed:true});
  assert.throws(()=>validateSendRequest({action:'start',batchId:'send-batch-0001',expectedRevision:1,confirmed:false}),/invalid_send_request/);
  assert.throws(()=>validateSendRequest({action:'freeze',requestId:'web-request-0001',expectedPreviewHash:hash,extra:1}),/invalid_send_request/);
  assert.throws(()=>validateSendRequest({action:'stop',batchId:'send-batch-0001',expectedRevision:2,confirmed:true}),/invalid_send_request/);
+ assert.throws(()=>validateSendRequest({action:'reconcile',batchId:'send-batch-0001',deliveryId:'delivery-0001',expectedRevision:2,confirmed:false}),/invalid_send_request/);
 });
 
 test('a frozen batch response is validated and reconciles its item counts',()=>{
@@ -118,8 +126,20 @@ test('a frozen batch response is validated and reconciles its item counts',()=>{
  frozen.batch={batchId:'send-batch-0001',requestId:'web-request-0001',previewHash:hash,revision:1,
   state:'prepared',target:500,attempted:500,reserveTotal:50,reservePromoted:0,reserveRemaining:50,
   counts:{pending:500},config:payload.config,authorization,
-  authorizedAt:null,stopRequestedAt:null,createdAt:1789838000};
+  authorizedAt:null,stopRequestedAt:null,createdAt:1789838000,unknownDeliveries:[]};
  assert.equal(validateSendState(frozen).batch.state,'prepared');
  frozen.batch.counts.pending=499;
+ assert.throws(()=>validateSendState(frozen),/invalid_send/);
+});
+
+test('unknown delivery summary exposes only bounded original intent identifiers',()=>{
+ const frozen=structuredClone(payload);
+ frozen.batch={batchId:'send-batch-0001',requestId:'web-request-0001',previewHash:hash,revision:2,
+  state:'waiting_reconciliation',target:500,attempted:500,reserveTotal:50,reservePromoted:0,reserveRemaining:50,
+  counts:{sending:500},config:payload.config,authorization,authorizedAt:1789838000,stopRequestedAt:null,
+  createdAt:1789838000,unknownDeliveries:[{deliveryId:'delivery-0001',creatorId:'creator-0001',
+   oecId:'1234567890123456789',pid:'1729571380453480878',parts:{card:'unknown',text:'ready'}}]};
+ assert.equal(validateSendState(frozen).batch.unknownDeliveries[0].parts.card,'unknown');
+ frozen.batch.unknownDeliveries[0].parts.raw_payload='private';
  assert.throws(()=>validateSendState(frozen),/invalid_send/);
 });

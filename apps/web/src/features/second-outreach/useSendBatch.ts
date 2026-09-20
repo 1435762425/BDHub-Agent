@@ -6,7 +6,7 @@ import type {SendConfig,SendState} from "./send-contracts";
 export type SendController={data:SendState|null;draft:SendConfig|null;
  setDraft:(value:SendConfig)=>void;busy:boolean;message:string|null;
  loaded:boolean;reload:()=>Promise<void>;save:()=>Promise<void>;
- freeze:()=>Promise<void>;start:()=>Promise<void>;stop:()=>Promise<void>};
+ freeze:()=>Promise<void>;start:()=>Promise<void>;stop:()=>Promise<void>;reconcile:(deliveryId:string)=>Promise<void>};
 
 export function useSendBatch():SendController{
  const [data,setData]=useState<SendState|null>(null);
@@ -68,5 +68,10 @@ export function useSendBatch():SendController{
   await action({action:"stop",batchId:data.batch.batchId,expectedRevision:data.batch.revision},
    "已请求停止。执行器会在安全点退出，不会把在途结果当成未发送。");
  },[action,data]);
- return {data,draft,setDraft,busy,message,loaded,reload,save,freeze,start,stop};
+ const reconcile=useCallback(async(deliveryId:string)=>{
+  if(!data?.batch)return;
+  await action({action:"reconcile",batchId:data.batch.batchId,deliveryId,expectedRevision:data.batch.revision,confirmed:true},
+   "已核验原发送意图；若证据仍不足，批次会继续保持待核验，不会重发。");
+ },[action,data]);
+ return {data,draft,setDraft,busy,message,loaded,reload,save,freeze,start,stop,reconcile};
 }

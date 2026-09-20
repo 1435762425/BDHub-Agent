@@ -166,7 +166,7 @@ def status(root, *, now=None, clock=None, pool_reader=None, chooser=None):
     state = preview(root, count=config['count'], widen=config['widen'], window=window,
                     now=now, clock=clock, pool_reader=pool_reader, chooser=chooser)
     layers = pool(root, now=clock() if clock else (now if now is not None else time.time())) if pool_reader is None else {}
-    return {'config': config, 'preview': state,
+    return {'market': 'it', 'account': 'acc6', 'config': config, 'preview': state,
             'pool': {'counts': layers.get('counts') or {}, 'layers': layers.get('layers') or {}},
             'batch': batch_status(root), 'available': state.get('available', False)}
 
@@ -309,8 +309,15 @@ def _sample(candidate):
     from lib.cycle_materials import render
     offer = candidate['offer']
     name = candidate.get('name') or {}
+    source = candidate.get('source') or {}
+    source_class = source.get('sourceClass') or ('B' if source.get('sourceKind') == 'kalodata_video' else 'A')
     message = render(name, offer, 'standard', candidate.get('handle')) if name.get('mentionIt') else None
-    return {'handle': candidate.get('handle'), 'pid': str(candidate['pid']),
+    return {'handle': candidate.get('handle'), 'oecId':str(candidate.get('oecId') or ''),
+            'pid': str(candidate['pid']),'sourceClass':source_class,
+            'sourceRank':source.get('sourceRank'),'units':source.get('units'),
+            'gmv':source.get('revenueValue') if source_class=='A' else None,
+            'videoViews':source.get('videoViews'),'videoId':source.get('videoId'),
+            'videoReleasedAt':source.get('videoReleasedAt'),
             'name': name.get('mentionIt') or name.get('shortNameIt') or '',
             'nameZh': name.get('shortNameZh') or '',
             'nameSource': candidate.get('nameSource'),
@@ -319,6 +326,7 @@ def _sample(candidate):
             'template': (message or {}).get('template') or '',
             'creatorPercent': offer.get('creatorPercent'), 'publicPercent': offer.get('publicPercent'),
             'campaignId': str(offer.get('campaignId') or ''), 'catalogSource': offer.get('catalogSource'),
+            'currentListId':str((candidate.get('card') or {}).get('listId') or ''),
             'unlocked': bool(candidate.get('relationshipUnlocked'))}
 
 
@@ -364,6 +372,17 @@ def _batch_payload(db, row):
                              (row['batch_id'],)).fetchone()
         if running:
             runtime = {'pid': running['pid'], 'seenAt': running['seen'], 'phase': running['phase']}
+    unknown = []
+    if _table_exists(db, 'cycle_delivery') and _table_exists(db, 'cycle_delivery_part'):
+        for delivery in db.execute("SELECT d.id,i.creator_id,c.oec,c.pid FROM cycle_delivery d "
+                                   "JOIN cycle_bulk_item i ON i.delivery_id=d.id "
+                                   "JOIN cycle_bulk_candidate c ON c.batch_id=i.batch_id AND c.creator_id=i.creator_id "
+                                   "WHERE i.batch_id=? AND d.state='unknown' ORDER BY d.id",
+                                   (row['batch_id'],)):
+            unknown.append({'deliveryId': delivery['id'], 'creatorId': delivery['creator_id'],
+                            'oecId': delivery['oec'], 'pid': delivery['pid'],
+                            'parts': dict(db.execute('SELECT kind,state FROM cycle_delivery_part '
+                                                    'WHERE delivery_id=?', (delivery['id'],)))})
     return {'batchId': row['batch_id'], 'requestId': row['request_id'],
             'previewHash': row['preview_hash'], 'revision': row['revision'], 'state': row['state'],
             'target': target, 'attempted': attempted, 'counts': counts,
@@ -373,7 +392,7 @@ def _batch_payload(db, row):
             'config': json.loads(row['config_json']),
             'authorization': json.loads(row['authorization_json']),
             'authorizedAt': row['authorized_at'], 'stopRequestedAt': row['stop_requested_at'],
-            'createdAt': row['created_at'], 'runtime': runtime}
+            'createdAt': row['created_at'], 'runtime': runtime, 'unknownDeliveries': unknown}
 
 
 def batch_status(root, batch_id=None):
@@ -390,6 +409,56 @@ def batch_status(root, batch_id=None):
         else:
             row = db.execute("SELECT * FROM cycle_bulk_freeze ORDER BY created_at DESC LIMIT 1").fetchone()
         return _batch_payload(db, row) if row else None
+
+
+def reconciliation_target(root, batch_id, delivery_id, expected_revision):
+    """Return the exact original snapshot hash for one unknown delivery."""
+    batch_id = _identifier(batch_id, 'invalid_batch_id')
+    delivery_id = _identifier(delivery_id, 'invalid_delivery_id')
+    if type(expected_revision) is not int or expected_revision < 1:
+        raise CycleError('invalid_revision')
+    with _store(Path(root)) as store:
+        row = store.db.execute('SELECT * FROM cycle_bulk_freeze WHERE batch_id=?', (batch_id,)).fetchone()
+        if not row:
+            raise CycleError('batch_missing')
+        if row['revision'] != expected_revision:
+            raise CycleError('revision_conflict')
+        if row['state'] != 'waiting_reconciliation':
+            raise CycleError('batch_not_reconcilable')
+        delivery = store.db.execute("SELECT d.snapshot FROM cycle_delivery d JOIN cycle_bulk_item i "
+                                    "ON i.delivery_id=d.id WHERE i.batch_id=? AND d.id=? AND d.state='unknown'",
+                                    (batch_id, delivery_id)).fetchone()
+        if not delivery:
+            raise CycleError('unknown_delivery_missing')
+        return {'batchId': batch_id, 'deliveryId': delivery_id,
+                'snapshotHash': digest(json.loads(delivery['snapshot']))}
+
+
+def settle_reconciliation(root, batch_id, delivery_id, expected_revision):
+    """Publish readback outcome without launching a worker or promoting reserves."""
+    batch_id = _identifier(batch_id, 'invalid_batch_id')
+    delivery_id = _identifier(delivery_id, 'invalid_delivery_id')
+    with _store(Path(root)) as store, store.tx():
+        row = store.db.execute('SELECT * FROM cycle_bulk_freeze WHERE batch_id=?', (batch_id,)).fetchone()
+        if not row or row['revision'] != expected_revision:
+            raise CycleError('revision_conflict')
+        delivery = store.db.execute("SELECT d.state FROM cycle_delivery d JOIN cycle_bulk_item i "
+                                    "ON i.delivery_id=d.id WHERE i.batch_id=? AND d.id=?",
+                                    (batch_id, delivery_id)).fetchone()
+        if not delivery:
+            raise CycleError('unknown_delivery_missing')
+        if delivery['state'] == 'confirmed':
+            store.db.execute("UPDATE cycle_bulk_item SET state='confirmed',reason=NULL "
+                             "WHERE batch_id=? AND delivery_id=?", (batch_id, delivery_id))
+        remaining = store.db.execute("SELECT 1 FROM cycle_delivery d JOIN cycle_bulk_item i "
+                                     "ON i.delivery_id=d.id WHERE i.batch_id=? AND d.state='unknown'",
+                                     (batch_id,)).fetchone()
+        if not remaining:
+            store.db.execute("UPDATE cycle_bulk_freeze SET state='prepared',revision=revision+1,"
+                             "authorized_at=NULL WHERE batch_id=?", (batch_id,))
+            store.db.execute("UPDATE cycle_bulk SET state='prepared' WHERE id=?", (batch_id,))
+            row = store.db.execute('SELECT * FROM cycle_bulk_freeze WHERE batch_id=?', (batch_id,)).fetchone()
+        return _batch_payload(store.db, row)
 
 
 def _require_freeze_schema(store):
