@@ -59,6 +59,8 @@ def main():
     parser.add_argument('--confirmed', action='store_true')
     args = parser.parse_args()
     try:
+        if args.action in ('freeze','start','stop','reconcile'):
+            raise CycleError('legacy_frozen_send_retired')
         window = parse_window(args.window)
         if args.action == 'status':
             print(json.dumps(status(ROOT), ensure_ascii=False))
