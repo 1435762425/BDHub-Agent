@@ -11,6 +11,7 @@ from lib.catalog_links import CatalogLinks,policy_fingerprint
 from lib.catalog_binding import CatalogBindings
 from lib.schema_migrations import apply_database
 from lib.second_cycle import digest
+from types import SimpleNamespace
 POLICY=json.loads((ROOT/'config/catalog-link-policy.json').read_text())
 
 class BatchLinkTests(unittest.TestCase):
@@ -199,6 +200,23 @@ class BatchLinkTests(unittest.TestCase):
         self.assertEqual(len(calls),3);self.assertEqual(len(result['skippedUnknown']),1)
         self.assertEqual(self.prep.item(self.run,pid,cid)['state'],'skipped_unknown')
         ledger=CatalogLinks(self.root);self.assertEqual(ledger.get(intent['id'])['state'],'unknown');ledger.db.close()
+
+    def test_verification_replays_only_the_same_frozen_create_request(self):
+        from importlib.util import spec_from_file_location,module_from_spec
+        spec=spec_from_file_location('catalog_link_prepare_script',ROOT/'scripts/catalog-link-prepare.py');module=module_from_spec(spec);spec.loader.exec_module(module)
+        class Transport:
+            _verification_header='challenge';verification_successes=0
+            def __init__(self):self.calls=[];self.solved=[]
+            def _params(self):return {'fixed':'params'}
+            def _xhr(self,**kwargs):
+                self.calls.append(kwargs)
+                return SimpleNamespace(http_status=200,code=0,has_turing=len(self.calls)==1,ambiguous=False)
+            def _solve_verification(self,header):self.solved.append(header)
+        transport=Transport();report={};payload={'frozen':'request'}
+        result=module.submit_create_with_verification(transport,payload,'1',report)
+        self.assertFalse(result.has_turing);self.assertEqual(transport.solved,['challenge'])
+        self.assertEqual(len(transport.calls),2);self.assertEqual(transport.calls[0],transport.calls[1])
+        self.assertIs(transport.calls[0]['payload'],payload);self.assertEqual(transport.verification_successes,1)
     def test_summary_separates_links_from_covered_pids(self):
         for pid in ('1','2'):self.seed(pid,'2')
         self.prep.claim_read(self.run,limit=5)

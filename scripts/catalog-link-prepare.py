@@ -21,6 +21,25 @@ ROUTES=('selected','campaign')
 # 非全托读卡用的渠道号：卡清单是 `source=1, campaign_id=<活动>`，成员读也要带 source=1。
 CAMPAIGN_SOURCE='1'
 
+def submit_create_with_verification(transport,payload,pid,report):
+    """Submit once; when challenged, solve on the same session and replay this exact request once."""
+    def request():
+        result=transport._xhr(method='POST',path=CREATE,params=transport._params(),payload=payload,write=True)
+        report.setdefault('nativeReceipts',[]).append({'pid':pid,'http':result.http_status,
+          'code':result.code if type(result.code) is int else None,'verification':result.has_turing,
+          'ambiguous':result.ambiguous})
+        return result
+    response=request()
+    if not response.has_turing:return response
+    header=getattr(transport,'_verification_header','')
+    if not header:raise ValueError('verification_failed')
+    transport._solve_verification(header);transport.verification_successes+=1
+    replay=request();report.setdefault('verificationReplays',[]).append({'pid':pid,'replayed':True,
+      'http':replay.http_status,'code':replay.code if type(replay.code) is int else None,
+      'verification':replay.has_turing})
+    if replay.has_turing:raise ValueError('verification_failed')
+    return replay
+
 def scope():
     from lib.catalog_links import policy_fingerprint
     policy=json.loads((ROOT/'config/catalog-link-policy.json').read_text())
@@ -728,13 +747,7 @@ def step_create(prep,run_id,limit,report,pace=0.0,lanes=1,qps=5):
                     moved={k:(str(intent['spec']['offer'].get(k)),str(current.get(k))) for k in ('campaignId','creatorPercent','totalPercent','publicPercent') if str(current.get(k))!=str(intent['spec']['offer'].get(k))}
                     if moved:raise ValueError('commercial_facts_changed:'+(';'.join(f'{k} {a}->{b}' for k,(a,b) in moved.items()))[:180])
                     ledger.begin(intent['id'],'acc9');prep.mark_progress(run_id,pid,cid,src,'submitted')
-                    r=transport._xhr(method='POST',path=CREATE,params=transport._params(),payload=intent['spec']['payload'],write=True)
-                    report.setdefault('nativeReceipts',[]).append({'pid':pid,'http':r.http_status,'code':r.code if type(r.code) is int else None,'verification':r.has_turing,'ambiguous':r.ambiguous})
-                    if r.has_turing and getattr(transport,'_verification_header',''):
-                        transport._solve_verification(transport._verification_header);transport.verification_successes+=1
-                        ledger.unknown(intent['id'],'verification_required_readback_pending')
-                        prep.mark_progress(run_id,pid,cid,src,'unknown',error='verification_required_readback_pending')
-                        created.append({'pid':pid,'state':'unknown_readback_pending','seconds':round(time.time()-t0,2)});continue
+                    r=submit_create_with_verification(transport,intent['spec']['payload'],pid,report)
                     from bdhub.send.taplink.protocol import creation_receipt
                     body=transport.require_read(r);receipt=creation_receipt(body);receipt['responseHash']=digest(body);ledger.receipt(intent['id'],receipt)
                     # The receipt already carries list_id. Read that list back on its own lane and
@@ -751,6 +764,9 @@ def step_create(prep,run_id,limit,report,pace=0.0,lanes=1,qps=5):
                     try:prep.mark_progress(run_id,pid,cid,src,'unknown' if attempted else 'missing',error=code)
                     except Exception:pass
                     blocked.append({'pid':pid,'error':code,'seconds':round(time.time()-t0,2)})
+                    if code in ('verification_failed','source_maintenance_due','taplink_account_maintenance_due',
+                                'login_required','account_disabled','transport_unavailable'):
+                        raise
                 finally:
                     prep.release(run_id,pid,cid,src)
                 timings.append(round(time.time()-t0,2))
