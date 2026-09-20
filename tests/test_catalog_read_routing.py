@@ -10,7 +10,7 @@ class RoutingTests(unittest.TestCase):
   self.assertTrue(transport.is_account_busy(RuntimeError('account_in_use')))
   self.assertFalse(transport.is_account_busy(RuntimeError('guard_changed')))
   self.assertFalse(transport.is_account_busy(ValueError('source_institution_changed')))
- def test_read_migration_does_not_move_selection_writes(self):
+ def test_supply_reads_and_selection_writes_are_both_pinned_to_acc9(self):
   calls=[]
   @contextmanager
   def fake(report,**kwargs):calls.append(kwargs);yield object()
@@ -18,8 +18,8 @@ class RoutingTests(unittest.TestCase):
    with transport.opportunity_reader({}):pass
    with transport.opportunity_selector({},{}):pass
   self.assertEqual(calls[0]['account_name'],'acc9');self.assertNotIn('selection_scope',calls[0])
-  self.assertEqual(calls[1]['account_name'],'acc6');self.assertEqual(calls[1]['selection_scope'],{})
-  self.assertEqual(resolver.call_count,1)
+  self.assertEqual(calls[1]['account_name'],'acc9');self.assertEqual(calls[1]['selection_scope'],{})
+  self.assertEqual(resolver.call_count,2)
  def test_card_canary_uses_acc9_and_copies_its_frozen_payload(self):
   calls=[]
   @contextmanager
