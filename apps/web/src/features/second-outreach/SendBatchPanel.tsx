@@ -1,6 +1,7 @@
 "use client";
-import {Button,Card,Field,Input,Notice,Pill,Select,StatTile,Toggle} from "../bdhub/ui";
+import {Button,Card,Field,Input,Notice,Pill,StatTile,Toggle} from "../bdhub/ui";
 import type {SendController} from "./useSendBatch";
+import SendTemplateManager from "./SendTemplateManager";
 
 const labels:Record<string,string>={off:"关闭",stopped:"已停止",waiting_window:"等待窗口",sending:"发送中",waiting_capacity:"当日额度用尽",paused:"暂停",waiting_reconciliation:"待核验"};
 const number=(value:number|null|undefined)=>value==null?"—":value.toLocaleString("zh-CN");
@@ -12,12 +13,7 @@ export default function SendBatchPanel({controller}:{controller:SendController})
  const active=["waiting_window","sending","waiting_capacity","waiting_reconciliation","paused"].includes(data.runtime.state)&&!data.control.stopRequested;
  return <div className="space-y-5">
   {data.runtime.state==="waiting_reconciliation"&&<Notice tone="warning"><strong>有发送结果未知。</strong> 系统已停止领取新达人；只能核验原 delivery、原 requestRef 和原账号，不会重发。</Notice>}
-  <Card title="二发话术模板" subtitle="模板 revision 与最终逐达人正文会在领取发送前写入不可变 delivery 快照。" action={<Pill tone="brand">revision {data.sample?.templateRevision??data.templates.find(row=>row.id===draft.template)?.revision??"—"}</Pill>}>
-   <div className="grid gap-5 p-5 lg:grid-cols-[320px_1fr]">
-    <Field label="当前模板"><Select value={draft.template} disabled={busy} onChange={event=>setDraft({...draft,template:event.target.value})}>{data.templates.filter(row=>row.state==="active").map(row=><option key={row.id} value={row.id}>{row.name}</option>)}</Select></Field>
-    <div className="rounded-xl bg-gray-50 p-4 dark:bg-gray-800"><p className="text-xs font-medium text-gray-500">真实发送例子</p>{data.sample?<><p className="mt-2 text-xs text-gray-400">@{data.sample.handle} · PID {data.sample.pid} · {data.sample.creatorCommission}%</p><p lang="it" className="mt-3 text-sm leading-6 text-gray-700 dark:text-gray-200">{data.sample.messageIt}</p>{data.sample.messageZh&&<p className="mt-2 text-xs leading-5 text-gray-500">中文辅助：{data.sample.messageZh}</p>}</>:<p className="mt-3 text-sm text-gray-500">当前发送池没有可生成例子的就绪达人。</p>}</div>
-   </div>
-  </Card>
+  <SendTemplateManager controller={controller}/>
   <Card title="发送设置与操作" subtitle="人工“发送”和自动发送都必须等待北京时间窗口；不再创建用户批次或候补名单。" action={<Pill tone={data.window.open?"success":"warning"}>{data.window.open?"窗口已打开":"等待窗口"}</Pill>}>
    <div className="space-y-5 p-5"><div className="grid gap-5 lg:grid-cols-3"><Toggle label="持续自动发送" description="每日到窗口后继续消费当前发送池。" checked={draft.automaticEnabled} disabled={busy} onChange={value=>setDraft({...draft,automaticEnabled:value})}/><Field label="发送开始"><Input type="time" value={draft.window[0]} disabled={busy} onChange={event=>setDraft({...draft,window:[event.target.value,draft.window[1]]})}/></Field><Field label="发送结束"><Input value={draft.window[1]} maxLength={5} disabled={busy} onChange={event=>setDraft({...draft,window:[draft.window[0],event.target.value]})}/></Field></div>
     <div className="flex flex-wrap gap-2"><Button variant="outline" disabled={busy||!dirty} onClick={()=>void save()}>{dirty?"保存设置":"设置已保存"}</Button>{!active?<Button disabled={busy} onClick={()=>void start()}>发送</Button>:<Button variant="outline" disabled={busy} onClick={()=>void stop()}>停止</Button>}{data.unknownDeliveries.length>0&&<Button variant="outline" disabled={busy} onClick={()=>void reconcile()}>核验原发送意图</Button>}</div>{message&&<Notice tone={message.includes("已")?"success":"warning"}>{message}</Notice>}

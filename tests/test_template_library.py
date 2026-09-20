@@ -4,7 +4,7 @@ sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'scripts'))
 from lib.schema_migrations import apply_database
 from lib.second_cycle import CycleError,CycleStore
 from lib.template_library import (agent_setting,agent_templates,archive_send_template,create_send_template,
- manual_templates,render_send_template,resolve_send_template,save_agent_setting,send_templates,
+ manual_templates,render_send_template,resolve_send_template,save_agent_setting,selected_send_template,send_templates,
  update_agent_template,update_send_template,upsert_manual_template)
 from lib.reply_events import load_policy
 from test_second_cycle import NOW,offer
@@ -61,5 +61,8 @@ class TemplateLibraryTests(unittest.TestCase):
    update_agent_template(self.store,policy,current['id'],1,'Versione vecchia')
   with self.assertRaisesRegex(CycleError,'request_invalid'):
    update_agent_template(self.store,policy,'human',1,'No')
+ def test_continuous_control_is_the_current_template_delete_gate(self):
+  self.store.db.execute("INSERT INTO continuous_send_control VALUES(?,0,0,0,'16:30','24:00','reconnect',1,?)",(self.plan,NOW))
+  self.assertEqual(selected_send_template(self.store,self.root),'reconnect')
 
 if __name__=='__main__':unittest.main()

@@ -1,5 +1,6 @@
 """Versioned outbound, manual-reply templates and Agent reply schedule settings."""
 import json,re,time
+from pathlib import Path
 from lib.second_cycle import CycleError,digest,encoded
 from lib.cycle_materials import TEMPLATES,render as render_builtin
 
@@ -117,6 +118,14 @@ def render_send_template(spec,name,offer,handle):
  return {'version':4,'template':spec['id'],'templateRevision':spec['revision'],'textIt':text,
   'translationZh':'自定义模板；请以意大利语最终正文为准。','deliveryOrder':'card_then_text','pid':offer['pid'],
   'executionAllowed':False,'requiresVerifiedCard':True,'commissionState':'proposed_not_applied'}
+
+def selected_send_template(store,root):
+ try:value=json.loads((Path(root)/'config/send-batch.json').read_text(encoding='utf-8'));selected=value.get('template')
+ except (OSError,ValueError,TypeError):selected=None
+ if store.db.execute("SELECT 1 FROM sqlite_master WHERE name='continuous_send_control'").fetchone():
+  current=store.db.execute('SELECT template_id FROM continuous_send_control ORDER BY updated_at DESC LIMIT 1').fetchone()
+  if current:selected=current[0]
+ return selected
 
 def manual_templates(store,include_archived=False):
  if not store.db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='manual_reply_template'").fetchone():return []

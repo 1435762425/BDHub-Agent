@@ -5,7 +5,7 @@ from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1];sys.dont_write_bytecode=True;sys.path.insert(0,str(ROOT/'scripts'))
 from lib.second_cycle import CycleError,CycleStore
 from lib.template_library import (agent_setting,agent_templates,archive_send_template,create_send_template,
- manual_templates,send_templates,save_agent_setting,update_agent_template,update_send_template,
+ manual_templates,selected_send_template,send_templates,save_agent_setting,update_agent_template,update_send_template,
  upsert_manual_template)
 from lib.reply_events import load_policy
 
@@ -43,9 +43,7 @@ def main():
     update_send_template(store,req['templateId'],req['expectedRevision'],req['name'],req['bodyIt'])
    elif action=='archive_send':
     if set(req)!={'action','templateId','expectedRevision'}:raise CycleError('invalid_input')
-    try:send_config=json.loads((ROOT/'config/send-batch.json').read_text(encoding='utf-8'))
-    except (OSError,ValueError,TypeError):send_config={}
-    if send_config.get('template')==req['templateId']:raise CycleError('template_in_use')
+    if selected_send_template(store,ROOT)==req['templateId']:raise CycleError('template_in_use')
     archive_send_template(store,req['templateId'],req['expectedRevision'])
    elif action=='upsert_manual':
     if set(req)!={'action','requestId','templateId','expectedRevision','name','category','body'}:raise CycleError('invalid_input')
