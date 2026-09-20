@@ -117,6 +117,7 @@ React 组件不能直接读写 SQLite、启动任意命令或实现资格规则�
 | --- | --- |
 | `leads_queue.py` | 首次/到期 PID 队列、额度和尝试台账 |
 | `leads-run.py` | 复用 Kalodata provider 的实际读取驱动 |
+| `kalodata-video-evidence.py` / `kalodata_video_evidence.py` | 按发布时间完整翻页读取精确 PID 视频、解析作者并生成零销量探索证据；不改变发送池 |
 | `creator_discovery.py` / `discovery_cohort.py` | handle Find、cohort、lease、blocked 重试和证据 |
 | `profile_refresh.py` | OECID 画像刷新与持久任务 |
 | `identity_queue.py` / `identity-batch.py` | 达人级身份分类、批量补齐和进度 |
@@ -125,6 +126,8 @@ React 组件不能直接读写 SQLite、启动任意命令或实现资格规则�
 身份按达人去重，线索按达人×商品保留。明确 `unresolved` 与尚未请求/技术 blocked 分开；只允许技术未提交项有界重试，明确未找到不自动重问。
 
 线索合同已升级为 `leads-queue-v2`：每 PID 近 14 天、Kalodata `revenue DESC`，完整 page receipt 和全部正销量 `source_edge` 继续保留；`lead_query_head + lead_query_selection` 只发布当前最多 20 条。排序消费 `sourceRank`，并列时用 `units DESC, pid ASC`；原始 GMV 字符串只作证据，不跨币种直接比较。`scripts/backfill-current-leads.py` 可从本机历史 receipt 重建当前范围，不调用平台。
+
+零销量视频证据目前是发送池外的研究投影：商品视频表按 `create_time DESC` 逐页读取，直到越过发布时间窗口或自然结束；窗口内所有达到播放量门槛的视频都调用详情解析作者，不使用“播放量前 20 条”。列表没有作者，详情返回 Kalodata creator ID 与 handle；来源关联优先用稳定 creator ID，OECID 仍只接受当前精确 handle 的身份结果。超过 20 页、日期不可解析、作者缺失或中断都必须表现为覆盖不完整，不得进入正式统计。实测与成本见 [零销量视频证据](implementation/kalodata-zero-sale-video-evidence-20260920.md)。
 
 身份表应把 `市场 × OECID` 投影为稳定 `creatorId`，handle 变化只追加带观测时间的 alias。同一 OECID 改名时不得新建关系、重置冷却或丢失达人×PID 位置。
 
@@ -191,7 +194,7 @@ DeepSeek 与 TypeSafe Jev 当前都只作为影子 provider。Jev 使用官方 S
 | `var/it-conversations.sqlite` | IT/ACC6 会话索引 |
 | `var/matching*.sqlite` | 独立匹配研究数据集和结果 |
 
-新增当前投影：`catalog-links.sqlite.catalog_current_binding*` 保存唯一标准卡；`second-cycle.sqlite.lead_query_*` 保存每 PID 当前 20 条范围，`source_edge_index` 为历史证据提供规范化索引；`cycle_bulk_freeze/cycle_bulk_candidate` 保存用户确认的不可变发送范围、revision 与完整材料；`outbound_episode/inbound_turn/turn_episode_link/service_case_turn` 保存事件级回复上下文，`reply_classification/reply_review` 分开保存模型影子结果和人工判断。原准备记录、page receipt、`source_edge`、旧批次和旧回复评估都不删除。
+新增当前投影：`catalog-links.sqlite.catalog_current_binding*` 保存唯一标准卡；`second-cycle.sqlite.lead_query_*` 保存每 PID 当前 20 条范围，`source_edge_index` 为历史证据提供规范化索引；`kalodata_video_run/evidence/head` 保存精确 PID 视频读取范围、覆盖状态、作者和内容证据；`cycle_bulk_freeze/cycle_bulk_candidate` 保存用户确认的不可变发送范围、revision 与完整材料；`outbound_episode/inbound_turn/turn_episode_link/service_case_turn` 保存事件级回复上下文，`reply_classification/reply_review` 分开保存模型影子结果和人工判断。原准备记录、page receipt、`source_edge`、旧批次和旧回复评估都不删除。
 
 `scripts/lib/schema_migrations.py` 当前以增量 registry 管理 `catalog-links.sqlite` 和 `second-cycle.sqlite` 的本轮新投影；其他历史表仍由各领域模块初始化。新增表/字段必须继续提供幂等升级和旧库兼容测试，不能靠删除本地 DB 重建。
 
@@ -296,6 +299,7 @@ pending → started/submitted → confirmed
 - 读取复用既有生产身份和 browser lock，不复制 Cookie 到仓库。
 - 每日额度、认证和浏览器锁是明确停止条件；查询失败不写成功时间。
 - 2026-09-20 两个历史混币 PID 的实时读取均为同页 50/50 欧元，且其中一组新旧 creator ID/handle 重合 50/50；历史混合符号来自采集会话展示口径，不是达人集合换市场。当前继续使用同请求内 `revenue DESC` 产生的 `sourceRank`，不得跨采集批次直接比较 `revenueRaw` 绝对值；详见 [实时GMV探查](implementation/kalodata-gmv-live-probe-20260920.md)。
+- 商品视频列表支持 `create_time DESC` 和分页，但列表不含作者；`/video/detail` 可取得稳定 Kalodata creator ID、handle、发布时间、播放量、销量、GMV 与 AD/AI 标签。五个 PID 的完整 30 天只读样本解析 225 条视频、86 条播放量 ≥1,000 的视频，得到 19 个当前零销量候选对，其中 12 个已有 OECID；该样本不是全池外推，详见 [零销量视频证据](implementation/kalodata-zero-sale-video-evidence-20260920.md)。
 
 ### 旧 BDHub
 

@@ -221,6 +221,14 @@ DeepSeek/Agent 已经把 9 月 14 日的“货盘批量备链”继续推进到�
 3. 只有用户另行明确开启后，才设计真实自动回复 transport；当前 `collaboration_ack/link_usage` 固定人工；
 4. 第一次 frozen-v2 真实发送和账号级日额度探测仍由用户另行在页面明确启动。
 
+### 已完成：零销量视频证据可行性与完整分页
+
+- 新增 `kalodata_video_run/evidence/head` 和 migration v7–v8；迁移前备份位于 `var/backups/state/20260920T042216Z-before-paged-video-evidence`，21 库、289,513,472 字节、`valid=true`；
+- 实时确认商品视频列表支持 `create_time DESC` 与 `pageNo` 翻页，列表不含作者，必须逐视频调用 `/video/detail`；作者关联使用 Kalodata creator ID，不依赖可能变化的 handle；
+- 已移除早期“播放量前 20 条”探针限制；正式读取按发布时间倒序覆盖完整窗口，越过窗口或自然短页才结束，超过 20 页只标记不完整；
+- 五个 PID 的完整 30 天样本读取 225 条视频、解析 86 条播放量 ≥1,000 的视频，得到 19 个当前零销量候选对，其中 12 个已有 OECID；≥5,000 为 6 对，≥10,000 为 4 对；
+- 高活跃 PID 的列表探针可达 16 页/800 条、457 条达标视频，后续全池运行必须补断点与额度调度；本轮没有接入 `lead_pool`、冻结批次或发送消息。详细证据见 [零销量视频证据](../implementation/kalodata-zero-sale-video-evidence-20260920.md)。
+
 旧 `batch-tasks.sqlite` 只作迁移证据，不再作为执行入口；后续批次能力继续只在 frozen-v2 上扩展。
 
 ## 8. 关键入口
@@ -243,7 +251,7 @@ DeepSeek/Agent 已经把 9 月 14 日的“货盘批量备链”继续推进到�
 
 ## 9. 本轮执行边界
 
-本轮应用了本项目 `second-cycle.sqlite` 的 additive migration v3–v6，构建并重启了 5198 Web 服务；完成 DeepSeek/Jev 全 35 条同集影子分类、turn 级人工真值与受控应用合同、统计日历聚合页，并按用户授权为意大利当前货盘执行 1,548 次 TapLink 创建与逐条回读。没有发送 TikTok IM、冻结业务批次、启动发送/收信 worker、开启 AI 自动回复、创建真实回复发送意图、删除历史 TapLink、修改旧 BDHub 或恢复其他 worker。
+本轮应用了本项目 `second-cycle.sqlite` 的 additive migration v3–v8，构建并重启了 5198 Web 服务；完成 DeepSeek/Jev 全 35 条同集影子分类、turn 级人工真值与受控应用合同、统计日历聚合页、零销量视频只读证据探针，并按用户授权为意大利当前货盘执行 1,548 次 TapLink 创建与逐条回读。没有发送 TikTok IM、冻结业务批次、启动发送/收信 worker、开启 AI 自动回复、创建真实回复发送意图、把视频候选接入发送池、删除历史 TapLink、修改旧 BDHub 或恢复其他 worker。
 
 ## 10. 接管验证
 
