@@ -23,6 +23,19 @@ class AgentReplyWorkerTests(unittest.TestCase):
   self.assertFalse(WORKER.inside(setting,stamp(14,59)))
   self.assertTrue(WORKER.inside(setting,stamp(15,0)))
   self.assertFalse(WORKER.inside(setting,stamp(16,0)))
+ def test_one_time_authorization_requires_a_bounded_request_id(self):
+  self.assertEqual(WORKER.authorized_request('agent-now-0001'),'agent-now-0001')
+  with self.assertRaisesRegex(Exception,'agent_reply_authorization_invalid'):
+   WORKER.authorized_request('../unsafe')
+ def test_due_pending_survives_the_old_short_freeze_deadline(self):
+  db=self.store.db
+  db.execute('CREATE TABLE inbox_pending(plan_id TEXT,creator_id TEXT,state TEXT,due_at REAL)')
+  db.execute('CREATE TABLE relationship(plan_id TEXT,creator_id TEXT,mode TEXT,rejected INTEGER,inbox_until REAL)')
+  db.execute('CREATE TABLE service_case(plan_id TEXT,creator_id TEXT,state TEXT)')
+  db.execute("INSERT INTO inbox_pending VALUES('p','c','policy_review',10)")
+  db.execute("INSERT INTO relationship VALUES('p','c','auto',0,11)")
+  rows=WORKER.pending_rows(self.store,'p',1000)
+  self.assertEqual([row['creator_id'] for row in rows],['c'])
  def test_waiting_send_batch_does_not_block_reply_window_but_active_dispatch_does(self):
   db=self.store.db
   db.execute('CREATE TABLE cycle_delivery_part(state TEXT)')

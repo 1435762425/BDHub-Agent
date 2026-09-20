@@ -10,7 +10,7 @@ from zoneinfo import ZoneInfo
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
-from lib.legacy_runtime import (configure_vendored_bdhub, project_identity_maintenance_due,
+from lib.legacy_runtime import (configure_vendored_bdhub, project_account_enabled, project_identity_maintenance_due,
                                 project_identity_paths)  # noqa: E402
 
 
@@ -52,6 +52,7 @@ class VendoredLegacyRuntime(unittest.TestCase):
             (generation / "headers.json").write_text("{}")
             with closing(sqlite3.connect(root / "var/second-cycle.sqlite")) as database:
                 database.execute("CREATE TABLE account_identity_generation(market,account,role,state,published_at,browser_ref,http_ref,im_ref)")
+                database.execute("CREATE TABLE account_runtime_setting(market,account,enabled)")
                 published = datetime(2026, 9, 20, 1, 0, tzinfo=ZoneInfo("Asia/Shanghai")).timestamp()
                 database.execute("INSERT INTO account_identity_generation VALUES(?,?,?,?,?,?,?,?)",
                     ("it", "acc6", "communications", "published", published, f"project-browser:{candidate}",
@@ -64,6 +65,11 @@ class VendoredLegacyRuntime(unittest.TestCase):
             after = datetime(2026, 9, 23, 14, 30, tzinfo=ZoneInfo("Asia/Shanghai"))
             self.assertFalse(project_identity_maintenance_due(root, "acc6", before))
             self.assertTrue(project_identity_maintenance_due(root, "acc6", after))
+            self.assertTrue(project_account_enabled(root, "acc6"))
+            with closing(sqlite3.connect(root / "var/second-cycle.sqlite")) as database:
+                database.execute("INSERT INTO account_runtime_setting VALUES('it','acc6',0)")
+                database.commit()
+            self.assertFalse(project_account_enabled(root, "acc6"))
             (generation / "headers.json").unlink()
             self.assertIsNone(project_identity_paths(root, "acc6"))
 

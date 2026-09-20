@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Scheduled Agent replies for reviewed policy actions; no work outside the reply window."""
-import argparse,fcntl,importlib.util,json,signal,sys,time
+import argparse,fcntl,importlib.util,json,re,signal,sys,time
 from datetime import datetime,timezone,timedelta
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1];sys.dont_write_bytecode=True;sys.path.insert(0,str(ROOT/'scripts'))
@@ -9,12 +9,17 @@ from lib.reply_events import DeepSeekClassifier,backfill,classify,load_policy
 from lib.second_cycle import CycleError,CycleStore,digest
 from lib.template_library import agent_setting,agent_template_map
 STOP=False;BEIJING=timezone(timedelta(hours=8))
+REQUEST_ID=re.compile(r'[A-Za-z0-9][A-Za-z0-9._:-]{7,119}')
 def stop(*_):
  global STOP;STOP=True
 def inside(setting,stamp):
  now=datetime.fromtimestamp(stamp,BEIJING);minutes=now.hour*60+now.minute
  def m(v):h,n=map(int,v.split(':'));return h*60+n
  return m(setting['replyStart'])<=minutes<m(setting['replyEnd'])
+def authorized_request(value):
+ if value is None:return None
+ if not isinstance(value,str) or not REQUEST_ID.fullmatch(value):raise CycleError('agent_reply_authorization_invalid')
+ return value
 def close_no_reply(store,plan,turn,pending):
  with store.tx():
   row=store.db.execute('SELECT rowid FROM inbox_event WHERE plan_id=? AND cid=? AND message_id=?',(plan,turn['cid'],turn['message_id'])).fetchone();watermark=row[0] if row else 0
@@ -39,21 +44,25 @@ def send_dispatch_active(store):
 def reviewed_action(store,turn):
  row=store.db.execute('SELECT correct_action FROM turn_review WHERE turn_id=? ORDER BY revision DESC LIMIT 1',(turn['turn_id'],)).fetchone()
  return {'action':row[0],'intentCode':'reviewed_'+row[0]} if row else None
-def tick():
+def pending_rows(store,plan,now):
+ return store.db.execute("""SELECT p.* FROM inbox_pending p JOIN relationship r
+   ON r.plan_id=p.plan_id AND r.creator_id=p.creator_id
+   WHERE p.plan_id=? AND p.state IN ('awaiting_classification','review_partial','template_ready','policy_review','facts_ready_for_review','needs_facts')
+   AND p.due_at<=? AND r.mode='auto' AND r.rejected=0
+   AND NOT EXISTS(SELECT 1 FROM service_case c WHERE c.plan_id=p.plan_id AND c.creator_id=p.creator_id AND c.state='open')
+   ORDER BY p.due_at LIMIT 20""",(plan,now)).fetchall()
+def tick(authorized_now=None):
+ authorized_now=authorized_request(authorized_now)
  with CycleStore(ROOT/'var/second-cycle.sqlite') as store:
   plan=store.db.execute("SELECT id FROM plan WHERE market='it' AND institution='bjn-local-research'").fetchone()[0];setting=agent_setting(store,plan);now=store.clock()
   if not setting['enabled']:return {'state':'disabled','platformWrites':0,'realSends':0}
-  if not inside(setting,now):return {'state':'outside_reply_window','platformWrites':0,'realSends':0}
+  if not inside(setting,now) and authorized_now is None:return {'state':'outside_reply_window','platformWrites':0,'realSends':0}
   if send_dispatch_active(store):return {'state':'send_dispatch_active','platformWrites':0,'realSends':0}
-  projection=backfill(store);policy=load_policy();templates=agent_template_map(store,policy);replies=AutoReplies(store);run_id='agent-run-'+digest([plan,int(now),setting['revision']])[:24]
-  report={'runId':run_id,'state':'running','claimed':0,'noReply':0,'prepared':0,'human':0,'confirmed':0,'unknown':0,'platformWrites':0,'realSends':0}
+  projection=backfill(store);policy=load_policy();templates=agent_template_map(store,policy);replies=AutoReplies(store);run_id='agent-run-'+digest([plan,int(now),setting['revision'],authorized_now])[:24]
+  report={'runId':run_id,'state':'running','triggerSource':'user_authorized_now' if authorized_now else 'reply_window',
+   'authorizationRequestId':authorized_now,'claimed':0,'noReply':0,'prepared':0,'human':0,'confirmed':0,'unknown':0,'platformWrites':0,'realSends':0}
   store.db.execute("INSERT OR IGNORE INTO agent_reply_run VALUES(?,?,\'running\',?,NULL,0,0,0,0,0,0,NULL)",(run_id,plan,now))
-  for pending in store.db.execute("""SELECT p.* FROM inbox_pending p JOIN relationship r
-    ON r.plan_id=p.plan_id AND r.creator_id=p.creator_id
-    WHERE p.plan_id=? AND p.state IN ('awaiting_classification','review_partial','template_ready','policy_review','facts_ready_for_review','needs_facts')
-    AND p.due_at<=? AND r.inbox_until>? AND r.mode='auto' AND r.rejected=0
-    AND NOT EXISTS(SELECT 1 FROM service_case c WHERE c.plan_id=p.plan_id AND c.creator_id=p.creator_id AND c.state='open')
-    ORDER BY p.due_at LIMIT 20""",(plan,now,now)).fetchall():
+  for pending in pending_rows(store,plan,now):
    turn=store.db.execute('SELECT * FROM inbound_turn WHERE plan_id=? AND creator_id=? AND historical=0 ORDER BY coalesce(occurred_ms,observed_at*1000) DESC LIMIT 1',(plan,pending['creator_id'])).fetchone()
    if not turn:continue
    decision=reviewed_action(store,turn)
@@ -75,14 +84,16 @@ def tick():
    state=runtime.run_reply(store,replies,queued);report['realSends']=int(new_dispatch);report['platformWrites']=int(new_dispatch);report['confirmed']+=int(state=='confirmed');report['unknown']+=int(state=='unknown')
   report['state']='completed';store.db.execute("UPDATE agent_reply_run SET state='completed',finished_at=?,claimed=?,no_reply=?,prepared=?,human=?,confirmed=?,unknown=? WHERE run_id=?",(store.clock(),report['claimed'],report['noReply'],report['prepared'],report['human'],report['confirmed'],report['unknown'],run_id));return report|{'replyProjection':projection}
 def main():
- p=argparse.ArgumentParser();p.add_argument('--worker',action='store_true');p.add_argument('--interval',type=int,default=60);p.add_argument('--stop',type=Path);a=p.parse_args();signal.signal(signal.SIGTERM,stop);signal.signal(signal.SIGINT,stop)
+ p=argparse.ArgumentParser();p.add_argument('--worker',action='store_true');p.add_argument('--interval',type=int,default=60);p.add_argument('--stop',type=Path);p.add_argument('--authorized-now');a=p.parse_args();signal.signal(signal.SIGTERM,stop);signal.signal(signal.SIGINT,stop)
+ if a.worker and a.authorized_now:p.error('--authorized-now cannot be used with --worker')
  with (ROOT/'var/agent-reply-worker.lock').open('a') as lock:
   fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
   while not STOP and not (a.stop and a.stop.exists()):
-   try:result=tick()
+   try:result=tick(a.authorized_now)
    except Exception as e:result={'state':'failed','error':str(e) if isinstance(e,CycleError) else type(e).__name__,'platformWrites':0,'realSends':0}
    (ROOT/'var/agent-reply-status.json').write_text(json.dumps(result,ensure_ascii=False,indent=2)+'\n');print(json.dumps(result,ensure_ascii=False),flush=True)
    if not a.worker:break
+   a.authorized_now=None
    for _ in range(max(30,a.interval)):
     if STOP or (a.stop and a.stop.exists()):break
     time.sleep(1)

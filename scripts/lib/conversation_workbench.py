@@ -16,6 +16,7 @@ INTENT_REASONS={'paid_collaboration':'paid_or_budget','commission_anomaly':'comm
  'refusal':'refusal_review','refusal_or_stop_contact':'refusal_review',
  'collaboration_product_request':'catalog_request','ambiguous_request':'unclassified',
  'other':'multiple_requests'}
+SHOWCASE_TEXT='达人已将商品添加到橱窗'
 
 def _handles(root):
  path=Path(root)/'var/creator-identities.sqlite'
@@ -70,12 +71,18 @@ def _latest_decision(db,turn_id):
  if review:value['action']=review[0];value['reviewed']=True
  return value if value.get('action') else None
 
+def _latest_showcase(db,plan,oec):
+ if not db.execute("SELECT 1 FROM sqlite_master WHERE name='inbox_event'").fetchone():return None
+ return db.execute("""SELECT cid,message_id,occurred_ms,historical,observed_at FROM inbox_event
+  WHERE plan_id=? AND oec=? AND kind='showcaseNotifications'
+  ORDER BY coalesce(occurred_ms,observed_at*1000) DESC,message_id DESC LIMIT 1""",(plan,oec)).fetchone()
+
 def _human_reason(decision):
  if not decision:return 'human'
  return INTENT_REASONS.get(decision.get('intentCode'),decision.get('intentCode') if decision.get('intentCode') in HUMAN_REASONS else 'human')
 
 def list_conversations(root,store,view='human',query='',limit=30,offset=0):
- if view not in ('human','processing','agent','completed','all') or type(limit) is not int or not 1<=limit<=100 or type(offset) is not int or offset<0 or offset>5000:raise CycleError('conversation_query_invalid')
+ if view not in ('human','agent','completed','all') or type(limit) is not int or not 1<=limit<=100 or type(offset) is not int or offset<0 or offset>5000:raise CycleError('conversation_query_invalid')
  handles=_handles(root);db=store.db;plan=db.execute("SELECT id FROM plan WHERE market='it' AND institution='bjn-local-research'").fetchone()[0]
  rows=[]
  for rel in db.execute('SELECT * FROM relationship WHERE plan_id=?',(plan,)):
@@ -83,9 +90,10 @@ def list_conversations(root,store,view='human',query='',limit=30,offset=0):
   case=db.execute("SELECT * FROM service_case WHERE plan_id=? AND creator_id=? AND state='open' ORDER BY updated DESC LIMIT 1",(plan,rel['creator_id'])).fetchone()
   pending=db.execute('SELECT * FROM inbox_pending WHERE plan_id=? AND creator_id=?',(plan,rel['creator_id'])).fetchone()
   reply=db.execute('SELECT state,kind,started,text FROM service_reply WHERE plan_id=? AND creator_id=? ORDER BY created DESC LIMIT 1',(plan,rel['creator_id'])).fetchone() if db.execute("SELECT 1 FROM sqlite_master WHERE name='service_reply'").fetchone() else None
+  showcase=_latest_showcase(db,plan,rel['oec'])
   decision=_latest_decision(db,latest['turn_id']) if latest else None;action=decision.get('action') if decision else None
-  if case or (action=='human' and pending and pending['state']!='resolved_by_human') or (pending and pending['state']=='human'):state='human'
-  elif rel['mode']=='human' or (pending and pending['state'] in ('awaiting_classification','review_partial','template_ready','policy_review','facts_ready_for_review','needs_facts')):state='processing'
+  if case or rel['mode']=='human' or (action=='human' and pending and pending['state']!='resolved_by_human') or (pending and pending['state']=='human'):state='human'
+  elif pending and pending['state'] in ('awaiting_classification','review_partial','template_ready','policy_review','facts_ready_for_review','needs_facts'):state='agent'
   elif reply and reply['state']=='confirmed' or pending and pending['state'] in ('answered','no_reply'):state='agent'
   elif latest:state='completed'
   else:continue
@@ -93,15 +101,17 @@ def list_conversations(root,store,view='human',query='',limit=30,offset=0):
   if query and query.casefold() not in f"{handle or ''} {rel['oec']} {(latest['text'] if latest else '')}".casefold():continue
   reason=(case['reason'] if case else _human_reason(decision) if action=='human' else None)
   occurred=(latest['occurred_ms']/1000 if latest and latest['occurred_ms'] else latest['observed_at'] if latest else 0)
+  showcase_at=(showcase['occurred_ms']/1000 if showcase and showcase['occurred_ms'] else showcase['observed_at'] if showcase else 0)
+  display_at=max(occurred,showcase_at);display_text=SHOWCASE_TEXT if showcase_at>occurred else latest['text'] if latest else None
   rows.append({'conversationId':latest['cid'] if latest else None,'creatorId':rel['creator_id'],'oec':rel['oec'],'handle':handle,
    'state':state,'humanReason':reason,'humanReasonLabel':HUMAN_REASONS.get(reason,reason) if reason else None,
-   'latestText':latest['text'] if latest else None,'latestAt':occurred,'waitingSeconds':max(0,int(store.clock()-occurred)) if occurred else 0,
+   'latestText':display_text,'latestAt':display_at,'waitingSeconds':max(0,int(store.clock()-display_at)) if display_at else 0,
    'unread':bool(pending and pending['state'] in ('awaiting_classification','review_partial','template_ready','policy_review','facts_ready_for_review','needs_facts','human')),
    'action':action,'caseId':case['id'] if case else None})
- order={'human':0,'processing':1,'agent':2,'completed':3}
+ order={'human':0,'agent':1,'completed':2}
  rows.sort(key=lambda r:(order[r['state']],-r['waitingSeconds'],r['creatorId']))
  filtered=rows if view=='all' else [r for r in rows if r['state']==view]
- counts={key:sum(r['state']==key for r in rows) for key in ('human','processing','agent','completed')};counts['all']=len(rows)
+ counts={key:sum(r['state']==key for r in rows) for key in ('human','agent','completed')};counts['all']=len(rows)
  return {'available':True,'view':view,'query':query,'counts':counts,'total':len(filtered),'offset':offset,'limit':limit,
   'nextOffset':offset+limit if offset+limit<len(filtered) else None,'items':filtered[offset:offset+limit],
   'platformWrites':0,'realSends':0}
@@ -115,6 +125,12 @@ def conversation_detail(root,store,cid):
  timeline=[]
  for row in db.execute('SELECT * FROM inbound_turn WHERE plan_id=? AND cid=? ORDER BY coalesce(occurred_ms,observed_at*1000),message_id',(plan,cid)):
   timeline.append({'id':row['turn_id'],'direction':'inbound','kind':row['format'],'text':row['text'],'occurredAt':(row['occurred_ms']/1000 if row['occurred_ms'] else row['observed_at']),'status':'received','source':'creator'})
+ for row in db.execute("""SELECT message_id,occurred_ms,historical,observed_at FROM inbox_event
+  WHERE plan_id=? AND oec=? AND kind='showcaseNotifications'
+  ORDER BY coalesce(occurred_ms,observed_at*1000),message_id""",(plan,rel['oec'])):
+  timeline.append({'id':'showcase-'+row['message_id'],'direction':'inbound','kind':'showcase','text':SHOWCASE_TEXT,
+   'occurredAt':row['occurred_ms']/1000 if row['occurred_ms'] else row['observed_at'],
+   'status':'historical' if row['historical'] else 'received','source':'showcase'})
  for row in db.execute('SELECT * FROM outbound_episode WHERE plan_id=? AND creator_id=? ORDER BY sent_at',(plan,creator)):
   payload=json.loads(row['payload_json']);message=payload.get('message') or {}
   timeline.append({'id':row['episode_id'],'direction':'outbound','kind':'text','text':message.get('textIt'),'occurredAt':row['sent_at'],'status':'confirmed','source':'batch','pid':row['pid'],'listId':row['list_id']})

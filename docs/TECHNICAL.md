@@ -111,6 +111,8 @@ Campaign 每日完整刷新，全托按周完整刷新；货盘 generation 发�
 
 `operations_scheduler.py` 按不可变 `workflow_run/workflow_stage_run` 串行执行清洗、完整货盘、链接准备、Kalodata、OECID 与发送池发布；每阶段记录输入/输出 generation、断点、计数和平台写入数。标准主链只由 `market_automation_setting` 总开关授权，`config/jobs.json` 保存各作业北京时间，不再要求逐项重复启用；全托、持续发送和 Agent 保留各自独立开关。旧 `material_maintenance.py` 只保留历史兼容，不再由 `/api/jobs` 启动。
 
+Campaign 货盘阶段固定执行 `status/verify unresolved → join-all --confirm → campaign-collect --screen`；默认联系邮箱只在本机配置读取，不进入 argv。`join-all` 以最多 100 个活动为一个持久批次，验证码成功后只重放同一 Campaign 加入请求一次，unknown 阻断后续采集。TapLink 阶段固定执行 `seed/read → catalog-names prepare --all → create`，短名缺口非零时 fail closed。调度器保留跨 tick 的 lastSuccess/lastAttempt，并在到期账号维护意图排队后启动项目维护 worker。
+
 ### 5.3 线索与身份
 
 | 模块 | 作用 |
@@ -191,6 +193,8 @@ Pure HTTP 验证依赖 `Pillow==12.3.0`、`opencv-python-headless==4.14.0.94` �
 DeepSeek 是当前 Agent 分类器，人工 `turn_review` 存在时人工结论优先；TypeSafe Jev 保持影子 challenger。Jev 使用官方 System One 合同 `POST https://api.typesafe.ai/v1/systemone`，固定模型 `jev-1.13.0`；API key 只从本机 `config/typesafe.json`（0600、Git 忽略）或 `TYPESAFE_API_KEY` 读取。收信 worker 不再调用旧 `cycle_agent.py`，也不执行旧 `process_due()`；它只保存事件并立即冻结达人。旧事实工具、60 秒服务代码和既有评估记录只保留历史兼容。
 
 Agent 与二发没有优先级关系，只有互斥窗口：默认北京时间 `15:00–16:00` 集中回复、30 分钟缓冲、`16:30–24:00` 持续二发。等待发送窗口不阻塞 Agent；实际 `cycle_delivery_part in (inflight,accepted)` 才阻塞回复 dispatch，随后仍复用同一 ACC6 写门禁。Agent 每轮最多分类 20 个 pending turn、发送或恢复 1 个持久 `service_reply`；恢复 `inflight/accepted/unknown` 只读回查原意图，不创建新发送。
+
+`run-agent-replies.py --authorized-now <request-id>` 是用户明确要求立即处理当前合格队列时的一次性运维入口，不能与常驻 `--worker` 同用；它不改变日常窗口，每次仍只发送/核验一个持久意图。Agent durable setting 是常驻恢复的唯一开关，operations scheduler 不再依赖已退役的 jobs 子开关来重启 Agent worker。
 
 `cycle_scheduler.PERIODS` 同样不再包含 `reply_facts`：既有 `cycle_schedule` 历史行保留，但 claim、running/recover 判断和状态投影只接受当前五个供给阶段，`run-second-cycle.py` 也不再为该旧阶段生成命令。这样以后启动供给调度器也不会意外恢复事实型回复路径。
 
@@ -314,6 +318,8 @@ Web 不再构建 `/flow-demo`、浏览器演示页、旧 local runtime、second-
 运营首页 canonical route 为 `/it`；合作工作台为 `/it/workspace/send` 和 `/it/workspace/history`；旧 `/it/workspace/inbox` 只做重定向。会话为 `/it/conversations`、`/it/conversations/templates` 和 `/it/conversations/agent`，默认 view=`human`；旧 `/ops/reply-evaluation` 重定向到 Agent 高级评测区。运行设置为 `/ops/kalodata`、`/ops/jobs`、`/ops/accounts`。
 
 会话页在 AppShell 中使用无最大宽度布局，并在桌面按 `队列 / 时间线与编辑器 / 达人与事项` 占满剩余视口。详情只投影白名单经营字段；人工事项确认直接结算当前 case/pending 且不发送消息。`creator_collaboration_event/current` 保存 `normal/collaborated/paid/rejected`，状态 mutation 同时校验 collaboration 与 relationship revision；showcase 只升级系统默认，人工选择优先。达人库顶部的“已查询/查得到/搜索不到”复用 `/api/identity-queue` 的互斥 handle 口径；“有回复/已加橱窗”从 live `inbox_event` 按 `creator_id` 去重，历史补录不计入。
+
+会话时间线把 `inbox_event.kind=showcaseNotifications` 投影为“达人已将商品添加到橱窗”，不把它送入回复分类器。队列状态只投影 `human / agent / completed`；持久 pending 即使早期短冻结时间已过，仍属于 Agent 待回复，不能因 `relationship.inbox_until` 到期永久跳过。
 
 ## 9. 账号与外部系统
 
@@ -523,6 +529,7 @@ PYTHONDONTWRITEBYTECODE=1 \
 - 35 条意大利 turn 已完成人工真值审核：DeepSeek 28/35（80.00%，误自动处理 2、误转人工 3），Jev 22/35（62.86%，误自动处理 3、误转人工 1）；双模型一致也仍有 2 条误自动处理。DeepSeek 暂作 Agent 分类器、Jev 保持 challenger，人工 `turn_review` 优先。真实回复 transport、持久意图和回查合同已经接入，但 Agent 设置仍为 `enabled=false`，本轮真实发送为 0；详细证据见 [最终人工评测](implementation/reply-model-evaluation-20260920.md)。
 - SQLite 备份、校验和空目录恢复工具已完成；当前首份基线仍只在本机，尚未配置异机副本、保留周期或自动调度。
 - 项目 Python 环境、依赖锁、协议源码和 ACC6/ACC9 新身份发布目录已独立；保存的登录账号密码仍只在运行时从旧账号配置只读使用，不复制进新仓库。其他账号与市场仍需逐项迁移和验收。
+- 2026-09-21 起旧 BDHub 已将 ACC6/ACC9 停用并移出全部旧业务池。新项目的账号 overlay 只继承旧配置中的账号元数据与保存凭据读取能力；`enabled`、固定角色、业务池、profile/headers 和身份维护完全由新项目台账覆盖，避免旧项目停用状态反向关闭新项目。
 - vendored `pure_http_canary.py` 依赖同目录 `pure_http_runtime_manifest.json` 校验旧 `data/runtime` 的逐文件哈希；JSON 清单属于协议闭包，缺失时所有 OECID cohort 会在网络请求前以 manifest 无效失败。当前清单已随 vendor 提交，runtime/身份文件本身仍只读留在旧 BDHub。
 
 ## 15. 技术文档变更规则

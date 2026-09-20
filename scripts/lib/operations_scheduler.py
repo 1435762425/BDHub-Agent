@@ -125,7 +125,7 @@ class SubprocessStageExecutor:
             return {'state':'completed','itemCount':total,'complete':True,'platformWrites':writes,
                     'scope':{'sources':sources},'payload':last.get('payload') or {}}
         if stage=='catalog':
-            outputs=[];count=0
+            outputs=[];count=0;writes=0
             if 'selected' in sources:
                 rid='it-global-'+time.strftime('%Y%m%d')+'-'+digest([run['runId'],'selected'])[:12]
                 result=self._call(['scripts/collect-global-opportunity.py','--run-id',rid,'--pages','40','--worker'],
@@ -135,22 +135,49 @@ class SubprocessStageExecutor:
                     return {**result,'state':'failed','complete':False,'errorCode':'global_catalog_not_published'}
                 outputs.append(result);count+=int((result.get('payload') or {}).get('products') or 0)
             if 'campaign' in sources:
+                join_status=self._call(['scripts/campaign-join.py','status'],'campaign-join-status')
+                if join_status['state']!='completed':return join_status|{'platformWrites':writes}
+                join_payload=join_status.get('payload') or {}
+                if join_payload.get('available') and join_payload.get('unresolved'):
+                    verified=self._call(['scripts/campaign-join.py','verify'],'campaign-join-verify')
+                    if verified['state']!='completed':return verified|{'platformWrites':writes}
+                    verified_payload=verified.get('payload') or {}
+                    if verified_payload.get('unresolved'):
+                        return {**verified,'state':'needs_human','complete':False,
+                                'errorCode':'campaign_join_result_unknown','platformWrites':writes}
+                joined=self._call(['scripts/campaign-join.py','join-all','--confirm'],'campaign-join')
+                writes+=joined.get('platformWrites',0);joined_payload=joined.get('payload') or {}
+                if joined['state']!='completed':return joined|{'platformWrites':writes}
+                if joined_payload.get('state')=='needs_verification' or joined_payload.get('unresolved'):
+                    return {**joined,'state':'needs_human','complete':False,
+                            'errorCode':'campaign_join_result_unknown','platformWrites':writes}
+                outputs.append(joined)
                 result=self._call(['scripts/campaign-collect.py','--max-requests','150','--passes','200','--screen'],
                                   'campaign-catalog')
-                if result['state']!='completed':return result
+                if result['state']!='completed':return result|{'platformWrites':writes}
                 evidence=result.get('payload') or {}
                 if evidence.get('status')!='completed' or not (evidence.get('screening') or {}).get('recorded'):
-                    return {**result,'state':'failed','complete':False,'errorCode':'campaign_catalog_not_published'}
+                    return {**result,'state':'failed','complete':False,'errorCode':'campaign_catalog_not_published',
+                            'platformWrites':writes}
                 outputs.append(result);count+=int((result.get('payload') or {}).get('offers') or 0)
-            return {'state':'completed','itemCount':count,'complete':True,'platformWrites':0,
+            return {'state':'completed','itemCount':count,'complete':True,'platformWrites':writes,
                     'scope':{'sources':sources},'payload':{'sources':outputs}}
         if stage=='taplink_prepare':
             writes=0;outputs=[]
             for route in sources:
-                result=self._call(['scripts/catalog-link-batch.py','--route',route,'--limit','200','--passes','80',
-                  '--creates','200','--lanes','9','--qps','12','--seed'],'taplink-prepare-'+route)
-                writes+=result.get('platformWrites',0);outputs.append(result)
-                if result['state']!='completed':return result|{'platformWrites':writes}
+                prepared=self._call(['scripts/catalog-link-batch.py','--route',route,'--limit','200','--passes','80',
+                  '--creates','0','--lanes','9','--qps','12','--seed'],'taplink-read-'+route)
+                outputs.append(prepared)
+                if prepared['state']!='completed':return prepared|{'platformWrites':writes}
+                names=self._call(['scripts/catalog-names.py','prepare','--all'],'taplink-short-names-'+route)
+                outputs.append(names);name_payload=names.get('payload') or {}
+                if names['state']!='completed' or int(name_payload.get('missing') or 0)>0:
+                    return {**names,'state':'needs_human','complete':False,
+                            'errorCode':'catalog_short_names_incomplete','platformWrites':writes}
+                created=self._call(['scripts/catalog-link-batch.py','--route',route,'--limit','200','--passes','0',
+                  '--creates','200','--lanes','9','--qps','12'],'taplink-create-'+route)
+                writes+=created.get('platformWrites',0);outputs.append(created)
+                if created['state']!='completed':return created|{'platformWrites':writes}
             return {'state':'completed','itemCount':sum(item.get('itemCount',0) for item in outputs),
                     'complete':True,'platformWrites':writes,'scope':{'sources':sources},'payload':{'routes':outputs}}
         if stage=='kalodata':
@@ -180,7 +207,9 @@ class SubprocessStageExecutor:
 def tick(root,*,now=None,executor=None):
     root=Path(root);stamp=time.time() if now is None else float(now);executor=executor or SubprocessStageExecutor(root)
     database=root/'var/second-cycle.sqlite'
-    progress={'checkedAt':stamp,'runId':None,'stage':None,'lastSuccess':{},'lastAttempt':{},'nextDue':{},'error':None}
+    previous=_read(status_path(root),{})
+    progress={'checkedAt':stamp,'runId':None,'stage':None,'lastSuccess':previous.get('lastSuccess') or {},
+              'lastAttempt':previous.get('lastAttempt') or {},'nextDue':{},'error':None}
     if not database.exists():progress['error']='workflow_database_missing';_write(status_path(root),progress);return progress
     from lib.jobs import load
     jobs=load(root)
@@ -225,12 +254,11 @@ def _background(root,store,jobs,automation,stamp):
     if (automation['automaticOperationsEnabled'] or enabled['inbox_monitor']['enabled']) and not (job_state(root,'inbox') or {}).get('running'):
         try:start_job(root,'inbox',{'limit':6,'interval':60})
         except (ValueError,OSError):pass
-    if enabled['agent_reply']['enabled']:
-        from lib.template_library import agent_setting
-        plan=store.db.execute("SELECT id FROM plan WHERE institution='bjn-local-research' AND market='it'").fetchone()
-        if plan and agent_setting(store,plan[0])['enabled'] and not (job_state(root,'agentReply') or {}).get('running'):
-            try:start_job(root,'agentReply',{'interval':60})
-            except (ValueError,OSError):pass
+    from lib.template_library import agent_setting
+    plan=store.db.execute("SELECT id FROM plan WHERE institution='bjn-local-research' AND market='it'").fetchone()
+    if plan and agent_setting(store,plan[0])['enabled'] and not (job_state(root,'agentReply') or {}).get('running'):
+        try:start_job(root,'agentReply',{'interval':60})
+        except (ValueError,OSError):pass
     tables={row[0] for row in store.db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     if {'continuous_send_control','cycle_delivery','cycle_delivery_part'}<=tables:
         from lib.continuous_send import control as send_control,launch_worker,worker_state
@@ -239,7 +267,7 @@ def _background(root,store,jobs,automation,stamp):
            not control['stopRequested'] and not worker_state(root)['running']:
             launch_worker(root)
     if automation['automaticOperationsEnabled']:
-        from lib.account_identity import assignments,current_generation,next_due,request_maintenance
+        from lib.account_identity import assignments,current_generation,next_due,request_maintenance,status as account_status
         try:rows=assignments(root)
         except (OSError,ValueError):rows=[]
         for row in rows:
@@ -250,3 +278,12 @@ def _background(root,store,jobs,automation,stamp):
             try:request_maintenance(store,root,market=row['market'],account=row['account'],operation='refresh',request_id=request_id,scheduled_at=due)
             except CycleError as error:
                 if str(error) not in ('account_maintenance_active',):raise
+        queue=account_status(store,root)['queue'] if rows else []
+        if any(item['state']=='queued' for item in queue) and not any(item['state'] in ('draining','running') for item in queue):
+            log=Path(root)/'var/account-maintenance.log'
+            try:
+                with log.open('a',encoding='utf-8') as handle:
+                    subprocess.Popen([str(Path(root)/'.venv/bin/python'),str(Path(root)/'scripts/account-maintenance-worker.py')],
+                      cwd=str(root),stdin=subprocess.DEVNULL,stdout=handle,stderr=subprocess.STDOUT,
+                      start_new_session=True,env={**os.environ,'PYTHONDONTWRITEBYTECODE':'1'})
+            except OSError:pass

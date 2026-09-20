@@ -58,7 +58,7 @@ function MaintenanceNotice({row}:{row:AccountRow}){
   </Notice>;
 }
 
-export default function MarketAccountsPage(){
+export default function MarketAccountsPage({embedded=false}:{embedded?:boolean}){
   const [data,setData]=useState<AccountStatus|null>(null),[message,setMessage]=useState(""),[busy,setBusy]=useState<string|null>(null);
   const ids=useRef(new Map<string,string>());
   const load=useCallback(async()=>{const response=await fetch("/api/market-accounts",{cache:"no-store"});if(!response.ok)throw Error();setData(await response.json());},[]);
@@ -72,7 +72,9 @@ export default function MarketAccountsPage(){
     }catch{setMessage("账号操作未完成；最后一套已发布身份没有被覆盖。");}finally{setBusy(null);}
   };
   return <div className="space-y-5">
-    <PageHeading title="机构账号设置" description="两个账号固定分工；职责与身份实测分开显示，重登只发布到本项目身份目录。" action={<Link href="/ops/jobs" className="text-sm font-medium text-brand-500">作业与定时 →</Link>}/>
+    {!embedded&&(
+      <PageHeading title="机构账号设置" description="两个账号固定分工；职责与身份实测分开显示，重登只发布到本项目身份目录。" action={<Link href="/ops/jobs" className="text-sm font-medium text-brand-500">作业与定时 →</Link>}/>
+    )}
     {message&&<Notice tone={message.includes("已")||message.includes("启动")?"success":"warning"}>{message}</Notice>}
     {!data?<p className="text-sm text-gray-500">正在读取账号代次…</p>:data.markets.map(market=><div key={market.market} className="grid gap-5 xl:grid-cols-2">
       {market.accounts.map(row=>{const presentation=maintenancePresentation(row);const capabilities=row.identityGeneration?.capabilities??row.evidence?.capabilities??{};return <Card key={row.account} title={`${row.account.toUpperCase()} · ${row.role==="communications"?"通信账号":"货盘账号"}`} action={<Pill tone={presentation.tone}>{presentation.label}</Pill>}>

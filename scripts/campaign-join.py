@@ -21,7 +21,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(ROOT / 'scripts'))
-from lib.campaign_join import apply, join_all, preview, status, verify  # noqa: E402
+from lib.campaign_join import apply, default_email, join_all, preview, status, verify  # noqa: E402
 
 
 def main():
@@ -39,7 +39,7 @@ def main():
         elif args.action == 'verify':
             result = verify(ROOT)
         elif args.action == 'join-all':
-            result = join_all(ROOT, email=args.email or '', confirm=args.confirm)
+            result = join_all(ROOT, email=args.email or default_email(ROOT), confirm=args.confirm)
         else:
             campaigns = [c.strip() for c in (args.campaigns or '').split(',') if c.strip()]
             result = apply(ROOT, campaign_ids=campaigns, email=args.email or '', confirm=args.confirm)

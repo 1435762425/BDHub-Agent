@@ -1,6 +1,6 @@
 import {test} from 'node:test';import assert from 'node:assert/strict';
 import {createConversationHandlers,validateConversationCommand,validateConversationDetail,validateConversationList} from '../src/server/conversations/bridge.ts';
-const listPayload={available:true,view:'human',query:'',counts:{human:1,processing:0,agent:0,completed:0,all:1},total:1,offset:0,limit:30,nextOffset:null,items:[{conversationId:'123',creatorId:'creator-1',oec:'456',handle:'alice',state:'human',humanReason:'link_issue',humanReasonLabel:'链接打不开',latestText:'non funziona',latestAt:1,waitingSeconds:2,unread:true,action:'human',caseId:'case-1'}],platformWrites:0,realSends:0};
+const listPayload={available:true,view:'human',query:'',counts:{human:1,agent:0,completed:0,all:1},total:1,offset:0,limit:30,nextOffset:null,items:[{conversationId:'123',creatorId:'creator-1',oec:'456',handle:'alice',state:'human',humanReason:'link_issue',humanReasonLabel:'链接打不开',latestText:'non funziona',latestAt:1,waitingSeconds:2,unread:true,action:'human',caseId:'case-1'}],platformWrites:0,realSends:0};
 const noop=async()=>listPayload;
 const operations=(overrides={})=>({list:noop,detail:noop,saveDraft:noop,sendText:noop,sendCard:noop,translate:noop,completeHuman:noop,confirmManual:noop,rejectCreator:noop,setCollaboration:noop,...overrides});
 test('human conversations expose reason, source text and wait time',()=>{const value=validateConversationList(listPayload);assert.equal(value.items[0].humanReasonLabel,'链接打不开');});

@@ -28,6 +28,15 @@ class ConversationWorkbenchTests(unittest.TestCase):
  def test_default_human_queue_explains_reason(self):
   result=list_conversations(self.root,self.store,'human')
   self.assertEqual(result['total'],1);self.assertEqual(result['items'][0]['humanReasonLabel'],'链接打不开')
+ def test_agent_queue_includes_waiting_replies_without_a_processing_category(self):
+  self.store.db.execute('DELETE FROM service_case')
+  self.store.db.execute("UPDATE relationship SET mode='auto'")
+  self.store.db.execute("UPDATE inbox_pending SET state='awaiting_classification'")
+  result=list_conversations(self.root,self.store,'agent')
+  self.assertEqual(result['total'],1);self.assertTrue(result['items'][0]['unread'])
+  self.assertNotIn('processing',result['counts'])
+  with self.assertRaisesRegex(CycleError,'conversation_query_invalid'):
+   list_conversations(self.root,self.store,'processing')
  def test_detail_timeline_and_draft_revision(self):
   detail=conversation_detail(self.root,self.store,'999');self.assertEqual(detail['creator']['handle'],'alice');self.assertEqual(detail['timeline'][0]['text'],'Ho un problema')
   saved=save_draft(self.store,'999','Risposta',0);self.assertEqual(saved['revision'],1)
@@ -61,7 +70,10 @@ class ConversationWorkbenchTests(unittest.TestCase):
   self.store.db.execute("UPDATE inbox_checkpoint SET baseline_at=?",(NOW-10,))
   Inbox(self.store).ingest(self.plan,'999','123',{'identityVerified':True,'hasMore':False,'events':[
    {'conversationId':'999','oecId':'123','kind':'showcaseNotifications','messageId':'2002','createTimeRaw':int(NOW*1000)}]})
-  self.assertEqual(conversation_detail(self.root,self.store,'999')['creator']['collaboration']['status'],'collaborated')
+  detail=conversation_detail(self.root,self.store,'999')
+  self.assertEqual(detail['creator']['collaboration']['status'],'collaborated')
+  showcase=[row for row in detail['timeline'] if row['kind']=='showcase']
+  self.assertEqual([row['text'] for row in showcase],['达人已将商品添加到橱窗','达人已将商品添加到橱窗'])
  def test_manual_rejection_suppresses_all_future_positions(self):
   result=reject_creator(self.store,'999',1,'manual-reject-request')
   self.assertEqual(result['state'],'rejected')

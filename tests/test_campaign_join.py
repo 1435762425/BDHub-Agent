@@ -124,6 +124,20 @@ class Apply(unittest.TestCase):
             self.assertEqual(len(fake.writes), 1)   # 注入的假传输不维护 platformWrites 计数器
             self.assertEqual(fake.writes[0][1]['contact_info']['campaign_contact_info'][0]['value'], 'a@b.com')
 
+    def test_a_verification_challenge_solves_and_replays_the_same_join_once(self):
+        with tempfile.TemporaryDirectory() as folder:
+            answers = [outcome(code=10000, turing=True), outcome()]
+            fake = self._previewed(folder, Fake(joinable=[A], answer=lambda *_: answers.pop(0)))
+            fake._verification_header = 'challenge'
+            fake.verification_successes = 0
+            fake._solve_verification = lambda header: self.assertEqual(header, 'challenge')
+            result = apply(folder, campaign_ids=[A], email='a@b.com', confirm=True,
+                           transport=context(fake), clock=lambda: NOW, job_id='job-1')
+            self.assertEqual(result['counts'], {'joined': 1})
+            self.assertEqual(len(fake.writes), 2)
+            self.assertEqual(fake.writes[0], fake.writes[1])
+            self.assertEqual(fake.verification_successes, 1)
+
     def test_a_confirmed_join_refreshes_the_platform_joined_total(self):
         """写完必须重读"已加入"总数：拿写入之前的数当结论，页面就永远少算这一批。
 
@@ -278,6 +292,17 @@ class JoinAll(unittest.TestCase):
             self.assertEqual(result['appliedCounts'], {'joined': 2})
             # 期限不足的那个活动绝不能出现在写入里。
             self.assertEqual([cid for _, payload in fake.writes for cid in [payload['campaign_id']]], [A, B])
+
+    def test_more_than_one_hundred_campaigns_are_joined_in_bounded_batches(self):
+        with tempfile.TemporaryDirectory() as folder:
+            ids=[f'{index:019d}' for index in range(1,102)]
+            fake=Fake(joinable=ids)
+            result=join_all(folder,email='a@b.com',confirm=True,transport=Sessions(fake),
+                            clock=lambda:NOW,job_id='job-large')
+            self.assertEqual(result['eligible'],101)
+            self.assertEqual(len(result['attempted']),101)
+            self.assertEqual(len(fake.writes),101)
+            self.assertEqual(result['appliedCounts'],{'joined':101})
 
     def test_it_refuses_without_confirmation_and_writes_nothing(self):
         with tempfile.TemporaryDirectory() as folder:

@@ -389,6 +389,10 @@ def start(root, name, raw=None, *, clock=time.time, spawn=subprocess.Popen):
         except OSError:
             pass
     state_path(root, name).write_text(json.dumps(record, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+    if name == 'agentReply' and (root / 'scripts/operations-scheduler.py').is_file():
+        from lib.operations_scheduler import scheduler_state, start_scheduler
+        if not scheduler_state(root)['running']:
+            start_scheduler(root)
     return record | {'running': True, 'stopping': False}
 
 

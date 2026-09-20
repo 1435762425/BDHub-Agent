@@ -391,8 +391,7 @@ def apply(root, *, campaign_ids, email, confirm=False, transport=None, clock=tim
                 # Persist the attempt BEFORE the write: a crash here must not look like "never tried".
                 store.set_item(job['id'], cid, state='writing', write_attempted=1, reason='')
                 try:
-                    outcome = live._xhr(method='POST', path=_join_path(), params=live._params(),
-                                        payload=payloads[cid], write=True)
+                    outcome = _submit_with_verification(live, cid, payloads[cid])
                 except Exception as error:                      # noqa: BLE001 - unknown, never a retry
                     # 记**消息**，不只记类型名：只留一个 "TapLinkError" 时根本查不出原因
                     # （实际遇到过：真正的原因是 taplink_endpoint_not_allowed，写根本没发出去）。
@@ -450,18 +449,26 @@ def join_all(root, *, email, confirm=False, transport=None, clock=time.time, job
     eligible = [row['campaign_id'] for row in previewed['items'] if row['state'] == 'eligible']
     if not eligible:
         return previewed | {'eligible': 0, 'attempted': [], 'platformWrites': 0}
-    applied = apply(root, campaign_ids=eligible, email=email, confirm=True, transport=transport,
-                    clock=clock, job_id=job_id)
+    writes, attempted = 0, []
+    for start in range(0, len(eligible), 100):
+        batch = eligible[start:start + 100]
+        applied = apply(root, campaign_ids=batch, email=email, confirm=True, transport=transport,
+                        clock=clock, job_id=job_id)
+        writes += int(applied.get('platformWrites') or 0)
+        attempted.extend(batch)
+        if applied.get('state') == 'needs_verification':
+            break
+    current = status(root, clock=clock, job_id=job_id)
     wanted = set(eligible)
     counts = {}
-    for row in applied.get('items') or []:
+    for row in current.get('items') or []:
         if row['campaign_id'] in wanted:
             counts[row['state']] = counts.get(row['state'], 0) + 1
     # 与 status 同一个封装（页面只认这一种形状），但 **platformWrites 用真实写入次数**，
     # 不能沿用 status 里那个恒为 0 的展示值。
-    return status(root, clock=clock, job_id=job_id) | {
-        'eligible': len(eligible), 'attempted': eligible, 'appliedCounts': counts,
-        'platformWrites': applied.get('platformWrites', 0)}
+    return current | {
+        'eligible': len(eligible), 'attempted': attempted, 'appliedCounts': counts,
+        'platformWrites': writes}
 
 
 def verify(root, *, transport=None, clock=time.time, job_id=DEFAULT_JOB_ID):
@@ -525,6 +532,30 @@ def _settle(outcome):
     if http == 200 and isinstance(code, int) and code != 0 and not ambiguous and not turing:
         return 'skipped', f'platform_rejected:{code}'
     return 'result_unknown', 'result_unknown'
+
+
+def _submit_with_verification(live, campaign_id, payload):
+    """Submit once; a real challenge may solve and replay this exact frozen request once."""
+    if str((payload or {}).get('campaign_id') or '') != str(campaign_id):
+        raise ValueError('campaign_join_scope_invalid')
+    def request():
+        return live._xhr(method='POST', path=_join_path(), params=live._params(),
+                         payload=payload, write=True)
+    outcome = request()
+    if not (getattr(outcome, 'http_status', None) == 200 and
+            getattr(outcome, 'code', None) == 10000 and
+            getattr(outcome, 'has_turing', False) is True and
+            getattr(outcome, 'ambiguous', False) is False):
+        return outcome
+    header = getattr(live, '_verification_header', '')
+    if not header:
+        raise ValueError('campaign_join_verification_failed')
+    live._solve_verification(header)
+    live.verification_successes = getattr(live, 'verification_successes', 0) + 1
+    replay = request()
+    if getattr(replay, 'has_turing', False):
+        raise ValueError('campaign_join_verification_failed')
+    return replay
 
 
 def _returned_campaign(outcome):

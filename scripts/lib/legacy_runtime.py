@@ -20,6 +20,7 @@ LEGACY_ROOT = ROOT.parent / "01-BDSystem-V2"
 _PROJECT_REF = re.compile(r"^project-(browser|http|im):([a-f0-9]{32})$")
 _BEIJING = ZoneInfo("Asia/Shanghai")
 _ROLE_SLOT = {"communications": (14, 30), "supply": (14, 40)}
+_PROJECT_ROLES = {"acc6": "communications", "acc9": "supply"}
 
 
 def _same_path(value, expected):
@@ -97,6 +98,22 @@ def project_identity_maintenance_due(root, account, now=None):
     return observed.astimezone(_BEIJING) >= scheduled
 
 
+def project_account_enabled(root, account):
+    """Read the new project's own enable switch; a published account defaults to enabled."""
+    root = Path(root).resolve()
+    if project_identity_paths(root, account) is None:
+        return None
+    try:
+        with closing(sqlite3.connect((root / "var/second-cycle.sqlite").as_uri() + "?mode=ro", uri=True)) as db:
+            row = db.execute(
+                "SELECT enabled FROM account_runtime_setting WHERE market='it' AND account=?",
+                (account,),
+            ).fetchone()
+    except (OSError, sqlite3.Error):
+        return True
+    return bool(row[0]) if row else True
+
+
 def _install_project_account_overlay(config, root):
     """Make all vendored transports consume a published project identity when one exists."""
     if not hasattr(config, "_bdhub_agent_base_load_accounts"):
@@ -111,8 +128,17 @@ def _install_project_account_overlay(config, root):
                 if paths is None:
                     output.append(account)
                     continue
+                role = _PROJECT_ROLES.get(account.name)
+                if role is None:
+                    output.append(account)
+                    continue
                 output.append(replace(account, profile_dir=paths["profileDir"],
-                                      headers_json=paths["headersJson"], market="it"))
+                                      headers_json=paths["headersJson"], market="it",
+                                      enabled=bool(project_account_enabled(agent_root, account.name)),
+                                      listener_pool=False, im_send_pool=True,
+                                      collection_pool=role == "communications", report_pool=False,
+                                      share_link_pool=False, sample_review_pool=False,
+                                      identity_lifecycle_enabled=False, auto_relogin=False))
             return output
 
         config.load_accounts = load_accounts_with_project_identity

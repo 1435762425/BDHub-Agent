@@ -9,7 +9,8 @@ from zoneinfo import ZoneInfo
 
 ROOT=Path(__file__).resolve().parents[1];sys.path.insert(0,str(ROOT/'scripts'))
 from lib.jobs import save  # noqa:E402
-from lib.operations_scheduler import (due_slot,scheduler_state,start_scheduler,stop_scheduler,tick)  # noqa:E402
+from lib.operations_scheduler import (SubprocessStageExecutor,due_slot,scheduler_state,start_scheduler,
+                                      stop_scheduler,tick)  # noqa:E402
 from lib.operations_workflow import save_setting,status as workflow_status  # noqa:E402
 from lib.schema_migrations import apply_database  # noqa:E402
 from lib.second_cycle import CycleStore  # noqa:E402
@@ -56,6 +57,41 @@ class SchedulerFlow(unittest.TestCase):
         base={'fullCatalogWeeklyEnabled':False}
         self.assertEqual(datetime.fromtimestamp(due_slot(self.root,NOW,base),TZ).strftime('%H:%M'),'04:30')
         self.assertEqual(datetime.fromtimestamp(due_slot(self.root,NOW+86400,base),TZ).strftime('%H:%M'),'07:00')
+
+
+class StageWiring(unittest.TestCase):
+    def executor(self,answers):
+        executor=SubprocessStageExecutor(ROOT);calls=[]
+        def call(args,label,timeout=14400):
+            calls.append((args,label))
+            return answers(args,label)
+        executor._call=call
+        return executor,calls
+
+    def test_taplink_prepares_every_short_name_before_any_create(self):
+        def answers(args,_label):
+            payload={'missing':0} if args[0]=='scripts/catalog-names.py' else {}
+            return {'state':'completed','itemCount':1,'complete':True,'platformWrites':0,'payload':payload}
+        executor,calls=self.executor(answers)
+        result=executor.execute(None,{'applicableSources':['campaign']},'taplink_prepare',{'jobs':{}})
+        self.assertEqual(result['state'],'completed')
+        self.assertEqual([args[0] for args,_ in calls],
+                         ['scripts/catalog-link-batch.py','scripts/catalog-names.py','scripts/catalog-link-batch.py'])
+        self.assertEqual(calls[0][0][calls[0][0].index('--creates')+1],'0')
+        self.assertEqual(calls[2][0][calls[2][0].index('--creates')+1],'200')
+
+    def test_campaign_joins_before_collecting_the_new_joined_catalog(self):
+        def answers(args,_label):
+            if args[1]=='status':payload={'available':False}
+            elif args[1]=='join-all':payload={'state':'completed','unresolved':[]}
+            else:payload={'status':'completed','screening':{'recorded':True},'offers':7}
+            return {'state':'completed','itemCount':0,'complete':True,
+                    'platformWrites':2 if args[1]=='join-all' else 0,'payload':payload}
+        executor,calls=self.executor(answers)
+        result=executor.execute(None,{'applicableSources':['campaign']},'catalog',{'jobs':{}})
+        self.assertEqual(result['state'],'completed');self.assertEqual(result['platformWrites'],2)
+        self.assertEqual([args[:2] for args,_ in calls],[['scripts/campaign-join.py','status'],
+                         ['scripts/campaign-join.py','join-all'],['scripts/campaign-collect.py','--max-requests']])
 
 
 class FakeChild:pid=os.getpid()

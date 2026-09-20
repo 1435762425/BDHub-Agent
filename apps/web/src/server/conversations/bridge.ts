@@ -3,7 +3,7 @@ import {join} from "node:path";
 import {projectRoot} from "../creator-identities/refresh.ts";
 import {isLocalRequest} from "../runtime/validation.ts";
 
-export type ConversationView="human"|"processing"|"agent"|"completed"|"all";
+export type ConversationView="human"|"agent"|"completed"|"all";
 export type ConversationItem={conversationId:string|null;creatorId:string;oec:string;handle:string|null;state:Exclude<ConversationView,"all">;humanReason:string|null;humanReasonLabel:string|null;latestText:string|null;latestAt:number;waitingSeconds:number;unread:boolean;action:string|null;caseId:string|null};
 export type ConversationList={available:true;view:ConversationView;query:string;counts:Record<ConversationView,number>;total:number;offset:number;limit:number;nextOffset:number|null;items:ConversationItem[];platformWrites:0;realSends:0};
 export type TimelineItem={id:string;direction:"inbound"|"outbound";kind:string;text:string|null;occurredAt:number;status:string;source:string;pid?:string;listId?:string};
@@ -43,15 +43,15 @@ export function validateConversationList(raw:unknown):ConversationList{
  const value=raw as Record<string,unknown>;
  if(value.available!==true||value.platformWrites!==0||value.realSends!==0||!Array.isArray(value.items)||value.items.length>100)throw Error("invalid_conversation");
  const view=value.view as ConversationView;
- if(!["human","processing","agent","completed","all"].includes(view))throw Error("invalid_conversation");
+ if(!["human","agent","completed","all"].includes(view))throw Error("invalid_conversation");
  const items:ConversationItem[]=value.items.map(rawItem=>{
   if(!rawItem||typeof rawItem!=="object"||Array.isArray(rawItem))throw Error("invalid_conversation");
   const row=rawItem as Record<string,unknown>,state=row.state;
-  if(!["human","processing","agent","completed"].includes(String(state))||typeof row.unread!=="boolean")throw Error("invalid_conversation");
+  if(!["human","agent","completed"].includes(String(state))||typeof row.unread!=="boolean")throw Error("invalid_conversation");
   return {conversationId:text(row.conversationId,40,true),creatorId:identifier(row.creatorId,120),oec:identifier(row.oec,40),handle:text(row.handle,100,true),state:state as ConversationItem["state"],humanReason:text(row.humanReason,80,true),humanReasonLabel:text(row.humanReasonLabel,120,true),latestText:text(row.latestText,4000,true),latestAt:stamp(row.latestAt),waitingSeconds:number(row.waitingSeconds),unread:row.unread,action:text(row.action,40,true),caseId:text(row.caseId,80,true)};
  });
  const rawCounts=value.counts;
- if(!rawCounts||typeof rawCounts!=="object"||Array.isArray(rawCounts)||Object.keys(rawCounts).sort().join(",")!=="agent,all,completed,human,processing")throw Error("invalid_conversation");
+ if(!rawCounts||typeof rawCounts!=="object"||Array.isArray(rawCounts)||Object.keys(rawCounts).sort().join(",")!=="agent,all,completed,human")throw Error("invalid_conversation");
  const counts=Object.fromEntries(Object.entries(rawCounts).map(([key,count])=>[key,number(count)])) as Record<ConversationView,number>;
  const total=number(value.total),offset=number(value.offset,5000),limit=number(value.limit,100),nextOffset=value.nextOffset==null?null:number(value.nextOffset,5100);
  if(limit<1||items.length>limit||total!==counts[view]||(nextOffset==null)!==(offset+items.length>=total))throw Error("invalid_conversation");
@@ -134,7 +134,7 @@ export function createConversationHandlers(operations:ConversationOperations=def
  GET:async(request:Request)=>{
   if(!isLocalRequest(request,false))return Response.json({error:"local_origin_required"},{status:403,headers});
   let query:{cid?:string;view?:ConversationView;text?:string;limit?:number;offset?:number};
-  try{const params=new URL(request.url).searchParams;const allowed=new Set(["view","query","limit","offset","cid"]);if([...params.keys()].some(key=>!allowed.has(key)||params.getAll(key).length!==1))throw Error();const cid=params.get("cid");if(cid!=null){if(params.size!==1||!/^\d{1,40}$/.test(cid))throw Error();query={cid};}else{const view=(params.get("view")??"human") as ConversationView;if(!["human","processing","agent","completed","all"].includes(view))throw Error();const textValue=params.get("query")??"";if(textValue.length>100)throw Error();const bounded=(key:string,fallback:number,low:number,max:number)=>{const raw=params.get(key);if(raw==null)return fallback;if(!/^\d+$/.test(raw))throw Error();const value=Number(raw);if(!Number.isSafeInteger(value)||value<low||value>max)throw Error();return value;};query={view,text:textValue,limit:bounded("limit",30,1,100),offset:bounded("offset",0,0,5000)};}}
+  try{const params=new URL(request.url).searchParams;const allowed=new Set(["view","query","limit","offset","cid"]);if([...params.keys()].some(key=>!allowed.has(key)||params.getAll(key).length!==1))throw Error();const cid=params.get("cid");if(cid!=null){if(params.size!==1||!/^\d{1,40}$/.test(cid))throw Error();query={cid};}else{const view=(params.get("view")??"human") as ConversationView;if(!["human","agent","completed","all"].includes(view))throw Error();const textValue=params.get("query")??"";if(textValue.length>100)throw Error();const bounded=(key:string,fallback:number,low:number,max:number)=>{const raw=params.get(key);if(raw==null)return fallback;if(!/^\d+$/.test(raw))throw Error();const value=Number(raw);if(!Number.isSafeInteger(value)||value<low||value>max)throw Error();return value;};query={view,text:textValue,limit:bounded("limit",30,1,100),offset:bounded("offset",0,0,5000)};}}
   catch{return Response.json({error:"invalid_conversation_query"},{status:400,headers});}
   try{return Response.json(query.cid?await operations.detail(query.cid):await operations.list(query.view!,query.text!,query.limit!,query.offset!),{headers});}
   catch{return Response.json({error:"conversation_workbench_unavailable"},{status:503,headers});}
