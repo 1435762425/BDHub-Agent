@@ -58,8 +58,14 @@ def main():
  try:
   body=json.loads(args.json or '{}')
   with CycleStore(ROOT/'var/second-cycle.sqlite',readonly=args.action=='status') as store:
-   if args.action=='save':save_setting(store,'it',body.get('requestId'),body.get('expectedRevision'),body.get('changes'))
+   if args.action=='save':saved=save_setting(store,'it',body.get('requestId'),body.get('expectedRevision'),body.get('changes'))
    result=home(store)
+  if args.action=='save' and (saved['automaticOperationsEnabled'] or saved['continuousSendEnabled']):
+   from lib.operations_scheduler import scheduler_state,start_scheduler
+   if not scheduler_state(ROOT)['running']:start_scheduler(ROOT)
+   if saved['continuousSendEnabled']:
+    from lib.continuous_send import launch_worker
+    launch_worker(ROOT)
   print(json.dumps(result,ensure_ascii=False));return 0
  except (CycleError,ValueError,TypeError,json.JSONDecodeError) as error:
   print(json.dumps({'error':str(error)},ensure_ascii=False));return 2

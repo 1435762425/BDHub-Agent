@@ -64,6 +64,13 @@ class OperationsWorkflowTests(unittest.TestCase):
                               scope={"sources": ["selected", "campaign"]})
         self.assertTrue(result["outputGenerationId"].startswith("generation-"))
 
+    def test_home_continuous_switch_updates_the_execution_control_without_starting_it(self):
+        saved=save_setting(self.store,"it","setting-request-send",0,{"continuousSendEnabled":True})
+        self.assertTrue(saved["continuousSendEnabled"])
+        row=self.store.db.execute('SELECT automatic_enabled,run_requested,stop_requested FROM continuous_send_control').fetchone()
+        self.assertEqual(tuple(row),(1,0,0))
+        self.assertEqual(self.store.db.execute('SELECT count(*) FROM continuous_send_runtime').fetchone()[0],0)
+
     def test_kalodata_quota_exhaustion_publishes_only_completed_scope(self):
         run = create_run(self.store, market="it", trigger_source="manual", scheduled_at=NOW + 86400,
                          request_id="workflow-request-0002")

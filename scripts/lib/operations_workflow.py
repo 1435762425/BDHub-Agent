@@ -134,6 +134,7 @@ def save_setting(store, market, request_id, expected_revision, changes):
                     """INSERT INTO continuous_send_control VALUES(?,?,?,?,?,?,?,?,?)
                     ON CONFLICT(plan_id) DO UPDATE SET
                       automatic_enabled=excluded.automatic_enabled,
+                      stop_requested=CASE WHEN excluded.automatic_enabled=1 THEN 0 ELSE continuous_send_control.stop_requested END,
                       revision=excluded.revision,updated_at=excluded.updated_at""",
                     (plan[0], int(changes["continuousSendEnabled"]), 0, 0, "16:30", "24:00",
                      "standard", control_revision, now),
