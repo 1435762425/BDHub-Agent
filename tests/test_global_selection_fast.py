@@ -3,10 +3,12 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'scripts'))
-from lib.global_selection import Selection
+from lib.global_selection import READBACK_DELAYS,Selection
 from lib.global_selection_fast import Gate,run
 
 class FastTests(unittest.TestCase):
+ def test_readback_waits_for_platform_final_consistency(self):
+  self.assertEqual(READBACK_DELAYS,(0,1,3,30,120))
  def test_shared_gate_spaces_dispatches(self):
   at=[1.]
   g=Gate(8,clock=lambda:at[0],sleep=lambda n:at.__setitem__(0,at[0]+n))

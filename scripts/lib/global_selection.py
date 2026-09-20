@@ -12,6 +12,8 @@ from pathlib import Path
 from lib.global_screen import decimal, evaluate, fingerprint, load, sales
 from lib.second_cycle import encoded,digest
 
+READBACK_DELAYS=(0,1,3,30,120)
+
 def rules(root=None):
     """The thresholds currently in force, read from the operator-controlled config."""
     return load(root)

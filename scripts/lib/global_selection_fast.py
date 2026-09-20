@@ -2,7 +2,7 @@
 from concurrent.futures import ThreadPoolExecutor,wait,FIRST_COMPLETED
 from threading import Lock
 import time
-from lib.global_selection import assess,choose_campaign,selected_rows
+from lib.global_selection import READBACK_DELAYS,assess,choose_campaign,selected_rows
 from lib.global_source import clean_product
 from lib.global_source_transport import DETAIL
 
@@ -141,7 +141,7 @@ def run(ledger,id,t,scope,items,report,save,stopped,*,width=8,qps=8,native_listi
                         refresh_speed();save()
                         if fatal:verify(batch);raise ValueError('parallel_selection_requires_review')
                         ready=unsent
-                for delay in (0,1,3):
+                for delay in READBACK_DELAYS:
                     remaining=[i for i in batch if i['state'] in ('submitting','awaiting_verification') or (i['state']=='result_unknown' and i['payload'].get('platformVerification')!='passed')]
                     if not remaining:break
                     if delay:time.sleep(delay)

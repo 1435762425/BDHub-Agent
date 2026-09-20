@@ -3,7 +3,7 @@
 import argparse,fcntl,json,signal,sys,time
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1];sys.dont_write_bytecode=True;sys.path.insert(0,str(ROOT/'scripts'))
-from lib.global_selection import Selection,assess,choose_campaign,selected_rows
+from lib.global_selection import READBACK_DELAYS,Selection,assess,choose_campaign,selected_rows
 from lib.global_source import clean_product
 from lib.global_source_transport import opportunity_selector
 STOP=False
@@ -85,7 +85,7 @@ def main():
                                 continue
                             verify([i]);save();raise ValueError('selection_receipt_requires_review')
                     attempted=[i for i in chunk if i['state'] in ('submitting','result_unknown')]
-                    for delay in (0,1,3):
+                    for delay in READBACK_DELAYS:
                         if not attempted:break
                         if delay:time.sleep(delay)
                         verify(attempted);attempted=[i for i in attempted if i['state']!='confirmed']
