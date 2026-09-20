@@ -12,9 +12,9 @@
 - TapLink 创建 unknown 改为单 PID 隔离：整批结束后公共回读，再按 30/120 秒两次轮询；未找到记 `skipped_unknown`，不重复 POST。同账号验证码成功后只重放原冻结请求一次，重放仍挑战则暂停作业。清洗对平台明确失效卡建立意图，批后完整回读仍存在记 `failed_known`，不重复 DELETE。
 - 用户可见 frozen-v2 已退役；持续发送在领取每位达人前把 OECID、PID、Offer、`currentListId`、模板 revision、最终正文与控制 revision 冻结进 `cycle_delivery`。旧 `cycle_bulk*` 只读保留，旧 freeze/start/stop/reconcile CLI 固定拒绝。
 - 会话加入 `normal/collaborated/paid/rejected` 四态、人工优先与 showcase 自动升级；人工事项可直接确认且不要求先发送。三条 Agent 动作 key 不变，正文支持不可变 revision 编辑。
-- 页面已重构为运营首页、合作工作台、会话、货盘、达人、运行与设置；结果页支持 7/14/30 天三条趋势线，货盘含命名 Tab，运行设置拆为 Kalodata/作业/机构账号。
+- 页面已重构为运营首页、合作工作台、会话、货盘、达人、运行与设置；结果页支持 7/14/30 天三条趋势线，货盘含命名 Tab，运行设置拆为 Kalodata/作业/机构账号。持续发送页已恢复二发模板的新增、revision 修改、删除、中文翻译与真实例子，当前模板删除门禁读取 `continuous_send_control`。
 - 当前只读回读：持续发送 `off`、池剩余 1,391、24 小时额度使用 0、unknown 0；Agent `enabled=false`；自动设置 0 行、workflow 0 行、连续发送控制/运行 0 行、旧活动冻结批次 0。
-- 代码验证：Python 982 项、Web 143 项、TypeScript、Next 生产构建均通过；平台写入、真实 IM、自动回复、自动清洗、自动建链、账号重登均为 0。
+- 代码验证：Python 983 项、Web 143 项、TypeScript、Next 生产构建均通过；平台写入、真实 IM、自动回复、自动清洗、自动建链、账号重登均为 0。
 
 本轮逻辑提交：`a8fbabd`（状态合同与 migration）、`a1e7d47`（账号身份代次）、`348e7a1`（自动工作流与 TapLink unknown）、`e4086e9`（持续发送）、`328400d`（首页与全页面重构）。
 
@@ -324,7 +324,7 @@ DeepSeek/Agent 已经把 9 月 14 日的“货盘批量备链”继续推进到�
 
 2026-09-21 自动运营工作流验证：
 
-- Python：`982` 项当前 `unittest` 通过，`PYTHONWARNINGS=default` 下无未关闭数据库 warning。
+- Python：`983` 项当前 `unittest` 通过，`PYTHONWARNINGS=default` 下无未关闭数据库 warning。
 - Web：`143` 项 Node 合同测试通过。
 - TypeScript：`npm run typecheck` 通过。
 - Next.js：`npm run build` 通过；生成运营首页、意大利 market-scoped 页面、`/ops/*` 与新 `/api/operations-home`、`/api/workflow`、持续 `/api/send`。
