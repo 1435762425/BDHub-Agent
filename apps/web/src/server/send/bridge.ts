@@ -126,7 +126,7 @@ function validateConfig(raw:unknown):SendConfig{
 }
 
 function validateTemplates(raw:unknown):SendTemplateOption[]{
- if(!Array.isArray(raw)||raw.length<2||raw.length>200)throw Error('invalid_send');
+ if(!Array.isArray(raw)||raw.length<1||raw.length>200)throw Error('invalid_send');
  const seen=new Set<string>();
  const rows=raw.map(value=>{const row=(value??{}) as Record<string,unknown>;const id=text(row.id,40) as SendTemplateId;
   if((!SEND_TEMPLATE_IDS.includes(id as typeof SEND_TEMPLATE_IDS[number])&&!/^custom-[a-f0-9]{24}$/.test(id))||seen.has(id)||
@@ -134,7 +134,6 @@ function validateTemplates(raw:unknown):SendTemplateOption[]{
   const parameters=row.parameters.map(item=>text(item,40));
   return {id,name:text(row.name,60),description:text(row.description,160),bodyIt:text(row.bodyIt,600),
    revision:int(row.revision,'invalid_send',100000),builtIn:row.builtIn,state:row.state as "active"|"archived",parameters};});
- if(SEND_TEMPLATE_IDS.some(id=>!seen.has(id)))throw Error('invalid_send');
  return rows;
 }
 
@@ -202,6 +201,7 @@ export function validateSendState(value:unknown):SendState{
  if(v.market!=="it"||v.account!=="acc6")throw Error('invalid_send');
  const config=validateConfig(v.config);
  const templates=validateTemplates(v.templates);
+ if(!templates.some(item=>item.id===config.template&&item.state==="active"))throw Error('invalid_send');
  const raw=(v.preview??{}) as Record<string,unknown>;
  if(raw.available!==true){
   return {market:"it",account:"acc6",available:false,config,templates,pool:{counts:{},layers:{}},

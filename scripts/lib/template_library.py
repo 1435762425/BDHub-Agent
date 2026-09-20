@@ -31,12 +31,20 @@ def _public_builtin(key,value):
          'builtIn':True,'state':'active','parameters':list(SEND_PLACEHOLDERS)}
 
 def send_templates(store,include_archived=False):
- rows=[_public_builtin(key,value) for key,value in TEMPLATES.items()]
- if not store.db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='send_message_template'").fetchone():return rows
- where='' if include_archived else "WHERE t.state='active'"
- for row in store.db.execute(f'''SELECT t.*,r.body_it FROM send_message_template t
+ defaults={key:_public_builtin(key,value) for key,value in TEMPLATES.items()}
+ if not store.db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='send_message_template'").fetchone():return list(defaults.values())
+ saved=list(store.db.execute('''SELECT t.*,r.body_it FROM send_message_template t
    JOIN send_message_template_revision r ON r.template_id=t.template_id AND r.revision=t.current_revision
-   {where} ORDER BY t.updated_at DESC,t.template_id'''):
+   ORDER BY t.updated_at DESC,t.template_id'''))
+ indexed={row['template_id']:row for row in saved};rows=[]
+ for key,default in defaults.items():
+  row=indexed.get(key)
+  if row:
+   if row['state']=='archived' and not include_archived:continue
+   rows.append({**default,'name':row['name'],'bodyIt':row['body_it'],'revision':row['current_revision'],'state':row['state']})
+  else:rows.append(default)
+ for row in saved:
+  if row['template_id'] in TEMPLATES or (row['state']=='archived' and not include_archived):continue
   rows.append({'id':row['template_id'],'name':row['name'],'description':'自定义二发批量话术',
    'bodyIt':row['body_it'],'revision':row['current_revision'],'builtIn':False,'state':row['state'],
    'parameters':list(SEND_PLACEHOLDERS)})
@@ -57,34 +65,48 @@ def create_send_template(store,request_id,name,body):
  return next(row for row in send_templates(store,True) if row['id']==template_id)
 
 def update_send_template(store,template_id,expected_revision,name,body):
- if not isinstance(template_id,str) or not CUSTOM_ID.fullmatch(template_id) or type(expected_revision) is not int or expected_revision<1:
+ if not isinstance(template_id,str) or (template_id not in TEMPLATES and not CUSTOM_ID.fullmatch(template_id)) or type(expected_revision) is not int or expected_revision<1:
   raise CycleError('template_request_invalid')
  name=_name(name);body=_body(body);now=store.clock()
  with store.tx():
   row=store.db.execute('SELECT * FROM send_message_template WHERE template_id=?',(template_id,)).fetchone()
-  if not row:raise CycleError('template_missing')
-  if row['current_revision']!=expected_revision:raise CycleError('template_revision_conflict')
-  revision=expected_revision+1
+  if not row:
+   if template_id not in TEMPLATES or expected_revision!=1:raise CycleError('template_revision_conflict')
+   original=_public_builtin(template_id,TEMPLATES[template_id]);revision=2
+   store.db.execute("INSERT INTO send_message_template VALUES(?,?,\'active\',?,?,?)",(template_id,name,revision,now,now))
+   store.db.execute('INSERT INTO send_message_template_revision VALUES(?,?,?,?)',(template_id,1,original['bodyIt'],now))
+  else:
+   if row['current_revision']!=expected_revision:raise CycleError('template_revision_conflict')
+   revision=expected_revision+1
   store.db.execute('INSERT INTO send_message_template_revision VALUES(?,?,?,?)',(template_id,revision,body,now))
   store.db.execute("UPDATE send_message_template SET name=?,state='active',current_revision=?,updated_at=? WHERE template_id=?",(name,revision,now,template_id))
  return next(value for value in send_templates(store,True) if value['id']==template_id)
 
 def archive_send_template(store,template_id,expected_revision):
- if not isinstance(template_id,str) or not CUSTOM_ID.fullmatch(template_id):raise CycleError('template_request_invalid')
+ if not isinstance(template_id,str) or (template_id not in TEMPLATES and not CUSTOM_ID.fullmatch(template_id)) or type(expected_revision) is not int or expected_revision<1:raise CycleError('template_request_invalid')
  with store.tx():
   row=store.db.execute('SELECT current_revision FROM send_message_template WHERE template_id=?',(template_id,)).fetchone()
-  if not row or row[0]!=expected_revision:raise CycleError('template_revision_conflict')
-  store.db.execute("UPDATE send_message_template SET state='archived',updated_at=? WHERE template_id=?",(store.clock(),template_id))
+  now=store.clock()
+  if not row:
+   if template_id not in TEMPLATES or expected_revision!=1:raise CycleError('template_revision_conflict')
+   default=_public_builtin(template_id,TEMPLATES[template_id])
+   store.db.execute("INSERT INTO send_message_template VALUES(?,?,\'archived\',1,?,?)",(template_id,default['name'],now,now))
+   store.db.execute('INSERT INTO send_message_template_revision VALUES(?,?,?,?)',(template_id,1,default['bodyIt'],now))
+  else:
+   if row[0]!=expected_revision:raise CycleError('template_revision_conflict')
+   store.db.execute("UPDATE send_message_template SET state='archived',updated_at=? WHERE template_id=?",(now,template_id))
  return {'id':template_id,'state':'archived','revision':expected_revision}
 
 def resolve_send_template(store,template_id):
- if template_id in TEMPLATES:return {'id':template_id,'revision':1,'builtIn':True}
- if not isinstance(template_id,str) or not CUSTOM_ID.fullmatch(template_id):raise CycleError('template_missing')
+ if not store.db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='send_message_template'").fetchone():
+  if template_id in TEMPLATES:return {'id':template_id,'revision':1,'builtIn':True}
+  raise CycleError('template_missing')
  row=store.db.execute('''SELECT t.current_revision,r.body_it FROM send_message_template t
    JOIN send_message_template_revision r ON r.template_id=t.template_id AND r.revision=t.current_revision
    WHERE t.template_id=? AND t.state='active' ''',(template_id,)).fetchone()
- if not row:raise CycleError('template_missing')
- return {'id':template_id,'revision':row['current_revision'],'builtIn':False,'bodyIt':row['body_it']}
+ if row:return {'id':template_id,'revision':row['current_revision'],'builtIn':False,'bodyIt':row['body_it']}
+ if template_id in TEMPLATES and not store.db.execute('SELECT 1 FROM send_message_template WHERE template_id=?',(template_id,)).fetchone():return {'id':template_id,'revision':1,'builtIn':True}
+ raise CycleError('template_missing')
 
 def render_send_template(spec,name,offer,handle):
  if spec['builtIn']:return render_builtin(name,offer,spec['id'],handle)

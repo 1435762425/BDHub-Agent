@@ -4,5 +4,6 @@ import {CreatorIdentityReadStore} from "./store.ts";
 // Web runs from apps/web; every request owns and closes its read-only connection.
 // A database imported after server startup becomes visible on the next request.
 export function getCreatorIdentityStore(){
-  return new CreatorIdentityReadStore(resolve(process.env.BDHUB_AGENT_IDENTITY_DB||"../../var/creator-identities.sqlite"));
+  return new CreatorIdentityReadStore(resolve(process.env.BDHUB_AGENT_IDENTITY_DB||"../../var/creator-identities.sqlite"),
+   resolve(process.env.BDHUB_AGENT_CYCLE_DB||"../../var/second-cycle.sqlite"));
 }

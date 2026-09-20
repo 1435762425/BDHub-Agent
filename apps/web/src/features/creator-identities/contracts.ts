@@ -21,7 +21,7 @@ export interface IdentityOverviewCounts {
   verifiedIdentities:number; pendingLeads:number; resolvedLeads:number; observations:number; lastVerifiedAt:string|null;
 }
 export interface CreatorIdentityOverview extends IdentityOverviewCounts {
-  datasetStatus:IdentityDatasetStatus; market:IdentityMarket;
+  datasetStatus:IdentityDatasetStatus; market:IdentityMarket; repliedCreators:number|null;showcaseCreators:number|null;
   markets:({market:IdentityMarket}&IdentityOverviewCounts)[];
 }
 export interface IdentityAlias {

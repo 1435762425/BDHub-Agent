@@ -16,6 +16,7 @@ const navigation:{href:string;label:string;icon:IconName;match:string}[]=[
 
 export default function AppShell({children}:{children:ReactNode}){
  const pathname=usePathname();
+ const conversationWide=pathname.startsWith("/it/conversations");
  const [collapsed,setCollapsed]=useState(false),[mobile,setMobile]=useState(false);
  useEffect(()=>{try{setCollapsed(localStorage.getItem("bdhub-agent-sidebar")==="collapsed");}catch{}},[]);
  useEffect(()=>setMobile(false),[pathname]);
@@ -47,7 +48,7 @@ export default function AppShell({children}:{children:ReactNode}){
     <div className="flex items-center gap-3"><Button variant="outline" onClick={toggle} className="!size-10 !p-0" aria-label="切换导航"><Icon name="menu"/></Button><div><p className="text-sm font-medium text-gray-700 dark:text-gray-200">意大利 V1</p><p className="text-[11px] text-gray-400">TikTok IM 二发闭环</p></div></div>
     <ThemeToggleButton/>
    </header>
-   <main className="mx-auto max-w-[1680px] p-4 sm:p-6 xl:p-8">{children}</main>
+   <main className={conversationWide?"w-full p-3 sm:p-4 lg:p-5":"mx-auto max-w-[1680px] p-4 sm:p-6 xl:p-8"}>{children}</main>
   </div>
  </div>;
 }

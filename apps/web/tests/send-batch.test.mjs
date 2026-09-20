@@ -57,6 +57,12 @@ test('send state is pinned to the enabled Italy market and ACC6 sender',()=>{
  assert.throws(()=>validateSendState({...payload,account:'acc9'}),/invalid_send/);
 });
 
+test('deleted system templates do not make the remaining active template unreadable',()=>{
+ const reduced=structuredClone(payload);reduced.templates=[templates[0]];
+ assert.equal(validateSendState(reduced).templates.length,1);
+ reduced.config.template='video_focus';assert.throws(()=>validateSendState(reduced),/invalid_send/);
+});
+
 test('a batch that does not add up is refused instead of shown as real numbers',()=>{
  // 池子是个划分：每个扫到的槽位要么进这一批、要么有具名原因。少算一条就必须整包拒。
  const broken=structuredClone(payload);

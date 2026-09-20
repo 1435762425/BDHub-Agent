@@ -25,7 +25,7 @@ function fixture(t){
   observe(IDS[0],"it","111",null,TIMES[3],{},"failure","blocked");
   observe(IDS[1],"it","222","old_name",TIMES[2],{exactFind:{raw:"DO_NOT_EXPOSE"}});observe(IDS[2],"mx","111","mx_name",TIMES[0],{fields:{follower_cnt:{status:"value",value:99}}});
   lead("lead_a","it","old_name","source-a",IDS[0]);lead("lead_pending","it","pending_name","source-pending");lead("lead_other","it","old_name","source-hidden",IDS[0],"other_provider");
-  const open=()=>{const store=new CreatorIdentityReadStore(path);t.after(()=>store.close());return store;};
+  const open=(cyclePath)=>{const store=new CreatorIdentityReadStore(path,cyclePath);t.after(()=>store.close());return store;};
   return {dir,path,db,lead,create,observe,open};
 }
 
@@ -36,6 +36,13 @@ test("read-only overview and paginated list expose explicit identities and unres
   const pending=store.list({market:"it",status:"pending"});assert.equal(pending.total,1);assert.equal(pending.items[0].handle,"pending_name");assert.equal(pending.items[0].historicalCrossSourceIdentityProven,false);
   for(const word of ["payload_json","rawMessage","DO_NOT_EXPOSE","PRIVATE_","source-a","https://"]){assert(!JSON.stringify([overview,list,pending]).includes(word),word);}
   assert.deepEqual(readFileSync(f.path),bytes);
+});
+test("overview counts replies and showcase adoption by distinct creator",t=>{
+  const f=fixture(t),cyclePath=join(f.dir,"cycle.sqlite"),cycle=new DatabaseSync(cyclePath);
+  cycle.exec("CREATE TABLE plan(id TEXT,market TEXT);CREATE TABLE relationship(plan_id TEXT,creator_id TEXT,oec TEXT);CREATE TABLE inbox_event(plan_id TEXT,oec TEXT,kind TEXT,historical INTEGER)");
+  cycle.prepare("INSERT INTO plan VALUES('p','it')").run();cycle.prepare("INSERT INTO relationship VALUES('p',?,'111')").run(IDS[0]);cycle.prepare("INSERT INTO relationship VALUES('p',?,'222')").run(IDS[1]);
+  const event=cycle.prepare("INSERT INTO inbox_event VALUES('p',?,?,?)");event.run('111','creatorReplies',0);event.run('111','creatorReplies',0);event.run('111','showcaseNotifications',0);event.run('222','showcaseNotifications',0);event.run('222','creatorReplies',1);cycle.close();
+  const overview=f.open(cyclePath).overview('it');assert.equal(overview.repliedCreators,1);assert.equal(overview.showcaseCreators,2);
 });
 test("old handle search returns both canonical candidates after name reuse without merging",t=>{
   const store=fixture(t).open(),result=store.list({market:"it",q:"old_name"});

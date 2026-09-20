@@ -4,14 +4,15 @@ import argparse,importlib.util,json,re,sqlite3,sys
 from contextlib import closing
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1];sys.dont_write_bytecode=True;sys.path.insert(0,str(ROOT/'scripts'))
-from lib.conversation_workbench import complete_reviewed_human,conversation_detail,list_conversations,save_draft,workspace_status
+from lib.conversation_workbench import (complete_reviewed_human,confirm_manual_reply,conversation_detail,
+ list_conversations,reject_creator,save_draft,workspace_status)
 from lib.cycle_auto_reply import AutoReplies
 from lib.second_cycle import CycleError,CycleStore,digest
 
 def main():
- p=argparse.ArgumentParser();p.add_argument('action',choices=('list','detail','status','save-draft','complete-human','send-text','send-card','translate'));p.add_argument('--view',default='human');p.add_argument('--query',default='');p.add_argument('--limit',type=int,default=30);p.add_argument('--offset',type=int,default=0);p.add_argument('--cid');a=p.parse_args()
+ p=argparse.ArgumentParser();p.add_argument('action',choices=('list','detail','status','save-draft','complete-human','confirm-manual','reject-creator','send-text','send-card','translate'));p.add_argument('--view',default='human');p.add_argument('--query',default='');p.add_argument('--limit',type=int,default=30);p.add_argument('--offset',type=int,default=0);p.add_argument('--cid');a=p.parse_args()
  try:
-  readonly=a.action not in ('save-draft','complete-human','send-text','send-card')
+  readonly=a.action not in ('save-draft','complete-human','confirm-manual','reject-creator','send-text','send-card')
   with CycleStore(ROOT/'var/second-cycle.sqlite',readonly=readonly) as store:
    if a.action=='list':result=list_conversations(ROOT,store,a.view,a.query,a.limit,a.offset)
    elif a.action=='detail':result=conversation_detail(ROOT,store,a.cid)
@@ -24,6 +25,14 @@ def main():
     raw=sys.stdin.read(10001)
     if len(raw.encode())>10000:raise CycleError('input_too_large')
     req=json.loads(raw);result=complete_reviewed_human(store,a.cid,req.get('turnId'),req.get('expectedControlRevision'),req.get('expectedPendingRevision'),req.get('note'))
+   elif a.action=='confirm-manual':
+    raw=sys.stdin.read(10001)
+    if len(raw.encode())>10000:raise CycleError('input_too_large')
+    req=json.loads(raw);result=confirm_manual_reply(store,a.cid,req.get('caseId'),req.get('turnId'),req.get('virtual'),req.get('expectedControlRevision'),req.get('expectedPendingRevision'))
+   elif a.action=='reject-creator':
+    raw=sys.stdin.read(10001)
+    if len(raw.encode())>10000:raise CycleError('input_too_large')
+    req=json.loads(raw);result=reject_creator(store,a.cid,req.get('expectedControlRevision'),req.get('requestId'))
    elif a.action in ('send-text','send-card'):
     raw=sys.stdin.read(10001)
     if len(raw.encode())>10000:raise CycleError('input_too_large')

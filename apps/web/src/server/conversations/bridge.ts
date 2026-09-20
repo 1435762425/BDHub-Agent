@@ -8,13 +8,16 @@ export type ConversationItem={conversationId:string|null;creatorId:string;oec:st
 export type ConversationList={available:true;view:ConversationView;query:string;counts:Record<ConversationView,number>;total:number;offset:number;limit:number;nextOffset:number|null;items:ConversationItem[];platformWrites:0;realSends:0};
 export type TimelineItem={id:string;direction:"inbound"|"outbound";kind:string;text:string|null;occurredAt:number;status:string;source:string;pid?:string;listId?:string};
 export type ManualTemplate={id:string;name:string;category:string;body:string;revision:number;state:"active"|"archived"};
-export type ConversationDetail={available:true;conversationId:string;creator:{creatorId:string;oec:string;handle:string|null;mode:string;rejected:boolean;unlocked:boolean;revision:number};timeline:TimelineItem[];episodes:Array<{episodeId:string;pid:string;listId:string;sentAt:number}>;case:{id:string;reason:string;reasonLabel:string;createdAt:number;revision:number;virtual:boolean;turnId:string|null;pendingRevision:number}|null;draft:{text:string;revision:number;updatedAt:number};manualTemplates:ManualTemplate[];platformWrites:0;realSends:0};
+export type CreatorMetrics={gmv:string|number|null;videoGmv:string|number|null;liveGmv:string|number|null;followers:number|null;unitsSold:number|null;avgVideoViews:number|null;observedAt:string|null;replyCount:number;showcaseCount:number};
+export type ConversationDetail={available:true;conversationId:string;creator:{creatorId:string;oec:string;handle:string|null;mode:string;rejected:boolean;unlocked:boolean;revision:number};timeline:TimelineItem[];episodes:Array<{episodeId:string;pid:string;listId:string;sentAt:number}>;case:{id:string;reason:string;reasonLabel:string;createdAt:number;revision:number;virtual:boolean;turnId:string|null;pendingRevision:number}|null;metrics:CreatorMetrics;manualReply:{id:string;kind:"manual"|"manual_card";confirmedAt:number}|null;draft:{text:string;revision:number;updatedAt:number};manualTemplates:ManualTemplate[];platformWrites:0;realSends:0};
 
 export type ConversationCommand=
  | {action:"save_draft";cid:string;text:string;expectedRevision:number}
  | {action:"send_text";cid:string;text:string;expectedControlRevision:number;requestId:string}
  | {action:"send_card";cid:string;episodeId:string;expectedControlRevision:number;requestId:string}
  | {action:"complete_human";cid:string;turnId:string;expectedControlRevision:number;expectedPendingRevision:number;note:string}
+ | {action:"confirm_manual_reply";cid:string;caseId:string;turnId:string|null;virtual:boolean;expectedControlRevision:number;expectedPendingRevision:number}
+ | {action:"reject_creator";cid:string;expectedControlRevision:number;requestId:string}
  | {action:"translate";text:string;target:"it"|"zh"};
 
 function run(args:string[],stdin?:unknown):Promise<unknown>{
@@ -73,7 +76,12 @@ export function validateConversationDetail(raw:unknown):ConversationDetail{
  if(!value.draft||typeof value.draft!=="object"||Array.isArray(value.draft))throw Error("invalid_conversation");
  const rawDraft=value.draft as Record<string,unknown>,draft={text:text(rawDraft.text,4000)??"",revision:number(rawDraft.revision),updatedAt:stamp(rawDraft.updatedAt)};
  const manualTemplates:ManualTemplate[]=(value.manualTemplates as unknown[]).map(rawTemplate=>{if(!rawTemplate||typeof rawTemplate!=="object"||Array.isArray(rawTemplate))throw Error("invalid_conversation");const row=rawTemplate as Record<string,unknown>;if(row.state!=="active"&&row.state!=="archived")throw Error("invalid_conversation");return {id:identifier(row.id,40),name:identifier(row.name,60),category:identifier(row.category,60),body:identifier(row.body,2000),revision:number(row.revision),state:row.state};});
- return {available:true,conversationId:identifier(value.conversationId,40),creator:{creatorId:identifier(creator.creatorId,120),oec:identifier(creator.oec,40),handle:text(creator.handle,100,true),mode:identifier(creator.mode,30),rejected:creator.rejected,unlocked:creator.unlocked,revision:number(creator.revision)},timeline,episodes,case:caseValue,draft,manualTemplates,platformWrites:0,realSends:0};
+ if(!value.metrics||typeof value.metrics!=="object"||Array.isArray(value.metrics))throw Error("invalid_conversation");const rawMetrics=value.metrics as Record<string,unknown>;
+ const metric=(raw:unknown)=>raw==null?null:typeof raw==="string"&&raw.length<=128?raw:typeof raw==="number"&&Number.isFinite(raw)&&raw>=0?raw:(()=>{throw Error("invalid_conversation");})();
+ const countMetric=(raw:unknown)=>raw==null?null:number(raw);
+ const metrics:CreatorMetrics={gmv:metric(rawMetrics.gmv),videoGmv:metric(rawMetrics.videoGmv),liveGmv:metric(rawMetrics.liveGmv),followers:countMetric(rawMetrics.followers),unitsSold:countMetric(rawMetrics.unitsSold),avgVideoViews:countMetric(rawMetrics.avgVideoViews),observedAt:text(rawMetrics.observedAt,64,true),replyCount:number(rawMetrics.replyCount),showcaseCount:number(rawMetrics.showcaseCount)};
+ let manualReply:ConversationDetail["manualReply"]=null;if(value.manualReply!=null){if(typeof value.manualReply!=="object"||Array.isArray(value.manualReply))throw Error("invalid_conversation");const row=value.manualReply as Record<string,unknown>;if(row.kind!=="manual"&&row.kind!=="manual_card")throw Error("invalid_conversation");manualReply={id:identifier(row.id,80),kind:row.kind,confirmedAt:stamp(row.confirmedAt)};}
+ return {available:true,conversationId:identifier(value.conversationId,40),creator:{creatorId:identifier(creator.creatorId,120),oec:identifier(creator.oec,40),handle:text(creator.handle,100,true),mode:identifier(creator.mode,30),rejected:creator.rejected,unlocked:creator.unlocked,revision:number(creator.revision)},timeline,episodes,case:caseValue,metrics,manualReply,draft,manualTemplates,platformWrites:0,realSends:0};
 }
 
 export function validateConversationCommand(raw:unknown):ConversationCommand{
@@ -86,6 +94,8 @@ export function validateConversationCommand(raw:unknown):ConversationCommand{
  if(action==="send_text"){exact(value,["action","cid","expectedControlRevision","requestId","text"]);const body=text(value.text,4000);const revision=number(value.expectedControlRevision,1_000_000);if(!body?.trim()||revision<1)throw Error("invalid_conversation_request");return {action,cid:cid(),text:body,expectedControlRevision:revision,requestId:requestId()};}
  if(action==="send_card"){exact(value,["action","cid","episodeId","expectedControlRevision","requestId"]);const episodeId=identifier(value.episodeId,40),revision=number(value.expectedControlRevision,1_000_000);if(!/^episode-[a-f0-9]{24}$/.test(episodeId)||revision<1)throw Error("invalid_conversation_request");return {action,cid:cid(),episodeId,expectedControlRevision:revision,requestId:requestId()};}
  if(action==="complete_human"){exact(value,["action","cid","expectedControlRevision","expectedPendingRevision","note","turnId"]);const turnId=identifier(value.turnId,40),control=number(value.expectedControlRevision,1_000_000),pending=number(value.expectedPendingRevision,1_000_000),note=text(value.note,4000);if(!/^turn-[a-f0-9]{24}$/.test(turnId)||control<1||pending<1||!note?.trim())throw Error("invalid_conversation_request");return {action,cid:cid(),turnId,expectedControlRevision:control,expectedPendingRevision:pending,note};}
+ if(action==="confirm_manual_reply"){exact(value,["action","caseId","cid","expectedControlRevision","expectedPendingRevision","turnId","virtual"]);const caseId=identifier(value.caseId,80),control=number(value.expectedControlRevision,1_000_000),pending=number(value.expectedPendingRevision,1_000_000),turnId=text(value.turnId,40,true);if(typeof value.virtual!=="boolean"||control<1||pending<1||!/^case-[a-f0-9]{24}$|^review-[a-f0-9]{24}$/.test(caseId)||(value.virtual?!turnId?.match(/^turn-[a-f0-9]{24}$/):turnId!==null))throw Error("invalid_conversation_request");return {action,cid:cid(),caseId,turnId,virtual:value.virtual,expectedControlRevision:control,expectedPendingRevision:pending};}
+ if(action==="reject_creator"){exact(value,["action","cid","expectedControlRevision","requestId"]);const control=number(value.expectedControlRevision,1_000_000);if(control<1)throw Error("invalid_conversation_request");return {action,cid:cid(),expectedControlRevision:control,requestId:requestId()};}
  throw Error("invalid_conversation_request");
 }
 
@@ -96,6 +106,8 @@ export function sendConversationText(cid:string,textValue:string,expectedControl
 export function translateConversationText(textValue:string,target:"it"|"zh"){return run(["translate"],{text:textValue,target});}
 export function sendConversationCard(cid:string,episodeId:string,expectedControlRevision:number,requestId:string){return run(["send-card","--cid",cid],{episodeId,expectedControlRevision,requestId});}
 export function completeReviewedHuman(cid:string,turnId:string,expectedControlRevision:number,expectedPendingRevision:number,note:string){return run(["complete-human","--cid",cid],{turnId,expectedControlRevision,expectedPendingRevision,note});}
+export function confirmManualReply(cid:string,caseId:string,turnId:string|null,virtual:boolean,expectedControlRevision:number,expectedPendingRevision:number){return run(["confirm-manual","--cid",cid],{caseId,turnId,virtual,expectedControlRevision,expectedPendingRevision});}
+export function rejectConversationCreator(cid:string,expectedControlRevision:number,requestId:string){return run(["reject-creator","--cid",cid],{expectedControlRevision,requestId});}
 
 async function jsonBody(request:Request,maxBytes=20_000):Promise<unknown>{
  if(request.headers.get("content-type")?.split(";")[0].trim()!=="application/json")throw Error("json_required");
@@ -108,9 +120,9 @@ async function jsonBody(request:Request,maxBytes=20_000):Promise<unknown>{
 
 type ConversationOperations={
  list:typeof listConversations;detail:typeof readConversation;saveDraft:typeof saveConversationDraft;
- sendText:typeof sendConversationText;sendCard:typeof sendConversationCard;translate:typeof translateConversationText;completeHuman:typeof completeReviewedHuman;
+ sendText:typeof sendConversationText;sendCard:typeof sendConversationCard;translate:typeof translateConversationText;completeHuman:typeof completeReviewedHuman;confirmManual:typeof confirmManualReply;rejectCreator:typeof rejectConversationCreator;
 };
-const defaults:ConversationOperations={list:listConversations,detail:readConversation,saveDraft:saveConversationDraft,sendText:sendConversationText,sendCard:sendConversationCard,translate:translateConversationText,completeHuman:completeReviewedHuman};
+const defaults:ConversationOperations={list:listConversations,detail:readConversation,saveDraft:saveConversationDraft,sendText:sendConversationText,sendCard:sendConversationCard,translate:translateConversationText,completeHuman:completeReviewedHuman,confirmManual:confirmManualReply,rejectCreator:rejectConversationCreator};
 const headers={"Cache-Control":"no-store","X-Content-Type-Options":"nosniff"};
 
 export function createConversationHandlers(operations:ConversationOperations=defaults){return {
@@ -132,6 +144,8 @@ export function createConversationHandlers(operations:ConversationOperations=def
     command.action==="save_draft"?await operations.saveDraft(command.cid,command.text,command.expectedRevision):
     command.action==="send_text"?await operations.sendText(command.cid,command.text,command.expectedControlRevision,command.requestId):
     command.action==="complete_human"?await operations.completeHuman(command.cid,command.turnId,command.expectedControlRevision,command.expectedPendingRevision,command.note):
+    command.action==="confirm_manual_reply"?await operations.confirmManual(command.cid,command.caseId,command.turnId,command.virtual,command.expectedControlRevision,command.expectedPendingRevision):
+    command.action==="reject_creator"?await operations.rejectCreator(command.cid,command.expectedControlRevision,command.requestId):
     await operations.sendCard(command.cid,command.episodeId,command.expectedControlRevision,command.requestId);
    return Response.json(result,{headers});
   }catch{return Response.json({error:"conversation_workbench_unavailable"},{status:503,headers});}

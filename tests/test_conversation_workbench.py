@@ -2,11 +2,13 @@ import json,sqlite3,tempfile,unittest,sys
 from contextlib import closing
 from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'scripts'))
-from lib.conversation_workbench import complete_reviewed_human,conversation_detail,list_conversations,save_draft
+from lib.conversation_workbench import (complete_reviewed_human,confirm_manual_reply,conversation_detail,
+ list_conversations,reject_creator,save_draft)
+from lib.cycle_auto_reply import AutoReplies
 from lib.cycle_inbox import Inbox
 from lib.cycle_service import Service
 from lib.schema_migrations import apply_database
-from lib.second_cycle import CycleStore
+from lib.second_cycle import CycleError,CycleStore
 from test_second_cycle import NOW
 
 class ConversationWorkbenchTests(unittest.TestCase):
@@ -41,5 +43,20 @@ class ConversationWorkbenchTests(unittest.TestCase):
   duplicate=complete_reviewed_human(self.store,'999',turn,detail['creator']['revision'],detail['case']['pendingRevision'],'已人工核对')
   self.assertTrue(duplicate['duplicate'])
   self.assertEqual(self.store.db.execute('SELECT state FROM service_case').fetchone()[0],'resolved')
+ def test_confirm_manual_reply_needs_a_confirmed_manual_send_and_no_free_text_note(self):
+  detail=conversation_detail(self.root,self.store,'999')
+  with self.assertRaisesRegex(CycleError,'manual_reply_not_confirmed'):
+   confirm_manual_reply(self.store,'999',detail['case']['id'],None,False,detail['creator']['revision'],detail['case']['pendingRevision'])
+  reply=AutoReplies(self.store).prepare_manual(self.plan,'creator-1','999','Risposta',detail['creator']['revision'],'manual-confirmation')
+  self.store.db.execute("UPDATE service_reply SET state='confirmed',started=? WHERE id=?",(NOW+1,reply['id']))
+  refreshed=conversation_detail(self.root,self.store,'999');self.assertEqual(refreshed['manualReply']['id'],reply['id'])
+  result=confirm_manual_reply(self.store,'999',detail['case']['id'],None,False,detail['creator']['revision'],detail['case']['pendingRevision'])
+  self.assertEqual(result['state'],'resolved');self.assertEqual(self.store.db.execute('SELECT state FROM service_case').fetchone()[0],'resolved')
+ def test_manual_rejection_suppresses_all_future_positions(self):
+  result=reject_creator(self.store,'999',1,'manual-reject-request')
+  self.assertEqual(result['state'],'rejected')
+  rel=self.store.db.execute('SELECT rejected,mode,inbox_until FROM relationship WHERE creator_id=\'creator-1\'').fetchone()
+  self.assertEqual(tuple(rel),(1,'auto',0));self.assertEqual(self.store.db.execute('SELECT state FROM inbox_pending').fetchone()[0],'suppressed_no_reply')
+  self.assertTrue(reject_creator(self.store,'999',1,'manual-reject-request')['duplicate'])
 
 if __name__=='__main__':unittest.main()

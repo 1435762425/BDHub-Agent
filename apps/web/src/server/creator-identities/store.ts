@@ -65,7 +65,8 @@ const safePayload="CASE WHEN json_valid(e.payload_json) THEN e.payload_json ELSE
 
 export class CreatorIdentityReadStore {
   private db:DatabaseSync|null=null;
-  constructor(path:string){
+  private cycle:DatabaseSync|null=null;
+  constructor(path:string,cyclePath?:string){
     if(!existsSync(path))return;
     try{
       this.db=new DatabaseSync(path,{readOnly:true});
@@ -80,9 +81,14 @@ export class CreatorIdentityReadStore {
       if(versions.length!==1||versions[0].version!==1)throw invalid();
       // All projections in this short-lived request see the same WAL snapshot.
       this.db.exec("BEGIN");
+      if(cyclePath&&existsSync(cyclePath))try{
+        const cycle=new DatabaseSync(cyclePath,{readOnly:true});cycle.exec("PRAGMA query_only=ON");
+        const cycleTables=new Set(cycle.prepare("SELECT name FROM sqlite_master WHERE type='table'").all().map(row=>String(row.name)));
+        if(["plan","relationship","inbox_event"].every(table=>cycleTables.has(table))){cycle.exec("BEGIN");this.cycle=cycle;}else cycle.close();
+      }catch{this.cycle?.close();this.cycle=null;}
     }catch{this.close();throw invalid();}
   }
-  close(){this.db?.close();this.db=null;}
+  close(){this.cycle?.close();this.cycle=null;this.db?.close();this.db=null;}
   get datasetStatus(){return this.db?"ready" as const:"not_imported" as const;}
   private counts(market:IdentityMarket):IdentityOverviewCounts{
     if(!this.db)return {verifiedIdentities:0,pendingLeads:0,resolvedLeads:0,observations:0,lastVerifiedAt:null};
@@ -94,7 +100,16 @@ export class CreatorIdentityReadStore {
       (SELECT last_observed_at FROM creator_identity WHERE market=? ORDER BY last_observed_us DESC LIMIT 1) verified`).get(market,market,market,market,market)!;
     return {verifiedIdentities:Number(row.identities),pendingLeads:Number(row.pending),resolvedLeads:Number(row.resolved),observations:Number(row.observations),lastVerifiedAt:row.verified===null?null:String(row.verified)};
   }
-  overview(market:IdentityMarket="it"):CreatorIdentityOverview{return {datasetStatus:this.datasetStatus,market,...this.counts(market),markets:(["it","mx","br"] as const).map(key=>({market:key,...this.counts(key)}))};}
+  private interactionCounts(market:IdentityMarket){
+    if(!this.cycle)return {repliedCreators:null,showcaseCreators:null};
+    const row=this.cycle.prepare(`SELECT
+      count(DISTINCT CASE WHEN e.kind='creatorReplies' THEN r.creator_id END) replied,
+      count(DISTINCT CASE WHEN e.kind='showcaseNotifications' THEN r.creator_id END) showcase
+      FROM inbox_event e JOIN relationship r ON r.plan_id=e.plan_id AND r.oec=e.oec
+      JOIN plan p ON p.id=e.plan_id WHERE p.market=? AND e.historical=0`).get(market)!;
+    return {repliedCreators:Number(row.replied||0),showcaseCreators:Number(row.showcase||0)};
+  }
+  overview(market:IdentityMarket="it"):CreatorIdentityOverview{return {datasetStatus:this.datasetStatus,market,...this.counts(market),...this.interactionCounts(market),markets:(["it","mx","br"] as const).map(key=>({market:key,...this.counts(key)}))};}
   list({market="it",status="verified",q="",offset=0,limit=20}:{market?:IdentityMarket;status?:"verified"|"pending";q?:string;offset?:number;limit?:number}={}):CreatorIdentityList{
     const base={datasetStatus:this.datasetStatus,market,status,offset,limit};if(!this.db)return {...base,items:[],total:0};
     const search=like(q);

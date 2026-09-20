@@ -163,7 +163,7 @@ Pure HTTP 验证依赖 `Pillow==12.3.0`、`opencv-python-headless==4.14.0.94` �
 
 `cycle_burst.run_cohort()` 强制同时存在 state=`running` 且 authorization 完全相等的 `cycle_bulk_freeze`，并要求每个待执行 item 都有不可变 `cycle_bulk_candidate`；没有冻结范围时在认证/平台调用前返回 `frozen_batch_required`，不再调用 `choose_candidates()` 或远程 `fresh_card()`。旧 `bulk-second-send.py` 固定返回 `legacy_bulk_sender_retired`，不会建表、恢复或发送；历史 `cycle_bulk` 行只读保留。
 
-发送话术由 `cycle_materials.py` 的五个内置模板与 `send_message_template*` 的自定义 revision 统一投影。自定义正文只允许 `{creator_handle}`、`{product_name}`、`{creator_commission}`，后二者必需；二发模板卡在保存批次前就展示完整正文和参数预览。`config/send-batch.json` 保存当前模板 ID；模板 ID、revision 和最终正文进入预览 config、authorization、preview hash 和每个冻结 candidate 的 `message`，因此切换或修订模板必须重新预览并保存，冻结后执行器只读取已冻结的最终 `textIt`。正在使用的自定义模板不能归档。旧 `video_live` 仅保留历史材料读取兼容，不出现在新批次选择器中。
+发送话术由 `cycle_materials.py` 的五个系统默认值与 `send_message_template*` revision 统一投影。系统模板第一次编辑时把默认正文冻结为 revision 1，再写 revision 2；删除写 `archived` 覆盖，不修改代码常量。新增模板使用 `custom-*` ID。所有正文只允许 `{creator_handle}`、`{product_name}`、`{creator_commission}`，后二者必需；模板卡在保存批次前展示全文、参数预览和按需中文翻译。`config/send-batch.json` 保存当前模板 ID；模板 ID、revision 和最终正文进入预览 config、authorization、preview hash 和每个冻结 candidate 的 `message`。正在使用的模板不能删除，冻结后执行器只读取冻结正文。旧 `video_live` 仅保留历史材料读取兼容。
 
 `lead_pool.py` 与 `/api/lead-pool` 使用 `bdhub.lead-pool.v3`：业务只投影 `sendable / waiting / inactive`，`sent` 单列历史；Web 合同同时保留 A/B 来源证据、数值 GMV、代表视频和来源计数。发送预览按池子顺序复检；B-only 位置从 `video_lead_current` 冻结代表视频 source，而不是伪造 A 类 `source_edge`。冻结批次执行器按 `position_order` 消费，不在执行时重新挑选或补满。
 
@@ -298,7 +298,7 @@ pending → started/submitted → confirmed
 | `/api/lead-pool` | 发送池分层 |
 | `/api/send` | 发送预览、设置保存、冻结、明确 start/stop 和批次状态 |
 | `/api/template-library` | 二发模板、人工模板、Agent 固定模板和互斥窗口；所有 mutation 使用字段白名单与 revision |
-| `/api/conversations` | 默认需人工队列、会话详情、草稿、翻译、人工文本/商品卡发送；图片入口当前明确禁用 |
+| `/api/conversations` | 默认需人工队列、会话详情、原文中译、草稿、人工文本/商品卡、人工回复确认和达人拒绝标签；图片入口当前明确禁用 |
 | `/api/reply-review` | 事件级样本、双模型影子分类、turn 标准动作和受控案件应用；无发送动作 |
 | `/api/inbox` | 收信 worker、今日/最近 14 日统计、可分页日明细和待人工 |
 | `/api/jobs` | 手动作业与定时意向 |
@@ -307,6 +307,8 @@ pending → started/submitted → confirmed
 Web 不再构建 `/flow-demo`、浏览器演示页、旧 local runtime、second-pilot、second-live trial、second-outreach history、matching 或 outreach-drafts 路由。对应 SQLite 作为历史数据保留，未从备份清单移除。
 
 合作工作台 canonical route 为 `/it/workspace/send` 和 `/it/workspace/history`；旧 `/it/workspace/inbox` 只做重定向。会话 canonical route 为 `/it/conversations`、`/it/conversations/templates` 和 `/it/conversations/agent`，默认 view=`human`。回复影子评测保留在 `/ops/reply-evaluation`，账号就绪保留在 `/ops/accounts?market=it`。
+
+会话页在 AppShell 中使用无最大宽度布局，并在桌面按 `队列 / 时间线与编辑器 / 达人与事项` 占满剩余视口。详情只投影白名单经营字段；人工回复确认必须先找到当前入站消息之后 `service_reply.kind in (manual,manual_card)` 且 `state=confirmed` 的证据。手工拒绝写达人级 `relationship.rejected=1`、关闭回复冻结并把当前 pending 标为 `suppressed_no_reply`，因此所有 PID 都被发送池排除。达人库顶部的“已查询/查得到/搜索不到”复用 `/api/identity-queue` 的互斥 handle 口径；“有回复/已加橱窗”从 live `inbox_event` 按 `creator_id` 去重，历史补录不计入。
 
 ## 9. 账号与外部系统
 
