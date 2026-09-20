@@ -20,11 +20,15 @@ class IdentityBridge:
    if self.store._plan(plan)['state']!='active':raise CycleError('plan_paused')
    tables={r[0] for r in self.store.db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
    current={'lead_query_head','lead_query_selection'}<=tables and self.store.db.execute('SELECT 1 FROM lead_query_head WHERE plan_id=? LIMIT 1',(plan,)).fetchone()
+   # CROSS JOIN fixes the loop order.  With ordinary JOIN SQLite chose q -> every source_edge -> s,
+   # turning a few thousand current rows into tens of millions of JSON parses while holding the
+   # write transaction.  The current head must drive its bounded selection before the edge lookup.
    sql="""SELECT e.source_id,e.payload FROM lead_query_head q
-    JOIN lead_query_selection s ON s.query_id=q.query_id
-    JOIN source_edge e ON e.plan_id=q.plan_id AND e.source_id=s.source_id
+    CROSS JOIN lead_query_selection s
+    CROSS JOIN source_edge e
     LEFT JOIN cycle_identity_handoff h ON h.plan_id=e.plan_id AND h.source_id=e.source_id
-    WHERE e.plan_id=? AND h.source_id IS NULL AND json_extract(e.payload,'$.creatorId') IS NULL
+    WHERE s.query_id=q.query_id AND e.plan_id=q.plan_id AND e.source_id=s.source_id
+    AND e.plan_id=? AND h.source_id IS NULL AND json_extract(e.payload,'$.creatorId') IS NULL
     AND (? IS NULL OR e.source_id IN (SELECT value FROM json_each(?)))
     ORDER BY s.source_rank,e.source_id LIMIT 500""" if current else """SELECT e.source_id,e.payload FROM source_edge e
     LEFT JOIN cycle_identity_handoff h ON h.plan_id=e.plan_id AND h.source_id=e.source_id

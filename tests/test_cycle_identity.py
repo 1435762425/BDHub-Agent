@@ -28,6 +28,26 @@ class BridgeTests(unittest.TestCase):
   self.assertEqual(self.s.db.execute('SELECT batch_id FROM cycle_identity_outbox WHERE id=?',(second,)).fetchone()[0],None)
   self.assertEqual(json.loads(self.s.db.execute('SELECT payload FROM cycle_identity_outbox WHERE id=?',(first,)).fetchone()[0])['edges'][0]['sourceId'],'e1')
   self.assertIsNone(self.b.freeze(self.p,source_ids=[]))
+ def test_current_head_drives_edge_lookup_without_scanning_all_history_per_pid(self):
+  self.s.db.executescript('''CREATE TABLE lead_query_head(plan_id TEXT,pid TEXT,query_id TEXT,PRIMARY KEY(plan_id,pid));
+CREATE TABLE lead_query_selection(query_id TEXT,source_id TEXT,source_rank INTEGER,units INTEGER,position INTEGER,
+ PRIMARY KEY(query_id,source_id),UNIQUE(query_id,position));
+CREATE INDEX lead_query_selection_source ON lead_query_selection(source_id,query_id);''')
+  with self.s.tx():
+   for i in range(80):
+    source=f'current{i}';query=f'query{i}';pid=str(1000000000000000000+i)
+    self.s.db.execute('INSERT INTO source_edge VALUES(?,?,?)',(self.p,source,json.dumps({'sourceHandle':f'handle{i}','creatorId':None})))
+    self.s.db.execute('INSERT INTO lead_query_head VALUES(?,?,?)',(self.p,pid,query))
+    self.s.db.execute('INSERT INTO lead_query_selection VALUES(?,?,?,?,?)',(query,source,1,1,1))
+   for i in range(1000):
+    self.s.db.execute('INSERT INTO source_edge VALUES(?,?,?)',(self.p,f'history{i}',json.dumps({'sourceHandle':f'old{i}','creatorId':None})))
+  # The old reordered JOIN crosses 80 heads with every historical edge and exceeds this bound.
+  self.s.db.set_progress_handler(lambda:1,50000)
+  try:outbox=self.b.freeze(self.p)
+  finally:self.s.db.set_progress_handler(None,0)
+  self.assertIsNotNone(outbox)
+  self.assertEqual(len(json.loads(self.s.db.execute(
+   'SELECT payload FROM cycle_identity_outbox WHERE id=?',(outbox,)).fetchone()[0])['handles']),80)
  def test_recover_submit_before_local_ack(self):
   self.b.freeze(self.p);old=self.d.submit
   def crash(*a):old(*a);raise KeyboardInterrupt()
