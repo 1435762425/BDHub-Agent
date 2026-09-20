@@ -41,6 +41,12 @@ class LeadSelectionTests(unittest.TestCase):
   publish_query(self.root,plan_id='p',query_id='q',pid='1',edges=[edge(1)],receipt_fingerprints=['a'])
   with self.assertRaisesRegex(ValueError,'lead_publication_conflict'):
    publish_query(self.root,plan_id='p',query_id='q',pid='1',edges=[edge(2)],receipt_fingerprints=['b'])
+ def test_empty_success_publishes_a_zero_selection_head_with_explicit_window(self):
+  result=publish_query(self.root,plan_id='p',query_id='empty',pid='1',edges=[],
+                       receipt_fingerprints=['empty-page'],window_start='2026-09-01',window_end='2026-09-14',at=10)
+  self.assertEqual((result['rawPositive'],result['selected']),(0,0))
+  with closing(sqlite3.connect(self.root/'var/second-cycle.sqlite')) as db:
+   self.assertEqual(db.execute("SELECT query_id FROM lead_query_head WHERE pid='1'").fetchone()[0],'empty')
  def test_backfill_checks_then_publishes_existing_receipts_without_platform_writes(self):
   with closing(sqlite3.connect(self.root/'var/kalodata-leads.sqlite')) as db,db:
    db.executescript('CREATE TABLE leads_page(pid TEXT,cursor TEXT,payload TEXT);'

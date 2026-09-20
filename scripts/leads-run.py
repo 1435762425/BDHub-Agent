@@ -164,7 +164,8 @@ def run(root, *, limit=None, max_pages=2, provider_factory=None, clock=time.time
                     target=plan_id(root);query=claim_for(root,pid,'',offer_key,window)['id']
                     published=publish_query(root,plan_id=target,query_id=query,pid=pid,edges=gathered,
                                             receipt_fingerprints=fingerprints,
-                                            policy_version=config['version'],limit=config['leadsPerPid'],at=clock())
+                                            policy_version=config['version'],limit=config['leadsPerPid'],
+                                            window_start=window[0],window_end=window[1],at=clock())
                     report['rawPositive']+=published['rawPositive'];report['leads']+=published['selected']
                     ledger.succeeded(pid, window_end=window[1], leads=published['selected'],note='队列查询', at=clock())
                     report['done'] += 1

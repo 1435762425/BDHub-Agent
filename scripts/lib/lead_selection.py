@@ -49,7 +49,7 @@ def _require_schema(db):
 
 
 def publish_query(root, *, plan_id, query_id, pid, edges, receipt_fingerprints,
-                  policy_version=POLICY_VERSION, limit=DEFAULT_LIMIT, at=None):
+                  policy_version=POLICY_VERSION, limit=DEFAULT_LIMIT, window_start=None,window_end=None,at=None):
     root = Path(root);path = root / "var/second-cycle.sqlite"
     if not path.exists():raise CycleError("plan_store_missing")
     if not isinstance(plan_id,str) or not plan_id or not isinstance(query_id,str) or not query_id or \
@@ -62,7 +62,11 @@ def publish_query(root, *, plan_id, query_id, pid, edges, receipt_fingerprints,
     windows={(edge["windowStart"],edge["windowEnd"]) for edge in checked}
     if len(windows)>1:raise CycleError("lead_window_mismatch")
     if windows:window_start,window_end=next(iter(windows))
-    else:raise CycleError("lead_empty_window_missing")
+    elif not isinstance(window_start,str) or not isinstance(window_end,str):
+        raise CycleError("lead_empty_window_missing")
+    try:
+        if (date.fromisoformat(window_end)-date.fromisoformat(window_start)).days!=13:raise ValueError
+    except ValueError:raise CycleError('lead_window_mismatch') from None
     fingerprint=digest(sorted(receipt_fingerprints));stamp=time.time() if at is None else at
     with closing(sqlite3.connect(path,timeout=30,isolation_level=None)) as db:
         db.row_factory=sqlite3.Row;_require_schema(db);db.execute("BEGIN IMMEDIATE")
