@@ -404,6 +404,102 @@ ALTER TABLE kalodata_video_run ADD COLUMN coverage TEXT NOT NULL DEFAULT 'legacy
 """)
 
 
+SECOND_CYCLE_AB_LEADS = Migration(9, "ab_leads_and_video_scan_v1", """
+ALTER TABLE source_edge_index ADD COLUMN revenue_value TEXT;
+ALTER TABLE source_edge_index ADD COLUMN revenue_currency TEXT;
+CREATE INDEX IF NOT EXISTS source_edge_index_revenue
+  ON source_edge_index(plan_id,pid,revenue_value,units,source_handle);
+CREATE TABLE IF NOT EXISTS kalodata_video_generation(
+  generation_id TEXT PRIMARY KEY,
+  window_start TEXT NOT NULL,
+  window_end TEXT NOT NULL,
+  min_views INTEGER NOT NULL,
+  state TEXT NOT NULL,
+  scope_fingerprint TEXT NOT NULL,
+  scope_count INTEGER NOT NULL,
+  created_at REAL NOT NULL,
+  updated_at REAL NOT NULL,
+  error TEXT
+);
+CREATE TABLE IF NOT EXISTS kalodata_video_scan_job(
+  generation_id TEXT NOT NULL,
+  pid TEXT NOT NULL,
+  priority_units INTEGER NOT NULL,
+  state TEXT NOT NULL,
+  next_page INTEGER NOT NULL,
+  list_done INTEGER NOT NULL,
+  list_requests INTEGER NOT NULL,
+  detail_requests INTEGER NOT NULL,
+  error TEXT,
+  updated_at REAL NOT NULL,
+  PRIMARY KEY(generation_id,pid)
+);
+CREATE INDEX IF NOT EXISTS kalodata_video_scan_job_queue
+  ON kalodata_video_scan_job(generation_id,state,priority_units DESC,updated_at,pid);
+CREATE TABLE IF NOT EXISTS kalodata_video_scan_page(
+  generation_id TEXT NOT NULL,
+  pid TEXT NOT NULL,
+  page_no INTEGER NOT NULL,
+  rows_received INTEGER NOT NULL,
+  rows_fingerprint TEXT NOT NULL,
+  newest_release_date TEXT,
+  oldest_release_date TEXT,
+  reached_window_start INTEGER NOT NULL,
+  payload_json TEXT NOT NULL,
+  observed_at REAL NOT NULL,
+  PRIMARY KEY(generation_id,pid,page_no)
+);
+CREATE TABLE IF NOT EXISTS kalodata_video_scan_item(
+  generation_id TEXT NOT NULL,
+  pid TEXT NOT NULL,
+  video_id TEXT NOT NULL,
+  source_rank INTEGER NOT NULL,
+  views INTEGER NOT NULL,
+  sale INTEGER NOT NULL,
+  revenue_raw TEXT,
+  release_time TEXT NOT NULL,
+  duration TEXT,
+  description TEXT NOT NULL,
+  content_type TEXT,
+  is_ad INTEGER NOT NULL,
+  is_ai INTEGER NOT NULL,
+  list_payload_hash TEXT NOT NULL,
+  detail_state TEXT NOT NULL,
+  kalodata_creator_id TEXT,
+  handle TEXT,
+  detail_payload_hash TEXT,
+  video_url TEXT,
+  observed_at REAL NOT NULL,
+  PRIMARY KEY(generation_id,pid,video_id)
+);
+CREATE INDEX IF NOT EXISTS kalodata_video_scan_item_pending
+  ON kalodata_video_scan_item(generation_id,pid,detail_state,source_rank);
+CREATE TABLE IF NOT EXISTS kalodata_video_author_cache(
+  video_id TEXT PRIMARY KEY,
+  kalodata_creator_id TEXT NOT NULL,
+  handle TEXT NOT NULL,
+  payload_hash TEXT NOT NULL,
+  video_url TEXT NOT NULL,
+  observed_at REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS video_lead_current(
+  generation_id TEXT NOT NULL,
+  pid TEXT NOT NULL,
+  kalodata_creator_id TEXT NOT NULL,
+  handle TEXT NOT NULL,
+  run_id TEXT NOT NULL,
+  video_id TEXT NOT NULL,
+  views INTEGER NOT NULL,
+  released_at TEXT NOT NULL,
+  video_sale INTEGER NOT NULL,
+  observed_at REAL NOT NULL,
+  PRIMARY KEY(pid,kalodata_creator_id)
+);
+CREATE INDEX IF NOT EXISTS video_lead_current_order
+  ON video_lead_current(views DESC,released_at DESC,pid,kalodata_creator_id);
+""")
+
+
 DATABASES = {
     "catalog-links": ("catalog-links.sqlite", (CATALOG_LINKS,)),
     "second-cycle": ("second-cycle.sqlite", (SECOND_CYCLE, SECOND_CYCLE_INDEXES,
@@ -412,7 +508,8 @@ DATABASES = {
                                                 SECOND_CYCLE_TURN_REVIEW,
                                                 SECOND_CYCLE_REVIEW_APPLICATION,
                                                 SECOND_CYCLE_VIDEO_EVIDENCE,
-                                                SECOND_CYCLE_VIDEO_PAGING)),
+                                                SECOND_CYCLE_VIDEO_PAGING,
+                                                SECOND_CYCLE_AB_LEADS)),
 }
 
 REGISTRY_SQL = """

@@ -21,9 +21,9 @@ class LeadPriorityTests(unittest.TestCase):
 
  def test_sales_leads_then_highest_video_produce_the_send_order(self):
   rows=[
-   {'creatorId':'a','pid':'1729000000000000001','source':'sales','sourceRank':1,'units':10,'hasOec':True},
-   {'creatorId':'b','pid':'1729000000000000002','source':'sales','sourceRank':2,'units':50,'hasOec':True},
-   {'creatorId':'c','pid':'1729000000000000003','source':'sales','sourceRank':2,'units':20,'hasOec':True},
+   {'creatorId':'a','pid':'1729000000000000001','source':'sales','sourceRank':1,'units':10,'gmv':'500','hasOec':True},
+   {'creatorId':'b','pid':'1729000000000000002','source':'sales','sourceRank':2,'units':50,'gmv':'300','hasOec':True},
+   {'creatorId':'c','pid':'1729000000000000003','source':'sales','sourceRank':2,'units':20,'gmv':'200','hasOec':True},
    {'creatorId':'d','pid':'1729000000000000004','source':'video','hasOec':True,
     'videos':[video('d-old',26000,'2026-09-11')]},
    {'creatorId':'e','pid':'1729000000000000005','source':'video','hasOec':True,
@@ -35,7 +35,7 @@ class LeadPriorityTests(unittest.TestCase):
 
  def test_same_pair_merges_to_a_and_same_creator_gets_one_slot(self):
   rows=[
-   {'creatorId':'a','pid':'1729000000000000001','source':'sales','sourceRank':5,'units':2,'hasOec':True},
+   {'creatorId':'a','pid':'1729000000000000001','source':'sales','sourceRank':5,'units':2,'gmv':'20','hasOec':True},
    {'creatorId':'a','pid':'1729000000000000001','source':'video','hasOec':True,
     'videos':[video('same-pair',50000,'2026-09-18')]},
    {'creatorId':'a','pid':'1729000000000000002','source':'video','hasOec':True,
@@ -64,7 +64,7 @@ class LeadPriorityTests(unittest.TestCase):
 
  def test_invalid_control_is_rejected(self):
   rows=[{'creatorId':'a','pid':'1729000000000000001','source':'sales','sourceRank':1,
-         'units':1,'hasOec':True}]
+         'units':1,'gmv':'1','hasOec':True}]
   with self.assertRaisesRegex(CycleError,'controls_invalid'):
    rank_leads(rows,as_of='2026-09-20',controls={'a':'mystery'})
 

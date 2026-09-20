@@ -16,11 +16,11 @@ def video(video_id,views,released):return {'videoId':video_id,'views':views,'rel
 
 def fixture():
     return [
-      {'creatorId':'creator_alba','pid':'1729000000000000001','source':'sales','sourceRank':1,'units':18,'hasOec':True},
+      {'creatorId':'creator_alba','pid':'1729000000000000001','source':'sales','sourceRank':1,'units':18,'gmv':'420','hasOec':True},
       {'creatorId':'creator_alba','pid':'1729000000000000001','source':'video','hasOec':True,
        'videos':[video('video_alba',80000,'2026-09-10')]},
-      {'creatorId':'creator_bruno','pid':'1729000000000000002','source':'sales','sourceRank':2,'units':50,'hasOec':True},
-      {'creatorId':'creator_carla','pid':'1729000000000000003','source':'sales','sourceRank':2,'units':20,'hasOec':True},
+      {'creatorId':'creator_bruno','pid':'1729000000000000002','source':'sales','sourceRank':2,'units':50,'gmv':'300','hasOec':True},
+      {'creatorId':'creator_carla','pid':'1729000000000000003','source':'sales','sourceRank':2,'units':20,'gmv':'200','hasOec':True},
       {'creatorId':'creator_carla','pid':'1729000000000000004','source':'video','hasOec':True,
        'videos':[video('video_carla',150000,'2026-09-15')]},
       {'creatorId':'creator_elena','pid':'1729000000000000005','source':'video','hasOec':True,

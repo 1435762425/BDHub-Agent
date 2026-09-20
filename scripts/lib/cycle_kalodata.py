@@ -21,6 +21,13 @@ def sales(v):
  d=Decimal(m[1])*{'':1,'k':1000,'K':1000,'m':1000000,'M':1000000,'万':10000}[m[2]]
  return int(d) if d==d.to_integral_value() and 0<=d<=9007199254740991 else None
 
+def revenue(v):
+ if v is None or isinstance(v,bool):return None
+ s=str(v).strip().replace(',','');m=re.search(r'(\d+(?:\.\d+)?)\s*([kKmM万]?)\Z',s)
+ if not m:return None
+ d=Decimal(m[1])*{'':1,'k':1000,'K':1000,'m':1000000,'M':1000000,'万':10000}[m[2]]
+ return format(d,'f') if 0<=d<=Decimal('9007199254740991') else None
+
 def parse_page(body,claim,at,*,max_pages=2):
  if quota_exhausted(body):raise CycleError('kalodata_daily_quota_exhausted')
  if not isinstance(body,dict) or body.get('success') is not True:raise CycleError('kalodata_business_rejected')
@@ -43,6 +50,7 @@ def parse_page(body,claim,at,*,max_pages=2):
                 'observedAt':at,'windowStart':claim['window_start'],'windowEnd':claim['window_end'],
                 'sourceHandle':handle,'kalodataCreatorId':kid,'sourceRank':rank,'currency':'EUR',
                 'revenueRaw':str(row['revenue'])[:80] if isinstance(row.get('revenue'),(str,int,float)) else None,
+                'revenueValue':revenue(row.get('revenue')),
                 'liveRevenueRaw':str(row['live_revenue'])[:80] if isinstance(row.get('live_revenue'),(str,int,float)) else None,
                 'videoRevenueRaw':str(row['video_revenue'])[:80] if isinstance(row.get('video_revenue'),(str,int,float)) else None,'historicalOwnership':'unverified','sourceKind':'kalodata_http'})
  done=len(rows)<50 or page>=max_pages

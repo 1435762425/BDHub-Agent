@@ -233,11 +233,15 @@ class CycleStore:
             if self.db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='source_edge_index'").fetchone() and e.get('sourceKind')=='kalodata_http':
                 rank=e.get('sourceRank');handle=e.get('sourceHandle')
                 if type(rank) is not int or rank<1 or not isinstance(handle,str) or not handle:raise CycleError('lead_edge_invalid')
-                self.db.execute("""INSERT INTO source_edge_index VALUES(?,?,?,?,?,?,?,?,?)
+                self.db.execute("""INSERT INTO source_edge_index(
+                  plan_id,source_id,pid,source_handle,source_rank,units,window_start,window_end,source_kind,
+                  revenue_value,revenue_currency) VALUES(?,?,?,?,?,?,?,?,?,?,?)
                   ON CONFLICT(plan_id,source_id) DO UPDATE SET pid=excluded.pid,source_handle=excluded.source_handle,
                   source_rank=excluded.source_rank,units=excluded.units,window_start=excluded.window_start,
-                  window_end=excluded.window_end,source_kind=excluded.source_kind""",
-                  (p,e['sourceId'],e['pid'],handle,rank,e['units'],e['windowStart'],e['windowEnd'],e['sourceKind']))
+                  window_end=excluded.window_end,source_kind=excluded.source_kind,
+                  revenue_value=excluded.revenue_value,revenue_currency=excluded.revenue_currency""",
+                  (p,e['sourceId'],e['pid'],handle,rank,e['units'],e['windowStart'],e['windowEnd'],e['sourceKind'],
+                   e.get('revenueValue'),e.get('currency')))
             if old:continue
             person=e.get('creatorId');oec=e.get('oec')
             if bool(person)!=bool(oec):raise CycleError('identity_incomplete')

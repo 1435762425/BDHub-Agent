@@ -38,7 +38,9 @@ def fixture(folder, positions, relationships, deliveries=(), cases=()):
                          % (pid, rank, creator)))
             conn.execute('INSERT INTO cycle_identity_resolution VALUES(?,?,?)', ('p', sid, creator))
             conn.execute('INSERT INTO cycle_identity_outcome VALUES(?,?,?)', ('p', sid, 'completed'))
-            conn.execute('INSERT INTO source_edge_index VALUES(?,?,?,?,?,?,?,?,?)',
+            conn.execute('INSERT INTO source_edge_index('
+                         'plan_id,source_id,pid,source_handle,source_rank,units,window_start,window_end,source_kind) '
+                         'VALUES(?,?,?,?,?,?,?,?,?)',
                          ('p',sid,pid,creator,rank,10,'2026-09-01','2026-09-14','kalodata_http'))
             grouped.setdefault(pid,[]).append((sid,rank))
         for pid,rows in grouped.items():
@@ -94,6 +96,36 @@ class Layers(unittest.TestCase):
             state=pool(folder,now=NOW)
             self.assertEqual(state['pools']['ready'][0]['pid'],high)
             self.assertEqual(state['pools']['queued'][0]['pid'],low)
+
+    def test_same_creator_a_positions_use_numeric_gmv_before_source_rank(self):
+        with tempfile.TemporaryDirectory() as folder:
+            low='1'*19;high='2'*19
+            fixture(folder,[('a',low,1),('a',high,3)],[('a',0,'auto',0)])
+            with closing(sqlite3.connect(Path(folder)/'var/second-cycle.sqlite')) as db,db:
+                db.execute("UPDATE source_edge_index SET revenue_value='20',revenue_currency='EUR' WHERE pid=?",(low,))
+                db.execute("UPDATE source_edge_index SET revenue_value='500',revenue_currency='EUR' WHERE pid=?",(high,))
+            state=pool(folder,now=NOW)
+            self.assertEqual((state['pools']['ready'][0]['pid'],state['pools']['ready'][0]['gmv']),(high,'500.0'))
+            self.assertEqual(state['pools']['queued'][0]['pid'],low)
+
+    def test_a_precedes_b_and_b_uses_highest_video_views(self):
+        with tempfile.TemporaryDirectory() as folder:
+            a_pid='1'*19;b_pid='2'*19;c_pid='3'*19
+            fixture(folder,[('a',a_pid,9)],[('a',0,'auto',0),('b',0,'auto',0)])
+            var=Path(folder)/'var'
+            with closing(sqlite3.connect(var/'creator-identities.sqlite')) as db,db:
+                db.execute('CREATE TABLE creator_identity(creator_id TEXT,market TEXT,current_handle TEXT,handle_conflict INTEGER)')
+                db.executemany('INSERT INTO creator_identity VALUES(?,?,?,0)',
+                               [('a','it','a.video'),('b','it','b.video')])
+            with closing(sqlite3.connect(var/'second-cycle.sqlite')) as db,db:
+                db.executemany('INSERT INTO video_lead_current VALUES(?,?,?,?,?,?,?,?,?,?)',[
+                  ('g',b_pid,'ka','a.video','r','va',150000,'2026-09-18',0,NOW),
+                  ('g',c_pid,'kb','b.video','r','vb',26000,'2026-09-18',0,NOW)])
+            state=pool(folder,now=NOW)
+            self.assertEqual([(row['creatorId'],row['sourceClass']) for row in state['pools']['ready']],
+                             [('a','A'),('b','B')])
+            self.assertEqual((state['pools']['queued'][0]['pid'],state['pools']['queued'][0]['videoViews']),
+                             (b_pid,150000))
 
     def test_a_recent_send_puts_every_position_of_that_creator_on_cooldown(self):
         with tempfile.TemporaryDirectory() as folder:

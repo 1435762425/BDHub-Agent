@@ -24,6 +24,8 @@ import json
 import sqlite3
 import time
 from contextlib import closing
+from datetime import date
+from decimal import Decimal,InvalidOperation
 from pathlib import Path
 
 UNLOCKED_COOLDOWN = 86400   # one message per creator per day
@@ -54,7 +56,7 @@ def pool(root, *, now=None, limit=20):
         required={'source_edge_index','lead_query_run','lead_query_selection','lead_query_head'}
         if not required<=tables:return {'available':False,'counts':{},'layers':{},'pools':{},'schema':'bdhub.lead-pool.v2'}
         eligible=_eligible_pids(conn,now,tables)
-        return _build(conn, now, limit, eligible_pids=eligible)
+        return _build(conn, now, limit, eligible_pids=eligible,root=root)
 
 
 def _eligible_pids(conn,now,tables):
@@ -72,10 +74,28 @@ def _eligible_pids(conn,now,tables):
     return pids
 
 
-def _build(conn, now, limit, eligible_pids=None):
+def _money(value,currency):
+    if value is None or currency!='EUR':return None
+    try:return Decimal(str(value))
+    except InvalidOperation:return None
+
+
+def _video_owner(root):
+    path=Path(root)/'var/creator-identities.sqlite'
+    if not path.exists():return {}
+    try:
+        with closing(sqlite3.connect(path.resolve().as_uri()+'?mode=ro',uri=True)) as db:
+            return {str(row[1]).lower():str(row[0]) for row in db.execute(
+                "SELECT creator_id,current_handle FROM creator_identity WHERE market='it' "
+                "AND handle_conflict=0 AND current_handle IS NOT NULL")}
+    except sqlite3.Error:return {}
+
+
+def _build(conn, now, limit, eligible_pids=None,root=None):
     # CROSS JOIN pins the intended small-head → selected rows → indexed evidence order.  Ordinary
     # JOIN let SQLite start with every historical edge for each PID (12s on 13k rows).
-    current="""SELECT h.plan_id,s.source_id,x.pid,x.source_handle,x.source_rank,x.units
+    current="""SELECT h.plan_id,s.source_id,x.pid,x.source_handle,x.source_rank,x.units,
+      x.revenue_value,x.revenue_currency
       FROM lead_query_head h CROSS JOIN lead_query_selection s CROSS JOIN source_edge_index x
       WHERE s.query_id=h.query_id AND x.plan_id=h.plan_id AND x.source_id=s.source_id"""
     leads = _rows(conn, f"SELECT count(*) FROM ({current})")[0][0]
@@ -98,12 +118,35 @@ def _build(conn, now, limit, eligible_pids=None):
     owner = {row['handle']: row['creator_id'] for row in resolved}
     if owner:
         marks = ','.join('?' * len(owner))
-        edges = _rows(conn, f"""SELECT source_handle AS handle,pid,min(source_rank) AS rank,max(units) AS units
+        edges = _rows(conn, f"""SELECT source_handle AS handle,pid,min(source_rank) AS rank,max(units) AS units,
+            max(CASE WHEN revenue_currency='EUR' THEN CAST(revenue_value AS REAL) END) AS gmv
             FROM ({current}) WHERE source_handle IN ({marks}) GROUP BY source_handle,pid""", tuple(owner))
         positions = [{'creator_id': owner[row['handle']], 'handle': row['handle'], 'pid': row['pid'],
-                      'rank': row['rank'], 'units': row['units']} for row in edges]
+                      'rank': row['rank'], 'units': row['units'],'gmv':str(row['gmv']) if row['gmv'] is not None else None,
+                      'sourceClass':'A','videoViews':None,'videoId':None,'videoReleasedAt':None} for row in edges]
     else:
         positions = []
+    video_rows=_rows(conn,'SELECT * FROM video_lead_current') if conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='video_lead_current'").fetchone() else []
+    video_owner=_video_owner(root) if root else {};video_unresolved=0
+    for row in video_rows:
+        creator=video_owner.get(str(row['handle']).lower())
+        if not creator:video_unresolved+=1;continue
+        positions.append({'creator_id':creator,'handle':row['handle'],'pid':row['pid'],'rank':None,'units':0,
+                          'gmv':None,'sourceClass':'B','videoViews':row['views'],'videoId':row['video_id'],
+                          'videoReleasedAt':row['released_at']})
+    merged={}
+    for row in positions:
+        key=(row['creator_id'],str(row['pid']));old=merged.get(key)
+        if old is None:merged[key]=row;continue
+        if old['sourceClass']=='A':
+            if row['sourceClass']=='B':
+                old['videoViews']=row['videoViews'];old['videoId']=row['videoId'];old['videoReleasedAt']=row['videoReleasedAt']
+        elif row['sourceClass']=='A':
+            row['videoViews']=old['videoViews'];row['videoId']=old['videoId'];row['videoReleasedAt']=old['videoReleasedAt'];merged[key]=row
+        elif (row['videoViews'],row['videoReleasedAt'],row['videoId'])>(old['videoViews'],old['videoReleasedAt'],old['videoId']):
+            merged[key]=row
+    positions=list(merged.values())
     relationships = {row['creator_id']: row for row in _rows(
         conn, 'SELECT creator_id,unlocked,mode,rejected FROM relationship')}
     last_sent = {row[0]: row[1] for row in _rows(
@@ -147,13 +190,23 @@ def _build(conn, now, limit, eligible_pids=None):
             layer = 'cooling'
         layers[layer].append({'creatorId': creator, 'handle': row['handle'] or '',
                               'pid': str(row['pid']), 'rank': row['rank'], 'units': row['units'],
+                              'sourceClass':row['sourceClass'],'gmv':row['gmv'],
+                              'videoViews':row['videoViews'],'videoId':row['videoId'],
+                              'videoReleasedAt':row['videoReleasedAt'],
                               'unlocked': unlocked, 'sentAt': pair_sent,
                               'readyAt': ready_at, 'layer': layer,
                               'caseUpdatedAt': open_cases.get(creator)})
 
     # Ready positions: strongest lead first, one slot per creator so a single creator cannot fill
     # the whole page while others never surface. Cooling follows the clock, not the lead strength.
-    strength=lambda r:(r['rank'] if r['rank'] is not None else 10 ** 9,-(r['units'] or 0),r['pid'],r['creatorId'])
+    def strength(row):
+        if row['sourceClass']=='A':
+            gmv=_money(row['gmv'],'EUR')
+            return (0,0 if gmv is not None else 1,-(gmv or Decimal(0)),-(row['units'] or 0),
+                    row['rank'] if row['rank'] is not None else 10**9,row['pid'],row['creatorId'])
+        try:released=date.fromisoformat(row['videoReleasedAt']).toordinal()
+        except (TypeError,ValueError):released=0
+        return (1,-(row['videoViews'] or 0),-released,row['pid'],row['creatorId'])
     layers['ready'].sort(key=strength)
     # One slot per creator: sending the best lead first, the rest wait their turn in the pool.
     seen = set()
@@ -168,7 +221,7 @@ def _build(conn, now, limit, eligible_pids=None):
             slots.append(row)
     layers['queued'] = sorted(queued, key=lambda r: (r['creatorId'],)+strength(r))
     layers['ready'] = slots
-    layers['cooling'].sort(key=lambda r: (r['readyAt'] or 0, r['rank'] if r['rank'] is not None else 10 ** 9))
+    layers['cooling'].sort(key=lambda r: (r['readyAt'] or 0,)+strength(r))
     layers['awaiting_reply'].sort(key=lambda r: (r['caseUpdatedAt'] or 0, r['creatorId']))
     layers['excluded'].sort(key=lambda r: (r['creatorId'], r['pid']))
     layers['product_inactive'].sort(key=strength)
@@ -188,6 +241,9 @@ def _build(conn, now, limit, eligible_pids=None):
               'ready': len(layers['ready']),
               'readyCreators': len({row['creatorId'] for row in layers['ready']}),
               'queued': len(layers['queued']),
+              'aPositions':sum(row['sourceClass']=='A' for row in positions),
+              'bPositions':sum(row['sourceClass']=='B' for row in positions),
+              'videoUnresolved':video_unresolved,
               'cooling': len(layers['cooling']),
               'awaitingReply': len(layers['awaiting_reply']),
               'excluded': len(layers['excluded']),

@@ -5,6 +5,7 @@ Kalodata, change the production pool, freeze a batch, or send anything.
 """
 from collections import defaultdict
 from datetime import date
+from decimal import Decimal,InvalidOperation
 import re
 
 from lib.second_cycle import CycleError
@@ -51,17 +52,20 @@ def _position(rows, creator_id, pid, as_of):
         source=row.get('source')
         if source=='sales':
             rank=row.get('sourceRank');units=row.get('units')
+            try:gmv=Decimal(str(row.get('gmv')))
+            except (InvalidOperation,TypeError):raise CycleError('lead_priority_sales_invalid') from None
             if type(rank) is not int or rank<1 or type(units) is not int or units<1:
                 raise CycleError('lead_priority_sales_invalid')
-            sales.append({'sourceRank':rank,'units':units})
+            if gmv<0:raise CycleError('lead_priority_sales_invalid')
+            sales.append({'sourceRank':rank,'units':units,'gmv':gmv})
         elif source=='video':
             video=representative_video(row.get('videos'),as_of=as_of)
             if video:videos.append(video)
         else:raise CycleError('lead_priority_source_invalid')
     representative=max(videos,key=lambda row:(row['views'],row['releasedAt'],row['videoId'])) if videos else None
     if sales:
-        best=min(sales,key=lambda row:(row['sourceRank'],-row['units']))
-        source_class='A';key=(0,best['sourceRank'],-best['units'],pid,creator_id)
+        best=min(sales,key=lambda row:(-row['gmv'],-row['units'],row['sourceRank']))
+        source_class='A';key=(0,-best['gmv'],-best['units'],best['sourceRank'],pid,creator_id)
     elif representative:
         best=None;source_class='B';key=(1,-representative['views'],-_date(representative['releasedAt']).toordinal(),
                                        pid,creator_id)
@@ -69,6 +73,7 @@ def _position(rows, creator_id, pid, as_of):
     return {'creatorId':creator_id,'pid':pid,'sourceClass':source_class,
             'hasOec':next(iter(has_oec)),'productActive':next(iter(active)),
             'sourceRank':best['sourceRank'] if best else None,'units':best['units'] if best else 0,
+            'gmv':format(best['gmv'],'f') if best else None,
             'representativeVideo':representative,'_key':key}
 
 

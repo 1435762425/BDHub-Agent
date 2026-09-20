@@ -251,7 +251,9 @@ def linked_products(root):
     # Only the canonical standard binding is material.  Preparation states and historical reuse
     # rows are evidence, not sendable links.
     return {row[0]: row[1] for row in _read(
-        db, "SELECT pid,state FROM catalog_current_binding WHERE market='it' AND state='active'")}
+        db, "SELECT pid,state FROM catalog_current_binding WHERE market='it' AND state='active' "
+            "AND commission_rule_version='commission-1-to-2-v1' "
+            "AND naming_rule_version='link-naming-v1'")}
 
 
 def build(root, *, config=None, now=None, ledger=None):
@@ -288,7 +290,7 @@ def build(root, *, config=None, now=None, ledger=None):
         else:
             waiting.append(pid)
     first.sort(key=lambda pid: (-products[pid]['units'], pid))
-    due.sort(key=lambda pid: (known[pid]['queried_at'], pid))
+    due.sort(key=lambda pid: (known[pid]['queried_at'],-products[pid]['units'],pid))
     waiting.sort(key=lambda pid: (known[pid]['queried_at'], pid))
     # A queried product that is no longer in scope is reported, never silently dropped.
     unknown = sorted(set(known) - set(scope))
@@ -307,7 +309,7 @@ def build(root, *, config=None, now=None, ledger=None):
             'firstTime': [{'pid': pid, 'units': products[pid]['units'], 'title': products[pid]['title']} for pid in first],
             'due': [{'pid': pid, 'queriedAt': known[pid]['queried_at'],
                      'dueAt': known[pid]['queried_at'] + age, 'leads': known[pid]['leads'],
-                     'title': products[pid]['title']} for pid in due],
+                     'units':products[pid]['units'],'title': products[pid]['title']} for pid in due],
             'waiting': len(waiting), 'unknownScope': len(unknown),
             'stuck': [{'pid': pid, 'attempts': attempts[pid]['attempts'],
                        'code': attempts[pid]['last_code'],
@@ -327,7 +329,7 @@ def queue_items(built):
     items = [{'pid': row['pid'], 'kind': 'first', 'units': row['units'], 'title': row['title'],
               'queriedAt': None, 'dueAt': None}
              for row in built['firstTime']]
-    items += [{'pid': row['pid'], 'kind': 'due', 'units': None, 'title': row['title'],
+    items += [{'pid': row['pid'], 'kind': 'due', 'units': row['units'], 'title': row['title'],
                'queriedAt': row['queriedAt'], 'dueAt': row['dueAt']}
               for row in built['due']]
     return items

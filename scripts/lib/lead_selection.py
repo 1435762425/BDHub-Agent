@@ -77,13 +77,17 @@ def publish_query(root, *, plan_id, query_id, pid, edges, receipt_fingerprints,
                 for edge in checked:
                     db.execute("INSERT OR IGNORE INTO source_edge(plan_id,source_id,payload) VALUES(?,?,?)",
                                (plan_id,edge["sourceId"],encoded(edge)))
-                    db.execute("""INSERT INTO source_edge_index VALUES(?,?,?,?,?,?,?,?,?)
+                    db.execute("""INSERT INTO source_edge_index(
+                      plan_id,source_id,pid,source_handle,source_rank,units,window_start,window_end,source_kind,
+                      revenue_value,revenue_currency) VALUES(?,?,?,?,?,?,?,?,?,?,?)
                       ON CONFLICT(plan_id,source_id) DO UPDATE SET
                       pid=excluded.pid,source_handle=excluded.source_handle,source_rank=excluded.source_rank,
                       units=excluded.units,window_start=excluded.window_start,window_end=excluded.window_end,
-                      source_kind=excluded.source_kind""",
+                      source_kind=excluded.source_kind,revenue_value=excluded.revenue_value,
+                      revenue_currency=excluded.revenue_currency""",
                       (plan_id,edge["sourceId"],pid,edge["sourceHandle"],edge["sourceRank"],edge["units"],
-                       edge["windowStart"],edge["windowEnd"],edge["sourceKind"]))
+                       edge["windowStart"],edge["windowEnd"],edge["sourceKind"],edge.get("revenueValue"),
+                       edge.get("currency")))
                 db.execute("INSERT INTO lead_query_run VALUES(?,?,?,?,?,?,?,?,?,?)",
                            (query_id,plan_id,pid,window_start,window_end,policy_version,"published",
                             len(selected),fingerprint,stamp))
@@ -165,10 +169,14 @@ def backfill_source_index(root, *, apply=False):
         if apply:
             with db:
                 for plan_id,edge in valid:
-                    db.execute("""INSERT INTO source_edge_index VALUES(?,?,?,?,?,?,?,?,?)
+                    db.execute("""INSERT INTO source_edge_index(
+                      plan_id,source_id,pid,source_handle,source_rank,units,window_start,window_end,source_kind,
+                      revenue_value,revenue_currency) VALUES(?,?,?,?,?,?,?,?,?,?,?)
                       ON CONFLICT(plan_id,source_id) DO UPDATE SET pid=excluded.pid,
                       source_handle=excluded.source_handle,source_rank=excluded.source_rank,units=excluded.units,
-                      window_start=excluded.window_start,window_end=excluded.window_end,source_kind=excluded.source_kind""",
+                      window_start=excluded.window_start,window_end=excluded.window_end,source_kind=excluded.source_kind,
+                      revenue_value=excluded.revenue_value,revenue_currency=excluded.revenue_currency""",
                       (plan_id,edge["sourceId"],edge["pid"],edge["sourceHandle"],edge["sourceRank"],edge["units"],
-                       edge["windowStart"],edge["windowEnd"],edge["sourceKind"]))
+                       edge["windowStart"],edge["windowEnd"],edge["sourceKind"],edge.get("revenueValue"),
+                       edge.get("currency")))
         return {"indexed":len(valid),"invalid":invalid,"platformWrites":0}
