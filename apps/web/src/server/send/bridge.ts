@@ -1,19 +1,19 @@
 import {execFile} from "node:child_process";
 import {join} from "node:path";
 import {projectRoot} from "../creator-identities/refresh.ts";
-import {PROBE_COUNT,SEND_COUNTS} from "../../features/second-outreach/send-contracts.ts";
-import type {SendAuthorization,SendBatch,SendConfig,SendCapacity,SendPreview,SendRateGap,SendSample,SendState,SendUnknownDelivery,SendWindow} from "../../features/second-outreach/send-contracts.ts";
+import {PROBE_COUNT,SEND_COUNTS,SEND_TEMPLATE_IDS} from "../../features/second-outreach/send-contracts.ts";
+import type {SendAuthorization,SendBatch,SendConfig,SendCapacity,SendPreview,SendRateGap,SendSample,SendState,SendTemplateId,SendTemplateOption,SendUnknownDelivery,SendWindow} from "../../features/second-outreach/send-contracts.ts";
 
 // 类型与档位常量在 `features/second-outreach/send-contracts.ts`（客户端组件也要用，
 // 不能从这一层 import：那会把 node:child_process 打进浏览器包）。这里只留校验与调用。
 export {PROBE_COUNT,SEND_COUNTS};
-export type {SendAuthorization,SendBatch,SendConfig,SendCapacity,SendPreview,SendRateGap,SendSample,SendState,SendUnknownDelivery,SendWindow};
+export type {SendAuthorization,SendBatch,SendConfig,SendCapacity,SendPreview,SendRateGap,SendSample,SendState,SendTemplateId,SendTemplateOption,SendUnknownDelivery,SendWindow};
 
 /**
  * 发送池 → 正式发送的播种层桥接。
  *
  * 这一层只做两件事：把 `send-batch.py status`（只读预检）翻成页面要的形状，和保存
- * 「这一批多少条 / 要不要越界 / 窗口开不开」三个设置。**它不发任何消息**：真正的发送
+ * 「这一批多少条 / 使用哪个模板 / 要不要越界 / 窗口开不开」四类设置。**它不发任何消息**：真正的发送
  * 由执行器按批次授权跑，页面上的「确认并开始」是那一步的入口。
  */
 
@@ -120,13 +120,25 @@ function validateConfig(raw:unknown):SendConfig{
   if(!/^([01]\d|2[0-4]):[0-5]\d$/.test(t))throw Error('invalid_send');
   return t;
  };
- return {count,widen:v.widen,windowEnabled:v.windowEnabled,window:[edge(v.window[0]),edge(v.window[1])]};
+ const template=(v.template??"standard") as SendTemplateId;
+ if(!SEND_TEMPLATE_IDS.includes(template))throw Error('invalid_send');
+ return {count,widen:v.widen,windowEnabled:v.windowEnabled,window:[edge(v.window[0]),edge(v.window[1])],template};
+}
+
+function validateTemplates(raw:unknown):SendTemplateOption[]{
+ if(!Array.isArray(raw)||raw.length<2||raw.length>8)throw Error('invalid_send');
+ const seen=new Set<string>();
+ const rows=raw.map(value=>{const row=(value??{}) as Record<string,unknown>;const id=text(row.id,24) as SendTemplateId;
+  if(!SEND_TEMPLATE_IDS.includes(id)||seen.has(id))throw Error('invalid_send');seen.add(id);
+  return {id,label:text(row.label,40),description:text(row.description,160)};});
+ if(rows.length!==SEND_TEMPLATE_IDS.length||SEND_TEMPLATE_IDS.some(id=>!seen.has(id)))throw Error('invalid_send');
+ return rows;
 }
 
 function validateAuthorization(raw:unknown):SendAuthorization{
  if(!raw||typeof raw!=="object"||Array.isArray(raw))throw Error('invalid_send');
  const v=raw as Record<string,unknown>;
- const allowed=["source","scope","maxPeople","requestedPeople","reservePeople","frozenPeople","reservePolicy","widenLocalGate","sendWindow",
+ const allowed=["source","scope","maxPeople","requestedPeople","reservePeople","frozenPeople","reservePolicy","widenLocalGate","sendWindow","messageTemplate",
   "institutionNewContactRollingCap","materialPolicy","note"];
  if(Object.keys(v).some(key=>!allowed.includes(key))||v.source!=="current_user_request"||
    v.scope!=="pool_to_send"||v.materialPolicy!=="frozen-current-binding-v1"||
@@ -140,11 +152,12 @@ function validateAuthorization(raw:unknown):SendAuthorization{
  const reservePeople=int(v.reservePeople??0,'invalid_send',200);
  const frozenPeople=int(v.frozenPeople??maxPeople,'invalid_send',2200);
  const reservePolicy=v.reservePolicy??(reservePeople?"ceil-10-percent-v1":"none");
+ const messageTemplate=(v.messageTemplate??"standard") as SendTemplateId;
  if(frozenPeople!==maxPeople+reservePeople||(reservePolicy!=="ceil-10-percent-v1"&&reservePolicy!=="none")||
-   (reservePeople>0)!==(reservePolicy==="ceil-10-percent-v1"))throw Error('invalid_send');
+   (reservePeople>0)!==(reservePolicy==="ceil-10-percent-v1")||!SEND_TEMPLATE_IDS.includes(messageTemplate))throw Error('invalid_send');
  return {source:v.source,scope:v.scope,maxPeople,
   requestedPeople:int(v.requestedPeople,'invalid_send',2000),reservePeople,frozenPeople,reservePolicy,widenLocalGate:v.widenLocalGate,
-  sendWindow,institutionNewContactRollingCap:int(v.institutionNewContactRollingCap,'invalid_send',2000),
+  sendWindow,messageTemplate,institutionNewContactRollingCap:int(v.institutionNewContactRollingCap,'invalid_send',2000),
   materialPolicy:v.materialPolicy,note:text(v.note,240)};
 }
 
@@ -184,9 +197,10 @@ export function validateSendState(value:unknown):SendState{
  const v=value as Record<string,unknown>;
  if(v.market!=="it"||v.account!=="acc6")throw Error('invalid_send');
  const config=validateConfig(v.config);
+ const templates=validateTemplates(v.templates);
  const raw=(v.preview??{}) as Record<string,unknown>;
  if(raw.available!==true){
-  return {market:"it",account:"acc6",available:false,config,pool:{counts:{},layers:{}},
+  return {market:"it",account:"acc6",available:false,config,templates,pool:{counts:{},layers:{}},
    preview:{available:false,requested:int(raw.requested??0,'invalid_send'),
     reserveRequested:int(raw.reserveRequested??0,'invalid_send',200),required:int(raw.required??0,'invalid_send',2200),
     sendable:0,reserveReady:0,frozenTotal:0,fullPreparation:false,samples:[],
@@ -217,7 +231,7 @@ export function validateSendState(value:unknown):SendState{
  const pool=(v.pool??{}) as Record<string,unknown>;
  const layers=counts(pool.layers,'invalid_send');
  if(Object.keys(layers).some(name=>!LAYERS.includes(name)))throw Error('invalid_send');
- return {market:"it",account:"acc6",available:true,config,preview,pool:{counts:counts(pool.counts,'invalid_send'),layers},
+ return {market:"it",account:"acc6",available:true,config,templates,preview,pool:{counts:counts(pool.counts,'invalid_send'),layers},
   batch:validateBatch(v.batch)};
 }
 
@@ -244,7 +258,7 @@ function run(args:string[]):Promise<SendState>{
 
 export function readSendBatch():Promise<SendState>{return run(["status"]);}
 
-/** 顺手校验一遍请求：字段多一个就拒，`save` 只接受这三个设置。 */
+/** 顺手校验一遍请求：字段多一个就拒，`save` 只接受明确的批次设置。 */
 export type SendRequest={action:"save";config:Partial<SendConfig>}|
  {action:"freeze";requestId:string;expectedPreviewHash:string}|
  {action:"start";batchId:string;expectedRevision:number;confirmed:true}|
@@ -281,7 +295,7 @@ export function validateSendRequest(body:unknown):SendRequest{
  if(v.action!=="save")throw Error('invalid_send_request');
  if(Object.keys(v).some(key=>!["action","config"].includes(key)))throw Error('invalid_send_request');
  const raw=(v.config??{}) as Record<string,unknown>;
- if(Object.keys(raw).some(key=>!["count","widen","windowEnabled","window"].includes(key)))
+ if(Object.keys(raw).some(key=>!["count","widen","windowEnabled","window","template"].includes(key)))
   throw Error('invalid_send_request');
  // 任意明确目标 N 均可；500/1000/600 只是页面快捷档，不是业务上限。
  if(raw.count!==undefined){
@@ -290,7 +304,7 @@ export function validateSendRequest(body:unknown):SendRequest{
  }
  return {action:"save",config:validateConfig({...raw,
   count:raw.count??500,widen:raw.widen??false,windowEnabled:raw.windowEnabled??false,
-  window:raw.window??["09:00","24:00"]})};
+  window:raw.window??["09:00","24:00"],template:raw.template??"standard"})};
 }
 
 export function saveSendConfig(config:Partial<SendConfig>):Promise<SendState>{

@@ -2,6 +2,7 @@
   "count": 500,
   "widen": false,
   "windowEnabled": true,
+  "template": "standard",
   "window": [
     "09:00",
     "24:00"

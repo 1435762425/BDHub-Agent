@@ -36,7 +36,7 @@ class MaterialTests(unittest.TestCase):
   self.assertEqual(self.m.prepare_names([self.o],lambda *a:1/0)['modelCalls'],0)
  def test_templates_do_not_invite_samples_or_emphasize_new_link(self):
   self.m.prepare_names([self.o],self.model)
-  for kind in ['standard','brief','video_live']:
+  for kind in ['standard','brief','reconnect','video_focus','live_focus','video_live']:
    r=render(self.m.name(self.o),self.o,kind,'creator');self.assertIn('12%',r['textIt']);self.assertNotIn('BJN',r['textIt']);self.assertNotIn('campione',r['textIt']);self.assertFalse(r['executionAllowed'])
  def test_overlapping_batches_do_not_duplicate_model_requests(self):
   def crash(*a,**kw):raise KeyboardInterrupt()

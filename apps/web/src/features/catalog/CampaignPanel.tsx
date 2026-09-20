@@ -1,5 +1,5 @@
 "use client";
-import {Button,Card,Field,Input,Notice,Pill,Progress,Section,StatTile} from "../bdhub/ui";
+import {Button,Card,Field,Input,MetricTable,Notice,Pill,Progress,Section} from "../bdhub/ui";
 import FunnelBar from "./FunnelBar";
 import type {FunnelStage} from "./funnel";
 import ShortNames from "./ShortNames";
@@ -81,15 +81,12 @@ export default function CampaignPanel({onOpenLeads}:{onOpenLeads?:()=>void}={}){
     <div className="space-y-4 p-5">
     {!ledger?.available&&<p className="text-sm text-gray-500">{join.loaded?"还没有读过可加入的活动。":"读取中…"}</p>}
     {ledger?.available&&<>
-     <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-      <StatTile label="可加入" value={joinable.length} hint="通过资格判定，可以直接加入"/>
-      <StatTile label="已加入（平台）" value={ledger.joinedCount??0} hint="平台自己的回答，不靠本地推断"/>
-      <StatTile label="结果待核验" value={unresolved.length} hint="提过但没结算：只回查，不重发"/>
-      {/* 第四个数字用**其它分类可加入**：它和"本类可加入"是两件不同的事，
-          而且正是用户问过的那个缺口；不再放内部口径（本地记账条目数）。 */}
-      <StatTile label="其它分类可加入" value={other?.unjoinedEligible??0}
-       hint={other?.available?`平台活动：${other.parents} 父 / ${other.subs} 子${ledger?.account?` · 账号 ${ledger.account}`:""}`:(ledger?.account?`账号 ${ledger.account}`:"其它分类未读到")} brand/>
-     </div>
+     <MetricTable rows={[
+      {label:"可加入",value:joinable.length.toLocaleString(),detail:"通过资格判定，可以直接加入",accent:true},
+      {label:"已加入（平台）",value:(ledger.joinedCount??0).toLocaleString(),detail:"平台自己的回答，不靠本地推断"},
+      {label:"结果待核验",value:unresolved.length.toLocaleString(),detail:"提过但没结算：只回查，不重发"},
+      {label:"其它分类可加入",value:(other?.unjoinedEligible??0).toLocaleString(),detail:other?.available?`平台活动：${other.parents} 父 / ${other.subs} 子${ledger?.account?` · 账号 ${ledger.account}`:""}`:(ledger?.account?`账号 ${ledger.account}`:"其它分类未读到")},
+     ]}/>
      {unresolved.length>0&&<Notice tone="warning">有 {unresolved.length} 个活动提过但没结算（{unresolved.slice(0,3).join("、")}{unresolved.length>3?"…":""}）。先点「回查未结算」——**绝不重新提交**。</Notice>}
      {ledger.error&&<Notice tone="warning">上次运行停在 {reason(ledger.error)}。</Notice>}
      {joinable.length===0&&<Notice tone="info">平台当前没有新的可加入活动。活动有更新时点「刷新活动列表」再看。</Notice>}
@@ -142,11 +139,11 @@ export default function CampaignPanel({onOpenLeads}:{onOpenLeads?:()=>void}={}){
     {collectProgress?.error&&<Notice tone="warning">上次采集停在 {COLLECT_ERRORS[collectProgress.error]??collectProgress.error}。已保存断点，再点一次会重新起一轮。</Notice>}
     {!pool?.available&&<p className="text-sm text-gray-500">{panel.loaded?"还没有非全托快照：先点上面的「刷新活动与商品」。":"读取中…"}</p>}
     {pool?.available&&<>
-     <div className="grid grid-cols-2 gap-4 lg:grid-cols-3">
-      <StatTile label="采集到的商品（去重）" value={pool.distinctPids??0} hint="同一个商品可能出现在多个活动里，这里只算一次"/>
-      <StatTile label="合格商品" value={pool.eligiblePids??0} hint="通过下面这套门槛的商品数" brand/>
-      <StatTile label="标准链接已就绪" value={linkOk} hint="只有这些商品可以进入达人线索查询"/>
-     </div>
+     <MetricTable rows={[
+      {label:"采集到的商品（去重）",value:(pool.distinctPids??0).toLocaleString(),detail:"同一商品出现在多个活动时只算一次"},
+      {label:"合格商品",value:(pool.eligiblePids??0).toLocaleString(),detail:"通过当前 Campaign 门槛",accent:true},
+      {label:"标准链接已就绪",value:linkOk.toLocaleString(),detail:"可以进入达人线索查询"},
+     ]}/>
      {!pool.poolReconciled&&<Notice tone="warning">合格商品数与去重商品数对不上，先别据此判断池子大小。</Notice>}
      <Progress done={pool.eligiblePids??0} total={pool.distinctPids??0} label="合格比例（合格商品 / 去重商品）"/>
      <div className="rounded-xl border border-gray-200 p-4 dark:border-gray-700">
@@ -183,12 +180,12 @@ export default function CampaignPanel({onOpenLeads}:{onOpenLeads?:()=>void}={}){
     </p>
     {!links.data?.available&&<p className="text-sm text-gray-500">{links.loaded?"还没有为非全托读过卡。先点下面的「准备链接（只查不建）」。":"读取中…"}</p>}
     {links.data?.available&&<>
-     <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-      <StatTile label="待备链商品" value={linkTargets} hint={(links.data.excluded??0)>0?`已排除跨渠道重叠 ${links.data.excluded} 个（全托优先）`:"已入池商品，一个商品只出一条"}/>
-      <StatTile label="历史卡记录" value={links.data.reusePids??0} hint="只用于追溯，不进入发送材料"/>
-      <StatTile label="缺标准链接" value={linkStates.missing??0} hint="需要确认或创建当前标准卡"/>
-      <StatTile label="当前标准链接" value={links.data.verifiedPids??0} hint="统一规则并已回读确认" brand/>
-     </div>
+     <MetricTable rows={[
+      {label:"待备链商品",value:linkTargets.toLocaleString(),detail:(links.data.excluded??0)>0?`已排除跨渠道重叠 ${links.data.excluded} 个（全托优先）`:"已入池商品，一个商品只出一条"},
+      {label:"历史卡记录",value:(links.data.reusePids??0).toLocaleString(),detail:"只用于追溯，不进入发送材料"},
+      {label:"缺标准链接",value:(linkStates.missing??0).toLocaleString(),detail:"需要确认或创建当前标准卡"},
+      {label:"当前标准链接",value:(links.data.verifiedPids??0).toLocaleString(),detail:"统一规则并已回读确认",accent:true},
+     ]}/>
      <Progress done={judged} total={linkTargets} label="准备进展（已判定 / 待备链商品）"/>
      {linkRun?.running&&<Progress done={linkRun.progress?.created??0} total={(linkRun.progress?.created??0)+((linkRun.progress?.states?.missing)??0)} label="本批建链进展（本批已建 / 本批已建＋还缺）"/>}
      {(links.data.planMissing??0)>0&&<Notice tone="warning">有 {links.data.planMissing} 个已入池商品在快照里找不到对应活动事实，已跳过——不按猜的活动建链。</Notice>}

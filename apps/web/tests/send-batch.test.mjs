@@ -10,11 +10,18 @@ const sample={handle:'nuvolablu4',oecId:'1234567890123456789',pid:'1729571380453
 const hash='a'.repeat(64);
 const authorization={source:'current_user_request',scope:'pool_to_send',maxPeople:500,requestedPeople:500,
  reservePeople:50,frozenPeople:550,reservePolicy:'ceil-10-percent-v1',
- widenLocalGate:false,sendWindow:null,institutionNewContactRollingCap:500,
+ widenLocalGate:false,sendWindow:null,messageTemplate:'standard',institutionNewContactRollingCap:500,
  materialPolicy:'frozen-current-binding-v1',note:'只消费本批冻结位置'};
+const templates=[
+ {id:'standard',label:'佣金提升',description:'先说明更高佣金，再邀请制作短视频或直播。'},
+ {id:'brief',label:'简短直接',description:'一句话说明商品、佣金和合作动作。'},
+ {id:'reconnect',label:'再次合作',description:'强调这是同一商品的再次合作邀请。'},
+ {id:'video_focus',label:'短视频优先',description:'明确邀请达人优先制作新的短视频。'},
+ {id:'live_focus',label:'直播优先',description:'明确邀请达人在下一场直播中再次推广。'},
+];
 
 const payload={market:'it',account:'acc6',available:true,
- config:{count:500,widen:false,windowEnabled:false,window:['09:00','24:00']},
+ config:{count:500,widen:false,windowEnabled:false,window:['09:00','24:00'],template:'standard'},templates,
  preview:{available:true,requested:500,reserveRequested:50,required:550,sendable:500,reserveReady:50,
   frozenTotal:550,fullPreparation:true,positions:1769,readyAvailable:1769,
   samples:[sample],nameQuality:{缓存:476,取自卡名:24},
@@ -38,10 +45,11 @@ test('the send card reads the batch preview and the pool layers from one payload
  assert.equal(v.preview.capacity.remaining,500);
  assert.deepEqual(v.pool.layers,payload.pool.layers);
  assert.deepEqual(v.config,payload.config);
+ assert.equal(v.templates[4].id,'live_focus');
 });
 
 test('an unavailable pool is reported as unavailable, not as zeroes that look real',()=>{
- const v=validateSendState({market:'it',account:'acc6',available:false,config:payload.config,
+ const v=validateSendState({market:'it',account:'acc6',available:false,config:payload.config,templates,
   preview:{available:false,requested:0,skipped:{},window:{enabled:false,open:true,start:null,end:null}}});
  assert.equal(v.available,false);
  assert.equal(v.preview.sendable,0);
@@ -92,10 +100,11 @@ test('an unknown pool layer or a bad sample is refused',()=>{
 test('an exact target from 1 to 2000 can be saved; presets are only shortcuts',()=>{
  assert.deepEqual(validateSendRequest({action:'save',config:{count:1000}}).config.count,1000);
  assert.deepEqual(validateSendRequest({action:'save',config:{count:500,widen:true,windowEnabled:true,
-  window:['09:00','24:00']}}).config.window,['09:00','24:00']);
+  window:['09:00','24:00'],template:'video_focus'}}).config.template,'video_focus');
  assert.equal(validateSendRequest({action:'save',config:{count:600,widen:true}}).config.count,600);
  assert.equal(validateSendRequest({action:'save',config:{count:600}}).config.count,600);
  assert.equal(validateSendRequest({action:'save',config:{count:777}}).config.count,777);
+ assert.throws(()=>validateSendRequest({action:'save',config:{count:500,template:'unknown'}}),/invalid_send/);
  assert.throws(()=>validateSendRequest({action:'save',config:{count:0}}),/invalid_send_request/);
  assert.throws(()=>validateSendRequest({action:'save',config:{count:2001}}),/invalid_send_request/);
  assert.throws(()=>validateSendRequest({action:'save',config:{count:500,unknown:1}}),/invalid_send_request/);

@@ -1,7 +1,7 @@
 "use client";
 import Link from "next/link";
 import {useCallback,useEffect,useRef,useState} from "react";
-import {Button,Card,Collapsible,Field,Input,Notice,PageHeading,Pill,Progress,Section,Tabs} from "../bdhub/ui";
+import {Button,Card,Collapsible,Field,Input,MetricTable,Notice,PageHeading,Pill,Progress,Section,Tabs} from "../bdhub/ui";
 import type {CatalogLinkStatus,GlobalStatus} from "../../server/global-source/bridge";
 import type {CatalogScreenConfig,CatalogScreenState} from "../../server/catalog-screen/bridge";
 import LeadsQueuePanel from "./LeadsQueuePanel";
@@ -63,11 +63,19 @@ export default function CatalogWorkspace(){
  <Tabs items={[{value:"full",label:"全托商品",count:data?.products},{value:"campaign",label:"非全托商品"},{value:"leads",label:"达人线索",count:queue.data?.scope??leadPool.data?.counts?.positions}]} value={tab} onChange={setTab}/>
  {tab==="leads"?<LeadsPanel/>:tab==="campaign"?<CampaignPanel onOpenLeads={()=>setTab("leads")}/>:<>
  <FunnelBar stages={stages} onJump={id=>id==="card-leads"?setTab("leads"):jump(id)}/>
- {tab==="full"&&leadPool.data?.available&&<div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-  {(()=>{const c=leadPool.data.counts,b=leadPool.data.business;return [["可发送",b.sendable,`${c.readyCreators.toLocaleString()} 个达人，各取一个最优 PID`],["等待中",b.waiting,"等轮次、冷却或达人问题处理"],["暂不参与",b.inactive,"商品当前不合格或明确排除"],["已发送历史",leadPool.data.history.sent,`${c.positions.toLocaleString()} 个累计位置`]].map(([label,value,hint])=><div key={String(label)} className="rounded-2xl border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-white/[0.025]"><p className="text-xs text-gray-500">{label}</p><p className="mt-1 text-xl font-semibold tabular-nums">{Number(value).toLocaleString()}</p><p className="mt-0.5 text-xs leading-5 text-gray-400">{hint}</p></div>);})()}
- </div>}
+ {tab==="full"&&leadPool.data?.available&&<MetricTable rows={(()=>{const c=leadPool.data.counts,b=leadPool.data.business;return [
+  {label:"可发送",value:b.sendable.toLocaleString(),detail:`${c.readyCreators.toLocaleString()} 个达人，各取一个最优 PID`,accent:true},
+  {label:"等待中",value:b.waiting.toLocaleString(),detail:"等轮次、冷却或达人问题处理"},
+  {label:"暂不参与",value:b.inactive.toLocaleString(),detail:"商品当前不合格或明确排除"},
+  {label:"已发送历史",value:leadPool.data.history.sent.toLocaleString(),detail:`累计位置 ${c.positions.toLocaleString()} 个`},
+ ];})()}/>}
  <Section id="stage-collect" index="①" title="采集与筛选" summary={<>采集 {data?.products?.toLocaleString()??"—"} · 筛出 {screen?.funnel?.eligible.toLocaleString()??"—"} · 已备链 {linkedCount?.toLocaleString()??"—"}</>}>
- <div id="card-collect" className="scroll-mt-6"><Card title="意大利 · 全托主力来源" action={<div className="flex flex-wrap items-center gap-2"><Pill tone={data?.published?"success":data?.state==="blocked"?"warning":"brand"}>{data?.state?states[data.state]:"读取中"}</Pill><Button size="sm" onClick={()=>void sync()} disabled={syncing}>{syncing?"提交中…":data?.state==="collecting"?"继续采集":"主动采集"}</Button></div>}><div className="space-y-4 p-5"><div className="grid grid-cols-2 gap-4 lg:grid-cols-4">{[["已采集去重商品",data?.products],["本查询报告数量",data?.reportedTotal],["采集时未选",data?.listedUnselectedProducts],["已核对活动详情",data?.detailProducts]].map(([label,value])=><div key={String(label)} className="rounded-xl bg-gray-50 p-4 dark:bg-gray-800"><p className="text-xs text-gray-500">{label}</p><p className="mt-2 text-2xl font-semibold">{value==null?"—":Number(value).toLocaleString()}</p></div>)}</div>
+ <div id="card-collect" className="scroll-mt-6"><Card title="意大利 · 全托主力来源" action={<div className="flex flex-wrap items-center gap-2"><Pill tone={data?.published?"success":data?.state==="blocked"?"warning":"brand"}>{data?.state?states[data.state]:"读取中"}</Pill><Button size="sm" onClick={()=>void sync()} disabled={syncing}>{syncing?"提交中…":data?.state==="collecting"?"继续采集":"主动采集"}</Button></div>}><div className="space-y-4 p-5"><MetricTable rows={[
+  {label:"已采集去重商品",value:data?.products?.toLocaleString()??"—",detail:"当前完整商品范围",accent:true},
+  {label:"本查询报告数量",value:data?.reportedTotal?.toLocaleString()??"—",detail:"平台本轮报告总数"},
+  {label:"采集时未选",value:data?.listedUnselectedProducts?.toLocaleString()??"—",detail:"尚未进入已选商品池"},
+  {label:"已核对活动详情",value:data?.detailProducts?.toLocaleString()??"—",detail:"已取得活动与佣金详情"},
+ ]}/>
  {data?.reason&&data.state!=="completed"&&<Notice tone="warning">{{source_remote_rejected:"平台暂未接受查询，已保留采集进度。",repeated_page:"平台返回重复分页，需要核对后续采。",endpoint_end_total_mismatch:"已到接口末页，但数量尚未核对一致。",source_maintenance_due:"账号正在维护，等待恢复后续采。"}[data.reason]||"采集需进一步核对，已保存原始进度。"}</Notice>}
  {data?.updatedAt&&<p className="text-xs text-gray-400">最近写入 {new Date(data.updatedAt*1000).toLocaleString("zh-CN",{timeZone:"Asia/Shanghai",hour12:false})} · 北京时间</p>}
  <Collapsible label="商品明细（可搜索）" count={data?.totalMatches}><form className="mb-4 flex gap-2" onSubmit={e=>{e.preventDefault();setOffset(0);setQuery(text.trim());}}><Input aria-label="搜索货盘商品" placeholder="搜索 PID 或商品标题" value={text} onChange={e=>setText(e.target.value)} maxLength={100}/><Button type="submit" variant="outline" className="shrink-0 whitespace-nowrap">搜索</Button></form>
@@ -80,7 +88,12 @@ export default function CatalogWorkspace(){
  {!screenDraft&&<p className="text-sm text-gray-500">{screenLoaded?"暂时无法读取筛选门槛。":"读取中…"}</p>}
  {screenDraft&&<>
  {screen?.funnel?<>
- <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">{[["本批采集去重商品",screen.funnel.collected],["筛出（合格）",screen.funnel.eligible],["其中已在池中",screen.funnel.selectedEligible]].map(([label,value])=><div key={String(label)} className="rounded-xl bg-gray-50 p-4 dark:bg-gray-800"><p className="text-xs text-gray-500">{label}</p><p className="mt-2 text-2xl font-semibold">{Number(value).toLocaleString()}</p></div>)}<div className="rounded-xl bg-brand-50 p-4 dark:bg-brand-500/10"><p className="text-xs text-gray-500">待入池</p><p className="mt-2 text-2xl font-semibold">{screen.funnel.unselectedEligible.toLocaleString()}</p><div className="mt-2"><Button size="sm" disabled={jobs.busy!==null||Boolean(jobs.data?.selection.run?.running)||screen.funnel.unselectedEligible===0} onClick={()=>void jobs.start("selection")}>{jobs.data?.selection.run?.running?"选入中…":"一键选入"}</Button></div></div></div>
+ <MetricTable rows={[
+  {label:"本批采集去重商品",value:screen.funnel.collected.toLocaleString(),detail:"进入本次筛分的商品"},
+  {label:"筛出（合格）",value:screen.funnel.eligible.toLocaleString(),detail:`合格率 ${screen.funnel.collected?((screen.funnel.eligible/screen.funnel.collected)*100).toFixed(1):"0.0"}%`,accent:true},
+  {label:"其中已在池中",value:screen.funnel.selectedEligible.toLocaleString(),detail:"已经完成商品选入"},
+  {label:"待入池",value:screen.funnel.unselectedEligible.toLocaleString(),detail:"当前符合规则但尚未选入",action:<Button size="sm" disabled={jobs.busy!==null||Boolean(jobs.data?.selection.run?.running)||screen.funnel.unselectedEligible===0} onClick={()=>void jobs.start("selection")}>{jobs.data?.selection.run?.running?"选入中…":"一键选入"}</Button>},
+ ]}/>
  <p className="text-xs italic leading-5 text-gray-500">合格率 {screen.funnel.collected?((screen.funnel.eligible/screen.funnel.collected)*100).toFixed(1):"0.0"}%；筛除 {screen.funnel.rejected.toLocaleString()} 个（{Object.entries(screen.funnel.reasons).sort((a,b)=>b[1]-a[1]).map(([code,count])=>`${screenReason(code,screen.funnel?.config)}，${count.toLocaleString()} 个`).join("；")||"—"}）；另有暂无评分的 {screen.funnel.unrated.toLocaleString()} 个（评分为 0 的语义未核实）。</p>
  </>:<p className="text-sm text-gray-500">还没有可筛分的采集批次。</p>}
  {selection&&<><Progress done={(selection.states.confirmed??0)+(selection.states.already_selected??0)} total={selection.total} label="选入进度"/>{((selection.states.needs_review??0)+(selection.states.result_unknown??0))>0&&<p className="text-xs text-gray-500">需人工核对 {selection.states.needs_review??0} · 结果待核验 {selection.states.result_unknown??0}</p>}</>}
@@ -105,7 +118,11 @@ export default function CatalogWorkspace(){
  :<p className="text-sm text-gray-500">已启动，正在整理商品清单…</p>}
  </div>}
  {links?.available&&links.summary&&<>
- <div className="grid grid-cols-2 gap-4 lg:grid-cols-3">{[["本批已选商品",links.summary.total],["当前标准链接",links.summary.verifiedPidCount],["等待标准链接",links.summary.pendingCount]].map(([label,value])=><div key={String(label)} className="rounded-xl bg-gray-50 p-4 dark:bg-gray-800"><p className="text-xs text-gray-500">{label}</p><p className="mt-2 text-2xl font-semibold">{Number(value).toLocaleString()}</p></div>)}</div>
+ <MetricTable rows={[
+  {label:"本批已选商品",value:links.summary.total.toLocaleString(),detail:"本轮链接准备范围"},
+  {label:"当前标准链接",value:links.summary.verifiedPidCount.toLocaleString(),detail:"统一分佣、命名并已回读",accent:true},
+  {label:"等待标准链接",value:links.summary.pendingCount.toLocaleString(),detail:"尚未形成当前可发材料"},
+ ]}/>
  <ShortNames/>
  {links.summary.errors.length>0&&<Notice tone="warning">读取不完整，需核对：{links.summary.errors.map(e=>linkReasons[e]??e).join("；")}</Notice>}
  {links.summary.retryableErrors&&links.summary.retryableErrors.length>0&&<Notice tone="info">上次建链有 {links.summary.retryableErrors.length} 类未完成{links.summary.errorsUpdatedAt?`（${new Date(links.summary.errorsUpdatedAt*1000).toLocaleString("zh-CN",{timeZone:"Asia/Shanghai",hour12:false})}）`:""}：{links.summary.retryableErrors.map(e=>{const base=e.split(":")[0];const detail=e.slice(base.length+1);return (linkReasons[base]??base)+(detail?`（${detail}）`:"");}).join("；")}。这些商品仍在待建链里，再点一次「准备链接并新建」会重试。</Notice>}

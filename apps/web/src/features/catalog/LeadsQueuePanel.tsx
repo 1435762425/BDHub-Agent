@@ -1,5 +1,5 @@
 "use client";
-import {Button,Card,Field,Input,Notice,Pill,Progress,StatTile} from "../bdhub/ui";
+import {Button,Card,Field,Input,MetricTable,Notice,Pill,Progress} from "../bdhub/ui";
 import type {LeadsRunState} from "../../server/leads-queue/bridge";
 import type {LeadsQueueController} from "./useLeadsQueue";
 
@@ -15,34 +15,25 @@ function runLine(run:LeadsRunState){
  return `上一批：完成 ${done} 个，取得线索 ${leads} 条，只读请求 ${requests} 次。${run.stopped?(STOP[run.stopped]??`停在 ${run.stopped}。`):"正常结束。"}`;
 }
 
-// The queue's four layers. They partition the queue exactly -- every PID in scope sits in one of
-// them -- which is why "已出范围" is reported as a footnote instead: it is not in the queue at all.
-const LAYERS=[
- {key:"first",label:"首次待查",tone:"brand" as const,hint:"从没问过平台，按累计销量降序"},
- {key:"due",label:"到期待刷新",tone:"success" as const,hint:"距上次查询已满刷新周期"},
- {key:"waiting",label:"冷却中",tone:"neutral" as const,hint:"周期内查过，本次不碰"},
- {key:"stuck",label:"连续失败暂停",tone:"warning" as const,hint:"失败到上限，已移出队列"},
-];
-
 /** The PID -> creator-lead queue. State is owned by the page so the funnel bar reads the same numbers. */
 export default function LeadsQueuePanel({controller}:{controller:LeadsQueueController}){
  const {data,draft,setDraft,busy,message,save,startRun,loaded}=controller;
  const due=data?.nextDue?.[0];
- const counts=data?{first:data.firstTime,due:data.due,waiting:data.waiting,stuck:data.stuck}:null;
  // "Already queried" has to exclude both never-asked products and the ones parked after repeated
  // failures, or the coverage bar would count work that never reached the platform as done.
  const queried=data?Math.max(0,data.scope-data.firstTime-data.stuck):0;
  return <Card title="达人线索查询队列"><div className="space-y-4 p-5">
   {!draft&&<p className="text-sm text-gray-500">{loaded?"暂时无法读取查询队列。":"读取中…"}</p>}
   {draft&&data&&<>
-  <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-   <StatTile label="队列 PID（总数）" value={data.scope} hint={`合格 ${data.eligible.toLocaleString()} ∩ 有链接 ${data.linked.toLocaleString()}`}/>
-   <StatTile label="今日可查" value={data.dueQueue} hint={`首次 ${data.firstTime.toLocaleString()} · 到期刷新 ${data.due.toLocaleString()}`}/>
-   <StatTile label="冷却中" value={data.waiting} hint={`${data.refreshDays} 天内查过，下次 ${due?stamp(due.dueAt):`${data.refreshDays} 天后`}`}/>
-   <StatTile label="本次将跑" value={data.taken} hint={`上限 ${data.batchSize.toLocaleString()}；队列不够就少跑，绝不用冷却中的补足`} brand/>
-  </div>
+  <MetricTable rows={[
+   {label:"队列 PID（总数）",value:data.scope.toLocaleString(),detail:`合格 ${data.eligible.toLocaleString()} ∩ 有链接 ${data.linked.toLocaleString()}`},
+   {label:"首次待查",value:data.firstTime.toLocaleString(),detail:"从没问过平台，按累计销量降序",accent:true},
+   {label:"到期待刷新",value:data.due.toLocaleString(),detail:"距上次查询已满刷新周期"},
+   {label:"冷却中",value:data.waiting.toLocaleString(),detail:`${data.refreshDays} 天内查过，下次 ${due?stamp(due.dueAt):`${data.refreshDays} 天后`}`},
+   {label:"连续失败暂停",value:data.stuck.toLocaleString(),detail:"失败到上限，已移出队列"},
+   {label:"本次将跑",value:data.taken.toLocaleString(),detail:`上限 ${data.batchSize.toLocaleString()}；不使用冷却中的 PID 补足`},
+  ]}/>
   <Progress done={queried} total={data.scope} label="线索覆盖（已查过 / 队列总数）"/>
-  <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">{LAYERS.map(layer=><div key={layer.key} className="rounded-xl border border-gray-200 p-3 dark:border-gray-700"><div className="flex items-center justify-between"><p className="text-xs text-gray-500">{layer.label}</p><Pill tone={layer.tone}>{(counts?.[layer.key as keyof typeof counts]??0).toLocaleString()}</Pill></div><p className="mt-1 text-xs leading-5 text-gray-400">{layer.hint}</p></div>)}</div>
   <div className="grid gap-4 lg:grid-cols-3">
    <Field label="刷新周期（天）" hint="已查过的 PID 多久重查一次。"><Input type="number" min={1} max={90} value={draft.refreshDays} onChange={e=>setDraft({...draft,refreshDays:Number(e.target.value)})}/></Field>
    <Field label="每 PID 线索数" hint="平台按 GMV 排序，取销量大于 0 的前若干位。"><Input type="number" min={1} max={50} value={draft.leadsPerPid} onChange={e=>setDraft({...draft,leadsPerPid:Number(e.target.value)})}/></Field>

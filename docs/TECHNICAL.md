@@ -160,6 +160,8 @@ Pure HTTP 验证依赖 `Pillow==12.3.0`、`opencv-python-headless==4.14.0.94` �
 
 `cycle_burst.run_cohort()` 强制同时存在 state=`running` 且 authorization 完全相等的 `cycle_bulk_freeze`，并要求每个待执行 item 都有不可变 `cycle_bulk_candidate`；没有冻结范围时在认证/平台调用前返回 `frozen_batch_required`，不再调用 `choose_candidates()` 或远程 `fresh_card()`。旧 `bulk-second-send.py` 固定返回 `legacy_bulk_sender_retired`，不会建表、恢复或发送；历史 `cycle_bulk` 行只读保留。
 
+发送话术由 `cycle_materials.py` 的版本化模板目录统一渲染，当前新批次可选 `standard / brief / reconnect / video_focus / live_focus`。`config/send-batch.json` 保存当前模板；模板 ID 进入预览 config、authorization、preview hash 和每个冻结 candidate 的 `message`，因此切换模板必须重新预览并保存，冻结后执行器只读取已冻结的最终 `textIt`，不会运行时再选模板。旧 `video_live` 仅保留历史材料读取兼容，不出现在新批次选择器中。
+
 `lead_pool.py` 与 `/api/lead-pool` 使用 `bdhub.lead-pool.v3`：业务只投影 `sendable / waiting / inactive`，`sent` 单列历史；Web 合同同时保留 A/B 来源证据、数值 GMV、代表视频和来源计数。发送预览按池子顺序复检；B-only 位置从 `video_lead_current` 冻结代表视频 source，而不是伪造 A 类 `source_edge`。冻结批次执行器按 `position_order` 消费，不在执行时重新挑选或补满。
 
 已确认的排序合同已由 `lead_priority.py` 用合成数据验证并接入 `lead_pool.py`：A 类整体优先，按同市场数值 `GMV DESC → units DESC → sourceRank → pid`；B 类只取同一达人×PID中播放量最高的一条达标视频，按 `views DESC → releasedAt DESC → pid`。A/B 同对合并为 A，同达人仍只有一个发送槽；身份、回复、冷却、拒联与商品门禁继续生效。真实顺序以本轮全量重建完成后的当前投影为准，不能用模拟数量代替；详见 [排序模拟](implementation/lead-priority-simulation-20260920.md)。
@@ -328,7 +330,7 @@ Web 不再构建 `/flow-demo`、浏览器演示页、旧 local runtime、second-
 | `config/leads-queue.json` | 查询周期、批大小和失败上限 |
 | `config/identity-run.json` | OECID 批大小和 cohort |
 | `config/link-prepare*.json` | 链接读取/创建运行参数 |
-| `config/send-batch.json` | 发送预检数量、窗口和越界档 |
+| `config/send-batch.json` | 发送预检数量、话术模板、窗口和越界档 |
 | `config/reply-policy.json` | 五种回复动作、两小时集中周期、自动回复关闭和三条固定模板 |
 | `config/state-backup.json` | 当前 SQLite 明确清单与历史快照排除规则 |
 | `config/typesafe.example.json` / 本机 `config/typesafe.json` | TypeSafe 官方 endpoint、固定 Jev 模型和本机 API key；真实文件 0600 且不入 Git |

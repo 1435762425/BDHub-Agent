@@ -9,9 +9,32 @@ CREATE TABLE IF NOT EXISTS cycle_product_name(id TEXT PRIMARY KEY,pid TEXT NOT N
 CREATE TABLE IF NOT EXISTS cycle_card_check(plan_id TEXT NOT NULL,offer_key TEXT NOT NULL,offer_fingerprint TEXT NOT NULL,payload TEXT NOT NULL,PRIMARY KEY(plan_id,offer_key,offer_fingerprint));
 '''
 TEMPLATES={
- 'standard':"Ciao{recipient}! Abbiamo una commissione migliorata al {rate}% per te su {mention} 👏 Ti va di dedicarci un nuovo video o LIVE?",
- 'brief':"Ciao{recipient}! Per {mention}, commissione del {rate}% per te 👏 Ci fai un nuovo video o LIVE? 😊",
- 'video_live':"Ciao{recipient}! Stai preparando un nuovo video o LIVE? Per {mention} abbiamo una commissione migliorata al {rate}% per te 😊",
+ 'standard':{
+  'label':'佣金提升','description':'先说明更高佣金，再邀请制作短视频或直播。',
+  'textIt':"Ciao{recipient}! Abbiamo una commissione migliorata al {rate}% per te su {mention} 👏 Ti va di dedicarci un nuovo video o LIVE?",
+  'translationZh':"你好！这款{shortZh}可以为你提供更高的 {rate}% 佣金，下一条视频或直播可以再推一轮。"},
+ 'brief':{
+  'label':'简短直接','description':'一句话说明商品、佣金和合作动作。',
+  'textIt':"Ciao{recipient}! Per {mention}, commissione del {rate}% per te 👏 Ci fai un nuovo video o LIVE? 😊",
+  'translationZh':"你好！这款{shortZh}给你的佣金是 {rate}%，可以再做一条视频或一场直播吗？"},
+ 'reconnect':{
+  'label':'再次合作','description':'强调这是同一商品的再次合作邀请。',
+  'textIt':"Ciao{recipient}! Per {mention} ora hai una commissione del {rate}% 😊 Ti va di collaborare di nuovo con un video o una LIVE?",
+  'translationZh':"你好！这款{shortZh}现在给你的佣金是 {rate}%，愿意再合作制作一条视频或一场直播吗？"},
+ 'video_focus':{
+  'label':'短视频优先','description':'明确邀请达人优先制作新的短视频。',
+  'textIt':"Ciao{recipient}! Per {mention} abbiamo una commissione del {rate}% per te 👏 Ti va di creare un nuovo video?",
+  'translationZh':"你好！这款{shortZh}可以给你 {rate}% 佣金，愿意制作一条新的短视频吗？"},
+ 'live_focus':{
+  'label':'直播优先','description':'明确邀请达人在下一场直播中再次推广。',
+  'textIt':"Ciao{recipient}! Per {mention} abbiamo una commissione del {rate}% per te 👏 Ti va di inserirlo nella tua prossima LIVE?",
+ 'translationZh':"你好！这款{shortZh}可以给你 {rate}% 佣金，愿意在下一场直播中再次推广吗？"},
+}
+LEGACY_TEMPLATES={
+ 'video_live':{
+  'label':'旧版视频或直播','description':'只用于读取历史材料，不再作为新批次选项。',
+  'textIt':"Ciao{recipient}! Stai preparando un nuovo video o LIVE? Per {mention} abbiamo una commissione migliorata al {rate}% per te 😊",
+  'translationZh':"你好！如果你正在准备新的短视频或直播，这款{shortZh}可以为你提供 {rate}% 佣金。"},
 }
 # The exact instruction the model receives. Kept here as one string so the workbench can show the
 # operator what is actually being asked, instead of a paraphrase that could drift from the code.
@@ -34,13 +57,17 @@ def checked_names(body,inputs):
  return result
 
 def render(name,offer,kind='standard',handle=None):
- if kind not in TEMPLATES:raise CycleError('template_missing')
+ template=(TEMPLATES|LEGACY_TEMPLATES).get(kind)
+ if template is None:raise CycleError('template_missing')
  if not assess_offer(offer,time.time())['eligible']:raise CycleError('offer_not_eligible')
  if handle is not None and not re.fullmatch(r'[a-zA-Z0-9_.]{1,100}',handle):raise CycleError('invalid_handle')
  rate=format(Decimal(offer['creatorPercent']).normalize(),'f')
- return {'version':4,'template':kind,'textIt':TEMPLATES[kind].format(recipient=' @'+handle if handle else '',rate=rate,mention=name['mentionIt']),
- 'translationZh':f"你好！这款{name['shortNameZh']}可以为你提供更高的 {rate}% 佣金，下一条视频或直播可以再推一轮。",
+ return {'version':4,'template':kind,'textIt':template['textIt'].format(recipient=' @'+handle if handle else '',rate=rate,mention=name['mentionIt']),
+ 'translationZh':template['translationZh'].format(rate=rate,shortZh=name['shortNameZh']),
  'deliveryOrder':'card_then_text','pid':offer['pid'],'executionAllowed':False,'requiresVerifiedCard':True,'commissionState':'proposed_not_applied'}
+
+def template_catalog():
+ return [{'id':key,'label':value['label'],'description':value['description']} for key,value in TEMPLATES.items()]
 
 def select_offers(store,plan,limit=5,require_demand=False,scoped_pids=None):
  """当前合格货盘里的 offer，按 pid 取最好的一条。

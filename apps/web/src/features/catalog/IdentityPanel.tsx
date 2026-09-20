@@ -1,5 +1,5 @@
 "use client";
-import {Button,Card,Field,Input,Notice,Pill,Progress,StatTile} from "../bdhub/ui";
+import {Button,Card,Field,Input,MetricTable,Notice,Pill,Progress} from "../bdhub/ui";
 import type {IdentityProgress} from "../../server/identity-queue/bridge";
 import type {IdentityController} from "./useIdentityQueue";
 
@@ -48,11 +48,11 @@ export default function IdentityPanel({controller}:{controller:IdentityControlle
 
  return <Card title="达人身份（OECID）">
   <div className="space-y-4 p-5">
-   <div className="grid gap-4 sm:grid-cols-3">
-    <StatTile label="已就位" value={by?.resolved??data.resolvedCreators} hint="可进入发送池"/>
-    <StatTile label="待补充身份" value={by?by.blocked+by.unknown:data.pendingCreators} hint="等待查询 OECID" brand/>
-    <StatTile label="搜索不到" value={by?.unresolved??data.unresolvedCreators} hint="平台没有返回精确达人"/>
-   </div>
+   <MetricTable rows={[
+    {label:"已就位",value:(by?.resolved??data.resolvedCreators).toLocaleString(),detail:"可进入发送池"},
+    {label:"待补充身份",value:(by?by.blocked+by.unknown:data.pendingCreators).toLocaleString(),detail:"等待查询 OECID",accent:true},
+    {label:"搜索不到",value:(by?.unresolved??data.unresolvedCreators).toLocaleString(),detail:"平台没有返回精确达人"},
+   ]}/>
 
    <div className="flex flex-wrap items-center gap-2 text-xs text-gray-500">
     {data.policy.published

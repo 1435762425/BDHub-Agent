@@ -1,5 +1,5 @@
 "use client";
-import {Notice,Section,StatTile} from "../bdhub/ui";
+import {MetricTable,Notice,Section} from "../bdhub/ui";
 import IdentityPanel from "./IdentityPanel";
 import LeadPool from "./LeadPool";
 import LeadsQueuePanel from "./LeadsQueuePanel";
@@ -27,12 +27,12 @@ export default function LeadsPanel(){
     这一步<b>不分渠道</b>：位置＝达人×商品，渠道只挂在商品与链接上；同一个达人在两条渠道下共用冷却、
     500 额度与拒联记录。所以下面看到的是整个机构的状态。
   </Notice>
-  {scopeValue!=null&&<div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-   <StatTile label="队列商品（全托＋非全托）" value={scopeValue} hint={byChannel?`全托 ${byChannel.selected.toLocaleString()} · 非全托 ${byChannel.campaign.toLocaleString()}`:"两条渠道并集"}/>
-   <StatTile label="首次待查" value={queue.data?.firstTime??0} hint="从没问过平台，按累计销量降序"/>
-   <StatTile label="未到期（7 天内查过）" value={queue.data?.waiting??0} hint="到期后自动回到队列"/>
-   <StatTile label="连续失败已移出" value={queue.data?.stuck??0} hint="保留记录，不静默丢弃" brand/>
-  </div>}
+  {scopeValue!=null&&<MetricTable rows={[
+   {label:"队列商品（全托＋非全托）",value:scopeValue.toLocaleString(),detail:byChannel?`全托 ${byChannel.selected.toLocaleString()} · 非全托 ${byChannel.campaign.toLocaleString()}`:"两条渠道并集"},
+   {label:"首次待查",value:(queue.data?.firstTime??0).toLocaleString(),detail:"从没问过平台，按累计销量降序",accent:true},
+   {label:"未到期",value:(queue.data?.waiting??0).toLocaleString(),detail:"7 天内查过，到期后自动回到队列"},
+   {label:"连续失败已移出",value:(queue.data?.stuck??0).toLocaleString(),detail:"保留记录，不静默丢弃"},
+  ]}/>}
   {(queue.data?.unitsUnknown??0)>0&&<Notice tone="warning">
    有 {queue.data?.unitsUnknown} 个非全托商品没有销量数据，排序时按 0 处理（不会假装有销量）。
   </Notice>}

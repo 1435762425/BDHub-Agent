@@ -27,6 +27,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(ROOT / 'scripts'))
 from lib.second_cycle import CycleError  # noqa: E402
+from lib.cycle_materials import TEMPLATES  # noqa: E402
 from lib.send_batch import (freeze_batch, mark_batch_running, mark_batch_start_failed, preview,  # noqa: E402
                             reconciliation_target, save_and_status, settle_reconciliation,
                             start_batch, status, stop_batch)
@@ -48,6 +49,7 @@ def main():
     parser.add_argument('--count', type=int, default=500)
     parser.add_argument('--widen', action='store_true', help='显式越过本地 24h 500 新联系闸门')
     parser.add_argument('--window', help='发送窗口，形如 09:00-24:00；不填＝不设窗口')
+    parser.add_argument('--template', choices=tuple(TEMPLATES), default='standard', help='发送话术模板')
     parser.add_argument('--json', help='配置 JSON（save 用），如 {"count":500,"widen":true}')
     parser.add_argument('--request-id')
     parser.add_argument('--expected-preview-hash')
@@ -113,7 +115,7 @@ def main():
             batch = settle_reconciliation(ROOT, args.batch_id, args.delivery_id, args.expected_revision)
             print(json.dumps(status(ROOT) | {'batch': batch, 'reconciliation': verification}, ensure_ascii=False))
             return 0
-        state = preview(ROOT, count=args.count, widen=args.widen, window=window)
+        state = preview(ROOT, count=args.count, widen=args.widen, window=window, template=args.template)
         print(json.dumps(state, ensure_ascii=False))
         return 0
     except (CycleError, ValueError) as error:

@@ -141,6 +141,16 @@ class Preview(unittest.TestCase):
         self.assertTrue(state['fullPreparation'])
         self.assertEqual([s['pid'] for s in state['samples']], ['p0', 'p1', 'p2'])
 
+    def test_template_selection_changes_preview_hash_and_frozen_message(self):
+        slots=[slot('c0','p0'),slot('c1','p1')]
+        standard=self.run_preview(slots,['p0','p1'],count=1,template='standard')
+        live=self.run_preview(slots,['p0','p1'],count=1,template='live_focus')
+        self.assertEqual(standard['samples'][0]['template'],'standard')
+        self.assertEqual(live['samples'][0]['template'],'live_focus')
+        self.assertIn('prossima LIVE',live['samples'][0]['messageIt'])
+        self.assertNotEqual(standard['previewHash'],live['previewHash'])
+        self.assertEqual(live['authorization']['messageTemplate'],'live_focus')
+
     def test_it_walks_past_slots_the_gate_rejects(self):
         slots = [slot(f'c{i}', f'p{i}') for i in range(6)]
         # 前 4 个槽位过不了复检（缺卡片/被控制），批次仍要从后面凑满。
@@ -175,6 +185,7 @@ class Preview(unittest.TestCase):
         self.assertEqual(state['authorization']['scope'], 'pool_to_send')
         self.assertEqual((state['authorization']['reservePeople'],state['authorization']['frozenPeople']),(1,2))
         self.assertEqual(state['authorization']['reservePolicy'],'ceil-10-percent-v1')
+        self.assertEqual(state['authorization']['messageTemplate'],'standard')
         self.assertIsNone(state['authorization']['sendWindow'])
 
     def test_arbitrary_target_uses_ceiling_ten_percent_reserve(self):
@@ -324,6 +335,7 @@ def test_save_answers_with_the_new_config_already_applied(tmp_path):
                           pool_reader=lambda: {'available': False})
     assert out['saved'] is True
     assert out['config']['count'] == 500 and out['config']['widen'] is False
+    assert out['config']['template'] == 'standard'
     # 预检按新配置算：池子读不到时 requested/widen 也必须已经是新值，不能是旧的 600/True。
     assert out['preview']['requested'] == 500
     assert out['preview']['widen'] is False
@@ -336,7 +348,7 @@ def test_a_saved_config_that_cannot_be_read_back_is_reported_not_faked(tmp_path)
     out = save_and_status(tmp_path, {'count': 1000, 'windowEnabled': True,
                                      'window': ['09:00', '24:00']},
                           pool_reader=lambda: {'available': False})
-    assert out['config'] == {'count': 1000, 'widen': False, 'windowEnabled': True,
+    assert out['config'] == {'count': 1000, 'widen': False, 'windowEnabled': True, 'template': 'standard',
                              'window': ['09:00', '24:00']}
     raw = json.loads((tmp_path / 'config/send-batch.json').read_text(encoding='utf-8'))
     assert raw == out['config']

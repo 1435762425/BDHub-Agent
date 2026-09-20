@@ -24,6 +24,7 @@ from contextlib import closing
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from lib.cycle_materials import TEMPLATES, template_catalog
 from lib.cycle_review import card_rate_gap, choose_candidates
 from lib.lead_pool import pool
 from lib.second_cycle import CycleError, digest, encoded
@@ -112,7 +113,7 @@ def _contact_count(conn, plan_id, stamp):
         (plan_id, stamp - NEW_CONTACT_WINDOW_SECONDS, plan_id, stamp - NEW_CONTACT_WINDOW_SECONDS)).fetchone()[0]
 
 
-CONFIG_DEFAULT = {'count': 500, 'widen': False, 'windowEnabled': False,
+CONFIG_DEFAULT = {'count': 500, 'widen': False, 'windowEnabled': False, 'template': 'standard',
                   'window': list(DEFAULT_WINDOW)}
 
 
@@ -121,10 +122,10 @@ def config_path(root):
 
 
 def validate_config(raw):
-    """页面能改的只有三件：这一批多少条、要不要越界、窗口开不开与几点到几点。"""
+    """页面能改人数、模板、是否越界，以及窗口开不开与几点到几点。"""
     if not isinstance(raw, dict):
         raise CycleError('invalid_send_config')
-    if set(raw) - {'count', 'widen', 'windowEnabled', 'window'}:
+    if set(raw) - {'count', 'widen', 'windowEnabled', 'window', 'template'}:
         raise CycleError('invalid_send_config')
     value = {**CONFIG_DEFAULT, **raw}
     # 类型要先判：`1 <= "很多"` 会抛 TypeError，而不是我们自己的具名码——配置文件被人手改坏时
@@ -135,6 +136,8 @@ def validate_config(raw):
         raise CycleError('invalid_send_count')
     if type(value['widen']) is not bool or type(value['windowEnabled']) is not bool:
         raise CycleError('invalid_send_config')
+    if value['template'] not in TEMPLATES:
+        raise CycleError('template_missing')
     value['window'] = list(_window_arg(value['window'] if value['windowEnabled'] else None) or DEFAULT_WINDOW)
     return value
 
@@ -164,9 +167,10 @@ def status(root, *, now=None, clock=None, pool_reader=None, chooser=None):
     config = load_config(root)
     window = config['window'] if config['windowEnabled'] else None
     state = preview(root, count=config['count'], widen=config['widen'], window=window,
+                    template=config['template'],
                     now=now, clock=clock, pool_reader=pool_reader, chooser=chooser)
     layers = pool(root, now=clock() if clock else (now if now is not None else time.time())) if pool_reader is None else {}
-    return {'market': 'it', 'account': 'acc6', 'config': config, 'preview': state,
+    return {'market': 'it', 'account': 'acc6', 'config': config, 'templates': template_catalog(), 'preview': state,
             'pool': {'counts': layers.get('counts') or {}, 'layers': layers.get('layers') or {}},
             'batch': batch_status(root), 'available': state.get('available', False)}
 
@@ -181,20 +185,22 @@ def save_and_status(root, raw, *, now=None, clock=None, pool_reader=None, choose
     return {**state, 'config': saved, 'saved': True}
 
 
-def preview(root, *, count=500, widen=False, window=None, now=None, clock=None,
+def preview(root, *, count=500, widen=False, window=None, template='standard', now=None, clock=None,
             pool_reader=None, chooser=None):
     """这一批会发给谁、发什么、谁被跳过（只读，不落库、不碰平台）。"""
-    state, _ = _preview(root, count=count, widen=widen, window=window, now=now, clock=clock,
+    state, _ = _preview(root, count=count, widen=widen, window=window, template=template, now=now, clock=clock,
                         pool_reader=pool_reader, chooser=chooser)
     return state
 
 
-def _preview(root, *, count=500, widen=False, window=None, now=None, clock=None,
+def _preview(root, *, count=500, widen=False, window=None, template='standard', now=None, clock=None,
              pool_reader=None, chooser=None):
     """Return the public preview and its private, fully frozen candidate list."""
     root = Path(root)
     if type(count) is not int or not 1 <= count <= 2000:
         raise CycleError('invalid_send_count')
+    if template not in TEMPLATES:
+        raise CycleError('template_missing')
     window = _window_arg(window)
     stamp = clock() if clock is not None else (now if now is not None else time.time())
     reserve_requested = math.ceil(count * RESERVE_RATE)
@@ -246,13 +252,13 @@ def _preview(root, *, count=500, widen=False, window=None, now=None, clock=None,
     reasons = {}
     for row in skipped:
         reasons[row.get('reason') or 'unknown'] = reasons.get(row.get('reason') or 'unknown', 0) + 1
-    formal_frozen = [_frozen_candidate(candidate, 'formal') for candidate in sendable]
-    reserve_frozen = [_frozen_candidate(candidate, 'reserve') for candidate in reserves]
+    formal_frozen = [_frozen_candidate(candidate, 'formal', template) for candidate in sendable]
+    reserve_frozen = [_frozen_candidate(candidate, 'reserve', template) for candidate in reserves]
     frozen = formal_frozen + reserve_frozen
-    config = {'count': count, 'widen': bool(widen), 'windowEnabled': window is not None,
+    config = {'count': count, 'widen': bool(widen), 'windowEnabled': window is not None, 'template': template,
               'window': list(window or DEFAULT_WINDOW)}
     authorization = _authorization(count, len(formal_frozen), reserve_requested,
-                                   len(reserve_frozen), widen, window)
+                                   len(reserve_frozen), widen, window, template)
     preview_hash = _preview_hash(config, authorization, frozen)
     return ({'available': True, 'requested': count, 'reserveRequested': reserve_requested, 'required': required,
             'sendable': len(formal_frozen), 'reserveReady': len(reserve_frozen),
@@ -267,12 +273,12 @@ def _preview(root, *, count=500, widen=False, window=None, now=None, clock=None,
             'previewHash': preview_hash, 'authorization': authorization}, frozen)
 
 
-def _frozen_candidate(candidate, role):
+def _frozen_candidate(candidate, role, template):
     """Freeze the actual card, text and all eligibility revisions shown in the preview."""
     from lib.cycle_materials import render
     frozen = json.loads(encoded(candidate))
     frozen['batchRole'] = role
-    frozen['message'] = render(frozen['name'], frozen['offer'], 'standard', frozen['handle'])
+    frozen['message'] = render(frozen['name'], frozen['offer'], template, frozen['handle'])
     return frozen
 
 
@@ -302,16 +308,15 @@ def _name_quality(candidates):
 def _sample(candidate):
     """样例要展示**真正会发出去的那句话**，不是我们对商品的内部叫法。
 
-    话术由既有模板渲染（`cycle_materials.render`，v4 `standard`），商品名用的是意语的
+    话术由本批已选模板渲染（`cycle_materials.render`，v4），商品名用的是意语的
     `mentionIt`；`shortNameZh` 只是操作者的中文备注，绝不进话术，也不能顶在"商品"那一栏
     （以前这里先取中文短名，页面上看起来就像要给意大利达人发中文）。
     """
-    from lib.cycle_materials import render
     offer = candidate['offer']
     name = candidate.get('name') or {}
     source = candidate.get('source') or {}
     source_class = source.get('sourceClass') or ('B' if source.get('sourceKind') == 'kalodata_video' else 'A')
-    message = render(name, offer, 'standard', candidate.get('handle')) if name.get('mentionIt') else None
+    message = candidate.get('message') if name.get('mentionIt') else None
     return {'handle': candidate.get('handle'), 'oecId':str(candidate.get('oecId') or ''),
             'pid': str(candidate['pid']),'sourceClass':source_class,
             'sourceRank':source.get('sourceRank'),'units':source.get('units'),
@@ -330,13 +335,14 @@ def _sample(candidate):
             'unlocked': bool(candidate.get('relationshipUnlocked'))}
 
 
-def _authorization(requested, max_people, reserve_requested, reserve_ready, widen, window):
+def _authorization(requested, max_people, reserve_requested, reserve_ready, widen, window, template):
     """写进 `cycle_bulk.authorization` 的显式授权：它决定这一批到底被允许做什么。"""
     return {'source': 'current_user_request', 'scope': 'pool_to_send', 'maxPeople': max_people,
             'requestedPeople': requested,
             'reservePeople': reserve_requested, 'frozenPeople': max_people + reserve_ready,
             'reservePolicy': 'ceil-10-percent-v1',
             'widenLocalGate': bool(widen), 'sendWindow': list(window) if window else None,
+            'messageTemplate': template,
             'institutionNewContactRollingCap': NEW_CONTACT_LIMIT,
             'materialPolicy': 'frozen-current-binding-v1',
             'note': '正式目标之外只消费本批冻结候补；unknown不释放名额；越界探测时平台原始回执必须落账'}
@@ -476,6 +482,7 @@ def freeze_batch(root, request_id, expected_preview_hash, *, now=None, clock=Non
     config = load_config(root)
     window = config['window'] if config['windowEnabled'] else None
     preview_state, candidates = _preview(root, count=config['count'], widen=config['widen'], window=window,
+                                         template=config['template'],
                                          now=now, clock=clock, pool_reader=pool_reader, chooser=chooser)
     if preview_state.get('previewHash') != expected_preview_hash:
         raise CycleError('preview_conflict')

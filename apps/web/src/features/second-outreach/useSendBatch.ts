@@ -33,7 +33,7 @@ export function useSendBatch():SendController{
     body:JSON.stringify({action:"save",config:draft})});
    if(!r.ok){setMessage("设置被拒绝：一批 1\u20132000 条，窗口形如 09:00\u201324:00。");return;}
    const value:SendState=await r.json();setData(value);setDraft(value.config);
-   setMessage("设置已保存。它只决定下一批的规模和窗口，不会自己开始发。");
+   setMessage("设置已保存。人数、窗口和话术模板已进入新预览；不会自己开始发。");
   }catch{setMessage("暂时无法读取或保存发送设置。");}
   finally{setBusy(false);}
  },[draft]);
@@ -56,7 +56,7 @@ export function useSendBatch():SendController{
   if(!hash)return;
   requestId.current??=`web-${crypto.randomUUID()}`;
   await action({action:"freeze",requestId:requestId.current,expectedPreviewHash:hash},
-   "本批已冻结。名单、PID、Offer、currentListId 和顺序不会再变化；还没有开始发送。");
+   "本批已冻结。名单、PID、Offer、currentListId、模板、最终话术和顺序不会再变化；还没有开始发送。");
  },[action,data]);
  const start=useCallback(async()=>{
   if(!data?.batch)return;
