@@ -107,9 +107,9 @@ React 组件不能直接读写 SQLite、启动任意命令或实现资格规则�
 
 当前已由 `catalog_current_binding` 提供唯一前向绑定：普通旧卡只保留在准备/库存历史表，不再进入线索或发送；创建意图按商品方案、分佣规则和命名规则冻结，历史卡存在不再阻止补建标准卡。`scripts/backfill-current-bindings.py` 可以只读检查或从已核验意图中本地回填可证明完全一致的标准卡；回填不调用平台、不创建或删除链接。动态回填数量见当前交接页。
 
-刷新合同按来源只有两条：Campaign 每日来源刷新时一并核验对应 TapLink；全托已选商品的 TapLink 每周统一核验一次。最后一次成功结果持续生效，达人查询、组批和正式发送不另做远程预检；确认失效的链接进入清理并在删除后回读。新建后回读属于写入结果结算，不属于周期核验。冻结批次执行器只用本地 `catalog_current_binding` 校验冻结的 Offer 指纹与 `currentListId`，再用 `cycle_send_runtime.descriptor()` 构造发送材料；不调用 `fresh_card()`。若平台明确拒绝商品卡，仅将该 PID 的当前绑定转为 `waiting_refresh` 并继续其他 PID；结果未知仍整批停下核验。
+Campaign 每日完整刷新，全托按周完整刷新；货盘 generation 发布后统一计算应有标准链接。新建后即时回读失败的单 PID 被隔离，整批写请求结束后执行一次公共回读，再按 30/120 秒两次轮询；仍未找到记 `skipped_unknown`，原 `catalog_link_intent` 保持 unknown 且永不重复 POST。确认失效的链接由周一清洗建立删除意图，整批删除请求收口后一次重读完整列表；仍存在记 `failed_known`，不重复 DELETE。持续发送只用本地 `catalog_current_binding` 校验 Offer 指纹与 `currentListId`，不调用 `fresh_card()`。
 
-`material_maintenance.py` 与 `lib/material_maintenance.py` 实现上述两个来源周期，配置入口仍为 `config/jobs.json`：`campaign_material_refresh` 是每日链（`campaignCollect` 完成且进度为 done 后，才启动 `linksCampaign`），`selected_taplink_verify` 是可配置星期的周检（启动 `links`）。调度器调用既有 `job_run.start()`，两种链接作业强制覆盖 `creates=0`，不删除卡；失败写 `retryAt=+1h`，不清空 `lastSuccess`。周期和调度器都默认关闭，`/api/jobs` 只有用户明确启用周期并启动 scheduler 后才会执行；一次 `--once` 在全关闭配置下只发布状态，不启动任何子作业。
+`operations_scheduler.py` 按不可变 `workflow_run/workflow_stage_run` 串行执行清洗、完整货盘、链接准备、Kalodata、OECID 与发送池发布；每阶段记录输入/输出 generation、断点、计数和平台写入数。`config/jobs.json` 的十个真实作业全部默认关闭；`market_automation_setting` 总开关关闭时不创建定时主链。旧 `material_maintenance.py` 只保留历史兼容，不再由 `/api/jobs` 启动。
 
 ### 5.3 线索与身份
 
@@ -147,11 +147,10 @@ Pure HTTP 验证依赖 `Pillow==12.3.0`、`opencv-python-headless==4.14.0.94` �
 | --- | --- |
 | `lead_pool.py` | 按当前时间重算位置、达人冷却和状态分层 |
 | `lead_priority.py` | A/B 合并、最高单条视频和最终发送顺序的纯函数合同；真实池由 `lead_pool.py` 按同一规则实现 |
-| `send_batch.py` | 发送预览指纹、不可变批次、revision 及 start/stop 控制 |
-| `cycle_review.py` | 候选复检、冻结与跳过原因 |
+| `cycle_review.py` | 从当前发送池领取前的身份、Offer、材料、关系和去重复检 |
 | `cycle_delivery.py` | 发送意图、组件状态、平台信号和额度预留 |
-| `cycle_burst.py` / `cycle_executor.py` | 既有分批执行与外部调用协调 |
-| `send-batch-worker.py` | 只消费指定冻结批次、检查窗口/停止/unknown 和完成状态 |
+| `cycle_executor.py` | 卡片→文字、回执与原意图只读恢复 |
+| `continuous_send.py` / `continuous-send-worker.py` | 持续发送控制、逐条快照、窗口、跨日恢复与进程统计 |
 | `cycle_inbox.py` / `poll-cycle-inbox.py` | 只读收信水位、事件和待处理内容 |
 | `cycle_service.py` | 服务案件、事实、人工接管与处理结果 |
 | `cycle_stats.py` | 按北京时间聚合确认发送、回复和橱窗事件 |
@@ -161,21 +160,20 @@ Pure HTTP 验证依赖 `Pillow==12.3.0`、`opencv-python-headless==4.14.0.94` �
 | `operations_workflow.py` | 自动运营开关、不可变 workflow run、阶段屏障、generation 和断点 |
 | `account_identity.py` | 账号身份代次、72 小时维护意图、能力观察和原子发布 |
 | `collaboration_status.py` | 四态合作事件、人工优先当前投影与 showcase 自动升级 |
-| `continuous_send.py` | 持续发送控制、单条不可变 delivery 快照、跨日恢复和进程统计 |
 
-`/api/send` 的 GET 只读状态；POST 只接受五种精确动作：保存设置、按 `expectedPreviewHash` 冻结、携带 `confirmed=true + expectedRevision` 启动、按 revision 停止、对一个原 `deliveryId` 执行只读 unknown 核验。多一个字段即拒绝。冻结把完整达人×PID×Offer×`currentListId`、话术和顺序写入 `cycle_bulk_candidate`，继续使用旧 `cycle_bulk/cycle_bulk_item` 表承载状态但不继承其历史执行授权；重复 `requestId` 幂等，预览变化返回冲突。窗口关闭不阻塞只读预览或冻结；start 后 worker 留在 `waiting_window`，到窗口内才允许 dispatch。只有 start 会启动 `send-batch-worker.py`；unknown 核验固定进入 `verify_only` recovery，遇到后续仍为 ready 的组件立即停止，不会发送。GET、save、freeze、reconcile、构建和测试均不会唤醒批量执行器。
+`/api/send` 的 GET 只读当前控制、窗口、24 小时额度、池余量、真实话术例子和进程；POST 只接受 revision 化的保存、发送、停止与原 unknown 核验。多一个字段即拒绝。保存、GET、构建和重启都不启动 worker；只有用户“发送”、显式自动发送开关或已启用调度器在窗口内启动 `continuous-send-worker.py`。
 
-`cycle_burst.run_cohort()` 强制同时存在 state=`running` 且 authorization 完全相等的 `cycle_bulk_freeze`，并要求每个待执行 item 都有不可变 `cycle_bulk_candidate`；没有冻结范围时在认证/平台调用前返回 `frozen_batch_required`，不再调用 `choose_candidates()` 或远程 `fresh_card()`。旧 `bulk-second-send.py` 固定返回 `legacy_bulk_sender_retired`，不会建表、恢复或发送；历史 `cycle_bulk` 行只读保留。
+持续发送按 `lead_pool.v3` 当前顺序领取一位达人，复检后把 creator/OECID、PID、Offer、`currentListId`、模板 revision、最终正文、关系控制 revision 和确定性 claim key 写入不可变 `cycle_delivery.snapshot`。执行只用本地 `catalog_current_binding` 核对材料，不远程刷新卡；`cycle_delivery` 唯一键、24 小时预留和同达人 active delivery 共同防重复。unknown 使进程进入 `waiting_reconciliation`，恢复只运行原 delivery 的 `verify_only`，不会领取下一位或重发。
 
-发送话术由 `cycle_materials.py` 的五个系统默认值与 `send_message_template*` revision 统一投影。系统模板第一次编辑时把默认正文冻结为 revision 1，再写 revision 2；删除写 `archived` 覆盖，不修改代码常量。新增模板使用 `custom-*` ID。所有正文只允许 `{creator_handle}`、`{product_name}`、`{creator_commission}`，后二者必需；模板卡在保存批次前展示全文、参数预览和按需中文翻译。`config/send-batch.json` 保存当前模板 ID；模板 ID、revision 和最终正文进入预览 config、authorization、preview hash 和每个冻结 candidate 的 `message`。正在使用的模板不能删除，冻结后执行器只读取冻结正文。旧 `video_live` 仅保留历史材料读取兼容。
+发送话术由 `cycle_materials.py` 的五个系统默认值与 `send_message_template*` revision 统一投影。系统模板第一次编辑时把默认正文冻结为 revision 1，再写 revision 2；删除写 `archived` 覆盖，不修改代码常量。新增模板使用 `custom-*` ID。所有正文只允许 `{creator_handle}`、`{product_name}`、`{creator_commission}`，后二者必需；发送页展示当前池中下一位达人的真实渲染例子。模板 ID、revision 与最终正文进入每个 delivery 快照，历史 delivery 不随模板更新。
 
-`lead_pool.py` 与 `/api/lead-pool` 使用 `bdhub.lead-pool.v3`：业务只投影 `sendable / waiting / inactive`，`sent` 单列历史；Web 合同同时保留 A/B 来源证据、数值 GMV、代表视频和来源计数。发送预览按池子顺序复检；B-only 位置从 `video_lead_current` 冻结代表视频 source，而不是伪造 A 类 `source_edge`。冻结批次执行器按 `position_order` 消费，不在执行时重新挑选或补满。
+`lead_pool.py` 与 `/api/lead-pool` 使用 `bdhub.lead-pool.v3`：业务只投影 `sendable / waiting / inactive`，`sent` 单列历史；Web 合同同时保留 A/B 来源证据、数值 GMV、代表视频和来源计数。B-only 位置从 `video_lead_current` 保留代表视频 source，不伪造 A 类 `source_edge`；`paid/rejected` 在确定性门禁中排除达人全部 PID。
 
 已确认的排序合同已由 `lead_priority.py` 用合成数据验证并接入 `lead_pool.py`：A 类整体优先，按同市场数值 `GMV DESC → units DESC → sourceRank → pid`；B 类只取同一达人×PID中播放量最高的一条达标视频，按 `views DESC → releasedAt DESC → pid`。A/B 同对合并为 A，同达人仍只有一个发送槽；身份、回复、冷却、拒联与商品门禁继续生效。真实顺序以本轮全量重建完成后的当前投影为准，不能用模拟数量代替；详见 [排序模拟](implementation/lead-priority-simulation-20260920.md)。
 
-当前 send preview v3 接受任意 `N=1..2000`，自动要求 `R=ceil(N×10%)`。冻结把前 N 位标为 `batchRole=formal` 并建立初始 `cycle_bulk_item`，后 R 位标为 `reserve` 且只保存在不可变 `cycle_bulk_candidate`；N＋R 未齐时 `fullPreparation=false`，服务端拒绝冻结。执行器仅在正式成员进入明确非触达终态后按 `position_order` 提升已冻结候补；`unknown` 先把整批切到 `waiting_reconciliation`，不会提升候补。`cycle_bulk.target` 始终是 N，`attempted/reservePromoted/reserveRemaining` 单独展示，候补不增加目标。页面修改目标、窗口或越界开关后先标记为未保存并禁用冻结，保存后重新预检并取得新的 preview hash，不能用旧预览冻结新设置。
+历史 `cycle_bulk/cycle_bulk_freeze/cycle_bulk_candidate` 和 `send-batch-worker.py` 只读保留用于结果追溯；`send-batch.py freeze/start/stop/reconcile` 固定返回 `legacy_frozen_send_retired`，不能成为新授权。
 
-`/api/inbox` 一次返回监控状态、最近 14 个北京自然日和当前未结人工事项；`StatsCalendarPanel` 直接复用工作台唯一的 `useInboxMonitor()` controller，不增加请求或轮询。日历主指标为确认触达达人次、确认商品卡、实时达人回复和加橱窗；未确认卡片单独展示，不计入成功。bridge 与纯展示模型都会复核期间 totals 等于每日行求和、`today` 等于同日期行；不可用、空数据或恒等式不成立时不显示成业务 0。
+`/api/inbox?days=7|14|30` 返回同一收信控制器的北京日统计；结果页画确认触达达人、有回复达人和加橱窗达人三条趋势线。未确认卡片与异常单列，不计入成功。bridge 与纯展示模型复核期间 totals 等于每日行求和、`today` 等于同日期行；不可用、空数据或恒等式不成立时不显示成业务 0。
 
 点击日期后，GET `/api/inbox?date=YYYY-MM-DD&offset=0&limit=50` 调用 `cycle_stats.day_detail()` 只读同一 SQLite，单页上限 100、偏移上限 5000。明细只投影投递、实时回复、加橱窗、历史已确认服务回复和当日新建人工案件的白名单字段；不下发原始 delivery snapshot、平台 payload、receipt、confirmation 或身份凭据。`total` 必须等于当日这些明细类型的统计求和，分页游标、日期和字段长度在 CLI/bridge 两层校验；确认文字跟随商品卡展示，不重复算成第二条触达。
 
@@ -187,11 +185,11 @@ Pure HTTP 验证依赖 `Pillow==12.3.0`、`opencv-python-headless==4.14.0.94` �
 - `ReplyPolicyGuard`：检查多意图、附件、PID/listId 唯一性、模板版本和人工条件，并把不满足的结果强制收敛为 `human`。
 - `ReplyTemplateRegistry`：只提供版本化的 `sample_self_service`、`collaboration_ack`、`link_usage` 三条 Agent 固定模板；它与二发批量模板、人工回复模板完全分离。
 
-当前 V1 回复实现由 `reply_events.py`、`config/reply-policy.json`、`template_library.py` 和 `run-agent-replies.py` 组成：事件层把已确认外发投影为 `outbound_episode`，把达人入站正文投影为不可变 `inbound_turn`，并保存最多三个 `turn_episode_link` 候选；政策文件唯一保存五种动作和三条固定意大利语模板；设置表保存 Agent 开关、回复窗口和缓冲约束，二发窗口的当前值仍以 `config/send-batch.json` 为执行真相。分类输出必须引用真实 message ID 与原文片段，`link_usage` 还必须只有一个关联 PID/listId，否则确定性守卫改为 `human`。
+当前 V1 回复实现由 `reply_events.py`、`config/reply-policy.json`、`template_library.py` 和 `run-agent-replies.py` 组成：事件层把已确认外发投影为 `outbound_episode`，把达人入站正文投影为不可变 `inbound_turn`，并保存最多三个 `turn_episode_link` 候选；政策文件固定五种动作和三条模板 key，`agent_reply_template*` 保存可编辑正文 revision；设置表保存 Agent 开关、回复窗口和缓冲约束。分类输出必须引用真实 message ID 与原文片段，`link_usage` 还必须只有一个关联 PID/listId，否则确定性守卫改为 `human`。
 
 DeepSeek 是当前 Agent 分类器，人工 `turn_review` 存在时人工结论优先；TypeSafe Jev 保持影子 challenger。Jev 使用官方 System One 合同 `POST https://api.typesafe.ai/v1/systemone`，固定模型 `jev-1.13.0`；API key 只从本机 `config/typesafe.json`（0600、Git 忽略）或 `TYPESAFE_API_KEY` 读取。收信 worker 不再调用旧 `cycle_agent.py`，也不执行旧 `process_due()`；它只保存事件并立即冻结达人。旧事实工具、60 秒服务代码和既有评估记录只保留历史兼容。
 
-Agent 与二发没有优先级关系，只有互斥窗口：默认北京时间 `15:00–16:00` 集中回复、30 分钟缓冲、`16:30–24:00` 二发；`validate_agent_setting()` 和 `send_batch.save_config()` 双向拒绝重叠。等待二发窗口的 `cycle_bulk_freeze=running/runtime=waiting_window` 不阻塞 Agent；实际 `cohort` 或 `cycle_delivery_part in (inflight,accepted)` 才阻塞回复 dispatch，随后仍复用同一 ACC6 写门禁。Agent 每轮最多分类 20 个 pending turn、发送或恢复 1 个持久 `service_reply`；恢复 `inflight/accepted/unknown` 只读回查原意图，不创建新发送。
+Agent 与二发没有优先级关系，只有互斥窗口：默认北京时间 `15:00–16:00` 集中回复、30 分钟缓冲、`16:30–24:00` 持续二发。等待发送窗口不阻塞 Agent；实际 `cycle_delivery_part in (inflight,accepted)` 才阻塞回复 dispatch，随后仍复用同一 ACC6 写门禁。Agent 每轮最多分类 20 个 pending turn、发送或恢复 1 个持久 `service_reply`；恢复 `inflight/accepted/unknown` 只读回查原意图，不创建新发送。
 
 `cycle_scheduler.PERIODS` 同样不再包含 `reply_facts`：既有 `cycle_schedule` 历史行保留，但 claim、running/recover 判断和状态投影只接受当前五个供给阶段，`run-second-cycle.py` 也不再为该旧阶段生成命令。这样以后启动供给调度器也不会意外恢复事实型回复路径。
 
@@ -222,7 +220,7 @@ Agent 与二发没有优先级关系，只有互斥窗口：默认北京时间 `
 
 `scripts/lib/schema_migrations.py` 当前以增量 registry 管理 `catalog-links.sqlite` 和 `second-cycle.sqlite`；自动工作流、账号身份与合作/持续发送分别使用 v11、v12、v13 三组 additive migration。其他历史表仍由各领域模块初始化。新增表/字段必须继续提供幂等升级和旧库兼容测试，不能靠删除本地 DB 重建。
 
-早期 `batch-tasks.sqlite` 与当前 `cycle_bulk_freeze/cycle_bulk_candidate` 是两套不同台账。Web 的 `/api/batch-tasks`、容量预检卡和旧 worker 唤醒入口已删除；历史数据库继续只读保留并纳入备份。当前新批次只走 `/api/send` 的预览、冻结、明确 start/stop/reconcile。项目文档要求的“任意 N＋10% 候补”已迁入当前冻结发送台账，不再依赖旧并行入口。
+早期 `batch-tasks.sqlite` 与 `cycle_bulk*` 均为历史台账。Web 的旧任务、冻结、候补与 worker 唤醒入口已删除；历史数据库继续只读保留并纳入备份。当前发送只走 `continuous_send_control/runtime` 与不可变 `cycle_delivery`。
 
 ### 6.2 状态原则
 
@@ -300,7 +298,9 @@ pending → started/submitted → confirmed
 | `/api/leads-queue` | Kalodata 查询队列与运行 |
 | `/api/identity-queue` | 达人级 OECID 分类与补齐 |
 | `/api/lead-pool` | 发送池分层 |
-| `/api/send` | 发送预览、设置保存、冻结、明确 start/stop 和批次状态 |
+| `/api/operations-home` | 首页主链、异常与三个 revision 化开关 |
+| `/api/workflow` | workflow 状态、立即运行与安全停止 |
+| `/api/send` | 持续发送设置、发送/停止、unknown 原意图核验和进程状态 |
 | `/api/template-library` | 二发模板、人工模板、Agent 固定模板和互斥窗口；所有 mutation 使用字段白名单与 revision |
 | `/api/conversations` | 默认需人工队列、会话详情、原文中译、草稿、人工文本/商品卡、人工回复确认和达人拒绝标签；图片入口当前明确禁用 |
 | `/api/reply-review` | 事件级样本、双模型影子分类、turn 标准动作和受控案件应用；无发送动作 |
@@ -310,9 +310,9 @@ pending → started/submitted → confirmed
 
 Web 不再构建 `/flow-demo`、浏览器演示页、旧 local runtime、second-pilot、second-live trial、second-outreach history、matching 或 outreach-drafts 路由。对应 SQLite 作为历史数据保留，未从备份清单移除。
 
-合作工作台 canonical route 为 `/it/workspace/send` 和 `/it/workspace/history`；旧 `/it/workspace/inbox` 只做重定向。会话 canonical route 为 `/it/conversations`、`/it/conversations/templates` 和 `/it/conversations/agent`，默认 view=`human`。回复影子评测保留在 `/ops/reply-evaluation`，账号就绪保留在 `/ops/accounts?market=it`。
+运营首页 canonical route 为 `/it`；合作工作台为 `/it/workspace/send` 和 `/it/workspace/history`；旧 `/it/workspace/inbox` 只做重定向。会话为 `/it/conversations`、`/it/conversations/templates` 和 `/it/conversations/agent`，默认 view=`human`；旧 `/ops/reply-evaluation` 重定向到 Agent 高级评测区。运行设置为 `/ops/kalodata`、`/ops/jobs`、`/ops/accounts`。
 
-会话页在 AppShell 中使用无最大宽度布局，并在桌面按 `队列 / 时间线与编辑器 / 达人与事项` 占满剩余视口。详情只投影白名单经营字段；人工回复确认必须先找到当前入站消息之后 `service_reply.kind in (manual,manual_card)` 且 `state=confirmed` 的证据。手工拒绝写达人级 `relationship.rejected=1`、关闭回复冻结并把当前 pending 标为 `suppressed_no_reply`，因此所有 PID 都被发送池排除。达人库顶部的“已查询/查得到/搜索不到”复用 `/api/identity-queue` 的互斥 handle 口径；“有回复/已加橱窗”从 live `inbox_event` 按 `creator_id` 去重，历史补录不计入。
+会话页在 AppShell 中使用无最大宽度布局，并在桌面按 `队列 / 时间线与编辑器 / 达人与事项` 占满剩余视口。详情只投影白名单经营字段；人工事项确认直接结算当前 case/pending 且不发送消息。`creator_collaboration_event/current` 保存 `normal/collaborated/paid/rejected`，状态 mutation 同时校验 collaboration 与 relationship revision；showcase 只升级系统默认，人工选择优先。达人库顶部的“已查询/查得到/搜索不到”复用 `/api/identity-queue` 的互斥 handle 口径；“有回复/已加橱窗”从 live `inbox_event` 按 `creator_id` 去重，历史补录不计入。
 
 ## 9. 账号与外部系统
 
@@ -345,17 +345,17 @@ Web 不再构建 `/flow-demo`、浏览器演示页、旧 local runtime、second-
 | `config/leads-queue.json` | 查询周期、批大小和失败上限 |
 | `config/identity-run.json` | OECID 批大小和 cohort |
 | `config/link-prepare*.json` | 链接读取/创建运行参数 |
-| `config/send-batch.json` | 发送预检数量、当前二发模板、二发窗口和越界档；二发窗口的执行真相 |
+| `config/send-batch.json` | 历史默认模板/窗口兼容输入；当前执行设置发布到 `continuous_send_control` |
 | `config/reply-policy.json` | 五种回复动作和三条 Agent 固定模板；不保存人工或二发自定义模板 |
 | `config/state-backup.json` | 当前 SQLite 明确清单与历史快照排除规则 |
 | `config/typesafe.example.json` / 本机 `config/typesafe.json` | TypeSafe 官方 endpoint、固定 Jev 模型和本机 API key；真实文件 0600 且不入 Git |
-| `config/jobs.json` | 手动作业与材料维护周期；Campaign 日检、全托周检及调度器均默认关闭 |
+| `config/jobs.json` | 十个真实运营作业的开关和北京时间；全部默认关闭 |
 | `config/market-accounts.json` | 市场账号角色和维护目标 |
 | `config/*.example.json` | 敏感本机配置样例 |
 
 业务配置不得另建第二来源。敏感配置、邮箱、激活码、Cookie 和身份文件不入 Git。
 
-回复政策统一由版本化的 `config/reply-policy.json` 保存五种动作和固定模板；`agent_reply_setting` 保存开关、回复时间和缓冲，`config/send-batch.json` 保存二发窗口。模板正文、设置 revision 和批次冻结正文都可追溯；provider 的连接配置分别从本机敏感配置读取，API key 继续只放本机敏感配置。
+回复政策由 `config/reply-policy.json` 固定五种动作和初始模板；`agent_reply_template*` 保存三条正文 revision，`agent_reply_setting` 保存开关、回复时间和缓冲，`continuous_send_control` 保存二发窗口与模板。最终正文冻结在 `service_reply` 或 `cycle_delivery`；provider 连接配置继续只放本机敏感配置。
 
 ## 11. 运行方式
 
@@ -389,16 +389,16 @@ Web bridge、作业启动器和子 worker 都固定使用仓库内 `.venv/bin/py
 
 手动作业统一优先走页面或 `scripts/job-run.py`，因为它保存配置、检查同名进程并在安全点停止。不要同时另开同一底层 CLI 绕过作业锁。
 
-冻结发送的 CLI 仅用于诊断或页面 bridge；真实 start 仍应从页面明确点击：
+持续发送 CLI 仅用于诊断或页面 bridge；真实 start 仍应从页面明确点击：
 
 ```bash
-.venv/bin/python scripts/send-batch.py status
-.venv/bin/python scripts/send-batch.py freeze --request-id <id> --expected-preview-hash <sha256>
-.venv/bin/python scripts/send-batch.py start --batch-id <id> --expected-revision <n> --confirmed
-.venv/bin/python scripts/send-batch.py stop --batch-id <id> --expected-revision <n>
+.venv/bin/python scripts/continuous-send.py status
+.venv/bin/python scripts/continuous-send.py save --json '<revisioned-setting>'
+.venv/bin/python scripts/continuous-send.py start --json '<revisioned-request>'
+.venv/bin/python scripts/continuous-send.py stop --json '<revisioned-request>'
 ```
 
-`freeze` 只写本机 SQLite；`start` 会启动真实发送 worker，不能用于只读检查、构建或部署验收。
+`status` 只读；`save` 只写本机设置；`start` 会启动真实发送 worker，不能用于构建或部署验收。旧 `send-batch.py` 的冻结与启动动作固定退役。
 
 回复事件回填和只读状态：
 
@@ -516,8 +516,8 @@ PYTHONDONTWRITEBYTECODE=1 \
 - 历史 `batch-tasks.sqlite` 曾有长事务；当前 UI 已停止唤醒旧准备 worker。若未来为迁移/追溯再次运行它，仍需先完成事务/WAL 与恢复语义验证。
 - Python 全量测试夹具已显式关闭 SQLite connection；`-W default` 下 1081 项通过且未关闭数据库 `ResourceWarning` 为 0。
 - Web package 已显式声明 ESM，Node 测试不再产生 module type warning；Next.js 构建仍有上游 `module.register()` deprecation warning。
-- 冻结批次、start/stop 和 frozen-v2 执行桥已接通；账号级平台日额度的原生信号仍未取得，不能用本地 500 闸门冒充。
-- 历史 legacy-only `cycle_bulk` 仍保留用于追溯，但旧 CLI 与 `cycle_burst` 动态选人回退均已退役；执行只接受当前冻结批次。
+- 持续发送 start/stop、窗口等待、逐条不可变 delivery、跨日恢复和 unknown 原意图核验已接通；账号级平台日额度原生信号仍未取得，不能用本地 500 闸门冒充。
+- 历史 `cycle_bulk*` 只读保留用于追溯；旧 CLI 与动态选人回退均已退役，新执行不读取旧授权。
 - 35 条意大利 turn 已完成人工真值审核：DeepSeek 28/35（80.00%，误自动处理 2、误转人工 3），Jev 22/35（62.86%，误自动处理 3、误转人工 1）；双模型一致也仍有 2 条误自动处理。DeepSeek 暂作 Agent 分类器、Jev 保持 challenger，人工 `turn_review` 优先。真实回复 transport、持久意图和回查合同已经接入，但 Agent 设置仍为 `enabled=false`，本轮真实发送为 0；详细证据见 [最终人工评测](implementation/reply-model-evaluation-20260920.md)。
 - SQLite 备份、校验和空目录恢复工具已完成；当前首份基线仍只在本机，尚未配置异机副本、保留周期或自动调度。
 - 项目 Python 环境、依赖锁和协议源码已独立；画像、IM、TapLink 等账号配置、身份文件和锁仍只读复用旧 BDHub，后续需逐项迁移凭据管理和身份维护，不能一次性复制旧配置。

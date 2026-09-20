@@ -1,8 +1,24 @@
 # BDHub-Agent Codex 接管状态
 
-更新时间：2026-09-20（Asia/Shanghai）。本文件是当前开发交接入口；产品规则以 [项目文档](../PROJECT.md) 为准，技术结构以 [技术文档](../TECHNICAL.md) 为准。动态数量是本次只读快照，后续以 `var/` 台账和页面 API 回读为准。
+更新时间：2026-09-21（Asia/Shanghai）。本文件是当前开发交接入口；产品规则以 [项目文档](../PROJECT.md) 为准，技术结构以 [技术文档](../TECHNICAL.md) 为准。动态数量是本次只读快照，后续以 `var/` 台账和页面 API 回读为准。
 
-## 0. 2026-09-20 会话工作台、模板与互斥窗口
+## 0. 2026-09-21 自动运营首页与持续经营
+
+- 根路由默认进入 `/it` 运营首页；主链按货盘 → TapLink → Kalodata → OECID → 发送池 → 持续二发 → Agent 回复展示，同一 workflow run/stage/generation 对账。首页三个开关均为持久 revision，当前全部关闭。
+- migration v11–v13 已在 21 库在线备份 `var/backups/state/20260920T161947Z-before-ops-v11-v13` 验证通过后应用；schema check 当前 ready。备份 322,461,696 字节、凭据 0、`valid=true`。
+- 本地合作状态回填 2,293 位达人：`normal=2,256`、`collaborated=36`、`paid=0`、`rejected=1`；paid 没有从消息文本猜测。重复 apply 为 0。
+- ACC6/ACC9 已各建立一份无敏感值的 baseline identity generation，固定角色分别为 communications/supply；现有能力证据保留 `verified/not_tested`。凭据权威仍为旧系统只读域，刷新/重登执行会明确停在 `project_identity_authority_required`，不会修改旧目录。
+- 自动工作流调度、十个真实作业、完整货盘发布屏障、Kalodata 额度终态、OECID 后统一发池均已接通；`config/jobs.json` 全部作业仍为关闭，调度器未运行，workflow run 为 0。
+- TapLink 创建 unknown 改为单 PID 隔离：整批结束后公共回读，再按 30/120 秒两次轮询；未找到记 `skipped_unknown`，不重复 POST。清洗对平台明确失效卡建立意图，批后完整回读仍存在记 `failed_known`，不重复 DELETE。
+- 用户可见 frozen-v2 已退役；持续发送在领取每位达人前把 OECID、PID、Offer、`currentListId`、模板 revision、最终正文与控制 revision 冻结进 `cycle_delivery`。旧 `cycle_bulk*` 只读保留，旧 freeze/start/stop/reconcile CLI 固定拒绝。
+- 会话加入 `normal/collaborated/paid/rejected` 四态、人工优先与 showcase 自动升级；人工事项可直接确认且不要求先发送。三条 Agent 动作 key 不变，正文支持不可变 revision 编辑。
+- 页面已重构为运营首页、合作工作台、会话、货盘、达人、运行与设置；结果页支持 7/14/30 天三条趋势线，货盘含命名 Tab，运行设置拆为 Kalodata/作业/机构账号。
+- 当前只读回读：持续发送 `off`、池剩余 1,391、24 小时额度使用 0、unknown 0；Agent `enabled=false`；自动设置 0 行、workflow 0 行、连续发送控制/运行 0 行、旧活动冻结批次 0。
+- 代码验证：Python 980 项、Web 143 项、TypeScript、Next 生产构建均通过；平台写入、真实 IM、自动回复、自动清洗、自动建链、账号重登均为 0。
+
+本轮逻辑提交：`a8fbabd`（状态合同与 migration）、`a1e7d47`（账号身份代次）、`348e7a1`（自动工作流与 TapLink unknown）、`e4086e9`（持续发送）、`328400d`（首页与全页面重构）。
+
+## 0A. 2026-09-20 会话工作台、模板与互斥窗口
 
 - 新增一级 `/it/conversations`，默认打开“需人工”，二级页为人工回复模板和 Agent AI 回复设置；旧 `/it/workspace/inbox` 重定向到新入口，合作工作台只保留发送与结果历史。
 - 当前真实只读队列为 33 条：需人工 5、处理中 6、Agent 已处理 1、已完成 21。需人工只计算当前仍有 pending/开放案件的会话，不把无 pending 的历史审核样本混入；详情展示原因、达人原文、等待时间、完整时间线、相关 PID/listId 和草稿。审核结论为人工但尚无实体 case 的 4 条会话会投影为可完成的人工事项，用户记录结果后才原子落账并解除本次冻结。
@@ -66,6 +82,11 @@ DeepSeek/Agent 已经把 9 月 14 日的“货盘批量备链”继续推进到�
 | 多市场参考标准 | `75e7817`（意大利基准、14 市场逐能力验收和当前文档对齐） |
 | 会话工作台与互斥窗口 | `532980e`（三套模板、默认需人工、Agent 固定回复、15:00/16:30 窗口与安全恢复） |
 | 会话与达人界面优化 | `e9fc133`（全宽会话、中译、人工确认/拒绝、经营画像、可编辑系统模板和达人维度统计） |
+| 自动运营状态合同 | `a8fbabd`（workflow/identity/collaboration/continuous 三组 additive migration 与门禁） |
+| 账号身份代次 | `a1e7d47`（72 小时全局维护队列、固定角色、原子代次与旧权威只读阻断） |
+| 自动工作流与 TapLink unknown | `348e7a1`（generation 屏障、十作业调度、批后回读与清洗终态） |
+| 持续发送 | `e4086e9`（逐条 delivery 快照、窗口/额度/unknown 恢复，旧冻结入口退役） |
+| 自动运营首页与页面重构 | `328400d`（首页、趋势、四态合作、命名 Tab 与三运行设置入口） |
 | 上一个已提交开发头 | `4cdb759`（`agent/p0-catalog-links`） |
 | 继承工作区固化提交 | `cd81dff` |
 | 继承标签 | `takeover-20260919-inherited` |
@@ -297,16 +318,16 @@ DeepSeek/Agent 已经把 9 月 14 日的“货盘批量备链”继续推进到�
 
 ## 9. 本轮执行边界
 
-本轮已将本项目 `second-cycle.sqlite` 的 additive migration 推进到 v10；新增模板库、会话草稿、Agent 设置/运行表，以及新一级会话工作台和独立 Agent 回复执行器。迁移前备份为 `var/backups/state/20260920T114352Z-before-conversation-workbench`。没有发送 TikTok IM、冻结业务批次、启动发送/收信/Agent worker、开启 Agent 自动回复、创建新的真实回复发送意图、删除历史 TapLink、修改旧 BDHub 或恢复其他 worker。
+本轮已将本项目 `second-cycle.sqlite` additive migration 推进到 v13，并完成合作状态与账号 baseline 代次的本地回填。迁移前备份为 `var/backups/state/20260920T161947Z-before-ops-v11-v13`。没有发送 TikTok IM、创建/删除真实 TapLink、启动持续发送/收信/Agent/自动运营 worker、开启任何自动开关、账号重登、修改旧 BDHub 或恢复其他 worker。
 
 ## 10. 接管验证
 
-2026-09-20 意大利工作台收敛验证：
+2026-09-21 自动运营工作流验证：
 
-- Python：删除已退役模拟/试点测试后，`963` 项当前 `unittest` 通过。
-- Web：删除已退役演示/模拟合同后，`147` 项当前 Node 测试通过。
+- Python：`980` 项当前 `unittest` 通过，`PYTHONWARNINGS=default` 下无未关闭数据库 warning。
+- Web：`143` 项 Node 合同测试通过。
 - TypeScript：`npm run typecheck` 通过。
-- Next.js：`npm run build` 通过；只生成意大利 market-scoped 页面、`/ops/*` 和保留 API，旧体验/模拟 API 不在 route manifest。
+- Next.js：`npm run build` 通过；生成运营首页、意大利 market-scoped 页面、`/ops/*` 与新 `/api/operations-home`、`/api/workflow`、持续 `/api/send`。
 - 文档：119 个 Markdown 文件的本地链接检查通过；`git diff --check` 通过。
 
 以上均为本机代码与只读合同验证，不是新的平台写入或真实发送验收。

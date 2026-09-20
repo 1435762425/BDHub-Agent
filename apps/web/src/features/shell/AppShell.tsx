@@ -41,7 +41,7 @@ export default function AppShell({children}:{children:ReactNode}){
    </nav>
    <div className={`mb-5 mx-2 rounded-xl border border-gray-200 px-3 py-3 text-xs leading-5 text-gray-500 dark:border-gray-800 ${collapsed?"lg:hidden":""}`}>
     <p className="font-medium text-gray-700 dark:text-gray-200">运行边界</p>
-    <p className="mt-1">二发需冻结后明确启动；Agent 回复当前关闭，启用后只在独立集中窗口运行。</p>
+    <p className="mt-1">持续二发、Agent、清洗、建链和账号维护均需显式开启；发布不会自动恢复。</p>
    </div>
   </aside>
   <div className={`min-h-screen transition-[margin] duration-200 ${collapsed?"lg:ml-[84px]":"lg:ml-[272px]"}`}>
