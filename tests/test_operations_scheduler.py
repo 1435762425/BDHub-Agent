@@ -71,10 +71,14 @@ class StageWiring(unittest.TestCase):
     def test_taplink_prepares_every_short_name_before_any_create(self):
         def answers(args,_label):
             payload={'missing':0} if args[0]=='scripts/catalog-names.py' else {}
-            return {'state':'completed','itemCount':1,'complete':True,'platformWrites':0,'payload':payload}
+            creating=args[0]=='scripts/catalog-link-batch.py' and args[args.index('--creates')+1]=='200'
+            return {'state':'completed','itemCount':499 if args[0]=='scripts/catalog-link-batch.py' else 0,
+                    'complete':True,'platformWrites':267 if creating else 0,'payload':payload}
         executor,calls=self.executor(answers)
         result=executor.execute(None,{'applicableSources':['campaign']},'taplink_prepare',{'jobs':{}})
         self.assertEqual(result['state'],'completed')
+        self.assertEqual(result['itemCount'],499)
+        self.assertEqual(result['platformWrites'],267)
         self.assertEqual([args[0] for args,_ in calls],
                          ['scripts/catalog-link-batch.py','scripts/catalog-names.py','scripts/catalog-link-batch.py'])
         self.assertEqual(calls[0][0][calls[0][0].index('--creates')+1],'0')
@@ -100,6 +104,27 @@ class StageWiring(unittest.TestCase):
         result=executor._call(['scripts/campaign-join.py','status'],'needs-human-fixture')
         self.assertEqual(result['state'],'needs_human')
         self.assertEqual(result['errorCode'],'verification_pending')
+
+    def test_nested_batch_report_preserves_write_and_item_totals(self):
+        class Result:
+            returncode=0;stdout='{"steps": 2}\n';stderr=''
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder);(root/'var').mkdir()
+            def runner(command,**_kwargs):
+                report=Path(command[command.index('--report')+1])
+                report.write_text(json.dumps({
+                    'steps':[
+                        {'result':{'platformWrites':168}},
+                        {'result':{'platformWrites':99}},
+                    ],
+                    'finalSummary':{'total':499},
+                }))
+                return Result()
+            result=SubprocessStageExecutor(root,runner=runner)._call(
+                ['scripts/catalog-link-batch.py','--route','campaign'],'nested-batch-fixture')
+        self.assertEqual(result['state'],'completed')
+        self.assertEqual(result['platformWrites'],267)
+        self.assertEqual(result['itemCount'],499)
 
 
 class FakeChild:pid=os.getpid()

@@ -34,6 +34,29 @@ def _write(path,value):
     temporary.write_text(json.dumps(value,ensure_ascii=False,indent=2)+'\n',encoding='utf-8');temporary.replace(path)
 
 
+def _report_platform_writes(payload):
+    """Read direct or nested write counts from a CLI evidence report."""
+    if not isinstance(payload,dict):return 0
+    direct=payload.get('platformWrites')
+    direct=direct if type(direct) is int and direct>=0 else 0
+    nested=0;steps=payload.get('steps')
+    for step in steps if isinstance(steps,list) else []:
+        result=step.get('result') if isinstance(step,dict) else None
+        value=result.get('platformWrites') if isinstance(result,dict) else None
+        if type(value) is int and value>=0:nested+=value
+    return max(direct,nested)
+
+
+def _report_item_count(payload):
+    """Extract the final durable queue size without summing repeated batch passes."""
+    if not isinstance(payload,dict):return 0
+    for key in ('finalSummary','summary'):
+        summary=payload.get(key)
+        value=summary.get('total') if isinstance(summary,dict) else None
+        if type(value) is int and value>=0:return value
+    return 0
+
+
 def scheduler_state(root):
     run=_read(run_path(root),{});pid=run.get('pid');alive=False
     if type(pid) is int and pid>0:
@@ -103,13 +126,14 @@ class SubprocessStageExecutor:
             try:evidence=json.loads(report.read_text(encoding='utf-8'))
             except (OSError,ValueError):evidence={}
         reported_state=str(evidence.get('state') or evidence.get('status') or payload.get('state') or payload.get('status') or '')
+        writes=max(_report_platform_writes(evidence),_report_platform_writes(payload))
+        items=max(_report_item_count(evidence),_report_item_count(payload))
         if child.returncode or reported_state in {'blocked','failed','partial','needs_human'}:
             code=str(payload.get('error') or evidence.get('error') or f'{label}_failed')
             return {'state':'needs_human' if reported_state=='needs_human' or 'maintenance' in code or 'auth' in code else 'failed',
-                    'itemCount':0,'complete':False,'platformWrites':int(evidence.get('platformWrites') or 0),
+                    'itemCount':items,'complete':False,'platformWrites':writes,
                     'errorCode':code[:120],'payload':{'report':str(report.relative_to(self.root)) if report.exists() else None}}
-        return {'state':'completed','itemCount':0,'complete':True,
-                'platformWrites':int(evidence.get('platformWrites') or payload.get('platformWrites') or 0),
+        return {'state':'completed','itemCount':items,'complete':True,'platformWrites':writes,
                 'payload':evidence or payload,'scope':{}}
 
     def execute(self,store,run,stage,jobs):
@@ -163,7 +187,7 @@ class SubprocessStageExecutor:
             return {'state':'completed','itemCount':count,'complete':True,'platformWrites':writes,
                     'scope':{'sources':sources},'payload':{'sources':outputs}}
         if stage=='taplink_prepare':
-            writes=0;outputs=[]
+            writes=0;outputs=[];count=0
             for route in sources:
                 prepared=self._call(['scripts/catalog-link-batch.py','--route',route,'--limit','200','--passes','80',
                   '--creates','0','--lanes','9','--qps','12','--seed'],'taplink-read-'+route)
@@ -178,7 +202,8 @@ class SubprocessStageExecutor:
                   '--creates','200','--lanes','9','--qps','12'],'taplink-create-'+route)
                 writes+=created.get('platformWrites',0);outputs.append(created)
                 if created['state']!='completed':return created|{'platformWrites':writes}
-            return {'state':'completed','itemCount':sum(item.get('itemCount',0) for item in outputs),
+                count+=max(prepared.get('itemCount',0),created.get('itemCount',0))
+            return {'state':'completed','itemCount':count,
                     'complete':True,'platformWrites':writes,'scope':{'sources':sources},'payload':{'routes':outputs}}
         if stage=='kalodata':
             sales=self._call(['scripts/leads-run.py','--limit','5000','--max-pages','20'],'kalodata-sales')
