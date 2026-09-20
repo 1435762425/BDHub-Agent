@@ -255,7 +255,7 @@ DeepSeek/Agent 已经把 9 月 14 日的“货盘批量备链”继续推进到�
 - migration v9 和 durable B crawler 已应用；A 类使用数值 GMV，B 类有逐页/逐视频断点和作者缓存，真实池已经支持 A 优先、B 最高单条播放量；
 - 首日因真实 Kalodata 日额度停止：A 类完成1,523/2,756 PID，当前4,504条线索、3,213个A类位置、1,186个ready；B 类首个PID保存5页后停在详情断点，尚未发布不完整结果；
 - heartbeat `BDHub A/B线索全量重建` 每日00:15自动续跑，正常额度暂停不通知；没有发送、冻结、建链、删卡或开启自动回复。详见 [全量重建](../implementation/full-ab-lead-rebuild-20260920.md)。
-- 当前 OECID：2,038个唯一 handle 中1,296已解析、14个明确搜索不到、728待补。已补齐 vendored runtime 清单及 Pillow/OpenCV，ACC6滑块验证与原Find重放真实成功；当前 outbox 的50个判定为36 resolved/14 unresolved，已判定 handle 由 `--skip-judged` 永久跳过。用户15:38要求停止，全部 worker 与 heartbeat 已暂停；发送池当前3,281个位置、1,222个ready、495个sent。
+- 当前 OECID 已全量判定：2,038个唯一 handle 中1,465已就位、573个明确搜索不到、待补/blocked/unknown均为0；可达位置3,491，发送池ready 1,391、sent 495。先本地复用498个同handle历史终态，再对230个真正未判定达人执行真实Find；连续82位实测160.8秒（约30.6位/分钟），12 QPS/9 lanes、请求82/82完成。身份批次默认50，并跳过无关画像刷新、只对当前精确outbox白名单回填；未发送IM、未开启自动回复。详见 [身份吞吐与全量判定](../implementation/identity-oecid-throughput-20260920.md)。
 
 旧 `batch-tasks.sqlite` 只作迁移证据，不再作为执行入口；后续批次能力继续只在 frozen-v2 上扩展。
 

@@ -27,6 +27,12 @@ class CohortTests(unittest.TestCase):
   self.assertEqual(self.calls,1);self.assertEqual(r['targets'],20);self.assertEqual(self.store.detail(self.batch)['batch']['counts']['completed'],20)
   self.assertEqual(self.ids._db.execute('SELECT count(*) FROM creator_identity').fetchone()[0],20)
   self.assertEqual(self.store._db.execute("SELECT count(*) FROM discovery_item WHERE status='running'").fetchone()[0],0)
+ def test_fifty_targets_stay_in_one_bounded_process(self):
+  text='\n'.join('fifty'+str(i) for i in range(50));v=preview('it','fifty',text);batch=self.store.submit('it','fifty',text,v['previewHash'],'fifty')['id']
+  with closing(sqlite3.connect(self.root/'second-cycle.sqlite')) as c,c:
+   c.execute('INSERT INTO cycle_identity_outbox VALUES(?,?,0)',('p',batch))
+  w=CreatorDiscoveryWorker(self.store,executor=self.executor);r=run_cohort(w,50,only_batch=batch)
+  self.assertEqual(r['targets'],50);self.assertEqual(self.store.detail(batch)['batch']['counts']['completed'],50)
  def test_claim_is_bounded_and_other_workers_cannot_join(self):
   g=self.store.claim_cohort('one',[self.batch],10);self.assertEqual(len(g['items']),10)
   self.assertIsNone(self.store.claim('two'));self.assertIsNone(self.store.claim_cohort('two',[self.batch]))
@@ -50,6 +56,11 @@ class CohortTests(unittest.TestCase):
   r.update(status='blocked',reason='remote_error',identityOnly=True);r['targets'][0].update(status='identity_verified',profiles=[],profileCollection='not_requested');r['requests']=r['requests'][:1]
   self.assertEqual(slice_report(r,item)['status'],'completed');self.assertIsNone(slice_report(r,{'id':'b'}))
   r['identityFileUnchanged']=False;self.assertEqual(slice_report(r,item)['status'],'blocked')
+ def test_an_unrequested_cohort_sibling_does_not_consume_a_real_attempt(self):
+  group=self.store.claim_cohort('worker',[self.batch],10);item=group['items'][0]
+  self.store.defer_busy(item,'worker',consume_attempt=False)
+  row=self.store._db.execute('SELECT status,attempt_no FROM discovery_item WHERE id=?',(item['id'],)).fetchone()
+  self.assertEqual(tuple(row),('queued',1))
  # 「被挡住」＝问过但没拿到平台的回答：必须能重试，而且每一次尝试的取证不能互相覆盖。
  def test_a_blocked_item_is_claimed_again_with_its_own_attempt_directory(self):
   store=self.store;item_id=self.store.detail(self.batch)['items'][0]['id']

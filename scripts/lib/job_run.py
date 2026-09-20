@@ -47,9 +47,9 @@ LANES = (1, 3, 6, 9)
 QPS = (3, 5, 8, 12)
 READ_MAX = 200
 CREATES_MAX = 200
-# The validated Find worker accepts 1, 10 or 20 per round, but 1 makes it skip the cohort runner
-# for its single-item path, which reports no target count. Only the measurable sizes are offered.
-COHORTS = (10, 20)
+# The Find worker accepts 1, 10, 20 or 50 per round, but 1 skips the cohort runner and reports no
+# target count. 50 keeps the published 12 QPS / 9-lane policy and only amortizes fixed startup cost.
+COHORTS = (10, 20, 50)
 IDENTITY_MAX = 200000
 # 收信每一轮最多核验几个会话、两轮之间停多久。上限沿用脚本自己的取值域（1..12、>=30 秒）：
 # 收信吃的是 ACC6 的 live 锁，轮次开大只会把补身份/发送挤得更久。
@@ -218,7 +218,7 @@ def validate(name, raw):
         return {'maxRequests': _bounded(raw.get('maxRequests', 150), 1, 150, 'job_collect_requests_invalid'),
                 'passes': _bounded(raw.get('passes', 40), 1, 200, 'job_collect_passes_invalid')}
     if name == 'identity':
-        cohort = raw.get('cohortSize', 20)
+        cohort = raw.get('cohortSize', 50)
         if cohort not in COHORTS:
             raise ValueError('job_cohort_invalid')
         # A ceiling on handles attempted, not a target: a short backlog makes a short run.

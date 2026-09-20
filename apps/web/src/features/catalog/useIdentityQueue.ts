@@ -32,7 +32,7 @@ export function useIdentityQueue():IdentityController{
   if(!draft)return;setBusy(true);setMessage(null);
   try{
    const r=await fetch("/api/identity-queue",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"save",config:draft})});
-   if(!r.ok){setMessage("保存被拒绝：一次上限允许 1\u2013200000，每轮只能是 1 / 10 / 20 个 handle。");return;}
+   if(!r.ok){setMessage("保存被拒绝：一次上限允许 1\u2013200000，每轮只能是 10 / 20 / 50 个 handle。");return;}
    const value:IdentityQueueState=await r.json();setData(value);setDraft(value.config);
    setMessage("设置已保存。上限只影响下次补多少，不会自己开始跑。");
   }catch{setMessage("暂时无法读取或保存身份设置。");}
@@ -45,7 +45,7 @@ export function useIdentityQueue():IdentityController{
    const value=await r.json();
    if(!r.ok){setMessage(r.status===409?"已经有一批在补，等它结束再点。":value?.error==="invalid_identity_queue_request"?"请求被拒绝：检查两个数值。":"暂时无法启动。");return;}
    setData(value);
-   setMessage("已开始补身份。只读平台的达人资料，不改任何业务数据；找不到的 handle 会如实记账，不会被算成已解析。");
+   setMessage("已开始补充身份。搜索不到的达人会单独记账。");
   }catch{setMessage("暂时无法启动。");}
   finally{setBusy(false);}
  },[draft]);

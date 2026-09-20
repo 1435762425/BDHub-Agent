@@ -47,8 +47,9 @@ test('a workspace with no identity work is reported as unavailable, not as zeroe
 
 test('only the validated cohort sizes and a sane ceiling are accepted',()=>{
  assert.deepEqual(validateIdentityConfig({batchSize:50,cohortSize:10}),{batchSize:50,cohortSize:10});
+ assert.deepEqual(validateIdentityConfig({batchSize:2000,cohortSize:50}),{batchSize:2000,cohortSize:50});
  for(const bad of [{batchSize:0,cohortSize:20},{batchSize:200001,cohortSize:20},{batchSize:10,cohortSize:1},
-                   {batchSize:10,cohortSize:2},{batchSize:10,cohortSize:'20'},
+                   {batchSize:10,cohortSize:2},{batchSize:10,cohortSize:51},{batchSize:10,cohortSize:'20'},
                    {batchSize:10,cohortSize:20,typo:1},null]){
   assert.throws(()=>validateIdentityConfig(bad),/invalid_identity_queue/);
  }

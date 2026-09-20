@@ -61,6 +61,27 @@ class BridgeTests(unittest.TestCase):
   self.b.reconcile(self.p)
   self.assertEqual(self.s.pending_identity_count(self.p,'2026-09-13'),0)
   self.assertEqual(self.s.status(self.p)['sourceEdges'],2);self.assertEqual(self.s.status(self.p)['relationships'],0)
+ def test_a_terminal_handle_judgment_is_reused_for_new_edges_without_another_find(self):
+  self.b.freeze(self.p);self.b.dispatch(self.p);self.resolve();self.b.reconcile(self.p)
+  self.s.import_edges(self.p,[edge('2',person=None,source='e3',sourceKind='kalodata_http',sourceHandle='hello')])
+  box=self.b.freeze(self.p);self.b.dispatch(self.p);batch=self.s.db.execute('SELECT batch_id FROM cycle_identity_outbox WHERE id=?',(box,)).fetchone()[0]
+  self.assertEqual(self.d.detail(batch)['items'][0]['status'],'queued')
+  result=self.b.reconcile(self.p)
+  self.assertEqual(result['newBindings'],1)
+  self.assertEqual(self.s.db.execute("SELECT oec FROM cycle_identity_resolution WHERE source_id='e3'").fetchone()[0],'123')
+  self.assertEqual(self.s.db.execute('SELECT settled FROM cycle_identity_outbox WHERE id=?',(box,)).fetchone()[0],1)
+  # Reuse is a cycle projection; it does not forge a second discovery receipt.
+  self.assertEqual(self.d.detail(batch)['items'][0]['status'],'queued')
+ def test_an_unresolved_handle_judgment_is_reused_for_new_edges(self):
+  self.b.freeze(self.p);self.b.dispatch(self.p)
+  first=self.s.db.execute('SELECT batch_id FROM cycle_identity_outbox').fetchone()[0]
+  with self.d.transaction():self.d._db.execute("UPDATE discovery_item SET status='unresolved',reason='no_exact_handle',finished_at='2026-09-20T00:00:00Z' WHERE batch_id=?",(first,))
+  self.b.reconcile(self.p)
+  self.s.import_edges(self.p,[edge('2',person=None,source='e3',sourceKind='kalodata_http',sourceHandle='hello')])
+  box=self.b.freeze(self.p);self.b.dispatch(self.p);result=self.b.reconcile(self.p)
+  self.assertEqual(result['newBindings'],0)
+  self.assertEqual(self.s.db.execute("SELECT status FROM cycle_identity_outcome WHERE source_id='e3'").fetchone()[0],'unresolved')
+  self.assertEqual(self.s.db.execute('SELECT settled FROM cycle_identity_outbox WHERE id=?',(box,)).fetchone()[0],1)
  def test_resume_after_binding_before_projection(self):
   self.b.freeze(self.p);self.b.dispatch(self.p);self.resolve();original=self.s.project_current_offers
   self.s.project_current_offers=lambda *a:(_ for _ in ()).throw(RuntimeError('interrupted'))

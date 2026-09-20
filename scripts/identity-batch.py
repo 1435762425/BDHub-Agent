@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Resolve the handles waiting for an OECID, one validated round at a time.
 
-    python scripts/identity-batch.py --limit 2000 --cohort-size 20 [--progress var/job-identity-progress.json]
+    python scripts/identity-batch.py --limit 2000 --cohort-size 50 [--progress var/job-identity-progress.json]
 
 Sending needs the platform identity (the OECID), so every Kalodata lead whose handle has not been
 resolved yet is a lead that cannot enter the sending pool. This driver walks that backlog.
@@ -16,8 +16,10 @@ page can show movement, and stops on the conditions that must never be papered o
 simply shorter, and it is never padded with retries of leads already judged unresolved.
 """
 import argparse
+from contextlib import closing
 import json
 import re
+import sqlite3
 import subprocess
 import sys
 import time
@@ -27,14 +29,15 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(ROOT / 'scripts'))
 
-from lib.identity_queue import counts  # noqa: E402
+from lib.identity_queue import CURRENT, OWNERS, SCOPE, counts  # noqa: E402
 
 WORKER = ROOT / 'scripts/creator-profile-refresh.py'
 # 1 is deliberately absent. At ``--cohort-size 1`` the validated worker skips the cohort runner
 # entirely and takes its single-item discovery path, which reports no target count -- the progress
-# bar would then read "claimed 0" while a handle was in fact judged. 10 and 20 both go through
-# ``run_cohort``, which reports exactly what it claimed.
-COHORT_SIZES = (10, 20)
+# bar would then read "claimed 0" while a handle was in fact judged. 10, 20 and 50 go through
+# ``run_cohort``, which reports exactly what it claimed. 50 amortizes the fixed account/bootstrap
+# cost while retaining the already-published aggregate 12 QPS / 9-lane transport policy.
+COHORT_SIZES = (10, 20, 50)
 # Two rounds in a row that claim nothing means the queue is empty (or stuck); either way the driver
 # must end rather than spin forever on a daily budget.
 IDLE_ROUNDS = 2
@@ -67,7 +70,8 @@ def one_round(root, cohort_size, *, timeout=ROUND_TIMEOUT,only_batch=None):
     # 只补真正没判过的达人，不会把同一位达人的其它线索反复重查。
     command = [str(python_bin(root)), str(root / 'scripts/creator-profile-refresh.py'), 'worker',
                '--once', '--cohort-size', str(cohort_size), '--interval', '1', '--skip-judged']
-    if only_batch:command+=['--only-batch',only_batch]
+    batches=([only_batch] if isinstance(only_batch,str) else list(only_batch or []))
+    for batch in batches:command+=['--only-batch',batch]
     child = subprocess.run(command, cwd=str(root), capture_output=True, text=True, timeout=timeout)
     lines = [line for line in (child.stdout or '').strip().splitlines() if line.strip()]
     payload = None
@@ -93,11 +97,88 @@ def one_round(root, cohort_size, *, timeout=ROUND_TIMEOUT,only_batch=None):
     if isinstance(cycle, dict) and (cycle.get('status') == 'blocked' or cycle.get('error')):
         note = f"池位回填未成功：{cycle.get('error') or cycle.get('status')}（这一轮的判定结果没有写进发送池）"
     return {'ok': True, 'code': None, 'targets': int(cohort.get('targets') or 0),
-            'cohortId': cohort.get('id'), 'seconds': cohort.get('seconds'), 'note': note}
+            'cohortId': cohort.get('id'), 'seconds': cohort.get('seconds'), 'note': note,
+            'batchIds': batches}
 
 
-def run(root=None, *, limit=2000, cohort_size=20, progress=None, rounds=None, clock=time.time,
-        round_runner=None, measured=None, stop=None, pause=None,only_batch=None):
+def current_batch_scopes(root,limit=50):
+    """Choose exact discovery batches covering up to ``limit`` unjudged current-pool handles.
+
+    A full rebuild leaves historical outboxes behind. Running the worker without an exact batch can
+    spend the account on handles that are no longer in ``lead_query_head``. We still need several
+    batches because one lead-query import can create many outboxes. The driver greedily builds an
+    explicit allowlist of exact ``discovery_<id>`` values before every round; it never widens the
+    worker to all historical outboxes.
+    """
+    if type(limit) is not int or not 1<=limit<=50:
+        raise ValueError('identity_cohort_invalid')
+    root = Path(root)
+    cycle_path = root / 'var/second-cycle.sqlite'
+    discovery_path = root / 'var/creator-discovery.sqlite'
+    if not cycle_path.exists() or not discovery_path.exists():
+        return []
+    with closing(sqlite3.connect(cycle_path.resolve().as_uri() + '?mode=ro', uri=True)) as cycle:
+        plan = cycle.execute('SELECT id FROM plan WHERE institution=? AND market=? AND state=?',
+                             (SCOPE['institution'], SCOPE['market'], 'active')).fetchone()
+        if not plan:
+            return []
+        plan_id = plan[0]
+        current = {row[0] for row in cycle.execute(
+            f'SELECT DISTINCT source_handle FROM ({CURRENT}) WHERE plan_id=?', (plan_id,))}
+        resolved = {row[0] for row in cycle.execute(
+            f'SELECT source_handle FROM ({OWNERS})')}
+        unresolved = {row[0] for row in cycle.execute(
+            f'''SELECT DISTINCT k.source_handle FROM ({CURRENT}) k
+                JOIN cycle_identity_outcome o ON o.plan_id=k.plan_id AND o.source_id=k.source_id
+                WHERE k.plan_id=? AND o.status='unresolved' ''', (plan_id,))}
+        pending = current - resolved - unresolved
+        boxes = list(cycle.execute(
+            '''SELECT o.rowid,o.batch_id,o.payload FROM cycle_identity_outbox o
+               WHERE o.plan_id=? AND o.batch_id IS NOT NULL AND o.settled=0 ORDER BY o.rowid''',
+            (plan_id,)))
+    if not pending or not boxes:
+        return []
+    with closing(sqlite3.connect(discovery_path.resolve().as_uri() + '?mode=ro', uri=True)) as discovery:
+        judged = {row[0] for row in discovery.execute(
+            "SELECT DISTINCT handle FROM discovery_item WHERE status IN ('completed','unresolved')")}
+        pending -= judged
+        if not pending:
+            return []
+        eligible = {}
+        for batch_id, handle in discovery.execute(
+            '''SELECT i.batch_id,i.handle FROM discovery_item i JOIN discovery_batch b ON b.id=i.batch_id
+               WHERE i.retry_at<=? AND b.status IN ('queued','running','blocked') AND
+                 (i.status='queued' OR (i.status='blocked' AND i.attempt_no<3))''',(time.time(),)):
+            if handle in pending:
+                eligible.setdefault(batch_id, set()).add(handle)
+    candidates=[]
+    for rowid,batch_id,payload in boxes:
+        allowed=eligible.get(batch_id,set())
+        if not allowed:
+            continue
+        handles=set(json.loads(payload).get('handles') or [])
+        size=len(handles & allowed)
+        if size:
+            candidates.append((rowid,batch_id,handles & allowed))
+    chosen=[];covered=set()
+    while len(covered)<limit:
+        options=[(len(handles-covered),rowid,batch_id,handles) for rowid,batch_id,handles in candidates if handles-covered]
+        if not options:break
+        _,_,batch_id,handles=max(options)
+        chosen.append(batch_id)
+        covered.update(list(handles-covered)[:max(0,limit-len(covered))])
+        candidates=[row for row in candidates if row[1]!=batch_id]
+    return chosen
+
+
+def current_batch_scope(root):
+    """Compatibility helper for diagnostics that want only the first exact batch."""
+    scopes=current_batch_scopes(root,50)
+    return scopes[0] if scopes else None
+
+
+def run(root=None, *, limit=2000, cohort_size=50, progress=None, rounds=None, clock=time.time,
+        round_runner=None, measured=None, stop=None, pause=None,only_batch=None,scope_resolver=None):
     """Consume the identity backlog. Returns a report; a refusal is a stop reason, never an exception.
 
     ``stop`` is a file the operator's stop button creates. It is checked **between** rounds, never
@@ -111,7 +192,15 @@ def run(root=None, *, limit=2000, cohort_size=20, progress=None, rounds=None, cl
         raise ValueError('identity_cohort_invalid')
     stop_path = Path(stop) if stop else None
     read = measured or (lambda: counts(root))
-    step = round_runner or (lambda size: one_round(root,size,only_batch=only_batch))
+    if round_runner:
+        step = round_runner
+    else:
+        resolve_scope = scope_resolver or current_batch_scope
+        def step(size):
+            scoped = only_batch or (current_batch_scopes(root,size) if scope_resolver is None else resolve_scope(root))
+            if not scoped:
+                return {'ok': True, 'targets': 0, 'batchId': None}
+            return one_round(root,size,only_batch=scoped)
     wait = pause or time.sleep
     started = clock()
     before = read() or {}
@@ -199,11 +288,11 @@ def run(root=None, *, limit=2000, cohort_size=20, progress=None, rounds=None, cl
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--limit', type=int, default=2000)
-    parser.add_argument('--cohort-size', type=int, default=20, choices=COHORT_SIZES)
+    parser.add_argument('--cohort-size', type=int, default=50, choices=COHORT_SIZES)
     parser.add_argument('--progress', type=Path)
     parser.add_argument('--stop', type=Path, help='stop file the launcher creates to end the batch')
     parser.add_argument('--report', type=Path)
-    parser.add_argument('--only-batch')
+    parser.add_argument('--only-batch',action='append')
     args = parser.parse_args()
     progress = args.progress.resolve() if args.progress else None
     if progress is not None and not progress.is_relative_to(ROOT / 'var'):
@@ -213,7 +302,7 @@ def main():
     if args.report is not None and not args.report.resolve().is_relative_to(ROOT / 'var'):
         parser.error('report must live under var')
     try:
-        if args.only_batch is not None and not re.fullmatch(r'discovery_[0-9a-f]{32}',args.only_batch):
+        if args.only_batch is not None and any(not re.fullmatch(r'discovery_[0-9a-f]{32}',batch) for batch in args.only_batch):
             raise ValueError('identity_batch_scope_invalid')
         report = run(ROOT, limit=args.limit, cohort_size=args.cohort_size, progress=progress,
                      stop=args.stop,only_batch=args.only_batch)

@@ -65,7 +65,7 @@ class Config(unittest.TestCase):
             path.write_text(json.dumps({'batchSize': 3, 'cohortSize': 1}), encoding='utf-8')
             payload = status(folder)
             self.assertEqual(sorted(payload), sorted(JOBS))
-            self.assertEqual(payload['identity']['config'], {'batchSize': 2000, 'cohortSize': 20})
+            self.assertEqual(payload['identity']['config'], {'batchSize': 2000, 'cohortSize': 50})
             self.assertTrue(payload['identity']['configInvalid'])
             self.assertFalse(payload['links']['configInvalid'])
             # The stored file is left exactly as it was; only the next save rewrites it.
@@ -169,11 +169,13 @@ class Launch(unittest.TestCase):
 
 class IdentityConfig(unittest.TestCase):
     def test_only_the_validated_cohort_sizes_are_accepted(self):
-        self.assertEqual(validate('identity', {}), {'batchSize': 2000, 'cohortSize': 20})
+        self.assertEqual(validate('identity', {}), {'batchSize': 2000, 'cohortSize': 50})
         self.assertEqual(validate('identity', {'batchSize': 50, 'cohortSize': 10}),
                          {'batchSize': 50, 'cohortSize': 10})
+        self.assertEqual(validate('identity', {'batchSize': 500, 'cohortSize': 50}),
+                         {'batchSize': 500, 'cohortSize': 50})
         # 1 is refused: the worker would leave the cohort path and report no target count.
-        for bad in ({'cohortSize': 1}, {'cohortSize': 2}, {'cohortSize': '20'}, {'batchSize': 0}, {'batchSize': 200001},
+        for bad in ({'cohortSize': 1}, {'cohortSize': 2}, {'cohortSize': 51}, {'cohortSize': '20'}, {'batchSize': 0}, {'batchSize': 200001},
                     {'batchSize': 10, 'typo': 1}):
             with self.assertRaises(ValueError):
                 validate('identity', bad)

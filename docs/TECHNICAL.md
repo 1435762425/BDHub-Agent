@@ -127,9 +127,11 @@ React 组件不能直接读写 SQLite、启动任意命令或实现资格规则�
 
 身份按达人去重，线索按达人×商品保留。明确 `unresolved` 与尚未请求/技术 blocked 分开；只允许技术未提交项有界重试，明确未找到不自动重问。
 
-OECID 批次固定带 `--skip-judged`，身份库中已经 resolved/unresolved 的 handle 不再进入远端请求。全量重建时还必须用 `--only-batch discovery_<id>` 限定到与当前 `lead_query_head` 待补 handle 有交集的 `cycle_identity_outbox`，不能让历史未结 outbox 抢占当前批次。`cycle_identity_outcome` 只在精确成功、精确 miss 或明确技术 blocked 后更新；账号挑战不得冒充 miss。
+OECID 批次固定带 `--skip-judged`，身份库中已经 resolved/unresolved 的 handle 不再进入远端请求。同一 handle 的既有终态会由 `IdentityBridge` 本地复用到当前 source edge：resolved 必须保留原始不可变发现证据且不得存在身份冲突，unresolved 只复用明确精确 miss；复用不会伪造新的发现回执。全量重建的驱动器每轮都会从当前 `lead_query_head` 待补 handle 与未结 `cycle_identity_outbox` 的交集生成若干精确 `discovery_<id>` 白名单，再以重复的 `--only-batch` 参数凑成最多 50 位的 cohort，不能让历史未结 outbox 抢占当前批次。`cycle_identity_outcome` 只在精确成功、精确 miss 或明确技术 blocked 后更新；账号挑战不得冒充 miss。
 
 Pure HTTP 验证依赖 `Pillow==12.3.0`、`opencv-python-headless==4.14.0.94` 和 NumPy；缺少图像依赖时背景图与拼图虽能下载，求解器仍会在识别前失败。账号内多个 Find lane 共用一次串行验证结果：首个 lane 求解滑块，把验证后的 session Cookie/fp同步给其他 lane，再分别重放原业务请求；重放再次挑战时才重新求解。报告只保存 `runtime/captcha_get/template_size/image_decode/contour/verify_http/network/solver` 等脱敏错误类别，不保存异常原文、Cookie或验证载荷。
+
+正式身份补齐每轮支持 10、20 或 50 位，当前默认 50；50 只用于摊薄每轮账号准备、认证和进程启动开销，不改变已发布的单账号聚合上限 12 QPS / 9 lanes，也不增加账号或绕过验证。吞吐以真实 cohort 的 targets、终态、耗时和验证计数核算，不能用配置值代替实测。
 
 当前真实验证证据：ACC6 单目标首次 Find 返回 `verificationRequired=true + systemError3=true`，项目求解器一次成功，原请求重放后 HTTP 200/code0且无验证头；`captcha_success_count=1`、`replay_code0=1`、身份文件未变、旧业务库写入0、真实发送0。随后当前 outbox 共判定50个 handle：36 resolved、14 unresolved；结果已回填发送池。
 

@@ -56,7 +56,7 @@ def read_request(fields):
     return value
 
 
-def reconcile_cycle(var_dir,discovery_store):
+def reconcile_cycle(var_dir,discovery_store,only_batch=None):
     path=var_dir/'second-cycle.sqlite'
     if not path.exists():return None
     try:
@@ -66,6 +66,10 @@ def reconcile_cycle(var_dir,discovery_store):
             plan=cycle.db.execute("SELECT id FROM plan WHERE institution='bjn-local-research' AND market='it'").fetchone()
             if not plan:return None
             bridge=IdentityBridge(cycle,discovery_store,var_dir/'creator-identities.sqlite')
+            if only_batch:
+                batches=[only_batch] if isinstance(only_batch,str) else list(only_batch)
+                boxes=[r[0] for r in cycle.db.execute('SELECT id FROM cycle_identity_outbox WHERE plan_id=? AND batch_id IN (SELECT value FROM json_each(?))',(plan[0],json.dumps(batches)))]
+                return bridge.reconcile(plan[0],outbox_ids=boxes) if boxes else {'newBindings':0,'batches':{}}
             if cycle._plan(plan[0])['state']=='active':
                 bridge.freeze(plan[0])
                 bridge.dispatch(plan[0])
@@ -84,9 +88,9 @@ def main():
     worker = commands.add_parser("worker")
     worker.add_argument("--once", action="store_true")
     worker.add_argument("--soak-run")
-    worker.add_argument("--cohort-size",type=int,choices=(1,10,20),default=1)
+    worker.add_argument("--cohort-size",type=int,choices=(1,10,20,50),default=1)
     worker.add_argument("--cohort-lanes",type=int,choices=(3,6,9),default=3)
-    worker.add_argument("--only-batch")
+    worker.add_argument("--only-batch",action="append")
     worker.add_argument("--interval", type=float, default=5)
     # 达人级一次：判过的 handle 不再重复问平台（补 OECID 的驱动器会带上它；soak/验收默认不带）。
     worker.add_argument("--skip-judged", action="store_true")
@@ -110,9 +114,11 @@ def main():
                 signal.signal(signal.SIGTERM, stop)
                 with CreatorDiscoveryStore(store.var_dir) as discovery_store, ProfileRefreshWorker(store) as runner, CreatorDiscoveryWorker(discovery_store) as discovery:
                     while True:
-                        # Both lanes use ACC6 and run sequentially. Each round
-                        # takes at most one refresh and one discovery item.
-                        refreshed = runner.run_once()
+                        # An exact discovery batch is an identity-only backfill round. Running one
+                        # unrelated OEC profile refresh before every scoped Find cohort adds account
+                        # lock/auth/network time without advancing this queue, so only the ordinary
+                        # mixed worker path consumes a refresh job.
+                        refreshed = None if args.only_batch else runner.run_once()
                         cohort_result=None
                         if args.cohort_size>1:
                             from lib.discovery_cohort import run_cohort
@@ -120,7 +126,7 @@ def main():
                                 soak_id=args.soak_run,only_batch=args.only_batch,
                                 use_production_policy=True,skip_judged=args.skip_judged)
                         discovered = None if cohort_result else discovery.run_once()
-                        cycle_result = reconcile_cycle(store.var_dir,discovery_store)
+                        cycle_result = reconcile_cycle(store.var_dir,discovery_store,args.only_batch)
                         if refreshed is not None or discovered is not None or cohort_result is not None or args.once:
                             print(json.dumps({"refresh": refreshed, **({"cohort":cohort_result} if cohort_result else {}), "discovery": discovered["batch"] if discovered else None,**({"cycleIdentity":cycle_result} if cycle_result is not None else {})}), flush=True)
                         if args.once or cohort_result and cohort_result.get('soakState')=='attention':break

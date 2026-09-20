@@ -35,11 +35,11 @@ export type IdentityQueueState={available:boolean;leads:number;resolvedLeads:num
  byCreator:IdentityByCreator|null;
  config:IdentityConfig;run:IdentityRun|null;saved?:boolean};
 
-// The worker accepts 1, 10 or 20 per round, but 1 makes it skip the cohort runner for its
+// The worker accepts 1, 10, 20 or 50 per round, but 1 makes it skip the cohort runner for its
 // single-item path, which reports no target count -- the progress bar would read zero. So only the
 // measurable sizes reach the button. The ceiling is a ceiling, never a target, so its value is
 // bounded but not tied to the cohort size.
-const COHORTS=new Set([10,20]);
+const COHORTS=new Set([10,20,50]);
 const BATCH_MAX=200000;
 
 export function validateIdentityConfig(value:unknown):IdentityConfig{
@@ -48,7 +48,7 @@ export function validateIdentityConfig(value:unknown):IdentityConfig{
  // A misspelled key would be ignored here and the job would start with defaults instead.
  if(Object.keys(v).some(key=>key!=="batchSize"&&key!=="cohortSize"))throw Error('invalid_identity_queue');
  const whole=(raw:unknown,low:number,high:number)=>{if(typeof raw!=="number"||!Number.isSafeInteger(raw)||raw<low||raw>high)throw Error('invalid_identity_queue');return raw;};
- const cohort=whole(v.cohortSize,1,20);
+ const cohort=whole(v.cohortSize,1,50);
  if(!COHORTS.has(cohort))throw Error('invalid_identity_queue');
  return {batchSize:whole(v.batchSize,1,BATCH_MAX),cohortSize:cohort};
 }

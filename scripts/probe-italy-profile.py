@@ -202,7 +202,7 @@ def network_child(account_name: str, target_file: Path, output: Path) -> int:
             if not row:raise ValueError('cohort_not_active')
             registered={r['id']:r for r in json.loads(row[0])}
             if len(targets)!=len(registered) or {t['ref'] for t in targets}!=set(registered) or any(t['ref'] not in registered or t['handle']!=registered[t['ref']]['handle'] or t['externalId']!=t['ref'] for t in targets):raise ValueError('cohort_scope_mismatch')
-    if not 1 <= len(targets) <= (40 if stress else 20 if cohort else 3):
+    if not 1 <= len(targets) <= (40 if stress else 50 if cohort else 3):
         raise ValueError("bounded_target_count")
     report = {"schema": "bdhub.italy-profile-probe.v3", "market": "it", "account": account_name,
               "startedAt": datetime.now(timezone.utc).isoformat(), "mode": "live_readonly_profile", "requests": [], "targets": [],

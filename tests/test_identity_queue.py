@@ -77,7 +77,7 @@ class Counts(unittest.TestCase):
             self.assertIsNone(counts(folder))
             payload = status(folder)
             self.assertFalse(payload['available'])
-            self.assertEqual(payload['config'], {'batchSize': 2000, 'cohortSize': 20})
+            self.assertEqual(payload['config'], {'batchSize': 2000, 'cohortSize': 50})
             self.assertIsNone(payload['run'])
 
     def test_status_carries_config_run_and_the_published_channel(self):

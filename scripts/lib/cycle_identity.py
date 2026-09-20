@@ -73,26 +73,56 @@ class IdentityBridge:
   bound=0;states={};finished=[]
   with closing(sqlite3.connect(self.identity_path.resolve().as_uri()+'?mode=ro',uri=True)) as identities, identities:
    identities.row_factory=sqlite3.Row
+   judgments={}
+   def judgment(handle,current):
+    """Reuse one exact handle judgment across every current source edge.
+
+    A Find answers who a handle is; it is not scoped to a PID or to the outbox that first asked.
+    New lead rebuilds therefore must consume an earlier terminal judgment locally instead of either
+    repeating the platform request or leaving the new edge forever queued behind ``--skip-judged``.
+    A resolved identity is stronger than an unresolved row, but conflicting resolved identities are
+    never guessed through.
+    """
+    if handle in judgments:return judgments[handle]
+    rows=[dict(r) for r in self.discovery._db.execute(
+     "SELECT * FROM discovery_item WHERE handle=? AND status IN ('completed','unresolved') "
+     "ORDER BY CASE status WHEN 'completed' THEN 0 ELSE 1 END,finished_at DESC,rowid DESC",(handle,)).fetchall()]
+    completed=[r for r in rows if r['status']=='completed' and r['creator_id'] and r['oec_id']]
+    if completed:
+     identities_seen={(r['creator_id'],r['oec_id']) for r in completed}
+     if len(identities_seen)!=1:raise CycleError('identity_conflict')
+     # Prefer the current batch's item when it is terminal; otherwise use the newest proof-bearing
+     # item. The proof remains the original immutable discovery evidence.
+     completed.sort(key=lambda r:(r['id']!=(current or {}).get('id'),-(r['finished_at'] is not None),r['id']))
+     import re
+     for candidate in completed:
+      proofs=identities.execute("SELECT evidence_ref FROM identity_observation WHERE creator_id=? AND market='it' AND oec_id=?",(candidate['creator_id'],candidate['oec_id'])).fetchall()
+      pattern=re.compile(re.escape(f"creator-discovery:{candidate['id']}:")+r'[a-f0-9]{64}:discovery-result$')
+      proofs=[r[0] for r in proofs if pattern.fullmatch(r[0])]
+      if len(proofs)==1:
+       judgments[handle]=({**candidate,'creatorId':candidate['creator_id'],'oecId':candidate['oec_id']},proofs[0])
+       return judgments[handle]
+     raise CycleError('identity_proof_missing')
+    unresolved=next((r for r in rows if r['status']=='unresolved'),None)
+    judgments[handle]=(unresolved,None) if unresolved else (current,None)
+    return judgments[handle]
    for box in self.store.db.execute('SELECT * FROM cycle_identity_outbox WHERE plan_id=? AND batch_id IS NOT NULL AND settled=0 AND (? IS NULL OR id IN (SELECT value FROM json_each(?)))',(plan,encoded(outbox_ids) if outbox_ids is not None else None,encoded(outbox_ids) if outbox_ids is not None else None)).fetchall():
     detail=self.discovery.detail(box['batch_id']);states[box['batch_id']]=detail['batch']['counts']
     matched={r['handle']:r for r in detail['items']}
     counts=detail['batch']['counts']
     # 队列空 + 没有在跑 + **没有被挡住还能重试的**，才算这一批有结论了。被挡住的项要退避重试，
     # 所以它没结论之前不能把 outbox 结算掉——否则那批人从此出不了候选范围。
-    if not counts['queued'] and not counts['running'] and not counts.get('retryableBlocked'):finished.append(box['id'])
+    all_terminal=True
     for edge in json.loads(box['payload'])['edges']:
-     item=matched.get(edge['handle'])
-     if not item:continue
+     item,proof=judgment(edge['handle'],matched.get(edge['handle']))
+     if not item:
+      all_terminal=False
+      continue
+     terminal=item['status'] in ('completed','unresolved')
+     all_terminal=all_terminal and terminal
      with self.store.tx():
       self.store.db.execute('INSERT INTO cycle_identity_outcome VALUES(?,?,?) ON CONFLICT(plan_id,source_id) DO UPDATE SET status=excluded.status',(plan,edge['sourceId'],item['status']))
      if not (item['status']=='completed' or item['outcome']=='identity_only') or not item['creatorId'] or not item['oecId']:continue
-     # The discovery marker is written only after exact Find and unchanged-identity checks.
-     import re
-     proofs=identities.execute("SELECT evidence_ref FROM identity_observation WHERE creator_id=? AND market='it' AND oec_id=?",(item['creatorId'],item['oecId'])).fetchall()
-     pattern=re.compile(re.escape(f"creator-discovery:{item['id']}:")+r'[a-f0-9]{64}:discovery-result$')
-     proofs=[r[0] for r in proofs if pattern.fullmatch(r[0])]
-     if len(proofs)!=1:raise CycleError('identity_proof_missing')
-     proof=proofs[0]
      with self.store.tx():
       old=self.store.db.execute('SELECT * FROM cycle_identity_resolution WHERE plan_id=? AND source_id=?',(plan,edge['sourceId'])).fetchone()
       if old:
@@ -102,6 +132,7 @@ class IdentityBridge:
       if relationship and (relationship['creator_id']!=item['creatorId'] or relationship['oec']!=item['oecId']):raise CycleError('identity_conflict')
       self.store.db.execute('INSERT OR IGNORE INTO relationship(plan_id,creator_id,oec) VALUES(?,?,?)',(plan,item['creatorId'],item['oecId']))
       self.store.db.execute('INSERT INTO cycle_identity_resolution VALUES(?,?,?,?,?)',(plan,edge['sourceId'],item['creatorId'],item['oecId'],proof));bound+=1
+    if all_terminal or (not counts['queued'] and not counts['running'] and not counts.get('retryableBlocked')):finished.append(box['id'])
   if states:
    self.store.project_current_offers(plan)
    with self.store.tx():

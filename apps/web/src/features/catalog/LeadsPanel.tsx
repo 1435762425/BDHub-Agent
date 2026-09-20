@@ -46,7 +46,7 @@ export default function LeadsPanel(){
       不要在这一行再写一遍线索口径的"已就位/待补"，否则两个数并排会互相打架。 */}
   <Section id="stage-identity" index="②" title="达人身份（OECID）"
    summary={identity.data?.byCreator
-    ?<>已就位 {identity.data.byCreator.resolved.toLocaleString()} · 搜索不到 {identity.data.byCreator.unresolved.toLocaleString()} · 被挡住 {(identity.data.byCreator.blocked+identity.data.byCreator.unknown).toLocaleString()}</>
+    ?<>已就位 {identity.data.byCreator.resolved.toLocaleString()} · 待补充身份 {(identity.data.byCreator.blocked+identity.data.byCreator.unknown).toLocaleString()} · 搜索不到 {identity.data.byCreator.unresolved.toLocaleString()}</>
     :<>已就位 {identity.data?.resolvedCreators?.toLocaleString()??"—"} · 搜索不到 {identity.data?.unresolvedCreators?.toLocaleString()??"—"}</>}>
    <div id="card-identity" className="scroll-mt-6"><IdentityPanel controller={identity}/></div>
   </Section>

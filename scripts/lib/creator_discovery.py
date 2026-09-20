@@ -301,7 +301,7 @@ class CreatorDiscoveryStore:
             return dict(self._db.execute("SELECT * FROM discovery_item WHERE id=?", (row["id"],)).fetchone())
 
     def claim_cohort(self,owner,batch_ids,limit=20,skip_judged=False):
-        if type(limit) is not int or not 1<=limit<=20:raise CreatorDiscoveryError('invalid_request')
+        if type(limit) is not int or not 1<=limit<=50:raise CreatorDiscoveryError('invalid_request')
         with self.transaction():
             if self._db.execute("SELECT 1 FROM discovery_item WHERE status='running'").fetchone():return None
             candidates=self._next_items(limit,batch_ids,distinct=True,skip_judged=skip_judged,retry_blocked=True);items=[];handles=set()
@@ -322,10 +322,14 @@ class CreatorDiscoveryStore:
             self._db.execute("INSERT INTO discovery_cohort VALUES(?,?,?,'running',?)",(cid,owner,_json(fresh),self.now()))
             return {'id':cid,'items':fresh}
 
-    def recover_cohort(self,owner):
+    def recover_cohort(self,owner,batch_ids=None):
+        allowed=set(batch_ids) if batch_ids is not None else None
         with self.transaction():
             for row in self._db.execute("SELECT * FROM discovery_cohort WHERE state='running' ORDER BY created").fetchall():
                 items=json.loads(row['payload']);active=[]
+                # An exact current-pool scope must not revive an older mixed cohort before it. The
+                # old evidence remains recoverable by an unscoped maintenance run.
+                if allowed is not None and any(item.get('batch_id') not in allowed for item in items):continue
                 for item in items:
                     live=self._db.execute('SELECT * FROM discovery_item WHERE id=?',(item['id'],)).fetchone()
                     if live['status']=='running':active.append(live)
@@ -344,11 +348,13 @@ class CreatorDiscoveryStore:
             self._db.execute("UPDATE discovery_item SET lease_until=? WHERE id=?", (self.now() + LEASE_SECONDS, item["id"]))
             yield
 
-    def defer_busy(self,item,owner):
+    def defer_busy(self,item,owner,*,consume_attempt=True):
         with self.transaction():
             current=self._db.execute('SELECT * FROM discovery_item WHERE id=?',(item['id'],)).fetchone()
             if current['status']!='running' or current['lease_owner']!=owner:raise CreatorDiscoveryError('stale_lease')
-            self._db.execute("UPDATE discovery_item SET status='queued',reason=NULL,request_count=0,attempt_no=attempt_no+1,retry_at=?,lease_owner=NULL,lease_pid=NULL,lease_until=NULL WHERE id=?",(self.now()+30,item['id']))
+            # A cohort sibling may stop the shared run before this item gets any request at all. It
+            # must return to the queue without consuming one of the three real-attempt slots.
+            self._db.execute("UPDATE discovery_item SET status='queued',reason=NULL,request_count=0,attempt_no=attempt_no+?,retry_at=?,lease_owner=NULL,lease_pid=NULL,lease_until=NULL WHERE id=?",(1 if consume_attempt else 0,self.now()+30,item['id']))
             self._db.execute("UPDATE discovery_batch SET status='queued',error_code=NULL WHERE id=? AND status<>'paused'",(item['batch_id'],))
         return self.detail(item['batch_id'])
 

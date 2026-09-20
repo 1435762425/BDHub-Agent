@@ -32,17 +32,18 @@ def run_cohort(worker,limit=20,lanes=3,soak_id=None,only_batch=None,use_producti
         lanes=9
     path=store.var_dir/'second-cycle.sqlite'
     if not path.exists():return None
-    group=store.recover_cohort(worker.owner)
-    if group is None:
+    with closing(sqlite3.connect(path.resolve().as_uri()+'?mode=ro',uri=True)) as db:
+        if not db.execute("SELECT 1 FROM sqlite_master WHERE name='cycle_identity_outbox'").fetchone():return None
+        batches=[r[0] for r in db.execute("SELECT o.batch_id FROM cycle_identity_outbox o JOIN plan p ON p.id=o.plan_id WHERE p.state='active' AND p.market='it' AND o.batch_id IS NOT NULL AND o.settled=0")]
+    if soak_id:
+        boxes=[r[0] for r in service.db.execute('SELECT outbox_id FROM batch_source_identity WHERE task_id=?',(soak.config(soak_id)['task_id'],))]
         with closing(sqlite3.connect(path.resolve().as_uri()+'?mode=ro',uri=True)) as db:
-            if not db.execute("SELECT 1 FROM sqlite_master WHERE name='cycle_identity_outbox'").fetchone():return None
-            batches=[r[0] for r in db.execute("SELECT o.batch_id FROM cycle_identity_outbox o JOIN plan p ON p.id=o.plan_id WHERE p.state='active' AND p.market='it' AND o.batch_id IS NOT NULL AND o.settled=0")]
-        if soak_id:
-            boxes=[r[0] for r in service.db.execute('SELECT outbox_id FROM batch_source_identity WHERE task_id=?',(soak.config(soak_id)['task_id'],))]
-            with closing(sqlite3.connect(path.resolve().as_uri()+'?mode=ro',uri=True)) as db:
-                scoped={r[0] for r in db.execute('SELECT batch_id FROM cycle_identity_outbox WHERE id IN (SELECT value FROM json_each(?))',(_json(boxes),))}
-            batches=[b for b in batches if b in scoped]
-        if only_batch:batches=[b for b in batches if b==only_batch]
+            scoped={r[0] for r in db.execute('SELECT batch_id FROM cycle_identity_outbox WHERE id IN (SELECT value FROM json_each(?))',(_json(boxes),))}
+        batches=[b for b in batches if b in scoped]
+    exact={only_batch} if isinstance(only_batch,str) else set(only_batch or [])
+    if exact:batches=[b for b in batches if b in exact]
+    group=store.recover_cohort(worker.owner,batches)
+    if group is None:
         group=store.claim_cohort(worker.owner,batches,limit,skip_judged=skip_judged)
     if not group:
         if service:service.close()
@@ -68,7 +69,7 @@ def run_cohort(worker,limit=20,lanes=3,soak_id=None,only_batch=None,use_producti
             item=dict(current)
             part=slice_report(report,item) if report else None
             if part is None:
-                store.defer_busy(item,worker.owner);continue
+                store.defer_busy(item,worker.owner,consume_attempt=False);continue
             _,single,_=worker._paths(item);single.mkdir(parents=True,exist_ok=True,mode=0o700)
             evidence=single/'report.private.json';payload=_json(part)
             if evidence.exists() and evidence.read_text()!=payload:

@@ -1,9 +1,11 @@
 """The identity backfill driver: how many rounds it runs, and what makes it stop."""
 import importlib.util
 import json
+import sqlite3
 import sys
 import tempfile
 import unittest
+from contextlib import closing
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -361,6 +363,48 @@ class SkipJudged(unittest.TestCase):
         try:identity_batch.one_round(ROOT,20,only_batch=batch)
         finally:identity_batch.subprocess.run=original
         self.assertEqual(seen['command'][seen['command'].index('--only-batch')+1],batch)
+
+    def test_a_full_cohort_can_use_several_exact_current_batches(self):
+        class Result:
+            returncode = 0
+            stdout = json.dumps({'cohort': {'targets': 0, 'id': 'c', 'seconds': 1.0}})
+            stderr = ''
+        batches=['discovery_'+'a'*32,'discovery_'+'b'*32];seen={};original=identity_batch.subprocess.run
+        identity_batch.subprocess.run=lambda command,**kw:(seen.update(command=command),Result())[1]
+        try:identity_batch.one_round(ROOT,50,only_batch=batches)
+        finally:identity_batch.subprocess.run=original
+        indexes=[i for i,value in enumerate(seen['command']) if value=='--only-batch']
+        self.assertEqual([seen['command'][i+1] for i in indexes],batches)
+
+
+class CurrentScope(unittest.TestCase):
+    def test_the_next_round_uses_the_exact_batch_with_most_current_unjudged_handles(self):
+        with tempfile.TemporaryDirectory() as folder:
+            var=Path(folder)/'var';var.mkdir()
+            b1='discovery_'+'1'*32;b2='discovery_'+'2'*32;old='discovery_'+'0'*32
+            with closing(sqlite3.connect(var/'second-cycle.sqlite')) as db, db:
+                db.executescript('''
+                  CREATE TABLE plan(id TEXT,institution TEXT,market TEXT,state TEXT);
+                  CREATE TABLE lead_query_head(plan_id TEXT,pid TEXT,query_id TEXT);
+                  CREATE TABLE lead_query_selection(query_id TEXT,source_id TEXT);
+                  CREATE TABLE source_edge_index(plan_id TEXT,source_id TEXT,pid TEXT,source_handle TEXT,source_kind TEXT);
+                  CREATE TABLE cycle_identity_resolution(plan_id TEXT,source_id TEXT,creator_id TEXT);
+                  CREATE TABLE cycle_identity_outcome(plan_id TEXT,source_id TEXT,status TEXT);
+                  CREATE TABLE cycle_identity_outbox(batch_id TEXT,payload TEXT,plan_id TEXT,settled INTEGER);
+                ''')
+                db.execute("INSERT INTO plan VALUES('p','bjn-local-research','it','active')")
+                for n,handle in enumerate(('h1','h2','h3'),1):
+                    db.execute('INSERT INTO lead_query_head VALUES(?,?,?)',('p',str(n),'q'+str(n)))
+                    db.execute('INSERT INTO lead_query_selection VALUES(?,?)',('q'+str(n),'s'+str(n)))
+                    db.execute("INSERT INTO source_edge_index VALUES('p',?,?,?,'kalodata_http')",('s'+str(n),str(n),handle))
+                db.execute('INSERT INTO cycle_identity_outbox VALUES(?,?,?,0)',(b1,json.dumps({'handles':['h1','h2']}),'p'))
+                db.execute('INSERT INTO cycle_identity_outbox VALUES(?,?,?,0)',(b2,json.dumps({'handles':['h2','h3']}),'p'))
+            with closing(sqlite3.connect(var/'creator-discovery.sqlite')) as db, db:
+                db.executescript('CREATE TABLE discovery_batch(id TEXT,status TEXT); CREATE TABLE discovery_item(batch_id TEXT,handle TEXT,status TEXT,attempt_no INTEGER,retry_at REAL);')
+                db.executemany('INSERT INTO discovery_batch VALUES(?,?)',[(old,'completed'),(b1,'queued'),(b2,'queued')])
+                db.execute("INSERT INTO discovery_item VALUES(?,?,?,1,0)",(old,'h1','unresolved'))
+                db.executemany('INSERT INTO discovery_item VALUES(?,?,?,1,0)',[(b1,'h1','queued'),(b1,'h2','queued'),(b2,'h2','queued'),(b2,'h3','queued')])
+            self.assertEqual(identity_batch.current_batch_scope(folder),b2)
 
 
 if __name__ == '__main__':

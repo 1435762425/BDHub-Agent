@@ -2,7 +2,7 @@
 """Show the creator-identity (OECID) stage of the funnel.
 
     python scripts/identity-queue.py status
-    python scripts/identity-queue.py save --json '{"batchSize":2000,"cohortSize":20}'
+    python scripts/identity-queue.py save --json '{"batchSize":2000,"cohortSize":50}'
 
 ``status`` reads only: how many leads already carry an OECID (and are therefore pool positions),
 how many are still waiting for one, and how many handles the platform could not find -- the last

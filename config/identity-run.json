@@ -1,4 +1,4 @@
 {
-  "batchSize": 20,
-  "cohortSize": 20
+  "batchSize": 2000,
+  "cohortSize": 50
 }
