@@ -167,8 +167,11 @@ def _local_card(root,store,plan,candidate):
         links.row_factory=sqlite3.Row
         row=links.execute("SELECT offer_fingerprint,list_id,state FROM catalog_current_binding WHERE market='it' AND catalog_source=? AND pid=? AND campaign_id=?",
           (offer.get('catalogSource'),str(offer['pid']),str(offer.get('campaignId') or ''))).fetchone()
+    # ``candidate.offerFingerprint`` is the immutable full-offer digest used by cycle_review;
+    # ``catalog_current_binding.offer_fingerprint`` is the six-field material fingerprint.  They
+    # intentionally prove different contracts and must not be compared to each other.
     if not row or row['state']!='active' or row['offer_fingerprint']!=offer_fingerprint(offer) or \
-       row['offer_fingerprint']!=candidate['offerFingerprint'] or str(row['list_id'])!=str(candidate['card']['listId']):
+       str(row['list_id'])!=str(candidate['card']['listId']):
         raise CycleError('material_stale')
     return descriptor(candidate['card'])
 

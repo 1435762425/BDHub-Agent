@@ -11,7 +11,8 @@ import lib.continuous_send as continuous  # noqa:E402
 from lib.continuous_send import control,mutate_control,publish_runtime,status  # noqa:E402
 from lib.cycle_delivery import Deliveries  # noqa:E402
 from lib.schema_migrations import apply_database  # noqa:E402
-from lib.second_cycle import CycleStore  # noqa:E402
+from lib.second_cycle import CycleStore,digest  # noqa:E402
+from lib.catalog_binding import offer_fingerprint  # noqa:E402
 
 NOW=1_789_444_800.0
 
@@ -101,6 +102,24 @@ class ContinuousSendTests(unittest.TestCase):
             with self.assertRaisesRegex(Exception,'request_invalid'):
                 continuous.execute_once(self.root,self.store,authorized_now='short')
         finally:continuous.window_state,continuous._candidate=original_window,original_candidate
+
+    def test_local_card_checks_both_offer_and_material_fingerprints_in_their_own_domains(self):
+        current=candidate('c1','1729480061238089885')
+        current['card']['listId']='8650756273145355030'
+        current['offerFingerprint']=digest(current['offer'])
+        original=self.store._offers;self.store._offers=lambda _plan:[('catalog',current['offer'])]
+        try:
+            with closing(sqlite3.connect(self.root/'var/catalog-links.sqlite')) as db,db:
+                db.execute('''CREATE TABLE catalog_current_binding(
+                  market TEXT,catalog_source TEXT,pid TEXT,campaign_id TEXT,offer_fingerprint TEXT,
+                  list_id TEXT,state TEXT)''')
+                db.execute('INSERT INTO catalog_current_binding VALUES(?,?,?,?,?,?,?)',
+                  ('it','selected',current['pid'],'7',offer_fingerprint(current['offer']),
+                   current['card']['listId'],'active'))
+            card=continuous._local_card(self.root,self.store,self.plan,current)
+            self.assertEqual(card.list_id,current['card']['listId'])
+            self.assertNotEqual(current['offerFingerprint'],offer_fingerprint(current['offer']))
+        finally:self.store._offers=original
 
 
 if __name__=='__main__':unittest.main()
