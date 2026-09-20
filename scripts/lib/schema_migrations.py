@@ -338,13 +338,81 @@ BEFORE DELETE ON turn_review_application BEGIN SELECT RAISE(ABORT,'review applic
 """)
 
 
+SECOND_CYCLE_VIDEO_EVIDENCE = Migration(7, "kalodata_video_evidence_v1", """
+CREATE TABLE IF NOT EXISTS kalodata_video_run(
+  run_id TEXT PRIMARY KEY,
+  pid TEXT NOT NULL,
+  window_start TEXT NOT NULL,
+  window_end TEXT NOT NULL,
+  min_views INTEGER NOT NULL,
+  max_videos INTEGER NOT NULL,
+  list_fingerprint TEXT NOT NULL,
+  state TEXT NOT NULL,
+  rows_received INTEGER NOT NULL,
+  qualifying_videos INTEGER NOT NULL,
+  resolved_videos INTEGER NOT NULL,
+  network_requests INTEGER NOT NULL,
+  observed_at REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS kalodata_video_evidence(
+  run_id TEXT NOT NULL,
+  video_id TEXT NOT NULL,
+  pid TEXT NOT NULL,
+  kalodata_creator_id TEXT NOT NULL,
+  handle TEXT NOT NULL,
+  views INTEGER NOT NULL,
+  sale INTEGER NOT NULL,
+  revenue_raw TEXT,
+  release_time TEXT,
+  duration TEXT,
+  description TEXT NOT NULL,
+  video_url TEXT NOT NULL,
+  content_type TEXT,
+  is_ad INTEGER NOT NULL,
+  is_ai INTEGER NOT NULL,
+  payload_hash TEXT NOT NULL,
+  observed_at REAL NOT NULL,
+  PRIMARY KEY(run_id,video_id)
+);
+CREATE TABLE IF NOT EXISTS kalodata_video_head(
+  pid TEXT PRIMARY KEY,
+  run_id TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS kalodata_video_run_pid_time
+  ON kalodata_video_run(pid,observed_at);
+CREATE INDEX IF NOT EXISTS kalodata_video_evidence_pid_views
+  ON kalodata_video_evidence(pid,views DESC);
+CREATE INDEX IF NOT EXISTS kalodata_video_evidence_handle
+  ON kalodata_video_evidence(handle,pid);
+CREATE TRIGGER IF NOT EXISTS kalodata_video_run_no_update
+BEFORE UPDATE ON kalodata_video_run BEGIN SELECT RAISE(ABORT,'video run is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS kalodata_video_run_no_delete
+BEFORE DELETE ON kalodata_video_run BEGIN SELECT RAISE(ABORT,'video run is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS kalodata_video_evidence_no_update
+BEFORE UPDATE ON kalodata_video_evidence BEGIN SELECT RAISE(ABORT,'video evidence is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS kalodata_video_evidence_no_delete
+BEFORE DELETE ON kalodata_video_evidence BEGIN SELECT RAISE(ABORT,'video evidence is immutable'); END;
+""")
+
+
+SECOND_CYCLE_VIDEO_PAGING = Migration(8, "kalodata_video_paging_v1", """
+ALTER TABLE kalodata_video_run ADD COLUMN sort_field TEXT NOT NULL DEFAULT 'views';
+ALTER TABLE kalodata_video_run ADD COLUMN max_pages INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE kalodata_video_run ADD COLUMN pages_read INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE kalodata_video_run ADD COLUMN selected_videos INTEGER;
+ALTER TABLE kalodata_video_run ADD COLUMN coverage TEXT NOT NULL DEFAULT 'legacy_top_cap';
+""")
+
+
 DATABASES = {
     "catalog-links": ("catalog-links.sqlite", (CATALOG_LINKS,)),
     "second-cycle": ("second-cycle.sqlite", (SECOND_CYCLE, SECOND_CYCLE_INDEXES,
                                                 SECOND_CYCLE_FROZEN_SEND,
                                                 SECOND_CYCLE_REPLY_EVENTS,
                                                 SECOND_CYCLE_TURN_REVIEW,
-                                                SECOND_CYCLE_REVIEW_APPLICATION)),
+                                                SECOND_CYCLE_REVIEW_APPLICATION,
+                                                SECOND_CYCLE_VIDEO_EVIDENCE,
+                                                SECOND_CYCLE_VIDEO_PAGING)),
 }
 
 REGISTRY_SQL = """
