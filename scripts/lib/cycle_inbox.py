@@ -31,7 +31,7 @@ class Inbox:
      overlap=True
      if prev[0]!=encoded(e):raise CycleError('event_conflict')
    gap=bool(cp and (cp['state']=='gap' or (history['hasMore'] and not overlap)))
-   added=historical=live=0;unlock=False
+   added=historical=live=showcase_live=0;unlock=False
    for mid,e in unique.items():
     if db.execute('SELECT 1 FROM inbox_event WHERE plan_id=? AND cid=? AND message_id=?',(plan,cid,mid)).fetchone():continue
     stamp=e.get('createTimeRaw');valid=type(stamp) is int and 946684800000<=stamp<=int(now*1000)+300000
@@ -39,6 +39,7 @@ class Inbox:
     db.execute('INSERT INTO inbox_event VALUES(?,?,?,?,?,?,?,?,?)',(plan,cid,mid,oec,e['kind'],stamp if valid else None,encoded(e),int(old),now));added+=1;historical+=int(old)
     if e['kind'] in ('creatorReplies','showcaseNotifications'):unlock=True
     if e['kind']=='creatorReplies' and not old:live+=1
+    if e['kind']=='showcaseNotifications' and not old:showcase_live+=1
    # Interaction evidence is separate from manual control/rejection. No marketing is dispatched here.
    if unlock and not rel['unlocked']:db.execute('UPDATE relationship SET unlocked=1,revision=revision+1 WHERE plan_id=? AND creator_id=?',(plan,rel['creator_id']))
    if gap:
@@ -48,6 +49,9 @@ class Inbox:
     db.execute("INSERT INTO inbox_pending VALUES(?,?,1,?,'awaiting_classification') ON CONFLICT(plan_id,creator_id) DO UPDATE SET revision=revision+1,due_at=excluded.due_at,state='awaiting_classification'",(plan,rel['creator_id'],now+REPLY_BATCH_SECONDS))
    state='gap' if gap else 'tracking'
    db.execute('INSERT INTO inbox_checkpoint VALUES(?,?,?,?,?,?) ON CONFLICT(plan_id,cid) DO UPDATE SET checked_at=excluded.checked_at,state=excluded.state',(plan,cid,oec,baseline,now,state))
+  if showcase_live and self.s.db.execute("SELECT 1 FROM sqlite_master WHERE name='creator_collaboration_current'").fetchone():
+   from lib.collaboration_status import observe_showcase
+   observe_showcase(self.s,rel['creator_id'],{'conversationId':cid,'count':showcase_live,'observedAt':now})
   return dict(added=added,historical=historical,liveReplies=live,state=state,realSends=0)
 
 def inbox_status(store,plan):

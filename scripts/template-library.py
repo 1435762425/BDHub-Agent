@@ -4,8 +4,9 @@ import json,sys
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1];sys.dont_write_bytecode=True;sys.path.insert(0,str(ROOT/'scripts'))
 from lib.second_cycle import CycleError,CycleStore
-from lib.template_library import (agent_setting,archive_send_template,create_send_template,manual_templates,
- send_templates,save_agent_setting,update_send_template,upsert_manual_template)
+from lib.template_library import (agent_setting,agent_templates,archive_send_template,create_send_template,
+ manual_templates,send_templates,save_agent_setting,update_agent_template,update_send_template,
+ upsert_manual_template)
 from lib.reply_events import load_policy
 
 def snapshot(store):
@@ -20,7 +21,7 @@ def snapshot(store):
  except (OSError,ValueError,TypeError):
   pass
  return {'sendTemplates':send_templates(store),'manualTemplates':manual_templates(store),
-  'agentTemplates':[{'id':key,'action':value['action'],'language':value['language'],'text':value['text']} for key,value in policy['templates'].items()],
+  'agentTemplates':agent_templates(store,policy),
   'agentSetting':setting,'platformWrites':0,'realSends':0}
 
 def main():
@@ -28,7 +29,7 @@ def main():
   raw=sys.stdin.read(20001)
   if len(raw.encode())>20000:raise CycleError('input_too_large')
   req=json.loads(raw or '{}');action=req.get('action');readonly=action=='status'
-  if action not in ('status','create_send','update_send','archive_send','upsert_manual','save_agent'):
+  if action not in ('status','create_send','update_send','archive_send','upsert_manual','update_agent','save_agent'):
    raise CycleError('invalid_action')
   with CycleStore(ROOT/'var/second-cycle.sqlite',readonly=readonly) as store:
    plan=store.db.execute("SELECT id FROM plan WHERE market='it' AND institution='bjn-local-research'").fetchone()[0]
@@ -49,6 +50,9 @@ def main():
    elif action=='upsert_manual':
     if set(req)!={'action','requestId','templateId','expectedRevision','name','category','body'}:raise CycleError('invalid_input')
     upsert_manual_template(store,req['requestId'],req['templateId'],req['expectedRevision'],req['name'],req['category'],req['body'])
+   elif action=='update_agent':
+    if set(req)!={'action','templateKey','expectedRevision','body'}:raise CycleError('invalid_input')
+    update_agent_template(store,load_policy(),req['templateKey'],req['expectedRevision'],req['body'])
    else:
     if set(req)!={'action','expectedRevision','setting'}:raise CycleError('invalid_input')
     saved=save_agent_setting(store,plan,req['expectedRevision'],req['setting'])

@@ -24,7 +24,7 @@ export type InboxDetailItem={kind:InboxDetailKind;occurredAt:number;ref:string;c
  format:"text"|"attachment_or_unsupported"|"not_fetched"|null;textState:string|null};
 export type InboxDayDetail={available:boolean;date:string;timezone:string;summary:InboxDay|null;
  total:number;offset:number;limit:number;nextOffset:number|null;items:InboxDetailItem[];platformWrites:false};
-export type InboxQuery={view:"status"}|{view:"detail";date:string;offset:number;limit:number};
+export type InboxQuery={view:"status";days:7|14|30}|{view:"detail";date:string;offset:number;limit:number};
 
 const STAT_KEYS=(['cards','texts','creators','unconfirmed','replies','showcase','ourMessages','autoReplies','casesOpened'] as const);
 
@@ -163,7 +163,8 @@ export function validateInboxDayDetail(value:unknown):InboxDayDetail{
 
 export function parseInboxQuery(url:string):InboxQuery{
  const params=new URL(url).searchParams;
- if(!params.size)return {view:"status"};
+ if(!params.size)return {view:"status",days:14};
+ if(params.size===1&&params.has('days')){const raw=params.get('days');if(raw!=='7'&&raw!=='14'&&raw!=='30')throw Error('invalid_inbox_query');return {view:'status',days:Number(raw) as 7|14|30};}
  if([...params.keys()].some(key=>!['date','offset','limit'].includes(key))||
   ['date','offset','limit'].some(key=>params.getAll(key).length>1))throw Error('invalid_inbox_query');
  const date=params.get('date');
@@ -193,7 +194,7 @@ function runMonitor(args:string[]):Promise<unknown>{
  });
 }
 
-export async function readInbox():Promise<InboxState>{return validateInbox(await runMonitor(["status"]));}
+export async function readInbox(days:7|14|30=14):Promise<InboxState>{return validateInbox(await runMonitor(["status","--days",String(days)]));}
 export async function readInboxDay(date:string,offset:number,limit:number):Promise<InboxDayDetail>{
  return validateInboxDayDetail(await runMonitor(["detail","--date",date,"--offset",String(offset),"--limit",String(limit)]));
 }

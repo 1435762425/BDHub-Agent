@@ -7,7 +7,7 @@ ROOT=Path(__file__).resolve().parents[1];sys.dont_write_bytecode=True;sys.path.i
 from lib.cycle_auto_reply import AutoReplies
 from lib.reply_events import DeepSeekClassifier,backfill,classify,load_policy
 from lib.second_cycle import CycleError,CycleStore,digest
-from lib.template_library import agent_setting
+from lib.template_library import agent_setting,agent_template_map
 STOP=False;BEIJING=timezone(timedelta(hours=8))
 def stop(*_):
  global STOP;STOP=True
@@ -45,7 +45,7 @@ def tick():
   if not setting['enabled']:return {'state':'disabled','platformWrites':0,'realSends':0}
   if not inside(setting,now):return {'state':'outside_reply_window','platformWrites':0,'realSends':0}
   if send_dispatch_active(store):return {'state':'send_dispatch_active','platformWrites':0,'realSends':0}
-  projection=backfill(store);policy=load_policy();templates={value['action']:(key,value['text']) for key,value in policy['templates'].items()};replies=AutoReplies(store);run_id='agent-run-'+digest([plan,int(now),setting['revision']])[:24]
+  projection=backfill(store);policy=load_policy();templates=agent_template_map(store,policy);replies=AutoReplies(store);run_id='agent-run-'+digest([plan,int(now),setting['revision']])[:24]
   report={'runId':run_id,'state':'running','claimed':0,'noReply':0,'prepared':0,'human':0,'confirmed':0,'unknown':0,'platformWrites':0,'realSends':0}
   store.db.execute("INSERT OR IGNORE INTO agent_reply_run VALUES(?,?,\'running\',?,NULL,0,0,0,0,0,0,NULL)",(run_id,plan,now))
   for pending in store.db.execute("""SELECT p.* FROM inbox_pending p JOIN relationship r
@@ -66,7 +66,7 @@ def tick():
    action=decision['action'];report['claimed']+=1
    if action=='no_reply' and setting['actions']['no_reply']:close_no_reply(store,plan,turn,pending);report['noReply']+=1
    elif action in templates and setting['actions'].get(action):
-    key,text=templates[action];replies.prepare_policy(plan,turn['creator_id'],turn['cid'],pending['revision'],action,key,text,turn['turn_id'],policy['version']);report['prepared']+=1
+    key,text,revision=templates[action];replies.prepare_policy(plan,turn['creator_id'],turn['cid'],pending['revision'],action,key,text,turn['turn_id'],policy['version']+':template-'+str(revision));report['prepared']+=1
    else:open_human(store,plan,turn,pending,decision.get('intentCode') or 'agent_handoff');report['human']+=1
   q=store.db.execute("SELECT id FROM service_reply WHERE plan_id=? AND state IN ('ready','inflight','accepted','unknown') AND kind IN ('sample_self_service','collaboration_ack','link_usage') ORDER BY CASE state WHEN 'unknown' THEN 0 WHEN 'inflight' THEN 1 ELSE 2 END,created LIMIT 1",(plan,)).fetchone()
   if q:

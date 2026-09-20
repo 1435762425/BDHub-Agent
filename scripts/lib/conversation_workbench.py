@@ -139,7 +139,9 @@ def conversation_detail(root,store,cid):
    'createdAt':(turn['occurred_ms']/1000 if turn['occurred_ms'] else turn['observed_at']),
    'revision':pending['revision'],'virtual':True,'turnId':turn['turn_id'],'pendingRevision':pending['revision']}
  else:case_payload=None
- return {'available':True,'conversationId':cid,'creator':{'creatorId':creator,'oec':rel['oec'],'handle':handles.get(creator),'mode':rel['mode'],'rejected':bool(rel['rejected']),'unlocked':bool(rel['unlocked']),'revision':rel['revision']},
+ from lib.collaboration_status import current as collaboration_current
+ collaboration=collaboration_current(store,creator,plan)
+ return {'available':True,'conversationId':cid,'creator':{'creatorId':creator,'oec':rel['oec'],'handle':handles.get(creator),'mode':rel['mode'],'rejected':bool(rel['rejected']),'unlocked':bool(rel['unlocked']),'revision':rel['revision'],'collaboration':collaboration},
   'timeline':timeline,'episodes':episodes,'case':case_payload,
   'metrics':_creator_metrics(root,db,plan,creator,rel['oec']),
   'manualReply':({'id':manual['id'],'kind':manual['kind'],'confirmedAt':manual['confirmed_at']} if manual else None),
@@ -200,15 +202,22 @@ def confirm_manual_reply(store,cid,case_id,turn_id,virtual,expected_control_revi
  if not turn:raise CycleError('conversation_missing')
  occurred=turn['occurred_ms']/1000 if turn['occurred_ms'] else turn['observed_at']
  manual=_latest_manual_reply(store.db,plan,turn['creator_id'],occurred)
- if not manual:raise CycleError('manual_reply_not_confirmed')
- note='manual_reply_confirmed:'+manual['id']
+ note='manual_reply_confirmed:'+manual['id'] if manual else 'human_case_confirmed_without_send'
  if virtual:
   if turn_id!=turn['turn_id']:raise CycleError('conversation_resolution_changed')
   result=complete_reviewed_human(store,cid,turn_id,expected_control_revision,expected_pending_revision,note)
  else:
   if not isinstance(case_id,str) or not re.fullmatch(r'case-[a-f0-9]{24}',case_id):raise CycleError('manual_confirmation_invalid')
   result=Service(store).resolve_case(plan,case_id,expected_pending_revision,expected_control_revision,note)
- return {**result,'manualReplyId':manual['id'],'platformWrites':0,'realSends':0}
+ return {**result,'manualReplyId':manual['id'] if manual else None,'platformWrites':0,'realSends':0}
+
+def set_collaboration(store,cid,status,expected_status_revision,expected_control_revision,request_id):
+ if not isinstance(cid,str) or not cid.isdigit():raise CycleError('collaboration_request_invalid')
+ plan=store.db.execute("SELECT id FROM plan WHERE market='it' AND institution='bjn-local-research'").fetchone()[0]
+ turn=store.db.execute('SELECT creator_id FROM inbound_turn WHERE plan_id=? AND cid=? ORDER BY coalesce(occurred_ms,observed_at*1000) DESC LIMIT 1',(plan,cid)).fetchone()
+ if not turn:raise CycleError('conversation_missing')
+ from lib.collaboration_status import set_manual
+ return set_manual(store,turn['creator_id'],status,request_id,expected_status_revision,expected_control_revision)
 
 def reject_creator(store,cid,expected_control_revision,request_id):
  if not isinstance(cid,str) or not cid.isdigit() or type(expected_control_revision) is not int or expected_control_revision<1 or \

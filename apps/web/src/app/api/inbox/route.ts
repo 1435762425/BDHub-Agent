@@ -10,7 +10,7 @@ export async function GET(request:Request){
  if(!isLocalRequest(request,false))return Response.json({error:'local_origin_required'},{status:403,headers});
  let query;try{query=parseInboxQuery(request.url);}
  catch{return Response.json({error:'invalid_inbox_query'},{status:400,headers});}
- try{return Response.json(query.view==="status"?await readInbox():await readInboxDay(query.date,query.offset,query.limit),{headers});}
+ try{return Response.json(query.view==="status"?await readInbox(query.days):await readInboxDay(query.date,query.offset,query.limit),{headers});}
  catch{return Response.json({error:'inbox_unavailable'},{status:503,headers});}
 }
 

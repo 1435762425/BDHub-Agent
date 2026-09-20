@@ -438,14 +438,17 @@ def apply_turn_review(store, turn_id, expected_review_revision, expected_control
                 links=store.db.execute("SELECT count(DISTINCT e.pid||':'||e.list_id) FROM turn_episode_link l "
                     "JOIN outbound_episode e ON e.episode_id=l.episode_id WHERE l.turn_id=?",(turn_id,)).fetchone()[0]
                 if links!=1:raise CycleError('link_episode_not_unique')
-            policy=load_policy();template_key=TEMPLATE_FOR[action];template=policy['templates'][template_key]['text']
+            policy=load_policy();template_key=TEMPLATE_FOR[action]
+            from lib.template_library import agent_template_map
+            _,template,template_revision=agent_template_map(store,policy)[action]
             candidate_id='reply-candidate-'+digest([turn_id,expected_review_revision,action])[:24]
             store.db.execute("INSERT OR IGNORE INTO review_reply_candidate VALUES(?,?,?,?,?,?,?,?,?,?)",
                              (candidate_id,turn_id,expected_review_revision,turn['plan_id'],turn['creator_id'],
                               action,template_key,template,'reviewed_ready',now))
             store.db.execute("UPDATE inbox_pending SET state='template_ready' WHERE plan_id=? AND creator_id=?",
                              (turn['plan_id'],turn['creator_id']))
-            result|={'state':'template_ready','candidateId':candidate_id,'templateKey':template_key}
+            result|={'state':'template_ready','candidateId':candidate_id,'templateKey':template_key,
+                     'templateRevision':template_revision}
         else:
             if relationship['mode']!='auto':raise CycleError('relationship_control_changed')
             result|={'state':'review_partial'}
@@ -593,8 +596,9 @@ def status(store, limit=12):
     items=items[:limit]
     from lib.typesafe_provider import status as typesafe_status
     jev=typesafe_status(Path(store.db.execute('PRAGMA database_list').fetchone()[2]).parent.parent)
-    templates={value['action']:{'key':key,'text':value['text']}
-               for key,value in policy['templates'].items()}
+    from lib.template_library import agent_templates
+    templates={value['action']:{'key':value['id'],'text':value['text'],'revision':value['revision']}
+               for value in agent_templates(store,policy)}
     return {'schema':'bdhub.reply-review.v1','policyVersion':policy['version'],
             'processingIntervalSeconds':policy['processingIntervalSeconds'],
             'automaticReplies':False,'providers':{'deepseek':{'mode':'shadow'},

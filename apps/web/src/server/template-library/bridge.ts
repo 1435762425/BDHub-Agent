@@ -7,12 +7,12 @@ export type SendTemplate={id:string;name:string;description:string;bodyIt:string
 export type ManualTemplate={id:string;name:string;category:string;body:string;revision:number;state:"active"|"archived"};
 export type AgentSetting={enabled:boolean;timezone:"Asia/Shanghai";replyStart:string;replyEnd:string;sendStart:string;sendEnd:string;bufferMinutes:number;
  actions:{no_reply:boolean;sample_self_service:boolean;collaboration_ack:boolean;link_usage:boolean;human:false};revision:number;updatedAt:number};
-export type AgentTemplate={id:string;action:string;language:string;text:string};
+export type AgentTemplate={id:string;action:string;language:string;text:string;revision:number};
 export type TemplateLibraryState={sendTemplates:SendTemplate[];manualTemplates:ManualTemplate[];agentTemplates:AgentTemplate[];agentSetting:AgentSetting;platformWrites:0;realSends:0};
 
 const SEND_PARAMETERS=["creator_handle","product_name","creator_commission"];
 const AGENT_ACTIONS=["no_reply","sample_self_service","collaboration_ack","link_usage","human"];
-const safeErrors=new Set(["template_body_invalid","template_parameters_invalid","template_name_invalid","template_request_invalid","template_request_conflict","template_revision_conflict","template_missing","template_in_use","reply_setting_invalid","reply_setting_conflict","reply_schedule_invalid","reply_schedule_overlap"]);
+const safeErrors=new Set(["template_body_invalid","template_parameters_invalid","template_name_invalid","template_request_invalid","template_request_conflict","template_revision_conflict","template_missing","template_in_use","agent_template_request_invalid","agent_template_revision_conflict","reply_setting_invalid","reply_setting_conflict","reply_schedule_invalid","reply_schedule_overlap"]);
 const time=(value:unknown)=>{if(typeof value!=="string"||!/^([01]\d|2[0-3]):[0-5]\d$|^24:00$/.test(value))throw Error("invalid_template_library");return value;};
 const text=(value:unknown,max:number)=>{if(typeof value!=="string"||!value.trim()||value.length>max)throw Error("invalid_template_library");return value;};
 const integer=(value:unknown,max=100000)=>{if(typeof value!=="number"||!Number.isSafeInteger(value)||value<0||value>max)throw Error("invalid_template_library");return value;};
@@ -46,7 +46,7 @@ export function validateTemplateLibrary(raw:unknown):TemplateLibraryState{
  if(typeof setting.enabled!=="boolean"||setting.timezone!=="Asia/Shanghai")throw Error("invalid_template_library");
  const replyStart=time(setting.replyStart),replyEnd=time(setting.replyEnd),sendStart=time(setting.sendStart),sendEnd=time(setting.sendEnd),bufferMinutes=integer(setting.bufferMinutes,180);
  if(replyStart==="24:00"||sendStart==="24:00"||!(minutes(replyStart)<minutes(replyEnd)&&minutes(replyEnd)<=minutes(sendStart)&&minutes(sendStart)<minutes(sendEnd))||minutes(sendStart)-minutes(replyEnd)<bufferMinutes)throw Error("invalid_template_library");
- const agentTemplates=value.agentTemplates.map(rawTemplate=>{if(!rawTemplate||typeof rawTemplate!=="object"||Array.isArray(rawTemplate))throw Error("invalid_template_library");const row=rawTemplate as Record<string,unknown>;const action=text(row.action,40);if(!AGENT_ACTIONS.slice(1,4).includes(action))throw Error("invalid_template_library");return {id:text(row.id,80),action,language:text(row.language,10),text:text(row.text,4000)};});
+ const agentTemplates=value.agentTemplates.map(rawTemplate=>{if(!rawTemplate||typeof rawTemplate!=="object"||Array.isArray(rawTemplate))throw Error("invalid_template_library");const row=rawTemplate as Record<string,unknown>;const action=text(row.action,40);if(!AGENT_ACTIONS.slice(1,4).includes(action))throw Error("invalid_template_library");return {id:text(row.id,80),action,language:text(row.language,10),text:text(row.text,4000),revision:integer(row.revision)};});
  return {sendTemplates,manualTemplates,agentTemplates,agentSetting:{enabled:setting.enabled,timezone:"Asia/Shanghai",replyStart,replyEnd,sendStart,sendEnd,bufferMinutes,actions:actions(setting.actions,"invalid_template_library"),revision:integer(setting.revision),updatedAt:typeof setting.updatedAt==="number"&&Number.isFinite(setting.updatedAt)&&setting.updatedAt>=0?setting.updatedAt:(()=>{throw Error("invalid_template_library");})()},platformWrites:0,realSends:0};
 }
 
@@ -66,6 +66,7 @@ export function validateTemplateRequest(raw:unknown):Record<string,unknown>{
  if(action==="update_send"){exact(value,["action","templateId","expectedRevision","name","bodyIt"]);return {action,templateId:text(value.templateId,40),expectedRevision:integer(value.expectedRevision),name:text(value.name,60),bodyIt:text(value.bodyIt,600)};}
  if(action==="archive_send"){exact(value,["action","templateId","expectedRevision"]);return {action,templateId:text(value.templateId,40),expectedRevision:integer(value.expectedRevision)};}
  if(action==="upsert_manual"){exact(value,["action","requestId","templateId","expectedRevision","name","category","body"]);return {action,requestId:text(value.requestId,120),templateId:value.templateId==null?null:text(value.templateId,40),expectedRevision:value.expectedRevision==null?null:integer(value.expectedRevision),name:text(value.name,60),category:text(value.category,60),body:text(value.body,2000)};}
+ if(action==="update_agent"){exact(value,["action","templateKey","expectedRevision","body"]);return {action,templateKey:text(value.templateKey,80),expectedRevision:integer(value.expectedRevision),body:text(value.body,4000)};}
  if(action==="save_agent"){exact(value,["action","expectedRevision","setting"]);return {action,expectedRevision:integer(value.expectedRevision),setting:agentSettingInput(value.setting)};}
  throw Error("invalid_template_request");
 }
@@ -85,6 +86,6 @@ export function createTemplateLibraryHandlers(invoke=invokeTemplateLibrary,syncW
   let body:Record<string,unknown>;
   try{body=validateTemplateRequest(await jsonBody(request));}catch(error){const status=error instanceof Error&&error.message==="json_required"?415:400;return Response.json({error:status===415?"json_required":"invalid_template_request"},{status,headers});}
   try{const result=await invoke(body);if(body.action==="save_agent")await syncWorker(result.agentSetting.enabled);return Response.json(result,{headers});}
-  catch(error){const code=error instanceof Error?error.message:"";if(["template_request_conflict","template_revision_conflict","template_in_use","reply_setting_conflict"].includes(code))return Response.json({error:code},{status:409,headers});if(["template_body_invalid","template_parameters_invalid","template_name_invalid","template_request_invalid","template_missing","reply_setting_invalid","reply_schedule_invalid","reply_schedule_overlap"].includes(code))return Response.json({error:code},{status:422,headers});return Response.json({error:"template_library_unavailable"},{status:503,headers});}
+  catch(error){const code=error instanceof Error?error.message:"";if(["template_request_conflict","template_revision_conflict","agent_template_revision_conflict","template_in_use","reply_setting_conflict"].includes(code))return Response.json({error:code},{status:409,headers});if(["template_body_invalid","template_parameters_invalid","template_name_invalid","template_request_invalid","agent_template_request_invalid","template_missing","reply_setting_invalid","reply_schedule_invalid","reply_schedule_overlap"].includes(code))return Response.json({error:code},{status:422,headers});return Response.json({error:"template_library_unavailable"},{status:503,headers});}
  }
 };}

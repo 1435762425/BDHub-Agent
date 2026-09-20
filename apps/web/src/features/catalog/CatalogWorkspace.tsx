@@ -14,6 +14,7 @@ import {useLeadsQueue} from "./useLeadsQueue";
 import {useIdentityQueue} from "./useIdentityQueue";
 import {useCatalogJobs} from "./useCatalogJobs";
 import LeadsPanel from "./LeadsPanel";
+import LinkNamingPanel from "./LinkNamingPanel";
 import {useLeadPool} from "./useLeadPool";
 const states:Record<string,string>={collecting:"采集中",completed:"查询范围已采完",partial:"覆盖尚不完整",blocked:"等待处理"};
 const linkReasons:Record<string,string>={card_search_incomplete:"商品卡查询不完整，暂不判断标准链接",card_read_unresolved:"商品卡读取未完成",card_members_incomplete:"成员回查不完整",existing_links_require_review:"旧卡只保留历史，等待标准链接",existing_links_other_campaign:"旧卡属于其他活动，不作为当前材料",product_no_longer_eligible:"商品当前不再符合初筛",selected_campaign_changed:"活动绑定已变化，需按当前活动重查",catalog_link_creation_pending:"等待标准链接",catalog_link_creation_unresolved:"建链结果未知，按原意图回查",catalog_link_requires_review:"旧口径记录待重新检查",catalog_link_terms_changed:"标准链接与当前商品方案不一致",catalog_link_not_prepared:"尚未进入标准链接准备",link_creator_not_above_public:"历史卡达人佣金未高于公开佣金",link_agency_below_minimum:"历史卡机构收益不足1个百分点",link_not_platform_valid:"历史卡当前平台无效",link_product_not_eligible:"历史卡商品当前不满足资格"};
@@ -23,7 +24,7 @@ const pct=(value:unknown)=>(typeof value==="string"&&value!==""||typeof value===
 const screenReason=(code:string,config?:CatalogScreenConfig)=>{switch(code){case"sales_missing":return "销量字段缺失";case"sales_below_min":return `累计销量不足 ${config?.minSales??"—"}`;case"rating_unrated":return "暂无评分（当前不允许）";case"rating_below_min":return `评分低于 ${config?.minRating??"—"}`;case"commission_missing":return "佣金字段缺失";case"commission_gap_below_min":return `两档佣金差不足 ${config?.minCommissionGapPoints??"—"} 个点`;default:return code;}};
 
 export default function CatalogWorkspace(){
- const [tab,setTab]=useState<"full"|"campaign"|"leads">("full");
+ const [tab,setTab]=useState<"full"|"campaign"|"leads"|"naming">("full");
  const queue=useLeadsQueue();
  const identity=useIdentityQueue();
  const jobs=useCatalogJobs();
@@ -60,8 +61,8 @@ export default function CatalogWorkspace(){
   :{done:judgedLinks,total:linkProgress?.total??0,label:"准备进展（已判定 / 本批已选商品）"};
  return <div className="space-y-5"><PageHeading title="货盘" description="高机会商品 · 仅全球销售商品。一条链：采集 → 筛选入池 → 准备链接 → 查达人线索。"/>
  {error&&<Notice tone="warning">暂时无法读取最新货盘状态，已有记录保留。</Notice>}
- <Tabs items={[{value:"full",label:"全托商品",count:data?.products},{value:"campaign",label:"非全托商品"},{value:"leads",label:"达人线索",count:queue.data?.scope??leadPool.data?.counts?.positions}]} value={tab} onChange={setTab}/>
- {tab==="leads"?<LeadsPanel/>:tab==="campaign"?<CampaignPanel onOpenLeads={()=>setTab("leads")}/>:<>
+ <Tabs items={[{value:"full",label:"全托商品"},{value:"campaign",label:"非全托商品"},{value:"leads",label:"达人线索"},{value:"naming",label:"新建链接命名"}]} value={tab} onChange={setTab}/>
+ {tab==="naming"?<LinkNamingPanel/>:tab==="leads"?<LeadsPanel/>:tab==="campaign"?<CampaignPanel onOpenLeads={()=>setTab("leads")}/>:<>
  <FunnelBar stages={stages} onJump={id=>id==="card-leads"?setTab("leads"):jump(id)}/>
  {tab==="full"&&leadPool.data?.available&&<MetricTable rows={(()=>{const c=leadPool.data.counts,b=leadPool.data.business;return [
   {label:"可发送",value:b.sendable.toLocaleString(),detail:`${c.readyCreators.toLocaleString()} 个达人，各取一个最优 PID`,accent:true},

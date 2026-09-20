@@ -5,7 +5,7 @@ import type {InboxConfig,InboxState} from "../../server/inbox/bridge";
 /** One owner for the inbox-monitor fetch, so the card is the only thing polling it. */
 export type InboxController={data:InboxState|null;draft:InboxConfig|null;
  setDraft:(value:InboxConfig)=>void;busy:boolean;message:string|null;
- reload:()=>Promise<void>;save:()=>Promise<void>;start:()=>Promise<void>;stop:()=>Promise<void>;loaded:boolean};
+ range:7|14|30;setRange:(value:7|14|30)=>void;reload:()=>Promise<void>;save:()=>Promise<void>;start:()=>Promise<void>;stop:()=>Promise<void>;loaded:boolean};
 
 export function useInboxMonitor():InboxController{
  const [data,setData]=useState<InboxState|null>(null);
@@ -13,15 +13,16 @@ export function useInboxMonitor():InboxController{
  const [busy,setBusy]=useState(false);
  const [message,setMessage]=useState<string|null>(null);
  const [loaded,setLoaded]=useState(false);
+ const [range,setRange]=useState<7|14|30>(14);
  const reload=useCallback(async()=>{
   // 读的是同一个共享库；一次读被拒不是这一阶段的事实，重试后就忽略，卡片保留上一次的数字。
   for(let attempt=0;attempt<3;attempt+=1){
-   const r=await fetch("/api/inbox",{cache:"no-store"}).catch(()=>null);
+   const r=await fetch(`/api/inbox?days=${range}`,{cache:"no-store"}).catch(()=>null);
    if(r?.ok){const value:InboxState=await r.json();setData(value);setDraft(value.config);setLoaded(true);return;}
    await new Promise(resolve=>setTimeout(resolve,400));
   }
   throw Error('inbox_unavailable');
- },[]);
+ },[range]);
  useEffect(()=>{void reload().catch(()=>{});},[reload]);
  // 监控是常驻的，所以只要它在跑就跟着刷；没在跑就不轮询（不制造假的"正在监控"）。
  useEffect(()=>{if(!data?.run?.running)return;const timer=setInterval(()=>void reload().catch(()=>{}),10000);return()=>clearInterval(timer);},[data?.run?.running,reload]);
@@ -57,5 +58,5 @@ export function useInboxMonitor():InboxController{
   }catch{setMessage("暂时无法停止。");}
   finally{setBusy(false);}
  },[]);
- return {data,draft,setDraft,busy,message,reload,save,start,stop,loaded};
+ return {data,draft,setDraft,busy,message,range,setRange,reload,save,start,stop,loaded};
 }

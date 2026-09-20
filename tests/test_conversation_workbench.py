@@ -3,7 +3,7 @@ from contextlib import closing
 from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'scripts'))
 from lib.conversation_workbench import (complete_reviewed_human,confirm_manual_reply,conversation_detail,
- list_conversations,reject_creator,save_draft)
+ list_conversations,reject_creator,save_draft,set_collaboration)
 from lib.cycle_auto_reply import AutoReplies
 from lib.cycle_inbox import Inbox
 from lib.cycle_service import Service
@@ -43,15 +43,25 @@ class ConversationWorkbenchTests(unittest.TestCase):
   duplicate=complete_reviewed_human(self.store,'999',turn,detail['creator']['revision'],detail['case']['pendingRevision'],'已人工核对')
   self.assertTrue(duplicate['duplicate'])
   self.assertEqual(self.store.db.execute('SELECT state FROM service_case').fetchone()[0],'resolved')
- def test_confirm_manual_reply_needs_a_confirmed_manual_send_and_no_free_text_note(self):
+ def test_confirm_manual_item_does_not_require_a_send(self):
   detail=conversation_detail(self.root,self.store,'999')
-  with self.assertRaisesRegex(CycleError,'manual_reply_not_confirmed'):
-   confirm_manual_reply(self.store,'999',detail['case']['id'],None,False,detail['creator']['revision'],detail['case']['pendingRevision'])
-  reply=AutoReplies(self.store).prepare_manual(self.plan,'creator-1','999','Risposta',detail['creator']['revision'],'manual-confirmation')
-  self.store.db.execute("UPDATE service_reply SET state='confirmed',started=? WHERE id=?",(NOW+1,reply['id']))
-  refreshed=conversation_detail(self.root,self.store,'999');self.assertEqual(refreshed['manualReply']['id'],reply['id'])
   result=confirm_manual_reply(self.store,'999',detail['case']['id'],None,False,detail['creator']['revision'],detail['case']['pendingRevision'])
-  self.assertEqual(result['state'],'resolved');self.assertEqual(self.store.db.execute('SELECT state FROM service_case').fetchone()[0],'resolved')
+  self.assertEqual(result['state'],'resolved');self.assertIsNone(result['manualReplyId'])
+  self.assertEqual(self.store.db.execute('SELECT state FROM service_case').fetchone()[0],'resolved')
+ def test_collaboration_selector_is_revisioned_and_paid_blocks_without_marking_rejected(self):
+  detail=conversation_detail(self.root,self.store,'999');self.assertEqual(detail['creator']['collaboration']['status'],'normal')
+  result=set_collaboration(self.store,'999','paid',0,detail['creator']['revision'],'collaboration-request-0001')
+  self.assertEqual(result['status'],'paid');self.assertEqual(result['source'],'manual')
+  self.assertEqual(self.store.db.execute("SELECT rejected FROM relationship WHERE creator_id='creator-1'").fetchone()[0],0)
+ def test_live_showcase_only_upgrades_the_system_default(self):
+  self.store.db.execute('DELETE FROM inbox_checkpoint')
+  result=Inbox(self.store).ingest(self.plan,'999','123',{'identityVerified':True,'hasMore':False,'events':[
+   {'conversationId':'999','oecId':'123','kind':'showcaseNotifications','messageId':'2001','createTimeRaw':int(NOW*1000)}]})
+  self.assertEqual(result['historical'],1)  # first read is baseline, not an automatic business event
+  self.store.db.execute("UPDATE inbox_checkpoint SET baseline_at=?",(NOW-10,))
+  Inbox(self.store).ingest(self.plan,'999','123',{'identityVerified':True,'hasMore':False,'events':[
+   {'conversationId':'999','oecId':'123','kind':'showcaseNotifications','messageId':'2002','createTimeRaw':int(NOW*1000)}]})
+  self.assertEqual(conversation_detail(self.root,self.store,'999')['creator']['collaboration']['status'],'collaborated')
  def test_manual_rejection_suppresses_all_future_positions(self):
   result=reject_creator(self.store,'999',1,'manual-reject-request')
   self.assertEqual(result['state'],'rejected')

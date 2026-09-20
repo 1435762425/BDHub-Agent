@@ -111,7 +111,8 @@ test('a run record for a different job cannot wear this shape',()=>{
 });
 
 test('day-detail queries are exact, bounded and cannot smuggle another command',()=>{
- assert.deepEqual(parseInboxQuery(url),{view:'status'});
+ assert.deepEqual(parseInboxQuery(url),{view:'status',days:14});
+ assert.deepEqual(parseInboxQuery(url+'?days=30'),{view:'status',days:30});
  assert.deepEqual(parseInboxQuery(url+'?date=2026-09-15'),
   {view:'detail',date:'2026-09-15',offset:0,limit:50});
  assert.deepEqual(parseInboxQuery(url+'?date=2026-09-15&offset=50&limit=100'),

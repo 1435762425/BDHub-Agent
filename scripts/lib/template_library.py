@@ -6,6 +6,8 @@ from lib.cycle_materials import TEMPLATES,render as render_builtin
 SEND_PLACEHOLDERS=('creator_handle','product_name','creator_commission')
 CUSTOM_ID=re.compile(r'custom-[a-f0-9]{24}')
 MANUAL_ID=re.compile(r'manual-[a-f0-9]{24}')
+AGENT_TEMPLATE_KEYS={'sample_self_service_v1':'sample_self_service',
+ 'collaboration_ack_v1':'collaboration_ack','link_usage_v1':'link_usage'}
 TIME=re.compile(r'(?:[01]\d|2[0-3]):[0-5]\d|24:00')
 DEFAULT_AGENT_SETTING={'enabled':False,'timezone':'Asia/Shanghai','replyStart':'15:00','replyEnd':'16:00',
  'sendStart':'16:30','sendEnd':'24:00','bufferMinutes':30,
@@ -109,7 +111,7 @@ def resolve_send_template(store,template_id):
  raise CycleError('template_missing')
 
 def render_send_template(spec,name,offer,handle):
- if spec['builtIn']:return render_builtin(name,offer,spec['id'],handle)
+ if spec['builtIn']:return render_builtin(name,offer,spec['id'],handle)|{'templateRevision':spec['revision']}
  rate=str(offer['creatorPercent']).rstrip('0').rstrip('.') if '.' in str(offer['creatorPercent']) else str(offer['creatorPercent'])
  text=spec['bodyIt'].replace('{creator_handle}',handle).replace('{product_name}',name['mentionIt']).replace('{creator_commission}',rate)
  return {'version':4,'template':spec['id'],'templateRevision':spec['revision'],'textIt':text,
@@ -151,6 +153,42 @@ def upsert_manual_template(store,request_id,template_id,expected_revision,name,c
    store.db.execute('INSERT INTO manual_reply_template_revision VALUES(?,?,?,?)',(template_id,revision,body.strip(),now))
    store.db.execute("UPDATE manual_reply_template SET name=?,category=?,state='active',current_revision=?,updated_at=? WHERE template_id=?",(name,category,revision,now,template_id))
  return next(value for value in manual_templates(store,True) if value['id']==template_id)
+
+def agent_templates(store,policy):
+ defaults=policy.get('templates') or {};rows=[]
+ for key,action in AGENT_TEMPLATE_KEYS.items():
+  original=defaults.get(key) or {}
+  if original.get('action')!=action or not isinstance(original.get('text'),str):raise CycleError('agent_template_policy_invalid')
+  saved=store.db.execute('''SELECT t.current_revision,r.body FROM agent_reply_template t
+   JOIN agent_reply_template_revision r ON r.template_key=t.template_key AND r.revision=t.current_revision
+   WHERE t.template_key=? AND t.action=?''',(key,action)).fetchone() if store.db.execute(
+    "SELECT 1 FROM sqlite_master WHERE name='agent_reply_template'").fetchone() else None
+  rows.append({'id':key,'action':action,'language':'it','text':saved['body'] if saved else original['text'],
+   'revision':saved['current_revision'] if saved else 1})
+ return rows
+
+def update_agent_template(store,policy,template_key,expected_revision,body):
+ if template_key not in AGENT_TEMPLATE_KEYS or type(expected_revision) is not int or expected_revision<1 or \
+    not isinstance(body,str) or not body.strip() or len(body)>4000 or any(ord(c)<9 for c in body):
+  raise CycleError('agent_template_request_invalid')
+ defaults={row['id']:row for row in agent_templates(store,policy)};default=defaults[template_key];now=store.clock()
+ with store.tx():
+  row=store.db.execute('SELECT current_revision,action FROM agent_reply_template WHERE template_key=?',(template_key,)).fetchone()
+  if not row:
+   if expected_revision!=1:raise CycleError('agent_template_revision_conflict')
+   revision=2
+   store.db.execute('INSERT INTO agent_reply_template VALUES(?,?,?,?)',(template_key,AGENT_TEMPLATE_KEYS[template_key],revision,now))
+   store.db.execute('INSERT INTO agent_reply_template_revision VALUES(?,?,?,?)',(template_key,1,default['text'],now))
+  else:
+   if row['action']!=AGENT_TEMPLATE_KEYS[template_key] or row['current_revision']!=expected_revision:
+    raise CycleError('agent_template_revision_conflict')
+   revision=expected_revision+1
+   store.db.execute('UPDATE agent_reply_template SET current_revision=?,updated_at=? WHERE template_key=?',(revision,now,template_key))
+  store.db.execute('INSERT INTO agent_reply_template_revision VALUES(?,?,?,?)',(template_key,revision,body.strip(),now))
+ return next(row for row in agent_templates(store,policy) if row['id']==template_key)
+
+def agent_template_map(store,policy):
+ return {row['action']:(row['id'],row['text'],row['revision']) for row in agent_templates(store,policy)}
 
 def _minutes(value,allow_24=False):
  if not isinstance(value,str) or not TIME.fullmatch(value) or (value=='24:00' and not allow_24):raise CycleError('reply_schedule_invalid')

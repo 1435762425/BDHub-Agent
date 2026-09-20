@@ -1,63 +1,19 @@
 "use client";
-import {useEffect,useState} from "react";
+import {useCallback,useEffect,useState} from "react";
 import {Button,Card,Input,Notice,Pill,Toggle} from "../bdhub/ui";
 import type {JobsState,WorkbenchJob} from "../../server/jobs/bridge";
 
-const stamp=(value:number|null)=>value?new Date(value*1000).toLocaleString("zh-CN",{timeZone:"Asia/Shanghai",hour12:false}):"尚未运行";
+const stamp=(value:number|null)=>value?new Date(value*1000).toLocaleString("zh-CN",{timeZone:"Asia/Shanghai",hour12:false}):"尚未成功";
 const weekdays=["周一","周二","周三","周四","周五","周六","周日"];
-
-/** Manual entry points that are actually wired to a verified endpoint. */
-async function trigger(job:WorkbenchJob):Promise<void>{
- if(job.manual==="global-source-sync"){
-  const r=await fetch("/api/global-source",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"sync",requestId:crypto.randomUUID()})});
-  if(!r.ok)throw Error();
-  return;
- }
- if(job.manual==="catalog-screen-run"){
-  const r=await fetch("/api/catalog-screen",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"run"})});
-  if(!r.ok)throw Error();
-  return;
- }
- throw Error("unwired");
-}
+const workflowJobs=new Set(["taplink_clean","full_catalog_update","campaign_catalog_update","taplink_prepare","kalodata_leads","oecid","send_pool_publish"]);
 
 export default function JobsPanel(){
- const [data,setData]=useState<JobsState|null>(null);
- const [busy,setBusy]=useState<string|null>(null);
- const [message,setMessage]=useState<string|null>(null);
- useEffect(()=>{const controller=new AbortController();void(async()=>{try{const r=await fetch("/api/jobs",{signal:controller.signal,cache:"no-store"});if(!r.ok)throw Error();const v:JobsState=await r.json();if(!controller.signal.aborted)setData(v);}catch{if(!controller.signal.aborted)setData(null);}})();return()=>controller.abort();},[]);
- useEffect(()=>{if(!data?.scheduler.running)return;const timer=setInterval(()=>void fetch("/api/jobs",{cache:"no-store"}).then(r=>r.ok?r.json():Promise.reject()).then(value=>setData(value)).catch(()=>{}),5000);return()=>clearInterval(timer);},[data?.scheduler.running]);
- async function saveJob(id:string,patch:{enabled?:boolean;at?:string|null;weekday?:number}){
-  setBusy(id);setMessage(null);
-  try{
-   const r=await fetch("/api/jobs",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"save",jobs:{[id]:patch}})});
-   if(!r.ok)throw Error();
-   setData(await r.json());
-   setMessage(data?.scheduler.running?"维护周期已保存；调度器会按新的北京时间执行。":"维护周期已保存，但调度器当前未运行；启动调度器后才会到点执行。");
-  }catch{setMessage("暂时无法保存定时意向。");}
-  finally{setBusy(null);}
- }
- async function scheduler(action:"start_scheduler"|"stop_scheduler"){
-  setBusy("scheduler");setMessage(null);try{const r=await fetch("/api/jobs",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action})});const value=await r.json();if(!r.ok)throw Error();setData(value);setMessage(action==="start_scheduler"?"调度器已启动。只有已开启的来源周期会运行；链接核验固定 creates=0，不建链、不删卡。":"已请求停止，调度器会在当前检查点退出；已启动的底层只读作业不会被强杀。");}catch{setMessage("暂时无法改变调度器状态。");}finally{setBusy(null);}
- }
- async function runJob(job:WorkbenchJob){
-  setBusy(job.id);setMessage(null);
-  try{await trigger(job);setMessage(job.manual==="catalog-screen-run"?`已按当前门槛重新筛分。`:`已提交「${job.name}」。采集逐页保存，可回到上方卡片看进度，也可以再点一次继续。`);}
-  catch{setMessage(job.manual==="unwired"?`「${job.name}」还没有接上手动入口，这一项先记在面板里。`:`暂时无法提交「${job.name}」。`);}
-  finally{setBusy(null);}
- }
- return <Card title="作业与定时" subtitle="手动作业与来源维护分开；Campaign 可每日检查，全托 TapLink 可每周检查，默认全部关闭。"><div className="space-y-4 p-5">
-  {!data&&<p className="text-sm text-gray-500">暂时无法读取作业列表。</p>}
-  {data&&<>
-  <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-gray-200 p-4 dark:border-gray-700"><div><div className="flex items-center gap-2"><p className="text-sm font-medium">材料维护调度器</p><Pill tone={data.scheduler.running?"success":"neutral"}>{data.scheduler.running?(data.scheduler.stopping?"正在停止":"运行中"):"未运行"}</Pill></div><p className="mt-1 text-xs leading-5 text-gray-500">只协调两个来源周期；Campaign＝来源刷新后链接只读核验，全托＝每周链接只读核验。失败保留上次成功绑定。</p>{data.scheduler.error&&<p className="mt-1 text-xs text-warning-600">最近异常：{data.scheduler.error}</p>}</div>{data.scheduler.running?<Button size="sm" variant="outline" disabled={busy==="scheduler"||data.scheduler.stopping} onClick={()=>void scheduler("stop_scheduler")}>{data.scheduler.stopping?"停止中…":"停止调度器"}</Button>:<Button size="sm" disabled={busy==="scheduler"} onClick={()=>void scheduler("start_scheduler")}>启动调度器</Button>}</div>
-  <div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead className="border-b border-gray-200 text-xs text-gray-500 dark:border-gray-700"><tr>{["作业","上次运行 · 北京时间","手动触发","定时"].map(label=><th key={label} className="whitespace-nowrap px-3 py-3 font-medium">{label}</th>)}</tr></thead><tbody>{data.jobs.map(job=><tr key={job.id} className="border-b border-gray-100 align-top dark:border-gray-800">
-   <td className="min-w-56 max-w-md px-3 py-4"><p className="font-medium">{job.name}</p><p className="mt-1 text-xs leading-5 text-gray-500">{job.description}</p><Pill tone="neutral">{job.group}</Pill></td>
-   <td className="whitespace-nowrap px-3 py-4 text-xs text-gray-500">{stamp(job.lastRunAt)}</td>
-   <td className="whitespace-nowrap px-3 py-4">{job.manual==="unwired"?<Pill tone="neutral">尚未接入</Pill>:<Button size="sm" variant="outline" disabled={busy===job.id} onClick={()=>void runJob(job)}>{busy===job.id?"提交中…":"立即运行"}</Button>}</td>
-   <td className="min-w-52 px-3 py-4">{job.schedulable?<><Toggle checked={job.enabled} disabled={busy===job.id||!data.schedulerReady} label={job.enabled?"周期已开启":"未启用"} onChange={value=>void saveJob(job.id,{enabled:value})}/><div className="flex items-center gap-2 text-xs text-gray-500">{job.cadence==="weekly"&&<select aria-label={`${job.name}星期`} value={job.weekday??0} disabled={busy===job.id} onChange={e=>void saveJob(job.id,{weekday:Number(e.target.value)})} className="h-9 rounded-lg border border-gray-300 bg-transparent px-2 dark:border-gray-700">{weekdays.map((label,index)=><option key={label} value={index}>{label}</option>)}</select>}<span>{job.cadence==="daily"?"每天":""}</span><Input type="time" className="h-9 w-28" value={job.at??""} disabled={busy===job.id||!data.schedulerReady} onChange={e=>void saveJob(job.id,{at:e.target.value||null})}/><span>北京时间</span></div>{job.enabled&&data.scheduler.nextDue[job.id==="campaign_material_refresh"?"campaign":"selected"]&&<p className="mt-1 text-[11px] text-gray-400">下次：{stamp(data.scheduler.nextDue[job.id==="campaign_material_refresh"?"campaign":"selected"])}</p>}</>:<Pill tone="neutral">未接周期调度</Pill>}</td>
-   </tr>)}</tbody></table></div>
-  {!data.scheduler.running&&<Notice tone="warning">调度器当前未运行；即使保存了周期，也不会自动执行。启动调度器不会立刻开放任何未勾选的作业，所有周期默认关闭。</Notice>}
-  {message&&<Notice tone="info">{message}</Notice>}
-  </>}
- </div></Card>;
+ const [data,setData]=useState<JobsState|null>(null),[busy,setBusy]=useState<string|null>(null),[message,setMessage]=useState("");
+ const load=useCallback(async()=>{const response=await fetch("/api/jobs",{cache:"no-store"});if(!response.ok)throw Error();setData(await response.json());},[]);
+ useEffect(()=>{void load().catch(()=>{});const timer=setInterval(()=>void load().catch(()=>{}),10000);return()=>clearInterval(timer);},[load]);
+ const saveJob=async(id:string,patch:{enabled?:boolean;at?:string|null;weekday?:number})=>{setBusy(id);setMessage("");try{const response=await fetch("/api/jobs",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"save",jobs:{[id]:patch}})});if(!response.ok)throw Error();setData(await response.json());setMessage("作业设置已保存；所有开关仍受自动运营总开关和各自业务门禁约束。");}catch{setMessage("作业设置未保存。");}finally{setBusy(null);}};
+ const scheduler=async(action:"start_scheduler"|"stop_scheduler")=>{setBusy("scheduler");try{const response=await fetch("/api/jobs",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action})});if(!response.ok)throw Error();setData(await response.json());setMessage(action==="start_scheduler"?"本机调度器已启动；关闭的作业不会执行。":"已请求调度器在安全点停止。");}catch{setMessage("调度器状态未改变。");}finally{setBusy(null);}};
+ const run=async(job:WorkbenchJob)=>{setBusy(job.id);setMessage("");try{if(workflowJobs.has(job.id)){const response=await fetch("/api/workflow",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"run",requestId:`job-${crypto.randomUUID()}`,jobId:job.id})});if(!response.ok)throw Error();}else if(job.id==="inbox_monitor"){const response=await fetch("/api/inbox",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"start",config:{limit:6,interval:60}})});if(!response.ok&&response.status!==409)throw Error();}else if(job.id==="continuous_send"){const state=await fetch("/api/send",{cache:"no-store"}).then(response=>response.json());const response=await fetch("/api/send",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"start",requestId:`send-${crypto.randomUUID()}`,expectedRevision:state.control.revision})});if(!response.ok)throw Error();}else{const library=await fetch("/api/template-library",{cache:"no-store"}).then(response=>response.json());const {revision,updatedAt,...setting}=library.agentSetting;const response=await fetch("/api/template-library",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"save_agent",expectedRevision:revision,setting:{...setting,enabled:true}})});if(!response.ok)throw Error();}setMessage(`已提交「${job.name}」；外部动作仍按原意图、窗口和账号门禁执行。`);await load();}catch{setMessage(`「${job.name}」未启动，请查看该行停止原因。`);}finally{setBusy(null);}};
+ const stop=async(job:WorkbenchJob)=>{setBusy(job.id);try{if(job.id==="inbox_monitor")await fetch("/api/inbox",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"stop"})});else if(job.id==="continuous_send"){const state=await fetch("/api/send",{cache:"no-store"}).then(response=>response.json());await fetch("/api/send",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"stop",requestId:`send-stop-${crypto.randomUUID()}`,expectedRevision:state.control.revision})});}else if(workflowJobs.has(job.id)&&data?.scheduler.cycle)await fetch("/api/workflow",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"stop",runId:data.scheduler.cycle,expectedState:"running"})});else{const library=await fetch("/api/template-library",{cache:"no-store"}).then(response=>response.json());const {revision,updatedAt,...setting}=library.agentSetting;await fetch("/api/template-library",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"save_agent",expectedRevision:revision,setting:{...setting,enabled:false}})});}setMessage(`已请求安全停止「${job.name}」。`);await load();}catch{setMessage("停止请求未完成。");}finally{setBusy(null);}};
+ return <Card title="作业与定时" subtitle="按主链顺序展示真实入口；技术 ID、日志和锁收进详情。"><div className="space-y-4 p-5">{!data?<p className="text-sm text-gray-500">暂时无法读取作业台账。</p>:<><div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-gray-200 p-4 dark:border-gray-700"><div><div className="flex items-center gap-2"><p className="text-sm font-medium">自动运营调度器</p><Pill tone={data.scheduler.running?"success":"neutral"}>{data.scheduler.running?(data.scheduler.stopping?"正在停止":"运行中"):"未运行"}</Pill></div><p className="mt-1 text-xs text-gray-500">只调度已开启作业；不会因部署或 GET 自动启动。</p>{data.scheduler.error&&<p className="mt-1 text-xs text-warning-600">{data.scheduler.error}</p>}</div>{data.scheduler.running?<Button size="sm" variant="outline" disabled={busy==="scheduler"} onClick={()=>void scheduler("stop_scheduler")}>停止调度器</Button>:<Button size="sm" disabled={busy==="scheduler"} onClick={()=>void scheduler("start_scheduler")}>启动调度器</Button>}</div><div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead><tr className="border-b border-gray-200 text-xs text-gray-500 dark:border-gray-700">{["作业","状态 / 上次成功","时间","操作"].map(label=><th key={label} className="px-3 py-3 font-medium">{label}</th>)}</tr></thead><tbody>{data.jobs.map(job=><tr key={job.id} className="border-b border-gray-100 align-top dark:border-gray-800"><td className="min-w-64 px-3 py-4"><p className="font-medium">{job.name}</p><p className="mt-1 text-xs leading-5 text-gray-500">{job.description}</p><details className="mt-2 text-[11px] text-gray-400"><summary>技术详情</summary><p>{job.id} · {job.manualEndpoint}</p></details></td><td className="whitespace-nowrap px-3 py-4"><Pill tone={job.enabled?"brand":"neutral"}>{job.enabled?"已启用":"未启用"}</Pill><p className="mt-2 text-xs text-gray-500">{stamp(job.lastRunAt)}</p></td><td className="min-w-52 px-3 py-4"><Toggle checked={job.enabled} disabled={busy===job.id} label={job.enabled?"周期已开启":"周期关闭"} onChange={value=>void saveJob(job.id,{enabled:value})}/><div className="flex items-center gap-2">{job.cadence==="weekly"&&<select value={job.weekday??0} onChange={event=>void saveJob(job.id,{weekday:Number(event.target.value)})} className="h-9 rounded-lg border border-gray-300 bg-transparent px-2 dark:border-gray-700">{weekdays.map((label,index)=><option key={label} value={index}>{label}</option>)}</select>}<Input className="h-9 w-28" type="time" value={job.at??""} onChange={event=>void saveJob(job.id,{at:event.target.value})}/><span className="text-xs text-gray-400">北京</span></div></td><td className="whitespace-nowrap px-3 py-4"><div className="flex gap-2"><Button size="sm" variant="outline" disabled={busy!==null} onClick={()=>void run(job)}>立即运行</Button><Button size="sm" variant="ghost" disabled={busy!==null} onClick={()=>void stop(job)}>安全停止</Button></div></td></tr>)}</tbody></table></div>{message&&<Notice tone={message.includes("已")?"success":"warning"}>{message}</Notice>}</>}</div></Card>;
 }
