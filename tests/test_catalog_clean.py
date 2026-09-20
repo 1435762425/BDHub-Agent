@@ -10,6 +10,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'scripts'))
 from lib.catalog_clean import CatalogClean, classify_card, decide, used_list_ids  # noqa: E402
+from lib.catalog_prepare import TaplinkInventory  # noqa: E402
 
 
 def member(pid='1729480061238089885', status='2', unavailable=None, governed=None, stock='25', campaign='7685262119046498070'):
@@ -87,6 +88,46 @@ class DeleteGuards(unittest.TestCase):
                     clean.freeze_delete(clean.open_run(), '9' * 19)
             finally:
                 clean.close()
+
+
+class PlanProjection(unittest.TestCase):
+    def test_replanning_the_daily_run_drops_items_absent_from_current_inventory(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            var = Path(tmp) / 'var'
+            var.mkdir(parents=True)
+            inventory = TaplinkInventory(tmp)
+            clean = CatalogClean(tmp)
+            try:
+                current = '1' * 19
+                retired = '2' * 19
+                inventory.save_list({'list_id': current, 'name': 'current'}, now=1)
+                inventory.save_members(current, 'current', [{
+                    'product_id': '3' * 19, 'product_status': '2', 'stock': '25',
+                    'campaign_id': '7' * 19,
+                }], now=1)
+                inventory.save_list({'list_id': retired, 'name': 'retired'}, now=1)
+                inventory.save_members(retired, 'retired', [{
+                    'product_id': '4' * 19, 'product_status': '2', 'stock': '0',
+                    'campaign_id': '8' * 19, 'unavailable_type': '6',
+                    'is_under_governed': True,
+                }], now=1)
+
+                run = clean.open_run()
+                clean.plan(run, inventory, now=1)
+                self.assertEqual(clean.summary(run)['total'], 2)
+                intent = clean.freeze_delete(run, retired)
+                clean.mark(intent['id'], 'verified', readback={'absent': True}, now=1)
+
+                inventory.save_list({'list_id': current, 'name': 'current'}, now=2)
+                self.assertEqual(inventory.remove_unobserved_lists(2), 1)
+                clean.plan(run, inventory, now=2)
+
+                self.assertEqual(clean.summary(run)['total'], 1)
+                self.assertEqual([row['list_id'] for row in clean.items(run)], [current])
+                self.assertEqual(clean.intent(intent['id'])['state'], 'verified')
+            finally:
+                clean.close()
+                inventory.close()
 
 
 class UsedLinks(unittest.TestCase):

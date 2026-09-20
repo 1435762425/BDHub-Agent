@@ -166,6 +166,15 @@ class CatalogClean:
                            decision=decision, used=was_used,
                            evidence={'products': verdict.get('products'), 'listReason': verdict.get('reason')}, now=now)
             states[decision] = states.get(decision, 0) + 1
+        # A run id is stable for the whole day, so a later complete inventory refresh can
+        # legitimately contain fewer cards than the first classification.  Keep the run's
+        # item table as a projection of the current inventory, but retain delete intents as
+        # immutable audit history.  Prune only after every current card was classified so an
+        # interrupted plan cannot temporarily erase the previous complete projection.
+        with self.db:
+            self.db.execute('''DELETE FROM catalog_clean_item
+WHERE run_id=?
+  AND list_id NOT IN (SELECT list_id FROM catalog_tap_list)''', (run_id,))
         return states
 
     # ---- delete intents ---------------------------------------------------------

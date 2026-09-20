@@ -1,5 +1,6 @@
 """Read-only opportunity source using the old verified HTTP protocol, no old lease writes."""
 from contextlib import contextmanager
+from datetime import datetime,timezone
 from pathlib import Path
 import hashlib,importlib.util,sys,time
 from lib.legacy_runtime import configure_vendored_bdhub
@@ -157,7 +158,7 @@ def _opportunity_transport(report,*,stopped=lambda:False,extra_read_endpoints=fr
     saved=json.loads((ROOT/'var/cycle-catalog-it-20260913/selected.json').read_text())['scope']
     binding={'market':'it','account':account_name,'institutionFingerprint':digest(str(identity.im_market_partner_id))}
     if any(saved.get(k)!=binding[k] for k in ('market','institutionFingerprint')):raise ValueError('source_institution_changed')
-    path=Path(account.headers_json);before=hashlib.sha256(path.read_bytes()).hexdigest()
+    path=Path(account.headers_json);before=hashlib.sha256(path.read_bytes()).hexdigest();current_fingerprint={'value':before}
     spec=importlib.util.spec_from_file_location('source_readonly_guard',ROOT/'scripts/probe-italy-profile.py');guard=importlib.util.module_from_spec(spec);spec.loader.exec_module(guard)
     from bdhub.send.sharelink.transport import PICK_UP_SELECT_PATH
     if PICK_UP_SELECT_PATH!=SELECT:raise ValueError('selection_endpoint_changed')
@@ -181,6 +182,18 @@ def _opportunity_transport(report,*,stopped=lambda:False,extra_read_endpoints=fr
             lane=Scoped(identity,account,allow_write=allow_write)
             lane.copy_session_from(self);lane._pace=pace;lane.check_stop=check;lane._batch_lane=True
             return lane
+        def _solve_verification(self,header):
+            super()._solve_verification(header)
+            project_identities=(ROOT/'var/account-identities').resolve()
+            resolved=path.resolve()
+            if resolved.is_relative_to(project_identities):
+                from bdhub.enrich.identity_store import IdentityBundle,IdentityMeta,write_verified_identity
+                warnings=write_verified_identity(path,IdentityBundle(dict(self.headers)),IdentityMeta(
+                  account=account.name,market='it',verified_at=datetime.now(timezone.utc).isoformat(),
+                  verification_method='commerce_captcha_verified_session'))
+                current_fingerprint['value']=hashlib.sha256(path.read_bytes()).hexdigest()
+                report['identityFileWrites']=report.get('identityFileWrites',0)+1
+                if warnings:report['identityWriteWarnings']=list(warnings)
         def allow_verified_nonselection(self,pid,receipt,fresh,absent):
             if selection_scope is None or absent is not True or fresh.get('product_id')!=pid or fresh.get('fs_is_selected') is not False or receipt.get('http')!=200 or receipt.get('code')!=10000 or receipt.get('verification') is not True or receipt.get('ambiguous') is not False:raise ValueError('nonselection_proof_required')
             consumed.discard(pid)
@@ -239,7 +252,7 @@ def _opportunity_transport(report,*,stopped=lambda:False,extra_read_endpoints=fr
         def check():
             if stopped():raise ValueError('source_stopped')
             if scheduled_relogin.maintenance_due(account,initialize=False,ignore_retry_throttle=True):raise ValueError('source_maintenance_due')
-            if hashlib.sha256(path.read_bytes()).hexdigest()!=before:raise ValueError('source_identity_changed')
+            if hashlib.sha256(path.read_bytes()).hexdigest()!=current_fingerprint['value']:raise ValueError('source_identity_changed')
         transport.check_stop=check
         try:
             check();yield transport
