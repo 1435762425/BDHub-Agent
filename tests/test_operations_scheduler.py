@@ -97,6 +97,48 @@ class StageWiring(unittest.TestCase):
         self.assertEqual([args[:2] for args,_ in calls],[['scripts/campaign-join.py','status'],
                          ['scripts/campaign-join.py','join-all'],['scripts/campaign-collect.py','--max-requests']])
 
+    def test_oecid_hands_off_every_current_batch_before_resolving(self):
+        submissions=iter((['discovery_'+'1'*32],[]))
+        def answers(args,_label):
+            if args[0]=='scripts/second-cycle-identities.py':
+                payload={'submittedBatches':next(submissions)}
+            else:
+                payload={'pendingAtStart':3,'pending':0,'claimed':3,'stopReason':'backlog_clear'}
+            return {'state':'completed','itemCount':0,'complete':True,'platformWrites':0,'payload':payload}
+        executor,calls=self.executor(answers)
+        result=executor.execute(None,{'applicableSources':['campaign']},'oecid',{'jobs':{}})
+        self.assertEqual(result['state'],'completed')
+        self.assertEqual(result['itemCount'],3)
+        self.assertEqual(result['scope']['handoffBatches'],1)
+        self.assertEqual([args[0] for args,_ in calls],
+                         ['scripts/second-cycle-identities.py','scripts/second-cycle-identities.py',
+                          'scripts/identity-batch.py'])
+
+    def test_oecid_never_publishes_with_a_stalled_pending_queue(self):
+        def answers(args,_label):
+            payload=({'submittedBatches':[]} if args[0]=='scripts/second-cycle-identities.py' else
+                     {'pendingAtStart':4,'pending':4,'claimed':0,'stopReason':'queue_stalled'})
+            return {'state':'completed','itemCount':0,'complete':True,'platformWrites':0,'payload':payload}
+        result=self.executor(answers)[0].execute(
+            None,{'applicableSources':['campaign']},'oecid',{'jobs':{}})
+        self.assertEqual(result['state'],'needs_human')
+        self.assertFalse(result['complete'])
+        self.assertEqual(result['errorCode'],'identity_queue_stalled')
+
+    def test_kalodata_counts_completed_video_pids_at_quota(self):
+        def answers(args,_label):
+            if args[0]=='scripts/leads-run.py':payload={'done':1261}
+            elif args[1]=='init':payload={'generationId':'video-generation-test'}
+            else:payload={'error':'kalodata_daily_quota_exhausted',
+                          'status':{'counts':{'completed':20}}}
+            return {'state':'completed','itemCount':0,'complete':True,'platformWrites':0,'payload':payload}
+        result=self.executor(answers)[0].execute(
+            None,{'applicableSources':['campaign']},'kalodata',{'jobs':{}})
+        self.assertEqual(result['state'],'quota_exhausted')
+        self.assertEqual(result['itemCount'],1281)
+        self.assertEqual(result['scope']['aCompleted'],1261)
+        self.assertEqual(result['scope']['bCompleted'],20)
+
     def test_stage_adapter_preserves_an_explicit_needs_human_result(self):
         class Result:
             returncode=0;stdout='{"state":"needs_human","error":"verification_pending"}\n';stderr=''

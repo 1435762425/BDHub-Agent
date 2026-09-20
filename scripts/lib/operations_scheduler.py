@@ -217,12 +217,31 @@ class SubprocessStageExecutor:
             videos=self._call(['scripts/kalodata-video-crawl.py','run','--generation',str(generation)],'kalodata-video-run')
             video_error=str((videos.get('payload') or {}).get('error') or videos.get('errorCode') or '')
             video_state='quota_exhausted' if video_error=='kalodata_daily_quota_exhausted' else videos['state']
-            video_done=int((((videos.get('payload') or {}).get('status') or {}).get('counts') or {}).get('done') or 0)
+            video_counts=(((videos.get('payload') or {}).get('status') or {}).get('counts') or {})
+            video_done=int(video_counts.get('completed') or video_counts.get('done') or 0)
             return {**videos,'state':video_state,'complete':video_state=='completed','itemCount':completed+video_done,
                     'scope':{'sources':sources,'aCompleted':completed,'bGeneration':generation,'bCompleted':video_done}}
         if stage=='oecid':
+            submitted=0
+            for _ in range(500):
+                handoff=self._call(['scripts/second-cycle-identities.py','submit'],'oecid-submit')
+                if handoff['state']!='completed':return handoff
+                batches=(handoff.get('payload') or {}).get('submittedBatches')
+                if not isinstance(batches,list):
+                    return {**handoff,'state':'failed','complete':False,'errorCode':'identity_handoff_invalid'}
+                submitted+=len(batches)
+                if not batches:break
+            else:
+                return {'state':'failed','itemCount':0,'complete':False,'platformWrites':0,
+                        'errorCode':'identity_handoff_limit','scope':{'sources':sources},'payload':{}}
             result=self._call(['scripts/identity-batch.py','--limit','200000','--cohort-size','50'],'oecid')
-            result['itemCount']=int((result.get('payload') or {}).get('claimed') or 0);return result
+            payload=result.get('payload') or {};pending=int(payload.get('pending') or 0)
+            result['itemCount']=int(payload.get('claimed') or 0)
+            result['scope']={'sources':sources,'handoffBatches':submitted,'pending':pending}
+            if result['state']=='completed' and pending:
+                reason=str(payload.get('stopReason') or 'pending')
+                result.update(state='needs_human',complete=False,errorCode=('identity_'+reason)[:120])
+            return result
         if stage=='send_pool':
             result=self._call(['scripts/lead-pool.py','status','--limit','1'],'send-pool')
             result['itemCount']=int(((result.get('payload') or {}).get('counts') or {}).get('positions') or 0);return result
