@@ -30,6 +30,7 @@ from pathlib import Path
 
 LEGACY = Path(__file__).resolve().parents[2].parent / '01-BDSystem-V2'
 LOGIN_DIR_NAME = 'Kalodata登录器独立版'
+FALLBACK_GRABBER = Path('/Users/bjn00003/kaladatagrab/乘丰 对标查找')
 DEFAULTS = {'version': 'kalodata-identity-v1', 'activationCode': '', 'canaryPid': ''}
 
 # Probe verdicts. ``identityOk`` separates "the login works" from "we got data this second":
@@ -42,6 +43,13 @@ def root_of(module_file=__file__):
     return Path(module_file).resolve().parents[2]
 
 
+def resolve_grabber(configured, fallback=FALLBACK_GRABBER):
+    """Prefer the configured collector, but tolerate a moved local checkout without changing legacy config."""
+    configured = Path(configured).expanduser()
+    fallback = Path(fallback).expanduser()
+    return configured if configured.is_dir() else fallback if fallback.is_dir() else configured
+
+
 @lru_cache(maxsize=1)
 def grabber():
     """The grabber project directory, read from the same config the Kalodata worker uses."""
@@ -52,10 +60,10 @@ def grabber():
         from lib.legacy_runtime import configure_vendored_bdhub
         configure_vendored_bdhub(root=root_of(),legacy_root=LEGACY)
         from bdhub import config
-        return Path(config.load().kalodata.project_dir)
+        return resolve_grabber(config.load().kalodata.project_dir)
     except Exception:
         # A moved or unreadable legacy config must not make the whole module unusable.
-        return Path('/Users/bjn00003/kalodatagrab/乘丰 对标查找')
+        return FALLBACK_GRABBER
 
 
 def login_dir():
@@ -187,6 +195,17 @@ def _write_state(root, payload):
     temporary.replace(path)
 
 
+def response_row_count(body):
+    data = body.get('data') if isinstance(body, dict) else None
+    if isinstance(data, list):
+        return len(data)
+    if isinstance(data, dict):
+        rows = next((data[key] for key in ('items', 'list', 'records', 'rows')
+                     if isinstance(data.get(key), list)), [])
+        return len(rows)
+    return 0
+
+
 def probe(root=None, pid=None, clock=time.time):
     """Ask the production path for one creator page and classify what came back.
 
@@ -201,7 +220,8 @@ def probe(root=None, pid=None, clock=time.time):
     target = pid or probe_pid(root, config)
     if not target:
         raise ValueError('kalodata_probe_pid_missing')
-    end = date.today()
+    # Match the production lead reader: TikTok/Kalodata near-real-time days are not settled yet.
+    end = date.today() - timedelta(days=2)
     payload = {'startDate': (end - timedelta(days=13)).isoformat(), 'endDate': end.isoformat(),
                'authority': True, 'pageSize': 50, 'pageNo': 1,
                'sort': [{'field': 'revenue', 'type': 'DESC'}], 'id': target}
@@ -221,8 +241,7 @@ def probe(root=None, pid=None, clock=time.time):
                            else 'unreachable')
                 detail = code
             else:
-                data = body.get('data') if isinstance(body, dict) else None
-                rows = len(data.get('list') or []) if isinstance(data, dict) else 0
+                rows = response_row_count(body)
                 verdict, detail = 'ready', 'ok'
     except Exception as error:
         detail = type(error).__name__

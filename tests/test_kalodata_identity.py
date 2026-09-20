@@ -10,7 +10,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'scripts'))
 from lib.kalodata_identity import (DEFAULTS, VERDICTS, config_path, cookie_state, load,  # noqa: E402
-                                   login_state, probe_pid, read_state, save, status, validate)
+                                   login_state, probe_pid, read_state, resolve_grabber, response_row_count,
+                                   save, status, validate)
 
 
 class CardAndConfig(unittest.TestCase):
@@ -43,6 +44,12 @@ class CardAndConfig(unittest.TestCase):
     def test_an_absent_config_reads_as_the_safe_default(self):
         with tempfile.TemporaryDirectory() as folder:
             self.assertEqual(load(folder), validate(DEFAULTS))
+
+    def test_missing_legacy_grabber_path_uses_an_existing_local_checkout(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder);configured=root/'old-name';fallback=root/'current-name';fallback.mkdir()
+            self.assertEqual(resolve_grabber(configured,fallback),fallback)
+            configured.mkdir();self.assertEqual(resolve_grabber(configured,fallback),configured)
 
 
 class CookieIsNeverRead(unittest.TestCase):
@@ -101,6 +108,12 @@ class Verdicts(unittest.TestCase):
             self.assertEqual(probe_pid(folder, validate({'canaryPid': '1729480002729777701'})),
                              '1729480002729777701')
             self.assertEqual(probe_pid(folder, validate({})), '')
+
+    def test_probe_counts_both_list_and_wrapped_response_shapes(self):
+        self.assertEqual(response_row_count({'data':[{},{}]}),2)
+        self.assertEqual(response_row_count({'data':{'list':[{}]}}),1)
+        self.assertEqual(response_row_count({'data':{'items':[{}, {}, {}]}}),3)
+        self.assertEqual(response_row_count({'data':None}),0)
 
 
 if __name__ == '__main__':
