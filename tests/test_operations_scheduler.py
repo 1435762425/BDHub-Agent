@@ -100,7 +100,7 @@ class StageWiring(unittest.TestCase):
     def test_full_managed_catalog_uses_first_level_category_partitions(self):
         def answers(args,_label):
             if args[0]=='scripts/collect-global-opportunity.py':payload={'state':'completed','published':True,'products':31809};writes=0
-            elif args[1]=='prepare':payload={'states':{'pending':21},'error':None};writes=0
+            elif args[1] in ('prepare','verify'):payload={'states':{'pending':21},'error':None};writes=0
             else:payload={'states':{'confirmed':21},'error':None};writes=21
             return {'state':'completed','itemCount':31809,'complete':True,'platformWrites':writes,'payload':payload}
         executor,calls=self.executor(answers)
@@ -109,8 +109,20 @@ class StageWiring(unittest.TestCase):
         self.assertIn('--by-category',calls[0][0])
         self.assertEqual(result['platformWrites'],21)
         self.assertEqual([call[0][0] for call in calls],
-                         ['scripts/collect-global-opportunity.py','scripts/select-global-products.py',
+                         ['scripts/collect-global-opportunity.py','scripts/select-global-products.py','scripts/select-global-products.py',
                           'scripts/select-global-products.py'])
+
+    def test_full_managed_catalog_never_resubmits_an_unknown_selection(self):
+        def answers(args,_label):
+            if args[0]=='scripts/collect-global-opportunity.py':payload={'state':'completed','published':True,'products':31809}
+            elif args[1]=='prepare':payload={'states':{'result_unknown':1},'error':None}
+            else:payload={'states':{'result_unknown':1},'error':None}
+            return {'state':'completed','itemCount':0,'complete':True,'platformWrites':0,'payload':payload}
+        executor,calls=self.executor(answers);result=executor.execute(
+            None,{'runId':'workflow-test','applicableSources':['selected']},'catalog',{'jobs':{}})
+        self.assertEqual(result['state'],'needs_human')
+        self.assertEqual(result['errorCode'],'global_selection_unresolved')
+        self.assertEqual(len(calls),3)
 
     def test_oecid_hands_off_every_current_batch_before_resolving(self):
         submissions=iter((['discovery_'+'1'*32],[]))

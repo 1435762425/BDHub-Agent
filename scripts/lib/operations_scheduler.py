@@ -161,6 +161,16 @@ class SubprocessStageExecutor:
                 prepared=self._call(['scripts/select-global-products.py','prepare'],'global-selection-prepare')
                 outputs.append(prepared)
                 if prepared['state']!='completed':return prepared|{'platformWrites':writes}
+                verified=self._call(['scripts/select-global-products.py','verify','--limit','600'],'global-selection-verify')
+                outputs.append(verified)
+                if verified['state']!='completed':return verified|{'platformWrites':writes}
+                verify_payload=verified.get('payload') or {};verify_states=verify_payload.get('states') or {}
+                verify_unresolved=sum(int(verify_states.get(key) or 0) for key in
+                  ('submitting','awaiting_verification','result_unknown','needs_review'))
+                if verify_payload.get('error') or verify_unresolved:
+                    return {**verified,'state':'needs_human','complete':False,
+                            'errorCode':str(verify_payload.get('error') or 'global_selection_unresolved')[:120],
+                            'platformWrites':writes}
                 for _ in range(20):
                     selected=self._call(['scripts/select-global-products.py','execute-fast','--limit','600','--native-listing'],
                                         'global-selection')
