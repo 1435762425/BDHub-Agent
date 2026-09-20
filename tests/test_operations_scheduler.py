@@ -97,6 +97,15 @@ class StageWiring(unittest.TestCase):
         self.assertEqual([args[:2] for args,_ in calls],[['scripts/campaign-join.py','status'],
                          ['scripts/campaign-join.py','join-all'],['scripts/campaign-collect.py','--max-requests']])
 
+    def test_full_managed_catalog_uses_first_level_category_partitions(self):
+        def answers(args,_label):
+            return {'state':'completed','itemCount':31809,'complete':True,'platformWrites':0,
+                    'payload':{'state':'completed','published':True,'products':31809}}
+        executor,calls=self.executor(answers)
+        result=executor.execute(None,{'runId':'workflow-test','applicableSources':['selected']},'catalog',{'jobs':{}})
+        self.assertEqual((result['state'],result['itemCount']),('completed',31809))
+        self.assertIn('--by-category',calls[0][0])
+
     def test_oecid_hands_off_every_current_batch_before_resolving(self):
         submissions=iter((['discovery_'+'1'*32],[]))
         def answers(args,_label):

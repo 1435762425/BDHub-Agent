@@ -21,6 +21,7 @@ const linkReasons:Record<string,string>={card_search_incomplete:"商品卡查询
 // The step names a running link batch publishes, in the operator's terms rather than the driver's.
 const linkPhases:Record<string,string>={seed:"整理商品清单",read:"只读检查已有链接",create:"平台新建缺链",done:"已结束"};
 const pct=(value:unknown)=>(typeof value==="string"&&value!==""||typeof value==="number")&&Number.isFinite(Number(value))?`${Number(value)/100}%`:"未返回";
+const duration=(seconds?:number)=>typeof seconds==="number"&&Number.isFinite(seconds)?`${Math.floor(seconds/60)} 分 ${Math.round(seconds%60)} 秒`:"—";
 const screenReason=(code:string,config?:CatalogScreenConfig)=>{switch(code){case"sales_missing":return "销量字段缺失";case"sales_below_min":return `累计销量不足 ${config?.minSales??"—"}`;case"rating_unrated":return "暂无评分（当前不允许）";case"rating_below_min":return `评分低于 ${config?.minRating??"—"}`;case"commission_missing":return "佣金字段缺失";case"commission_gap_below_min":return `两档佣金差不足 ${config?.minCommissionGapPoints??"—"} 个点`;default:return code;}};
 
 export default function CatalogWorkspace(){
@@ -73,7 +74,9 @@ export default function CatalogWorkspace(){
  <Section id="stage-collect" index="①" title="采集与筛选" summary={<>采集 {data?.products?.toLocaleString()??"—"} · 筛出 {screen?.funnel?.eligible.toLocaleString()??"—"} · 已备链 {linkedCount?.toLocaleString()??"—"}</>}>
  <div id="card-collect" className="scroll-mt-6"><Card title="意大利 · 全托主力来源" action={<div className="flex flex-wrap items-center gap-2"><Pill tone={data?.published?"success":data?.state==="blocked"?"warning":"brand"}>{data?.state?states[data.state]:"读取中"}</Pill><Button size="sm" onClick={()=>void sync()} disabled={syncing}>{syncing?"提交中…":data?.state==="collecting"?"继续采集":"主动采集"}</Button></div>}><div className="space-y-4 p-5"><MetricTable rows={[
   {label:"已采集去重商品",value:data?.products?.toLocaleString()??"—",detail:"当前完整商品范围",accent:true},
-  {label:"本查询报告数量",value:data?.reportedTotal?.toLocaleString()??"—",detail:"平台本轮报告总数"},
+  {label:"一级类目",value:data?.categoryCount!=null?`${data.categoriesCompleted??0} / ${data.categoryCount}`:"—",detail:data?.partitionMode==="category_l1_v1"?"按官方一级类目完整分片":"旧单查询口径"},
+  {label:"类目成员总数",value:data?.reportedTotal?.toLocaleString()??"—",detail:`跨类目重复 ${(data?.categoryOverlap??0).toLocaleString()} 个`},
+  {label:"完整采集耗时",value:duration(data?.elapsedSeconds),detail:`共 ${(data?.pages??0).toLocaleString()} 页`},
   {label:"采集时未选",value:data?.listedUnselectedProducts?.toLocaleString()??"—",detail:"尚未进入已选商品池"},
   {label:"已核对活动详情",value:data?.detailProducts?.toLocaleString()??"—",detail:"已取得活动与佣金详情"},
  ]}/>

@@ -319,4 +319,5 @@ class GlobalSources:
             'categoriesCompleted':sum(row['state']=='completed' for row in partitions) if partitioned else None,
             'categoryMemberships':memberships if partitioned else None,'categoryOverlap':memberships-count if partitioned else None,
             'nextCategory':({'categoryId':next_partition['category_id'],'name':next_partition['category_name'],'state':next_partition['state'],'nextPage':next_partition['next_page']} if next_partition else None),
-            'updatedAt':r['updated'],'listingOnly':True,'stockVerified':False,'stockRequired':False,'executionAllowed':False,'sample':[{'pid':x['pid'],'title':json.loads(x['payload']).get('title'),'listedSelected':json.loads(x['payload']).get('fs_is_selected')} for x in self.db.execute('SELECT pid,payload FROM global_source_product WHERE run_id=? ORDER BY first_page,pid LIMIT 6',(id,))]}
+            'updatedAt':r['updated'],'elapsedSeconds':max(0,r['updated']-r['created']),
+            'listingOnly':True,'stockVerified':False,'stockRequired':False,'executionAllowed':False,'sample':[{'pid':x['pid'],'title':json.loads(x['payload']).get('title'),'listedSelected':json.loads(x['payload']).get('fs_is_selected')} for x in self.db.execute('SELECT pid,payload FROM global_source_product WHERE run_id=? ORDER BY first_page,pid LIMIT 6',(id,))]}

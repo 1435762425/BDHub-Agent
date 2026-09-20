@@ -152,7 +152,7 @@ class SubprocessStageExecutor:
             outputs=[];count=0;writes=0
             if 'selected' in sources:
                 rid='it-global-'+time.strftime('%Y%m%d')+'-'+digest([run['runId'],'selected'])[:12]
-                result=self._call(['scripts/collect-global-opportunity.py','--run-id',rid,'--pages','40','--worker'],
+                result=self._call(['scripts/collect-global-opportunity.py','--run-id',rid,'--pages','40','--worker','--by-category'],
                                   'global-catalog')
                 if result['state']!='completed':return result
                 if (result.get('payload') or {}).get('state')!='completed' or (result.get('payload') or {}).get('published') is not True:
