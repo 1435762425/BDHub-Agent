@@ -37,6 +37,7 @@
 - 实测发现并修复四个主链缺口：同日清洗投影残留旧卡；嵌套 TapLink 写入和 B 类完成数漏计；OECID 未冻结新 current edge 却误报 completed；身份探针仍受旧项目停用状态控制。OECID current handoff 的慢查询同时从 PID×全部历史 edge 改为索引点查。
 - OECID 修复运行 `workflow-979d201b7799b0b39133f43d5394`：本地先复用既有 handle 终态，再对剩余 101 位执行真实 Find，60 resolved、41 unresolved、pending 0、错误 0；发送池修复运行 `workflow-b6f6fb7116382a2c12c40e8d8bf0` 随后重新发布。主运行的不可变旧 generation 仍保留修复前 `TapLink writes=0 / B completed=0` 的错误投影，真实子报告为 267/20；后续调度器已按子报告正确汇总。
 - 最终验证：Python 1,003 项在 `PYTHONWARNINGS=default` 下通过；Web 143 项、TypeScript、Next 生产构建通过。整段验收的真实业务写入合计为 13 张失效 TapLink 删除、6 次 Campaign 加入请求和 267 张新标准 TapLink，均已回查明确、unknown 0；未发送二发 IM，持续发送控制仍为 `automaticEnabled=false / runRequested=false`。
+- 验收后状态备份 `var/backups/state/20260920T201751Z-post-auto-ops-20260921` 已独立 verify：21 库、366,559,232 字节、凭据 0、`valid=true`；`gitDirty=true` 仅因保留用户的 `config/jobs.json` 与 `config/send-batch.json` 未提交设置。
 
 本轮补充提交：`184a12a`、`f67983b`、`7139379`、`fceac2d`、`889a565`、`4edd6a9`、`a01cc5d`。
 
