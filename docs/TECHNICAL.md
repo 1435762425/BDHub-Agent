@@ -127,7 +127,7 @@ React 组件不能直接读写 SQLite、启动任意命令或实现资格规则�
 
 线索合同已升级为 `leads-queue-v2`：每 PID 近 14 天、Kalodata `revenue DESC`，完整 page receipt 和全部正销量 `source_edge` 继续保留；`lead_query_head + lead_query_selection` 只发布当前最多 20 条。排序消费 `sourceRank`，并列时用 `units DESC, pid ASC`；原始 GMV 字符串只作证据，不跨币种直接比较。`scripts/backfill-current-leads.py` 可从本机历史 receipt 重建当前范围，不调用平台。
 
-零销量视频证据目前是发送池外的研究投影：商品视频表按 `create_time DESC` 逐页读取，直到越过发布时间窗口或自然结束；窗口内所有达到播放量门槛的视频都调用详情解析作者，不使用“播放量前 20 条”。列表没有作者，详情返回 Kalodata creator ID 与 handle；来源关联优先用稳定 creator ID，OECID 仍只接受当前精确 handle 的身份结果。超过 20 页、日期不可解析、作者缺失或中断都必须表现为覆盖不完整，不得进入正式统计。实测与成本见 [零销量视频证据](implementation/kalodata-zero-sale-video-evidence-20260920.md)。
+零销量视频证据是已确认但尚未接入真实发送池的 B 类输入：商品视频表按 `create_time DESC` 逐页读取，直到越过发布时间窗口或自然结束；窗口内所有达到播放量门槛的视频都调用详情解析作者，不使用“播放量前 20 条”，也不设置固定页数/视频数业务上限。列表没有作者，详情返回 Kalodata creator ID 与 handle；来源关联优先用稳定 creator ID，OECID 仍只接受当前精确 handle 的身份结果。重复页、日期不可解析、作者缺失、平台额度耗尽或中断都必须停止并保留明确状态，不得把不完整结果冒充正式统计。实测与成本见 [零销量视频证据](implementation/kalodata-zero-sale-video-evidence-20260920.md)。
 
 身份表应把 `市场 × OECID` 投影为稳定 `creatorId`，handle 变化只追加带观测时间的 alias。同一 OECID 改名时不得新建关系、重置冷却或丢失达人×PID 位置。
 
@@ -136,6 +136,7 @@ React 组件不能直接读写 SQLite、启动任意命令或实现资格规则�
 | 模块 | 作用 |
 | --- | --- |
 | `lead_pool.py` | 按当前时间重算位置、达人冷却和状态分层 |
+| `lead_priority.py` | 纯函数模拟已确认的 A/B 合并、最高单条视频和最终发送顺序；当前不读取真实池 |
 | `send_batch.py` | 发送预览指纹、不可变批次、revision 及 start/stop 控制 |
 | `cycle_review.py` | 候选复检、冻结与跳过原因 |
 | `cycle_delivery.py` | 发送意图、组件状态、平台信号和额度预留 |
@@ -150,6 +151,8 @@ React 组件不能直接读写 SQLite、启动任意命令或实现资格规则�
 `cycle_burst.run_cohort()` 强制同时存在 state=`running` 且 authorization 完全相等的 `cycle_bulk_freeze`，并要求每个待执行 item 都有不可变 `cycle_bulk_candidate`；没有冻结范围时在认证/平台调用前返回 `frozen_batch_required`，不再调用 `choose_candidates()` 或远程 `fresh_card()`。旧 `bulk-second-send.py` 固定返回 `legacy_bulk_sender_retired`，不会建表、恢复或发送；历史 `cycle_bulk` 行只读保留。
 
 `lead_pool.py` 与 `/api/lead-pool` 已使用 `bdhub.lead-pool.v2`：业务只投影 `sendable / waiting / inactive`，`sent` 单列历史；内部原因仍用于排障。达人排序和达人内部 PID 选择统一使用 `sourceRank → units DESC → pid ASC`，同一达人只有一个可发送槽位。发送预览按池子顺序复检；冻结批次执行器按 `position_order` 消费，不再执行时重新挑选或补满。
+
+已确认的下一版排序合同由 `lead_priority.py` 用合成数据独立验证：A 类整体优先并沿用 `sourceRank → units DESC → pid`；B 类只取同一达人×PID中播放量最高的一条达标视频，按 `views DESC → releasedAt DESC → pid` 排序。A/B 同对合并为 A，同达人仍只有一个发送槽；身份、回复、冷却、拒联与商品门禁继续生效。该模块尚未接入上述真实 `lead_pool.py`，不能把模拟顺序误报为当前生产顺序；详见 [排序模拟](implementation/lead-priority-simulation-20260920.md)。
 
 当前 send preview v3 接受任意 `N=1..2000`，自动要求 `R=ceil(N×10%)`。冻结把前 N 位标为 `batchRole=formal` 并建立初始 `cycle_bulk_item`，后 R 位标为 `reserve` 且只保存在不可变 `cycle_bulk_candidate`；N＋R 未齐时 `fullPreparation=false`，服务端拒绝冻结。执行器仅在正式成员进入明确非触达终态后按 `position_order` 提升已冻结候补；`unknown` 先把整批切到 `waiting_reconciliation`，不会提升候补。`cycle_bulk.target` 始终是 N，`attempted/reservePromoted/reserveRemaining` 单独展示，候补不增加目标。页面修改目标、窗口或越界开关后先标记为未保存并禁用冻结，保存后重新预检并取得新的 preview hash，不能用旧预览冻结新设置。
 

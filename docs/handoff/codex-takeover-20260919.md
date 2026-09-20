@@ -225,9 +225,16 @@ DeepSeek/Agent 已经把 9 月 14 日的“货盘批量备链”继续推进到�
 
 - 新增 `kalodata_video_run/evidence/head` 和 migration v7–v8；迁移前备份位于 `var/backups/state/20260920T042216Z-before-paged-video-evidence`，21 库、289,513,472 字节、`valid=true`；
 - 实时确认商品视频列表支持 `create_time DESC` 与 `pageNo` 翻页，列表不含作者，必须逐视频调用 `/video/detail`；作者关联使用 Kalodata creator ID，不依赖可能变化的 handle；
-- 已移除早期“播放量前 20 条”探针限制；正式读取按发布时间倒序覆盖完整窗口，越过窗口或自然短页才结束，超过 20 页只标记不完整；
+- 已移除早期“播放量前 20 条”探针限制以及固定页数/视频数业务上限；正式读取按发布时间倒序覆盖完整窗口，越过窗口或自然短页才结束；
 - 五个 PID 的完整 30 天样本读取 225 条视频、解析 86 条播放量 ≥1,000 的视频，得到 19 个当前零销量候选对，其中 12 个已有 OECID；≥5,000 为 6 对，≥10,000 为 4 对；
 - 高活跃 PID 的列表探针可达 16 页/800 条、457 条达标视频，后续全池运行必须补断点与额度调度；本轮没有接入 `lead_pool`、冻结批次或发送消息。详细证据见 [零销量视频证据](../implementation/kalodata-zero-sale-video-evidence-20260920.md)。
+
+### 已完成：A/B 线索发送顺序模拟
+
+- 产品规则已确认 A 类最近 14 天正销量、B 类最近 30 天精确 PID 视频播放量 `>=1,000`；B 类同一达人×PID只取最高单条视频，不求和、不计算播放速度；
+- `lead_priority.py` 以纯函数实现 A/B 合并和排序模拟：A 类 `sourceRank → units → PID`，B 类 `最高单条 views → 发布时间 → PID`，同达人只占一个当前发送槽；
+- 12 条合成来源形成 9 个位置、6 个发送顺序、3 个等待、2 个过滤；100,000 播放无 OECID和50,000播放未结回复均未进入发送顺序，150,000播放的同达人B类没有挤掉其A类；
+- 当前仅为模拟合同，未连接真实 `lead_pool.py`、未改真实池数量、未冻结或发送。详细结果见 [排序模拟](../implementation/lead-priority-simulation-20260920.md)。
 
 旧 `batch-tasks.sqlite` 只作迁移证据，不再作为执行入口；后续批次能力继续只在 frozen-v2 上扩展。
 
