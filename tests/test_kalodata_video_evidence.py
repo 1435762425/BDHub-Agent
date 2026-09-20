@@ -82,12 +82,10 @@ class VideoEvidenceTests(unittest.TestCase):
                    (2,51,1,'complete','completed',3))
   self.assertEqual(calls[:2],[(VIDEO_LIST_PATH,1),(VIDEO_LIST_PATH,2)])
 
- def test_page_cap_is_visible_and_never_reported_as_complete(self):
+ def test_repeated_page_is_rejected_instead_of_looping_forever(self):
   rows=[video(str(7674344776354860700+index),'999') for index in range(50)]
-  report=collect(PID,'2026-08-20','2026-09-18',lambda *_:{'success':True,'data':rows},
-                 max_pages=1,clock=lambda:123.)
-  self.assertEqual((report['coverage'],report['state'],report['pagesRead']),
-                   ('page_cap','completed_with_gaps',1))
+  with self.assertRaisesRegex(CycleError,'repeated_page'):
+   collect(PID,'2026-08-20','2026-09-18',lambda *_:{'success':True,'data':rows},clock=lambda:123.)
 
  def test_persist_and_zero_sale_join_are_idempotent_and_do_not_change_pool(self):
   report=collect(PID,'2026-08-20','2026-09-18',lambda path,payload:

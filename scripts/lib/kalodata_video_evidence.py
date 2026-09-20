@@ -56,7 +56,7 @@ def parse_video_list(body, pid, *, window_start, window_end, min_views=1000, pag
     if len(rows) > 50 or any(not isinstance(row, dict) for row in rows):
         raise CycleError('kalodata_video_list_invalid')
     if not isinstance(pid, str) or not re.fullmatch(r'[0-9]{19}', pid) or type(min_views) is not int \
-            or not 1 <= min_views <= 1_000_000_000 or type(page) is not int or not 1 <= page <= 20:
+            or not 1 <= min_views <= 1_000_000_000 or type(page) is not int or page<1:
         raise CycleError('kalodata_video_scope_invalid')
     try:start=date.fromisoformat(window_start);end=date.fromisoformat(window_end)
     except (TypeError,ValueError):raise CycleError('kalodata_video_window_invalid') from None
@@ -113,15 +113,15 @@ def parse_video_detail(body, candidate, observed_at):
             'payloadHash': digest(row), 'observedAt': observed_at}
 
 
-def collect(pid, window_start, window_end, requester, *, min_views=1000, max_pages=20, clock=time.time):
+def collect(pid, window_start, window_end, requester, *, min_views=1000, clock=time.time):
     try:
         if (date.fromisoformat(window_end)-date.fromisoformat(window_start)).days not in range(1, 180):
             raise ValueError
     except (TypeError, ValueError):
         raise CycleError('kalodata_video_window_invalid') from None
-    if type(max_pages) is not int or not 1<=max_pages<=20:raise CycleError('kalodata_video_scope_invalid')
-    pages=[];candidates=[];seen=set();coverage='page_cap'
-    for page in range(1,max_pages+1):
+    pages=[];candidates=[];seen=set();page_fingerprints=set();coverage='unknown'
+    page=1
+    while True:
         payload={'id':pid,'startDate':window_start,'endDate':window_end,'authority':True,
                  'pageNo':page,'pageSize':50,'sort':[{'field':'create_time','type':'DESC'}]}
         listed=parse_video_list(requester(VIDEO_LIST_PATH,payload),pid,window_start=window_start,
@@ -129,6 +129,8 @@ def collect(pid, window_start, window_end, requester, *, min_views=1000, max_pag
         if pages and pages[-1]['oldestReleaseDate'] and listed['newestReleaseDate'] and \
                 listed['newestReleaseDate']>pages[-1]['oldestReleaseDate']:
             raise CycleError('kalodata_video_sort_invalid')
+        if listed['listFingerprint'] in page_fingerprints:raise CycleError('kalodata_video_repeated_page')
+        page_fingerprints.add(listed['listFingerprint'])
         pages.append(listed)
         for candidate in listed['candidates']:
             if candidate['videoId'] in seen:raise CycleError('kalodata_video_repeated_page')
@@ -137,6 +139,7 @@ def collect(pid, window_start, window_end, requester, *, min_views=1000, max_pag
             coverage='unknown_release_date';break
         if listed['rowsReceived']<50 or listed['reachedWindowStart']:
             coverage='complete';break
+        page+=1
     observed_at = clock();evidence=[];errors=[]
     start=date.fromisoformat(window_start);end=date.fromisoformat(window_end)
     for candidate in candidates:
@@ -151,13 +154,13 @@ def collect(pid, window_start, window_end, requester, *, min_views=1000, max_pag
     fingerprints=[row['listFingerprint'] for row in pages]
     # A new observation must remain distinct even when the list page is byte-for-byte unchanged:
     # detail facts such as the author's current handle can still change between observations.
-    run_id = 'video-run-' + digest([pid,window_start,window_end,min_views,max_pages,
+    run_id = 'video-run-' + digest([pid,window_start,window_end,min_views,
                                     fingerprints,observed_at,
                                     [row['payloadHash'] for row in evidence],errors])[:24]
     state='completed' if coverage=='complete' and not errors else 'completed_with_gaps'
     return {'schema':'bdhub.kalodata-video-evidence.v1', 'runId':run_id, 'pid':pid,
             'windowStart':window_start, 'windowEnd':window_end, 'minViews':min_views,
-            'maxVideos':0,'sortField':'create_time','maxPages':max_pages,'pagesRead':len(pages),
+            'maxVideos':0,'sortField':'create_time','maxPages':0,'pagesRead':len(pages),
             'rowsReceived':sum(row['rowsReceived'] for row in pages),
             'qualifyingVideos':len(candidates),'selectedVideos':len(candidates),
             'resolvedVideos':len(evidence),'coverage':coverage,

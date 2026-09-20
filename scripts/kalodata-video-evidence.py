@@ -42,7 +42,7 @@ class VideoProvider:
    raise CycleError('kalodata_video_endpoint_forbidden')
   if path==VIDEO_LIST_PATH:
    sort=payload.get('sort')
-   if payload.get('id')!=self.pid or type(payload.get('pageNo')) is not int or not 1<=payload['pageNo']<=20 or \
+   if payload.get('id')!=self.pid or type(payload.get('pageNo')) is not int or payload['pageNo']<1 or \
       payload.get('pageSize')!=50 or not isinstance(sort,list) or len(sort)!=1 or \
       sort[0].get('field') not in ('views','create_time') or sort[0].get('type')!='DESC':
     raise CycleError('kalodata_video_scope_invalid')
@@ -70,20 +70,20 @@ def live_provider(pid,start,end):
 def main(argv=None):
  parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('action',choices=('status','probe'))
  parser.add_argument('--pid');parser.add_argument('--days',type=int,default=30)
- parser.add_argument('--min-views',type=int,default=1000);parser.add_argument('--max-pages',type=int,default=20)
+ parser.add_argument('--min-views',type=int,default=1000)
  args=parser.parse_args(argv)
  try:
   if args.pid is not None and not re.fullmatch(r'[0-9]{19}',args.pid):raise CycleError('kalodata_video_scope_invalid')
   if args.action=='status':
    with CycleStore(ROOT/'var/second-cycle.sqlite') as store:result=status(ROOT,store,args.pid)
    print(json.dumps(result,ensure_ascii=False));return 0
-  if not args.pid or not 7<=args.days<=90 or not 1<=args.min_views<=1_000_000_000 or not 1<=args.max_pages<=20:
+  if not args.pid or not 7<=args.days<=90 or not 1<=args.min_views<=1_000_000_000:
    raise CycleError('kalodata_video_scope_invalid')
   end=date.today()-timedelta(days=2);start=end-timedelta(days=args.days-1)
   with (ROOT/'var/kalodata-video-evidence.lock').open('a') as own:
    fcntl.flock(own,fcntl.LOCK_EX|fcntl.LOCK_NB)
    with live_provider(args.pid,str(start),str(end)) as provider:
-    report=collect(args.pid,str(start),str(end),provider.request,min_views=args.min_views,max_pages=args.max_pages)
+    report=collect(args.pid,str(start),str(end),provider.request,min_views=args.min_views)
    report['cookieFileUnchanged']=provider.unchanged
    with CycleStore(ROOT/'var/second-cycle.sqlite') as store:
     stored=persist(store,report);snapshot=status(ROOT,store,args.pid)
