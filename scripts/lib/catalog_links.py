@@ -53,19 +53,22 @@ class CatalogLinks:
         # 跨渠道也不例外。这与"同一商品只出一条位置、全托优先"的商品级决定一致，
         # 也是防止同一商品被两条渠道各建一次链的兜底。真正的跨渠道重叠实测只有 1 个 PID，
         # 且它已有全托卡，非全托侧不建（见 catalog-link-prepare 的 route 排除）。
-        self.db.execute("CREATE UNIQUE INDEX IF NOT EXISTS catalog_link_open_pid ON catalog_link_intent(pid) WHERE state IN ('prepared','submitted','receipt_saved','unknown')")
+        self.db.execute("DROP INDEX IF EXISTS catalog_link_open_pid")
+        self.db.execute("CREATE UNIQUE INDEX IF NOT EXISTS catalog_link_open_market_pid ON catalog_link_intent(json_extract(spec,'$.market'),pid) WHERE state IN ('prepared','submitted','receipt_saved','unknown')")
     def get(self,id):
         r=self.db.execute('SELECT * FROM catalog_link_intent WHERE id=?',(id,)).fetchone()
         if not r:raise ValueError('catalog_link_intent_missing')
         return dict(r)|{'spec':json.loads(r['spec']),'receipt':json.loads(r['receipt']) if r['receipt'] else None,'readback':json.loads(r['readback']) if r['readback'] else None}
-    def legacy_conflict(self,pid):
+    def legacy_conflict(self,pid,market='it'):
+        if market!='it':return False
         path=self.root/'var/second-cycle.sqlite'
         if not path.exists():return False
         with closing(sqlite3.connect(path.as_uri()+'?mode=ro',uri=True)) as c:
             if not c.execute("SELECT 1 FROM sqlite_master WHERE name='cycle_card_creation'").fetchone():return False
             return bool(c.execute("SELECT 1 FROM cycle_card_creation WHERE pid=? AND state IN ('prepared','started','response_saved','unknown')",(pid,)).fetchone())
-    def supersede_unsubmitted_legacy(self,pid,replacement_id):
+    def supersede_unsubmitted_legacy(self,pid,replacement_id,market='it'):
         """Retire only legacy intents that provably never reached a platform call."""
+        if market!='it':return 0
         path=self.root/'var/second-cycle.sqlite'
         if not path.exists():return 0
         with closing(sqlite3.connect(path,timeout=10,isolation_level=None)) as c:
@@ -87,7 +90,9 @@ class CatalogLinks:
         bindings=CatalogBindings(self.root,connection=self.db);settled=0
         for row in self.db.execute("SELECT id,spec FROM catalog_link_intent WHERE state='prepared' "
                                    "AND receipt IS NULL AND readback IS NULL").fetchall():
-            try:spec=json.loads(row['spec']);binding=bindings.active_for_offer(spec.get('offer') or {})
+            try:
+                spec=json.loads(row['spec']);binding=bindings.active_for_offer(
+                    spec.get('offer') or {},market=spec.get('market') or 'it')
             except (ValueError,TypeError):continue
             if not binding:continue
             evidence=encoded({'reason':'satisfied_by_current_binding','listId':binding['list_id'],
@@ -107,14 +112,21 @@ class CatalogLinks:
     def _freeze(self,spec,scope_error,*,canary):
         # 渠道属于商品/线索/链接：同一个 PID 在两条渠道上是两个不同的平台对象，
         # 所以这里放开 route，但载荷必须逐字节等于**该渠道**的冻结请求。
-        if spec.get('account')!='acc9' or spec.get('market')!='it' or spec.get('route') not in ROUTES:raise ValueError(scope_error)
+        from lib.market_accounts import load_config
+        market=spec.get('market')
+        try:supply=(load_config(self.root)['markets'].get(market) or {}).get('roles',{}).get('supply')
+        except FileNotFoundError:
+            if market!='it':raise
+            supply='acc9'
+        if not market or spec.get('account')!=supply or spec.get('route') not in ROUTES:raise ValueError(scope_error)
         if canary:
             if type(spec.get('searchTotal')) is not int or spec['searchTotal']!=0:raise ValueError('existing_link_or_intent_requires_review')
         elif type(spec.get('searchTotal')) is not int or spec['searchTotal']<0 or spec.get('standardSearchComplete') is not True:
             raise ValueError('catalog_standard_search_required')
         if spec.get('policyFingerprint')!=policy_fingerprint(self.policy):raise ValueError('catalog_policy_changed')
         if not canary:
-            if spec.get('policyVersion')!=self.policy.get('version') or spec.get('namingVersion')!='link-naming-v1' or not re.fullmatch(r'[0-9a-f]{64}',str(spec.get('namingFingerprint') or '')):raise ValueError('catalog_standard_rule_invalid')
+            from lib.link_naming import load as load_naming
+            if spec.get('policyVersion')!=self.policy.get('version') or spec.get('namingVersion')!=load_naming(self.root,market)['version'] or not re.fullmatch(r'[0-9a-f]{64}',str(spec.get('namingFingerprint') or '')):raise ValueError('catalog_standard_rule_invalid')
         # 预期载荷由生成器本身给出，不再手抄一份：抄的那份在加渠道时正是最容易抄错的地方。
         from bdhub.send.taplink.protocol import create_payload
         try:expected=create_payload(pid=spec['pid'],campaign_id=spec['campaignId'],creator_pct=spec['creatorPercent'],
@@ -127,8 +139,8 @@ class CatalogLinks:
             key['offerFingerprint']=offer_fingerprint(spec.get('offer'))
             key['namingFingerprint']=spec['namingFingerprint']
         id='catalog-link-'+digest(key)[:28]
-        if not canary:self.supersede_unsubmitted_legacy(spec['pid'],id)
-        if self.legacy_conflict(spec['pid']):raise ValueError('legacy_creation_in_progress' if not canary else 'existing_link_or_intent_requires_review')
+        if not canary:self.supersede_unsubmitted_legacy(spec['pid'],id,market)
+        if self.legacy_conflict(spec['pid'],market):raise ValueError('legacy_creation_in_progress' if not canary else 'existing_link_or_intent_requires_review')
         old=self.db.execute('SELECT id FROM catalog_link_intent WHERE id=?',(id,)).fetchone()
         if old:return self.get(id)
         try:self.db.execute('INSERT INTO catalog_link_intent VALUES(?,?,?,?,?,NULL,NULL,?,?)',(id,spec['pid'],spec['account'],'prepared',encoded(spec),time.time(),time.time()))
@@ -136,7 +148,8 @@ class CatalogLinks:
         return self.get(id)
     def begin(self,id,account):
         if self.get(id)['account']!=account:raise ValueError('catalog_link_account_changed')
-        if self.legacy_conflict(self.get(id)['pid']):raise ValueError('legacy_creation_in_progress')
+        spec=self.get(id)['spec']
+        if self.legacy_conflict(self.get(id)['pid'],spec.get('market') or 'it'):raise ValueError('legacy_creation_in_progress')
         n=self.db.execute("UPDATE catalog_link_intent SET state='submitted',updated=? WHERE id=? AND state='prepared'",(time.time(),id)).rowcount
         if n!=1:raise ValueError('catalog_link_already_submitted')
     def receipt(self,id,value):

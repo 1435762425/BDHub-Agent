@@ -82,10 +82,10 @@ function countsRecord(raw:unknown):Record<string,number>{
  return result;
 }
 
-function run():Promise<LeadPoolState>{
+function run(market="it"):Promise<LeadPoolState>{
  const root=projectRoot();
  return new Promise((resolve,reject)=>{
-  execFile(join(root,".venv/bin/python"),[join(root,"scripts/lead-pool.py"),"status"],
+  execFile(join(root,".venv/bin/python"),[join(root,"scripts/lead-pool.py"),"status","--market",market],
    {cwd:root,timeout:60000,maxBuffer:4*1024*1024,env:{...process.env,PYTHONDONTWRITEBYTECODE:"1"}},(error,out)=>{
     try{resolve(validateLeadPool(JSON.parse(out)));}
     catch{reject(Error('lead_pool_unavailable'));}
@@ -93,4 +93,4 @@ function run():Promise<LeadPoolState>{
  });
 }
 
-export function readLeadPool():Promise<LeadPoolState>{return run();}
+export function readLeadPool(market="it"):Promise<LeadPoolState>{return run(market);}

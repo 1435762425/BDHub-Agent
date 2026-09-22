@@ -27,9 +27,21 @@ test('unknown placeholders, bad ranges and missing short name are rejected',()=>
 });
 
 test('save and preview requests are validated before reaching the platform bridge',()=>{
- assert.deepEqual(validateNamingRequest({action:'save',config}),{action:'save',config});
+ assert.deepEqual(validateNamingRequest({action:'save',config}),{action:'save',market:'it',config});
  assert.equal(validateNamingRequest({action:'preview',config}).action,'preview');
- for(const bad of [{action:'delete',config},{action:'save'},{action:'save',config:{...config,template:'x'}},null]){
+ const brConfig={...config,version:'link-naming-br-v1',market:'br',language:'pt',locale:'pt-BR'};
+ assert.deepEqual(validateNamingRequest({action:'save',market:'br',config:brConfig}),
+  {action:'save',market:'br',config:brConfig});
+ for(const bad of [{action:'delete',config},{action:'save'},{action:'save',config:{...config,template:'x'}},
+                   {action:'save',market:'br',config:{...brConfig,language:'it'}},
+                   {action:'save',market:'xx',config},{action:'save',config,extra:true},null]){
   assert.throws(()=>validateNamingRequest(bad),/invalid_link_naming_request/);
  }
+});
+
+test('a localized naming state is pinned to the requested market locale',()=>{
+ const brConfig={...config,version:'link-naming-br-v1',market:'br',language:'pt',locale:'pt-BR'};
+ assert.equal(validateNaming({...payload,config:brConfig},'br').config.locale,'pt-BR');
+ assert.throws(()=>validateNaming({...payload,config:{...brConfig,locale:'it-IT'}},'br'),/invalid_link_naming/);
+ assert.throws(()=>validateNaming({...payload,config:brConfig},'uk'),/invalid_link_naming/);
 });

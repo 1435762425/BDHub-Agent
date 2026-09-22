@@ -1,2 +1,2 @@
 import {redirect} from "next/navigation";
-export default function Page(){redirect("/ops/jobs");}
+export default function Page(){redirect("/it/ops/jobs");}

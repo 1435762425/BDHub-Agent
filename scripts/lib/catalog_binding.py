@@ -82,7 +82,8 @@ class CatalogBindings:
         name = _text(spec.get("listName"), "catalog_binding_name_invalid")
         commission_version = _text(spec.get("policyVersion"), "catalog_binding_policy_invalid")
         naming_version = _text(spec.get("namingVersion"), "catalog_binding_naming_invalid")
-        if commission_version != "commission-1-to-2-v1" or naming_version != "link-naming-v1":
+        from lib.link_naming import load as load_naming
+        if commission_version != "commission-1-to-2-v1" or naming_version != load_naming(self.root,market)["version"]:
             raise ValueError("catalog_binding_rule_version_invalid")
         expected = {"state": "verified_read_only", "pid": pid, "sourceCampaignId": campaign,
                     "creatorPercent": creator, "verifiedListName": name, "listId": list_id}
@@ -137,8 +138,9 @@ class CatalogBindings:
             return None
         if row["offer_fingerprint"] != offer_fingerprint(offer):
             return None
+        from lib.link_naming import load as load_naming
         if row["commission_rule_version"] != "commission-1-to-2-v1" or \
-                row["naming_rule_version"] != "link-naming-v1":
+                row["naming_rule_version"] != load_naming(self.root,market)["version"]:
             return None
         return row
 
@@ -173,6 +175,76 @@ class CatalogBindings:
             with self.db:
                 write()
         return self.get(market, row["catalog_source"], row["pid"], row["campaign_id"])
+
+    def reconcile_current_offers(self, market, source, offers, *, evidence_ref, now=None):
+        """Align existing bindings with one complete, freshly screened offer projection.
+
+        The card rows are historical evidence and are never deleted here.  A card leaves the
+        sendable projection immediately when its offer disappears; a changed offer fingerprint
+        waits for a freshly verified standard card.  If the exact same offer later returns, the
+        already verified card can safely become active again.
+        """
+        market = _text(market, "catalog_binding_market_invalid")
+        source = _text(source, "catalog_binding_source_invalid")
+        evidence_ref = _text(evidence_ref, "catalog_binding_evidence_invalid")
+        if source not in ("selected", "campaign") or not isinstance(offers, list):
+            raise ValueError("catalog_binding_reconcile_invalid")
+        current = {}
+        for offer in offers:
+            if not isinstance(offer, dict) or offer.get("catalogSource") != source:
+                raise ValueError("catalog_binding_reconcile_invalid")
+            key = (_digits(offer.get("pid"), "catalog_binding_pid_invalid"),
+                   _digits(offer.get("campaignId"), "catalog_binding_campaign_invalid"))
+            fingerprint = offer_fingerprint(offer)
+            if key in current and current[key] != fingerprint:
+                raise ValueError("catalog_binding_reconcile_conflict")
+            current[key] = fingerprint
+        rows = list(self.db.execute(
+            "SELECT * FROM catalog_current_binding WHERE market=? AND catalog_source=?",
+            (market, source),
+        ))
+        stamp = time.time() if now is None else now
+        counts = {"unchanged": 0, ACTIVE: 0, "waiting_refresh": 0, "inactive": 0,
+                  "currentOffers": len(current), "bindings": len(rows)}
+        with self.db if not self.db.in_transaction else _nullcontext():
+            for row in rows:
+                key = (row["pid"], row["campaign_id"])
+                expected = current.get(key)
+                if expected is None:
+                    state, reason = "inactive", "offer_no_longer_current"
+                elif expected != row["offer_fingerprint"]:
+                    state, reason = "waiting_refresh", "offer_terms_changed"
+                else:
+                    state, reason = ACTIVE, "offer_current"
+                if row["state"] == state:
+                    counts["unchanged"] += 1
+                    continue
+                payload = {"market": market, "catalogSource": source, "pid": row["pid"],
+                           "campaignId": row["campaign_id"], "listId": row["list_id"],
+                           "previousState": row["state"], "state": state, "reason": reason,
+                           "evidenceRef": evidence_ref, "offerFingerprint": row["offer_fingerprint"],
+                           "currentOfferFingerprint": expected}
+                event_id = "catalog-binding-" + digest(payload)[:28]
+                self.db.execute(
+                    "INSERT OR IGNORE INTO catalog_current_binding_event VALUES(?,?,?,?,?,?,?,?)",
+                    (event_id, market, source, row["pid"], row["campaign_id"], state,
+                     encoded(payload), stamp),
+                )
+                self.db.execute(
+                    "UPDATE catalog_current_binding SET state=?,updated_at=? WHERE market=? "
+                    "AND catalog_source=? AND pid=? AND campaign_id=? AND state=?",
+                    (state, stamp, market, source, row["pid"], row["campaign_id"], row["state"]),
+                )
+                counts[state] += 1
+        return counts
+
+
+class _nullcontext:
+    def __enter__(self):
+        return None
+
+    def __exit__(self, *_args):
+        return False
 
 
 def audit_existing(root, *, apply=False, now=None):

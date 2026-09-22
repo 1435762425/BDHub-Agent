@@ -11,13 +11,18 @@ from lib.second_cycle import CycleStore,CycleError
 from lib.cycle_kalodata import KalodataWorker,PATH,quota_exhausted
 
 class HttpProvider:
+ def __init__(self,market='it'):self.market=market
  def __enter__(self):
   from bdhub import config
   from curl_cffi import requests
   module_path=config.load().kalodata.project_dir/'product_top50/collect.py'
   spec=importlib.util.spec_from_file_location('cycle_kalodata_config',module_path);core=importlib.util.module_from_spec(spec);spec.loader.exec_module(core)
   self.cookie_path=core.COOKIE_PATH;self.before=hashlib.sha256(self.cookie_path.read_bytes()).hexdigest()
-  self.headers=core.build_headers(core.read_cookie(),'','IT','EUR');self.headers['referer']='https://www.kalodata.com/product?region=IT&language=zh-CN&currency=EUR';self.proxy=core.load_proxy_url()
+  from lib.market_registry import market as market_row
+  row=market_row(ROOT,self.market);self.region='GB' if self.market=='uk' else self.market.upper();self.currency=row['currency']
+  self.headers=core.build_headers(core.read_cookie(),'',self.region,self.currency)
+  self.headers['referer']=f'https://www.kalodata.com/product?region={self.region}&language=zh-CN&currency={self.currency}'
+  self.proxy=core.load_proxy_url()
   self.session=requests.Session(impersonate='chrome');self.last=0.;self.requests=0;self.diagnostics=[]
   return self
  def __exit__(self,*args):
@@ -45,9 +50,9 @@ class HttpProvider:
   return data
 
 def main():
- p=argparse.ArgumentParser(description=__doc__);p.add_argument('--prepare-target',type=int,default=0);p.add_argument('--max-pids',type=int,default=2);p.add_argument('--max-steps',type=int,default=3);p.add_argument('--retry-blocked',action='store_true');p.add_argument('--report',type=Path,required=True);a=p.parse_args()
+ p=argparse.ArgumentParser(description=__doc__);p.add_argument('--market',default='it');p.add_argument('--prepare-target',type=int,default=0);p.add_argument('--max-pids',type=int,default=2);p.add_argument('--max-steps',type=int,default=3);p.add_argument('--retry-blocked',action='store_true');p.add_argument('--report',type=Path,required=True);a=p.parse_args()
  if not 0<=a.prepare_target<=500 or not 1<=a.max_pids<=5 or not 1<=a.max_steps<=10 or not a.report.resolve().is_relative_to(ROOT/'var') or a.report.exists():p.error('invalid bounded local scope')
- report={'mode':'IT source preparation only','platformWrites':0,'modelCalls':0,'realSends':0,'steps':[],'networkRequests':0,'datePolicy':'legacy Kalodata two-day lag; 14-day window'}
+ report={'mode':a.market.upper()+' source preparation only','market':a.market,'platformWrites':0,'modelCalls':0,'realSends':0,'steps':[],'networkRequests':0,'datePolicy':'legacy Kalodata two-day lag; 14-day window'}
  a.report.parent.mkdir(parents=True,exist_ok=True)
  def save():a.report.write_text(json.dumps(report,ensure_ascii=False,indent=2)+'\n')
  save()
@@ -56,7 +61,7 @@ def main():
   with (LEGACY/'data/research/kalodata/.browser.lock').open('rb') as lock:
    fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
    with CycleStore(ROOT/'var/second-cycle.sqlite') as store:
-    plan=store.db.execute("SELECT id FROM plan WHERE institution='bjn-local-research' AND market='it'").fetchone()
+    plan=store.db.execute("SELECT id FROM plan WHERE institution='bjn-local-research' AND market=?",(a.market,)).fetchone()
     if not plan:raise CycleError('plan_missing')
     plan=plan[0]
     blocked=store.db.execute("SELECT count(*) FROM source_job WHERE plan_id=? AND state='blocked'",(plan,)).fetchone()[0]
@@ -68,7 +73,7 @@ def main():
     if a.prepare_target:
      report['preparationPlan']=store.replenish(plan,new_remaining=a.prepare_target,established_capacity=0,max_pids=a.max_pids,window_end=(date.today()-timedelta(days=2)).isoformat())
      report['preparationPlan']['capacityMeaning']='local source stock target; not verified remaining TikTok quota';save()
-    with HttpProvider() as provider:
+    with HttpProvider(a.market) as provider:
      worker=KalodataWorker(store,provider,owner='kalodata-worker-'+str(os.getpid()))
      for _ in range(a.max_steps):
       result=worker.once(plan)

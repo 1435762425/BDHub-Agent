@@ -8,6 +8,7 @@ from dataclasses import replace
 from contextlib import closing
 from datetime import datetime, timedelta
 from pathlib import Path
+import json
 import re
 import sqlite3
 import sys
@@ -20,7 +21,19 @@ LEGACY_ROOT = ROOT.parent / "01-BDSystem-V2"
 _PROJECT_REF = re.compile(r"^project-(browser|http|im):([a-f0-9]{32})$")
 _BEIJING = ZoneInfo("Asia/Shanghai")
 _ROLE_SLOT = {"communications": (14, 30), "supply": (14, 40)}
-_PROJECT_ROLES = {"acc6": "communications", "acc9": "supply"}
+
+
+def _project_assignment(root, account):
+    try:
+        value = json.loads((Path(root) / "config/market-accounts.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        return ({"market": "it", "role": "communications"} if account == "acc6" else
+                {"market": "it", "role": "supply"} if account == "acc9" else None)
+    for market, pair in (value.get("markets") or {}).items():
+        for role, name in (pair.get("roles") or {}).items():
+            if name == account and role in _ROLE_SLOT:
+                return {"market": market, "role": role}
+    return None
 
 
 def _same_path(value, expected):
@@ -41,13 +54,15 @@ def project_identity_paths(root, account):
     try:
         with closing(sqlite3.connect(database.as_uri() + "?mode=ro", uri=True)) as connection:
             row = connection.execute(
-                "SELECT browser_ref,http_ref,im_ref FROM account_identity_generation "
-                "WHERE market='it' AND account=? AND state='published' "
+                "SELECT market,role,browser_ref,http_ref,im_ref FROM account_identity_generation "
+                "WHERE account=? AND state='published' "
                 "ORDER BY published_at DESC,rowid DESC LIMIT 1", (account,),
             ).fetchone()
     except (OSError, sqlite3.Error):
         return None
-    matches = [_PROJECT_REF.fullmatch(str(value or "")) for value in (row or ())]
+    if not row or _project_assignment(root, account) != {"market": row[0], "role": row[1]}:
+        return None
+    matches = [_PROJECT_REF.fullmatch(str(value or "")) for value in row[2:]]
     if len(matches) != 3 or any(match is None for match in matches):
         return None
     candidate_ids = {match.group(2) for match in matches if match is not None}
@@ -68,7 +83,8 @@ def project_identity_paths(root, account):
         return None
     if not profile.is_dir() or not headers.is_file():
         return None
-    return {"candidateId": candidate_id, "profileDir": profile, "headersJson": headers}
+    return {"candidateId": candidate_id, "profileDir": profile, "headersJson": headers,
+            "market": row[0], "role": row[1]}
 
 
 def project_identity_maintenance_due(root, account, now=None):
@@ -80,7 +96,7 @@ def project_identity_maintenance_due(root, account, now=None):
         with closing(sqlite3.connect((root / "var/second-cycle.sqlite").as_uri() + "?mode=ro", uri=True)) as db:
             row = db.execute(
                 "SELECT role,published_at FROM account_identity_generation "
-                "WHERE market='it' AND account=? AND state='published' "
+                "WHERE account=? AND state='published' "
                 "ORDER BY published_at DESC,rowid DESC LIMIT 1", (account,),
             ).fetchone()
     except (OSError, sqlite3.Error):
@@ -105,9 +121,12 @@ def project_account_enabled(root, account):
         return None
     try:
         with closing(sqlite3.connect((root / "var/second-cycle.sqlite").as_uri() + "?mode=ro", uri=True)) as db:
+            paths = project_identity_paths(root, account)
+            if paths is None:
+                return None
             row = db.execute(
-                "SELECT enabled FROM account_runtime_setting WHERE market='it' AND account=?",
-                (account,),
+                "SELECT enabled FROM account_runtime_setting WHERE market=? AND account=?",
+                (paths["market"], account),
             ).fetchone()
     except (OSError, sqlite3.Error):
         return True
@@ -128,12 +147,13 @@ def _install_project_account_overlay(config, root):
                 if paths is None:
                     output.append(account)
                     continue
-                role = _PROJECT_ROLES.get(account.name)
-                if role is None:
+                role = paths["role"]
+                market = paths["market"]
+                if role not in _ROLE_SLOT:
                     output.append(account)
                     continue
                 output.append(replace(account, profile_dir=paths["profileDir"],
-                                      headers_json=paths["headersJson"], market="it",
+                                      headers_json=paths["headersJson"], market=market,
                                       enabled=bool(project_account_enabled(agent_root, account.name)),
                                       listener_pool=False, im_send_pool=True,
                                       collection_pool=role == "communications", report_pool=False,

@@ -4,7 +4,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'scripts'))
 from lib.global_selection import READBACK_DELAYS,Selection
-from lib.global_selection_fast import Gate,run
+from lib.global_selection_fast import Gate,requires_review,run
 
 class FastTests(unittest.TestCase):
  def test_readback_waits_for_platform_final_consistency(self):
@@ -37,4 +37,11 @@ class FastTests(unittest.TestCase):
      return SimpleNamespace(http_status=200,code=0,has_turing=False,ambiguous=False,system_error_3=False)
    with patch.object(Gate,'acquire',lambda self:None):run(ledger,'r',Remote(),{},items,{},lambda:None,lambda:False,width=2,qps=8)
    self.assertEqual(ledger.status('r'),{'confirmed':2});self.assertEqual(sent,{pid,pid2});ledger.db.close()
+ def test_batch_size_is_explicitly_bounded(self):
+  with self.assertRaisesRegex(ValueError,'selection_batch_size_outside_test_scope'):
+   run(None,'r',None,{},[],{},lambda:None,lambda:False,batch_size=101)
+ def test_a_fatal_transport_signal_does_not_stop_after_exact_readback_confirms_it(self):
+  self.assertFalse(requires_review([{'state':'confirmed','payload':{}}]))
+  self.assertFalse(requires_review([{'state':'result_unknown','payload':{'platformVerification':'passed'}}]))
+  self.assertTrue(requires_review([{'state':'result_unknown','payload':{'receipt':{'ambiguous':True}}}]))
 if __name__=='__main__':unittest.main()

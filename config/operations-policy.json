@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 1,
+  "campaignRefreshDays": 2,
+  "fullManagedCategoryRefreshDays": 30,
+  "kalodataMaxParallelMarkets": 2,
+  "sendTemplateApprovalMinimum": 10
+}

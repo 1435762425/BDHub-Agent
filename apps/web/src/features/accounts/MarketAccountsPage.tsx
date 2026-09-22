@@ -16,6 +16,7 @@ const capabilityLabels:Record<string,string>={
   inbox_read:"收信监控",message_send:"IM 发送",agent_reply:"Agent 回复",
   oecid_find:"OECID 获取",creator_profile:"达人画像",campaign:"Campaign",
   product_select:"商品选入",taplink:"TapLink",link_create:"TapLink 创建",im_token:"IM Token",
+  full_managed_catalog:"全托货盘读取",campaign_join:"Campaign 加入",
 };
 const stateLabels:Record<string,string>={
   queued:"已排队",draining:"等待当前任务结束",running:"维护中",completed:"已发布",
@@ -58,22 +59,22 @@ function MaintenanceNotice({row}:{row:AccountRow}){
   </Notice>;
 }
 
-export default function MarketAccountsPage({embedded=false}:{embedded?:boolean}){
+export default function MarketAccountsPage({market,embedded=false}:{market:string;embedded?:boolean}){
   const [data,setData]=useState<AccountStatus|null>(null),[message,setMessage]=useState(""),[busy,setBusy]=useState<string|null>(null);
   const ids=useRef(new Map<string,string>());
-  const load=useCallback(async()=>{const response=await fetch("/api/market-accounts",{cache:"no-store"});if(!response.ok)throw Error();setData(await response.json());},[]);
+  const load=useCallback(async()=>{const response=await fetch(`/api/market-accounts?market=${encodeURIComponent(market)}`,{cache:"no-store"});if(!response.ok)throw Error();setData(await response.json());},[market]);
   useEffect(()=>{void load().catch(()=>setMessage("暂时无法读取账号状态。"));const timer=setInterval(()=>void load().catch(()=>{}),5000);return()=>clearInterval(timer);},[load]);
   const mutate=async(row:AccountRow,action:"set_enabled"|"refresh"|"relogin",enabled?:boolean)=>{
     const key=`${row.account}:${action}`,requestId=ids.current.get(key)??`account-${crypto.randomUUID()}`;ids.current.set(key,requestId);setBusy(key);
     try{
-      const response=await fetch("/api/market-accounts",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action,account:row.account,requestId,...(action==="set_enabled"?{enabled,expectedRevision:row.localRevision??0}:{})})});
+      const response=await fetch("/api/market-accounts",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action,market,account:row.account,requestId,...(action==="set_enabled"?{enabled,expectedRevision:row.localRevision??0}:{})})});
       if(!response.ok)throw Error();setData(await response.json());ids.current.delete(key);
       setMessage(action==="set_enabled"?"账号启用状态已保存。":action==="relogin"?"重登已启动；浏览器会自动打开并填写已保存的账号密码。":"身份刷新已启动；如静默刷新失败，会自动打开登录浏览器。");
     }catch{setMessage("账号操作未完成；最后一套已发布身份没有被覆盖。");}finally{setBusy(null);}
   };
   return <div className="space-y-5">
     {!embedded&&(
-      <PageHeading title="机构账号设置" description="两个账号固定分工；职责与身份实测分开显示，重登只发布到本项目身份目录。" action={<Link href="/ops/jobs" className="text-sm font-medium text-brand-500">作业与定时 →</Link>}/>
+      <PageHeading title="机构账号设置" description="两个账号固定分工；职责与身份实测分开显示，重登只发布到本项目身份目录。" action={<Link href={`/${market}/ops/jobs`} className="text-sm font-medium text-brand-500">作业与定时 →</Link>}/>
     )}
     {message&&<Notice tone={message.includes("已")||message.includes("启动")?"success":"warning"}>{message}</Notice>}
     {!data?<p className="text-sm text-gray-500">正在读取账号代次…</p>:data.markets.map(market=><div key={market.market} className="grid gap-5 xl:grid-cols-2">

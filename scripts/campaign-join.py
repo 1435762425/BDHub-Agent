@@ -27,22 +27,25 @@ from lib.campaign_join import apply, default_email, join_all, preview, status, v
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('action', choices=['preview', 'status', 'apply', 'join-all', 'verify'])
+    parser.add_argument('--market', default='it')
     parser.add_argument('--campaigns', help='逗号分隔的活动 id（apply 必填）')
     parser.add_argument('--email', help='平台要求的联系邮箱（apply 必填）')
     parser.add_argument('--confirm', action='store_true', help='显式确认这次是平台写入')
+    parser.add_argument('--canary', action='store_true', help='仅允许一个活动的接入验证')
     args = parser.parse_args()
+    market_args = {} if args.market == 'it' else {'market': args.market}
     try:
         if args.action == 'preview':
-            result = preview(ROOT)
+            result = preview(ROOT, **market_args)
         elif args.action == 'status':
-            result = status(ROOT)
+            result = status(ROOT, **market_args)
         elif args.action == 'verify':
-            result = verify(ROOT)
+            result = verify(ROOT, **market_args)
         elif args.action == 'join-all':
-            result = join_all(ROOT, email=args.email or default_email(ROOT), confirm=args.confirm)
+            result = join_all(ROOT, email=args.email or default_email(ROOT), confirm=args.confirm, **market_args)
         else:
             campaigns = [c.strip() for c in (args.campaigns or '').split(',') if c.strip()]
-            result = apply(ROOT, campaign_ids=campaigns, email=args.email or '', confirm=args.confirm)
+            result = apply(ROOT, campaign_ids=campaigns, email=args.email or '', confirm=args.confirm, canary=args.canary, **market_args)
     except ValueError as error:
         print(json.dumps({'error': str(error)}, ensure_ascii=False))
         return 2

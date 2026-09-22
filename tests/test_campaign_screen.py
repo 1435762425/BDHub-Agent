@@ -202,6 +202,41 @@ class Recorded(unittest.TestCase):
             with self.assertRaises(ValueError):
                 record(folder, {'available': False})
 
+    def test_record_reconciles_campaign_bindings_without_deleting_historical_cards(self):
+        from lib.catalog_binding import CatalogBindings
+        from lib.schema_migrations import apply_database
+        from lib.second_cycle import digest
+        with tempfile.TemporaryDirectory() as folder:
+            fixture(folder, [offer()])
+            config = Path(folder) / 'config';config.mkdir(exist_ok=True)
+            for name in ('catalog-link-policy.json', 'link-naming.json'):
+                (config / name).write_text((ROOT / 'config' / name).read_text())
+            sqlite3.connect(Path(folder) / 'var/catalog-links.sqlite').close()
+            apply_database(folder, 'catalog-links')
+            built = build(folder, source='campaign', rule=RULE, at=AT)
+            record(folder, built, clock=lambda: 1000.0)
+            target = __import__('lib.campaign_screen', fromlist=['link_targets']).link_targets(folder)['targets'][0]
+            spec = {'market': 'it', 'route': 'campaign', 'pid': target['pid'],
+                    'campaignId': target['campaignId'], 'creatorPercent': target['creatorPercent'],
+                    'listName': '🔥 BJN Prodotto 13% abcdef',
+                    'policyVersion': 'commission-1-to-2-v1', 'namingVersion': 'link-naming-v1',
+                    'offer': target['offer']}
+            card = {'state': 'verified_read_only', 'pid': target['pid'],
+                    'sourceCampaignId': target['campaignId'],
+                    'creatorPercent': target['creatorPercent'], 'verifiedListName': spec['listName'],
+                    'listId': '99', 'checkedAt': 1001.0}
+            bindings = CatalogBindings(folder);bindings.promote(spec, card);bindings.close()
+            # The next complete screen no longer contains that offer.
+            with closing(sqlite3.connect(Path(folder) / 'var/second-cycle.sqlite')) as conn, conn:
+                conn.execute("UPDATE catalog SET payload='[]' WHERE id='snap-1'")
+            empty = build(folder, source='campaign', rule=RULE, at=AT)
+            saved = record(folder, empty, clock=lambda: 1002.0)
+            self.assertEqual(saved['bindingReconciliation']['inactive'], 1)
+            bindings = CatalogBindings(folder)
+            self.assertEqual(bindings.get('it', 'campaign', target['pid'], target['campaignId'])['state'], 'inactive')
+            self.assertEqual(bindings.db.execute('SELECT count(*) FROM catalog_current_binding').fetchone()[0], 1)
+            bindings.close()
+
 
 class LinkTargets(unittest.TestCase):
     """建链目标：已入池商品（一个 PID 一条）＋按**当前**规则重算的佣金，并支持跨渠道排除。"""

@@ -19,6 +19,8 @@ from urllib.parse import urlsplit
 from lib.italy_im_auth import ImProbeDeadline, PARTNER_HOST
 
 IM_HOST = "oec-im-tt-i18n.tiktokglobalshopv.com"
+SG_IM_HOST = "oec-im-tt-sg.tiktokglobalshopv.com"
+EU_IM_REGIONS = frozenset({"3", "8", "18", "22", "23"})
 PATHS = {203: "/v2/message/get_by_user_init", 608: "/v2/conversation/get_info", 301: "/v1/message/get_by_conversation"}
 SAFE_CODES = frozenset({"im_auth_context_invalid", "im_endpoint_unapproved", "im_cookie_forbidden", "im_command_forbidden",
     "im_input_invalid", "im_runtime_unavailable", "im_auth_expired", "maintenance_due", "stopped", "im_transport_error",
@@ -71,12 +73,13 @@ def _extension(wire, raw):
     return result
 
 
-def _market_matches(ext):
-    if ext.get(b"market_region") not in (None, b"8") or ext.get(b"shop_region") not in (None, b"IT", b"it"):
+def _market_matches(ext, market_region="8"):
+    expected = str(market_region).encode("ascii")
+    if ext.get(b"market_region") not in (None, expected):
         raise ItalyImReadError("im_conversation_market_mismatch")
 
 
-def decode_initial_conversations(body, wire=None):
+def decode_initial_conversations(body, wire=None, market_region="8"):
     """Return CID/OEC metadata only, deliberately ignoring MessageBody field1."""
     wire = wire or _proto()
     try:
@@ -86,7 +89,7 @@ def decode_initial_conversations(body, wire=None):
             try:
                 info = wire.wire_fields(raw)
                 ext = _extension(wire, info)
-                _market_matches(ext)
+                _market_matches(ext, market_region)
                 cid = _id(wire.one(info, 2))
                 raw_oec = ext.get(b"creator_oec_id")
                 oec = _id(raw_oec.decode("ascii") if isinstance(raw_oec, bytes) else None)
@@ -129,12 +132,24 @@ class ItalyImReadSession:
                  use_environment_proxy=True, sequence=None, request_budget=None):
         self.wire = _proto()
         try:
-            if auth.account_name != "acc6" or auth.native_context.get("market_region") != "8":
+            if not isinstance(auth.account_name, str) or not auth.account_name or \
+               not str(auth.native_context.get("market_region") or "").isdigit():
                 raise ValueError()
+            self.account_name = auth.account_name
+            self.market_region = str(auth.native_context["market_region"])
+            partner_host = str(auth.native_context.get("partner_host") or PARTNER_HOST)
+            parsed_partner = urlsplit(partner_host)
+            if parsed_partner.scheme != "https" or not parsed_partner.hostname or \
+               not (parsed_partner.hostname == "tiktokshop.com" or parsed_partner.hostname.endswith(".tiktokshop.com")) or \
+               parsed_partner.path not in ("", "/") or parsed_partner.query or parsed_partner.fragment:
+                raise ValueError()
+            self.partner_host = f"https://{parsed_partner.hostname}"
             endpoint = urlsplit(auth.token.get("api_url", ""))
-            if (endpoint.scheme != "https" or endpoint.netloc != IM_HOST or endpoint.path not in ("", "/")
+            expected_im_host = IM_HOST if self.market_region in EU_IM_REGIONS else SG_IM_HOST
+            if (endpoint.scheme != "https" or endpoint.hostname != expected_im_host or endpoint.port is not None or endpoint.path not in ("", "/")
                     or endpoint.query or endpoint.fragment):
                 raise ItalyImReadError("im_endpoint_unapproved")
+            self.im_host = endpoint.hostname
             self.im_id = _id(auth.im_id)
             self.token = auth.token["token"]
             if not isinstance(self.token, str) or not self.token or any(c in self.token for c in "\r\n"):
@@ -142,7 +157,7 @@ class ItalyImReadSession:
             if any(key.lower() in {"cookie", "authorization", "proxy-authorization"} for key in auth.im_headers):
                 raise ItalyImReadError("im_cookie_forbidden")
             self.headers = {key.lower(): value for key, value in auth.im_headers.items() if key.lower() in {"user-agent", "accept-language"}}
-            self.headers.update({"content-type": "application/x-protobuf", "origin": PARTNER_HOST, "referer": PARTNER_HOST + "/"})
+            self.headers.update({"content-type": "application/x-protobuf", "origin": self.partner_host, "referer": self.partner_host + "/"})
             self.next_request_at = float(getattr(auth, "next_request_at", 0))
             if not math.isfinite(self.next_request_at) or self.next_request_at < 0:
                 raise ValueError()
@@ -172,7 +187,7 @@ class ItalyImReadSession:
                 self.close()
                 raise ItalyImReadError("im_runtime_unavailable") from None
         report.setdefault("imHostRequested", False)
-        report.update(imReadHost=IM_HOST, imReads=[], sendRequests=0, conversationCreateRequests=0, messageBodiesStored=False)
+        report.update(imReadHost=self.im_host, imReads=[], sendRequests=0, conversationCreateRequests=0, messageBodiesStored=False)
 
     def close(self):
         if getattr(self, "owned", False) and self.session is not None:
@@ -217,7 +232,7 @@ class ItalyImReadSession:
         try:
             self.report["imHostRequested"] = True
             self.on_update()
-            response = self.session.post("https://" + IM_HOST + PATHS[command], headers=self.headers, data=packet,
+            response = self.session.post("https://" + self.im_host + PATHS[command], headers=self.headers, data=packet,
                                          timeout=(5, 15), allow_redirects=False)
             response_received = True
             status = getattr(response, "status_code", None)
@@ -260,7 +275,7 @@ class ItalyImReadSession:
         if type(cursor) is not int or not 0 <= cursor <= (1 << 63) - 1:
             raise ItalyImReadError("im_input_invalid")
         body, _, _ = self._read(203, self.wire.vi(1, cursor))
-        result = decode_initial_conversations(body, self.wire)
+        result = decode_initial_conversations(body, self.wire, self.market_region)
         self.report.update(imInitializationVerified=True, initialConversationCount=len(result["conversations"]),
                            initialHasMore=result["hasMore"], initialInvalidConversations=result["invalidConversations"],
                            initialOtherMarketConversations=result["otherMarketConversations"], messageBodiesDiscarded=result["messageBodiesDiscarded"])
@@ -288,11 +303,11 @@ class ItalyImReadSession:
         try:
             decoded = wire.decode_conversation(raw, sequence=sequence, cid=cid, oec=oec_id)
             info = wire.wire_fields(wire.one(wire.wire_fields(body), 1))
-            _market_matches(_extension(wire, info))
+            _market_matches(_extension(wire, info), self.market_region)
             if decoded.conversation_type != conversation_type:
                 raise ItalyImReadError("im_conversation_identity_mismatch")
             result = VerifiedConversation(cid, decoded.full_cid, decoded.conversation_type, decoded.ticket, oec_id,
-                                          "it-im-conversation:" + hashlib.sha256(raw).hexdigest())
+                                          f"market-{self.market_region}-im-conversation:" + hashlib.sha256(raw).hexdigest())
         except ItalyImReadError:
             raise
         except Exception:

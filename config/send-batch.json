@@ -2,7 +2,7 @@
   "count": 500,
   "widen": false,
   "windowEnabled": true,
-  "template": "video_focus",
+  "template": "standard",
   "window": [
     "16:30",
     "24:00"

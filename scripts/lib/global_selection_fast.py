@@ -18,6 +18,10 @@ class Gate:
 
 def receipt(r):return {'http':r.http_status,'code':r.code if type(r.code) is int else None,'verification':r.has_turing,'ambiguous':r.ambiguous,'systemError':r.system_error_3}
 
+def requires_review(items):
+    return any(item['state'] in ('submitting','awaiting_verification','result_unknown') and
+               item.get('payload',{}).get('platformVerification')!='passed' for item in items)
+
 def dispatch(pool,lanes,ready,send,stopped):
     """Refill only a completed lane; on any rejection drain before returning."""
     active={};outcomes=[];cursor=0;paused=False
@@ -37,11 +41,13 @@ def dispatch(pool,lanes,ready,send,stopped):
                 if cursor<len(ready):submit(lane)
     return outcomes,ready[cursor:]
 
-def run(ledger,id,t,scope,items,report,save,stopped,*,width=8,qps=8,native_listing=False):
+def run(ledger,id,t,scope,items,report,save,stopped,*,width=8,qps=8,native_listing=False,batch_size=40,
+        skip_unknown_after_readback=False):
     if not 1<=width<=8:raise ValueError('selection_lanes_outside_test_scope')
+    if not 1<=batch_size<=100:raise ValueError('selection_batch_size_outside_test_scope')
     gate=Gate(qps);t._pace=gate.acquire;lanes=[t.fork_lane(gate.acquire) for _ in range(width)]
     initial=report.setdefault('baselineConfirmed',ledger.status(id).get('confirmed',0));started=time.monotonic()
-    report.update(mode='same_account_parallel',selectionSource='global_listing' if native_listing else 'campaign_detail',configuredQps=qps,lanes=width)
+    report.update(mode='same_account_parallel',selectionSource='global_listing' if native_listing else 'campaign_detail',configuredQps=qps,lanes=width,batchSize=batch_size)
     report.setdefault('stageMetrics',{})
     def stage(name,seconds,count):
         m=report['stageMetrics'].setdefault(name,{'seconds':0,'items':0});m['seconds']=round(m['seconds']+seconds,3);m['items']+=count
@@ -62,6 +68,7 @@ def run(ledger,id,t,scope,items,report,save,stopped,*,width=8,qps=8,native_listi
                 pid=str(r['campaign_product']['product_id']);matches.setdefault(pid,[]).append({'pid':pid,'campaignId':str(r['campaign_info']['campaign_id']),'type':r['campaign_info']['crs_campaign_type']})
         for i in pending:
             if i['pid'] in matches:ledger.update(i,'already_selected' if i['state']=='pending' else 'confirmed',selectionEvidence=matches[i['pid']],verifiedAt=time.time())
+            elif i['state'] in ('submitting','awaiting_verification','result_unknown'):ledger.record_readback_absence(i)
         stage('readback',time.monotonic()-start,len(pending));refresh_speed();save()
     def read_offer(lane,item):
         try:return lane._xhr(method='GET',path=DETAIL,params=lane._params()|{'product_id':item['pid']},payload=None,write=False)
@@ -71,9 +78,9 @@ def run(ledger,id,t,scope,items,report,save,stopped,*,width=8,qps=8,native_listi
         except Exception:return None
     try:
         with ThreadPoolExecutor(max_workers=width) as pool:
-            for start_index in range(0,len(items),40):
+            for start_index in range(0,len(items),batch_size):
                 if stopped():break
-                batch=items[start_index:start_index+40];verify(batch);batch=[i for i in batch if i['state']=='pending'];fresh={}
+                batch=items[start_index:start_index+batch_size];verify(batch);batch=[i for i in batch if i['state']=='pending'];fresh={}
                 began=time.monotonic()
                 for j in range(0,len(batch),15):
                     if stopped():break
@@ -89,7 +96,7 @@ def run(ledger,id,t,scope,items,report,save,stopped,*,width=8,qps=8,native_listi
                     plans.append(item)
                 # Refresh same-account session state after sequential source reads.
                 adopt(t)
-                group_size=40 if native_listing else width
+                group_size=batch_size if native_listing else width
                 for j in range(0,len(plans),group_size):
                     if stopped():break
                     group=plans[j:j+group_size];began=time.monotonic()
@@ -139,13 +146,19 @@ def run(ledger,id,t,scope,items,report,save,stopped,*,width=8,qps=8,native_listi
                             for item,_,_ in challenges:ledger.update(item,'result_unknown',platformVerification='passed')
                             verify([i for i in group if i['state']!='pending'])
                         refresh_speed();save()
-                        if fatal:verify(batch);raise ValueError('parallel_selection_requires_review')
+                        if fatal:
+                            verify(batch)
+                            if requires_review(batch):raise ValueError('parallel_selection_requires_review')
                         ready=unsent
                 for delay in READBACK_DELAYS:
                     remaining=[i for i in batch if i['state'] in ('submitting','awaiting_verification') or (i['state']=='result_unknown' and i['payload'].get('platformVerification')!='passed')]
                     if not remaining:break
                     if delay:time.sleep(delay)
                     verify(remaining)
+                if skip_unknown_after_readback:
+                    skipped=ledger.skip_unknown(id);report.setdefault('skippedUnknown',[]).extend(skipped)
+                    for item in batch:
+                        if item['pid'] in skipped:item['state']='skipped_unknown'
                 unresolved=[i for i in batch if i['state'] in ('submitting','awaiting_verification','result_unknown')]
                 for item in unresolved:ledger.update(item,'result_unknown')
                 if any(i['payload'].get('platformVerification')!='passed' for i in unresolved):raise ValueError('parallel_readback_unconfirmed')

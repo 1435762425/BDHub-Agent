@@ -2,6 +2,7 @@ import {execFile} from "node:child_process";
 import {join} from "node:path";
 import {projectRoot} from "../creator-identities/refresh.ts";
 import {isLocalRequest} from "../runtime/validation.ts";
+import {enabledMarket} from "../markets/registry.ts";
 
 export type ConversationView="human"|"agent"|"completed"|"all";
 export type ConversationItem={conversationId:string|null;creatorId:string;oec:string;handle:string|null;state:Exclude<ConversationView,"all">;humanReason:string|null;humanReasonLabel:string|null;latestText:string|null;latestAt:number;waitingSeconds:number;unread:boolean;action:string|null;caseId:string|null};
@@ -22,10 +23,10 @@ export type ConversationCommand=
  | {action:"set_collaboration";cid:string;status:CollaborationStatus;expectedStatusRevision:number;expectedControlRevision:number;requestId:string}
  | {action:"translate";text:string;target:"it"|"zh"};
 
-function run(args:string[],stdin?:unknown):Promise<unknown>{
+function run(args:string[],stdin?:unknown,market="it"):Promise<unknown>{
  const root=projectRoot();
  return new Promise((resolve,reject)=>{
-  const child=execFile(join(root,".venv/bin/python"),[join(root,"scripts/conversation-workbench.py"),...args],
+  const child=execFile(join(root,".venv/bin/python"),[join(root,"scripts/conversation-workbench.py"),...args,"--market",market],
    {cwd:root,timeout:120000,maxBuffer:4*1024*1024,env:{...process.env,PYTHONDONTWRITEBYTECODE:"1"}},
    (error,stdout)=>{try{const value=JSON.parse(stdout);if(error||value.error)throw Error();resolve(value);}catch{reject(Error("conversation_workbench_unavailable"));}});
   if(stdin!==undefined)child.stdin?.end(JSON.stringify(stdin));
@@ -103,8 +104,8 @@ export function validateConversationCommand(raw:unknown):ConversationCommand{
  throw Error("invalid_conversation_request");
 }
 
-export async function listConversations(view:ConversationView,query:string,limit:number,offset:number){return validateConversationList(await run(["list","--view",view,"--query",query,"--limit",String(limit),"--offset",String(offset)]));}
-export async function readConversation(cid:string){return validateConversationDetail(await run(["detail","--cid",cid]));}
+export async function listConversations(view:ConversationView,query:string,limit:number,offset:number,market="it"){return validateConversationList(await run(["list","--view",view,"--query",query,"--limit",String(limit),"--offset",String(offset)],undefined,market));}
+export async function readConversation(cid:string,market="it"){return validateConversationDetail(await run(["detail","--cid",cid],undefined,market));}
 export function saveConversationDraft(cid:string,textValue:string,expectedRevision:number){return run(["save-draft","--cid",cid],{text:textValue,expectedRevision});}
 export function sendConversationText(cid:string,textValue:string,expectedControlRevision:number,requestId:string){return run(["send-text","--cid",cid],{text:textValue,expectedControlRevision,requestId});}
 export function translateConversationText(textValue:string,target:"it"|"zh"){return run(["translate"],{text:textValue,target});}
@@ -133,18 +134,19 @@ const headers={"Cache-Control":"no-store","X-Content-Type-Options":"nosniff"};
 export function createConversationHandlers(operations:ConversationOperations=defaults){return {
  GET:async(request:Request)=>{
   if(!isLocalRequest(request,false))return Response.json({error:"local_origin_required"},{status:403,headers});
-  let query:{cid?:string;view?:ConversationView;text?:string;limit?:number;offset?:number};
-  try{const params=new URL(request.url).searchParams;const allowed=new Set(["view","query","limit","offset","cid"]);if([...params.keys()].some(key=>!allowed.has(key)||params.getAll(key).length!==1))throw Error();const cid=params.get("cid");if(cid!=null){if(params.size!==1||!/^\d{1,40}$/.test(cid))throw Error();query={cid};}else{const view=(params.get("view")??"human") as ConversationView;if(!["human","agent","completed","all"].includes(view))throw Error();const textValue=params.get("query")??"";if(textValue.length>100)throw Error();const bounded=(key:string,fallback:number,low:number,max:number)=>{const raw=params.get(key);if(raw==null)return fallback;if(!/^\d+$/.test(raw))throw Error();const value=Number(raw);if(!Number.isSafeInteger(value)||value<low||value>max)throw Error();return value;};query={view,text:textValue,limit:bounded("limit",30,1,100),offset:bounded("offset",0,0,5000)};}}
+  let query:{cid?:string;view?:ConversationView;text?:string;limit?:number;offset?:number;market:string};
+  try{const params=new URL(request.url).searchParams;const allowed=new Set(["view","query","limit","offset","cid","market"]);if([...params.keys()].some(key=>!allowed.has(key)||params.getAll(key).length!==1))throw Error();const selected=params.get("market")??"it";if(!enabledMarket(selected))throw Error();const cid=params.get("cid");if(cid!=null){if([...params.keys()].some(key=>!['cid','market'].includes(key))||!/^\d{1,40}$/.test(cid))throw Error();query={cid,market:selected};}else{const view=(params.get("view")??"human") as ConversationView;if(!["human","agent","completed","all"].includes(view))throw Error();const textValue=params.get("query")??"";if(textValue.length>100)throw Error();const bounded=(key:string,fallback:number,low:number,max:number)=>{const raw=params.get(key);if(raw==null)return fallback;if(!/^\d+$/.test(raw))throw Error();const value=Number(raw);if(!Number.isSafeInteger(value)||value<low||value>max)throw Error();return value;};query={view,text:textValue,limit:bounded("limit",30,1,100),offset:bounded("offset",0,0,5000),market:selected};}}
   catch{return Response.json({error:"invalid_conversation_query"},{status:400,headers});}
-  try{return Response.json(query.cid?await operations.detail(query.cid):await operations.list(query.view!,query.text!,query.limit!,query.offset!),{headers});}
+  try{return Response.json(query.cid?await operations.detail(query.cid,query.market):await operations.list(query.view!,query.text!,query.limit!,query.offset!,query.market),{headers});}
   catch{return Response.json({error:"conversation_workbench_unavailable"},{status:503,headers});}
  },
  POST:async(request:Request)=>{
   if(!isLocalRequest(request,true))return Response.json({error:"local_origin_required"},{status:403,headers});
-  let command:ConversationCommand;
-  try{command=validateConversationCommand(await jsonBody(request));}
+  let command:ConversationCommand;let selected="it";
+  try{const url=new URL(request.url);if([...url.searchParams.keys()].some(key=>key!=="market")||url.searchParams.getAll("market").length>1)throw Error();selected=url.searchParams.get("market")??"it";if(!enabledMarket(selected))throw Error();command=validateConversationCommand(await jsonBody(request));}
   catch(error){const status=error instanceof Error&&error.message==="json_required"?415:400;return Response.json({error:status===415?"json_required":"invalid_conversation_request"},{status,headers});}
   try{
+   if(selected!=="it"&&command.action!=="translate")return Response.json({error:"market_conversation_write_pending"},{status:409,headers});
    const result=command.action==="translate"?await operations.translate(command.text,command.target):
     command.action==="save_draft"?await operations.saveDraft(command.cid,command.text,command.expectedRevision):
     command.action==="send_text"?await operations.sendText(command.cid,command.text,command.expectedControlRevision,command.requestId):

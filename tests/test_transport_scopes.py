@@ -73,6 +73,15 @@ class Scopes(unittest.TestCase):
         # 加入之前要读活动列表判断还能不能加入：这个端点必须被允许，用的就是 CAMPAIGNS 常量。
         self.assertIn((transport.CAMPAIGNS, 'GET'), calls['extra_read_endpoints'])
 
+    def test_selection_canary_freezes_exactly_one_pid_at_the_write_boundary(self):
+        scope={}
+        self.assertTrue(transport.selection_canary_scope_valid(scope))
+        scope[PID]=CAMPAIGN
+        self.assertTrue(transport.selection_canary_scope_valid(scope,dispatch_pid=PID))
+        scope['1729480061238089886']=CAMPAIGN
+        self.assertFalse(transport.selection_canary_scope_valid(scope))
+        self.assertFalse(transport.selection_canary_scope_valid(scope,dispatch_pid=PID))
+
     def test_campaign_join_scope_refuses_a_payload_for_another_campaign(self):
         with patched():
             with self.assertRaises(ValueError) as caught:
@@ -137,6 +146,14 @@ class Scopes(unittest.TestCase):
         for endpoint in ('/api/v1/affiliate/partner/campaign/list',
                          '/api/v1/affiliate/partner/campaign/product_list/list'):
             self.assertIn(endpoint, (transport.CAMPAIGNS, transport.LIST_INVENTORY))
+
+    def test_malaysia_taplink_canary_is_allowed_but_stays_single_item(self):
+        source = (ROOT / 'scripts/lib/global_source_transport.py').read_text(encoding='utf-8')
+        prepare = (ROOT / 'scripts/catalog-link-prepare.py').read_text(encoding='utf-8')
+        batch = (ROOT / 'scripts/catalog-link-batch.py').read_text(encoding='utf-8')
+        self.assertIn("market not in {'br','my','uk'} or size!=1", source)
+        self.assertIn("a.market not in {'br','my','uk'} or a.action!='create' or a.max_creates!=1", prepare)
+        self.assertIn("a.market not in {'br','my','uk'} or a.creates!=1", batch)
 
 
 if __name__ == '__main__':

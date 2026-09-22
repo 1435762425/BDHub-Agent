@@ -1,17 +1,15 @@
 """Catalogue product short names: what is ready, what is missing, and how to fill the gap.
 
-A TapLink's card name is built from the product short name. When no short name has been generated,
-``link_naming.short_name_for`` silently falls back to a truncated raw title, so the card is named
-with a cut-off sentence. That step is therefore part of link preparation, not an optional extra:
-this module reports how many products would get a real name and can fill the gap with the same
-provider call the rest of the system already uses.
+A TapLink's card name is built from a market-localized product short name.  Italy keeps its legacy
+title fallback for compatibility; every other market fails closed until a localized name exists.
+That makes name generation part of link preparation, not an optional extra.
 """
 import json
 import sqlite3
 from contextlib import closing
 from pathlib import Path
 
-def _recover(root, store, rows):
+def _recover(root, store, rows, market='it'):
     """Store names an earlier run already generated but never wrote.
 
     A batch can produce a perfectly good response and still leave no stored name -- the process may
@@ -21,11 +19,11 @@ def _recover(root, store, rows):
     import sys
     if str(Path(root) / 'scripts') not in sys.path:
         sys.path.insert(0, str(Path(root) / 'scripts'))
-    from lib.cycle_materials import checked_names, name_key
+    from lib.cycle_materials import checked_names,market_locale,name_key
     from lib.second_cycle import encoded
     recovered = []
     for row in rows:
-        key = name_key(row)
+        key = name_key(row,market)
         prior = store.db.execute('SELECT job_id FROM cycle_name_reservation WHERE id=?', (key,)).fetchone()
         if not prior:
             continue
@@ -35,15 +33,15 @@ def _recover(root, store, rows):
             continue
         try:
             originals = json.loads(job['inputs'])
-            parsed = checked_names(json.loads(json.loads(job['response'])['content']), originals)
+            parsed = checked_names(json.loads(json.loads(job['response'])['content']), originals,market)
         except Exception:  # noqa: BLE001 - an unusable stored response just means "generate it"
             continue
         for index, original in enumerate(originals):
-            if name_key(original) == key and str(index) in parsed:
+            if name_key(original,market) == key and str(index) in parsed:
                 store.db.execute('INSERT INTO cycle_product_name VALUES(?,?,?,?,?,?) '
                                  'ON CONFLICT(id) DO UPDATE SET pid=excluded.pid,locale=excluded.locale,'
                                  'source_title=excluded.source_title,payload=excluded.payload,job_id=excluded.job_id',
-                                 (key, row['pid'], 'it-IT', row['title'],
+                                 (key, row['pid'], market_locale(market), row['title'],
                                   encoded(parsed[str(index)]), prior[0]))
                 recovered.append(row['pid'])
                 break
@@ -52,7 +50,7 @@ def _recover(root, store, rows):
     return recovered
 
 
-def _forget(store, batch):
+def _forget(store, batch, market='it'):
     """Drop one batch's reservation and job so it can be asked again.
 
     Only ever used after ``names_invalid``: that means a response arrived and was judged unusable,
@@ -61,10 +59,10 @@ def _forget(store, batch):
     """
     from lib.cycle_materials import name_key
     from lib.second_cycle import digest
-    jid = 'names-' + digest([name_key(row) for row in batch])
+    jid = 'names-' + digest([name_key(row,market) for row in batch])
     with store.tx():
         for row in batch:
-            store.db.execute('DELETE FROM cycle_name_reservation WHERE id=?', (name_key(row),))
+            store.db.execute('DELETE FROM cycle_name_reservation WHERE id=?', (name_key(row,market),))
         store.db.execute('DELETE FROM cycle_name_job WHERE id=?', (jid,))
 
 
@@ -93,7 +91,7 @@ def _attempt(store, materials, batch, call, tries):
         except CycleError as error:
             if str(error) != 'names_invalid':
                 return None, str(error)
-            _forget(store, batch)
+            _forget(store,batch,materials.market)
     return None, 'names_invalid'
 
 
@@ -102,7 +100,7 @@ MAX_CONSECUTIVE_FAILURES = 3  # stop only when failures look systemic, not incid
 INVALID_RESPONSE_TRIES = 3  # a response that fails validation is known-bad, so re-asking is safe
 
 
-def cached_pids(root):
+def cached_pids(root,market='it'):
     """Products that already have a usable AI short name, keyed by product id.
 
     The cache is keyed by product, not by title: the same product arrives with different titles
@@ -115,10 +113,13 @@ def cached_pids(root):
     try:
         with closing(sqlite3.connect(db.resolve().as_uri() + '?mode=ro', uri=True)) as conn:
             conn.execute('BEGIN')
-            for pid, payload in conn.execute('SELECT pid,payload FROM cycle_product_name'):
+            from lib.cycle_materials import market_locale
+            for pid, source_title, payload in conn.execute('SELECT pid,source_title,payload FROM cycle_product_name WHERE locale=?',(market_locale(market),)):
                 try:
-                    value = json.loads(payload).get('shortNameIt')
+                    data=json.loads(payload);value=data.get('shortNameIt') if market=='it' else data.get('shortName')
                 except (TypeError, ValueError):
+                    continue
+                if source_title==pid or str(pid) in str(value):
                     continue
                 if isinstance(value, str) and 1 <= len(value) <= 60:
                     found.add(str(pid))
@@ -127,7 +128,7 @@ def cached_pids(root):
     return found
 
 
-def scope(root):
+def scope(root,market='it'):
     """Products whose card name will be built from a short name, with their listing titles."""
     db = Path(root) / 'var/catalog-links.sqlite'
     if not db.exists():
@@ -137,41 +138,72 @@ def scope(root):
             conn.execute('BEGIN')
             # Only the products still waiting for a link need a name: the others already have a
             # card whose name is frozen, and regenerating would not change it.
-            rows = conn.execute("SELECT pid,listing FROM catalog_prepare_item "
-                                "WHERE state='missing'").fetchall()
+            columns={row[1] for row in conn.execute("PRAGMA table_info(catalog_prepare_item)")}
+            # Older IT-only ledgers and focused test fixtures predate ``run_id``.  They are still
+            # valid IT evidence, but must never be projected into another market.
+            if 'run_id' not in columns:
+                rows=(conn.execute("SELECT pid,listing FROM catalog_prepare_item WHERE state='missing'").fetchall()
+                      if market=='it' else [])
+            else:
+                states=('missing',) if market=='it' else ('pending','reading','read_incomplete','missing','prepared')
+                placeholders=','.join('?' for _ in states)
+                rows = conn.execute("SELECT i.pid,i.listing,i.title FROM catalog_prepare_item i "
+                                    "JOIN catalog_prepare_run r ON r.id=i.run_id "
+                                    f"WHERE i.state IN ({placeholders}) AND r.market=?",(*states,market)).fetchall()
     except sqlite3.Error:
         return {}
     out = {}
-    for pid, listing in rows:
+    for row in rows:
+        pid,listing=row[:2];seeded_title=row[2] if len(row)>2 else None
         try:
             title = (json.loads(listing) or {}).get('title')
         except (TypeError, ValueError):
             title = None
-        out[str(pid)] = str(title or pid)
+        out[str(pid)] = str(title or seeded_title or pid)
     return out
 
 
-def gap(root):
+def gap(root,market='it'):
     """What link preparation would name correctly today, and what it would truncate."""
-    products = scope(root)
-    ready = cached_pids(root)
+    products = scope(root,market)
+    ready = cached_pids(root,market)
     missing = {pid: title for pid, title in products.items() if pid not in ready}
     ordered = sorted(missing.items(), key=lambda row: row[0])
+    invalid=sorted(pid for pid,title in products.items() if not title.strip() or title==pid)
     return {'scope': len(products), 'ready': len(products) - len(missing), 'missing': len(missing),
+            'invalidSourceTitles':len(invalid),
             'missingSample': [{'pid': pid, 'title': title[:60]} for pid, title in ordered[:5]]}
 
 
-def prepare(root, limit=25, *, call=None, on_progress=None, all_missing=False):
+def discard_invalid_pid_names(root,market='it'):
+    """Remove only model rows generated from a bare PID instead of a product title."""
+    from lib.cycle_materials import market_locale
+    from lib.second_cycle import CycleStore
+    with CycleStore(Path(root)/'var/second-cycle.sqlite') as store:
+        rows=store.db.execute("SELECT id,job_id FROM cycle_product_name WHERE locale=? AND source_title=pid AND length(pid)=19 AND pid NOT GLOB '*[^0-9]*'",
+                              (market_locale(market),)).fetchall()
+        jobs=sorted({row['job_id'] for row in rows if row['job_id']})
+        with store.tx():
+            removed=store.db.execute("DELETE FROM cycle_product_name WHERE locale=? AND source_title=pid AND length(pid)=19 AND pid NOT GLOB '*[^0-9]*'",
+                                     (market_locale(market),)).rowcount
+            for job in jobs:
+                store.db.execute('DELETE FROM cycle_name_reservation WHERE job_id=?',(job,))
+                store.db.execute('DELETE FROM cycle_name_job WHERE id=?',(job,))
+    return {'removed':removed,'jobsRemoved':len(jobs),'market':market}
+
+
+def prepare(root, limit=25, *, market='it', call=None, on_progress=None, all_missing=False):
     """Generate short names for products that lack one, reusing the existing provider path.
 
     A model call costs money and is never retried here: a failure is reported so the operator can
     decide. Names are validated by ``cycle_materials.checked_names`` before anything is stored.
     """
     root = Path(root)
-    if type(limit) is not int or not 1 <= limit <= 5000:
+    ceiling=50_000 if all_missing else 5_000
+    if type(limit) is not int or not 1 <= limit <= ceiling:
         raise ValueError('catalog_names_limit_invalid')
-    products = scope(root)
-    ready = cached_pids(root)
+    products = scope(root,market)
+    ready = cached_pids(root,market)
     every = [{'pid': pid, 'title': title, 'offerKey': 'catalog:' + pid}
              for pid, title in sorted(products.items()) if pid not in ready]
     # ``all_missing`` covers whatever is left, so the operator never has to guess a number.
@@ -197,7 +229,7 @@ def prepare(root, limit=25, *, call=None, on_progress=None, all_missing=False):
                                   uri=True)) as conn:
             conn.execute('BEGIN')
             for row in missing:
-                key = name_key(row)
+                key = name_key(row,market)
                 prior = conn.execute('SELECT job_id FROM cycle_name_reservation WHERE id=?', (key,)).fetchone()
                 job = conn.execute('SELECT state FROM cycle_name_job WHERE id=?', (prior[0],)).fetchone() if prior else None
                 if prior and (job is None or job[0] not in ('ready', 'response_saved')):
@@ -218,10 +250,10 @@ def prepare(root, limit=25, *, call=None, on_progress=None, all_missing=False):
         call = call_model
     consecutive = 0
     with CycleStore(root / 'var/second-cycle.sqlite') as store:
-        materials = Materials(store)
+        materials = Materials(store,market)
         # Recovery always covers everything still missing: a stored-but-unwritten response is free
         # regardless of how small the requested batch is, and leaving it is pure waste.
-        reused = _recover(root, store, every)
+        reused = _recover(root,store,every,market)
         if reused:
             report['recovered'] = len(reused)
             report['reusedPids'] = sorted(reused)

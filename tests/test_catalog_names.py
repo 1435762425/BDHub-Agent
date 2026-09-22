@@ -9,7 +9,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'scripts'))
-from lib.catalog_names import cached_pids, gap, prepare, scope  # noqa: E402
+from lib.catalog_names import cached_pids, discard_invalid_pid_names, gap, prepare, scope  # noqa: E402
 
 
 def fixture(folder, products, names):
@@ -69,6 +69,31 @@ class Readiness(unittest.TestCase):
             # reuse/ready already have a card whose name is frozen, and review still needs a human
             # decision, so generating a name for any of them would be wasted work.
             self.assertEqual(sorted(scope(folder)), ['1' * 19, '3' * 19])
+
+    def test_non_it_pending_items_are_named_before_the_first_inventory_read(self):
+        with tempfile.TemporaryDirectory() as folder:
+            var=Path(folder)/'var';var.mkdir()
+            with closing(sqlite3.connect(var/'catalog-links.sqlite')) as conn,conn:
+                conn.executescript('CREATE TABLE catalog_prepare_run(id TEXT PRIMARY KEY,market TEXT);'
+                                   'CREATE TABLE catalog_prepare_item(run_id TEXT,pid TEXT,state TEXT,listing TEXT,title TEXT);')
+                conn.execute("INSERT INTO catalog_prepare_run VALUES('run','uk')")
+                conn.execute("INSERT INTO catalog_prepare_item VALUES('run',?,'pending',?,?)",
+                             ('1'*19,None,'Wireless sleep earbuds'))
+            self.assertEqual(scope(folder,'uk'),{'1'*19:'Wireless sleep earbuds'})
+            self.assertEqual(scope(folder,'it'),{})
+
+    def test_pid_only_model_output_is_not_ready_and_can_be_discarded(self):
+        with tempfile.TemporaryDirectory() as folder:
+            fixture(folder,[],[]);pid='1'*19
+            with closing(sqlite3.connect(Path(folder)/'var/second-cycle.sqlite')) as conn,conn:
+                conn.execute('CREATE TABLE cycle_name_reservation(id TEXT PRIMARY KEY,job_id TEXT)')
+                conn.execute('CREATE TABLE cycle_name_job(id TEXT PRIMARY KEY,state TEXT,inputs TEXT,response TEXT,error TEXT)')
+                conn.execute('INSERT INTO cycle_name_job VALUES(?,?,?,?,?)',('job','ready','[]','{}',None))
+                conn.execute('INSERT INTO cycle_name_reservation VALUES(?,?)',('key','job'))
+                conn.execute('INSERT INTO cycle_product_name VALUES(?,?,?,?,?,?)',
+                             ('key',pid,'en-GB',pid,json.dumps({'shortName':'Product '+pid}),'job'))
+            self.assertEqual(cached_pids(folder,'uk'),set())
+            self.assertEqual(discard_invalid_pid_names(folder,'uk')['removed'],1)
 
     def test_the_gap_counts_ready_against_missing(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -224,6 +249,12 @@ class BatchFailureHandling(unittest.TestCase):
             report = prepare(folder, 2, call=call, all_missing=True)
             self.assertEqual(report['prepared'], 7)
             self.assertEqual(gap(folder)['missing'], 0)
+
+    def test_all_missing_accepts_a_scope_larger_than_the_manual_limit(self):
+        with tempfile.TemporaryDirectory() as folder:
+            fixture(folder,[],[])
+            report=prepare(folder,5001,call=FakeCall(),all_missing=True)
+            self.assertEqual(report['stopped'],'nothing_missing')
 
 
 if __name__ == '__main__':

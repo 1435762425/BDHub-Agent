@@ -7,11 +7,11 @@ from pathlib import Path
 
 DEFAULTS = {'version': 'jobs-v3', 'jobs': {}}
 JOBS = (
-    {'id':'taplink_clean','name':'TapLink 清洗','group':'材料','description':'周一 04:30 整批扫描、删除平台明确失效卡并统一回读。','manual':'workflow','defaultAt':'04:30','cadence':'weekly','defaultWeekday':0},
-    {'id':'full_catalog_update','name':'全托周更新','group':'货盘','description':'清洗完成后读取并完整发布全托货盘；按市场开关生效。','manual':'workflow','defaultAt':'04:40','cadence':'weekly','defaultWeekday':0},
-    {'id':'campaign_catalog_update','name':'Campaign 日更新','group':'货盘','description':'每天 07:00 完整刷新 Campaign，账号忙时排队。','manual':'workflow','defaultAt':'07:00','cadence':'daily'},
+    {'id':'taplink_clean','name':'TapLink 清洗','group':'材料','description':'周一扫描平台卡；当前仅 IT 会删除平台明确失效且已回查的卡。','manual':'workflow','defaultAt':'04:30','cadence':'weekly','defaultWeekday':0},
+    {'id':'full_catalog_update','name':'全托周更新','group':'货盘','description':'每周普通刷新；新市场首次与每 30 天按一级类目完整刷新。','manual':'workflow','defaultAt':'04:40','cadence':'weekly','defaultWeekday':0},
+    {'id':'campaign_catalog_update','name':'Campaign 每两天更新','group':'货盘','description':'每 2 天 07:00 完整刷新 Campaign；每次重新判断失效、库存、佣金与期限。','manual':'workflow','defaultAt':'07:00','cadence':'daily'},
     {'id':'taplink_prepare','name':'TapLink 准备','group':'材料','description':'货盘发布后核验并创建缺失标准链接；unknown 只回查原意图。','manual':'workflow','defaultAt':'07:20','cadence':'daily'},
-    {'id':'kalodata_leads','name':'Kalodata','group':'达人','description':'整批读取 A/B 线索，范围完成或真实额度耗尽后发布。','manual':'workflow','defaultAt':'08:00','cadence':'daily'},
+    {'id':'kalodata_leads','name':'Kalodata','group':'达人','description':'整批读取 A/B 线索；最多两个市场并行，范围完成或真实额度耗尽后发布。','manual':'workflow','defaultAt':'08:00','cadence':'daily'},
     {'id':'oecid','name':'OECID','group':'达人','description':'集中处理本轮新增且尚未判定的 handle，cohort 间释放通信账号。','manual':'workflow','defaultAt':'09:00','cadence':'daily'},
     {'id':'send_pool_publish','name':'发送池发布','group':'发送','description':'OECID 阶段结束后统一重算并发布当前发送池。','manual':'workflow','defaultAt':'10:00','cadence':'daily'},
     {'id':'inbox_monitor','name':'收信监控','group':'会话','description':'全天只读收信并从 checkpoint 补捞；不授予回复发送。','manual':'job-control','defaultAt':'00:00','cadence':'daily'},

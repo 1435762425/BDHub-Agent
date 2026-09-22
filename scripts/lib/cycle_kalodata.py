@@ -28,7 +28,7 @@ def revenue(v):
  d=Decimal(m[1])*{'':1,'k':1000,'K':1000,'m':1000000,'M':1000000,'万':10000}[m[2]]
  return format(d,'f') if 0<=d<=Decimal('9007199254740991') else None
 
-def parse_page(body,claim,at,*,max_pages=2):
+def parse_page(body,claim,at,*,max_pages=2,market='it',currency='EUR'):
  if quota_exhausted(body):raise CycleError('kalodata_daily_quota_exhausted')
  if not isinstance(body,dict) or body.get('success') is not True:raise CycleError('kalodata_business_rejected')
  rows=body.get('data')
@@ -44,11 +44,11 @@ def parse_page(body,claim,at,*,max_pages=2):
   if not kid or len(kid)>128 or not re.fullmatch(r'[A-Za-z0-9_.:-]+',kid):kid='handle:'+handle
   if kid in seen:continue
   seen.add(kid)
-  sid=digest(['kalodata',claim['id'],claim['pid'],claim['window_start'],claim['window_end'],kid])
+  sid=digest(['kalodata',market,claim['id'],claim['pid'],claim['window_start'],claim['window_end'],kid])
   edges.append({'sourceId':sid,'pid':claim['pid'],'offerKey':claim['offer_key'],'creatorId':None,'oec':None,
                 'units':units,'evidenceRef':'kalodata:'+digest([claim['pid'],claim['window_start'],claim['window_end'],page,row]),
                 'observedAt':at,'windowStart':claim['window_start'],'windowEnd':claim['window_end'],
-                'sourceHandle':handle,'kalodataCreatorId':kid,'sourceRank':rank,'currency':'EUR',
+                'sourceHandle':handle,'kalodataCreatorId':kid,'sourceRank':rank,'currency':currency,
                 'revenueRaw':str(row['revenue'])[:80] if isinstance(row.get('revenue'),(str,int,float)) else None,
                 'revenueValue':revenue(row.get('revenue')),
                 'liveRevenueRaw':str(row['live_revenue'])[:80] if isinstance(row.get('live_revenue'),(str,int,float)) else None,
@@ -64,7 +64,10 @@ class KalodataWorker:
   store.db.executescript('''CREATE TABLE IF NOT EXISTS cycle_source_receipt(job_id TEXT NOT NULL,cursor TEXT NOT NULL,payload TEXT NOT NULL,PRIMARY KEY(job_id,cursor));
   CREATE TABLE IF NOT EXISTS cycle_source_issue(job_id TEXT PRIMARY KEY,code TEXT NOT NULL,created REAL NOT NULL);''')
  def once(self,plan):
-  if self.store._plan(plan)['market']!='it':raise CycleError('kalodata_market_not_enabled')
+  market=self.store._plan(plan)['market']
+  from lib.market_registry import market as market_row
+  try:currency=market_row(None,market)['currency']
+  except ValueError:raise CycleError('kalodata_market_not_enabled') from None
   claim=self.store.claim(plan,self.owner,lease_seconds=120)
   if not claim:return {'status':'idle','networkRequests':0}
   calls=0
@@ -76,7 +79,7 @@ class KalodataWorker:
    else:
     payload={'startDate':claim['window_start'],'endDate':claim['window_end'],'authority':True,'pageSize':50,'pageNo':int(claim['cursor'] or '1'),'sort':[{'field':'revenue','type':'DESC'}],'id':claim['pid']}
     calls=1;body=self.provider.request(PATH,payload)
-    receipt=parse_page(body,claim,self.store.clock(),max_pages=self.max_pages)
+    receipt=parse_page(body,claim,self.store.clock(),max_pages=self.max_pages,market=market,currency=currency)
     with self.store.tx():
      r=self.store.db.execute('SELECT * FROM source_job WHERE id=?',(claim['id'],)).fetchone()
      if r['owner']!=claim['owner'] or r['fence']!=claim['fence'] or r['lease_until']<=self.store.clock():raise CycleError('lease_lost')

@@ -21,7 +21,7 @@ from pathlib import Path
 from lib.cycle_catalog import commission_calculator
 from lib.second_cycle import assess_offer, digest
 
-SCOPE = {'institution': 'bjn-local-research', 'market': 'it'}
+INSTITUTION = 'bjn-local-research'
 SOURCES = ('campaign', 'selected')
 SCHEMA = '''
 CREATE TABLE IF NOT EXISTS campaign_screen_run(
@@ -51,11 +51,11 @@ def root_of(module_file=__file__):
     return Path(module_file).resolve().parents[2]
 
 
-def db_path(root):
-    return Path(root) / 'var/campaign-screen.sqlite'
+def db_path(root, market='it'):
+    return Path(root) / ('var/campaign-screen.sqlite' if market == 'it' else f'var/campaign-screen-{market}.sqlite')
 
 
-def snapshot_for(root, source):
+def snapshot_for(root, source, market='it'):
     """The head snapshot and its offers for one channel, read-only."""
     db = Path(root) / 'var/second-cycle.sqlite'
     if not db.exists():
@@ -65,7 +65,7 @@ def snapshot_for(root, source):
         row = conn.execute(
             'SELECT h.snapshot_id,c.payload FROM catalog_head h JOIN catalog c ON c.id=h.snapshot_id '
             'JOIN plan p ON p.id=h.plan_id WHERE p.institution=? AND p.market=? AND h.source=?',
-            (SCOPE['institution'], SCOPE['market'], f'live-it-{source}')).fetchone()
+            (INSTITUTION, market, f'live-{market}-{source}')).fetchone()
     if not row:
         return None, []
     return row[0], json.loads(row[1])
@@ -187,11 +187,11 @@ def pool(built):
             'reconciled': len(items) == len(by_pid)}
 
 
-def run_id(source, snapshot, rule):
-    return 'campaign-screen-' + digest([source, snapshot, rule])[:28]
+def run_id(source, snapshot, rule, market='it'):
+    return 'campaign-screen-' + digest([market, source, snapshot, rule])[:28]
 
 
-def build(root=None, *, source='campaign', rule=None, at=None, clock=time.time):
+def build(root=None, *, source='campaign', market='it', rule=None, at=None, clock=time.time):
     """Screen one channel's head snapshot. Pure: reads the snapshot, writes a run only if asked."""
     from lib.cycle_catalog import commission_rule
     root = Path(root or root_of())
@@ -200,13 +200,13 @@ def build(root=None, *, source='campaign', rule=None, at=None, clock=time.time):
     at = clock() if at is None else at
     # Order matters: nothing to screen without a snapshot, so that is reported first and a missing
     # policy file only shows up for a workspace that does have something to screen.
-    snapshot, offers = snapshot_for(root, source)
+    snapshot, offers = snapshot_for(root, source, market)
     if snapshot is None:
-        return {'available': False, 'source': source, 'reason': 'snapshot_missing'}
+        return {'available': False, 'market': market, 'source': source, 'reason': 'snapshot_missing'}
     try:
         rule = rule or commission_rule(root)
     except (OSError, ValueError, KeyError):
-        return {'available': False, 'source': source, 'reason': 'policy_missing'}
+        return {'available': False, 'market': market, 'source': source, 'reason': 'policy_missing'}
     calculate = commission_calculator(rule)
     items = [evaluate(offer, calculate=calculate, at=at) for offer in offers]
     counts = {}
@@ -219,8 +219,8 @@ def build(root=None, *, source='campaign', rule=None, at=None, clock=time.time):
     for item in items:
         if item['state'] == 'eligible':
             by_pid.setdefault(item['pid'], []).append(item['campaignId'])
-    return {'available': True, 'source': source, 'snapshot': snapshot, 'rule': rule,
-            'ruleFingerprint': digest(rule), 'runId': run_id(source, snapshot, rule), 'at': at,
+    return {'available': True, 'market': market, 'source': source, 'snapshot': snapshot, 'rule': rule,
+            'ruleFingerprint': digest(rule), 'runId': run_id(source, snapshot, rule, market), 'at': at,
             'offers': len(items), 'counts': counts, 'reasons': reasons,
             # 去重商品数：页面上要的是"我筛的是多少个商品"，不是 offer 条数。
             'distinctPids': len({item['pid'] for item in items}),
@@ -229,11 +229,12 @@ def build(root=None, *, source='campaign', rule=None, at=None, clock=time.time):
             'pool': pool({'items': items})}
 
 
-def record(root, built, *, clock=time.time):
+def record(root, built, *, market=None, clock=time.time):
     """Persist one screening run; the caller decides when that is worth doing."""
     if not built.get('available'):
         raise ValueError('campaign_screen_source_invalid')
-    path = db_path(root)
+    market = market or built.get('market') or 'it'
+    path = db_path(root, market)
     path.parent.mkdir(parents=True, exist_ok=True)
     stamp = clock()
     with closing(sqlite3.connect(path, timeout=15)) as conn:
@@ -271,12 +272,38 @@ def record(root, built, *, clock=time.time):
                          'VALUES(?,?,?,?,?) ON CONFLICT(run_id) DO UPDATE SET counts=excluded.counts',
                          (built['runId'], built['source'], built['snapshot'], stamp,
                           json.dumps(pool['counts'], ensure_ascii=False)))
+    reconciliation = {'available': False, 'reason': 'catalog_binding_missing'}
+    links = Path(root) / 'var/catalog-links.sqlite'
+    if links.exists():
+        targets = link_targets(root, source=built['source'], market=market)
+        skipped = targets.get('skipped') or {}
+        if targets.get('available') and not int(skipped.get('plan_missing') or 0) and \
+                not int(skipped.get('commission_invalid') or 0):
+            from lib.catalog_binding import CatalogBindings
+            bindings = None
+            try:
+                bindings = CatalogBindings(root)
+                reconciliation = {'available': True, **bindings.reconcile_current_offers(
+                    market, built['source'], [row['offer'] for row in targets['targets']],
+                    evidence_ref=built['runId'], now=stamp,
+                )}
+            except ValueError as error:
+                reconciliation = {'available': False, 'reason': str(error)}
+            finally:
+                if bindings is not None:
+                    bindings.close()
+        elif targets.get('available'):
+            reconciliation = {'available': False, 'reason': 'campaign_binding_reconcile_incomplete',
+                              'skipped': skipped}
+        else:
+            reconciliation = {'available': False, 'reason': targets.get('reason') or 'campaign_pool_missing'}
+    built['bindingReconciliation'] = reconciliation
     return built
 
 
-def recorded(root, source='campaign'):
+def recorded(root, source='campaign', market='it'):
     """The last recorded run for a channel, with a flag saying whether it still matches the snapshot."""
-    path = db_path(root)
+    path = db_path(root, market)
     if not path.exists():
         return None
     with closing(sqlite3.connect(path.resolve().as_uri() + '?mode=ro', uri=True, timeout=5)) as conn:
@@ -291,21 +318,21 @@ def recorded(root, source='campaign'):
             'updated': row[8]}
 
 
-def status(root=None, *, source='campaign', at=None):
+def status(root=None, *, source='campaign', market='it', at=None):
     """What the page reads: the funnel plus whether a recorded run is still current."""
     root = Path(root or root_of())
-    built = build(root, source=source, at=at)
-    return built | {'recorded': recorded(root, source)}
+    built = build(root, source=source, market=market, at=at)
+    return built | {'recorded': recorded(root, source, market)}
 
 
-def pool_products(root=None, *, source='campaign'):
+def pool_products(root=None, *, source='campaign', market='it'):
     """已入池商品（PID）＋累计销量与标题，供**线索队列**排序用。
 
     销量取自快照里的 `sales`（平台的活动商品行自带 `product_sales`，是 `normalize` 新接出来的）。
     老快照没有这个字段时返回 ``None``——**不编 0**：调用方要能区分"销量是 0"和"没有销量数据"。
     """
     root = Path(root or root_of())
-    path = db_path(root)
+    path = db_path(root, market)
     if not path.exists():
         return {}
     with closing(sqlite3.connect(path.resolve().as_uri() + '?mode=ro', uri=True, timeout=5)) as conn:
@@ -316,7 +343,7 @@ def pool_products(root=None, *, source='campaign'):
             return {}
         chosen = {str(row[0]) for row in conn.execute(
             "SELECT pid FROM campaign_pool_item WHERE run_id=? AND state='chosen'", (run[0],))}
-    _, offers = snapshot_for(root, source)
+    _, offers = snapshot_for(root, source, market)
     out = {}
     for offer in offers:
         pid = str(offer.get('pid') or '')
@@ -331,7 +358,7 @@ def pool_products(root=None, *, source='campaign'):
     return out
 
 
-def link_targets(root=None, *, source='campaign', exclude=()):
+def link_targets(root=None, *, source='campaign', market='it', exclude=()):
     """已入池（chosen）商品的建链目标：播种行 + 判定用的 offer（佣金按**当前**规则重算）。
 
     池子本身已经是「一个 PID 一条」（见 `pool`），所以这里天然不会给同一个商品建两条链。
@@ -341,7 +368,7 @@ def link_targets(root=None, *, source='campaign', exclude=()):
     ``exclude`` 用来排除跨渠道重叠的 PID（那种商品已有全托卡、按「全托优先」只会出一条位置）。
     """
     root = Path(root or root_of())
-    path = db_path(root)
+    path = db_path(root, market)
     if not path.exists():
         return {'available': False, 'reason': 'campaign_screen_missing', 'targets': []}
     with closing(sqlite3.connect(path.resolve().as_uri() + '?mode=ro', uri=True, timeout=5)) as conn:
@@ -353,7 +380,7 @@ def link_targets(root=None, *, source='campaign', exclude=()):
         rows = conn.execute(
             "SELECT pid,campaign_id,creator_percent,total_percent,public_percent,end_at,stock "
             "FROM campaign_pool_item WHERE run_id=? AND state='chosen' ORDER BY pid", (run[0],)).fetchall()
-    snapshot, offers = snapshot_for(root, source)
+    snapshot, offers = snapshot_for(root, source, market)
     index = {(str(o.get('pid')), str(o.get('campaignId'))): o for o in offers}
     from lib.catalog_prepare import new_offer
     try:

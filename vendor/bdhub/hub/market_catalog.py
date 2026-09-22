@@ -47,6 +47,16 @@ MARKET_CATALOG: dict[str, DashboardMarket] = {
         rollout_group="priority-1",
         rollout_order=10,
     ),
+    "my": DashboardMarket(
+        key="my",
+        label="马来西亚",
+        short_label="MY",
+        currency="MYR",
+        locale="ms-MY",
+        template_lang="ms",
+        rollout_group="priority-1",
+        rollout_order=15,
+    ),
     "uk": DashboardMarket(
         key="uk",
         label="英国",

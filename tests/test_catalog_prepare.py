@@ -75,6 +75,10 @@ class BatchLinkTests(unittest.TestCase):
         self.prep.apply_read(self.run,'1','2','selected',{'state':'read_incomplete','error':'card_search_incomplete'})
         self.assertEqual(self.prep.item(self.run,'1','2')['state'],'read_incomplete')
         self.assertEqual(self.prep.summary(self.run)['incompleteCount'],1)
+    def test_reseed_fills_a_missing_title_without_requeueing_the_item(self):
+        self.seed('1','2');self.prep.db.execute("UPDATE catalog_prepare_item SET state='reading' WHERE run_id=?",(self.run,))
+        self.prep.seed(self.run,[{'pid':'1','campaignId':'2','catalogSource':'selected','title':'Real title'}],self.scope)
+        item=self.prep.item(self.run,'1','2');self.assertEqual(item['title'],'Real title');self.assertEqual(item['state'],'reading')
     def test_expired_lease_is_reclaimed_without_losing_the_row(self):
         self.seed('1','2');self.prep.claim_read(self.run,now=1000,lease=10)
         self.assertEqual(self.prep.claim_read(self.run,now=1005,lease=10),[])
@@ -217,6 +221,15 @@ class BatchLinkTests(unittest.TestCase):
         self.assertFalse(result.has_turing);self.assertEqual(transport.solved,['challenge'])
         self.assertEqual(len(transport.calls),2);self.assertEqual(transport.calls[0],transport.calls[1])
         self.assertIs(transport.calls[0]['payload'],payload);self.assertEqual(transport.verification_successes,1)
+    def test_full_pool_seed_bypasses_a_recent_selected_pool_cache(self):
+        from importlib.util import spec_from_file_location,module_from_spec
+        spec=spec_from_file_location('catalog_link_prepare_cache_script',ROOT/'scripts/catalog-link-prepare.py');module=module_from_spec(spec);spec.loader.exec_module(module)
+        path=self.root/'var/recent-selected-pool.json'
+        cached={'readAt':9999999999,'total':1,'pages':1,'rows':[{'old':True}]}
+        path.write_text(json.dumps(cached))
+        self.assertEqual(module.pool_cache({},path),cached)
+        report={};self.assertIsNone(module.pool_cache(report,path,force_refresh=True))
+        self.assertEqual(report['selectedPoolCache'],{'bypassed':'full_pool_seed'})
     def test_summary_separates_links_from_covered_pids(self):
         for pid in ('1','2'):self.seed(pid,'2')
         self.prep.claim_read(self.run,limit=5)

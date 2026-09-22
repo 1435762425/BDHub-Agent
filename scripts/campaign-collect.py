@@ -37,10 +37,10 @@ def publish(path, payload):
     temporary.replace(path)
 
 
-def run_sync(run_file, max_requests):
+def run_sync(run_file, max_requests, market):
     """一次分页状态机的推进。返回它的 JSON 摘要（脚本自己会落盘进度）。"""
     child = subprocess.run(
-        [sys.executable, str(ROOT / 'scripts/sync-cycle-catalog.py'), '--source', 'campaign',
+        [sys.executable, str(ROOT / 'scripts/sync-cycle-catalog.py'), '--market', market, '--source', 'campaign',
          '--run', str(run_file), '--max-requests', str(max_requests)],
         cwd=ROOT, capture_output=True, text=True, timeout=3000)
     out = (child.stdout or '').strip().splitlines()
@@ -49,10 +49,10 @@ def run_sync(run_file, max_requests):
     return json.loads(out[-1])
 
 
-def record_screen():
+def record_screen(market):
     """采集完按**当前**门槛重新筛分并落库：不筛分的话池子还是旧的，刷新等于没用。"""
     child = subprocess.run([sys.executable, str(ROOT / 'scripts/campaign-screen.py'), 'record',
-                            '--source', 'campaign'],
+                            '--market', market, '--source', 'campaign'],
                            cwd=ROOT, capture_output=True, text=True, timeout=600)
     out = (child.stdout or '').strip().splitlines()
     if not out:
@@ -66,6 +66,7 @@ def record_screen():
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--market', default='it')
     parser.add_argument('--report', type=Path, required=True)
     parser.add_argument('--progress', type=Path)
     parser.add_argument('--stop', type=Path, help='停止请求文件；在两次推进之间安全退出')
@@ -86,7 +87,7 @@ def main():
 
     started_at = time.time()
     stamp = time.strftime('%Y%m%d-%H%M%S')
-    run_file = ROOT / f'var/cycle-catalog-campaign-{stamp}.json'
+    run_file = ROOT / f'var/cycle-catalog-{args.market}-campaign-{stamp}.json'
 
     def note(status, round_no, requests=0, offers=0, error=None):
         publish(progress, {'startedAt': started_at, 'updatedAt': time.time(), 'status': status,
@@ -103,7 +104,7 @@ def main():
             status = 'stopped'
             break
         try:
-            summary = run_sync(run_file, args.max_requests)
+            summary = run_sync(run_file, args.max_requests, args.market)
         except Exception as failure:                                  # noqa: BLE001 - 如实上报
             status = 'blocked'
             error = str(failure)[:200]
@@ -127,11 +128,11 @@ def main():
     screening = None
     if status == 'completed' and args.screen:
         note('screening', len(steps), _last(steps, 'requests'), _last(steps, 'offers'))
-        screening = record_screen()
+        screening = record_screen(args.market)
         if not screening.get('recorded'):
             error = screening.get('error')
 
-    final = {'status': status, 'source': 'campaign', 'platformWrites': 0,
+    final = {'status': status, 'market': args.market, 'source': 'campaign', 'platformWrites': 0,
              'runFile': str(run_file.relative_to(ROOT)), 'steps': steps,
              'requests': _last(steps, 'requests'), 'offers': _last(steps, 'offers'),
              'screening': screening, 'error': error,

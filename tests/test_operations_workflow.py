@@ -12,6 +12,7 @@ from lib.operations_workflow import (create_run, finish_stage, save_setting, set
                                      status, update_checkpoint)  # noqa:E402
 from lib.schema_migrations import apply_database  # noqa:E402
 from lib.second_cycle import CycleError, CycleStore  # noqa:E402
+from lib.template_library import review_send_template,send_template_reviews  # noqa:E402
 
 
 NOW = datetime(2026, 9, 21, 7, 0, tzinfo=ZoneInfo("Asia/Shanghai")).timestamp()  # Monday
@@ -65,6 +66,11 @@ class OperationsWorkflowTests(unittest.TestCase):
         self.assertTrue(result["outputGenerationId"].startswith("generation-"))
 
     def test_home_continuous_switch_updates_the_execution_control_without_starting_it(self):
+        with self.assertRaisesRegex(CycleError,'template_approval_required'):
+            save_setting(self.store,"it","setting-request-send-blocked",0,{"continuousSendEnabled":True})
+        for item in send_template_reviews(self.store,ROOT)['items'][:10]:
+            review_send_template(self.store,ROOT,'workflow-review-'+item['templateId'],
+                                 item['templateId'],'approved',item['revision'])
         saved=save_setting(self.store,"it","setting-request-send",0,{"continuousSendEnabled":True})
         self.assertTrue(saved["continuousSendEnabled"])
         row=self.store.db.execute('SELECT automatic_enabled,run_requested,stop_requested FROM continuous_send_control').fetchone()

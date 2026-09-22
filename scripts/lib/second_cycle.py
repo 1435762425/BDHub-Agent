@@ -106,7 +106,8 @@ class CycleStore:
         except BaseException:self.db.execute('ROLLBACK');raise
     def plan(self,institution,market):
         identifier(institution)
-        if market not in ('it','mx','br'):raise CycleError('invalid_market')
+        from lib.market_registry import enabled_market_keys
+        if market not in enabled_market_keys():raise CycleError('invalid_market')
         pid='cycle-'+digest([institution,market])[:24]
         with self.tx():self.db.execute('INSERT OR IGNORE INTO plan(id,institution,market) VALUES(?,?,?)',(pid,institution,market))
         return pid
@@ -162,7 +163,7 @@ class CycleStore:
 
     def publish(self,p,source,observed,offers,complete=True):
         identifier(source);at=epoch(observed)
-        if type(complete) is not bool or not isinstance(offers,list) or len(offers)>10000:raise CycleError('invalid_catalog')
+        if type(complete) is not bool or not isinstance(offers,list) or len(offers)>200000:raise CycleError('invalid_catalog')
         seen=set()
         for o in offers:
             identifier(o['pid']);identifier(o['offerKey']);identifier(o['evidenceRef'])

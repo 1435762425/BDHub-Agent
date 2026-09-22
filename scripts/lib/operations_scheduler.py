@@ -3,8 +3,11 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
 import subprocess
 import time
+from contextlib import closing
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -57,6 +60,43 @@ def _report_item_count(payload):
     return 0
 
 
+def accepted_partial_selection(root,market):
+    """Reuse an operator-accepted snapshot until its frozen selection queue is drained."""
+    root=Path(root);source=root/('var/global-source.sqlite' if market=='it' else f'var/global-source-{market}.sqlite')
+    selection=root/('var/global-selection.sqlite' if market=='it' else f'var/global-selection-{market}.sqlite')
+    if not source.exists():return None
+    try:
+        with closing(sqlite3.connect(source.resolve().as_uri()+'?mode=ro',uri=True)) as db:
+            row=db.execute("""SELECT r.id,(SELECT count(*) FROM global_source_product p WHERE p.run_id=r.id)
+                FROM global_source_head h JOIN global_source_run r ON r.id=h.run_id
+                WHERE json_extract(r.scope,'$.market')=? AND r.state='accepted_partial'
+                  AND r.terminal_reason='operator_accepted_partial' AND r.identity_unchanged=1""",(market,)).fetchone()
+        if not row:return None
+        states={};intake=None
+        if selection.exists():
+            with closing(sqlite3.connect(selection.resolve().as_uri()+'?mode=ro',uri=True)) as db:
+                intake=db.execute('SELECT id FROM intake_run WHERE source_run=? ORDER BY created DESC LIMIT 1',(row[0],)).fetchone()
+                if intake:states=dict(db.execute('SELECT state,count(*) FROM intake_item WHERE run_id=? GROUP BY state',(intake[0],)).fetchall())
+        active=sum(int(states.get(key) or 0) for key in ('pending','submitting','awaiting_verification','result_unknown','needs_review'))
+        if intake and active==0:return None
+        return {'sourceRun':row[0],'products':int(row[1]),'intakeRun':intake[0] if intake else None,'states':states,
+                'reason':'operator_accepted_partial_pending_selection'}
+    except sqlite3.Error:return None
+
+
+def selection_auth_unknown(root,market):
+    path=Path(root)/('var/global-selection.sqlite' if market=='it' else f'var/global-selection-{market}.sqlite')
+    if not path.exists():return None
+    try:
+        with closing(sqlite3.connect(path.resolve().as_uri()+'?mode=ro',uri=True)) as db:
+            row=db.execute("""SELECT count(*),max(json_extract(payload,'$.attemptedAt')) FROM intake_item
+                WHERE state='result_unknown' AND json_extract(payload,'$.receipt.http')=200
+                  AND json_extract(payload,'$.receipt.code')=16201010
+                  AND coalesce(json_extract(payload,'$.receipt.ambiguous'),0)=0""").fetchone()
+        return {'count':int(row[0]),'latestAttempt':row[1]} if row and row[0] else None
+    except sqlite3.Error:return None
+
+
 def scheduler_state(root):
     run=_read(run_path(root),{});pid=run.get('pid');alive=False
     if type(pid) is int and pid>0:
@@ -93,8 +133,8 @@ def stop_scheduler(root):
 def due_slot(root,now,automation):
     from lib.jobs import load
     jobs=load(root)['jobs'];local=datetime.fromtimestamp(now,BEIJING)
-    monday=local.weekday()==0
-    selected=jobs['taplink_clean'] if monday else jobs['campaign_catalog_update']
+    weekly_day=jobs['taplink_clean'].get('weekday',0)
+    selected=jobs['taplink_clean'] if local.weekday()==weekly_day and automation.get('fullCatalogWeeklyEnabled') else jobs['campaign_catalog_update']
     hour,minute=map(int,selected['at'].split(':'))
     return local.replace(hour=hour,minute=minute,second=0,microsecond=0).timestamp()
 
@@ -102,6 +142,43 @@ def due_slot(root,now,automation):
 def _day_start(stamp):
     local=datetime.fromtimestamp(stamp,BEIJING)
     return local.replace(hour=0,minute=0,second=0,microsecond=0).timestamp()
+
+
+def _source_success(store,market,source):
+    row=store.db.execute("""SELECT max(s.finished_at) FROM workflow_stage_run s
+      JOIN workflow_run r ON r.run_id=s.run_id
+      WHERE r.market=? AND s.stage='catalog' AND s.state='completed'
+        AND EXISTS(SELECT 1 FROM json_each(r.applicable_sources_json) WHERE value=?)""",(market,source)).fetchone()
+    return float(row[0]) if row and row[0] is not None else None
+
+
+def _scheduled_sources(root,store,market,stamp,automation,policy):
+    """Return only sources whose calendar cadence is due; no daily duplicate workflow."""
+    from lib.jobs import load
+    from lib.market_registry import supports
+    jobs=load(root)['jobs'];local=datetime.fromtimestamp(stamp,BEIJING);sources=[];due_times={}
+    campaign_hour,campaign_minute=map(int,jobs['campaign_catalog_update']['at'].split(':'))
+    last_campaign=_source_success(store,market,'campaign')
+    if last_campaign is None:
+        campaign_due=local.replace(hour=campaign_hour,minute=campaign_minute,second=0,microsecond=0).timestamp()
+    else:
+        prior=datetime.fromtimestamp(last_campaign,BEIJING)
+        campaign_due=(prior+timedelta(days=policy['campaignRefreshDays'])).replace(
+            hour=campaign_hour,minute=campaign_minute,second=0,microsecond=0).timestamp()
+    due_times['campaign']=campaign_due
+    if stamp>=campaign_due:sources.append('campaign')
+    if automation.get('fullCatalogWeeklyEnabled') and supports(root,market,'fullManagedCatalog'):
+        clean_hour,clean_minute=map(int,jobs['taplink_clean']['at'].split(':'))
+        weekly_day=jobs['taplink_clean'].get('weekday',0)
+        days_back=(local.weekday()-weekly_day)%7
+        selected_due=(local-timedelta(days=days_back)).replace(hour=clean_hour,minute=clean_minute,second=0,microsecond=0)
+        if selected_due.timestamp()>stamp:selected_due-=timedelta(days=7)
+        selected_due=selected_due.timestamp();last_selected=_source_success(store,market,'selected')
+        if last_selected is not None and last_selected>=selected_due:
+            selected_due+=7*86400
+        due_times['selected']=selected_due
+        if stamp>=selected_due:sources.insert(0,'selected')
+    return sources,due_times
 
 
 class SubprocessStageExecutor:
@@ -136,9 +213,31 @@ class SubprocessStageExecutor:
         return {'state':'completed','itemCount':items,'complete':True,'platformWrites':writes,
                 'payload':evidence or payload,'scope':{}}
 
+    def _relogin_market_account(self,store,market,role,run_id,reason):
+        if store is None:return {'state':'failed','errorCode':'selection_relogin_store_missing'}
+        from lib.account_identity import current_generation,request_maintenance
+        from lib.market_accounts import load_config
+        account=load_config(self.root)['markets'][market]['roles'][role];prior=current_generation(store,market,account)
+        request_id=f'{role}-auth-{market}-'+digest([run_id,reason,(prior or {}).get('generationId')])[:24]
+        try:request_maintenance(store,self.root,market=market,account=account,operation='relogin',request_id=request_id)
+        except CycleError as error:
+            if str(error)!='account_maintenance_active':return {'state':'failed','errorCode':str(error)}
+        worker=self._call(['scripts/account-maintenance-worker.py'],'global-selection-relogin',timeout=660)
+        current=current_generation(store,market,account)
+        if worker['state']!='completed' or not current or not prior or current['publishedAt']<=prior['publishedAt']:
+            return {'state':'failed','errorCode':worker.get('errorCode') or 'selection_relogin_not_published'}
+        return {'state':'completed','generationId':current['generationId']}
+
+    def _relogin_selection_account(self,store,market,run_id,auth):
+        return self._relogin_market_account(store,market,'supply',run_id,auth.get('latestAttempt'))
+
     def execute(self,store,run,stage,jobs):
-        sources=run['applicableSources'];enabled=jobs['jobs']
+        sources=run['applicableSources'];enabled=jobs['jobs'];market=run.get('market','it')
+        market_flag=[] if market=='it' else ['--market',market]
         if stage=='taplink_clean':
+            if market!='it':
+                return {'state':'skipped','itemCount':0,'complete':True,'platformWrites':0,
+                        'scope':{'market':market},'payload':{'reason':'market_taplink_cleanup_not_enabled'}}
             total=0;writes=0;last={}
             for action in ('refresh','classify','delete'):
                 args=['scripts/catalog-clean.py',action,'--lanes','9','--qps','12'] if action=='refresh' else ['scripts/catalog-clean.py',action]
@@ -151,63 +250,113 @@ class SubprocessStageExecutor:
         if stage=='catalog':
             outputs=[];count=0;writes=0
             if 'selected' in sources:
-                rid='it-global-'+time.strftime('%Y%m%d')+'-'+digest([run['runId'],'selected'])[:12]
-                result=self._call(['scripts/collect-global-opportunity.py','--run-id',rid,'--pages','40','--worker','--by-category'],
-                                  'global-catalog')
-                if result['state']!='completed':return result
-                if (result.get('payload') or {}).get('state')!='completed' or (result.get('payload') or {}).get('published') is not True:
-                    return {**result,'state':'failed','complete':False,'errorCode':'global_catalog_not_published'}
+                frozen=accepted_partial_selection(self.root,market)
+                if frozen:
+                    result={'state':'completed','itemCount':frozen['products'],'complete':True,'platformWrites':0,
+                            'scope':{'market':market,'coverage':'operator_accepted_partial'},
+                            'payload':{'state':'accepted_partial','published':True,'reusedPublishedSnapshot':frozen}}
+                else:
+                    rid=f'{market}-global-'+time.strftime('%Y%m%d')+'-'+digest([run['runId'],'selected'])[:12]
+                    collect=['scripts/collect-global-opportunity.py',*market_flag,'--run-id',rid,'--pages','40','--worker']
+                    from lib.operations_policy import full_catalog_collection_mode
+                    collection_mode=full_catalog_collection_mode(self.root,market,self.clock())
+                    if collection_mode['mode']=='category':collect.append('--by-category')
+                    result=self._call(collect,'global-catalog')
+                    if result['state']!='completed':return result
+                    if (result.get('payload') or {}).get('state')!='completed' or (result.get('payload') or {}).get('published') is not True:
+                        return {**result,'state':'failed','complete':False,'errorCode':'global_catalog_not_published'}
+                    result.setdefault('scope',{})['collectionMode']=collection_mode
                 outputs.append(result);count+=int((result.get('payload') or {}).get('products') or 0)
-                prepared=self._call(['scripts/select-global-products.py','prepare'],'global-selection-prepare')
-                outputs.append(prepared)
-                if prepared['state']!='completed':return prepared|{'platformWrites':writes}
-                verified=self._call(['scripts/select-global-products.py','verify','--limit','600'],'global-selection-verify')
-                outputs.append(verified)
-                if verified['state']!='completed':return verified|{'platformWrites':writes}
-                verify_payload=verified.get('payload') or {};verify_states=verify_payload.get('states') or {}
+                prepared=self._call(['scripts/select-global-products.py','prepare',*market_flag],'global-selection-prepare')
+                if prepared is None:pass
+                else:
+                    outputs.append(prepared)
+                    if prepared['state']!='completed':return prepared|{'platformWrites':writes}
+                verified=self._call(['scripts/select-global-products.py','verify',*market_flag,'--limit','600'],'global-selection-verify')
+                if verified is None:pass
+                else:
+                    outputs.append(verified)
+                    if verified['state']!='completed':return verified|{'platformWrites':writes}
+                verify_payload=(verified or {}).get('payload') or {};verify_states=verify_payload.get('states') or {}
                 verify_unresolved=sum(int(verify_states.get(key) or 0) for key in
                   ('submitting','awaiting_verification','result_unknown','needs_review'))
                 if verify_payload.get('error') or verify_unresolved:
-                    return {**verified,'state':'needs_human','complete':False,
-                            'errorCode':str(verify_payload.get('error') or 'global_selection_unresolved')[:120],
-                            'platformWrites':writes}
-                for _ in range(20):
-                    selected=self._call(['scripts/select-global-products.py','execute-fast','--limit','600','--native-listing'],
-                                        'global-selection')
-                    outputs.append(selected);writes+=selected.get('platformWrites',0)
-                    if selected['state']!='completed':return selected|{'platformWrites':writes}
-                    payload=selected.get('payload') or {};states=payload.get('states') or {};error=payload.get('error')
-                    if error:
-                        return {**selected,'state':'needs_human','complete':False,
-                                'errorCode':str(error)[:120],'platformWrites':writes}
-                    unresolved=sum(int(states.get(key) or 0) for key in
+                    auth=selection_auth_unknown(self.root,market)
+                    if auth:
+                        relogin=self._relogin_selection_account(store,market,run['runId'],auth)
+                        if relogin['state']!='completed':return {'state':'needs_human','itemCount':0,'complete':False,
+                          'platformWrites':writes,'errorCode':relogin['errorCode'],'scope':{'sources':sources},'payload':{}}
+                    recovered=self._call(['scripts/select-global-products.py','execute-fast',*market_flag,
+                      '--limit','100','--native-listing','--reconcile-rejections','--skip-after-readback',
+                      '--lanes','8','--qps','8','--group-size','100'],
+                      'global-selection-recover')
+                    outputs.append(recovered);writes+=recovered.get('platformWrites',0)
+                    recovered_payload=recovered.get('payload') or {};recovered_states=recovered_payload.get('states') or {}
+                    recovered_unresolved=sum(int(recovered_states.get(key) or 0) for key in
                       ('submitting','awaiting_verification','result_unknown','needs_review'))
-                    if unresolved:
-                        return {**selected,'state':'needs_human','complete':False,
-                                'errorCode':'global_selection_unresolved','platformWrites':writes}
-                    if not int(states.get('pending') or 0):break
-                else:
-                    return {'state':'failed','itemCount':count,'complete':False,'platformWrites':writes,
-                            'errorCode':'global_selection_iteration_limit','scope':{'sources':sources},'payload':{}}
+                    if recovered['state']!='completed' or recovered_payload.get('error') or recovered_unresolved:
+                        return {**recovered,'state':'needs_human','complete':False,
+                                'errorCode':str(recovered_payload.get('error') or 'global_selection_unresolved')[:120],
+                                'platformWrites':writes}
+                if True:
+                    for _ in range(40):
+                        selected=self._call(['scripts/select-global-products.py','execute-fast',*market_flag,'--limit','300',
+                          '--native-listing','--reconcile-rejections','--skip-after-readback',
+                          '--lanes','8','--qps','8','--group-size','100'],
+                                            'global-selection')
+                        outputs.append(selected);writes+=selected.get('platformWrites',0)
+                        if selected['state']!='completed':return selected|{'platformWrites':writes}
+                        payload=selected.get('payload') or {};states=payload.get('states') or {};error=payload.get('error')
+                        auth=selection_auth_unknown(self.root,market)
+                        if auth:
+                            relogin=self._relogin_selection_account(store,market,run['runId'],auth)
+                            if relogin['state']!='completed':return {'state':'needs_human','itemCount':count,'complete':False,
+                              'platformWrites':writes,'errorCode':relogin['errorCode'],'scope':{'sources':sources},'payload':payload}
+                            selected=self._call(['scripts/select-global-products.py','execute-fast',*market_flag,
+                              '--limit','100','--native-listing','--reconcile-rejections','--skip-after-readback',
+                              '--lanes','8','--qps','8','--group-size','100'],'global-selection-auth-recover')
+                            outputs.append(selected);writes+=selected.get('platformWrites',0)
+                            payload=selected.get('payload') or {};states=payload.get('states') or {};error=payload.get('error')
+                        if error:
+                            return {**selected,'state':'needs_human','complete':False,
+                                    'errorCode':str(error)[:120],'platformWrites':writes}
+                        unresolved=sum(int(states.get(key) or 0) for key in
+                          ('submitting','awaiting_verification','result_unknown','needs_review'))
+                        if unresolved:
+                            return {**selected,'state':'needs_human','complete':False,
+                                    'errorCode':'global_selection_unresolved','platformWrites':writes}
+                        if not int(states.get('pending') or 0):break
+                    else:
+                        return {'state':'failed','itemCount':count,'complete':False,'platformWrites':writes,
+                                'errorCode':'global_selection_iteration_limit','scope':{'sources':sources},'payload':{}}
+                selected_run=self.root/f"var/cycle-catalog-{market}-selected-{time.strftime('%Y%m%d')}-{digest([run['runId'],'selected-catalog'])[:10]}.json"
+                for pass_no in range(20):
+                    synced=self._call(['scripts/sync-cycle-catalog.py',*market_flag,'--source','selected','--run',str(selected_run),'--max-requests','150'],f'selected-catalog-{pass_no:02d}')
+                    outputs.append(synced)
+                    if synced['state']!='completed':return synced|{'platformWrites':writes}
+                    sync_payload=synced.get('payload') or {}
+                    if sync_payload.get('status') in {'completed','already_completed'}:break
+                else:return {'state':'failed','itemCount':count,'complete':False,'platformWrites':writes,
+                            'errorCode':'selected_catalog_iteration_limit','scope':{'sources':sources},'payload':{}}
             if 'campaign' in sources:
-                join_status=self._call(['scripts/campaign-join.py','status'],'campaign-join-status')
+                join_status=self._call(['scripts/campaign-join.py','status',*market_flag],'campaign-join-status')
                 if join_status['state']!='completed':return join_status|{'platformWrites':writes}
                 join_payload=join_status.get('payload') or {}
                 if join_payload.get('available') and join_payload.get('unresolved'):
-                    verified=self._call(['scripts/campaign-join.py','verify'],'campaign-join-verify')
+                    verified=self._call(['scripts/campaign-join.py','verify',*market_flag],'campaign-join-verify')
                     if verified['state']!='completed':return verified|{'platformWrites':writes}
                     verified_payload=verified.get('payload') or {}
                     if verified_payload.get('unresolved'):
                         return {**verified,'state':'needs_human','complete':False,
                                 'errorCode':'campaign_join_result_unknown','platformWrites':writes}
-                joined=self._call(['scripts/campaign-join.py','join-all','--confirm'],'campaign-join')
+                joined=self._call(['scripts/campaign-join.py','join-all',*market_flag,'--confirm'],'campaign-join')
                 writes+=joined.get('platformWrites',0);joined_payload=joined.get('payload') or {}
                 if joined['state']!='completed':return joined|{'platformWrites':writes}
                 if joined_payload.get('state')=='needs_verification' or joined_payload.get('unresolved'):
                     return {**joined,'state':'needs_human','complete':False,
                             'errorCode':'campaign_join_result_unknown','platformWrites':writes}
                 outputs.append(joined)
-                result=self._call(['scripts/campaign-collect.py','--max-requests','150','--passes','200','--screen'],
+                result=self._call(['scripts/campaign-collect.py',*market_flag,'--max-requests','150','--passes','200','--screen'],
                                   'campaign-catalog')
                 if result['state']!='completed':return result|{'platformWrites':writes}
                 evidence=result.get('payload') or {}
@@ -220,28 +369,41 @@ class SubprocessStageExecutor:
         if stage=='taplink_prepare':
             writes=0;outputs=[];count=0
             for route in sources:
-                prepared=self._call(['scripts/catalog-link-batch.py','--route',route,'--limit','200','--passes','80',
-                  '--creates','0','--lanes','9','--qps','12','--seed'],'taplink-read-'+route)
-                outputs.append(prepared)
-                if prepared['state']!='completed':return prepared|{'platformWrites':writes}
-                names=self._call(['scripts/catalog-names.py','prepare','--all'],'taplink-short-names-'+route)
+                if market!='it':
+                    seeded=self._call(['scripts/catalog-link-batch.py','--route',route,'--limit','200','--passes','0',
+                      '--creates','0','--lanes','9','--qps','12','--seed',
+                      *(['--scope','pool'] if route=='selected' else []),*market_flag],'taplink-seed-'+route)
+                    outputs.append(seeded)
+                    if seeded['state']!='completed':return seeded|{'platformWrites':writes}
+                else:
+                    prepared=self._call(['scripts/catalog-link-batch.py','--route',route,'--limit','200','--passes','80',
+                      '--creates','0','--lanes','9','--qps','12','--seed'],'taplink-read-'+route)
+                    outputs.append(prepared)
+                    if prepared['state']!='completed':return prepared|{'platformWrites':writes}
+                names=self._call(['scripts/catalog-names.py','prepare','--all',*market_flag],'taplink-short-names-'+route)
                 outputs.append(names);name_payload=names.get('payload') or {}
                 if names['state']!='completed' or int(name_payload.get('missing') or 0)>0:
                     return {**names,'state':'needs_human','complete':False,
                             'errorCode':'catalog_short_names_incomplete','platformWrites':writes}
+                if market!='it':
+                    prepared=self._call(['scripts/catalog-link-batch.py','--route',route,'--limit','200','--passes','80',
+                      '--creates','0','--lanes','9','--qps','12',*market_flag],'taplink-read-'+route)
+                    outputs.append(prepared)
+                    if prepared['state']!='completed':return prepared|{'platformWrites':writes}
                 created=self._call(['scripts/catalog-link-batch.py','--route',route,'--limit','200','--passes','0',
-                  '--creates','200','--lanes','9','--qps','12'],'taplink-create-'+route)
+                  '--creates','200','--lanes','9','--qps','12',*market_flag],'taplink-create-'+route)
                 writes+=created.get('platformWrites',0);outputs.append(created)
                 if created['state']!='completed':return created|{'platformWrites':writes}
                 count+=max(prepared.get('itemCount',0),created.get('itemCount',0))
             return {'state':'completed','itemCount':count,
                     'complete':True,'platformWrites':writes,'scope':{'sources':sources},'payload':{'routes':outputs}}
         if stage=='kalodata':
-            sales=self._call(['scripts/leads-run.py','--limit','5000','--max-pages','20'],'kalodata-sales')
+            sales=self._call(['scripts/leads-run.py',*market_flag,'--limit','5000','--max-pages','20'],'kalodata-sales')
             stopped=str((sales.get('payload') or {}).get('stopped') or sales.get('errorCode') or '')
             state='quota_exhausted' if stopped=='kalodata_daily_quota_exhausted' else sales['state']
             completed=int((sales.get('payload') or {}).get('done') or 0)
             if state!='completed':return {**sales,'state':state,'complete':False,'itemCount':completed,'scope':{'sources':sources,'aCompleted':completed}}
+            if market!='it':return {**sales,'state':'completed','complete':True,'itemCount':completed,'scope':{'sources':sources,'aCompleted':completed}}
             initialized=self._call(['scripts/kalodata-video-crawl.py','init'],'kalodata-video-init')
             generation=(initialized.get('payload') or {}).get('generationId')
             if initialized['state']!='completed' or not generation:return {**initialized,'state':'failed','complete':False,'errorCode':'video_generation_missing'}
@@ -253,6 +415,31 @@ class SubprocessStageExecutor:
             return {**videos,'state':video_state,'complete':video_state=='completed','itemCount':completed+video_done,
                     'scope':{'sources':sources,'aCompleted':completed,'bGeneration':generation,'bCompleted':video_done}}
         if stage=='oecid':
+            if market!='it':
+                total=0;outputs=[];result=None;left=0;auth_recoveries=0
+                for _ in range(500):
+                    result=self._call(['scripts/market-identity.py','run','--market',market,'--limit','50'],'oecid')
+                    outputs.append(result)
+                    if result['state']!='completed':
+                        if result.get('errorCode')=='market_identity_auth_required' and auth_recoveries<2:
+                            relogin=self._relogin_market_account(store,market,'communications',run['runId'],
+                                                                f'oecid-{auth_recoveries}')
+                            if relogin['state']=='completed':auth_recoveries+=1;outputs.append(relogin);continue
+                        return result|{'itemCount':total,'scope':{'sources':sources,'pending':None,
+                                                                 'authRecoveries':auth_recoveries}}
+                    total+=int((result.get('payload') or {}).get('newBindings') or 0)
+                    pending=self._call(['scripts/market-identity.py','status','--market',market,'--limit','1'],'oecid-status')
+                    if pending['state']!='completed':return pending|{'itemCount':total,'scope':{'sources':sources,'pending':None}}
+                    left=len((pending.get('payload') or {}).get('items') or [])
+                    if not left:break
+                    if not int((result.get('payload') or {}).get('resolvedHandles') or 0) and not int((result.get('payload') or {}).get('unresolvedHandles') or 0):
+                        return {**result,'state':'needs_human','complete':False,'itemCount':total,
+                                'errorCode':'identity_queue_stalled','scope':{'sources':sources,'pending':left}}
+                else:return {'state':'failed','itemCount':total,'complete':False,'platformWrites':0,
+                            'errorCode':'identity_iteration_limit','scope':{'sources':sources,'pending':left},'payload':{}}
+                return {'state':'completed','itemCount':total,'complete':True,'platformWrites':0,
+                        'scope':{'sources':sources,'pending':0,'authRecoveries':auth_recoveries},
+                        'payload':{'passes':outputs}}
             submitted=0
             for _ in range(500):
                 handoff=self._call(['scripts/second-cycle-identities.py','submit'],'oecid-submit')
@@ -276,7 +463,7 @@ class SubprocessStageExecutor:
                 result.update(state='needs_human',complete=False,errorCode=('identity_'+reason)[:120])
             return result
         if stage=='send_pool':
-            result=self._call(['scripts/lead-pool.py','status','--limit','1'],'send-pool')
+            result=self._call(['scripts/lead-pool.py','status','--limit','1',*market_flag],'send-pool')
             result['itemCount']=int(((result.get('payload') or {}).get('counts') or {}).get('positions') or 0);return result
         raise CycleError('workflow_stage_invalid')
 
@@ -291,25 +478,64 @@ def tick(root,*,now=None,executor=None):
     from lib.jobs import load
     jobs=load(root)
     with CycleStore(database) as store:
-        snapshot=workflow_status(store);automation=snapshot['setting'];current=snapshot['current']
-        _background(root,store,jobs,automation,stamp)
-        due=due_slot(root,stamp,automation);progress['nextDue']={'workflow':due}
-        if not current or current['state'] not in ('queued','running','stop_requested'):
-            today=_day_start(stamp)
-            exists=store.db.execute('SELECT 1 FROM workflow_run WHERE market=? AND scheduled_at>=?',('it',today)).fetchone()
-            if automation['automaticOperationsEnabled'] and stamp>=due and not exists:
-                current=create_run(store,market='it',trigger_source='schedule',scheduled_at=due)
+        from lib.market_registry import enabled_market_keys
+        markets=enabled_market_keys(root);snapshots={market:workflow_status(store,market) for market in markets}
+        it_automation=snapshots.get('it',{'setting':{'automaticOperationsEnabled':False}})['setting']
+        any_automation=any(snapshot['setting']['automaticOperationsEnabled'] for snapshot in snapshots.values())
+        _background(root,store,jobs,it_automation,stamp,maintenance_enabled=any_automation)
+        from lib.operations_policy import load_policy
+        policy=load_policy(root);active=[]
+        for market,snapshot in snapshots.items():
+            automation=snapshot['setting'];current=snapshot['current'];sources,due_times=_scheduled_sources(root,store,market,stamp,automation,policy)
+            future=[value for value in due_times.values() if value>stamp]
+            progress['nextDue']['workflow' if market=='it' else f'workflow:{market}']=min(future) if future else min(due_times.values())
+            if not current or current['state'] not in ('queued','running','stop_requested'):
+                if automation['automaticOperationsEnabled'] and sources:
+                    scheduled=min(due_times[source] for source in sources)
+                    current=create_run(store,market=market,trigger_source='schedule',scheduled_at=scheduled,sources=sources)
+            if current and current['state'] in ('queued','running','stop_requested'):active.append(current)
+        # Bring other markets to the same read-only Kalodata barrier before starting it.  Once two
+        # are ready, execute at most the policy cap in parallel; all write stages remain serial.
+        def queued(run):return next((row for row in run['stages'] if row['state']=='queued'),None)
+        non_kalodata=[row for row in active if queued(row) and queued(row)['stage']!='kalodata']
+        priority=lambda row:(0 if row.get('triggerSource') in ('manual','recovery') else 1,
+                             row['scheduledAt'],row['market'])
+        current=min(non_kalodata or active,key=priority) if active else None
         if not current or current['state'] not in ('queued','running','stop_requested'):
             _write(status_path(root),progress);return progress
-        progress['runId']=current['runId']
+        market=current['market'];progress['runId']=current['runId'];progress['market']=market
         if current['state']=='stop_requested':
             with store.tx():
                 store.db.execute("UPDATE workflow_stage_run SET state='stopped',finished_at=? WHERE run_id=? AND state IN ('queued','waiting_upstream')",(stamp,current['runId']))
                 store.db.execute("UPDATE workflow_run SET state='stopped',finished_at=? WHERE run_id=?",(stamp,current['runId']))
             progress['stage']='stopped';_write(status_path(root),progress);return progress
-        stage=next((row for row in current['stages'] if row['state']=='queued'),None)
+        stage=queued(current)
         if not stage:_write(status_path(root),progress);return progress
-        progress['stage']=stage['stage'];progress['lastAttempt'][stage['stage']]=stamp;_write(status_path(root),progress)
+        kalodata_ready=sorted([row for row in active if queued(row) and queued(row)['stage']=='kalodata'],
+                              key=lambda row:(row['scheduledAt'],row['market']))
+        if stage['stage']=='kalodata' and len(kalodata_ready)>1:
+            batch=kalodata_ready[:policy['kalodataMaxParallelMarkets']]
+            progress['runId']=batch[0]['runId'];progress['market']=batch[0]['market'];progress['stage']='kalodata'
+            progress['parallelMarkets']=[row['market'] for row in batch]
+            for row in batch:
+                key=f"{row['market']}:kalodata" if row['market']!='it' else 'kalodata'
+                progress['lastAttempt'][key]=stamp
+                prior=next((item['outputGenerationId'] for item in reversed(row['stages'][:queued(row)['position']]) if item['outputGenerationId']),None)
+                start_stage(store,row['runId'],'kalodata',input_generation_id=prior)
+            _write(status_path(root),progress)
+            with ThreadPoolExecutor(max_workers=len(batch)) as pool:
+                futures=[pool.submit(executor.execute,None,row,'kalodata',jobs) for row in batch]
+                results=[future.result() for future in futures]
+            for row,result in zip(batch,results):
+                finish_stage(store,row['runId'],'kalodata',state=result['state'],item_count=result.get('itemCount',0),
+                  scope=result.get('scope'),payload=result.get('payload'),complete=result.get('complete',True),
+                  platform_writes=result.get('platformWrites',0),error_code=result.get('errorCode'))
+                key=f"{row['market']}:kalodata" if row['market']!='it' else 'kalodata'
+                if result['state'] in ('completed','quota_exhausted','skipped'):progress['lastSuccess'][key]=stamp
+                elif progress['error'] is None:progress['error']=result.get('errorCode') or result['state']
+            _write(status_path(root),progress);return progress
+        stage_key=stage['stage'] if market=='it' else f"{market}:{stage['stage']}"
+        progress['stage']=stage['stage'];progress['lastAttempt'][stage_key]=stamp;_write(status_path(root),progress)
         previous=next((row['outputGenerationId'] for row in reversed(current['stages'][:stage['position']]) if row['outputGenerationId']),None)
         start_stage(store,current['runId'],stage['stage'],input_generation_id=previous)
         try:result=executor.execute(store,current,stage['stage'],jobs)
@@ -319,12 +545,12 @@ def tick(root,*,now=None,executor=None):
         finish_stage(store,current['runId'],stage['stage'],state=result['state'],item_count=result.get('itemCount',0),
           scope=result.get('scope'),payload=result.get('payload'),complete=result.get('complete',True),
           platform_writes=result.get('platformWrites',0),error_code=result.get('errorCode'))
-        if result['state'] in ('completed','quota_exhausted','skipped'):progress['lastSuccess'][stage['stage']]=stamp
+        if result['state'] in ('completed','quota_exhausted','skipped'):progress['lastSuccess'][stage_key]=stamp
         else:progress['error']=result.get('errorCode') or result['state']
     _write(status_path(root),progress);return progress
 
 
-def _background(root,store,jobs,automation,stamp):
+def _background(root,store,jobs,automation,stamp,maintenance_enabled=None):
     """Keep independent monitors/runtimes alive without treating them as serial workflow stages."""
     enabled=jobs['jobs']
     from lib.job_run import start as start_job,state as job_state
@@ -343,7 +569,16 @@ def _background(root,store,jobs,automation,stamp):
         if (enabled['continuous_send']['enabled'] or control['automaticEnabled']) and control['automaticEnabled'] and \
            not control['stopRequested'] and not worker_state(root)['running']:
             launch_worker(root)
-    if automation['automaticOperationsEnabled']:
+    from lib.operations_workflow import setting as market_setting
+    from lib.market_registry import enabled_market_keys
+    from lib.market_send_worker import launch as launch_market_sender,state as market_sender_state
+    for market in enabled_market_keys(root):
+        if market=='it':continue
+        current=market_setting(store,market)
+        if current['continuousSendEnabled'] and not market_sender_state(root,market)['running']:
+            try:launch_market_sender(root,market)
+            except OSError:pass
+    if (automation['automaticOperationsEnabled'] if maintenance_enabled is None else maintenance_enabled):
         from lib.account_identity import assignments,current_generation,next_due,request_maintenance,status as account_status
         try:rows=assignments(root)
         except (OSError,ValueError):rows=[]

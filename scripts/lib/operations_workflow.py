@@ -10,13 +10,16 @@ import json
 import re
 import time
 from datetime import datetime
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
+from lib.market_registry import enabled_market_keys, supports
 from lib.second_cycle import CycleError, digest, encoded
 
 
 BEIJING = ZoneInfo("Asia/Shanghai")
-MARKETS = {"it"}
+ROOT = Path(__file__).resolve().parents[2]
+MARKETS = frozenset(enabled_market_keys(ROOT))
 TRIGGERS = {"manual", "schedule", "recovery"}
 STAGES = (
     "taplink_clean",
@@ -89,6 +92,22 @@ def save_setting(store, market, request_id, expected_revision, changes):
     }
     if not changes or set(changes) - allowed or any(type(value) is not bool for value in changes.values()):
         raise CycleError("workflow_setting_invalid")
+    if changes.get("fullCatalogWeeklyEnabled") and not supports(ROOT, market, "fullManagedCatalog"):
+        raise CycleError("full_catalog_not_supported")
+    if changes.get("continuousSendEnabled") is True:
+        from lib.template_library import require_send_template_approval
+        require_send_template_approval(store, ROOT, market)
+    if market != 'it' and (changes.get('automaticOperationsEnabled') or changes.get('continuousSendEnabled')):
+        from lib.account_identity import current_generation
+        from lib.market_accounts import load_config
+        pair=load_config(ROOT)['markets'][market];verified=set()
+        for account in pair['accounts']:
+            generation=current_generation(store,market,account)
+            verified.update(name for name,row in (generation or {}).get('capabilities',{}).items()
+                            if row.get('state')=='verified')
+        required={'campaign','campaign_join','catalog_read','inbox_read','message_send','oecid_find','taplink'}
+        if supports(ROOT,market,'fullManagedCatalog'):required.add('product_select')
+        if not required<=verified:raise CycleError('market_automation_capabilities_pending')
     payload = encoded({"market": market, "changes": changes})
     with store.tx():
         prior = store.db.execute(
@@ -147,7 +166,7 @@ def applicable_sources(store, market="it", scheduled_at=None):
     stamp = store.clock() if scheduled_at is None else float(scheduled_at)
     monday = datetime.fromtimestamp(stamp, BEIJING).weekday() == 0
     sources = ["campaign"]
-    if monday and current["fullCatalogWeeklyEnabled"]:
+    if monday and current["fullCatalogWeeklyEnabled"] and supports(ROOT, market, "fullManagedCatalog"):
         sources.insert(0, "selected")
     return sources
 
@@ -166,6 +185,8 @@ def create_run(store, *, market="it", trigger_source="manual", scheduled_at=None
     sources = list(sources) if sources is not None else applicable_sources(store, market, stamp)
     if not sources or any(source not in ('selected','campaign') for source in sources) or len(set(sources))!=len(sources):
         raise CycleError('workflow_sources_invalid')
+    if 'selected' in sources and not supports(ROOT, market, 'fullManagedCatalog'):
+        raise CycleError('full_catalog_not_supported')
     if only_stage is not None and only_stage not in STAGES:raise CycleError('workflow_stage_invalid')
     if trigger_source == "schedule" and not current["automaticOperationsEnabled"]:
         raise CycleError("workflow_automation_disabled")
@@ -188,7 +209,8 @@ def create_run(store, *, market="it", trigger_source="manual", scheduled_at=None
         for position, stage in enumerate(STAGES):
             state = ('skipped' if only_stage is not None and stage!=only_stage else
                      "skipped" if stage == "taplink_clean" and not (
-                         datetime.fromtimestamp(stamp, BEIJING).weekday() == 0
+                         datetime.fromtimestamp(stamp, BEIJING).weekday() == 0 and
+                         supports(ROOT, market, 'fullManagedCatalog')
                      ) else "waiting_upstream")
             finished = store.clock() if state == "skipped" else None
             store.db.execute(

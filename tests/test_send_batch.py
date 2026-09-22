@@ -157,7 +157,7 @@ class Preview(unittest.TestCase):
         live=self.run_preview(slots,['p0','p1'],count=1,template='live_focus')
         self.assertEqual(standard['samples'][0]['template'],'standard')
         self.assertEqual(live['samples'][0]['template'],'live_focus')
-        self.assertIn('prossima LIVE',live['samples'][0]['messageIt'])
+        self.assertIn('Conosci già molto bene',live['samples'][0]['messageIt'])
         self.assertNotEqual(standard['previewHash'],live['previewHash'])
         self.assertEqual(live['authorization']['messageTemplate'],'live_focus')
 

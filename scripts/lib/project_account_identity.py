@@ -27,6 +27,7 @@ IM_ID = "/api/v1/affiliate/partner/im/id/get"
 IM_TOKEN = "/api/v1/affiliate/partner/im/token/get"
 CARD_LIST = "/api/v1/affiliate/partner/im/product_list/list"
 SELECTED = "/api/v1/affiliate/partner/product/pick_up/list"
+CAMPAIGNS = "/api/v1/affiliate/partner/campaign/list"
 COOKIE_ROOTS = ("tiktok.com", "tiktokshop.com")
 SESSION_COOKIES = frozenset({"sessionid", "sid_tt", "sid_guard", "sessionid_ss"})
 COOKIE_NAME = re.compile(r"^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$")
@@ -155,16 +156,16 @@ def _autofill(page, context, username, password, timeout_seconds=45):
     return False
 
 
-def _validate_candidate(cfg, account, role, candidate_id):
+def _validate_candidate(cfg, account, market, role, candidate_id, *, full_managed):
     from bdhub.hub.markets import identity_for
     from bdhub.research.commerce_transport import CommerceTransport
 
     class Reader(CommerceTransport):
         READ_ENDPOINTS = frozenset({(INFO, "GET"), (IM_ID, "GET"), (IM_TOKEN, "GET"),
-                                    (CARD_LIST, "GET"), (SELECTED, "POST")})
+                                    (CARD_LIST, "GET"), (SELECTED, "POST"), (CAMPAIGNS, "GET")})
         WRITE_ENDPOINTS = frozenset()
 
-    identity = identity_for("it", account=account, cfg=cfg).require_product_search()
+    identity = identity_for(market, account=account, cfg=cfg).require_product_search()
     reader = Reader(identity, account, allow_write=False)
     def data_of(payload):
         nested = payload.get("data") if isinstance(payload, dict) else None
@@ -183,9 +184,10 @@ def _validate_candidate(cfg, account, role, candidate_id):
                                   payload=None, write=False)
         info = data_of(reader.require_read(info_result))
         markets = (info.get("partner_biz_role_info") or {}).get("market_list", [])
-        matches = [market for market in markets if str(market.get("market_region")) == "8" and
-                   any(str(item.get("partner_id")) == str(identity.partner_id)
-                       for item in market.get("type_list", []))]
+        matches = [row for row in markets if str(row.get("market_region")) == str(identity.im_market) and
+                   any(str(item.get("partner_id")) in {
+                       str(identity.partner_id), str(identity.im_market_partner_id),
+                   } for item in row.get("type_list", []))]
         if len(matches) != 1:
             raise ValueError("market_institution_not_verified")
         market_id = str(matches[0].get("market_id") or "")
@@ -215,7 +217,21 @@ def _validate_candidate(cfg, account, role, candidate_id):
                 raise ValueError("im_card_search_invalid")
             capabilities["im_card_search"] = {"state": "verified", "evidenceRef": evidence}
         else:
-            reader.selected_page(1)
+            query = reader._params() | {"cur_page": 1, "page_size": 1, "status": 0,
+                    "crs_campaign_type": 4, "campaign_list_scene": 2,
+                    "seller_campaign_type": 0, "sort_field": 0}
+            campaign_result = reader._xhr(method="GET", path=CAMPAIGNS, params=query,
+                                          payload=None, write=False)
+            campaign_data = data_of(reader.require_read(campaign_result))
+            campaign_rows = campaign_data.get("campaign")
+            if not isinstance(campaign_rows, list):
+                raise ValueError("campaign_read_invalid")
+            capabilities["campaign"] = {"state": "verified", "evidenceRef": evidence}
+            if full_managed:
+                reader.selected_page(1)
+                capabilities["full_managed_catalog"] = {
+                    "state": "verified", "evidenceRef": evidence,
+                }
             capabilities["catalog_read"] = {"state": "verified", "evidenceRef": evidence}
         return {"institutionFingerprint": digest([str(identity.im_market_partner_id), market_id]),
                 "capabilities": capabilities}
@@ -226,6 +242,15 @@ def _validate_candidate(cfg, account, role, candidate_id):
 class ProjectAccountIdentityAdapter:
     def __init__(self, root):
         self.root = Path(root).resolve()
+        self.context = None
+
+    def prepare(self, market, account, role):
+        from lib.market_accounts import load_config
+        pair = load_config(self.root)["markets"].get(market)
+        if not pair or pair.get("roles", {}).get(role) != account:
+            raise ValueError("account_assignment_missing")
+        self.context = {"market": market, "account": account, "role": role,
+                        "fullManaged": bool((pair.get("catalogCapabilities") or {}).get("fullManaged"))}
 
     def drain(self, account):
         # Candidates use isolated profiles and the global maintenance queue is single-concurrency.
@@ -265,11 +290,13 @@ class ProjectAccountIdentityAdapter:
         os.close(descriptor)
 
     def _capture(self, account_name, *, headed, timeout_seconds):
+        if not self.context or self.context["account"] != account_name:
+            return {"ok": False, "errorCode": "account_assignment_missing"}
+        market, role = self.context["market"], self.context["role"]
         config, cfg, base_account = _safe_account(self.root, account_name)
         del config
         if headed and (not base_account.username or not base_account.password):
             return {"ok": False, "errorCode": "saved_credentials_missing"}
-        role = "communications" if account_name == "acc6" else "supply"
         candidate_id, generation, profile, headers = self._candidate_paths(account_name)
         result = None
         context = None
@@ -277,13 +304,13 @@ class ProjectAccountIdentityAdapter:
         try:
             self._prepare_profile(account_name, profile)
             candidate_account = replace(base_account, profile_dir=profile, headers_json=headers,
-                                        market="it")
+                                        market=market)
             from bdhub.enrich.identity_store import (IdentityMeta, write_verified_browser_cookies,
                                                       write_verified_identity)
             from bdhub.hub.markets import identity_for
             from playwright.sync_api import sync_playwright
 
-            identity = identity_for("it", account=candidate_account, cfg=cfg)
+            identity = identity_for(market, account=candidate_account, cfg=cfg)
             playwright = sync_playwright().start()
             context = playwright.chromium.launch_persistent_context(
                 str(profile), headless=not headed, no_viewport=headed,
@@ -326,16 +353,20 @@ class ProjectAccountIdentityAdapter:
                     continue
                 last_fingerprint, last_attempt = fingerprint, time.monotonic()
                 write_verified_identity(headers, bundle, IdentityMeta(
-                    account=account_name, market="it", verified_at=_utc_now(),
+                    account=account_name, market=market, verified_at=_utc_now(),
                     verification_method="project_browser_login_readonly_validation"))
-                write_verified_browser_cookies(profile, account_name, "it", list(bundle.browser_cookies))
+                write_verified_browser_cookies(profile, account_name, market, list(bundle.browser_cookies))
                 try:
-                    validation = _validate_candidate(cfg, candidate_account, role, candidate_id)
+                    validation = _validate_candidate(
+                        cfg, candidate_account, market, role, candidate_id,
+                        full_managed=self.context["fullManaged"],
+                    )
                 except Exception:
                     active_page.wait_for_timeout(1500)
                     continue
                 result = {"ok": True, "candidateId": candidate_id,
                           "candidateDir": str(generation),
+                          "market": market, "role": role,
                           "identity": {"browserRef": f"project-browser:{candidate_id}",
                                        "httpRef": f"project-http:{candidate_id}",
                                        "imRef": f"project-im:{candidate_id}",
@@ -378,12 +409,14 @@ class ProjectAccountIdentityAdapter:
         candidate_id = result.get("candidateId") if isinstance(result, dict) else None
         if not isinstance(candidate_id, str):
             return
-        for account in ("acc6", "acc9"):
+        from lib.account_identity import assignments
+        accounts = tuple(row["account"] for row in assignments(self.root))
+        for account in accounts:
             current = project_identity_paths(self.root, account)
             if current and current["candidateId"] == candidate_id:
                 return
         path = self.root / "var/account-identities"
-        for account in ("acc6", "acc9"):
+        for account in accounts:
             candidate = path / account / "generations" / candidate_id
             if candidate.resolve().is_relative_to(path.resolve()):
                 shutil.rmtree(candidate, ignore_errors=True)

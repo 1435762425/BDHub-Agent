@@ -1,4 +1,4 @@
-export type IdentityMarket = "it" | "mx" | "br";
+export type IdentityMarket = "it" | "br" | "my" | "uk" | "mx";
 export type IdentityDatasetStatus = "ready" | "not_imported";
 export type IdentityListStatus = "verified" | "pending";
 export type ProfileFieldStatus = "absent" | "no_value" | "unauthorized" | "error" | "zero" | "value";

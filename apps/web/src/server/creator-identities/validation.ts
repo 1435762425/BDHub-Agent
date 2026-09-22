@@ -14,7 +14,7 @@ export function parseCreatorIdentityQuery(url:string):CreatorIdentityQuery {
     return {view,creatorId};
   }
   const market=(params.get("market")||"it") as IdentityMarket;
-  if(market!=="it")throw new InputError("此工作台当前只启用意大利市场。");
+  if(!["it","br","my","uk"].includes(market))throw new InputError("此市场尚未启用。");
   if(view==="overview")return {view,market};
   if(view==="list"){
     const status=params.get("status")||"verified",q=(params.get("q")||"").trim().replace(/^@/,"");

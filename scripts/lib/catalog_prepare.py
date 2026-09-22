@@ -40,6 +40,9 @@ CREATE TABLE IF NOT EXISTS catalog_tap_member(
  product_status TEXT,governed INTEGER,unavailable_type TEXT,stock TEXT,list_name TEXT,
  observed REAL NOT NULL,PRIMARY KEY(list_id,pid));
 CREATE INDEX IF NOT EXISTS catalog_tap_member_pid ON catalog_tap_member(pid);
+CREATE TABLE IF NOT EXISTS catalog_tap_scan(
+ market TEXT NOT NULL,source TEXT NOT NULL,campaign_id TEXT NOT NULL,observed REAL NOT NULL,total INTEGER NOT NULL,
+ PRIMARY KEY(market,source,campaign_id));
 '''
 
 def percent_raw(value):
@@ -74,8 +77,8 @@ def choose_existing_batch(cards,policy):
     return max(accepted,key=lambda c:(Decimal(str(c['creatorRaw'])),c.get('previouslyUsed') is True,str(c.get('listId',''))))
 
 class CatalogPreparation:
-    def __init__(self,root):
-        self.root=Path(root)
+    def __init__(self,root,market='it'):
+        self.root=Path(root);self.market=market
         self.ledger_db=Path(root)/'var/catalog-links.sqlite'
         self.db=sqlite3.connect(self.ledger_db,timeout=15);self.db.row_factory=sqlite3.Row
         self.db.executescript(SCHEMA)
@@ -95,7 +98,13 @@ DROP TABLE catalog_prepare_reuse_old;''')
     def run_id(self,scope):
         return 'catalog-prepare-'+digest(scope)[:24]
     def open_run(self,scope):
-        if not isinstance(scope,dict) or scope.get('market')!='it' or scope.get('account')!='acc9':raise ValueError('catalog_prepare_scope_invalid')
+        from lib.market_accounts import load_config
+        try:supply=(load_config(self.root)['markets'].get(self.market) or {}).get('roles',{}).get('supply')
+        except FileNotFoundError:
+            if self.market!='it':raise
+            supply='acc9'
+        if not isinstance(scope,dict) or scope.get('market')!=self.market or scope.get('account')!=supply:
+            raise ValueError('catalog_prepare_scope_invalid')
         id=self.run_id(scope)
         with self.db:self.db.execute('INSERT OR IGNORE INTO catalog_prepare_run VALUES(?,?,?,?,?,?)',(id,scope.get('institution'),scope['market'],scope.get('sourceRun'),encoded(scope),time.time()))
         return id
@@ -106,8 +115,12 @@ DROP TABLE catalog_prepare_reuse_old;''')
             for it in items:
                 pid=str(it['pid']);cid=str(it.get('campaignId') or '');src=it.get('catalogSource') or 'selected'
                 if not pid.isdigit() or not cid.isdigit() or src not in ('selected','campaign'):raise ValueError('catalog_prepare_item_invalid')
+                title=str(it.get('title') or '')[:500];now=time.time()
                 added+=self.db.execute("INSERT OR IGNORE INTO catalog_prepare_item(run_id,pid,campaign_id,catalog_source,state,title,updated) VALUES(?,?,?,?,'pending',?,?)",
-                    (run_id,pid,cid,src,str(it.get('title') or '')[:500],time.time())).rowcount
+                    (run_id,pid,cid,src,title,now)).rowcount
+                if title:
+                    self.db.execute("UPDATE catalog_prepare_item SET title=? WHERE run_id=? AND pid=? AND campaign_id=? AND catalog_source=? AND (title IS NULL OR title='')",
+                                    (title,run_id,pid,cid,src))
         return added
     def item(self,run_id,pid,cid,src='selected'):
         r=self.db.execute('SELECT * FROM catalog_prepare_item WHERE run_id=? AND pid=? AND campaign_id=? AND catalog_source=?',(run_id,str(pid),str(cid),src)).fetchone()
@@ -189,10 +202,11 @@ DROP TABLE catalog_prepare_reuse_old;''')
                 (state,encoded(card) if card else None,error,now,run_id,str(pid),str(cid),src))
             if state=='ready' and card:
                 self.db.execute('INSERT OR REPLACE INTO catalog_prepare_readback VALUES(?,?,?,?,?,?,?)',(run_id,str(pid),str(cid),src,'verifiedLink',encoded(card),now))
-    def claim_create(self,run_id,now=None,lease=300):
+    def claim_create(self,run_id,now=None,lease=300,pids=None):
         now=now if now is not None else time.time()
         with self.db:
-            r=self.db.execute("SELECT * FROM catalog_prepare_item WHERE run_id=? AND state IN ('missing','prepared') AND lease_until<=? ORDER BY CASE state WHEN 'prepared' THEN 0 ELSE 1 END,updated,pid LIMIT 1",(run_id,now)).fetchone()
+            allowed=encoded(sorted({str(pid) for pid in pids})) if pids is not None else None
+            r=self.db.execute("SELECT * FROM catalog_prepare_item WHERE run_id=? AND state IN ('missing','prepared') AND lease_until<=? AND (? IS NULL OR pid IN (SELECT value FROM json_each(?))) ORDER BY CASE state WHEN 'prepared' THEN 0 ELSE 1 END,updated,pid LIMIT 1",(run_id,now,allowed,allowed)).fetchone()
             if not r:return None
             n=self.db.execute("UPDATE catalog_prepare_item SET lease_until=?,fence=fence+1,updated=? WHERE run_id=? AND pid=? AND campaign_id=? AND catalog_source=? AND fence=?",
                 (now+lease,now,run_id,r['pid'],r['campaign_id'],r['catalog_source'],r['fence'])).rowcount
@@ -204,7 +218,7 @@ DROP TABLE catalog_prepare_reuse_old;''')
     def verified_link(self,pid,campaign_id,catalog_source):
         """Consumer contract: the unique canonical current standard card, never a historical card."""
         from lib.catalog_binding import CatalogBindings
-        row=CatalogBindings(self.root,connection=self.db).get('it',catalog_source,str(pid),str(campaign_id))
+        row=CatalogBindings(self.root,connection=self.db).get(self.market,catalog_source,str(pid),str(campaign_id))
         if not row or row['state']!='active':return None
         return row['card']|{'contract':{'pid':str(pid),'campaignId':str(campaign_id),'catalogSource':catalog_source,
             'verifiedAt':row['verified_at'],'commissionRuleVersion':row['commission_rule_version'],
@@ -221,8 +235,8 @@ DROP TABLE catalog_prepare_reuse_old;''')
         if not rows:return {'state':'unprepared','reason':'catalog_link_not_prepared'}
         from lib.catalog_binding import CatalogBindings
         bindings=CatalogBindings(self.root,connection=self.db)
-        raw_binding=bindings.get('it',offer.get('catalogSource'),offer['pid'],offer.get('campaignId'))
-        binding=bindings.active_for_offer(offer)
+        raw_binding=bindings.get(self.market,offer.get('catalogSource'),offer['pid'],offer.get('campaignId'))
+        binding=bindings.active_for_offer(offer,market=self.market)
         created=(binding or {}).get('card') if binding else None
         if created:
             if created.get('creatorPercent')==offer.get('creatorPercent'):return {'state':'ready','card':created}
@@ -537,6 +551,12 @@ class TaplinkInventory:
         self.db=sqlite3.connect(self.root/'var/catalog-links.sqlite',timeout=15);self.db.row_factory=sqlite3.Row
         self.db.executescript(SCHEMA)
     def close(self):self.db.close()
+    def scan(self,market,source,campaign_id):
+        row=self.db.execute('SELECT observed,total FROM catalog_tap_scan WHERE market=? AND source=? AND campaign_id=?',(market,str(source),str(campaign_id))).fetchone()
+        return {'observed':row[0],'total':row[1]} if row else None
+    def save_scan(self,market,source,campaign_id,total,now=None):
+        now=now if now is not None else time.time()
+        with self.db:self.db.execute('INSERT INTO catalog_tap_scan VALUES(?,?,?,?,?) ON CONFLICT(market,source,campaign_id) DO UPDATE SET observed=excluded.observed,total=excluded.total',(market,str(source),str(campaign_id),now,int(total)))
     def save_list(self,row,source='2',campaign_id='0',now=None):
         now=now if now is not None else time.time()
         with self.db:

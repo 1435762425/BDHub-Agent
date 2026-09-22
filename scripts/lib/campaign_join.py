@@ -25,12 +25,14 @@ from pathlib import Path
 
 from lib.cycle_catalog import CAMPAIGNS
 
-SCOPE = {'institution': 'bjn-local-research', 'market': 'it'}
 # 预览/提交/回查是**同一个 job 的三个动作**：共用一个 id，提交时才看得到预览判定过的条目。
 DEFAULT_JOB_ID = 'campaign-join'
 # 已确认口径：Campaign 剩余有效期 > 45 天（旧版加入用的是"2 个月"，本次统一到 45 天）。
 REMAINING_DAYS = 45
 ITEM_STATES = ('eligible', 'joined', 'writing', 'result_unknown', 'skipped')
+
+def _job_id(market, value):
+    return value or (DEFAULT_JOB_ID if market == 'it' else f'{DEFAULT_JOB_ID}-{market}')
 SCHEMA = '''
 CREATE TABLE IF NOT EXISTS campaign_join_job(
   id TEXT PRIMARY KEY, market TEXT NOT NULL, account TEXT NOT NULL, state TEXT NOT NULL,
@@ -49,8 +51,8 @@ def root_of(module_file=__file__):
     return Path(module_file).resolve().parents[2]
 
 
-def db_path(root):
-    return Path(root) / 'var/campaign-join.sqlite'
+def db_path(root, market='it'):
+    return Path(root) / ('var/campaign-join.sqlite' if market == 'it' else f'var/campaign-join-{market}.sqlite')
 
 
 def join_payload(campaign_id, email):
@@ -91,9 +93,10 @@ def eligibility(campaign, *, at=None):
 class Store:
     """Durable per-campaign join ledger. One job per request key; re-running it is idempotent."""
 
-    def __init__(self, root, *, clock=time.time):
+    def __init__(self, root, *, market='it', clock=time.time):
         self.root = Path(root)
-        self.path = db_path(root)
+        self.market = market
+        self.path = db_path(root, market)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.clock = clock
         self.db = sqlite3.connect(self.path, timeout=15)
@@ -107,7 +110,7 @@ class Store:
         if job_id:
             return self.db.execute('SELECT * FROM campaign_join_job WHERE id=?', (job_id,)).fetchone()
         return self.db.execute('SELECT * FROM campaign_join_job WHERE market=? ORDER BY created DESC LIMIT 1',
-                               (SCOPE['market'],)).fetchone()
+                               (self.market,)).fetchone()
 
     def open_job(self, *, account, action, request_id, email='', campaign_ids=()):
         """Create or reuse the job for this request id.
@@ -125,7 +128,7 @@ class Store:
         with self.db:
             self.db.execute('INSERT INTO campaign_join_job(id,market,account,state,action,contact_email,'
                             'campaign_ids,created,updated) VALUES(?,?,?,?,?,?,?,?,?)',
-                            (request_id, SCOPE['market'], account, 'draft', action, email,
+                            (request_id, self.market, account, 'draft', action, email,
                              json.dumps([str(c) for c in campaign_ids]), stamp, stamp))
         return self.job(request_id)
 
@@ -264,15 +267,16 @@ def read_campaigns(transport):
     return joinable, joined
 
 
-def preview(root, *, transport=None, clock=time.time, job_id=DEFAULT_JOB_ID):
+def preview(root, *, market='it', transport=None, clock=time.time, job_id=None):
     """Read-only: what could be joined, what is already joined, and why the rest is not eligible."""
     root = Path(root or root_of())
     report = {'platformWrites': 0}
-    store = Store(root, clock=clock)
+    job_id = _job_id(market, job_id)
+    store = Store(root, market=market, clock=clock)
     try:
         if transport is None:
             from lib.global_source_transport import opportunity_reader
-            context = opportunity_reader(report, extra_read_endpoints={(CAMPAIGNS, 'GET')})
+            context = opportunity_reader(report, market=market, extra_read_endpoints={(CAMPAIGNS, 'GET')})
         else:
             context = transport
         with context as live:
@@ -292,7 +296,7 @@ def preview(root, *, transport=None, clock=time.time, job_id=DEFAULT_JOB_ID):
             ok, reason = eligibility(campaign, at=datetime.fromtimestamp(clock(), timezone.utc))
             rows.append({'campaign_id': cid, 'name': name,
                          'state': 'eligible' if ok else 'skipped', 'reason': reason})
-        job = store.open_job(account=_account_name(root), action='inspect', request_id=job_id)
+        job = store.open_job(account=_account_name(root, market), action='inspect', request_id=job_id)
         # 预览**不得**抹掉"提交过"的记录：它原来是整表替换，于是"先预览再提交"的路径
         # （一键加入就是）会把 write_attempted 一并清空，下一次提交就会重复写平台——
         # 而"结果未知绝不重试"正是这条状态机存在的理由。
@@ -315,7 +319,7 @@ def preview(root, *, transport=None, clock=time.time, job_id=DEFAULT_JOB_ID):
         store.set_job(job['id'], state='previewed', error='', joined_count=len(joined))
         # 返回**与 status 同一个封装**，另加三个预览专属字段：页面两处读的是同一份状态，
         # 少了 available 这一层，预览结果会被当成"不可用"直接丢掉（点了按钮像没反应）。
-        summary = status(root, clock=clock, job_id=job['id'])
+        summary = status(root, market=market, clock=clock, job_id=job['id'])
         return summary | {'campaigns': len(rows), 'joined': len(joined),
                           'otherCategories': other,
                           'eligible': sum(1 for row in rows if row['state'] == 'eligible')}
@@ -323,7 +327,7 @@ def preview(root, *, transport=None, clock=time.time, job_id=DEFAULT_JOB_ID):
         store.close()
 
 
-def _account_name(root):
+def _account_name(root, market='it'):
     """The catalogue account for this workspace; '' only in a workspace with no market config.
 
     A real workspace always has config/market-accounts.json -- the fallback exists so an isolated
@@ -331,29 +335,31 @@ def _account_name(root):
     """
     from lib.market_accounts import catalog_read_account
     try:
-        return catalog_read_account(Path(root), 'acc9')
+        return catalog_read_account(Path(root), market=market)
     except (OSError, ValueError, KeyError):
         return ''
 
 
-def apply(root, *, campaign_ids, email, confirm=False, transport=None, clock=time.time,
-          job_id=DEFAULT_JOB_ID):
+def apply(root, *, market='it', campaign_ids, email, confirm=False, canary=False, transport=None,
+          clock=time.time, job_id=None):
     """Join the named campaigns. **A platform write**: refuses without ``confirm=True``.
 
     Only campaigns that the current preview called ``eligible`` are accepted, each is written at most
     once, and an unresolved result ends the run instead of being retried.
     """
     root = Path(root or root_of())
+    job_id = _job_id(market, job_id)
     if confirm is not True:
         raise ValueError('campaign_join_confirmation_required')
     wanted = [str(c) for c in (campaign_ids or [])]
-    if not wanted or len(set(wanted)) != len(wanted) or len(wanted) > 100:
+    if not wanted or len(set(wanted)) != len(wanted) or len(wanted) > 100 or \
+       type(canary) is not bool or canary and len(wanted) != 1:
         raise ValueError('campaign_join_selection_invalid')
     payloads = {cid: join_payload(cid, email) for cid in wanted}
-    store = Store(root, clock=clock)
+    store = Store(root, market=market, clock=clock)
     report = {'platformWrites': 0}
     try:
-        job = store.open_job(account=_account_name(root), action='apply', request_id=job_id,
+        job = store.open_job(account=_account_name(root, market), action='apply', request_id=job_id,
                              email=email, campaign_ids=wanted)
         rows = {row['campaign_id']: row for row in store.items(job['id'])}
         if not rows:
@@ -371,7 +377,7 @@ def apply(root, *, campaign_ids, email, confirm=False, transport=None, clock=tim
                       campaign_ids=json.dumps(wanted))
         if transport is None:
             from lib.global_source_transport import opportunity_campaign_joiner
-            context = opportunity_campaign_joiner(report, payloads)
+            context = opportunity_campaign_joiner(report, payloads, market=market, canary=canary)
         else:
             context = transport
         with context as live:
@@ -432,7 +438,7 @@ def apply(root, *, campaign_ids, email, confirm=False, transport=None, clock=tim
         store.close()
 
 
-def join_all(root, *, email, confirm=False, transport=None, clock=time.time, job_id=DEFAULT_JOB_ID):
+def join_all(root, *, market='it', email, confirm=False, transport=None, clock=time.time, job_id=None):
     """一键加入：**先重新预览一遍**，再把当前全部合格的活动一次提交。
 
     为什么先预览：不拿页面上的旧列表去写平台——那样会把已经不可加入的活动也提交一遍，
@@ -443,22 +449,23 @@ def join_all(root, *, email, confirm=False, transport=None, clock=time.time, job
     两步共用同一个 job id——提交时才看得到预览判定过的条目。
     """
     root = Path(root or root_of())
+    job_id = _job_id(market, job_id)
     if confirm is not True:
         raise ValueError('campaign_join_confirmation_required')
-    previewed = preview(root, transport=transport, clock=clock, job_id=job_id)
+    previewed = preview(root, market=market, transport=transport, clock=clock, job_id=job_id)
     eligible = [row['campaign_id'] for row in previewed['items'] if row['state'] == 'eligible']
     if not eligible:
         return previewed | {'eligible': 0, 'attempted': [], 'platformWrites': 0}
     writes, attempted = 0, []
     for start in range(0, len(eligible), 100):
         batch = eligible[start:start + 100]
-        applied = apply(root, campaign_ids=batch, email=email, confirm=True, transport=transport,
+        applied = apply(root, market=market, campaign_ids=batch, email=email, confirm=True, transport=transport,
                         clock=clock, job_id=job_id)
         writes += int(applied.get('platformWrites') or 0)
         attempted.extend(batch)
         if applied.get('state') == 'needs_verification':
             break
-    current = status(root, clock=clock, job_id=job_id)
+    current = status(root, market=market, clock=clock, job_id=job_id)
     wanted = set(eligible)
     counts = {}
     for row in current.get('items') or []:
@@ -471,11 +478,12 @@ def join_all(root, *, email, confirm=False, transport=None, clock=time.time, job
         'platformWrites': writes}
 
 
-def verify(root, *, transport=None, clock=time.time, job_id=DEFAULT_JOB_ID):
+def verify(root, *, market='it', transport=None, clock=time.time, job_id=None):
     """Read-only settlement: re-read the joined list and settle what was written but unknown."""
     root = Path(root or root_of())
+    job_id = _job_id(market, job_id)
     report = {'platformWrites': 0}
-    store = Store(root, clock=clock)
+    store = Store(root, market=market, clock=clock)
     try:
         job = store.job(job_id)
         if not job:
@@ -487,7 +495,7 @@ def verify(root, *, transport=None, clock=time.time, job_id=DEFAULT_JOB_ID):
         # 因为缺 available 而当成"还没预览过"。
         if transport is None:
             from lib.global_source_transport import opportunity_reader
-            context = opportunity_reader(report, extra_read_endpoints={(CAMPAIGNS, 'GET')})
+            context = opportunity_reader(report, market=market, extra_read_endpoints={(CAMPAIGNS, 'GET')})
         else:
             context = transport
         with context as live:
@@ -511,7 +519,7 @@ def verify(root, *, transport=None, clock=time.time, job_id=DEFAULT_JOB_ID):
         # 已加入总数以**平台这次读回来的**为准。曾经写成"本 job 里 joined 的条目数"，
         # 于是一次回查就把平台的 43 改成了 0——页面上是一个凭空的假数字。
         store.set_job(job['id'], state=state, joined_count=len(joined))
-        return status(root, clock=clock, job_id=job['id']) | {'settled': settled}
+        return status(root, market=market, clock=clock, job_id=job['id']) | {'settled': settled}
     finally:
         store.close()
 
@@ -575,10 +583,10 @@ def default_email(root):
     return email if re.fullmatch(r'[^\s@]+@[^\s@]+\.[^\s@]+', email) else ''
 
 
-def status(root=None, *, clock=time.time, job_id=None):
+def status(root=None, *, market='it', clock=time.time, job_id=None):
     """Read-only summary for the page: what is eligible, what was joined, what needs a recheck."""
     root = Path(root or root_of())
-    store = Store(root, clock=clock)
+    store = Store(root, market=market, clock=clock)
     try:
         job = store.job(job_id)
         if not job:

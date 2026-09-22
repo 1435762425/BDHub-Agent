@@ -1,4 +1,4 @@
-"""Read model and local controls for the Italy conversation workbench."""
+"""Market-scoped read model and local controls for the conversation workbench."""
 import json,re,sqlite3,time
 from contextlib import closing
 from pathlib import Path
@@ -18,11 +18,11 @@ INTENT_REASONS={'paid_collaboration':'paid_or_budget','commission_anomaly':'comm
  'other':'multiple_requests'}
 SHOWCASE_TEXT='达人已将商品添加到橱窗'
 
-def _handles(root):
+def _handles(root,market='it'):
  path=Path(root)/'var/creator-identities.sqlite'
  if not path.exists():return {}
  with closing(sqlite3.connect(path.resolve().as_uri()+'?mode=ro',uri=True)) as db:
-  return {r[0]:r[1] for r in db.execute("SELECT creator_id,current_handle FROM creator_identity WHERE market='it' AND handle_conflict=0")}
+  return {r[0]:r[1] for r in db.execute("SELECT creator_id,current_handle FROM creator_identity WHERE market=? AND handle_conflict=0",(market,))}
 
 def _metric_value(fields,name):
  row=fields.get(name) if isinstance(fields,dict) else None
@@ -81,9 +81,11 @@ def _human_reason(decision):
  if not decision:return 'human'
  return INTENT_REASONS.get(decision.get('intentCode'),decision.get('intentCode') if decision.get('intentCode') in HUMAN_REASONS else 'human')
 
-def list_conversations(root,store,view='human',query='',limit=30,offset=0):
+def list_conversations(root,store,view='human',query='',limit=30,offset=0,market='it'):
  if view not in ('human','agent','completed','all') or type(limit) is not int or not 1<=limit<=100 or type(offset) is not int or offset<0 or offset>5000:raise CycleError('conversation_query_invalid')
- handles=_handles(root);db=store.db;plan=db.execute("SELECT id FROM plan WHERE market='it' AND institution='bjn-local-research'").fetchone()[0]
+ handles=_handles(root,market);db=store.db;plan=db.execute("SELECT id FROM plan WHERE market=? AND institution='bjn-local-research'",(market,)).fetchone()
+ if not plan:raise CycleError('plan_missing')
+ plan=plan[0]
  rows=[]
  for rel in db.execute('SELECT * FROM relationship WHERE plan_id=?',(plan,)):
   latest=db.execute('SELECT * FROM inbound_turn WHERE plan_id=? AND creator_id=? ORDER BY coalesce(occurred_ms,observed_at*1000) DESC,message_id DESC LIMIT 1',(plan,rel['creator_id'])).fetchone()
@@ -116,12 +118,14 @@ def list_conversations(root,store,view='human',query='',limit=30,offset=0):
   'nextOffset':offset+limit if offset+limit<len(filtered) else None,'items':filtered[offset:offset+limit],
   'platformWrites':0,'realSends':0}
 
-def conversation_detail(root,store,cid):
+def conversation_detail(root,store,cid,market='it'):
  if not isinstance(cid,str) or not cid.isdigit():raise CycleError('conversation_query_invalid')
- db=store.db;plan=db.execute("SELECT id FROM plan WHERE market='it' AND institution='bjn-local-research'").fetchone()[0]
+ db=store.db;plan=db.execute("SELECT id FROM plan WHERE market=? AND institution='bjn-local-research'",(market,)).fetchone()
+ if not plan:raise CycleError('plan_missing')
+ plan=plan[0]
  turn=db.execute('SELECT * FROM inbound_turn WHERE plan_id=? AND cid=? ORDER BY coalesce(occurred_ms,observed_at*1000) DESC LIMIT 1',(plan,cid)).fetchone()
  if not turn:raise CycleError('conversation_missing')
- creator=turn['creator_id'];rel=db.execute('SELECT * FROM relationship WHERE plan_id=? AND creator_id=?',(plan,creator)).fetchone();handles=_handles(root)
+ creator=turn['creator_id'];rel=db.execute('SELECT * FROM relationship WHERE plan_id=? AND creator_id=?',(plan,creator)).fetchone();handles=_handles(root,market)
  timeline=[]
  for row in db.execute('SELECT * FROM inbound_turn WHERE plan_id=? AND cid=? ORDER BY coalesce(occurred_ms,observed_at*1000),message_id',(plan,cid)):
   timeline.append({'id':row['turn_id'],'direction':'inbound','kind':row['format'],'text':row['text'],'occurredAt':(row['occurred_ms']/1000 if row['occurred_ms'] else row['observed_at']),'status':'received','source':'creator'})
@@ -162,7 +166,7 @@ def conversation_detail(root,store,cid):
   'metrics':_creator_metrics(root,db,plan,creator,rel['oec']),
   'manualReply':({'id':manual['id'],'kind':manual['kind'],'confirmedAt':manual['confirmed_at']} if manual else None),
   'draft':{'text':draft['text'],'revision':draft['revision'],'updatedAt':draft['updated_at']} if draft else {'text':'','revision':0,'updatedAt':0},
-  'manualTemplates':manual_templates(store),'platformWrites':0,'realSends':0}
+  'manualTemplates':manual_templates(store,market=market),'platformWrites':0,'realSends':0}
 
 def save_draft(store,cid,text,expected_revision):
  if not isinstance(cid,str) or not cid.isdigit() or not isinstance(text,str) or len(text)>4000 or type(expected_revision) is not int or expected_revision<0:raise CycleError('conversation_draft_invalid')
@@ -275,8 +279,10 @@ def reject_creator(store,cid,expected_control_revision,request_id):
   store.db.execute('INSERT INTO control_event VALUES(?,?,?)',(plan,request_id,payload))
  return {'state':'rejected','duplicate':False,'caseId':case_id,'revision':expected_control_revision+1,'platformWrites':0,'realSends':0}
 
-def workspace_status(root,store):
- plan=store.db.execute("SELECT id FROM plan WHERE market='it' AND institution='bjn-local-research'").fetchone()[0]
+def workspace_status(root,store,market='it'):
+ plan=store.db.execute("SELECT id FROM plan WHERE market=? AND institution='bjn-local-research'",(market,)).fetchone()
+ if not plan:raise CycleError('plan_missing')
+ plan=plan[0]
  latest=store.db.execute('SELECT * FROM agent_reply_run WHERE plan_id=? ORDER BY started_at DESC LIMIT 1',(plan,)).fetchone()
  return {'agentSetting':agent_setting(store,plan),'latestAgentRun':dict(latest) if latest else None,
-  'manualTemplates':manual_templates(store),'platformWrites':0,'realSends':0}
+  'manualTemplates':manual_templates(store,market=market),'platformWrites':0,'realSends':0}

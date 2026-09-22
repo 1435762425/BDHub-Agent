@@ -200,8 +200,13 @@ def _identity(fields):
         field = fields[key]
         return field.get("value") if field["status"] in _AVAILABLE else None
     market = value("selection_region")
+    canonical = market.lower() if market is not None else None
+    # TikTok's UK creator payload uses the ISO country code GB, while the product registry and
+    # every market-scoped ledger use the canonical key ``uk``.
+    if canonical == "gb":
+        canonical = "uk"
     return {"oecId": value("creator_oecuid"), "handle": value("handle"),
-            "market": market.lower() if market is not None else None}
+            "market": canonical}
 
 
 def summarize_profile(profile: dict) -> dict:

@@ -109,7 +109,7 @@ export class CreatorIdentityReadStore {
       JOIN plan p ON p.id=e.plan_id WHERE p.market=? AND e.historical=0`).get(market)!;
     return {repliedCreators:Number(row.replied||0),showcaseCreators:Number(row.showcase||0)};
   }
-  overview(market:IdentityMarket="it"):CreatorIdentityOverview{return {datasetStatus:this.datasetStatus,market,...this.counts(market),...this.interactionCounts(market),markets:(["it","mx","br"] as const).map(key=>({market:key,...this.counts(key)}))};}
+  overview(market:IdentityMarket="it"):CreatorIdentityOverview{return {datasetStatus:this.datasetStatus,market,...this.counts(market),...this.interactionCounts(market),markets:(["it","mx","br","my","uk"] as const).map(key=>({market:key,...this.counts(key)}))};}
   list({market="it",status="verified",q="",offset=0,limit=20}:{market?:IdentityMarket;status?:"verified"|"pending";q?:string;offset?:number;limit?:number}={}):CreatorIdentityList{
     const base={datasetStatus:this.datasetStatus,market,status,offset,limit};if(!this.db)return {...base,items:[],total:0};
     const search=like(q);

@@ -10,13 +10,14 @@ from lib.cycle_auto_reply import AutoReplies
 from lib.second_cycle import CycleError,CycleStore,digest
 
 def main():
- p=argparse.ArgumentParser();p.add_argument('action',choices=('list','detail','status','save-draft','complete-human','confirm-manual','reject-creator','set-collaboration','send-text','send-card','translate'));p.add_argument('--view',default='human');p.add_argument('--query',default='');p.add_argument('--limit',type=int,default=30);p.add_argument('--offset',type=int,default=0);p.add_argument('--cid');a=p.parse_args()
+ p=argparse.ArgumentParser();p.add_argument('action',choices=('list','detail','status','save-draft','complete-human','confirm-manual','reject-creator','set-collaboration','send-text','send-card','translate'));p.add_argument('--market',default='it');p.add_argument('--view',default='human');p.add_argument('--query',default='');p.add_argument('--limit',type=int,default=30);p.add_argument('--offset',type=int,default=0);p.add_argument('--cid');a=p.parse_args()
  try:
   readonly=a.action not in ('save-draft','complete-human','confirm-manual','reject-creator','set-collaboration','send-text','send-card')
   with CycleStore(ROOT/'var/second-cycle.sqlite',readonly=readonly) as store:
-   if a.action=='list':result=list_conversations(ROOT,store,a.view,a.query,a.limit,a.offset)
-   elif a.action=='detail':result=conversation_detail(ROOT,store,a.cid)
-   elif a.action=='status':result=workspace_status(ROOT,store)
+   if a.action=='list':result=list_conversations(ROOT,store,a.view,a.query,a.limit,a.offset,a.market)
+   elif a.action=='detail':result=conversation_detail(ROOT,store,a.cid,a.market)
+   elif a.action=='status':result=workspace_status(ROOT,store,a.market)
+   elif a.market!='it':raise CycleError('market_conversation_write_pending')
    elif a.action=='save-draft':
     raw=sys.stdin.read(10001)
     if len(raw.encode())>10000:raise CycleError('input_too_large')

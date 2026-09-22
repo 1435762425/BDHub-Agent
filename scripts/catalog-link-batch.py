@@ -29,6 +29,9 @@ def publish(path,payload):
     temporary.replace(path)
 def main():
     p=argparse.ArgumentParser();p.add_argument('--pids');p.add_argument('--limit',type=int,default=15);p.add_argument('--passes',type=int,default=80);p.add_argument('--creates',type=int,default=0);p.add_argument('--seed',action='store_true')
+    p.add_argument('--market',default='it');p.add_argument('--canary',action='store_true')
+    p.add_argument('--scope',choices=['intake','pool'],default='intake',
+                   help='selected seed universe; pool covers every live selected plan')
     p.add_argument('--route',choices=['selected','campaign'],default='selected',
                    help='selected=全托（账号级卡）；campaign=非全托（按活动卡，播种来自已入池商品）')
     p.add_argument('--lanes',type=int,default=1,choices=[1,3,6,9]);p.add_argument('--qps',type=int,default=3,choices=[3,5,8,12])
@@ -38,7 +41,9 @@ def main():
     if not out.is_relative_to(ROOT/'var') or out.exists():p.error('new report under var required')
     progress=a.progress.resolve() if a.progress else None
     if progress is not None and not progress.is_relative_to(ROOT/'var'):p.error('progress must live under var')
-    route=['--route',a.route]
+    route=['--route',a.route,'--market',a.market]
+    if a.canary:
+        if a.market not in {'br','my','uk'} or a.creates!=1:p.error('canary requires BR/MY/UK and --creates 1')
     steps=[];created=0;startedAt=time.time()
     def note(phase,pass_no=None):
         if progress is None:return
@@ -48,7 +53,7 @@ def main():
                           'pass':pass_no,'passes':a.passes,'created':created,
                           'total':int(summary.get('total') or 0),'states':summary.get('states') or {}})
     if a.seed:
-        steps.append(run(['seed',*route,'--lanes',str(a.lanes),'--qps',str(a.qps)],'seed'));note('seed')
+        steps.append(run(['seed',*route,'--scope',a.scope,'--lanes',str(a.lanes),'--qps',str(a.qps)],'seed'));note('seed')
     if a.route=='campaign':
         # 非全托的判定读的是**本地缓存 + 池子事实**，一次领完就能把所有未结行复判完；
         # 而且缺链的行合法地停在 missing（要等建链），用 pendingCount 当收敛条件会白跑满 --passes。
@@ -65,12 +70,12 @@ def main():
             if r['exitCode']!=0:break
     if a.creates:
         while True:
-            r=run(['create',*route,'--max-creates',str(a.creates),'--lanes',str(a.lanes),'--qps',str(a.qps)],f'create-{len(steps):02d}')
+            r=run(['create',*route,*(['--canary'] if a.canary else []),*(['--pids',a.pids] if a.pids else []),'--max-creates',str(a.creates),'--lanes',str(a.lanes),'--qps',str(a.qps)],f'create-{len(steps):02d}')
             steps.append(r)
             made=(r.get('result') or {}).get('created',0)
             created+=made if isinstance(made,int) else 0
             note('create')
-            if r['exitCode']!=0 or not made:break
+            if r['exitCode']!=0 or not made or a.canary:break
     last=next((s.get('result') for s in reversed(steps) if s.get('result')),None)
     summary=(last or {}).get('summary')
     if progress is not None:

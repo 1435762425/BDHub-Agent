@@ -10,7 +10,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 from lib.italy_im_auth import ItalyImAuthContext, ImProbeDeadline
-from lib.italy_im_session import ItalyImReadSession, ItalyImReadError, VerifiedConversation, IM_HOST, _proto
+from lib.italy_im_session import ItalyImReadSession, ItalyImReadError, VerifiedConversation, IM_HOST,SG_IM_HOST, _proto
 from lib.italy_im_delivery import (ItalyImDeliveryAdapter, ItalyImDeliveryError, build_create_payload,
     build_text_packet, decode_send_candidate, verify_history_body, CREATE_PATH, SEND_PATH,
     ItalyVerifiedProductCard, card_binding_sha256, build_card_packet, verify_card_history_body,
@@ -108,6 +108,24 @@ def allow(scope):
 
 
 class ItalyImDeliveryTests(unittest.TestCase):
+    def test_br_packet_uses_br_identity_host_and_shop_region(self):
+        row={"market_region":16,"market_id":"199","type_list":[{"type":1,"partner_id":"111"},{"type":4,"partner_id":"144"}]}
+        partner={"partner_info":{"company_name":"Fixture BR company"},"avatar_url":"",
+                 "partner_biz_role_info":{"company_region":"BR","market_list":[row]}}
+        context=ItalyImAuthContext("acc1","1987",{"token":"PRIVATE_TOKEN","api_url":"https://"+SG_IM_HOST,"app_id":1128},
+          {"market":"br","account":"acc1","market_region":"16","partner_host":"https://partner.tiktokshop.com",
+           "im_host":SG_IM_HOST,"partner":partner,"market_row":row,"market_id":"199","partner_id":"111"},
+          {"user-agent":"fixture"},0)
+        conversation=VerifiedConversation("10",b"full-10",2,b"PRIVATE_TICKET","100")
+        payload=build_create_payload(context,"100",created_at_ms=123)
+        self.assertEqual(payload["biz_hook_ext"]["market_region"],"16")
+        self.assertEqual(payload["options"]["api_url"],"https://"+SG_IM_HOST)
+        packet=build_text_packet(context,conversation,"Olá!",REQUEST,sequence=200)
+        body=W.wire_fields(W.one(W.wire_fields(W.one(W.wire_fields(packet.data),8)),100))
+        ext={W.one(W.wire_fields(item),1).decode():W.one(W.wire_fields(item),2).decode() for item in body[5]}
+        self.assertEqual(ext["shop_region"],"BR")
+        self.assertEqual((packet.market,packet.market_region),("br","16"))
+
     def test_unrelated_legacy_region_does_not_override_exact_it_target(self):
         conv=VerifiedConversation('10',b'full-10',2,b'ticket','100')
         old=W.vb(1,message(server_id=666,client=OTHER,ext_changes={'shop_region':'TH'}))

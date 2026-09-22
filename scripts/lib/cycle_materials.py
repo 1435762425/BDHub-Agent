@@ -1,35 +1,23 @@
 """Product-level names and fixed v4 templates. No per-creator model calls."""
 import json,re,time
 from decimal import Decimal
+from pathlib import Path
 from lib.second_cycle import CycleError,digest,encoded,assess_offer,epoch
+ROOT=Path(__file__).resolve().parents[2]
 SCHEMA='''
 CREATE TABLE IF NOT EXISTS cycle_name_job(id TEXT PRIMARY KEY,state TEXT NOT NULL,inputs TEXT NOT NULL,response TEXT,error TEXT);
 CREATE TABLE IF NOT EXISTS cycle_name_reservation(id TEXT PRIMARY KEY,job_id TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS cycle_product_name(id TEXT PRIMARY KEY,pid TEXT NOT NULL,locale TEXT NOT NULL,source_title TEXT NOT NULL,payload TEXT NOT NULL,job_id TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS cycle_card_check(plan_id TEXT NOT NULL,offer_key TEXT NOT NULL,offer_fingerprint TEXT NOT NULL,payload TEXT NOT NULL,PRIMARY KEY(plan_id,offer_key,offer_fingerprint));
 '''
-TEMPLATES={
- 'standard':{
-  'label':'佣金提升','description':'先说明更高佣金，再邀请制作短视频或直播。',
-  'textIt':"Ciao{recipient}! Abbiamo una commissione migliorata al {rate}% per te su {mention} 👏 Ti va di dedicarci un nuovo video o LIVE?",
-  'translationZh':"你好！这款{shortZh}可以为你提供更高的 {rate}% 佣金，下一条视频或直播可以再推一轮。"},
- 'brief':{
-  'label':'简短直接','description':'一句话说明商品、佣金和合作动作。',
-  'textIt':"Ciao{recipient}! Per {mention}, commissione del {rate}% per te 👏 Ci fai un nuovo video o LIVE? 😊",
-  'translationZh':"你好！这款{shortZh}给你的佣金是 {rate}%，可以再做一条视频或一场直播吗？"},
- 'reconnect':{
-  'label':'再次合作','description':'强调这是同一商品的再次合作邀请。',
-  'textIt':"Ciao{recipient}! Per {mention} ora hai una commissione del {rate}% 😊 Ti va di collaborare di nuovo con un video o una LIVE?",
-  'translationZh':"你好！这款{shortZh}现在给你的佣金是 {rate}%，愿意再合作制作一条视频或一场直播吗？"},
- 'video_focus':{
-  'label':'短视频优先','description':'明确邀请达人优先制作新的短视频。',
-  'textIt':"Ciao{recipient}! Per {mention} abbiamo una commissione del {rate}% per te 👏 Ti va di creare un nuovo video?",
-  'translationZh':"你好！这款{shortZh}可以给你 {rate}% 佣金，愿意制作一条新的短视频吗？"},
- 'live_focus':{
-  'label':'直播优先','description':'明确邀请达人在下一场直播中再次推广。',
-  'textIt':"Ciao{recipient}! Per {mention} abbiamo una commissione del {rate}% per te 👏 Ti va di inserirlo nella tua prossima LIVE?",
- 'translationZh':"你好！这款{shortZh}可以给你 {rate}% 佣金，愿意在下一场直播中再次推广吗？"},
-}
+def _italian_templates():
+ from lib.market_content import send_template_map
+ return {key:{'label':value['label'],'description':value['description'],'textIt':value['text'],
+              'translationZh':value['translationZh']}
+         for key,value in send_template_map(ROOT,'it').items()}
+
+
+TEMPLATES=_italian_templates()
 LEGACY_TEMPLATES={
  'video_live':{
   'label':'旧版视频或直播','description':'只用于读取历史材料，不再作为新批次选项。',
@@ -40,34 +28,61 @@ LEGACY_TEMPLATES={
 # operator what is actually being asked, instead of a paraphrase that could drift from the code.
 NAMES_SYSTEM_PROMPT='将意大利商品标题缩成真实商品类型，不添加营销、疗效、品质或销量主张。去掉品牌、促销、颜色、包装等非必要词，但不可改品类。输出JSON items数组，逐项ref原样，shortNameIt为简短意大利商品名，mentionIt为可接在su/per之后的意大利短语（例如questo cuscino cervicale、questi leggings），shortNameZh为中文短名。每个名称最好2至5词。'
 
-def name_key(offer):return digest(['product-short-name-v1','it-IT',offer['pid'],offer['title']])
-def checked_names(body,inputs):
+def localized_templates(market='it'):
+ from lib.market_content import send_template_map
+ rows=send_template_map(ROOT,market)
+ return {key:{'label':value['label'],'description':value['description'],'textIt':value['text'],
+              'translationZh':value['translationZh']} for key,value in rows.items()}
+
+def names_prompt(market='it'):
+ if market=='it':return NAMES_SYSTEM_PROMPT
+ from lib.market_content import name_prompt
+ return name_prompt(ROOT,market)
+
+def market_locale(market='it'):
+ from lib.market_content import market_content
+ return market_content(ROOT,market)['locale']
+
+def name_key(offer,market='it'):
+ if market=='it':return digest(['product-short-name-v1','it-IT',offer['pid'],offer['title']])
+ return digest(['product-short-name-v2',market,market_locale(market),offer['pid'],offer['title']])
+
+def checked_names(body,inputs,market='it'):
  if not isinstance(body,dict) or set(body)!={'items'} or not isinstance(body['items'],list) or len(body['items'])!=len(inputs):raise CycleError('names_invalid')
  result={}
- required={'ref','shortNameIt','mentionIt','shortNameZh'}
+ required={'ref','shortNameIt','mentionIt','shortNameZh'} if market=='it' else {'ref','shortName','mention','shortNameZh'}
  for row in body['items']:
   # The four keys must all be present, but extra ones are ignored rather than fatal: the model
   # sometimes echoes the input title back, which is harmless and was rejecting whole valid batches.
   if not isinstance(row,dict) or not required<=set(row) or row['ref'] not in {str(i) for i in range(len(inputs))} or row['ref'] in result:raise CycleError('names_invalid')
   row={k:row[k] for k in required}
-  for key in ('shortNameIt','mentionIt','shortNameZh'):
+  for key in required-{'ref'}:
    v=row[key]
-   if not isinstance(v,str) or not v.strip() or len(v)>60 or len(v.split())>8 or re.search(r'[\n\r<>%{}]|https?://|BJN|gratis|commission|sconto|best.?sell|爆款|热销|保证',v,re.I):raise CycleError('names_invalid')
+   word_limit=14 if market!='it' and key=='mention' else 8
+   length_limit=100 if market!='it' and key=='mention' else 60
+   if not isinstance(v,str) or not v.strip() or len(v)>length_limit or len(v.split())>word_limit or re.search(r'[\n\r<>%{}]|https?://|BJN|gratis|gratuito|commission|comissão|komisen|sconto|desconto|discount|diskaun|best.?sell|爆款|热销|保证',v,re.I):raise CycleError('names_invalid')
+  if market!='it':
+   from lib.market_content import market_content
+   content=market_content(ROOT,market);row={**row,'language':content['language'],'locale':content['locale']}
   result[row['ref']]=row
  return result
 
-def render(name,offer,kind='standard',handle=None):
- template=(TEMPLATES|LEGACY_TEMPLATES).get(kind)
+def render(name,offer,kind='standard',handle=None,market='it'):
+ from lib.market_content import market_content
+ template=(localized_templates(market)|LEGACY_TEMPLATES).get(kind)
  if template is None:raise CycleError('template_missing')
  if not assess_offer(offer,time.time())['eligible']:raise CycleError('offer_not_eligible')
  if handle is not None and not re.fullmatch(r'[a-zA-Z0-9_.]{1,100}',handle):raise CycleError('invalid_handle')
  rate=format(Decimal(offer['creatorPercent']).normalize(),'f')
- return {'version':4,'template':kind,'textIt':template['textIt'].format(recipient=' @'+handle if handle else '',rate=rate,mention=name['mentionIt']),
+ mention=name.get('mentionIt') if market=='it' else name.get('mention')
+ if not isinstance(mention,str) or not mention:raise CycleError('localized_name_missing')
+ text=template['textIt'].format(recipient=' @'+handle if handle else '',rate=rate,mention=mention)
+ return {'version':4,'template':kind,'market':market,'language':market_content(ROOT,market)['language'],'text':text,'textIt':text,
  'translationZh':template['translationZh'].format(rate=rate,shortZh=name['shortNameZh']),
  'deliveryOrder':'card_then_text','pid':offer['pid'],'executionAllowed':False,'requiresVerifiedCard':True,'commissionState':'proposed_not_applied'}
 
-def template_catalog():
- return [{'id':key,'label':value['label'],'description':value['description']} for key,value in TEMPLATES.items()]
+def template_catalog(market='it'):
+ return [{'id':key,'label':value['label'],'description':value['description']} for key,value in localized_templates(market).items()]
 
 def select_offers(store,plan,limit=5,require_demand=False,scoped_pids=None):
  """当前合格货盘里的 offer，按 pid 取最好的一条。
@@ -77,7 +92,7 @@ def select_offers(store,plan,limit=5,require_demand=False,scoped_pids=None):
  池位本身就是需求。少了这个区分，一大批**商品明明在货盘里、也明明有卡**的位置会被报成
  "商品不在当前合格货盘"（实测 182 条）。
  """
- if store._plan(plan)['market']!='it':return []
+ market=store._plan(plan)['market']
  if scoped_pids is None:
   pids={r[0] for r in store.db.execute('SELECT DISTINCT pid FROM opportunity WHERE plan_id=?',(plan,))}
  else:
@@ -103,7 +118,7 @@ def select_offers(store,plan,limit=5,require_demand=False,scoped_pids=None):
  return result if limit is None else result[:limit]
 
 class Materials:
- def __init__(self,store):self.store=store;store.db.executescript(SCHEMA)
+ def __init__(self,store,market='it'):self.store=store;self.market=market;store.db.executescript(SCHEMA)
  def candidates(self,plan,limit=5):
   result=[]
   for o in select_offers(self.store,plan,1000,require_demand=True):
@@ -119,9 +134,10 @@ class Materials:
   ``WHERE id=?`` and would block regeneration forever, while every reader still falls back to a
   truncated title. Those rows must be regenerated, not treated as done.
   """
-  row=self.store.db.execute('SELECT payload FROM cycle_product_name WHERE id=?',(name_key(offer),)).fetchone()
+  row=self.store.db.execute('SELECT payload FROM cycle_product_name WHERE id=?',(name_key(offer,self.market),)).fetchone()
   if not row:return False
-  try:value=json.loads(row[0]).get('shortNameIt')
+  try:
+   payload=json.loads(row[0]);value=payload.get('shortNameIt') if self.market=='it' else payload.get('shortName')
   except (TypeError,ValueError):return False
   return isinstance(value,str) and 1<=len(value)<=30
 
@@ -129,43 +145,43 @@ class Materials:
   missing=[o for o in offers if not self.usable_cached(o)]
   if not missing:return {'modelCalls':0,'cached':len(offers)}
   if len(missing)>5:raise CycleError('names_batch_limit')
-  jid='names-'+digest([name_key(o) for o in missing]);row=self.store.db.execute('SELECT * FROM cycle_name_job WHERE id=?',(jid,)).fetchone()
+  jid='names-'+digest([name_key(o,self.market) for o in missing]);row=self.store.db.execute('SELECT * FROM cycle_name_job WHERE id=?',(jid,)).fetchone()
   if row and row['state'] not in ('response_saved','ready'):raise CycleError('names_previous_request_unresolved')
   if not row:
    with self.store.tx():
     for o in missing:
-     prior=self.store.db.execute('SELECT job_id FROM cycle_name_reservation WHERE id=?',(name_key(o),)).fetchone()
+     prior=self.store.db.execute('SELECT job_id FROM cycle_name_reservation WHERE id=?',(name_key(o,self.market),)).fetchone()
      if prior and prior[0]!=jid:raise CycleError('names_reserved_by_other_batch')
-     self.store.db.execute('INSERT OR IGNORE INTO cycle_name_reservation VALUES(?,?)',(name_key(o),jid))
+     self.store.db.execute('INSERT OR IGNORE INTO cycle_name_reservation VALUES(?,?)',(name_key(o,self.market),jid))
     self.store.db.execute('INSERT INTO cycle_name_job VALUES(?,?,?,?,?)',(jid,'request_started',encoded(missing),None,None))
    prompt={'items':[{'ref':str(i),'title':o['title']} for i,o in enumerate(missing)]}
    try:
-    response=call([{'role':'system','content':NAMES_SYSTEM_PROMPT}, {'role':'user','content':encoded(prompt)}],max_output_tokens=1000)
+    response=call([{'role':'system','content':names_prompt(self.market)}, {'role':'user','content':encoded(prompt)}],max_output_tokens=1000)
     with self.store.tx():self.store.db.execute("UPDATE cycle_name_job SET state='response_saved',response=? WHERE id=?",(encoded(response),jid))
    except Exception as e:
     with self.store.tx():self.store.db.execute("UPDATE cycle_name_job SET state='unknown',error=?,response=? WHERE id=?",(getattr(e,'code','provider_failed'),encoded(getattr(e,'receipt',None)),jid))
     raise CycleError('names_request_unresolved') from None
   else:response=json.loads(row['response'])
-  parsed=checked_names(json.loads(response['content']),missing)
+  parsed=checked_names(json.loads(response['content']),missing,self.market)
   with self.store.tx():
    for i,o in enumerate(missing):
     # Upsert: ``missing`` only holds products with no row or an unusable one, so replacing is the
     # intended outcome and a good row is never overwritten.
-    self.store.db.execute('INSERT INTO cycle_product_name VALUES(?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET pid=excluded.pid,locale=excluded.locale,source_title=excluded.source_title,payload=excluded.payload,job_id=excluded.job_id',(name_key(o),o['pid'],'it-IT',o['title'],encoded(parsed[str(i)]),jid))
+    self.store.db.execute('INSERT INTO cycle_product_name VALUES(?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET pid=excluded.pid,locale=excluded.locale,source_title=excluded.source_title,payload=excluded.payload,job_id=excluded.job_id',(name_key(o,self.market),o['pid'],market_locale(self.market),o['title'],encoded(parsed[str(i)]),jid))
    self.store.db.execute("UPDATE cycle_name_job SET state='ready' WHERE id=?",(jid,))
   return {'modelCalls':0 if row else 1,'prepared':len(missing),'jobId':jid,'usage':response.get('usage'),'cost':response.get('cost')}
  def name(self,offer):
-  r=self.store.db.execute('SELECT payload FROM cycle_product_name WHERE id=?',(name_key(offer),)).fetchone()
+  r=self.store.db.execute('SELECT payload FROM cycle_product_name WHERE id=?',(name_key(offer,self.market),)).fetchone()
   return json.loads(r[0]) if r else None
 
 
 def material_status(store,plan):
  if not store.db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='cycle_product_name'").fetchone():return []
  # The same pure selection as the writer, without constructing/mutating stores.
- result=[]
+ market=store._plan(plan)['market'];result=[]
  for o in select_offers(store,plan):
-  saved=store.db.execute('SELECT payload FROM cycle_product_name WHERE id=?',(name_key(o),)).fetchone()
+  saved=store.db.execute('SELECT payload FROM cycle_product_name WHERE id=?',(name_key(o,market),)).fetchone()
   name=json.loads(saved[0]) if saved else None
   r=store.db.execute('SELECT payload FROM cycle_card_check WHERE plan_id=? AND offer_key=? AND offer_fingerprint=?',(plan,o['offerKey'],digest(o))).fetchone()
-  result.append({'pid':o['pid'],'name':name,'creatorPercent':o['creatorPercent'],'card':json.loads(r[0]) if r else {'state':'not_checked'},'templates':[render(name,o,k) for k in TEMPLATES] if name else []})
+  result.append({'pid':o['pid'],'name':name,'creatorPercent':o['creatorPercent'],'card':json.loads(r[0]) if r else {'state':'not_checked'},'templates':[render(name,o,k,market=market) for k in localized_templates(market)] if name else []})
  return result

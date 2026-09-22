@@ -86,8 +86,9 @@ def save_config(root, raw):
 class Ledger:
     """Per-PID record of when we last asked Kalodata and what came back."""
 
-    def __init__(self, root):
-        self.path = Path(root) / 'var/kalodata-leads.sqlite'
+    def __init__(self, root, market='it'):
+        self.market=market
+        self.path = Path(root) / ('var/kalodata-leads.sqlite' if market=='it' else f'var/kalodata-leads-{market}.sqlite')
         # The ledger owns its home: a workspace that has never queried anything still reads.
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.db = sqlite3.connect(self.path, timeout=15)
@@ -144,7 +145,7 @@ QUERIED_STATES = {'completed'}
 JOB_STORES = (('var/batch-tasks.sqlite', 'batch_source_job'), ('var/second-cycle.sqlite', 'source_job'))
 
 
-def queried_from_jobs(root):
+def queried_from_jobs(root,market='it'):
     """PIDs a Kalodata request actually completed for.
 
     Only completed jobs count. A ``queued`` or ``awaiting_identity`` job never reached the
@@ -160,14 +161,21 @@ def queried_from_jobs(root):
         try:
             with closing(sqlite3.connect(path.resolve().as_uri() + '?mode=ro', uri=True)) as conn:
                 conn.execute('BEGIN')
-                rows = conn.execute(f'SELECT DISTINCT pid,state FROM {table}').fetchall()
+                tables={row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+                if table=='source_job' and 'plan' in tables:
+                    rows=conn.execute('SELECT DISTINCT j.pid,j.state FROM source_job j JOIN plan p ON p.id=j.plan_id WHERE p.market=?',(market,)).fetchall()
+                elif table=='batch_source_job' and 'batch_task' in tables and 'spec' in {row[1] for row in conn.execute('PRAGMA table_info(batch_task)')}:
+                    rows=conn.execute("SELECT DISTINCT j.pid,j.state FROM batch_source_job j JOIN batch_task t ON t.id=j.task_id WHERE json_extract(t.spec,'$.market')=?",(market,)).fetchall()
+                elif market=='it':
+                    rows=conn.execute(f'SELECT DISTINCT pid,state FROM {table}').fetchall()
+                else:rows=[]
         except sqlite3.Error:
             continue
         found |= {pid for pid, state in rows if state in QUERIED_STATES}
     return found
 
 
-def sync(root, *, at=None, now=None):
+def sync(root, *, market='it', at=None, now=None):
     """Reconcile the clock with the job stores, in both directions.
 
     Adds a clock for newly completed products and removes rows this module itself wrote for
@@ -175,8 +183,8 @@ def sync(root, *, at=None, now=None):
     """
     root = Path(root)
     stamp = time.time() if at is None else at
-    queried = queried_from_jobs(root)
-    ledger = Ledger(root)
+    queried = queried_from_jobs(root,market)
+    ledger = Ledger(root,market)
     try:
         with ledger.db:
             # A row we wrote ourselves is an estimate of the query day; re-state it on every sync.
@@ -207,13 +215,13 @@ def _read(db, sql, args=()):
         return list(conn.execute(sql, args))
 
 
-def eligible_products(root):
+def eligible_products(root,market='it'):
     """Found creators for **两条渠道**的合格商品并集，keyed by pid, with cumulative sales for ordering.
 
     队列是跨渠道的：渠道只挂在商品与链接上，找达人是同一件事。以前这里**只读全托的筛分账本**，
     于是非全托的商品即使已经备好链接，也进不了查询队列（实测 444 个被挡在外面）。
     """
-    db = Path(root) / 'var/global-source.sqlite'
+    db = Path(root) / ('var/global-source.sqlite' if market=='it' else f'var/global-source-{market}.sqlite')
     runs = _read(db, 'SELECT run_id,source_run FROM global_source_screen_run ORDER BY updated DESC LIMIT 1')
     products = {}
     if runs:
@@ -225,14 +233,14 @@ def eligible_products(root):
                 products[pid] = {'units': sales(listing.get('sales')) or 0,
                                  'title': str(listing.get('title') or '')[:80],
                                  'channel': 'selected'}
-    return products | _campaign_products(root, products)
+    return products | _campaign_products(root, products,market)
 
 
-def _campaign_products(root, already):
+def _campaign_products(root, already,market='it'):
     """非全托已入池商品；同一个 PID 若全托也有，保留全托那条（有真实销量数据）。"""
     try:
         from lib.campaign_screen import pool_products
-        pool = pool_products(Path(root), source='campaign')
+        pool = pool_products(Path(root), source='campaign',market=market)
     except (OSError, ValueError, sqlite3.Error):
         return {}
     out = {}
@@ -246,26 +254,27 @@ def _campaign_products(root, already):
     return out
 
 
-def linked_products(root):
+def linked_products(root,market='it'):
     db = Path(root) / 'var/catalog-links.sqlite'
     # Only the canonical standard binding is material.  Preparation states and historical reuse
     # rows are evidence, not sendable links.
+    from lib.link_naming import load as load_naming
+    version=load_naming(root,market)['version']
     return {row[0]: row[1] for row in _read(
-        db, "SELECT pid,state FROM catalog_current_binding WHERE market='it' AND state='active' "
-            "AND commission_rule_version='commission-1-to-2-v1' "
-            "AND naming_rule_version='link-naming-v1'")}
+        db, "SELECT pid,state FROM catalog_current_binding WHERE market=? AND state='active' "
+            "AND commission_rule_version='commission-1-to-2-v1' AND naming_rule_version=?",(market,version))}
 
 
-def build(root, *, config=None, now=None, ledger=None):
+def build(root, *, market='it', config=None, now=None, ledger=None):
     """Describe the queue without touching the platform or enrolling anything."""
     root = Path(root)
     config = config or load(root)
     now = time.time() if now is None else now
     own = ledger is None
-    ledger = ledger or Ledger(root)
+    ledger = ledger or Ledger(root,market)
     try:
-        products = eligible_products(root)
-        linked = linked_products(root)
+        products = eligible_products(root,market)
+        linked = linked_products(root,market)
         known = ledger.known()
         attempts = ledger.attempts()
         ledger_counts = ledger.counts()
@@ -335,7 +344,7 @@ def queue_items(built):
     return items
 
 
-def plan(root=None, *, config=None, now=None, batch_size=None, ledger=None):
+def plan(root=None, *, market='it', config=None, now=None, batch_size=None, ledger=None):
     """The next batch: the top ``batchSize`` items of the due queue and nothing else.
 
     The size is a ceiling, not a target. When fewer items are due than the ceiling, the batch is
@@ -344,7 +353,7 @@ def plan(root=None, *, config=None, now=None, batch_size=None, ledger=None):
     """
     root = Path(root or root_of())
     config = config or load(root)
-    built = build(root, config=config, now=now, ledger=ledger)
+    built = build(root,market=market, config=config, now=now, ledger=ledger)
     size = config['batchSize'] if batch_size is None else batch_size
     if type(size) is not int or not 1 <= size <= 5000:
         raise ValueError('leads_queue_batch_invalid')
@@ -360,17 +369,17 @@ def plan(root=None, *, config=None, now=None, batch_size=None, ledger=None):
             'items': taken, 'built': built}
 
 
-def run_state_path(root):
-    return Path(root) / 'var/leads-run.json'
+def run_state_path(root,market='it'):
+    return Path(root) / ('var/leads-run.json' if market=='it' else f'var/leads-run-{market}.json')
 
 
-def run_state(root, *, clock=time.time):
+def run_state(root, *, market='it', clock=time.time):
     """Whether a batch is running right now, plus the last report.
 
     A run file that says "running" long after it started is treated as finished: a killed process
     must not leave the page claiming work is in flight forever.
     """
-    path = run_state_path(root)
+    path = run_state_path(root,market)
     if not path.exists():
         return None
     try:
@@ -384,9 +393,9 @@ def run_state(root, *, clock=time.time):
     return state | {'running': bool(state.get('running')) and fresh}
 
 
-def status(root=None, *, config=None, now=None, batch_size=None):
+def status(root=None, *, market='it', config=None, now=None, batch_size=None):
     root = Path(root or root_of())
-    built = build(root, config=config, now=now)
+    built = build(root,market=market, config=config, now=now)
     queue = queue_items(built)
     size = built['config']['batchSize'] if batch_size is None else batch_size
     taken = queue[:size]
@@ -403,4 +412,4 @@ def status(root=None, *, config=None, now=None, batch_size=None):
             'batchFirst': sum(1 for row in taken if row['kind'] == 'first'),
             'batchRefresh': sum(1 for row in taken if row['kind'] == 'due'),
             'shortfall': max(0, size - len(taken)), 'padded': False,
-            'run': run_state(root)}
+            'run': run_state(root,market=market)}

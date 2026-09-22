@@ -56,5 +56,5 @@ class VideoProvider:
 def live_provider(root,legacy,pid,start,end):
  lock_path=Path(legacy)/'data/research/kalodata/.browser.lock'
  with lock_path.open('rb') as lock:
-  fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+  fcntl.flock(lock,fcntl.LOCK_SH|fcntl.LOCK_NB)
   with VideoProvider(root,legacy,pid,start,end) as provider:yield provider

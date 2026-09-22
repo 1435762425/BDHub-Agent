@@ -4,7 +4,7 @@ import sys
 import tempfile,unittest,tempfile,json,sqlite3
 from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'scripts'))
-from lib.global_selection import sales,assess,choose_campaign,Selection,observations,selected_rows,retryable_verification_rejection
+from lib.global_selection import sales,assess,choose_campaign,prioritized_selection_batch,selection_campaign,Selection,observations,selected_rows,retryable_auth_rejection,retryable_verification_rejection
 class SelectionTests(unittest.TestCase):
  def test_inclusive_sales_and_percentage_point_boundary(self):
   p={'sales':'300 已售','product_rating':4,'commission_rate':'1200','open_collab_rate':'1000'}
@@ -15,6 +15,17 @@ class SelectionTests(unittest.TestCase):
  def test_current_campaign_type9_and_expiry(self):
   e={'campaign':{'campaign_id':'1234567890123456789','crs_campaign_type':9,'promotion_start_time':'1000','promotion_end_time':'3000','commission':'1200'},'open_collab_rate':'1000'}
   self.assertEqual(choose_campaign([e],2),e);self.assertIsNone(choose_campaign([e],3))
+ def test_native_listing_batch_uses_the_frozen_campaign_without_detail_reads(self):
+  class Transport:
+   def offers(self,_pid):raise AssertionError('native batch must not read one offer at a time')
+  product={'product_id':'1'*19,'campaign_id':'7'*19}
+  result=selection_campaign(Transport(),product,1,native_listing=True)
+  self.assertEqual(result['campaign']['campaign_id'],'7'*19)
+  self.assertEqual(result['selectionSource'],'global_listing')
+ def test_retried_items_are_not_duplicated_when_filling_the_batch(self):
+  retried=[{'pid':'1','state':'pending'}]
+  items=[{'pid':'1','state':'pending'},{'pid':'2','state':'pending'}]
+  self.assertEqual([row['pid'] for row in prioritized_selection_batch(items,retried,2)],['1','2'])
  def test_attempt_never_resubmitted(self):
   with tempfile.TemporaryDirectory() as d:
    root=Path(d);(root/'var').mkdir();s=Selection(root)
@@ -44,6 +55,44 @@ class SelectionTests(unittest.TestCase):
   for key,value in [('code',0),('http',0),('ambiguous',True),('verification',False)]:
    self.assertFalse(retryable_verification_rejection(i|{'payload':{'receipt':r|{key:value}}},set(),fresh))
   self.assertFalse(retryable_verification_rejection(i|{'payload':{'receipt':r,'priorAttempts':[{},{}]}},set(),fresh))
+ def test_explicit_auth_rejection_can_continue_only_after_a_new_relogin(self):
+  r={'http':200,'code':16201010,'verification':False,'ambiguous':False,'systemError':False}
+  i={'pid':'p','state':'result_unknown','payload':{'receipt':r,'attemptedAt':10}}
+  fresh={'product_id':'p','fs_is_selected':False,'sales':'300 已售','product_rating':4,'commission_rate':'1200','open_collab_rate':'1000'}
+  self.assertTrue(retryable_auth_rejection(i,set(),fresh,11))
+  self.assertFalse(retryable_auth_rejection(i,set(),fresh,None))
+  self.assertFalse(retryable_auth_rejection(i,{'p'},fresh,11))
+  self.assertFalse(retryable_auth_rejection(i|{'payload':{'receipt':r|{'ambiguous':True}}},set(),fresh,11))
+ def test_ambiguous_write_is_skipped_not_retried_after_two_delayed_absences(self):
+  with tempfile.TemporaryDirectory() as d:
+   root=Path(d);(root/'var').mkdir();ledger=Selection(root)
+   try:
+    with ledger.db:ledger.db.execute('INSERT INTO intake_item VALUES(?,?,?,?,?)',('r','p','result_unknown',json.dumps({'receipt':{'http':0,'ambiguous':True}}),1))
+    item=ledger.items('r')[0];ledger.record_readback_absence(item,at=10)
+    self.assertEqual(ledger.skip_unknown('r',at=20),[])
+    ledger.record_readback_absence(item,at=40)
+    self.assertEqual(ledger.skip_unknown('r',at=41),['p'])
+    self.assertEqual(ledger.items('r')[0]['state'],'skipped_unknown')
+   finally:ledger.db.close()
+ def test_code_zero_without_readback_is_also_skipped_after_two_delayed_absences(self):
+  with tempfile.TemporaryDirectory() as d:
+   root=Path(d);(root/'var').mkdir();ledger=Selection(root)
+   try:
+    payload={'receipt':{'http':200,'code':0,'verification':False,'ambiguous':False}}
+    with ledger.db:ledger.db.execute('INSERT INTO intake_item VALUES(?,?,?,?,?)',('r','p','awaiting_verification',json.dumps(payload),1))
+    item=ledger.items('r')[0];ledger.record_readback_absence(item,at=10);ledger.record_readback_absence(item,at=40)
+    self.assertEqual(ledger.skip_unknown('r',at=41),['p'])
+   finally:ledger.db.close()
+ def test_verification_rejection_is_skipped_after_two_proven_retries(self):
+  with tempfile.TemporaryDirectory() as d:
+   root=Path(d);(root/'var').mkdir();ledger=Selection(root)
+   try:
+    payload={'receipt':{'http':200,'code':10000,'verification':True,'ambiguous':False},
+             'platformVerification':'passed','priorAttempts':[{},{}],
+             'readbackAbsences':[{'at':10,'selectedPoolAbsent':True},{'at':40,'selectedPoolAbsent':True}]}
+    with ledger.db:ledger.db.execute('INSERT INTO intake_item VALUES(?,?,?,?,?)',('r','p','result_unknown',json.dumps(payload),1))
+    self.assertEqual(ledger.skip_unknown('r',at=41),['p'])
+   finally:ledger.db.close()
 if __name__=='__main__':unittest.main()
 
 

@@ -22,6 +22,9 @@ def profile(oec="123", market="IT", **extra):
 
 
 class ProfileCompletionTests(unittest.TestCase):
+    def test_gb_platform_region_maps_to_the_canonical_uk_market(self):
+        self.assertEqual(summarize_profile(profile(market="GB"))["identity"]["market"], "uk")
+
     def test_absent_empty_shell_and_explicit_error_are_different(self):
         result = summarize_profile({"product_price_range": {"status": 0, "is_authorized": True},
                                     "gpm": {"status": 1, "value": 10}})

@@ -91,9 +91,13 @@ React 组件不能直接读写 SQLite、启动任意命令或实现资格规则�
 
 全托与 Campaign 共享后续线索/身份/发送池，但保留 `catalogSource`、活动和链接方案，不能在读取时折叠掉来源。
 
-全托来源的正式完整模式为 `category_l1_v1`：先读取 IT 官方一级类目树，再对每个类目独立保存 `next_page / reported_total / unique_count / terminal_reason`，每个分区必须在 endpoint 末页满足 `unique_count = reported_total`。`global_source_product_category` 保存分区成员，`global_source_product` 跨类目按 PID 去重；全部分区完成后才更新同一 `global_source_head`，运行中或任一分区 partial/blocked 时继续展示上一版完整 head。2026-09-21 真实运行覆盖 28 类、2,134 页、31,809 个唯一 PID，耗时 3,524.088 秒，类目成员 31,809、重叠 0、平台写入 0。
+全托首次接入和每 30 天的发现刷新使用 `category_l1_v1`：先读取官方一级类目树，再对每个类目独立保存 `next_page / reported_total / unique_count / terminal_reason`，每个分区必须在 endpoint 末页满足 `unique_count = reported_total`。`global_source_product_category` 保存分区成员，`global_source_product` 跨类目按 PID 去重；全部分区完成后才更新同一 `global_source_head`，运行中或任一分区 partial/blocked 时继续展示上一版完整 head。两次类目刷新之间的周更使用普通不分类目查询。IT 2026-09-21 真实运行覆盖 28 类、2,134 页、31,809 个唯一 PID，耗时 3,524.088 秒。
 
-完整全托 catalog stage 随后在 ACC9 执行 `selection prepare → verify unresolved → execute-fast --native-listing`；每次最多 600 个并循环到 pending 为 0。选入请求先落持久意图，平台 code 0 后按 0/1/3/30/120 秒只读回查；任一 `result_unknown/needs_review` 阻断下游，不重发。跨 source generation 的未结意图复制为只读恢复投影并保留原 run 引用，避免新一周重新提交同一 PID。
+UK 2026-09-21 已停止的首轮类目读取由用户明确接受为部分快照：`global_source_run.state=accepted_partial`、`coverage/reason=operator_accepted_partial`，并把当时 64,089 个唯一商品、4,280 页、13/30 个完整类目和接受时点写入 `global_source_operator_acceptance`。这类 head 可以继续筛选和选入，但 API 与页面不得投影为完整覆盖；冻结选入队列清零后的周更使用普通查询，达到 30 天再使用类目刷新。当前产品注册表只有 IT/UK 支持全托，BR/MY 明确不适用。
+
+类目 endpoint 的 `reported_total` 是行数，不保证 PID 唯一。若完整末页出现少量重复行，`global_source_partition_repair_page` 先保存重复页邻域补洞回执；必要时完整复读该类目。只有完整复读新增 0，或重复页精确复现，且重复差额不超过 `max(5, reported_total/1000)` 时，才以 `endpoint_end_stable_duplicate_rows_*` 结束，并在状态中单列 `stableDuplicateRows`。普通 partial 不能发布 head、筛分或选入；唯一例外是用户明确执行的 `accept_partial_snapshot`，它以独立终态和覆盖标签发布，不能冒充 completed。
+
+全托 catalog stage 随后在该市场固定货盘账号执行 `selection prepare → verify/reconcile unresolved → execute-fast --native-listing`；正式配置每轮 300 PID、8 lanes/8 QPS、每个 listing/readback group 最多 100 PID，批末统一回读并循环到 pending 为 0。TikTok 当前前端 SDK 虽声明 `/pick_up/batch_select`，但 2026-09-21 UK 页面没有批选 UI，EU 后端 v1/v2/v3 均返回非 API HTML，尚不能作为正式写端点；当前已验证的 `/pick_up/select` payload 仍只接受一个 PID/Campaign。选入请求先落持久意图；验证码明确拒绝或登录失效只有在“已选池缺失＋当前 listing 未选入＋同账号验证/新代次”三项证据齐全时才重放同一冻结请求。登录失效由 workflow 自动串行重登供给账号并确认能力代次继承；网络歧义或 code0 未回读不重发；批后两次间隔回读及最多两次验证码恢复仍缺失时记 `skipped_unknown`，后续 generation 也不重新入队。UK 真实完整轮次约 61–75 confirmed/分钟，平台验证耗时仍是主要瓶颈。
 
 ### 5.2 TapLink
 
@@ -107,17 +111,21 @@ React 组件不能直接读写 SQLite、启动任意命令或实现资格规则�
 
 读链、建链、复用和清理必须使用同一持久账本。`readLimit`、`creates`、`lanes` 和 `qps` 是显式运行参数；`creates=0` 保持只读。未知创建/删除只核验原意图。
 
-目标链接合同只认一个标准版本：`commission-1-to-2-v1` + `link-naming-v1`。标准材料键至少包含市场、来源、PID、Campaign、分佣规则指纹和命名规则指纹；每个当前商品方案投影一个唯一 `currentListId`，发送池只消费该字段。历史卡不参与候选排序、复用或发送；只有完全相同且已由本系统核验的标准卡可以幂等复用。
+目标链接合同只认当前市场登记的标准版本：统一分佣为 `commission-1-to-2-v1`，命名为 IT 的兼容 `link-naming-v1` 或对应的 `link-naming-{market}-v1`。标准材料键至少包含市场、来源、PID、Campaign、分佣规则指纹和命名规则指纹；每个当前商品方案投影一个唯一 `currentListId`，发送池只消费该字段。历史卡不参与候选排序、复用或发送；只有完全相同且已由本系统核验的标准卡可以幂等复用。
 
-当前已由 `catalog_current_binding` 提供唯一前向绑定：普通旧卡只保留在准备/库存历史表，不再进入线索或发送；创建意图按商品方案、分佣规则和命名规则冻结，历史卡存在不再阻止补建标准卡。`scripts/backfill-current-bindings.py` 可以只读检查或从已核验意图中本地回填可证明完全一致的标准卡；回填不调用平台、不创建或删除链接。动态回填数量见当前交接页。
+市场内容由 `config/market-content.json` 与 `config/markets.json` 联合校验：IT=`it/it-IT`、BR=`pt/pt-BR`、MY=`ms/ms-MY`、UK=`en/en-GB`。各市场有独立 `link-naming*.json`、商品短名 prompt、二发模板和 Agent 固定模板。`cycle_product_name.locale` 是读取门禁；非 IT 只接受 `shortName/mention`，不读取 `shortNameIt/mentionIt` 或 `it-IT` 行，缺少本地化短名时以 `link_naming_localized_short_name_missing` 停止。非 IT 在首次读卡前先为 seed 的 pending 商品生成短名；`source_title=PID` 或短名包含 PID 的缓存固定无效并可精确清理。中文 `translationZh/shortNameZh` 只进入运营辅助展示，不进入达人正文。
 
-Campaign 每日完整刷新，全托按周完整刷新；货盘 generation 发布后统一计算应有标准链接。新建后即时回读失败的单 PID 被隔离，整批写请求结束后执行一次公共回读，再按 30/120 秒两次轮询；仍未找到记 `skipped_unknown`，原 `catalog_link_intent` 保持 unknown 且永不重复 POST。确认失效的链接由周一清洗建立删除意图，整批删除请求收口后一次重读完整列表；仍存在记 `failed_known`，不重复 DELETE。持续发送只用本地 `catalog_current_binding` 校验 Offer 指纹与 `currentListId`，不调用 `fresh_card()`。
+多市场执行使用同一持久合同但所有入口都携带 `market`：全托选入分别写 `global-selection-{market}.sqlite`，Kalodata 分别写 `kalodata-leads-{market}.sqlite`，当前绑定仍汇总在带 market 主键的 `catalog_current_binding`。Kalodata provider 用 BR=`BR/BRL`、UK=`GB/GBP` 构造 header 与 referer；线索 edge 保存对应币种，发送池只在同市场内比较。TikTok Find 返回的 UK `selection_region=GB` 在脱敏摘要层映射为 canonical `uk`。OECID/Profile 由固定通信账号读取，精确 Find 可以独立发布，Profile 失败不得冒充 OECID 失败或阻止已验证的发送链。
 
-`operations_scheduler.py` 按不可变 `workflow_run/workflow_stage_run` 串行执行清洗、完整货盘、链接准备、Kalodata、OECID 与发送池发布；每阶段记录输入/输出 generation、断点、计数和平台写入数。标准主链只由 `market_automation_setting` 总开关授权，`config/jobs.json` 保存各作业北京时间，不再要求逐项重复启用；全托、持续发送和 Agent 保留各自独立开关。旧 `material_maintenance.py` 只保留历史兼容，不再由 `/api/jobs` 启动。
+当前已由 `catalog_current_binding` 提供唯一前向绑定：普通旧卡只保留在准备/库存历史表，不再进入线索或发送；创建意图按商品方案、分佣规则和命名规则冻结，历史卡存在不再阻止补建标准卡。每次完整 Campaign screening 结束后，`CatalogBindings.reconcile_current_offers()` 把不再 current 的绑定改为 `inactive`、Offer 指纹变化的绑定改为 `waiting_refresh`，精确相同且重新合格的绑定可恢复 `active`，每次状态变化写 `catalog_current_binding_event`。`scripts/backfill-current-bindings.py` 可以只读检查或从已核验意图中本地回填可证明完全一致的标准卡；回填不调用平台、不创建或删除链接。
+
+Campaign 每 2 天完整刷新，全托按周刷新；货盘 generation 发布后统一计算应有标准链接。新建后即时回读失败的单 PID 被隔离，整批写请求结束后执行一次公共回读，再按 30/120 秒两次轮询；仍未找到记 `skipped_unknown`，原 `catalog_link_intent` 保持 unknown 且永不重复 POST。只有平台回读确认整张列表 invalid 的链接才由周一清洗建立删除意图；仅不符合内部期限/佣金门槛的卡只本地停用，不删除。BR/UK 尚未完成各市场单条 DELETE canary，调度器固定跳过其平台清理。删除整批收口后一次重读完整列表；仍存在记 `failed_known`，不重复 DELETE。持续发送只用本地 `catalog_current_binding` 校验 Offer 指纹与 `currentListId`，不调用 `fresh_card()`。
+
+`operations_scheduler.py` 按市场读取不可变 `workflow_run/workflow_stage_run`。清洗、货盘、链接准备、OECID 与发送池发布仍串行；两个同时到达 Kalodata barrier 的市场可由 `ThreadPoolExecutor` 最多并行 2 个。新项目只读 Kalodata HTTP session 持共享 `LOCK_SH`，旧项目和登录器的 `LOCK_EX` 仍会阻止并发；每市场继续使用独立 region、currency、queue、checkpoint 和 SQLite。全托命令由 `full_catalog_collection_mode()` 决定首次/月度 `--by-category` 或周更普通查询。若当前 head 是用户接受的部分快照且对应选入队列仍有 pending，catalog stage 先续跑该冻结队列、不重新采集。标准主链只由各市场 `market_automation_setting` 总开关授权，`config/jobs.json` 保存共享北京时间，`config/operations-policy.json` 保存 2 天/30 天/双市场/10 条审核等稳定策略；全托、持续发送和 Agent 保留各自独立开关。
 
 外层批处理报告必须汇总每个内部 pass 的 `platformWrites`，阶段 item count 取最终队列 summary，不能把重复 pass 相加。Kalodata 的 B 类完成数读取视频 generation 的 `counts.completed`；额度耗尽仍发布已完成的 A/B 数和断点。OECID 阶段先循环 `IdentityBridge.freeze/dispatch` 到当前 head 无未交接 source edge，再本地复用既有终态证据，最后运行精确 batch；`pending>0`、`queue_stalled` 或技术 blocked 一律 `needs_human`，不得发布 OECID generation 或提前进入发送池。
 
-Campaign 货盘阶段固定执行 `status/verify unresolved → join-all --confirm → campaign-collect --screen`；默认联系邮箱只在本机配置读取，不进入 argv。`join-all` 以最多 100 个活动为一个持久批次，验证码成功后只重放同一 Campaign 加入请求一次，unknown 阻断后续采集。TapLink 阶段固定执行 `seed/read → catalog-names prepare --all → create`，短名缺口非零时 fail closed。调度器保留跨 tick 的 lastSuccess/lastAttempt，并在到期账号维护意图排队后启动项目维护 worker。
+Campaign 货盘阶段固定执行 `status/verify unresolved → join-all --confirm → campaign-collect --screen`；默认联系邮箱只在本机配置读取，不进入 argv。`join-all` 以最多 100 个活动为一个持久批次，验证码成功后只重放同一 Campaign 加入请求一次，unknown 阻断后续采集。TapLink 阶段对 IT 执行 `seed/read → names → create`，对非 IT 执行 `seed → localized names → read → create`，短名缺口非零时 fail closed。非 IT OECID cohort 若中途 blocked，只落库 code0 且身份精确匹配的前缀目标，其余目标保持 pending；16201010 触发 communications 账号最多两次自动重登，不得把整批丢弃或把 blocked 写成 unresolved。账号在同 market/account/institution 下重登时，已验证的逐能力 canary 随新身份代次继承；新验证的 blocked/failed 仍优先。持续发送空池为 `waiting_pool` 常驻等待，不退出形成重启循环。
 
 ### 5.3 线索与身份
 
@@ -178,7 +186,7 @@ Pure HTTP 验证依赖 `Pillow==12.3.0`、`opencv-python-headless==4.14.0.94` �
 
 显式运维 canary 可带 `authorizedNowRequestId` 绕过日常时间窗一次，但仍使用同一不可变 delivery、材料/关系/额度门禁、ACC6 写锁和逐组件回查；普通 start 永远遵守 16:30–24:00。实时预检按当前关系政策执行：未结 pending/人工案件、未知消息、未回复累计 5 条以及达人级 24/48 小时冷却会阻止发送；历史已解决回复或橱窗不永久封锁。明确未提交的预检拒绝把 delivery 与两组件结算为 cancelled，保留审计但不重复领取；任一组件开始后禁止取消。2026-09-21 真实 canary 最终完成 1 位达人，卡和文字均 confirmed、unknown 0。
 
-发送话术由 `cycle_materials.py` 的五个系统默认值与 `send_message_template*` revision 统一投影。系统模板第一次编辑时把默认正文冻结为 revision 1，再写 revision 2；删除写 `archived` 覆盖，不修改代码常量。新增模板使用 `custom-*` ID。所有正文只允许 `{creator_handle}`、`{product_name}`、`{creator_commission}`，后二者必需；发送页展示当前池中下一位达人的真实渲染例子。模板 ID、revision 与最终正文进入每个 delivery 快照，历史 delivery 不随模板更新。
+发送话术由 `cycle_materials.py` 和 `market-content.json` 的 16 个跨市场固定模板投影。IT 的 `send_message_template*` revision 继续支持系统模板编辑、自定义和归档；BR/MY/UK 使用相同内部模板键的本地化固定正文。`send_template_review*` 保存当前内容 fingerprint 的 pending/approved/rejected 审核；任一市场固定正文或 IT revision 变化后 fingerprint 变化，该条自动回到 pending。`operations_workflow.save_setting()`、`continuous_send.mutate_control()` 和市场真实发送 runtime 都要求当前批准数至少为 10。候选领取查询该 plan+creator 历史 `cycle_delivery.snapshot.message.template`，只选尚未使用的 approved 模板，全部耗尽时不重复轮转。所有正文只允许 `{creator_handle}`、`{product_name}`、`{creator_commission}`，后二者必需；market、language、locale、模板键、revision 与最终正文共同进入交付合同，禁止跨市场回退。
 
 `lead_pool.py` 与 `/api/lead-pool` 使用 `bdhub.lead-pool.v3`：业务只投影 `sendable / waiting / inactive`，`sent` 单列历史；Web 合同同时保留 A/B 来源证据、数值 GMV、代表视频和来源计数。B-only 位置从 `video_lead_current` 保留代表视频 source，不伪造 A 类 `source_edge`；`paid/rejected` 在确定性门禁中排除达人全部 PID。
 
@@ -240,7 +248,7 @@ Agent 与二发没有优先级关系，只有互斥窗口：默认北京时间 `
 ### 6.2 状态原则
 
 - SQLite 是业务事实；JSON progress 只用于显示正在运行的步骤，不替代最终台账。
-- `var/` 不入 Git，也不能由源码完整恢复。`state-backup.py` 按 `config/state-backup.json` 的显式清单使用 SQLite online backup API 复制 21 个当前数据库，捕获已提交 WAL 而不复制 `-wal/-shm`，并为每库保存 SHA-256、大小、`quick_check` 与 schema 元数据。清单之外的新数据库会让备份失败，避免静默漏备；`*-before-*.sqlite` 历史快照明确排除。
+- `var/` 不入 Git，也不能由源码完整恢复。`state-backup.py` 按 `config/state-backup.json` 的显式清单使用 SQLite online backup API 复制当前 32 个数据库，捕获已提交 WAL 而不复制 `-wal/-shm`，并为每库保存 SHA-256、大小、`quick_check` 与 schema 元数据。清单之外的新数据库会让备份失败，避免静默漏备；`*-before-*.sqlite` 历史快照明确排除。
 - 备份目录和文件分别为 0700/0600。备份包含达人、消息和业务台账，仍属于敏感业务数据；TypeSafe、Kalodata、Campaign 凭据和运行日志固定不纳入。恢复只能写入不存在或空的目标 `var`，绝不覆盖当前状态，并生成恢复回执。跨机器切换需先停止所有写 worker、创建最终备份、复制整个备份目录、在新机器空目录恢复，再单独配置凭据并运行 migration check；多数据库快照不是跨库单事务。
 - 所有 ID、PID、OECID、Campaign ID 和 listId 按字符串处理。
 - 外部响应保存必要摘要、哈希和引用；凭据、Cookie、完整私密正文不进入普通日志。
@@ -321,7 +329,8 @@ pending → started/submitted → confirmed
 | `/api/reply-review` | 事件级样本、双模型影子分类、turn 标准动作和受控案件应用；无发送动作 |
 | `/api/inbox` | 收信 worker、今日/最近 14 日统计、可分页日明细和待人工 |
 | `/api/jobs` | 手动作业与定时意向 |
-| `/api/market-accounts` | 当前意大利账号固定职责、能力证据、启停与刷新/重登维护意图 |
+| `/api/market-accounts` | 按市场读取固定双账号职责、能力证据、启停与刷新/重登维护意图 |
+| `/api/market-catalog` | BR/MY/UK 的独立 Campaign/全托接入状态与只读 Campaign 刷新 |
 
 Web 不再构建 `/flow-demo`、浏览器演示页、旧 local runtime、second-pilot、second-live trial、second-outreach history、matching 或 outreach-drafts 路由。对应 SQLite 作为历史数据保留，未从备份清单移除。
 
@@ -335,9 +344,11 @@ Web 不再构建 `/flow-demo`、浏览器演示页、旧 local runtime、second-
 
 ### TikTok
 
-- ACC6：意大利通信账号，固定负责收信、IM 发送、Agent 回复、OECID 和达人画像。
-- ACC9：意大利货盘账号，固定负责货盘、Campaign、商品选入和 TapLink。
-- 两账号属于同机构/市场并共享同一 IM sender 语义；不能据此把新联系额度翻倍。
+- IT：ACC6 通信＋ACC9 货盘。
+- BR：ACC1 通信＋ACC2 货盘；只有 Campaign，无全托。
+- MY：ACC8 通信＋ACC5 货盘；只有 Campaign，无全托。
+- UK：ACC11 通信＋ACC4 货盘；Campaign＋全托。
+- 每市场两账号属于同机构/市场；通信/货盘角色固定且账号不跨市场复用。多登录账号不能据此把机构或 sender 额度翻倍。
 - 项目按全局单并发维护队列执行 72 小时身份维护；显式重登直接启动可见 Playwright 浏览器，运行时只读读取旧账号文件中的已保存用户名/密码并自动填充，但不复制凭据或旧 profile。候选 profile、headers 与 IM 证据写入 `var/account-identities/<account>/generations/`，浏览器、HTTP、IM 只读验证全部通过后才由 `account_identity_generation` 原子发布。失败候选删除，上一代发布身份继续生效。
 - `legacy_runtime.configure_vendored_bdhub()` 仍只从本仓库加载协议代码；账号 loader 仅在数据库存在完整 `project-browser/http/im:<candidate>` 发布代次且对应本地文件齐全时，把该账号运行路径投影到项目自有 profile/headers，否则继续读取旧只读基线。
 
@@ -368,7 +379,11 @@ Web 不再构建 `/flow-demo`、浏览器演示页、旧 local runtime、second-
 | `config/state-backup.json` | 当前 SQLite 明确清单与历史快照排除规则 |
 | `config/typesafe.example.json` / 本机 `config/typesafe.json` | TypeSafe 官方 endpoint、固定 Jev 模型和本机 API key；真实文件 0600 且不入 Git |
 | `config/jobs.json` | 十个真实运营作业的北京时间；Agent 独立开关保留在作业页 |
+| `config/operations-policy.json` | Campaign 2 天 cadence、全托 30 天类目刷新、Kalodata 双市场上限和二发模板审核下限 |
 | `config/market-accounts.json` | 市场账号固定角色、项目身份权威和维护目标 |
+| `config/markets.json` | 产品启用市场、locale/currency/timezone 与 Campaign/全托能力差异 |
+| `config/market-content.json` | 各市场二发、Agent 固定回复、TapLink 短名 prompt 与 language/locale 绑定 |
+| `config/link-naming.json`、`config/link-naming-{br,my,uk}.json` | 市场独立卡名模板、版本、长度和 locale；禁止跨市场回退 |
 | `config/*.example.json` | 敏感本机配置样例 |
 
 业务配置不得另建第二来源。敏感配置、邮箱、激活码、Cookie 和身份文件不入 Git。
@@ -538,7 +553,7 @@ PYTHONDONTWRITEBYTECODE=1 \
 - 历史 `cycle_bulk*` 只读保留用于追溯；旧 CLI 与动态选人回退均已退役，新执行不读取旧授权。
 - 35 条意大利 turn 已完成人工真值审核：DeepSeek 28/35（80.00%，误自动处理 2、误转人工 3），Jev 22/35（62.86%，误自动处理 3、误转人工 1）；双模型一致也仍有 2 条误自动处理。DeepSeek 暂作 Agent 分类器、Jev 保持 challenger，人工 `turn_review` 优先。真实回复 transport、持久意图和回查合同已经接入，但 Agent 设置仍为 `enabled=false`，本轮真实发送为 0；详细证据见 [最终人工评测](implementation/reply-model-evaluation-20260920.md)。
 - SQLite 备份、校验和空目录恢复工具已完成；当前首份基线仍只在本机，尚未配置异机副本、保留周期或自动调度。
-- 项目 Python 环境、依赖锁、协议源码和 ACC6/ACC9 新身份发布目录已独立；保存的登录账号密码仍只在运行时从旧账号配置只读使用，不复制进新仓库。其他账号与市场仍需逐项迁移和验收。
+- 项目 Python 环境、依赖锁、协议源码和 IT/BR/MY/UK 八账号的新身份发布目录已独立；保存的登录账号密码仍只在运行时从旧账号配置只读使用，不复制进新仓库。其它市场仍需逐项迁移和验收。
 - 2026-09-21 起旧 BDHub 已将 ACC6/ACC9 停用并移出全部旧业务池。新项目的账号 overlay 只继承旧配置中的账号元数据与保存凭据读取能力；`enabled`、固定角色、业务池、profile/headers 和身份维护完全由新项目台账覆盖，避免旧项目停用状态反向关闭新项目。
 - vendored `pure_http_canary.py` 依赖同目录 `pure_http_runtime_manifest.json` 校验旧 `data/runtime` 的逐文件哈希；JSON 清单属于协议闭包，缺失时所有 OECID cohort 会在网络请求前以 manifest 无效失败。当前清单已随 vendor 提交，runtime/身份文件本身仍只读留在旧 BDHub。
 

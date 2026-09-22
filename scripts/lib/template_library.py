@@ -2,7 +2,8 @@
 import json,re,time
 from pathlib import Path
 from lib.second_cycle import CycleError,digest,encoded
-from lib.cycle_materials import TEMPLATES,render as render_builtin
+from lib.cycle_materials import TEMPLATES
+from lib.market_content import SEND_IDS
 
 SEND_PLACEHOLDERS=('creator_handle','product_name','creator_commission')
 CUSTOM_ID=re.compile(r'custom-[a-f0-9]{24}')
@@ -28,12 +29,19 @@ def _name(value):
   raise CycleError('template_name_invalid')
  return value.strip()
 
-def _public_builtin(key,value):
- body=value['textIt'].replace('{recipient}',' @{creator_handle}').replace('{rate}','{creator_commission}').replace('{mention}','{product_name}')
- return {'id':key,'name':value['label'],'description':value['description'],'bodyIt':body,'revision':1,
-         'builtIn':True,'state':'active','parameters':list(SEND_PLACEHOLDERS)}
+def _public_builtin(key,value,market='it'):
+ body=(value.get('textIt') or value.get('text')).replace('{recipient}',' @{creator_handle}').replace('{rate}','{creator_commission}').replace('{mention}','{product_name}')
+ from lib.market_content import market_content
+ content=market_content(Path(__file__).resolve().parents[2],market)
+ return {'id':key,'semanticId':key,'name':value['label'],'description':value['description'],
+         'bodyIt':body,'body':body,'market':market,'language':content['language'],'locale':content['locale'],
+         'translationZh':value.get('translationZh') or '',
+         'revision':1,'builtIn':True,'state':'active','parameters':list(SEND_PLACEHOLDERS)}
 
-def send_templates(store,include_archived=False):
+def send_templates(store,include_archived=False,market='it'):
+ if market!='it':
+  from lib.market_content import send_template_map
+  return [_public_builtin(key,value,market) for key,value in send_template_map(Path(__file__).resolve().parents[2],market).items()]
  defaults={key:_public_builtin(key,value) for key,value in TEMPLATES.items()}
  if not store.db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='send_message_template'").fetchone():return list(defaults.values())
  saved=list(store.db.execute('''SELECT t.*,r.body_it FROM send_message_template t
@@ -52,6 +60,92 @@ def send_templates(store,include_archived=False):
    'bodyIt':row['body_it'],'revision':row['current_revision'],'builtIn':False,'state':row['state'],
    'parameters':list(SEND_PLACEHOLDERS)})
  return rows
+
+
+def _review_fingerprint(store,root,template_id):
+ from lib.market_content import load_content
+ content=load_content(root);bundle={}
+ for market,row in content['markets'].items():
+  template=row['sendTemplates'][template_id]
+  bundle[market]={'text':template['text'],'translationZh':template['translationZh'],'state':'active'}
+ saved=store.db.execute('''SELECT t.state,r.body_it FROM send_message_template t
+   JOIN send_message_template_revision r ON r.template_id=t.template_id AND r.revision=t.current_revision
+   WHERE t.template_id=?''',(template_id,)).fetchone() if store.db.execute(
+    "SELECT 1 FROM sqlite_master WHERE name='send_message_template'").fetchone() else None
+ if saved:
+  bundle['it']['text']=saved['body_it'];bundle['it']['state']=saved['state']
+ return digest({'templateId':template_id,'markets':bundle})
+
+
+def send_template_reviews(store,root,market='it'):
+ if not store.db.execute("SELECT 1 FROM sqlite_master WHERE name='send_template_review'").fetchone():
+  raise CycleError('send_template_review_schema_required')
+ rows={row['template_id']:row for row in store.db.execute('SELECT * FROM send_template_review')}
+ active_ids=({row['id'] for row in send_templates(store,market='it') if row['builtIn']}
+             if market=='it' else set(SEND_IDS))
+ items=[]
+ for template_id in SEND_IDS:
+  if template_id not in active_ids:continue
+  fingerprint=_review_fingerprint(store,root,template_id);row=rows.get(template_id)
+  current=bool(row and row['content_fingerprint']==fingerprint)
+  state=row['state'] if current else 'pending'
+  items.append({'templateId':template_id,'state':state,'revision':row['revision'] if row else 0,
+                'contentFingerprint':fingerprint,'updatedAt':row['updated_at'] if current else 0})
+ minimum=__import__('lib.operations_policy',fromlist=['load_policy']).load_policy(root)['sendTemplateApprovalMinimum']
+ approved=sum(row['state']=='approved' for row in items)
+ return {'minimumApproved':minimum,'approved':approved,'total':len(items),'ready':approved>=minimum,
+         'items':items}
+
+
+def review_send_template(store,root,request_id,template_id,state,expected_revision):
+ if not isinstance(request_id,str) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._:-]{7,119}',request_id) or \
+    template_id not in SEND_IDS or state not in ('approved','rejected') or \
+    type(expected_revision) is not int or expected_revision<0:
+  raise CycleError('send_template_review_invalid')
+ fingerprint=_review_fingerprint(store,root,template_id);payload=encoded([template_id,fingerprint,state])
+ with store.tx():
+  prior=store.db.execute('SELECT * FROM send_template_review_event WHERE request_id=?',(request_id,)).fetchone()
+  if prior:
+   if encoded([prior['template_id'],prior['content_fingerprint'],prior['state']])!=payload:
+    raise CycleError('send_template_review_request_conflict')
+   return send_template_reviews(store,root)
+  current=store.db.execute('SELECT * FROM send_template_review WHERE template_id=?',(template_id,)).fetchone()
+  revision=current['revision'] if current else 0
+  if revision!=expected_revision:raise CycleError('send_template_review_conflict')
+  revision+=1;now=store.clock()
+  store.db.execute('''INSERT INTO send_template_review VALUES(?,?,?,?,?)
+   ON CONFLICT(template_id) DO UPDATE SET content_fingerprint=excluded.content_fingerprint,
+   state=excluded.state,revision=excluded.revision,updated_at=excluded.updated_at''',
+   (template_id,fingerprint,state,revision,now))
+  store.db.execute('INSERT INTO send_template_review_event VALUES(?,?,?,?,?,?,?)',
+   (request_id,template_id,fingerprint,state,expected_revision,revision,now))
+ return send_template_reviews(store,root)
+
+
+def require_send_template_approval(store,root,market='it'):
+ status=send_template_reviews(store,root,market)
+ if not status['ready']:raise CycleError('send_template_approval_required')
+ return status
+
+
+def used_send_template_ids(store,plan,creator_id):
+ if not store.db.execute("SELECT 1 FROM sqlite_master WHERE name='cycle_delivery'").fetchone():return set()
+ return {str(row[0]) for row in store.db.execute('''SELECT DISTINCT json_extract(d.snapshot,'$.message.template')
+  FROM cycle_delivery d WHERE d.plan_id=? AND d.creator_id=?
+    AND json_extract(d.snapshot,'$.message.template') IS NOT NULL
+    AND (d.state IN ('ready','running','unknown') OR EXISTS(
+      SELECT 1 FROM cycle_delivery_part p WHERE p.delivery_id=d.id AND p.kind='text' AND p.started IS NOT NULL))''',
+  (plan,creator_id))}
+
+
+def next_approved_send_template(store,root,plan,creator_id,market='it'):
+ review=send_template_reviews(store,root,market)
+ approved={row['templateId'] for row in review['items'] if row['state']=='approved'}
+ used=used_send_template_ids(store,plan,creator_id)
+ for template_id in SEND_IDS:
+  if template_id in approved and template_id not in used:
+   return resolve_send_template(store,template_id,market=market)
+ return None
 
 def create_send_template(store,request_id,name,body):
  if not isinstance(request_id,str) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._:-]{7,119}',request_id):
@@ -100,23 +194,34 @@ def archive_send_template(store,template_id,expected_revision):
    store.db.execute("UPDATE send_message_template SET state='archived',updated_at=? WHERE template_id=?",(now,template_id))
  return {'id':template_id,'state':'archived','revision':expected_revision}
 
-def resolve_send_template(store,template_id):
+def resolve_send_template(store,template_id,market='it'):
+ if market!='it':
+  from lib.market_content import send_template_map
+  try:return _public_builtin(template_id,send_template_map(Path(__file__).resolve().parents[2],market)[template_id],market)
+  except KeyError:raise CycleError('template_missing') from None
  if not store.db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='send_message_template'").fetchone():
-  if template_id in TEMPLATES:return {'id':template_id,'revision':1,'builtIn':True}
+  if template_id in TEMPLATES:return _public_builtin(template_id,TEMPLATES[template_id])
   raise CycleError('template_missing')
  row=store.db.execute('''SELECT t.current_revision,r.body_it FROM send_message_template t
    JOIN send_message_template_revision r ON r.template_id=t.template_id AND r.revision=t.current_revision
    WHERE t.template_id=? AND t.state='active' ''',(template_id,)).fetchone()
- if row:return {'id':template_id,'revision':row['current_revision'],'builtIn':False,'bodyIt':row['body_it']}
- if template_id in TEMPLATES and not store.db.execute('SELECT 1 FROM send_message_template WHERE template_id=?',(template_id,)).fetchone():return {'id':template_id,'revision':1,'builtIn':True}
+ if row:
+  default=_public_builtin(template_id,TEMPLATES[template_id]) if template_id in TEMPLATES else {}
+  return {**default,'id':template_id,'revision':row['current_revision'],'builtIn':False,'bodyIt':row['body_it']}
+ if template_id in TEMPLATES and not store.db.execute('SELECT 1 FROM send_message_template WHERE template_id=?',(template_id,)).fetchone():return _public_builtin(template_id,TEMPLATES[template_id])
  raise CycleError('template_missing')
 
-def render_send_template(spec,name,offer,handle):
- if spec['builtIn']:return render_builtin(name,offer,spec['id'],handle)|{'templateRevision':spec['revision']}
+def render_send_template(spec,name,offer,handle,market='it'):
  rate=str(offer['creatorPercent']).rstrip('0').rstrip('.') if '.' in str(offer['creatorPercent']) else str(offer['creatorPercent'])
- text=spec['bodyIt'].replace('{creator_handle}',handle).replace('{product_name}',name['mentionIt']).replace('{creator_commission}',rate)
- return {'version':4,'template':spec['id'],'templateRevision':spec['revision'],'textIt':text,
-  'translationZh':'自定义模板；请以意大利语最终正文为准。','deliveryOrder':'card_then_text','pid':offer['pid'],
+ mention=name.get('mentionIt') if market=='it' else name.get('mention')
+ if not isinstance(mention,str) or not mention:raise CycleError('localized_name_missing')
+ text=spec['bodyIt'].replace('{creator_handle}',handle).replace('{product_name}',mention).replace('{creator_commission}',rate)
+ translation=spec.get('translationZh') or '自定义模板；请以最终正文为准。'
+ translation=translation.replace('{shortZh}',str(name.get('shortNameZh') or '')).replace('{rate}',rate)
+ from lib.market_content import market_content
+ return {'version':4,'template':spec['id'],'templateRevision':spec['revision'],'market':market,
+  'language':market_content(Path(__file__).resolve().parents[2],market)['language'],'text':text,'textIt':text,
+  'translationZh':translation,'deliveryOrder':'card_then_text','pid':offer['pid'],
   'executionAllowed':False,'requiresVerifiedCard':True,'commissionState':'proposed_not_applied'}
 
 def selected_send_template(store,root):
@@ -127,7 +232,8 @@ def selected_send_template(store,root):
   if current:selected=current[0]
  return selected
 
-def manual_templates(store,include_archived=False):
+def manual_templates(store,include_archived=False,market='it'):
+ if market!='it':return []
  if not store.db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='manual_reply_template'").fetchone():return []
  where='' if include_archived else "WHERE t.state='active'"
  return [{'id':r['template_id'],'name':r['name'],'category':r['category'],'body':r['body'],
@@ -163,7 +269,12 @@ def upsert_manual_template(store,request_id,template_id,expected_revision,name,c
    store.db.execute("UPDATE manual_reply_template SET name=?,category=?,state='active',current_revision=?,updated_at=? WHERE template_id=?",(name,category,revision,now,template_id))
  return next(value for value in manual_templates(store,True) if value['id']==template_id)
 
-def agent_templates(store,policy):
+def agent_templates(store,policy,market='it'):
+ if market!='it':
+  from lib.market_content import agent_template_map,market_content
+  content=market_content(Path(__file__).resolve().parents[2],market)
+  return [{'id':f'{market}-{key}_v1','action':key,'language':content['language'],'text':text,'revision':1}
+          for key,text in agent_template_map(Path(__file__).resolve().parents[2],market).items()]
  defaults=policy.get('templates') or {};rows=[]
  for key,action in AGENT_TEMPLATE_KEYS.items():
   original=defaults.get(key) or {}

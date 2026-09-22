@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
 from lib.account_identity import (apply_bootstrap, claim_next, current_generation, execute_claimed,
-                                  next_due, publish_generation, request_maintenance, set_enabled,
+                                  carry_verified_capabilities, next_due, promote_capabilities, publish_generation, request_maintenance, set_enabled,
                                   project_runtime_readiness, status)  # noqa:E402
 from lib.schema_migrations import apply_database  # noqa:E402
 from lib.second_cycle import CycleStore  # noqa:E402
@@ -177,6 +177,31 @@ class AccountIdentityTests(unittest.TestCase):
         self.assertEqual(result["state"], "completed")
         self.assertIn(("relogin", "acc6"), adapter.calls)
         self.assertNotIn(("refresh", "acc6"), adapter.calls)
+
+    def test_same_institution_relogin_keeps_verified_write_canary(self):
+        previous={"institutionFingerprint":"i"*64,"capabilities":{
+            "product_select":{"state":"verified","evidenceRef":"canary-proof"}}}
+        identity={"institutionFingerprint":"i"*64}
+        current={"product_select":{"state":"not_tested","evidenceRef":"new-login"},
+                 "partner_http":{"state":"verified","evidenceRef":"new-login"}}
+        merged=carry_verified_capabilities(previous,identity,current)
+        self.assertEqual(merged["product_select"],{"state":"verified","evidenceRef":"canary-proof"})
+        blocked=carry_verified_capabilities(previous,identity,
+          {"product_select":{"state":"blocked","evidenceRef":"new-login"}})
+        self.assertEqual(blocked["product_select"]["state"],"blocked")
+        changed=carry_verified_capabilities(previous,{"institutionFingerprint":"x"*64},current)
+        self.assertEqual(changed["product_select"]["state"],"not_tested")
+        added=carry_verified_capabilities(previous,identity,{"partner_http":{"state":"verified"}})
+        self.assertEqual(added["product_select"]["state"],"verified")
+
+    def test_promotion_restores_verified_history_lost_by_an_older_relogin(self):
+        identity={"browserRef":"b","httpRef":"h","imRef":"i","institutionFingerprint":"i"*64}
+        publish_generation(self.store,market="it",account="acc9",role="supply",reason="baseline",identity=identity,
+          capabilities={"campaign_join":{"state":"verified","evidenceRef":"old-canary"},"taplink":{"state":"not_tested"}})
+        publish_generation(self.store,market="it",account="acc9",role="supply",reason="relogin",identity=identity,
+          capabilities={"taplink":{"state":"not_tested"}})
+        promoted=promote_capabilities(self.store,market="it",account="acc9",capabilities=["taplink"],evidence_ref="new-canary")
+        self.assertEqual(promoted["capabilities"]["campaign_join"],{"state":"verified","evidenceRef":"old-canary","observedAt":NOW})
 
     def test_failed_new_generation_does_not_replace_last_published(self):
         first = publish_generation(self.store, market="it", account="acc6", role="communications",

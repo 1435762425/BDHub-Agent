@@ -2,7 +2,7 @@
 from contextlib import contextmanager
 from datetime import datetime,timezone
 from pathlib import Path
-import hashlib,importlib.util,sys,time
+import hashlib,sys,time
 from lib.legacy_runtime import configure_vendored_bdhub
 ROOT=Path(__file__).resolve().parents[2];LEGACY=ROOT.parent/'01-BDSystem-V2'
 LIST='/api/v1/affiliate/partner/product/opportunity_product/list'
@@ -42,22 +42,48 @@ def write_enabled(*, selection_scope=None, creation_scope=None, deletion_scope=N
     return any(scope is not None for scope in (selection_scope, creation_scope, deletion_scope, campaign_scope))
 
 
+def selection_canary_scope_valid(scope,*,dispatch_pid=None):
+    """A canary may discover its Campaign before freezing the one allowed write.
+
+    The mutable scope is empty while the transport performs the read-only offer lookup.  At the
+    write boundary it must contain exactly the one PID being dispatched.
+    """
+    if not isinstance(scope,dict):return False
+    if dispatch_pid is None:return len(scope)<=1
+    return len(scope)==1 and dispatch_pid in scope
+
+
 def is_account_busy(error):
     return isinstance(error,BlockingIOError) or isinstance(error,RuntimeError) and str(error)=='account_in_use'
 
 @contextmanager
-def opportunity_reader(report,*,stopped=lambda:False,extra_read_endpoints=frozenset(),account_name=None,wait_seconds=15):
-    from lib.market_accounts import catalog_read_account
-    account=catalog_read_account(ROOT,account_name)
-    with _opportunity_transport(report,stopped=stopped,extra_read_endpoints=extra_read_endpoints,account_name=account,wait_seconds=wait_seconds) as t:yield t
+def _profile_guard(account,market,wait_seconds):
+    from bdhub.enrich.profile_lease import ProfileBusyError,ProfileLease
+    lease=ProfileLease(account.profile_dir,account=account.name,market=market,operation='agent-catalog-read')
+    deadline=time.monotonic()+wait_seconds
+    while True:
+        try:
+            owner=lease.acquire();break
+        except ProfileBusyError:
+            if time.monotonic()>=deadline:raise RuntimeError('account_in_use') from None
+            time.sleep(0.25)
+    try:yield
+    finally:lease.release(owner.token)
 
 @contextmanager
-def opportunity_selector(report,selection_scope,*,stopped=lambda:False):
+def opportunity_reader(report,*,market='it',stopped=lambda:False,extra_read_endpoints=frozenset(),account_name=None,wait_seconds=15):
+    from lib.market_accounts import catalog_read_account
+    account=catalog_read_account(ROOT,account_name,market)
+    with _opportunity_transport(report,market=market,stopped=stopped,extra_read_endpoints=extra_read_endpoints,account_name=account,wait_seconds=wait_seconds) as t:yield t
+
+@contextmanager
+def opportunity_selector(report,selection_scope,*,market='it',canary=False,stopped=lambda:False):
     """Explicit PID/Campaign allowlist for user-authorized selection; never links or IM."""
     if not isinstance(selection_scope,dict):raise ValueError('selection_scope_required')
     from lib.market_accounts import catalog_read_account
-    if catalog_read_account(ROOT,'acc9')!='acc9':raise ValueError('selection_account_not_validated')
-    with _opportunity_transport(report,stopped=stopped,selection_scope=selection_scope,account_name='acc9') as t:yield t
+    account=catalog_read_account(ROOT,market=market)
+    with _opportunity_transport(report,market=market,stopped=stopped,selection_scope=selection_scope,
+                                selection_canary=canary,account_name=account) as t:yield t
 
 @contextmanager
 def opportunity_card_creator(report,payload,*,stopped=lambda:False,wait_seconds=15):
@@ -72,7 +98,7 @@ def opportunity_card_creator(report,payload,*,stopped=lambda:False,wait_seconds=
     with _opportunity_transport(report,stopped=stopped,extra_read_endpoints=reads,creation_scope=deepcopy(payload),account_name='acc9',wait_seconds=wait_seconds) as t:yield t
 
 @contextmanager
-def opportunity_card_creator_batch(report,payloads,*,stopped=lambda:False,wait_seconds=15,extra_reads=frozenset()):
+def opportunity_card_creator_batch(report,payloads,*,market='it',canary=False,stopped=lambda:False,wait_seconds=15,extra_reads=frozenset()):
     """Many frozen product-list requests on ACC9 under ONE account guard.
 
     Establishing the account session (profile lock, cookies, signer) is the dominant fixed
@@ -81,13 +107,16 @@ def opportunity_card_creator_batch(report,payloads,*,stopped=lambda:False,wait_s
     """
     from lib.market_accounts import catalog_read_account
     from copy import deepcopy
-    if catalog_read_account(ROOT,'acc9')!='acc9' or not isinstance(payloads,dict) or not payloads:raise ValueError('card_batch_scope_invalid')
+    account=catalog_read_account(ROOT,market=market)
+    if not isinstance(payloads,dict) or not payloads or type(canary) is not bool or canary and len(payloads)!=1:raise ValueError('card_batch_scope_invalid')
     frozen={}
     for pid,payload in payloads.items():
         if not isinstance(payload,dict) or len(payload.get('items',[]))!=1 or str(payload['items'][0].get('product_id'))!=str(pid):raise ValueError('card_batch_scope_invalid')
         frozen[str(pid)]=deepcopy(payload)
     reads={('/api/v1/affiliate/partner/im/product_list/list','GET'),('/api/v1/affiliate/partner/campaign/product_list/products','GET')}|set(extra_reads)
-    with _opportunity_transport(report,stopped=stopped,extra_read_endpoints=reads,creation_scope=frozen,account_name='acc9',wait_seconds=wait_seconds) as t:yield t
+    with _opportunity_transport(report,market=market,stopped=stopped,extra_read_endpoints=reads,
+                                creation_scope=frozen,creation_canary=canary,account_name=account,
+                                wait_seconds=wait_seconds) as t:yield t
 
 @contextmanager
 def opportunity_list_deleter_batch(report,list_ids,*,stopped=lambda:False,wait_seconds=15):
@@ -108,7 +137,7 @@ def opportunity_list_deleter_batch(report,list_ids,*,stopped=lambda:False,wait_s
     with _opportunity_transport(report,stopped=stopped,extra_read_endpoints=reads,deletion_scope=frozen,account_name='acc9',wait_seconds=wait_seconds) as t:yield t
 
 @contextmanager
-def opportunity_campaign_joiner(report,payloads,*,stopped=lambda:False,wait_seconds=15):
+def opportunity_campaign_joiner(report,payloads,*,market='it',canary=False,stopped=lambda:False,wait_seconds=15):
     """Frozen Seller-Campaign joins on the catalogue account, under ONE account guard.
 
     Same gate as the card creator: every POST must be byte-identical to the frozen payload of its
@@ -117,7 +146,8 @@ def opportunity_campaign_joiner(report,payloads,*,stopped=lambda:False,wait_seco
     a write that was not declared up front.
     """
     from lib.market_accounts import catalog_read_account
-    if catalog_read_account(ROOT,'acc9')!='acc9' or not isinstance(payloads,dict) or not payloads:
+    account=catalog_read_account(ROOT,market=market)
+    if not isinstance(payloads,dict) or not payloads or type(canary) is not bool or canary and len(payloads)!=1:
         raise ValueError('campaign_join_scope_invalid')
     frozen={}
     for cid,payload in payloads.items():
@@ -126,11 +156,12 @@ def opportunity_campaign_joiner(report,payloads,*,stopped=lambda:False,wait_seco
         frozen[str(cid)]=dict(payload)
     reads={(CAMPAIGNS,'GET')}
     with _opportunity_transport(report,stopped=stopped,extra_read_endpoints=reads,campaign_scope=frozen,
-                                account_name='acc9',wait_seconds=wait_seconds) as t:yield t
+                                campaign_canary=canary,market=market,account_name=account,
+                                wait_seconds=wait_seconds) as t:yield t
 
 
 @contextmanager
-def _opportunity_transport(report,*,stopped=lambda:False,extra_read_endpoints=frozenset(),selection_scope=None,creation_scope=None,deletion_scope=None,campaign_scope=None,account_name='acc6',wait_seconds=15):
+def _opportunity_transport(report,*,market='it',stopped=lambda:False,extra_read_endpoints=frozenset(),selection_scope=None,selection_canary=False,creation_scope=None,creation_canary=False,deletion_scope=None,campaign_scope=None,campaign_canary=False,account_name='acc6',wait_seconds=15):
     if type(wait_seconds) not in (int,float) or not 0<=wait_seconds<=60:raise ValueError('invalid_guard_wait')
     # campaign/product_list/list is the read-only TapLink inventory (lists all cards for a
     # campaign+source in pages), used to avoid one search per PID. It never writes.
@@ -143,34 +174,67 @@ def _opportunity_transport(report,*,stopped=lambda:False,extra_read_endpoints=fr
     from bdhub.research.commerce_transport import CommerceTransport
     from lib.second_cycle import digest
     import json
-    if selection_scope is not None and account_name!='acc9':raise ValueError('selection_account_not_validated')
+    from lib.market_accounts import load_config
+    supply=load_config(ROOT)['markets'].get(market,{}).get('roles',{}).get('supply')
+    if selection_scope is not None:
+        if account_name!=supply or type(selection_canary) is not bool or selection_canary and not selection_canary_scope_valid(selection_scope):
+            raise ValueError('selection_account_not_validated')
+        if selection_canary:
+            from bdhub.hub.markets import capability_status
+            from lib.market_registry import supports
+            if market=='it' or not supports(ROOT,market,'fullManagedCatalog') or capability_status(market,'product_select') not in {'pending','canary','enabled'}:
+                raise ValueError('selection_canary_unavailable')
+        else:
+            from lib.account_identity import current_generation
+            from lib.second_cycle import CycleStore
+            with CycleStore(ROOT/'var/second-cycle.sqlite',readonly=True) as store:
+                generation=current_generation(store,market,account_name)
+            if (generation or {}).get('capabilities',{}).get('product_select',{}).get('state')!='verified':
+                raise ValueError('selection_capability_unverified')
     if creation_scope is not None:
-        if selection_scope is not None or account_name!='acc9':raise ValueError('card_canary_account_invalid')
-        from bdhub.hub.markets import MARKETS
-        if MARKETS['it'].capabilities.tap_link not in ('canary','enabled'):raise ValueError('card_canary_capability_unavailable')
+        if selection_scope is not None or account_name!=supply or type(creation_canary) is not bool:
+            raise ValueError('card_canary_account_invalid')
+        size=1 if 'items' in creation_scope else len(creation_scope)
+        if creation_canary:
+            from bdhub.hub.markets import capability_status
+            if market not in {'br','my','uk'} or size!=1 or capability_status(market,'tap_link') not in {'pending','canary','enabled'}:
+                raise ValueError('card_canary_capability_unavailable')
+        else:
+            from lib.account_identity import current_generation
+            from lib.second_cycle import CycleStore
+            with CycleStore(ROOT/'var/second-cycle.sqlite',readonly=True) as store:
+                generation=current_generation(store,market,account_name)
+            if (generation or {}).get('capabilities',{}).get('taplink',{}).get('state')!='verified':
+                raise ValueError('taplink_capability_unverified')
     if campaign_scope is not None:
         # 加入活动是货盘侧的写入，所以走货盘账号；能力门禁沿用平台既有定义。
-        from bdhub.hub.markets import require_capability
-        if selection_scope is not None or creation_scope is not None or deletion_scope is not None or account_name!='acc9':
+        from bdhub.hub.markets import capability_status,require_capability
+        if selection_scope is not None or creation_scope is not None or deletion_scope is not None or account_name!=supply:
             raise ValueError('campaign_join_account_invalid')
-        require_capability('it','campaign_join')
-    cfg,account=account_for('it',account_name,check_maintenance=False)
-    identity=identity_for('it',account=account,cfg=cfg).require_product_search()
+        if campaign_canary:
+            if market not in {'br','my','uk'} or len(campaign_scope)!=1 or capability_status(market,'campaign_join') not in {'pending','canary','enabled'}:
+                raise ValueError('campaign_join_canary_unavailable')
+        else:require_capability(market,'campaign_join')
+    cfg,account=account_for(market,account_name,check_maintenance=False)
+    identity=identity_for(market,account=account,cfg=cfg).require_product_search()
     if not identity.partner_id_is_own:raise ValueError('source_identity_not_own')
-    saved=json.loads((ROOT/'var/cycle-catalog-it-20260913/selected.json').read_text())['scope']
-    binding={'market':'it','account':account_name,'institutionFingerprint':digest(str(identity.im_market_partner_id))}
+    from lib.market_accounts import catalog_scope
+    saved=catalog_scope(ROOT,account_name,market)
+    binding={'market':market,'account':account_name,'institutionFingerprint':digest(str(identity.im_market_partner_id))}
     if any(saved.get(k)!=binding[k] for k in ('market','institutionFingerprint')):raise ValueError('source_institution_changed')
     path=Path(account.headers_json);before=hashlib.sha256(path.read_bytes()).hexdigest();current_fingerprint={'value':before}
-    spec=importlib.util.spec_from_file_location('source_readonly_guard',ROOT/'scripts/probe-italy-profile.py');guard=importlib.util.module_from_spec(spec);spec.loader.exec_module(guard)
     from bdhub.send.sharelink.transport import PICK_UP_SELECT_PATH
     if PICK_UP_SELECT_PATH!=SELECT:raise ValueError('selection_endpoint_changed')
     if campaign_scope is not None:
         # 只在真的要写的时候才导入加入端点：只读任务不该因为写入侧的一行改动而坏掉。
         from bdhub.research.product_source_transport import SELLER_JOIN_PATH
         if SELLER_JOIN_PATH!=CAMPAIGN_JOIN:raise ValueError('campaign_join_endpoint_changed')
-    if selection_scope is not None:
+    # IT keeps its legacy static protocol gate.  New markets are promoted per project-owned
+    # account generation above; the vendored registry intentionally stays at pending/canary and
+    # must not override that newer, evidence-backed authority.
+    if selection_scope is not None and not selection_canary and market=='it':
         from bdhub.hub.markets import require_capability
-        require_capability('it','product_select')
+        require_capability(market,'product_select')
     # 写入许可只在这里推导一次，下面两处都用它：分散写正是漏掉一条渠道的原因。
     allow_write=write_enabled(selection_scope=selection_scope,creation_scope=creation_scope,
                               deletion_scope=deletion_scope,campaign_scope=campaign_scope)
@@ -184,6 +248,12 @@ def _opportunity_transport(report,*,stopped=lambda:False,extra_read_endpoints=fr
             lane=Scoped(identity,account,allow_write=allow_write)
             lane.copy_session_from(self);lane._pace=pace;lane.check_stop=check;lane._batch_lane=True
             return lane
+        def selection_lane(self,pace):
+            if selection_scope is None or selection_canary or not self.allow_write:
+                raise ValueError('commerce_selection_lane_scope_invalid')
+            lane=Scoped(identity,account,allow_write=True);lane.copy_session_from(self)
+            lane._pace=pace;lane.check_stop=check;lane._batch_lane=True
+            return lane
         def _solve_verification(self,header):
             super()._solve_verification(header)
             project_identities=(ROOT/'var/account-identities').resolve()
@@ -191,7 +261,7 @@ def _opportunity_transport(report,*,stopped=lambda:False,extra_read_endpoints=fr
             if resolved.is_relative_to(project_identities):
                 from bdhub.enrich.identity_store import IdentityBundle,IdentityMeta,write_verified_identity
                 warnings=write_verified_identity(path,IdentityBundle(dict(self.headers)),IdentityMeta(
-                  account=account.name,market='it',verified_at=datetime.now(timezone.utc).isoformat(),
+                  account=account.name,market=market,verified_at=datetime.now(timezone.utc).isoformat(),
                   verification_method='commerce_captcha_verified_session'))
                 current_fingerprint['value']=hashlib.sha256(path.read_bytes()).hexdigest()
                 report['identityFileWrites']=report.get('identityFileWrites',0)+1
@@ -240,7 +310,7 @@ def _opportunity_transport(report,*,stopped=lambda:False,extra_read_endpoints=fr
                     report['joinWrites']=report.get('joinWrites',0)+1
                     return outcome
                 body=kwargs.get('payload') or {};pid=body.get('product_id');cid=body.get('campaign_id')
-                if selection_scope is None or kwargs.get('path')!=SELECT or kwargs.get('method')!='POST' or set(body)!={'product_id','campaign_id'} or not cid or selection_scope.get(pid)!=cid or pid in consumed:raise ValueError('selection_write_outside_intent')
+                if selection_scope is None or selection_canary and not selection_canary_scope_valid(selection_scope,dispatch_pid=pid) or kwargs.get('path')!=SELECT or kwargs.get('method')!='POST' or set(body)!={'product_id','campaign_id'} or not cid or selection_scope.get(pid)!=cid or pid in consumed:raise ValueError('selection_write_outside_intent')
                 consumed.add(pid);report['platformWrites']=report.get('platformWrites',0)+1
             if getattr(self,'_batch_lane',False) and not kwargs.get('write'):
                 # Concurrent reads return challenges to the coordinator; no parallel verification.
@@ -248,7 +318,7 @@ def _opportunity_transport(report,*,stopped=lambda:False,extra_read_endpoints=fr
                 return super(CommerceTransport,self)._xhr(**kwargs)
             return super()._xhr(**kwargs)
     report.update(scope=binding,platformWrites=0,oldDatabaseWrites=0,identityFileWrites=0)
-    with guard.readonly_guard(account,wait_seconds=wait_seconds):
+    with _profile_guard(account,market,wait_seconds):
         report['guardAcquiredAt']=time.time()
         transport=Scoped(identity,account,allow_write=allow_write)
         def check():
@@ -259,5 +329,7 @@ def _opportunity_transport(report,*,stopped=lambda:False,extra_read_endpoints=fr
         try:
             check();yield transport
         finally:
-            transport.session.close();report.update(guardReleasedAt=time.time(),identityFileUnchanged=hashlib.sha256(path.read_bytes()).hexdigest()==before,
+            transport.session.close();final_hash=hashlib.sha256(path.read_bytes()).hexdigest()
+            report.update(guardReleasedAt=time.time(),identityFileUnchanged=final_hash==before,
+                identityFileVerifiedUpdate=final_hash==current_fingerprint['value'] and final_hash!=before and report.get('identityFileWrites',0)>0,
                 verificationAttempts=transport.verification_attempts+report.get('laneVerificationAttempts',0),verificationSuccesses=transport.verification_successes+report.get('laneVerificationSuccesses',0))

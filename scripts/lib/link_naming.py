@@ -20,8 +20,15 @@ DEFAULTS = {'version': 'link-naming-v1',
             'tailLength': 6, 'maxLength': 50, 'shortNameMaxLength': 30}
 
 
-def config_path(root):
-    return Path(root) / 'config/link-naming.json'
+def config_path(root, market='it'):
+    return Path(root) / ('config/link-naming.json' if market == 'it' else f'config/link-naming-{market}.json')
+
+
+def defaults_for(root, market='it'):
+    if market == 'it':
+        return dict(DEFAULTS)
+    from lib.market_content import taplink_defaults
+    return taplink_defaults(root, market)
 
 
 def _bounded(value, low, high, code):
@@ -30,11 +37,14 @@ def _bounded(value, low, high, code):
     return value
 
 
-def validate(raw):
+def validate(raw, *, market='it', root=None):
     """Normalise and check one config; raises ValueError with a stable code."""
     if not isinstance(raw, dict):
         raise ValueError('link_naming_invalid')
-    template = str(raw.get('template') or DEFAULTS['template'])
+    defaults = defaults_for(root or Path(__file__).resolve().parents[2], market)
+    if raw.get('market', market) != market:
+        raise ValueError('link_naming_market_mismatch')
+    template = str(raw.get('template') or defaults['template'])
     if not template.strip() or len(template) > 120:
         raise ValueError('link_naming_template_invalid')
     found = set(re.findall(r'\{([a-z_0-9]+)\}', template))
@@ -46,23 +56,26 @@ def validate(raw):
         raise ValueError('link_naming_requires_short_name')
     if template.count('{') != template.count('}'):
         raise ValueError('link_naming_template_invalid')
-    return {'version': str(raw.get('version') or DEFAULTS['version']),
+    config = {'version': str(raw.get('version') or defaults['version']),
             'template': template,
-            'tailLength': _bounded(raw.get('tailLength', DEFAULTS['tailLength']), 4, 12, 'link_naming_tail_invalid'),
-            'maxLength': _bounded(raw.get('maxLength', DEFAULTS['maxLength']), 10, 50, 'link_naming_max_invalid'),
-            'shortNameMaxLength': _bounded(raw.get('shortNameMaxLength', DEFAULTS['shortNameMaxLength']), 1, 40, 'link_naming_short_invalid')}
+            'tailLength': _bounded(raw.get('tailLength', defaults['tailLength']), 4, 12, 'link_naming_tail_invalid'),
+            'maxLength': _bounded(raw.get('maxLength', defaults['maxLength']), 10, 50, 'link_naming_max_invalid'),
+            'shortNameMaxLength': _bounded(raw.get('shortNameMaxLength', defaults['shortNameMaxLength']), 1, 40, 'link_naming_short_invalid')}
+    if market != 'it':
+        config.update(market=market, language=defaults['language'], locale=defaults['locale'])
+    return config
 
 
-def load(root):
-    path = config_path(root)
-    raw = json.loads(path.read_text(encoding='utf-8')) if path.exists() else dict(DEFAULTS)
-    return validate(raw)
+def load(root, market='it'):
+    path = config_path(root, market)
+    raw = json.loads(path.read_text(encoding='utf-8')) if path.exists() else defaults_for(root, market)
+    return validate(raw, market=market, root=root)
 
 
-def save(root, raw):
+def save(root, raw, market='it'):
     """Validate first, then write atomically: a rejected template must not touch the file."""
-    config = validate(raw)
-    path = config_path(root)
+    config = validate(raw, market=market, root=root)
+    path = config_path(root, market)
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix('.json.tmp')
     tmp.write_text(json.dumps(config, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
@@ -111,7 +124,7 @@ def render(config, **kwargs):
     return render_full(config, **kwargs)['name']
 
 
-def short_name_for(root, pid, title):
+def short_name_for(root, pid, title, market='it'):
     """Cached AI short name for one product, else a trimmed title. Shared by preview and create.
 
     The lookup is by product id, not by the cached title. A short name belongs to the product; the
@@ -126,15 +139,22 @@ def short_name_for(root, pid, title):
     if db.exists():
         with closing(sqlite3.connect(db.as_uri() + '?mode=ro', uri=True)) as conn:
             conn.execute('BEGIN')
-            row = conn.execute('SELECT payload FROM cycle_product_name WHERE pid=? '
-                               'ORDER BY rowid DESC LIMIT 1', (str(pid),)).fetchone()
+            from lib.market_content import market_content
+            locale = market_content(root, market)['locale']
+            row = conn.execute('SELECT payload FROM cycle_product_name WHERE pid=? AND locale=? '
+                               'ORDER BY rowid DESC LIMIT 1', (str(pid), locale)).fetchone()
         if row:
-            value = json.loads(row[0]).get('shortNameIt')
+            payload = json.loads(row[0])
+            # A non-IT locale must contain its own neutral fields.  Accepting ``shortNameIt`` here
+            # would quietly put an Italian product name on a Brazilian, Malaysian or UK card.
+            value = payload.get('shortNameIt') if market == 'it' else payload.get('shortName')
             # The writer validates names up to 60 characters. Refusing anything over 30 here threw
             # away a perfectly good generated name; fitting it to the card limit is render_full's
             # job, and it already trims by whole words.
             if isinstance(value, str) and 1 <= len(value) <= 60:
                 return value
+    if market != 'it':
+        raise ValueError('link_naming_localized_short_name_missing')
     cleaned = ' '.join(str(title).split())
     return (cleaned[:30].rsplit(' ', 1)[0] if len(cleaned) > 30 and ' ' in cleaned[:31] else cleaned[:30]) or str(pid)
 
@@ -142,7 +162,7 @@ def short_name_for(root, pid, title):
 def name_for(root, *, pid, campaign, creator_percent, short_name, public_percent=None,
              total_percent=None, market='it', config=None):
     """Convenience wrapper used by the creation path."""
-    config = config or load(root)
+    config = config or load(root, market)
     tail = tail_for(pid, campaign, creator_percent, config)
     return render_full(config, short_name=short_name, creator_percent=creator_percent, tail=tail,
                        pid=pid, campaign=campaign, public_percent=public_percent,

@@ -7,14 +7,14 @@ import time
 from urllib.parse import urlsplit
 
 from bdhub.enrich.profile_lease import ProfileLease
-from bdhub.hub.markets import identity_for, require_capability
+from bdhub.hub.markets import capability_status, identity_for, require_capability
 from bdhub.imbase.account_binding import resolve_bound_profile
 from bdhub.research.product_source_transport import SourceTransport, seller_join_payload, SELLER_JOIN_PATH
 from bdhub.send.sharelink.transport import SEARCH_PATH, OPPORTUNITY_SEARCH_PATH, OPPORTUNITY_DETAIL_PATH, PICK_UP_SELECT_PATH
 from bdhub.send.taplink.protocol import CREATE_PATH, CARD_LIST_PATH, identifier, find_card
 from bdhub.send.taplink.transport import account_for
 
-MARKETS = frozenset({'br', 'it', 'uk', 'us', 'jp', 'de'})
+MARKETS = frozenset({'br', 'my', 'it', 'uk', 'us', 'jp', 'de'})
 REVIEW_PATH = '/api/v1/affiliate/partner/campaign/review'
 PRODUCTS_PATH = '/api/v1/affiliate/partner/campaign/product_list/products'
 CATEGORY_PATH = '/api/v1/affiliate/lux/product/category/childrenv2'
@@ -56,7 +56,8 @@ class CommerceTransport(SourceTransport):
         self._verification_failed=source._verification_failed
 
     def selection_lane(self,pace):
-        if self.identity.market!='it' or not self.allow_write:raise ValueError('commerce_selection_lane_scope_invalid')
+        if not self.allow_write:raise ValueError('commerce_selection_lane_scope_invalid')
+        require_capability(self.identity.market,'product_select')
         lane=CommerceTransport(self.identity,self._account,allow_write=True)
         lane.WRITE_ENDPOINTS={(PICK_UP_SELECT_PATH,'POST')}
         lane.copy_session_from(self);lane._pace=pace
@@ -82,7 +83,7 @@ class CommerceTransport(SourceTransport):
     def resolve_selection_verification(self,pid,campaign_id):
         """只处理刚才选入请求的验证，不回放选入POST；结果由上层只读回查。"""
         pending=getattr(self,'_pending_selection_verification',None)
-        if (self.identity.market!='it' or not self.allow_write or not pending
+        if (not self.allow_write or not pending
                 or pending['pid']!=str(pid) or pending['campaign_id']!=str(campaign_id)):
             raise ValueError('commerce_selection_verification_scope_invalid')
         self._pending_selection_verification=None
@@ -94,9 +95,14 @@ class CommerceTransport(SourceTransport):
         import re
         if not re.fullmatch(r'[0-9]{1,20}', str(parent)):
             raise ValueError('commerce_category_invalid')
-        region = 'GB' if self.identity.market == 'uk' else self.identity.market.upper()
-        body = self.require_read(self._xhr(method='POST', path=CATEGORY_PATH, params=self._params(),
-            payload={'category_id':str(parent), 'status_param':{'region':region}}, write=False))
+        # TikTok Partner uses the market key here (UK), unlike Kalodata whose region is GB.
+        region = self.identity.market.upper()
+        response=self._xhr(method='POST', path=CATEGORY_PATH, params=self._params(),
+            payload={'category_id':str(parent), 'status_param':{'region':region}}, write=False)
+        self.last_read={'path':CATEGORY_PATH,'http':response.http_status,
+            'code':response.code if type(response.code) is int else None,
+            'verification':response.has_turing,'system_error':response.system_error_3}
+        body = self.require_read(response)
         rows = (body.get('data') or {}).get('category_infos')
         if not isinstance(rows, list):
             raise ValueError('commerce_category_response_invalid')
@@ -111,12 +117,13 @@ class CommerceTransport(SourceTransport):
         if selecting:self._pending_selection_verification=None
         result = super()._xhr(**kwargs)
         # 仅在内存保留选入挑战；批量器先保存意图，再显式处理验证和回查。
-        if (selecting and self.identity.market=='it' and result.http_status==200 and type(result.code) is int and result.code==10000
+        if (selecting and result.http_status==200 and type(result.code) is int and result.code==10000
                 and result.has_turing and not result.ambiguous and self._verification_header):
             body=kwargs.get('payload') or {}
             self._pending_selection_verification={'pid':str(body.get('product_id','')),'campaign_id':str(body.get('campaign_id','')),'header':self._verification_header}
         # 只读请求可以在验证后回放；任何平台写请求都不会在这里重发。
-        if result.has_turing and not kwargs.get('write') and self.identity.market == 'it' and self._verification_header:
+        if result.has_turing and not kwargs.get('write') and \
+                capability_status(self.identity.market,'pure_http') in {'canary','enabled'} and self._verification_header:
             self._solve_verification(self._verification_header)
             kwargs = kwargs | {'params':kwargs['params'] | {'fp':self.fp}}
             result = super()._xhr(**kwargs)

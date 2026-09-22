@@ -1,11 +1,13 @@
 import tempfile,unittest,sys
 from pathlib import Path
-sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'scripts'))
+ROOT=Path(__file__).resolve().parents[1]
+sys.path.insert(0,str(ROOT/'scripts'))
 from lib.schema_migrations import apply_database
 from lib.second_cycle import CycleError,CycleStore
 from lib.template_library import (agent_setting,agent_templates,archive_send_template,create_send_template,
- manual_templates,render_send_template,resolve_send_template,save_agent_setting,selected_send_template,send_templates,
- update_agent_template,update_send_template,upsert_manual_template)
+ manual_templates,next_approved_send_template,render_send_template,resolve_send_template,review_send_template,
+ save_agent_setting,selected_send_template,send_template_reviews,send_templates,update_agent_template,
+ update_send_template,upsert_manual_template)
 from lib.reply_events import load_policy
 from test_second_cycle import NOW,offer
 
@@ -64,5 +66,30 @@ class TemplateLibraryTests(unittest.TestCase):
  def test_continuous_control_is_the_current_template_delete_gate(self):
   self.store.db.execute("INSERT INTO continuous_send_control VALUES(?,0,0,0,'16:30','24:00','reconnect',1,?)",(self.plan,NOW))
   self.assertEqual(selected_send_template(self.store,self.root),'reconnect')
+
+ def test_ten_semantic_approvals_unlock_rotation_and_each_creator_uses_a_template_once(self):
+  from lib.cycle_delivery import Deliveries
+  status=send_template_reviews(self.store,ROOT)
+  self.assertEqual((status['approved'],status['total'],status['ready']),(0,16,False))
+  for row in status['items'][:10]:
+   status=review_send_template(self.store,ROOT,'review-'+row['templateId'],row['templateId'],
+                               'approved',row['revision'])
+  self.assertEqual((status['approved'],status['ready']),(10,True))
+  first=next_approved_send_template(self.store,ROOT,self.plan,'creator-1')
+  self.assertEqual(first['id'],'standard')
+  Deliveries(self.store)
+  snapshot={'message':{'template':'standard'}}
+  self.store.db.execute("INSERT INTO cycle_delivery VALUES('d1',?,?,?,?,?,?,?,?,'ready')",
+                        (self.plan,'creator-1','100','1','source-1',__import__('json').dumps(snapshot),NOW,NOW+60))
+  second=next_approved_send_template(self.store,ROOT,self.plan,'creator-1')
+  self.assertEqual(second['id'],'brief')
+
+ def test_editing_an_approved_meaning_invalidates_that_approval(self):
+  status=send_template_reviews(self.store,ROOT);row=status['items'][0]
+  review_send_template(self.store,ROOT,'review-standard','standard','approved',row['revision'])
+  update_send_template(self.store,'standard',1,'新版','Ciao @{creator_handle}! {product_name} {creator_commission}%.')
+  changed=send_template_reviews(self.store,ROOT)
+  self.assertEqual(changed['items'][0]['state'],'pending')
+  self.assertEqual(changed['approved'],0)
 
 if __name__=='__main__':unittest.main()

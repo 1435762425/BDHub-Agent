@@ -1,2 +1,3 @@
 import {redirect} from "next/navigation";
-export default function Home(){redirect("/it");}
+import {readMarketRegistry} from "@/server/markets/registry";
+export default function Home(){redirect(`/${readMarketRegistry().defaultMarket}`);}

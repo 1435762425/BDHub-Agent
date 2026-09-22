@@ -51,7 +51,7 @@ def main():
         ok &= check('AI auto-reply stays disabled', cfg.reply.api_key == '', 'reply.api_key empty')
 
         from bdhub.hub.markets import MARKETS, capability_status, identity_for  # noqa: E402
-        expected = {'br', 'de', 'it', 'jp', 'mx', 'uk', 'us'}
+        expected = {'br', 'de', 'it', 'jp', 'mx', 'my', 'uk', 'us'}
         ok &= check('registered markets carried over', set(MARKETS) == expected, ','.join(sorted(MARKETS)))
 
         ident = identity_for('it', cfg=cfg)

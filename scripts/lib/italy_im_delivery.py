@@ -16,13 +16,14 @@ from urllib.parse import urlsplit
 from uuid import UUID
 
 from lib.italy_im_auth import ItalyImAuthContext, ImProbeDeadline, PARTNER_HOST
-from lib.italy_im_session import ItalyImReadSession, ItalyImReadError, VerifiedConversation, IM_HOST, _proto
+from lib.italy_im_session import ItalyImReadSession, ItalyImReadError, VerifiedConversation, IM_HOST,SG_IM_HOST,EU_IM_REGIONS, _proto
 
 CREATE_PATH = "/api/v1/im/conversation/create"
 SEND_PATH = "/v1/message/send"
 CARD_CONTENT = "[商品列表]"
 CARD_TITLE_KEY = "ttspc_im_communication_list_preview_message_title3"
 CARD_ORIGIN = PARTNER_HOST + "/api/v1/affiliate/partner/im/product_list/list"
+CARD_SENDERS=frozenset({('it','acc6'),('br','acc1'),('uk','acc11')})
 SAFE_CODES = frozenset({"it_delivery_auth_invalid", "it_delivery_session_mismatch", "it_delivery_input_invalid",
     "it_delivery_conversation_unverified", "it_delivery_dispatch_not_allowed", "it_delivery_duplicate_dispatch",
     "it_delivery_stopped", "it_delivery_maintenance_due", "it_delivery_auth_expired", "it_delivery_create_unknown",
@@ -110,11 +111,14 @@ def card_binding_sha256(card: ItalyVerifiedProductCard | dict) -> str:
 
 def _verified_card(card):
     try:
-        if not isinstance(card, ItalyVerifiedProductCard) or card.market != "it" or card.account_name != "acc6" or card.verified is not True:
+        if not isinstance(card, ItalyVerifiedProductCard) or (card.market,card.account_name) not in CARD_SENDERS or card.verified is not True:
             raise ValueError()
         _id(card.product_id);_id(card.list_id)
         if card.campaign_id != "0":_id(card.campaign_id)
-        if card.title_key != CARD_TITLE_KEY or card.origin != CARD_ORIGIN:
+        origin=urlsplit(card.origin)
+        if card.title_key != CARD_TITLE_KEY or origin.scheme!='https' or not origin.hostname or \
+                not (origin.hostname=='tiktokshop.com' or origin.hostname.endswith('.tiktokshop.com')) or \
+                origin.path!='/api/v1/affiliate/partner/im/product_list/list' or origin.query or origin.fragment:
             raise ValueError()
         for name in (card.campaign_name, card.list_name):
             if not isinstance(name, str) or len(name) > 1000 or "\x00" in name:
@@ -141,10 +145,17 @@ def _card_extensions(card):
 
 def _native(auth):
     try:
-        if not isinstance(auth, ItalyImAuthContext) or auth.account_name != "acc6":
+        if not isinstance(auth, ItalyImAuthContext):
+            raise ValueError()
+        context = auth.native_context
+        market=str(context.get('market') or 'it')
+        account_name=str(context.get('account') or auth.account_name)
+        market_region=str(context.get('market_region') or '')
+        if (market,account_name) not in CARD_SENDERS or account_name!=auth.account_name or not market_region.isdigit():
             raise ValueError()
         endpoint = urlsplit(auth.token.get("api_url", ""))
-        if endpoint.scheme != "https" or endpoint.netloc != IM_HOST or endpoint.path not in ("", "/") or endpoint.query or endpoint.fragment:
+        expected_host=str(context.get('im_host') or (IM_HOST if market_region in EU_IM_REGIONS else SG_IM_HOST))
+        if endpoint.scheme != "https" or endpoint.hostname != expected_host or endpoint.port is not None or endpoint.path not in ("", "/") or endpoint.query or endpoint.fragment:
             raise ValueError()
         token = auth.token.get("token")
         if not isinstance(token, str) or not token or any(char in token for char in "\r\n"):
@@ -152,12 +163,9 @@ def _native(auth):
         im_id = _id(auth.im_id)
         if any(key.lower() in {"cookie", "authorization", "proxy-authorization"} for key in auth.im_headers):
             raise ValueError()
-        context = auth.native_context
-        if context.get("market_region") != "8":
-            raise ValueError()
         partner, row = context["partner"], context["market_row"]
         market_id, partner_id = _native_id(context["market_id"]), _native_id(context["partner_id"])
-        if str(row.get("market_region")) != "8" or _native_id(row.get("market_id")) != market_id:
+        if str(row.get("market_region")) != market_region or _native_id(row.get("market_id")) != market_id:
             raise ValueError()
         roles = {}
         for kind in (1, 4):
@@ -170,7 +178,7 @@ def _native(auth):
             raise ValueError()
         business = partner.get("partner_biz_role_info", {})
         own_rows = [item for item in business.get("market_list", []) if isinstance(item, dict)
-                    and str(item.get("market_region")) == "8" and str(item.get("market_id")) == market_id]
+                    and str(item.get("market_region")) == market_region and str(item.get("market_id")) == market_id]
         if len(own_rows) != 1 or own_rows[0] != row:
             raise ValueError()
         company = (partner.get("partner_info") or {}).get("company_name")
@@ -181,9 +189,13 @@ def _native(auth):
         avatar = partner.get("avatar_url") or ""
         if not isinstance(avatar, str) or len(avatar) > 4000:
             raise ValueError()
+        portal=urlsplit(str(context.get('partner_host') or PARTNER_HOST))
+        if portal.scheme!='https' or not portal.hostname:raise ValueError()
+        partner_host=f'{portal.scheme}://{portal.netloc}';shop_region='GB' if market=='uk' else market.upper()
         return {"im_id": im_id, "token": token, "market_id": market_id, "partner_id": partner_id, "tap_id": roles[4], "cap_id": roles[1],
                 "company_region": str(region), "agency_company_name": company, "agency_avatar": avatar, "app_id": app_id,
-                "api_url": "https://" + IM_HOST}
+                "api_url": "https://" + expected_host,'im_host':expected_host,'partner_host':partner_host,
+                'market':market,'market_region':market_region,'shop_region':shop_region,'account':account_name}
     except (KeyError, TypeError, ValueError, AttributeError, ItalyImDeliveryError):
         raise ItalyImDeliveryError("it_delivery_auth_invalid") from None
 
@@ -199,7 +211,7 @@ def build_create_payload(auth: ItalyImAuthContext, oec_id: str, *, created_at_ms
         {"role": 1, "uid": agency, "extra": {"sender_role": "4", "agency_market_id": agency, "tap_id": native["tap_id"], "cap_id": native["cap_id"]}}],
         "options": {"api_url": native["api_url"]}, "biz_hook_ext": {"1": oec_id, "4": agency,
             "createConversationTime": str(created_at_ms), "agency_market_id": agency, "company_region": native["company_region"],
-            "agency_company_name": native["agency_company_name"], "market_region": "8", "agency_avatar": native["agency_avatar"],
+            "agency_company_name": native["agency_company_name"], "market_region": native['market_region'], "agency_avatar": native["agency_avatar"],
             "creator_oec_id": oec_id, "partner_id": native["partner_id"], "tap_id": native["tap_id"], "cap_id": native["cap_id"]}}
 
 
@@ -215,6 +227,9 @@ class ItalyTextPacket:
     text: bytes
     sender_id: int
     market_id: str
+    market: str
+    market_region: str
+    shop_region: str
 
 
 def build_text_packet(auth: ItalyImAuthContext, conversation: VerifiedConversation, text: str, request_ref: str, *, sequence: int) -> ItalyTextPacket:
@@ -239,7 +254,8 @@ def _build_message_packet(auth, conversation, text, request_ref, *, sequence, ex
         raise ItalyImDeliveryError("it_delivery_input_invalid")
     wire = _proto()
     ext = {"PIGEON_BIZ_TYPE": "1", "sender_role": "4", "sender_im_role": "4", "sender_im_id": native["market_id"],
-           "shop_region": "IT", "monitor_send_message_platform": "pc", **extension}
+           "shop_region": native['shop_region'],
+           "monitor_send_message_platform": "pc", **extension}
     body = (wire.vb(1, conversation.full_cid) + wire.vi(2, conversation.conversation_type) + wire.vi(3, int(cid)) + wire.vb(4, content)
             + b"".join(wire.vb(5, wire.vb(1, key) + wire.vb(2, value)) for key, value in ext.items())
             + wire.vi(6, 1000) + wire.vb(7, conversation.ticket) + wire.vb(8, request_ref))
@@ -251,7 +267,9 @@ def _build_message_packet(auth, conversation, text, request_ref, *, sequence, ex
     if wire.one(envelope, 1) != 100 or wire.one(envelope, 2) != sequence or wire.one(envelope, 9) != native["im_id"].encode() or \
             wire.one(parsed, 1) != conversation.full_cid or wire.one(parsed, 3) != int(cid) or wire.one(parsed, 4) != content or wire.one(parsed, 6) != 1000 or wire.one(parsed, 8) != request_ref.encode():
         raise ItalyImDeliveryError("it_delivery_input_invalid")
-    return ItalyTextPacket(data, sequence, cid, conversation.full_cid, conversation.conversation_type, oec, request_ref, content, int(native["im_id"]), native["market_id"])
+    return ItalyTextPacket(data, sequence, cid, conversation.full_cid, conversation.conversation_type, oec,
+                           request_ref, content, int(native["im_id"]), native["market_id"],native['market'],
+                           native['market_region'],native['shop_region'])
 
 
 def _ext(wire, message):
@@ -283,7 +301,7 @@ def decode_send_candidate(data: bytes, packet: ItalyTextPacket) -> dict:
         if status != 0 or type(message_id) is not int or not 0 < message_id <= (1 << 63) - 1:
             raise ValueError()
         return {"conversationId": packet.conversation_id, "requestRef": packet.request_ref, "messageId": str(message_id),
-                "evidenceRef": "it-im-send:" + hashlib.sha256(data).hexdigest(), "accepted": True}
+                "evidenceRef": packet.market+"-im-send:" + hashlib.sha256(data).hexdigest(), "accepted": True}
     except ItalyImDeliveryError:
         raise
     except Exception:
@@ -293,7 +311,7 @@ def decode_send_candidate(data: bytes, packet: ItalyTextPacket) -> dict:
 
 def verify_history_body(body: bytes, conversation: VerifiedConversation, *, sender_id: str, market_id: str,
                         text: str, request_ref: str, message_id: str | None = None, wire=None,
-                        card: ItalyVerifiedProductCard | None = None) -> str | None:
+                        card: ItalyVerifiedProductCard | None = None,market_region='8',shop_region='IT') -> str | None:
     """Return an exact server ID, or None if absent. CID/OEC proof is supplied by the read session."""
     wire = wire or _proto();sender_id = _id(sender_id);market_id = _id(market_id);request_ref = _uuid(request_ref);content = _text(text)
     expected_message = int(_id(message_id)) if message_id is not None else None
@@ -312,7 +330,8 @@ def verify_history_body(body: bytes, conversation: VerifiedConversation, *, send
                 continue
             # Legacy messages can carry stale per-message region metadata. Validate
             # the exact target's identity; every row still has to belong to this CID.
-            if ext.get(b"creator_oec_id") not in (None, conversation.oec_id.encode()) or ext.get(b"shop_region") not in (None, b"IT", b"it") or ext.get(b"market_region") not in (None, b"8"):
+            shops={shop_region.encode(),shop_region.lower().encode()}
+            if ext.get(b"creator_oec_id") not in (None, conversation.oec_id.encode()) or ext.get(b"shop_region") not in ({None}|shops) or ext.get(b"market_region") not in (None, market_region.encode()):
                 raise ValueError()
             if type(server_id) is not int or not 0 < server_id <= (1 << 63) - 1 or expected_message is not None and server_id != expected_message or \
                     client_id != request_ref.encode() or wire.one(message, 7) != int(sender_id) or wire.one(message, 6) != 1000 or wire.one(message, 8) != content or \
@@ -334,9 +353,11 @@ def verify_history_body(body: bytes, conversation: VerifiedConversation, *, send
 
 
 def verify_card_history_body(body: bytes, conversation: VerifiedConversation, card: ItalyVerifiedProductCard, *,
-                             sender_id: str, market_id: str, request_ref: str, message_id: str | None = None, wire=None) -> str | None:
+                             sender_id: str, market_id: str, request_ref: str, message_id: str | None = None, wire=None,
+                             market_region='8',shop_region='IT') -> str | None:
     return verify_history_body(body, conversation, sender_id=sender_id, market_id=market_id, text=CARD_CONTENT,
-                               request_ref=request_ref, message_id=message_id, wire=wire, card=card)
+                               request_ref=request_ref, message_id=message_id, wire=wire, card=card,
+                               market_region=market_region,shop_region=shop_region)
 
 
 class ItalyImDeliveryAdapter:
@@ -354,7 +375,7 @@ class ItalyImDeliveryAdapter:
         if any(key.lower() in {"cookie", "authorization", "proxy-authorization", "x-im-paas-token"} for key in source) or len({key.lower() for key in source}) != len(source):
             raise ItalyImDeliveryError("it_delivery_session_mismatch")
         result = {key: value for key, value in source.items() if key.lower() in {"user-agent", "accept-language"}}
-        return {**result, "origin": PARTNER_HOST, "referer": PARTNER_HOST + "/"}
+        return {**result, "origin": self.native['partner_host'], "referer": self.native['partner_host'] + "/"}
 
     def _check(self):
         session = self.read_session
@@ -397,7 +418,7 @@ class ItalyImDeliveryAdapter:
         session.report[counter] = session.report.get(counter, 0) + 1
         path = CREATE_PATH if scope["stage"] == "create_conversation" else SEND_PATH
         try:
-            response = session.session.post("https://" + IM_HOST + path, headers=headers,
+            response = session.session.post("https://" + self.native['im_host'] + path, headers=headers,
                 **({"json": payload} if payload is not None else {"data": data}), timeout=(5, 15), allow_redirects=False)
             if type(response.status_code) is not int or response.status_code != 200 or getattr(response, "headers", {}).get("bdturing-verify"):
                 raise ValueError()
@@ -411,7 +432,7 @@ class ItalyImDeliveryAdapter:
         oec_id, request_ref = _id(oec_id), _uuid(request_ref)
         payload = build_create_payload(self.auth, oec_id, created_at_ms=int(self.wall_time() * 1000))
         headers = {**self._headers(), "content-type": "application/json", "x-im-paas-token": self.native["token"]}
-        scope = {"stage": "create_conversation", "requestRef": request_ref, "account": "acc6", "market": "it", "oecId": oec_id,
+        scope = {"stage": "create_conversation", "requestRef": request_ref, "account": self.native['account'], "market": self.native['market'], "oecId": oec_id,
                  "payloadSha256": hashlib.sha256(json.dumps(payload, sort_keys=True, ensure_ascii=False).encode()).hexdigest()}
         response = self._dispatch(scope, before_dispatch, headers=headers, payload=payload)
         try:
@@ -421,7 +442,7 @@ class ItalyImDeliveryAdapter:
             if is_new is not None and type(is_new) is not bool:raise ValueError()
             if body["data"].get("creator_oec_id") is not None and _native_id(body["data"]["creator_oec_id"]) != oec_id:raise ValueError()
             return {"conversationId": cid, "requestRef": request_ref, "isNew": is_new, "candidate": True,
-                    "evidenceRef": "it-im-create:" + hashlib.sha256(json.dumps(body, sort_keys=True, ensure_ascii=False).encode()).hexdigest()}
+                    "evidenceRef": self.native['market']+"-im-create:" + hashlib.sha256(json.dumps(body, sort_keys=True, ensure_ascii=False).encode()).hexdigest()}
         except ImProbeDeadline:
             raise ItalyImDeliveryError("it_delivery_wall_timeout", outcome="result_unknown") from None
         except Exception:
@@ -435,6 +456,8 @@ class ItalyImDeliveryAdapter:
 
     def send_card_once(self, conversation: VerifiedConversation, card: ItalyVerifiedProductCard, request_ref: str, *, before_dispatch=None) -> dict:
         self._conversation(conversation);self._check();_verified_card(card)
+        if card.market!=self.native['market'] or card.account_name!=self.native['account']:
+            raise ItalyImDeliveryError('it_delivery_card_binding_invalid')
         self.read_session.sequence += 1
         packet = build_card_packet(self.auth, conversation, card, request_ref, sequence=self.read_session.sequence)
         return self._send_packet(packet, before_dispatch, component_scope={"componentKind": "card",
@@ -443,7 +466,7 @@ class ItalyImDeliveryAdapter:
             "verifiedAt": card.verified_at, "origin": card.origin})
 
     def _send_packet(self, packet, before_dispatch, *, component_scope):
-        scope = {"stage": "send_message", "requestRef": packet.request_ref, "account": "acc6", "market": "it", "oecId": packet.oec_id,
+        scope = {"stage": "send_message", "requestRef": packet.request_ref, "account": self.native['account'], "market": self.native['market'], "oecId": packet.oec_id,
                  "conversationId": packet.conversation_id, "textSha256": hashlib.sha256(packet.text).hexdigest(), **component_scope}
         response = self._dispatch(scope, before_dispatch, headers={**self._headers(), "content-type": "application/x-protobuf"}, data=packet.data)
         try:
@@ -472,9 +495,10 @@ class ItalyImDeliveryAdapter:
             if wire.one(wire.decode_envelope(raw, cmd=301, sequence=sequence), 301) != body:
                 raise ItalyImDeliveryError("it_delivery_history_mismatch", outcome="result_unknown")
             found = verify_history_body(body, conversation, sender_id=self.native["im_id"], market_id=self.native["market_id"], text=text,
-                                        request_ref=request_ref, message_id=message_id, wire=wire, card=card)
+                                        request_ref=request_ref, message_id=message_id, wire=wire, card=card,
+                                        market_region=self.native['market_region'],shop_region=self.native['shop_region'])
             return {"status": "confirmed" if found else "result_unknown", "conversationId": conversation.conversation_id, "requestRef": request_ref,
-                    "messageId": found, "evidenceRef": "it-im-history:" + hashlib.sha256(raw).hexdigest(),
+                    "messageId": found, "evidenceRef": self.native['market']+"-im-history:" + hashlib.sha256(raw).hexdigest(),
                     "reason": None if found else "it_delivery_history_not_found"}
         except (ItalyImReadError, ItalyImDeliveryError) as error:
             code = error.code if isinstance(error, ItalyImDeliveryError) else "it_delivery_history_unavailable"

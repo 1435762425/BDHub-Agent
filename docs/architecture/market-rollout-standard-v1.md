@@ -7,17 +7,17 @@
 | 市场 | canonical key | 当前状态 |
 | --- | --- | --- |
 | Belgium | `be` | planned |
-| Brazil | `br` | planned |
+| Brazil | `br` | production enabled; Campaign only |
 | Germany | `de` | planned |
 | Italy | `it` | V1 enabled |
 | Japan | `jp` | planned |
-| Malaysia | `my` | planned |
+| Malaysia | `my` | paused by operator |
 | Mexico | `mx` | planned |
 | Netherlands | `nl` | planned |
 | Philippines | `ph` | planned |
 | Singapore | `sg` | planned |
 | Thailand | `th` | planned |
-| United Kingdom | `uk` | planned |
+| United Kingdom | `uk` | production enabled; Campaign + full-managed |
 | USA | `us` | planned |
 | Vietnam | `vn` | planned |
 
@@ -30,12 +30,12 @@
 1. **市场元数据**：平台 market code、host、locale、currency、语言、市场时区和运营日界线明确；
 2. **机构与账号**：机构归属、通信/供给角色、账号亲和、身份文件、维护执行器和锁都能核验；
 3. **逐能力状态**：Find、Profile、货盘、Campaign、Product List/TapLink、IM read、send 分别登记 `enabled/canary/pending/unsupported`；
-4. **商品材料**：Offer 字段不跨活动拼接；标准分佣、命名、`currentListId` 和周期刷新都能回到证据；
+4. **商品材料**：Offer 字段不跨活动拼接；TapLink 商品短名与卡名使用该市场 locale，标准分佣、命名、`currentListId` 和周期刷新都能回到证据；缺少本地化短名时停止，不得回退 IT 或截断原标题；
 5. **线索**：A 类销售窗口、B 类代表视频窗口、币种比较和额度断点按该市场验收；
 6. **身份与关系**：稳定键为 `market × OECID`；handle 只作别名；冷却、拒联、人工接管按达人统一；
 7. **冻结发送**：预览 hash、formal/reserve、freeze revision、账号、Offer、`currentListId`、话术和顺序不可变；
 8. **结果核验**：卡＋文字逐项确认；单达人限制、账号额度、平台拒绝、暂停和 unknown 分开；unknown 只核验原账号与原 requestRef；
-9. **回复政策**：该市场语言的固定模板和人工真值通过评测，自动回复仍需单独用户启用。
+9. **回复政策**：二发和 Agent 固定正文使用该市场语言，中文只作运营辅助翻译；固定模板和人工真值通过评测，自动回复仍需单独用户启用，任何市场不得读取另一市场正文。
 
 任何一层只有 canary 或 pending 时，只开放已经验收的只读/单条动作，不显示批量执行按钮。
 

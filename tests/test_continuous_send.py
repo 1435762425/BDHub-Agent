@@ -15,6 +15,7 @@ from lib.cycle_delivery import Deliveries  # noqa:E402
 from lib.schema_migrations import apply_database  # noqa:E402
 from lib.second_cycle import CycleStore,digest  # noqa:E402
 from lib.catalog_binding import offer_fingerprint  # noqa:E402
+from lib.template_library import review_send_template,send_template_reviews  # noqa:E402
 
 NOW=1_789_444_800.0
 
@@ -35,11 +36,16 @@ class ContinuousSendTests(unittest.TestCase):
     def setUp(self):
         self.temp=tempfile.TemporaryDirectory();self.root=Path(self.temp.name)
         (self.root/'var').mkdir();(self.root/'config').mkdir()
+        for name in ('markets.json','market-content.json','operations-policy.json'):
+            (self.root/'config'/name).write_text((ROOT/'config'/name).read_text())
         (self.root/'config/send-batch.json').write_text(json.dumps({'count':500,'widen':False,
           'windowEnabled':True,'template':'standard','window':['16:30','24:00']}))
         with CycleStore(self.root/'var/second-cycle.sqlite',lambda:NOW) as store:self.plan=store.plan('bjn-local-research','it')
         apply_database(self.root,'second-cycle',clock=lambda:NOW)
         self.store=CycleStore(self.root/'var/second-cycle.sqlite',lambda:NOW);Deliveries(self.store)
+        for row in send_template_reviews(self.store,self.root)['items'][:10]:
+            review_send_template(self.store,self.root,'fixture-'+row['templateId'],row['templateId'],
+                                 'approved',row['revision'])
         with closing(sqlite3.connect(self.root/'var/creator-identities.sqlite')) as db,db:
             db.execute('CREATE TABLE creator_identity(creator_id,oec_id,market,current_handle,handle_conflict)')
             db.execute("INSERT INTO creator_identity VALUES('c1','1c1','it','c1',0)")
@@ -55,6 +61,12 @@ class ContinuousSendTests(unittest.TestCase):
         stopped=mutate_control(self.store,self.root,action='stop',request_id='continuous-stop-0001',expected_revision=1)
         self.assertTrue(stopped['stopRequested']);self.assertFalse(stopped['runRequested'])
         self.assertEqual(self.store.db.execute('SELECT count(*) FROM cycle_bulk').fetchone()[0],0)
+
+    def test_start_is_blocked_until_ten_semantic_templates_are_approved(self):
+        with self.store.tx():
+            self.store.db.execute('DELETE FROM send_template_review')
+        with self.assertRaisesRegex(Exception,'template_approval_required'):
+            mutate_control(self.store,self.root,action='start',request_id='continuous-start-blocked',expected_revision=0)
 
     def test_settings_freeze_window_template_and_auto_switch(self):
         saved=mutate_control(self.store,self.root,action='save',request_id='continuous-save-0001',expected_revision=0,

@@ -1,0 +1,62 @@
+{
+  "schemaVersion": 1,
+  "defaultMarket": "it",
+  "markets": {
+    "it": {
+      "enabled": true,
+      "label": "意大利",
+      "shortLabel": "IT",
+      "locale": "it-IT",
+      "currency": "EUR",
+      "timeZone": "Europe/Rome",
+      "platformRegion": "8",
+      "templateLanguage": "it",
+      "capabilities": {
+        "campaignCatalog": true,
+        "fullManagedCatalog": true
+      }
+    },
+    "br": {
+      "enabled": true,
+      "label": "巴西",
+      "shortLabel": "BR",
+      "locale": "pt-BR",
+      "currency": "BRL",
+      "timeZone": "America/Sao_Paulo",
+      "platformRegion": "16",
+      "templateLanguage": "pt",
+      "capabilities": {
+        "campaignCatalog": true,
+        "fullManagedCatalog": false
+      }
+    },
+    "my": {
+      "enabled": true,
+      "label": "马来西亚",
+      "shortLabel": "MY",
+      "locale": "ms-MY",
+      "currency": "MYR",
+      "timeZone": "Asia/Kuala_Lumpur",
+      "platformRegion": "6",
+      "templateLanguage": "ms",
+      "capabilities": {
+        "campaignCatalog": true,
+        "fullManagedCatalog": false
+      }
+    },
+    "uk": {
+      "enabled": true,
+      "label": "英国",
+      "shortLabel": "UK",
+      "locale": "en-GB",
+      "currency": "GBP",
+      "timeZone": "Europe/London",
+      "platformRegion": "3",
+      "templateLanguage": "en",
+      "capabilities": {
+        "campaignCatalog": true,
+        "fullManagedCatalog": true
+      }
+    }
+  }
+}

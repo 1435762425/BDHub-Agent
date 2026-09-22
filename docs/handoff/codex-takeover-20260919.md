@@ -2,6 +2,42 @@
 
 更新时间：2026-09-21（Asia/Shanghai）。本文件是当前开发交接入口；产品规则以 [项目文档](../PROJECT.md) 为准，技术结构以 [技术文档](../TECHNICAL.md) 为准。动态数量是本次只读快照，后续以 `var/` 台账和页面 API 回读为准。
 
+## 0G. 2026-09-21 多市场 cadence、Campaign 失效、话术审核与统一页面
+
+- 全托高速选入已收敛为所有 `fullManagedCatalog=true` 市场共用的 `300 PID / 8 lanes / 8 QPS / 100 PID readback group` 路径，CLI、账号角色、数据库和 capability 均由 market 注册表决定，不再把正式执行写死为 IT/UK。UK 当前冻结队列为 confirmed 7,802、filtered 9、pending 88、result_unknown 12、skipped_unknown 20；最后 88 个 pending 等 ACC4 新登录代次，现有 unknown 只核验原意图。ACC4 两次项目自动重登均在 600 秒内超时；浏览器可登录但落到只有 United States 的机构上下文，未发布错误代次，需用户确认正确 UK 账号/市场后恢复。
+- 自动 cadence 改为 Campaign 每 2 天、全托每周普通读取、首次和距上次成功类目刷新满 30 天时才 `--by-category`。类目历史读取失败现在 fail closed，不会回退成昂贵类目抓取。本轮曾因旧进程误判启动 IT 类目读取，已在未发布时安全停止；正式 head 仍为 `it-global-cat-20260921-01` 的 31,809 个商品。
+- Campaign screening 落库后立即 reconcile 当前绑定：Offer 退出当前池→`inactive`，同 key 条款指纹变化→`waiting_refresh`，完全相同且重新合格→`active`，全部写 append-only event。真实台账已把 IT 492 条、BR 2 条旧 Campaign binding 转为 inactive；平台卡和历史证据未删除。只有平台确认整张列表 invalid 才允许 DELETE；BR/UK 删除 canary 未完成前固定只停用、不删平台卡。
+- Kalodata 新项目只读 session 改持共享锁，旧项目/登录器排他锁仍优先；scheduler 只在两个市场同时到达 Kalodata barrier 时并发，硬上限 2。各市场 region/currency/queue/checkpoint/SQLite 继续隔离；相关并发与上限测试已通过。
+- `market-content.json` 现有 16 个跨市场一致固定模板，IT/BR/MY/UK 仅翻译正文。migration v14 的全局审核台账按当前内容 fingerprint 重新判定；本轮正文全部变化并新增 1 条，因此均回到 pending。至少 10 条当前 fingerprint approved 前，首页持续发送开关、`/api/send start` 和市场 sender 均 fail closed；同一 creator 已进入 delivery 或文字已尝试的模板不再选择，全部用完则等待。
+- 用户最终保留原提案编号 01–12、15、18–20，删除直播过款、直播主推、素材支持和库存物流四条；四市场正文已同步翻译。IT 历史归档的 `brief/video_focus/live_focus` 以新正文追加 revision 2 并恢复 active，旧 revision 保留；当前四市场均为 16/16 可见、0 approved、16 pending，真实发送保持关闭。
+- BR/UK/MY 的合作工作台、会话和货盘不再显示占位页：合作工作台读取本市场模板审核、发送池和 workflow；会话复用三栏结构并显式携带 market，空队列不回退 IT；货盘按“采集筛选→TapLink→Kalodata/OECID→发送池”四阶段显示。已实机核对 UK 合作工作台、BR 会话和 UK 货盘，相关路由 HTTP 200。
+- BR OECID 的一次 blocked cohort 暴露了 `market_identity_report_invalid`：新代码会保留 cohort 中已确认的前缀结果，把 16201010 目标留在 pending，并由 communications 账号最多两次自动重登后恢复，不再丢掉整批有效结果或误记 unresolved。ACC1 已自动重登并发布新代次；恢复 workflow `workflow-379022a01ad71994a1d0e35cb875` 已将 pending 清零，随后 `workflow-1ab3f3d6b73073a5667d055917ea` 发布 send-pool generation `generation-7a85df3c753c992bd0a2a92b95a2`。BR 当前可发送 1,713、等待 329、历史 sent 1，持续发送仍关闭。
+- 当前真实发送仍全部关闭，MY 三开关保持关闭。migration check ready；Python 1,065 项、Web 149 项、TypeScript、Next production build、vendored runtime、122 份 Markdown 和 `git diff --check` 已通过；5198 Web 与 operations scheduler 已重启到本轮代码。最终状态备份 `var/backups/state/20260921T145554Z-multimarket-review` 含 32 库、687,779,840 字节、凭据 0，独立 verify `valid=true`。
+
+## 0F. 2026-09-21 BR / UK 正式闭环与英国周更策略
+
+- 英国类目采集已按用户指示停止并冻结为 `accepted_partial/operator_accepted_partial`：64,089 个唯一商品、4,280 页、13/30 类完整；筛选合格 7,932、拒绝 56,157。页面明确显示“用户接受的部分快照”，不冒充完整覆盖。UK 周调度固定不再传 `--by-category`；IT 保持一级类目读取。
+- 英国全托实测选入 400 confirmed、7,530 pending、1 `skipped_unknown`。该网络歧义 PID 完成两次间隔回读仍未出现，永久保留原意图且不重发；验证码拒绝与登录失效只在已选池缺失、fresh listing 未选入和同账号验证/新代次齐全后重放原请求。
+- 用户指出逐 PID 选入慢且频繁验证后，已核查 UK 当前后台和前端发布包：SDK 声明 `/pick_up/batch_select`，但 UK 页面没有批选 UI，EU v1/v2/v3 后端返回非 API HTML，尚不可上线。正式流程最终采用每轮 300 PID、8 lanes/8 QPS、100 PID group，批量读 listing、并发单 PID 写入、批末统一回读；真实完整轮次达到约 61–75 confirmed/分钟。验证码只恢复原意图，16201010 由 workflow 自动重登并继承 capability，重复两次仍未出现的项转 `skipped_unknown`。当前 full-chain workflow `workflow-0a26184025b0e1c9964829c5f330` 正在续跑冻结快照，catalog stage 在 pending 清零前不会重新采集；BR `workflow-92f88d95221df38e05c76b67de77` 已完整发布 424 个 Campaign、10,682 Offer，停在 TapLink 队列等待 UK 后续。
+- 英国 `en-GB` 短名 400/400、标准 TapLink 400/400 ready：canary 1 张＋正式 399 张，创建 unknown 0。实测拦下并删除 100 条以 PID 为标题生成的无效短名，正式代码已补齐 seed 标题并拒绝 PID 名称缓存。
+- UK Kalodata 明确使用 `GB/GBP`，11 个 PID 得到 6 条正销量线索；5 个 handle 精确取得 OECID、1 个明确搜索不到。Find 返回的 `selection_region=GB` 已规范为 canonical `uk`，不再误报跨市场。
+- UK 真实发送为 canary 1 位＋持续发送 4 位，共 5/5 位商品卡与英国英语正文双确认，unknown 0。BR 既有葡萄牙语 canary 保持 confirmed；两市场空池 worker 都常驻 `waiting_pool`。
+- BR 正式设置为自动运营开、持续发送开、全托不适用；UK 为自动运营开、全托周更开、持续发送开；MY 三项保持关闭。两市场当天各完成一次当前发送池审计运行，因此 UK 不会在启用当日重抓，下一周开始普通不分类目更新。
+- 代码验证：Python 1,050 项、Web 148 项、TypeScript、Next 生产构建、vendored runtime、122 份 Markdown 与 `git diff --check` 通过；5198 Web 和 operations scheduler 已重启到本轮代码。高速全链断点备份 `var/backups/state/20260921T111236Z-uk-br-fast-chain` 含 32 个数据库、649,138,176 字节、凭据 0，独立 verify `valid=true`。
+
+## 0E. 2026-09-21 BR / MY / UK 接入
+
+- 产品注册表现启用 IT/BR/MY/UK；导航与 `/{market}`、货盘、达人、会话、合作工作台、运行设置均按市场路由。BR/MY只显示 Campaign，UK显示 Campaign＋全托；空市场不回退读取 IT 数据。
+- 市场内容现固定为 IT=`it-IT`、BR=`pt-BR`、MY=`ms-MY`、UK=`en-GB`：16 条二发模板、三条 Agent 固定回复、商品短名 prompt 和 TapLink 命名配置均按 market 隔离。中文只作运营辅助翻译；BR/MY/UK 缺本地化短名时 fail closed，不读取 IT 缓存或截断标题。
+- 固定双账号：BR=ACC1通信/ACC2货盘、MY=ACC8/ACC5、UK=ACC11/ACC4。六号均已自动登录并发布项目自有身份；机构、HTTP、IM与角色内货盘读取通过，双号独立 lease/同机构证据通过。旧项目已把六号全部业务池、身份生命周期和自动重登关闭。
+- IM HTTP只读初始化：BR 2个当前会话、MY/UK 0个，三市场跨市场会话0、身份文件未变化、平台写入0。收信读取记为verified；真实消息发送、Agent回复、OECID/Profile与TapLink仍未做该市场写入/读取canary，持续发送保持关闭。
+- 上述缺口未清零前，三个市场首页禁用自动运营/持续发送，服务端直接请求同样以 `market_automation_capabilities_pending` 拒绝；Campaign canary 不会解锁批量外发。
+- Campaign实时预览：BR原407已加入、16合格可加入；MY原0已加入、647合格；UK原510已加入、14合格。三市场各加入1个canary并读回completed，合计3次写入、unknown 0，之后才把`campaign_join`升级为verified。
+- MY首轮Campaign完整发布70 offer，当前chosen 0/held 70。BR完整读取10,509 offer、9,116 PID；修复旧10,000 offer本地发布上限后复用同一读取发布，chosen 1,364/held 7,752。UK完整发布50,778 offer、14,339 PID，chosen 1,815/held 12,524；800个只读请求、平台写入0。UK类目读取按用户指示停止并冻结为 `operator_accepted_partial`：64,089个唯一商品、4,280页、13/30类完整，筛选合格7,932、拒绝56,157；后续周更改为普通不分类目读取。
+- 本轮前置备份 `var/backups/state/20260921T023744Z-pre-br-my-uk-onboarding`：21库、420,401,152字节、凭据0、`valid=true`。实现与证据见[接入记录](../implementation/br-my-uk-onboarding-20260921.md)。
+- 最终备份 `var/backups/state/20260921T034948Z-post-br-my-uk-final` 已独立verify：28库、504,868,864字节、凭据0、`valid=true`；新增市场数据库已进入正式备份清单。
+- 当轮接入验证：Python 1,023项、Web 148项、TypeScript、Next build、vendored runtime与122份Markdown检查通过；后续模板扩展为 16 条后需以本轮新验证为准。BR/MY/UK 货盘分别使用 `pt-BR/ms-MY/en-GB`，三市场会话页只读取对应语言，IT 使用 `it-IT`；旧项目保持不变。
+
 ## 0. 2026-09-21 自动运营首页与持续经营
 
 - 根路由默认进入 `/it` 运营首页；主链按货盘 → TapLink → Kalodata → OECID → 发送池 → 持续二发 → Agent 回复展示，同一 workflow run/stage/generation 对账。首页三个开关均为持久 revision；当前自动运营已开启，全托周更新与持续二发关闭。
@@ -58,7 +94,7 @@
 - 新增一级 `/it/conversations`，默认打开“需人工”，二级页为人工回复模板和 Agent AI 回复设置；旧 `/it/workspace/inbox` 重定向到新入口，合作工作台只保留发送与结果历史。
 - 当前真实只读队列为 33 条：需人工 5、处理中 6、Agent 已处理 1、已完成 21。需人工只计算当前仍有 pending/开放案件的会话，不把无 pending 的历史审核样本混入；详情展示原因、达人原文、等待时间、完整时间线、相关 PID/listId 和草稿。审核结论为人工但尚无实体 case 的 4 条会话会投影为可完成的人工事项，用户记录结果后才原子落账并解除本次冻结。
 - 人工操作已接文本、人工模板、商品卡、草稿 revision、中→意翻译和事项完成；图片入口明确禁用，因为当前 Pure HTTP 适配器没有图片写端点。人工文字/卡片共用持久 `service_reply`、同账号写门禁、request ref 和精确回查，失败后复用同一意图，不生成盲目重发。
-- 二发模板已经成为发送页独立卡片：五个内置模板无需保存批次即可看全文，并支持三参数自定义模板的创建、修订和归档；正在使用的模板不能归档。二发、人工回复和 Agent 固定模板三个域完全分离。
+- 二发模板已经成为发送页独立卡片：16 个内置模板无需保存批次即可看全文，并支持三参数自定义模板的创建、修订和归档；正在使用的模板不能归档。二发、人工回复和 Agent 固定模板三个域完全分离。
 - Agent 执行链已接 `no_reply` 本地结案、三条固定模板、`human` 人工案件、持久回复意图和原意图回查；人工 `turn_review` 优先于模型。默认北京时间回复 `15:00–16:00`、缓冲 30 分钟、二发 `16:30–24:00`，保存时双向拒绝重叠；等待二发窗口不会挡住回复窗口。
 - migration v10 已在备份 `var/backups/state/20260920T114352Z-before-conversation-workbench` 后应用，21 库校验通过。当前 `agent_reply_setting` 尚无持久行，页面读取默认设置；`service_reply_config.enabled=0`，Agent worker 未运行，真实回复与二发发送均为 0。
 - 货盘达人线索页已去掉与当前政策冲突的可编辑条件，集中展示 A 类 14 天/20 位/7 天刷新、B 类 30 天/1,000 播放/7 天完整重读和“只按真实平台额度停”的固定规则；`batchSize=5000` 仅作技术上限。

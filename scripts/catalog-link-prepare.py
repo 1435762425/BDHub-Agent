@@ -108,9 +108,19 @@ def live_plans(transport,prep,pids,pool,diag=None):
 
 POOL_CACHE_TTL_SECONDS=7200
 
-def pool_cache(report,path=None):
+def selected_pool_cache_path():
+    suffix='' if SCOPE['market']=='it' else '-'+SCOPE['market']
+    return ROOT/f'var/catalog-selected-pool-cache{suffix}.json'
+
+def selection_db_path():
+    return ROOT/('var/global-selection.sqlite' if SCOPE['market']=='it' else f"var/global-selection-{SCOPE['market']}.sqlite")
+
+def pool_cache(report,path=None,*,force_refresh=False):
     """Reuse a recent complete selected-pool read instead of re-paging it for every run."""
-    path=Path(path or (ROOT/'var/catalog-selected-pool-cache.json'))
+    path=Path(path or selected_pool_cache_path())
+    if force_refresh:
+        report['selectedPoolCache']={'bypassed':'full_pool_seed'}
+        return None
     if path.exists():
         cached=json.loads(path.read_text())
         if time.time()-cached.get('readAt',0)<=POOL_CACHE_TTL_SECONDS and type(cached.get('total')) is int and len(cached.get('rows') or [])==cached['total']:
@@ -124,7 +134,7 @@ def step_read(prep,run_id,limit,report,lanes=1,qps=3):
     by_pid={}
     for it in claimed:by_pid.setdefault(it['pid'],[]).append(it)
     states={}
-    with opportunity_reader(report,extra_read_endpoints=READ_EXTRA,wait_seconds=60,account_name='acc9') as transport:
+    with opportunity_reader(report,market=SCOPE['market'],extra_read_endpoints=READ_EXTRA,wait_seconds=60,account_name=SCOPE['account']) as transport:
         def reader(on,pace=None):
             # One read function per HTTP lane. CommerceTransport never calls _pace, so the
             # shared pacer has to be applied here; without it the lanes would burst unprotected.
@@ -138,7 +148,7 @@ def step_read(prep,run_id,limit,report,lanes=1,qps=3):
             pool=pool_cache(report)
             if pool is None:
                 pool=read_selected_pool(transport);pool['readAt']=time.time()
-                (ROOT/'var/catalog-selected-pool-cache.json').write_text(json.dumps(pool,ensure_ascii=False))
+                selected_pool_cache_path().write_text(json.dumps(pool,ensure_ascii=False))
             report['selectedPoolTotal']=pool['total'];report['selectedPoolPages']=pool['pages']
         except Exception as error:
             code=str(error) if isinstance(error,ValueError) else 'selected_pool_unreadable'
@@ -170,7 +180,7 @@ def step_read(prep,run_id,limit,report,lanes=1,qps=3):
                     states['retired']=states.get('retired',0)+1
         targets=[(pid,items) for pid,items in by_pid.items() if pid in group_offers]
         from lib.link_naming import load as load_naming
-        naming=load_naming(ROOT)
+        naming=load_naming(ROOT,SCOPE['market'])
         standard_specs={pid:create_spec(prep,run_id,offer,short_name_for(pid,offer.get('title','')),naming)
                         for pid,offer in group_offers.items()}
         # Classification is network-bound and dominates the run. Fan it across same-account
@@ -239,7 +249,7 @@ def step_inventory(report,lanes=1,qps=3,limit=None):
     """
     inv=TaplinkInventory(ROOT);states={}
     try:
-        with opportunity_reader(report,extra_read_endpoints=READ_EXTRA,wait_seconds=60,account_name='acc9') as transport:
+        with opportunity_reader(report,market=SCOPE['market'],extra_read_endpoints=READ_EXTRA,wait_seconds=60,account_name=SCOPE['account']) as transport:
             def reader(on,pace=None):
                 def read(path,extra):
                     if pace is not None:pace()
@@ -326,11 +336,11 @@ def step_reconcile(prep,inv,run_id,report,limit=None):
     report['reconcileItems']=len(rows);report['reconcileFromStored']=len(offers);report['reconcilePlansToRead']=len(todo)
     diag={}
     if todo:
-        with opportunity_reader(report,wait_seconds=60,account_name='acc9') as transport:
+        with opportunity_reader(report,market=SCOPE['market'],wait_seconds=60,account_name=SCOPE['account']) as transport:
             pool=pool_cache(report)
             if pool is None:
                 pool=read_selected_pool(transport);pool['readAt']=time.time()
-                (ROOT/'var/catalog-selected-pool-cache.json').write_text(json.dumps(pool,ensure_ascii=False))
+                selected_pool_cache_path().write_text(json.dumps(pool,ensure_ascii=False))
             report['selectedPoolTotal']=pool['total']
             for start in range(0,len(todo),15):
                 try:offers|=live_plans(transport,prep,todo[start:start+15],pool,diag)
@@ -362,8 +372,8 @@ def requeue_binding_mismatches(prep,run_id):
         for row in rows:
             try:listing=json.loads(row['listing']) if row['listing'] else {};offer=listing|{'pid':row['pid'],'campaignId':row['campaign_id'],'catalogSource':row['catalog_source']}
             except (TypeError,ValueError):continue
-            raw=bindings.get('it',row['catalog_source'],row['pid'],row['campaign_id'])
-            if not raw or bindings.active_for_offer(offer):continue
+            raw=bindings.get(SCOPE['market'],row['catalog_source'],row['pid'],row['campaign_id'])
+            if not raw or bindings.active_for_offer(offer,market=SCOPE['market']):continue
             changed+=prep.db.execute("UPDATE catalog_prepare_item SET state='pending',blocker='catalog_link_terms_changed',"
                                      "error=NULL,lease_until=0,updated=? WHERE run_id=? AND pid=? AND campaign_id=? "
                                      "AND catalog_source=? AND state='ready'",(time.time(),run_id,row['pid'],
@@ -386,19 +396,23 @@ def step_read_campaign(prep,run_id,limit,report):
     inv=TaplinkInventory(ROOT);failed={}
     try:
         if campaigns:
-            with opportunity_reader(report,extra_read_endpoints=READ_EXTRA,wait_seconds=60,account_name='acc9') as transport:
+            with opportunity_reader(report,market=SCOPE['market'],extra_read_endpoints=READ_EXTRA,wait_seconds=60,account_name=SCOPE['account']) as transport:
                 def read(path,extra):
                     r=transport._xhr(method='GET',path=path,params=transport._params()|extra,payload=None,write=False)
                     body=transport.require_read(r);return body,digest(body)
                 cards={}
+                run_created=prep.db.execute('SELECT created FROM catalog_prepare_run WHERE id=?',(run_id,)).fetchone()[0]
                 for cid in campaigns:
                     try:
+                        cached=inv.scan(SCOPE['market'],CAMPAIGN_SOURCE,cid)
+                        if cached and cached['observed']>=run_created:
+                            cards[cid]=cached['total'];continue
                         total,rows=scan_lists(read,source=CAMPAIGN_SOURCE,campaign_id=cid)
                         for row in rows:
                             inv.save_list(row,source=CAMPAIGN_SOURCE,campaign_id=cid)
                             inv.save_members(row['list_id'],row.get('name'),
                                              read_members(read,row['list_id'],source=CAMPAIGN_SOURCE))
-                        cards[cid]=total
+                        inv.save_scan(SCOPE['market'],CAMPAIGN_SOURCE,cid,total);cards[cid]=total
                     except Exception as error:
                         # 一个活动读不到不能把别的活动也拖下水：只给它自己的行记原因。
                         failed[cid]=str(error) if isinstance(error,ValueError) else f'{type(error).__name__}:{str(error)[:60]}'
@@ -417,6 +431,44 @@ def step_read_campaign(prep,run_id,limit,report):
         for cid in failed:states['read_incomplete']=states.get('read_incomplete',0)+1
         return {'claimed':len(claimed),'states':states,'campaigns':len(campaigns)}
     finally:inv.close()
+
+def step_read_campaign_direct(prep,run_id,limit,report,lanes=1,qps=3):
+    """Market-scoped PID search; reads only cards that can belong to the claimed products."""
+    claimed=prep.claim_read(run_id,limit=limit)
+    if not claimed:return {'claimed':0,'states':{}}
+    block=campaign_block();offers={target['pid']:target['offer'] for target in block['targets']};states={}
+    from concurrent.futures import ThreadPoolExecutor
+    from lib.cohort_find import SharedPacer
+    with opportunity_reader(report,market=SCOPE['market'],extra_read_endpoints=READ_EXTRA,wait_seconds=60,account_name=SCOPE['account']) as transport:
+        pacer=SharedPacer(qps)
+        lane_transports=[transport]+[transport.fork_lane(pacer.acquire) for _ in range(max(0,lanes-1))]
+        def reader(on):
+            def read(path,extra):
+                pacer.acquire();response=on._xhr(method='GET',path=path,params=on._params()|extra,payload=None,write=False)
+                body=on.require_read(response);return body,digest(body)
+            return read
+        reads=[reader(on) for on in lane_transports]
+        def inspect(index,item):
+            offer=offers.get(str(item['pid']))
+            if not offer:return item,None,ValueError('campaign_plan_missing')
+            try:return item,classify_pid(item['pid'],offer,reads[index%len(reads)],prep.policy),None
+            except Exception as error:return item,None,error
+        try:
+            with ThreadPoolExecutor(max_workers=max(1,lanes)) as executor:
+                outcomes=[future.result() for future in [executor.submit(inspect,index,item) for index,item in enumerate(claimed)]]
+        finally:
+            for lane in lane_transports[1:]:
+                try:lane.session.close()
+                except Exception:pass
+    for item,outcome,error in outcomes:
+        if error is not None:
+            code=str(error) if isinstance(error,ValueError) else type(error).__name__
+            prep.apply_read(run_id,item['pid'],item['campaign_id'],item['catalog_source'],{'state':'read_incomplete','error':code})
+            states['read_incomplete']=states.get('read_incomplete',0)+1;continue
+        outcome=dict(outcome);outcome['listing']=offers[str(item['pid'])]
+        prep.apply_read(run_id,item['pid'],item['campaign_id'],item['catalog_source'],outcome)
+        states[outcome['state']]=states.get(outcome['state'],0)+1
+    return {'claimed':len(claimed),'states':states,'mode':'pid_search'}
 
 def campaign_fresh_offers(transport,offers,at=None):
     """建链前实时重验非全托商业事实：按活动翻一遍商品列表，只挑我们关心的 PID。
@@ -470,7 +522,7 @@ def step_verify(prep,report,limit=None):
     if not rows:return states
     ledger=CatalogLinks(ROOT)
     try:
-        with opportunity_reader(report,extra_read_endpoints=READ_EXTRA,wait_seconds=60,account_name='acc9') as transport:
+        with opportunity_reader(report,market=SCOPE['market'],extra_read_endpoints=READ_EXTRA,wait_seconds=60,account_name=SCOPE['account']) as transport:
             def read(path,extra):
                 r=transport._xhr(method='GET',path=path,params=transport._params()|extra,payload=None,write=False)
                 body=transport.require_read(r);return body,digest(body)
@@ -496,7 +548,7 @@ def step_verify(prep,report,limit=None):
                         card=inspection.inspect_card(offer,read,expected_list_id=receipt.get('list_id'),expected_name=intent['spec']['listName'])
                         if card['state']=='verified_read_only':break
                     if not card or card['state']!='verified_read_only':raise ValueError('created_card_not_verified')
-                    card.update(readAccount='acc9')
+                    card.update(readAccount=SCOPE['account'])
                     ledger.confirm(intent['id'],card)
                     prep.mark_progress(item['run_id'],pid,cid,src,'ready',card=card)
                     states['verified']=states.get('verified',0)+1
@@ -546,23 +598,23 @@ def verify_created_card(read,intent,receipt):
             'campaignName':'','stock':str(member.get('stock')) if needs_stock else None,'stockRequired':needs_stock,
             'publicPercent':format(Decimal(str(public))/100,'f') if public is not None else None,
             'listId':list_id,'wireCampaignId':wire,'sourceCampaignId':wanted,'creatorPercent':format(rate,'f'),
-            'checkedAt':time.time(),'evidenceRefs':[sha],'executionAllowed':False,'readAccount':'acc9'}
+            'checkedAt':time.time(),'evidenceRefs':[sha],'executionAllowed':False,'readAccount':SCOPE['account']}
 
 def create_spec(prep,run_id,offer,short_name,naming=None,route=None):
     """Freeze one creation intent. The name comes from the frontend-controllable naming config."""
     from lib.link_naming import load as load_naming,fingerprint as naming_fingerprint,name_for
-    naming=naming or load_naming(ROOT)
+    naming=naming or load_naming(ROOT,SCOPE['market'])
     route=route or SCOPE['route']
     campaign=offer['campaignId'];pid=offer['pid']
     rendered=name_for(ROOT,pid=pid,campaign=campaign,creator_percent=offer['creatorPercent'],
                       short_name=short_name,public_percent=offer.get('publicPercent'),
-                      total_percent=offer.get('totalPercent'),market='it',config=naming)
+                      total_percent=offer.get('totalPercent'),market=SCOPE['market'],config=naming)
     name=rendered['name']
     # 载荷由生成器按渠道给出，不在这里手拼：两条渠道的形状不同（非全托没有 source、活动在顶层）。
     from bdhub.send.taplink.protocol import create_payload
     payload=create_payload(pid=pid,campaign_id=campaign,creator_pct=offer['creatorPercent'],name=name,route=route)
     from lib.catalog_links import policy_fingerprint
-    return {'market':'it','account':'acc9','route':route,'purpose':'catalog_batch_link','sourceRun':run_id,'pid':pid,'campaignId':campaign,
+    return {'market':SCOPE['market'],'account':SCOPE['account'],'route':route,'purpose':'catalog_batch_link','sourceRun':run_id,'pid':pid,'campaignId':campaign,
             'creatorPercent':offer['creatorPercent'],'listName':name,'shortName':rendered['shortName'],
             'policyVersion':prep.policy['version'],'policyFingerprint':policy_fingerprint(prep.policy),'searchTotal':0,'standardSearchComplete':True,
             'namingVersion':naming['version'],'namingFingerprint':naming_fingerprint(naming),
@@ -571,9 +623,9 @@ def create_spec(prep,run_id,offer,short_name,naming=None,route=None):
 def short_name_for(pid,title):
     # Shared with the naming preview so what the operator sees is what gets created.
     from lib.link_naming import short_name_for as cached_short_name
-    return cached_short_name(ROOT,pid,title)
+    return cached_short_name(ROOT,pid,title,SCOPE['market'])
 
-def step_create(prep,run_id,limit,report,pace=0.0,lanes=1,qps=5):
+def step_create(prep,run_id,limit,report,pace=0.0,lanes=1,qps=5,canary=False,pids=None):
     """Freeze a batch locally, then create it under ONE account session.
 
     Establishing the ACC9 session (profile lock, cookies, signer) is the dominant fixed cost of
@@ -583,14 +635,14 @@ def step_create(prep,run_id,limit,report,pace=0.0,lanes=1,qps=5):
     created=[];blocked=[];timings=[]
     # Pin the naming config once per run: a template edited mid-run must not split the batch.
     from lib.link_naming import load as load_naming
-    naming=load_naming(ROOT)
+    naming=load_naming(ROOT,SCOPE['market'])
     report['namingVersion']=naming['version']
     ledger=CatalogLinks(ROOT)
     work=[]
     try:
         # Phase 1: local only. Claim and freeze; nothing here touches the platform.
         for _ in range(limit):
-            item=prep.claim_create(run_id)
+            item=prep.claim_create(run_id,pids=pids)
             if not item:break
             pid,cid,src=item['pid'],item['campaign_id'],item['catalog_source']
             try:
@@ -599,7 +651,7 @@ def step_create(prep,run_id,limit,report,pace=0.0,lanes=1,qps=5):
                     offer=listing|{'pid':pid,'campaignId':cid,'catalogSource':src}
                     if not offer.get('creatorPercent'):raise ValueError('catalog_prepare_offer_missing')
                     from lib.catalog_binding import CatalogBindings
-                    current=CatalogBindings(ROOT,connection=prep.db).active_for_offer(offer)
+                    current=CatalogBindings(ROOT,connection=prep.db).active_for_offer(offer,market=SCOPE['market'])
                     if current:
                         ledger.supersede_redundant_prepared()
                         prep.mark_progress(run_id,pid,cid,src,'ready',card=current['card'])
@@ -640,7 +692,8 @@ def step_create(prep,run_id,limit,report,pace=0.0,lanes=1,qps=5):
         # 少了它，整条创建路径会在发出任何请求之前就被 TapLinkError('taplink_endpoint_not_allowed') 挡下。
         from lib.global_source_transport import CAMPAIGN_OFFER_READS
         extra_reads=CAMPAIGN_OFFER_READS if route=='campaign' else frozenset()
-        with opportunity_card_creator_batch(report,payloads,stopped=lambda:False,wait_seconds=60,extra_reads=extra_reads) as transport:
+        with opportunity_card_creator_batch(report,payloads,market=SCOPE['market'],canary=canary,
+                                             stopped=lambda:False,wait_seconds=60,extra_reads=extra_reads) as transport:
             def reader(on):
                 def read(path,extra):
                     r=on._xhr(method='GET',path=path,params=on._params()|extra,payload=None,write=False)
@@ -746,7 +799,7 @@ def step_create(prep,run_id,limit,report,pace=0.0,lanes=1,qps=5):
                     # a transient platform answer looks exactly like a real change.
                     moved={k:(str(intent['spec']['offer'].get(k)),str(current.get(k))) for k in ('campaignId','creatorPercent','totalPercent','publicPercent') if str(current.get(k))!=str(intent['spec']['offer'].get(k))}
                     if moved:raise ValueError('commercial_facts_changed:'+(';'.join(f'{k} {a}->{b}' for k,(a,b) in moved.items()))[:180])
-                    ledger.begin(intent['id'],'acc9');prep.mark_progress(run_id,pid,cid,src,'submitted')
+                    ledger.begin(intent['id'],SCOPE['account']);prep.mark_progress(run_id,pid,cid,src,'submitted')
                     r=submit_create_with_verification(transport,intent['spec']['payload'],pid,report)
                     from bdhub.send.taplink.protocol import creation_receipt
                     body=transport.require_read(r);receipt=creation_receipt(body);receipt['responseHash']=digest(body);ledger.receipt(intent['id'],receipt)
@@ -795,7 +848,7 @@ def step_create(prep,run_id,limit,report,pace=0.0,lanes=1,qps=5):
 
 def selection_items(pids=None):
     """Confirmed full-managed selections from the durable intake ledger."""
-    with closing(sqlite3.connect((ROOT/'var/global-selection.sqlite').as_uri()+'?mode=ro',uri=True)) as db:
+    with closing(sqlite3.connect(selection_db_path().as_uri()+'?mode=ro',uri=True)) as db:
         db.execute('BEGIN')
         run=db.execute('SELECT id FROM intake_run ORDER BY created DESC LIMIT 1').fetchone()
         if not run:return []
@@ -803,8 +856,10 @@ def selection_items(pids=None):
     items=[]
     for pid,state,payload in rows:
         if state!='confirmed':continue
-        campaign=str((json.loads(payload).get('snapshot') or {}).get('campaign_id') or '')
-        if campaign.isdigit() and len(campaign)>1:items.append({'pid':str(pid),'campaignId':campaign,'catalogSource':'selected'})
+        facts=json.loads(payload);snapshot=facts.get('snapshot') or {};fresh=facts.get('freshProduct') or (facts.get('campaign') or {}).get('freshProduct') or {}
+        campaign=str(snapshot.get('campaign_id') or fresh.get('campaign_id') or '')
+        title=str(snapshot.get('title') or fresh.get('title') or '').strip()
+        if campaign.isdigit() and len(campaign)>1:items.append({'pid':str(pid),'campaignId':campaign,'catalogSource':'selected','title':title})
     if pids:items=[i for i in items if i['pid'] in pids]
     return items
 
@@ -820,39 +875,46 @@ def channel_overlap(route=None):
     route=route or SCOPE['route']
     other_source='2' if route=='campaign' else '1'
     covered=set()
-    inv=TaplinkInventory(ROOT)
-    try:
-        covered={str(r[0]) for r in inv.db.execute(
-            "SELECT DISTINCT m.pid FROM catalog_tap_member m JOIN catalog_tap_list l ON l.list_id=m.list_id WHERE l.source=?",
-            (other_source,))}
-    finally:inv.close()
+    # Current standard bindings are market-scoped.  Only the IT compatibility path also consults
+    # the old account-wide inventory, whose historical schema predates the market column.
+    if SCOPE['market']=='it':
+        inv=TaplinkInventory(ROOT)
+        try:
+            covered={str(r[0]) for r in inv.db.execute(
+                "SELECT DISTINCT m.pid FROM catalog_tap_member m JOIN catalog_tap_list l ON l.list_id=m.list_id WHERE l.source=?",
+                (other_source,))}
+        finally:inv.close()
     path=ROOT/'var/catalog-links.sqlite'
     if path.exists():
         with closing(sqlite3.connect(path.resolve().as_uri()+'?mode=ro',uri=True,timeout=5)) as conn:
             conn.execute('BEGIN')
             # 意图里存了 route：只排另一条渠道的，本渠道的已经在这条 run 里了。
             covered|={str(r[0]) for r in conn.execute(
-                "SELECT DISTINCT pid FROM catalog_link_intent WHERE json_extract(spec,'$.route') IS NOT ?",(route,))}
+                "SELECT DISTINCT pid FROM catalog_current_binding WHERE market=? AND catalog_source<>? AND state='active'",
+                (SCOPE['market'],route))}
+            covered|={str(r[0]) for r in conn.execute(
+                "SELECT DISTINCT pid FROM catalog_link_intent WHERE json_extract(spec,'$.market')=? "
+                "AND json_extract(spec,'$.route') IS NOT ?",(SCOPE['market'],route))}
     return covered
 
 def campaign_block():
     """非全托的建链目标：已入池（chosen）商品 + 按**当前**规则重算的商业事实。"""
     from lib.campaign_screen import link_targets
-    return link_targets(ROOT,exclude=channel_overlap(SCOPE['route']))
+    return link_targets(ROOT,market=SCOPE['market'],exclude=channel_overlap(SCOPE['route']))
 
 def status_view(route='selected'):
     """Read-only coverage view for the product page: links, covered PIDs and blocking reasons."""
     from lib.catalog_prepare import CatalogPreparation
-    prep=CatalogPreparation(ROOT)
+    prep=CatalogPreparation(ROOT,SCOPE['market'])
     try:
         # 按渠道各取自己最近的一次准备 run：两条渠道的账本同表，最新一条不一定是这条渠道的。
-        run=prep.db.execute("SELECT * FROM catalog_prepare_run WHERE json_extract(scope,'$.route')=? ORDER BY created DESC LIMIT 1",(route,)).fetchone()
+        run=prep.db.execute("SELECT * FROM catalog_prepare_run WHERE market=? AND json_extract(scope,'$.route')=? ORDER BY created DESC LIMIT 1",(SCOPE['market'],route)).fetchone()
         if not run:return {'available':False,'executionAllowed':False,'route':route,'reason':'catalog_prepare_not_started'}
         items=[dict(r) for r in prep.db.execute('''SELECT pid,campaign_id,state,error,blocker,creator_percent,public_percent,total_percent,title,intent_id,updated
             FROM catalog_prepare_item WHERE run_id=? ORDER BY CASE state WHEN 'ready' THEN 0 WHEN 'missing' THEN 1 WHEN 'reuse' THEN 2 WHEN 'review' THEN 3 ELSE 4 END,updated DESC LIMIT 40''',(run['id'],))]
         selection=None
         if route=='selected':
-            with closing(sqlite3.connect((ROOT/'var/global-selection.sqlite').as_uri()+'?mode=ro',uri=True)) as db:
+            with closing(sqlite3.connect(selection_db_path().as_uri()+'?mode=ro',uri=True)) as db:
                 db.execute('BEGIN')
                 row=db.execute('SELECT run_id,count(*) FROM intake_item GROUP BY run_id ORDER BY max(updated) DESC LIMIT 1').fetchone()
             selection={'intakeRun':row[0],'confirmed':row[1]} if row else None
@@ -872,6 +934,7 @@ def status_view(route='selected'):
 def main():
     p=argparse.ArgumentParser(description=__doc__);p.add_argument('action',nargs='?',choices=['status','seed','read','reread','create','inventory','reconcile','verify'])
     p.add_argument('--status-links',action='store_true',help='read-only coverage view for the product page')
+    p.add_argument('--market',default='it');p.add_argument('--canary',action='store_true')
     p.add_argument('--report',type=Path);p.add_argument('--pids');p.add_argument('--limit',type=int,default=15);p.add_argument('--max-creates',type=int,default=0)
     p.add_argument('--lists',type=int,default=0,help='inventory: max lists to read members for (0=all pending)')
     p.add_argument('--items',type=int,default=0,help='reconcile: max queued plans to judge (0=all)')
@@ -882,12 +945,23 @@ def main():
     p.add_argument('--lanes',type=int,default=1,choices=[1,3,6,9],help='same-account read lanes')
     p.add_argument('--qps',type=int,default=3,choices=[3,5,8,12],help='aggregate request rate shared by all lanes')
     a=p.parse_args()
-    SCOPE['route']=a.route
+    from lib.market_accounts import load_config
+    from lib.market_registry import enabled_market_keys,supports
+    if a.market not in enabled_market_keys(ROOT):p.error('market not enabled')
+    if a.route=='selected' and not supports(ROOT,a.market,'fullManagedCatalog'):p.error('market has no full-managed catalog')
+    if a.canary and (a.market not in {'br','my','uk'} or a.action!='create' or a.max_creates!=1):p.error('canary requires BR/MY/UK create --max-creates 1')
+    SCOPE.update(market=a.market,account=load_config(ROOT)['markets'][a.market]['roles']['supply'],route=a.route)
     if a.route=='campaign':
         # 非全托的源跑号用**池子的 run**：快照或规则一变就换新 run，旧 run 的结论不会被沿用。
         block=campaign_block()
         if not block.get('available'):p.error('campaign pool unavailable: '+str(block.get('reason')))
         SCOPE['sourceRun']=block['runId']
+    else:
+        source_path=ROOT/('var/global-source.sqlite' if a.market=='it' else f'var/global-source-{a.market}.sqlite')
+        if source_path.exists():
+            with closing(sqlite3.connect(source_path.resolve().as_uri()+'?mode=ro',uri=True)) as source_db:
+                row=source_db.execute('SELECT run_id FROM global_source_head ORDER BY rowid DESC LIMIT 1').fetchone()
+            if row:SCOPE['sourceRun']=row[0]
     if a.action=='status' or a.status_links:
         print(json.dumps(status_view(a.route),ensure_ascii=False));return
     if not a.action:p.error('action required')
@@ -897,7 +971,7 @@ def main():
     output=a.report.resolve()
     if not output.is_relative_to(ROOT/'var') or output.exists():p.error('new report under var required')
     if a.limit<1 or a.limit>600 or a.max_creates<0 or a.max_creates>600:p.error('limit out of range')
-    prep=CatalogPreparation(ROOT);s=scope();run_id=prep.open_run(s)
+    prep=CatalogPreparation(ROOT,SCOPE['market']);s=scope();run_id=prep.open_run(s)
     report={'action':a.action,'route':a.route,'realSends':0,'platformWrites':0,'startedAt':time.time(),'scope':s,'runId':run_id}
     if a.action=='seed':
         wanted=set(a.pids.split(',')) if a.pids else None
@@ -912,12 +986,15 @@ def main():
             # intake keeps the original narrow universe (the durable full-managed selection ledger).
             # pool covers every live selected plan, so already-verified links are reused instead of
             # only creating links for the newly selected PIDs.
-            universe=None if a.scope=='pool' else {i['pid'] for i in selection_items(wanted)}
-            with opportunity_reader(report,wait_seconds=60,account_name='acc9') as transport:
-                pool=pool_cache(report)
+            intake=selection_items(wanted);universe=None if a.scope=='pool' else {i['pid']:i for i in intake}
+            with opportunity_reader(report,market=SCOPE['market'],wait_seconds=60,account_name=SCOPE['account']) as transport:
+                # A successful selection can change the platform pool seconds before this stage.
+                # A two-hour cache is useful for subsequent read passes, but never authoritative
+                # for the full-pool seed that defines their universe.
+                pool=pool_cache(report,force_refresh=a.scope=='pool')
                 if pool is None:
                     pool=read_selected_pool(transport);pool['readAt']=time.time()
-                    (ROOT/'var/catalog-selected-pool-cache.json').write_text(json.dumps(pool,ensure_ascii=False))
+                    selected_pool_cache_path().write_text(json.dumps(pool,ensure_ascii=False))
             items=[]
             for r in pool['rows']:
                 cp=r.get('campaign_product') or {};ci=r.get('campaign_info') or {}
@@ -925,7 +1002,8 @@ def main():
                 if not pid.isdigit() or str(ci.get('crs_campaign_type')) not in ('8','9'):continue
                 if wanted is not None and pid not in wanted:continue
                 if universe is not None and pid not in universe:continue
-                items.append({'pid':pid,'campaignId':str(ci.get('campaign_id')),'catalogSource':'selected'})
+                title=(universe.get(pid,{}).get('title') if universe is not None else None) or cp.get('product_name') or cp.get('title') or ''
+                items.append({'pid':pid,'campaignId':str(ci.get('campaign_id')),'catalogSource':'selected','title':str(title)[:500]})
             report['selectedPoolTotal']=pool['total'];report['candidates']=len(universe) if universe is not None else pool['total']
             report['scopeMode']=a.scope
         report['seeded']=prep.seed(run_id,items,s)
@@ -933,15 +1011,16 @@ def main():
         report['retired']=prep.retire_mismatched_bindings(run_id)
     elif a.action=='read':
         if a.route=='campaign':
-            report['read']=step_read_campaign(prep,run_id,a.limit,report)
+            report['read']=(step_read_campaign(prep,run_id,a.limit,report) if a.market=='it' else
+                            step_read_campaign_direct(prep,run_id,a.limit,report,lanes=a.lanes,qps=a.qps))
         else:
             if a.pids:
                 # Reserve the exact live binding before classifying; a stale local snapshot is not a plan.
-                with opportunity_reader(report,wait_seconds=60,account_name='acc9') as transport:
+                with opportunity_reader(report,market=SCOPE['market'],wait_seconds=60,account_name=SCOPE['account']) as transport:
                     pool=pool_cache(report)
                     if pool is None:
                         pool=read_selected_pool(transport);pool['readAt']=time.time()
-                        (ROOT/'var/catalog-selected-pool-cache.json').write_text(json.dumps(pool,ensure_ascii=False))
+                        selected_pool_cache_path().write_text(json.dumps(pool,ensure_ascii=False))
                 wanted=set(a.pids.split(','))
                 items=[{'pid':str((r.get('campaign_product') or {}).get('product_id')),'campaignId':str((r.get('campaign_info') or {}).get('campaign_id')),'catalogSource':'selected'}
                        for r in pool['rows'] if str((r.get('campaign_product') or {}).get('product_id')) in wanted and str((r.get('campaign_info') or {}).get('crs_campaign_type')) in ('8','9')]
@@ -970,7 +1049,8 @@ def main():
         finally:inv.close()
     elif a.action=='create':
         try:
-            report['create']=step_create(prep,run_id,a.max_creates,report,lanes=a.lanes,qps=a.qps)
+            report['create']=step_create(prep,run_id,a.max_creates,report,lanes=a.lanes,qps=a.qps,canary=a.canary,
+                                         pids=set(a.pids.split(',')) if a.pids else None)
         except Exception as error:                                     # noqa: BLE001 - 报告必须先落盘
             # 写不出去的时候，**这份报告就是唯一的证据**：异常抛出会让 stdout 空白、
             # 报告文件根本不生成，于是"为什么没写成"就查不出来了（踩过一次）。

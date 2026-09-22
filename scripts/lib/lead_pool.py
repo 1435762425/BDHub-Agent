@@ -44,7 +44,7 @@ def _rows(conn, sql, args=()):
     return conn.execute(sql, args).fetchall()
 
 
-def pool(root, *, now=None, limit=20):
+def pool(root, *, market='it', now=None, limit=20):
     """Build the pool. ``limit`` caps how many rows each layer returns, not the counts."""
     root = Path(root)
     db = root / 'var/second-cycle.sqlite'
@@ -56,16 +56,16 @@ def pool(root, *, now=None, limit=20):
         tables={row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         required={'source_edge_index','lead_query_run','lead_query_selection','lead_query_head'}
         if not required<=tables:return {'available':False,'counts':{},'layers':{},'pools':{},'schema':'bdhub.lead-pool.v3'}
-        eligible=_eligible_pids(conn,now,tables)
-        return _build(conn, now, limit, eligible_pids=eligible,root=root)
+        eligible=_eligible_pids(conn,now,tables,market)
+        return _build(conn, now, limit, eligible_pids=eligible,root=root,market=market)
 
 
-def _eligible_pids(conn,now,tables):
+def _eligible_pids(conn,now,tables,market='it'):
     if not {'plan','catalog','catalog_head'}<=tables:return None
     from lib.second_cycle import assess_offer
     pids=set()
     rows=conn.execute("SELECT c.payload FROM catalog_head h JOIN catalog c ON c.id=h.snapshot_id "
-                      "JOIN plan p ON p.id=h.plan_id WHERE p.market='it'").fetchall()
+                      "JOIN plan p ON p.id=h.plan_id WHERE p.market=?",(market,)).fetchall()
     for row in rows:
         try:offers=json.loads(row[0])
         except (TypeError,ValueError):continue
@@ -76,33 +76,43 @@ def _eligible_pids(conn,now,tables):
 
 
 def _money(value,currency):
-    if value is None or currency!='EUR':return None
+    if value is None or not isinstance(currency,str) or len(currency)!=3:return None
     try:return Decimal(str(value))
     except InvalidOperation:return None
 
 
-def _video_owner(root):
+def _video_owner(root,market='it'):
     path=Path(root)/'var/creator-identities.sqlite'
     if not path.exists():return {}
     try:
         with closing(sqlite3.connect(path.resolve().as_uri()+'?mode=ro',uri=True)) as db:
             return {str(row[1]).lower():str(row[0]) for row in db.execute(
-                "SELECT creator_id,current_handle FROM creator_identity WHERE market='it' "
-                "AND handle_conflict=0 AND current_handle IS NOT NULL")}
+                "SELECT creator_id,current_handle FROM creator_identity WHERE market=? "
+                "AND handle_conflict=0 AND current_handle IS NOT NULL",(market,))}
     except sqlite3.Error:return {}
 
 
-def _build(conn, now, limit, eligible_pids=None,root=None):
+def _build(conn, now, limit, eligible_pids=None,root=None,market='it'):
     # CROSS JOIN pins the intended small-head → selected rows → indexed evidence order.  Ordinary
     # JOIN let SQLite start with every historical edge for each PID (12s on 13k rows).
+    plan_columns={row[1] for row in conn.execute('PRAGMA table_info(plan)')}
+    has_plan={'id','institution','market','state'}<=plan_columns
+    plan=conn.execute("SELECT id FROM plan WHERE institution='bjn-local-research' AND market=? AND state='active'",(market,)).fetchone() if has_plan else None
+    if has_plan and not plan:return {'available':False,'counts':{},'layers':{},'pools':{},'schema':'bdhub.lead-pool.v3'}
+    plan_id=plan[0] if plan else None
+    try:
+        from lib.market_registry import market as market_row
+        currency=market_row(root,market)['currency'] if root else 'EUR'
+    except (FileNotFoundError,ValueError):currency='EUR' if market=='it' else None
     current="""SELECT h.plan_id,s.source_id,x.pid,x.source_handle,x.source_rank,x.units,
       x.revenue_value,x.revenue_currency
       FROM lead_query_head h CROSS JOIN lead_query_selection s CROSS JOIN source_edge_index x
-      WHERE s.query_id=h.query_id AND x.plan_id=h.plan_id AND x.source_id=s.source_id"""
-    leads = _rows(conn, f"SELECT count(*) FROM ({current})")[0][0]
+      WHERE s.query_id=h.query_id AND x.plan_id=h.plan_id AND x.source_id=s.source_id""" + (" AND h.plan_id=?" if plan_id else "")
+    current_args=(plan_id,) if plan_id else ()
+    leads = _rows(conn, f"SELECT count(*) FROM ({current})",current_args)[0][0]
     outcomes = {row[0]: row[1] for row in _rows(conn, f"SELECT o.status,count(*) FROM ({current}) k "
-        "JOIN cycle_identity_outcome o ON o.plan_id=k.plan_id AND o.source_id=k.source_id GROUP BY o.status")}
-    handles = _rows(conn, f"SELECT count(DISTINCT source_handle) FROM ({current})")
+        "JOIN cycle_identity_outcome o ON o.plan_id=k.plan_id AND o.source_id=k.source_id GROUP BY o.status",current_args)}
+    handles = _rows(conn, f"SELECT count(DISTINCT source_handle) FROM ({current})",current_args)
     # A position only exists once the lead has been matched to a real creator.
     #
     # 达人级一次（2026-09-15 用户确认）：平台回答的是"这个 handle 是谁"，**与商品无关**；商品卡也只按
@@ -115,21 +125,22 @@ def _build(conn, now, limit, eligible_pids=None,root=None):
     resolved = _rows(conn, """SELECT x.source_handle AS handle,min(r.creator_id) AS creator_id,
         count(DISTINCT r.creator_id) AS owners FROM cycle_identity_resolution r
         JOIN source_edge_index x ON x.plan_id=r.plan_id AND x.source_id=r.source_id
-        WHERE x.source_kind='kalodata_http' GROUP BY x.source_handle HAVING owners=1""")
+        WHERE """+("x.plan_id=? AND " if plan_id else "")+"""x.source_kind='kalodata_http' GROUP BY x.source_handle HAVING owners=1""",
+        (plan_id,) if plan_id else ())
     owner = {row['handle']: row['creator_id'] for row in resolved}
     if owner:
         marks = ','.join('?' * len(owner))
         edges = _rows(conn, f"""SELECT source_handle AS handle,pid,min(source_rank) AS rank,max(units) AS units,
-            max(CASE WHEN revenue_currency='EUR' THEN CAST(revenue_value AS REAL) END) AS gmv
-            FROM ({current}) WHERE source_handle IN ({marks}) GROUP BY source_handle,pid""", tuple(owner))
+            max(CASE WHEN revenue_currency=? THEN CAST(revenue_value AS REAL) END) AS gmv
+            FROM ({current}) WHERE source_handle IN ({marks}) GROUP BY source_handle,pid""", (currency,*current_args,*tuple(owner)))
         positions = [{'creator_id': owner[row['handle']], 'handle': row['handle'], 'pid': row['pid'],
                       'rank': row['rank'], 'units': row['units'],'gmv':str(row['gmv']) if row['gmv'] is not None else None,
                       'sourceClass':'A','videoViews':None,'videoId':None,'videoReleasedAt':None} for row in edges]
     else:
         positions = []
-    video_rows=_rows(conn,'SELECT * FROM video_lead_current') if conn.execute(
+    video_rows=_rows(conn,'SELECT * FROM video_lead_current') if market=='it' and conn.execute(
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name='video_lead_current'").fetchone() else []
-    video_owner=_video_owner(root) if root else {};video_unresolved=0
+    video_owner=_video_owner(root,market) if root else {};video_unresolved=0
     for row in video_rows:
         creator=video_owner.get(str(row['handle']).lower())
         if not creator:video_unresolved+=1;continue
@@ -149,27 +160,34 @@ def _build(conn, now, limit, eligible_pids=None,root=None):
             merged[key]=row
     positions=list(merged.values())
     relationships = {row['creator_id']: row for row in _rows(
-        conn, 'SELECT creator_id,unlocked,mode,rejected,inbox_until FROM relationship')}
+        conn, 'SELECT creator_id,unlocked,mode,rejected,inbox_until FROM relationship'+(' WHERE plan_id=?' if plan_id else ''),
+        (plan_id,) if plan_id else ())}
     collaboration = (
         {row['creator_id']: row['status'] for row in _rows(
-            conn, 'SELECT creator_id,status FROM creator_collaboration_current')}
+            conn, 'SELECT creator_id,status FROM creator_collaboration_current'+(' WHERE plan_id=?' if plan_id else ''),
+            (plan_id,) if plan_id else ())}
         if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' "
                         "AND name='creator_collaboration_current'").fetchone() else {}
     )
     last_sent = {row[0]: row[1] for row in _rows(
         conn, "SELECT d.creator_id,max(p.started) FROM cycle_delivery d "
               "JOIN cycle_delivery_part p ON p.delivery_id=d.id "
-              "WHERE d.state IN ('confirmed','partial_delivery') AND p.kind='card' GROUP BY d.creator_id")}
+              "WHERE "+("d.plan_id=? AND " if plan_id else "")+"d.state IN ('confirmed','partial_delivery') AND p.kind='card' GROUP BY d.creator_id",
+              (plan_id,) if plan_id else ())}
     sent_pairs = {(row[0], str(row[1])): row[2] for row in _rows(
         conn, "SELECT d.creator_id,d.pid,max(p.started) FROM cycle_delivery d "
               "JOIN cycle_delivery_part p ON p.delivery_id=d.id "
-              "WHERE d.state IN ('confirmed','partial_delivery') GROUP BY d.creator_id,d.pid")}
+              "WHERE "+("d.plan_id=? AND " if plan_id else "")+"d.state IN ('confirmed','partial_delivery') GROUP BY d.creator_id,d.pid",
+              (plan_id,) if plan_id else ())}
     open_cases = {row[0]: row[1] for row in _rows(
-        conn, "SELECT creator_id,updated FROM service_case WHERE state='open'")}
+        conn, "SELECT creator_id,updated FROM service_case WHERE "+("plan_id=? AND " if plan_id else "")+"state='open'",
+        (plan_id,) if plan_id else ())}
     pending = ({row[0]: (row[1],row[2]) for row in _rows(
-        conn, 'SELECT creator_id,state,due_at FROM inbox_pending')}
+        conn, 'SELECT creator_id,state,due_at FROM inbox_pending'+(' WHERE plan_id=?' if plan_id else ''),
+        (plan_id,) if plan_id else ())}
         if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='inbox_pending'").fetchone() else {})
-    creators = {row['creator_id'] for row in _rows(conn, 'SELECT DISTINCT creator_id FROM relationship')}
+    creators = {row['creator_id'] for row in _rows(conn, 'SELECT DISTINCT creator_id FROM relationship'+(' WHERE plan_id=?' if plan_id else ''),
+        (plan_id,) if plan_id else ())}
 
     layers = {name: [] for name in LAYER_ORDER}
     unique_creators = set()
@@ -216,7 +234,7 @@ def _build(conn, now, limit, eligible_pids=None,root=None):
     # the whole page while others never surface. Cooling follows the clock, not the lead strength.
     def strength(row):
         if row['sourceClass']=='A':
-            gmv=_money(row['gmv'],'EUR')
+            gmv=_money(row['gmv'],currency)
             return (0,0 if gmv is not None else 1,-(gmv or Decimal(0)),-(row['units'] or 0),
                     row['rank'] if row['rank'] is not None else 10**9,row['pid'],row['creatorId'])
         try:released=date.fromisoformat(row['videoReleasedAt']).toordinal()

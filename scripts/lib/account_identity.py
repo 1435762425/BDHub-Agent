@@ -242,6 +242,48 @@ def publish_generation(store, *, market, account, role, reason, identity, capabi
     return generation_payload(store, row)
 
 
+def promote_capabilities(store, *, market, account, capabilities, evidence_ref):
+    """Publish a new immutable view after a separately persisted live canary succeeds."""
+    current = current_generation(store, market, account)
+    if not current or not isinstance(capabilities, (list, tuple, set)) or not capabilities or \
+       any(not isinstance(name, str) or not name for name in capabilities) or \
+       not isinstance(evidence_ref, str) or not evidence_ref:
+        raise CycleError("identity_capability_promotion_invalid")
+    merged = {name: {"state": row["state"], "evidenceRef": row.get("evidenceRef")}
+              for name, row in current["capabilities"].items()}
+    for row in store.db.execute("""SELECT o.capability,o.evidence_ref FROM account_capability_observation o
+        JOIN account_identity_generation g ON g.generation_id=o.generation_id
+        WHERE g.market=? AND g.account=? AND g.institution_fingerprint=? AND g.state='published'
+          AND o.state='verified' ORDER BY g.published_at""",
+        (market,account,current["institutionFingerprint"])):
+        if row["capability"] not in merged or merged[row["capability"]]["state"]=="not_tested":
+            merged[row["capability"]]={"state":"verified","evidenceRef":row["evidence_ref"]}
+    for name in capabilities:
+        merged[name] = {"state": "verified", "evidenceRef": evidence_ref}
+    identity = {key: current[key] for key in (
+        "browserRef", "httpRef", "imRef", "institutionFingerprint",
+    )}
+    return publish_generation(store, market=market, account=account, role=current["role"],
+                              reason="refresh", identity=identity, capabilities=merged)
+
+
+def carry_verified_capabilities(previous, identity, capabilities):
+    """Keep live canary evidence across a same-account identity refresh/re-login.
+
+    Login maintenance changes cookies and browser references, not the platform capability already
+    proven for this account and institution.  A newly blocked/failed observation still wins; only
+    ``not_tested`` rows inherit the prior verified evidence.
+    """
+    merged={name:dict(row) for name,row in capabilities.items()}
+    if not previous or previous.get("institutionFingerprint")!=identity.get("institutionFingerprint"):
+        return merged
+    for name, prior in previous.get("capabilities",{}).items():
+        current=merged.get(name)
+        if prior.get("state")=="verified" and (current is None or current.get("state")=="not_tested"):
+            merged[name]={"state":"verified","evidenceRef":prior.get("evidenceRef")}
+    return merged
+
+
 def bootstrap_preview(store, root, evidence):
     """Build a secret-free baseline proposal from already-verified read-only evidence."""
     output = []
@@ -403,6 +445,8 @@ def execute_claimed(store, root, intent_id, adapter=None):
         store.db.execute("UPDATE account_maintenance_intent SET state='running' WHERE intent_id=?", (intent_id,))
     result = None
     try:
+        if hasattr(adapter, "prepare"):
+            adapter.prepare(row["market"], row["account"], row["role"])
         _intent_checkpoint(store, intent_id, "draining")
         adapter.drain(row["account"])
         if row["operation"] == "relogin":
@@ -420,9 +464,9 @@ def execute_claimed(store, root, intent_id, adapter=None):
         if not result.get("ok"):
             raise CycleError(result.get("errorCode") or "account_maintenance_failed")
         _intent_checkpoint(store, intent_id, "validating_capabilities", visibleBrowser=False)
+        capabilities=carry_verified_capabilities(previous,result["identity"],adapter.validate(row["account"],result))
         generated = publish_generation(store, market=row["market"], account=row["account"], role=row["role"],
-                                       reason=reason, identity=result["identity"],
-                                       capabilities=adapter.validate(row["account"], result))
+                                       reason=reason, identity=result["identity"],capabilities=capabilities)
         _intent_checkpoint(store, intent_id, "publishing_generation", generationId=generated["generationId"])
         reconnected = adapter.reconnect_inbox(row["account"], previous, generated)
         with store.tx():

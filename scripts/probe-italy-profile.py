@@ -111,20 +111,20 @@ def write_json(path: Path, value: dict) -> None:
     temporary.replace(path)
 
 
-def get_readiness() -> dict:
+def get_readiness(market="it") -> dict:
     from lib.account_identity import project_runtime_readiness
-    project = project_runtime_readiness(ROOT, "it")
+    project = project_runtime_readiness(ROOT, market)
     if project is not None:
         return project
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-    with opener.open("http://127.0.0.1:8787/api/account-readiness?market=it&capability=collect&transport=pure_http", timeout=10) as response:
+    with opener.open(f"http://127.0.0.1:8787/api/account-readiness?market={market}&capability=collect&transport=pure_http", timeout=10) as response:
         return json.load(response)
 
 
 @contextmanager
-def readonly_guard(account, *, wait_seconds=0):
+def readonly_guard(account, *, market="it", wait_seconds=0):
     from bdhub.enrich.profile_lease import ProfileLease
-    lease = ProfileLease(account.profile_dir, account=account.name, market="it", operation="agent-readonly-profile-probe")
+    lease = ProfileLease(account.profile_dir, account=account.name, market=market, operation="agent-readonly-profile-probe")
     fd = os.open(lease.mutex_path, os.O_RDONLY | os.O_NOFOLLOW)
     try:
         before = os.fstat(fd)
@@ -152,7 +152,7 @@ def permits_readiness_canary(ready,enabled,identity_only,targets,cohort,stress=F
                 and not ready.get('manual_paused') and not ready.get('market_paused')
                 and ready.get('blockers') and all(b.get('code')=='unchecked' for b in ready['blockers']))
 
-def network_child(account_name: str, target_file: Path, output: Path) -> int:
+def network_child(account_name: str, target_file: Path, output: Path, market: str='it') -> int:
     def expired(*_):
         raise ProbeDeadline("whole_probe_deadline")
     # The child has its own bound even if the supervising process is killed.
@@ -172,6 +172,7 @@ def network_child(account_name: str, target_file: Path, output: Path) -> int:
     from bdhub.enrich.creator_profile import merge_profiles
 
     target_input=json.loads(target_file.read_text())
+    if target_input.get('market','it')!=market:raise ValueError('target_market_mismatch')
     if type(target_input.get("identityOnly",False)) is not bool:raise ValueError("invalid_identity_mode")
     identity_only=target_input.get("identityOnly",False)
     targets = [normalize_target(t) for t in target_input["targets"]]
@@ -208,7 +209,7 @@ def network_child(account_name: str, target_file: Path, output: Path) -> int:
             if len(targets)!=len(registered) or {t['ref'] for t in targets}!=set(registered) or any(t['ref'] not in registered or t['handle']!=registered[t['ref']]['handle'] or t['externalId']!=t['ref'] for t in targets):raise ValueError('cohort_scope_mismatch')
     if not 1 <= len(targets) <= (40 if stress else 50 if cohort else 3):
         raise ValueError("bounded_target_count")
-    report = {"schema": "bdhub.italy-profile-probe.v3", "market": "it", "account": account_name,
+    report = {"schema": "bdhub.italy-profile-probe.v3" if market=='it' else "bdhub.market-profile-probe.v1", "market": market, "account": account_name,
               "startedAt": datetime.now(timezone.utc).isoformat(), "mode": "live_readonly_profile", "requests": [], "targets": [],
               "qps": rate if stress or soak or runtime_acceptance else 3 if cohort else 1, "businessRetries": 2, "captchaAttempts": 3, "verificationMode": "existing_market_aware_http_pipeline",
               "oldDatabaseWrites": 0, "realSends": 0, "status": "starting", "identityOnly": identity_only}
@@ -221,13 +222,13 @@ def network_child(account_name: str, target_file: Path, output: Path) -> int:
     client = None
     probe = None
     try:
-        ready = next((r for r in get_readiness()["accounts"] if r["name"] == account_name), None)
+        ready = next((r for r in get_readiness(market)["accounts"] if r["name"] == account_name), None)
         if (not ready or ready.get("startable") is not True) and not permits_readiness_canary(ready,canary or stress,identity_only,targets,cohort,stress=stress):
             report.update(status="blocked", reason="account_not_startable")
             return 2
         report['readinessCanary']=canary
         cfg = config.load()
-        prepared, unavailable = worker.prepare_collection_accounts(cfg, config.load_accounts(cfg), market="it", requested_names=[account_name])
+        prepared, unavailable = worker.prepare_collection_accounts(cfg, config.load_accounts(cfg), market=market, requested_names=[account_name])
         if not prepared:
             report.update(status="blocked", reason="account_not_prepared")
             return 2
@@ -236,10 +237,15 @@ def network_child(account_name: str, target_file: Path, output: Path) -> int:
         before_identity = hashlib.sha256(identity_file.read_bytes()).hexdigest()
         if stress and before_identity!=stress_fingerprint:raise ValueError('stress_identity_changed')
         runtime = worker.validate_runtime(worker._DEFAULT_RUNTIME)
-        report["transport"] = {"host": selected.identity["api_host"], "signerRegion": selected.identity["signer_region"], "marketCode": 8, "aid": selected.identity["aid"], "runtimeManifestValidated": True}
+        from lib.market_registry import market as market_row
+        report["transport"] = {"host": selected.identity["api_host"], "signerRegion": selected.identity["signer_region"], "marketCode": int(market_row(ROOT,market)["platformRegion"]), "aid": selected.identity["aid"], "runtimeManifestValidated": True}
         report["coordination"] = "Existing canonical guard locked read-only for this short probe; other lease acquisition may briefly wait. No lease file created."
         save()
-        with (readonly_guard(selected.account,wait_seconds=15) if cohort or stress else readonly_guard(selected.account)):
+        guard=(readonly_guard(selected.account,wait_seconds=15) if market=='it' and (cohort or stress) else
+               readonly_guard(selected.account) if market=='it' else
+               readonly_guard(selected.account,market=market,wait_seconds=15) if cohort or stress else
+               readonly_guard(selected.account,market=market))
+        with guard:
             try:
                 if hashlib.sha256(identity_file.read_bytes()).hexdigest() != before_identity:
                     report.update(status="blocked", reason="identity_changed_before_guard")
@@ -247,7 +253,7 @@ def network_child(account_name: str, target_file: Path, output: Path) -> int:
                 if worker.scheduled_relogin_svc.maintenance_due(selected.account, initialize=False, ignore_retry_throttle=True):
                     report.update(status="blocked", reason="maintenance_due")
                     return 2
-                if backoff_snapshot(selected.identity, "it")["open"]:
+                if backoff_snapshot(selected.identity, market)["open"]:
                     report.update(status="blocked", reason="shared_backoff")
                     return 2
                 with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
@@ -256,7 +262,7 @@ def network_child(account_name: str, target_file: Path, output: Path) -> int:
                 report.update(businessRetries=client.business_retries, captchaAttempts=client.captcha_attempts)
 
                 def request(stage: str, body: dict, target_ref: str):
-                    if worker.scheduled_relogin_svc.maintenance_due(selected.account, initialize=False, ignore_retry_throttle=True) or backoff_snapshot(selected.identity, "it")["open"]:
+                    if worker.scheduled_relogin_svc.maintenance_due(selected.account, initialize=False, ignore_retry_throttle=True) or backoff_snapshot(selected.identity, market)["open"]:
                         report.update(status="blocked", reason="account_maintenance_or_shared_backoff")
                         save()
                         return None
@@ -325,7 +331,7 @@ def network_child(account_name: str, target_file: Path, output: Path) -> int:
                 if cohort or stress:
                     from lib.cohort_find import run_find_cohort
                     def allowed(ref):
-                        if worker.scheduled_relogin_svc.maintenance_due(selected.account,initialize=False,ignore_retry_throttle=True) or backoff_snapshot(selected.identity,'it')['open']:return False
+                        if worker.scheduled_relogin_svc.maintenance_due(selected.account,initialize=False,ignore_retry_throttle=True) or backoff_snapshot(selected.identity,market)['open']:return False
                         if soak:
                             try:read_soak(ROOT,soak,cohort,account_name)
                             except ValueError:return False
@@ -352,7 +358,7 @@ def network_child(account_name: str, target_file: Path, output: Path) -> int:
                             save()
                             continue
                         exact_summary = summarize_profile(exact)
-                        if exact_summary["identity"]["market"] not in (None, "it"):
+                        if exact_summary["identity"]["market"] not in (None, market):
                             report.update(status="blocked", reason="find_market_mismatch")
                             break
                         oec = child._oec(exact)
@@ -364,7 +370,7 @@ def network_child(account_name: str, target_file: Path, output: Path) -> int:
                         summaries.append(exact_summary)
                         raw_profiles.append(exact)
                     result["oecId"] = oec
-                    if identity_only and handle and exact_summary["identity"]["market"] == "it":
+                    if identity_only and handle and exact_summary["identity"]["market"] == market:
                         result.update(status="identity_verified",currentPlatformIdentityVerified=True,
                                       historicalCrossSourceIdentityProven=False,profileCollection="not_requested")
                         save()
@@ -379,7 +385,7 @@ def network_child(account_name: str, target_file: Path, output: Path) -> int:
                             report.update(status="blocked", reason="profile_identity_mismatch")
                             break
                         summary = summarize_profile(profile)
-                        if summary["identity"]["market"] not in (None, "it"):
+                        if summary["identity"]["market"] not in (None, market):
                             report.update(status="blocked", reason="profile_market_mismatch")
                             break
                         result["profiles"].append({"profileTypes": profile_types, "summary": summary})
@@ -398,14 +404,14 @@ def network_child(account_name: str, target_file: Path, output: Path) -> int:
                             report.update(status="blocked", reason="supplement_identity_mismatch")
                             break
                         summary = summarize_profile(profile)
-                        if summary["identity"]["market"] not in (None, "it"):
+                        if summary["identity"]["market"] not in (None, market):
                             report.update(status="blocked", reason="supplement_market_mismatch")
                             break
                         result["profiles"].append({"profileTypes": [1, 6], "summary": summary})
                         summaries.append(summary)
                     merged = merge_profile_summaries(summaries)
                     current_handle = merged["identity"]["handle"]
-                    if (handle and (current_handle or "").lower() != handle) or merged["identity"]["market"] != "it" or merged["identity"]["oecId"] != oec:
+                    if (handle and (current_handle or "").lower() != handle) or merged["identity"]["market"] != market or merged["identity"]["oecId"] != oec:
                         result.update(status="unresolved", reason="merged_identity_not_confirmed", merged=merged, currentHandleResolved=False)
                     else:
                         result.update(status="completed", merged=merged, currentPlatformIdentityVerified=True,
@@ -450,6 +456,7 @@ def network_child(account_name: str, target_file: Path, output: Path) -> int:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--account", default="acc6")
+    parser.add_argument("--market",default="it")
     parser.add_argument("--targets", type=Path, default=VAR / "italy-profile-probe-targets.json")
     parser.add_argument("--output", type=Path)
     parser.add_argument("--network-child", action="store_true")
@@ -459,11 +466,11 @@ def main() -> int:
         raise ValueError("Probe input and output must stay in new project var.")
     output.mkdir(parents=True, exist_ok=True)
     if args.network_child:
-        return network_child(args.account, args.targets.resolve(), output)
+        return network_child(args.account,args.targets.resolve(), output,market=args.market)
     if (output / "report.private.json").exists():
         raise ValueError("Existing probe evidence is immutable; select a new output directory.")
     env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1")
-    command = [sys.executable, str(Path(__file__).resolve()), "--network-child", "--account", args.account, "--targets", str(args.targets.resolve()), "--output", str(output)]
+    command = [sys.executable, str(Path(__file__).resolve()), "--network-child", "--account", args.account, "--market",args.market,"--targets", str(args.targets.resolve()), "--output", str(output)]
     child_process = subprocess.Popen(command, env=env, start_new_session=True, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     timeout = False
     def cancelled(*_):
@@ -495,7 +502,7 @@ def main() -> int:
     if timeout:
         report.update(status="bounded_timeout", reason="whole_probe_deadline")
         write_json(report_file, report)
-    public = {"status": report.get("status"), "reason": report.get("reason"), "account": args.account,
+    public = {"status": report.get("status"), "reason": report.get("reason"), "account": args.account,"market":args.market,
               "completedTargets": sum(t.get("status") in ("completed","identity_verified") for t in report.get("targets", [])),
               "identityOnly":report.get("identityOnly",False),
               "profileCompletedTargets":sum(t.get("status")=="completed" for t in report.get("targets", [])),

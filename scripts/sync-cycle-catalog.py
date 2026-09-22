@@ -15,16 +15,18 @@ def save(path,data):
  tmp=path.with_suffix('.tmp');tmp.write_text(json.dumps(data,ensure_ascii=False,indent=2)+'\n');os.chmod(tmp,0o600);tmp.replace(path)
 
 def main():
- p=argparse.ArgumentParser(description=__doc__);p.add_argument('--source',choices=['campaign','selected'],required=True);p.add_argument('--run',type=Path,required=True);p.add_argument('--max-requests',type=int,default=100);p.add_argument('--audit-only',action='store_true');args=p.parse_args()
+ p=argparse.ArgumentParser(description=__doc__);p.add_argument('--market',default='it');p.add_argument('--source',choices=['campaign','selected'],required=True);p.add_argument('--run',type=Path,required=True);p.add_argument('--max-requests',type=int,default=100);p.add_argument('--audit-only',action='store_true');args=p.parse_args()
+ from lib.market_registry import supports
+ if args.source=='selected' and not supports(ROOT,args.market,'fullManagedCatalog'):p.error('market has no full-managed catalog')
  path=args.run.resolve()
  if not path.is_relative_to(ROOT/'var') or not 1<=args.max_requests<=150:p.error('invalid local scope')
  path.parent.mkdir(parents=True,exist_ok=True)
  import fcntl
  lock=path.with_suffix('.lock').open('a');fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
  prior=json.loads(path.read_text()) if path.exists() else None
- account_name=catalog_read_account(ROOT,prior['scope']['account'] if prior else None)
+ account_name=catalog_read_account(ROOT,prior['scope']['account'] if prior else None,args.market)
  rule=commission_rule(ROOT)
- scope=catalog_scope(ROOT,account_name)
+ scope=catalog_scope(ROOT,account_name,args.market)
  state=prior or new_state(args.source,rule,scope,time.time())
  if state['source']!=args.source or state['scope']!=scope or digest(state['rule'])!=digest(rule):raise CycleError('catalog_run_scope_changed')
  calculate=commission_calculator(rule)
@@ -32,7 +34,7 @@ def main():
   if args.audit_only:return
   if state.get('identityFileUnchanged') is not True:raise CycleError('identity_unverified')
   with CycleStore(ROOT/'var/second-cycle.sqlite') as store:
-   plan=store.plan('bjn-local-research','it');sid=store.publish(plan,'live-it-'+args.source,state['startedAt'],state['offers'])
+   plan=store.plan('bjn-local-research',args.market);sid=store.publish(plan,f'live-{args.market}-'+args.source,state['startedAt'],state['offers'])
    store.project_current_offers(plan)
    state['publishedSnapshot']=sid;save(path,state)
  if state['state']=='completed':
@@ -40,7 +42,7 @@ def main():
  state['state']='running';state.pop('error',None);save(path,state)
  report={}
  try:
-  with opportunity_reader(report,account_name=account_name,extra_read_endpoints={(CAMPAIGNS,'GET'),(PRODUCTS,'GET')}) as transport:
+  with opportunity_reader(report,market=args.market,account_name=account_name,extra_read_endpoints={(CAMPAIGNS,'GET'),(PRODUCTS,'GET')}) as transport:
    if report['scope']!=scope:raise CycleError('catalog_actor_scope_mismatch')
    def read(method,endpoint,extra,body):
     if (method,endpoint) not in {('GET',CAMPAIGNS),('GET',PRODUCTS),('POST',SELECTED)}:raise CycleError('catalog_endpoint_forbidden')

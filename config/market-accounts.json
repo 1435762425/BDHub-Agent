@@ -19,6 +19,67 @@
       "linkCreationCanary": {
         "creation": "var/acc9-link-execute-20260914.json",
         "senderReadback": "var/acc9-link-acc6-readback-20260914-v3.json"
+      },
+      "catalogCapabilities": {
+        "campaign": true,
+        "fullManaged": true
+      }
+    },
+    "br": {
+      "accounts": [
+        "acc1",
+        "acc2"
+      ],
+      "roles": {
+        "communications": "acc1",
+        "supply": "acc2"
+      },
+      "assignmentState": "campaign_reads_enabled",
+      "validationEvidence": "var/brazil-account-pair-project.json",
+      "credentialAuthority": "project_owned",
+      "maintenanceExecutor": "agent_identity_generation",
+      "automaticRoleSwitchEnabled": false,
+      "catalogCapabilities": {
+        "campaign": true,
+        "fullManaged": false
+      }
+    },
+    "my": {
+      "accounts": [
+        "acc8",
+        "acc5"
+      ],
+      "roles": {
+        "communications": "acc8",
+        "supply": "acc5"
+      },
+      "assignmentState": "campaign_reads_enabled",
+      "validationEvidence": "var/malaysia-account-pair-project.json",
+      "credentialAuthority": "project_owned",
+      "maintenanceExecutor": "agent_identity_generation",
+      "automaticRoleSwitchEnabled": false,
+      "catalogCapabilities": {
+        "campaign": true,
+        "fullManaged": false
+      }
+    },
+    "uk": {
+      "accounts": [
+        "acc11",
+        "acc4"
+      ],
+      "roles": {
+        "communications": "acc11",
+        "supply": "acc4"
+      },
+      "assignmentState": "catalog_reads_enabled",
+      "validationEvidence": "var/uk-account-pair-project.json",
+      "credentialAuthority": "project_owned",
+      "maintenanceExecutor": "agent_identity_generation",
+      "automaticRoleSwitchEnabled": false,
+      "catalogCapabilities": {
+        "campaign": true,
+        "fullManaged": true
       }
     }
   },

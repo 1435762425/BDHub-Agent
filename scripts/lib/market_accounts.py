@@ -1,5 +1,6 @@
 """Non-secret market assignments and read-only status. No worker starts or credential writes."""
-import json,re,time
+import json,re,sqlite3,time
+from contextlib import closing
 from pathlib import Path
 
 def validate_config(value):
@@ -25,18 +26,56 @@ def validate_config(value):
     if any(type(lifecycle.get(k)) is not int or lifecycle[k]<=0 for k in ('identityRefreshHours','loginMaintenanceHours')):raise ValueError('maintenance_interval_invalid')
     return value
 
-def load_config(root):return validate_config(json.loads((Path(root)/'config/market-accounts.json').read_text()))
+def load_config(root):
+    value=validate_config(json.loads((Path(root)/'config/market-accounts.json').read_text()))
+    registry_path=Path(root)/'config/markets.json'
+    if registry_path.exists():
+        from lib.market_registry import load_registry
+        registry=load_registry(root);enabled={key for key,row in registry['markets'].items() if row['enabled']}
+        if set(value['markets'])!=enabled:raise ValueError('market_account_registry_mismatch')
+        for key,pair in value['markets'].items():
+            expected={'campaign':registry['markets'][key]['capabilities']['campaignCatalog'],
+                      'fullManaged':registry['markets'][key]['capabilities']['fullManagedCatalog']}
+            if pair.get('catalogCapabilities')!=expected:raise ValueError('market_catalog_capability_mismatch')
+    return value
 
-def catalog_read_account(root,pinned=None):
-    pair=load_config(root)['markets']['it']
+def _published_capabilities(root,market,account):
+    path=Path(root)/'var/second-cycle.sqlite'
+    if not path.exists():return None
+    try:
+        with closing(sqlite3.connect(path.resolve().as_uri()+'?mode=ro',uri=True,timeout=5)) as db:
+            row=db.execute("SELECT generation_id FROM account_identity_generation WHERE market=? AND account=? AND state='published' ORDER BY published_at DESC,rowid DESC LIMIT 1",(market,account)).fetchone()
+            if not row:return None
+            return {name:state for name,state in db.execute(
+                'SELECT capability,state FROM account_capability_observation WHERE generation_id=?',(row[0],))}
+    except (OSError,sqlite3.Error):
+        return None
+
+def catalog_read_account(root,pinned=None,market='it'):
+    pair=load_config(root)['markets'].get(market)
+    if not pair:raise ValueError('market_account_assignment_missing')
     account=pinned or pair['roles']['supply']
     if account not in pair['accounts']:raise ValueError('catalog_account_outside_assignment')
-    evidence=evidence_summary(root,pair,'it')
+    capabilities=_published_capabilities(root,market,account)
+    if capabilities is not None:
+        if capabilities.get('catalog_read')!='verified':raise ValueError('catalog_account_not_verified')
+        return account
+    evidence=evidence_summary(root,pair,market)
     if evidence.get('state')!='verified_readonly' or evidence['accounts'].get(account,{}).get('capabilities',{}).get('catalog_read')!='verified':raise ValueError('catalog_account_not_verified')
     return account
 
-def catalog_scope(root,account):
-    scope=json.loads((Path(root)/'var/cycle-catalog-it-20260913/selected.json').read_text())['scope']
+def catalog_scope(root,account,market='it'):
+    if market=='it':
+        scope=json.loads((Path(root)/'var/cycle-catalog-it-20260913/selected.json').read_text())['scope']
+    else:
+        from lib.legacy_runtime import configure_vendored_bdhub
+        configure_vendored_bdhub(root=Path(root),legacy_root=Path(root).parent/'01-BDSystem-V2')
+        from bdhub.hub.markets import identity_for
+        from bdhub.send.taplink.transport import account_for
+        from lib.second_cycle import digest
+        cfg,registered=account_for(market,account,check_maintenance=False)
+        identity=identity_for(market,account=registered,cfg=cfg).require_product_search()
+        scope={'market':market,'institutionFingerprint':digest(str(identity.im_market_partner_id))}
     return scope|{'account':account}
 
 def evidence_summary(root,pair,market='it'):

@@ -23,7 +23,8 @@ from lib.cycle_send_runtime import descriptor
 from lib.lead_pool import pool
 from lib.second_cycle import CycleError, digest, encoded
 from lib.send_batch import NEW_CONTACT_LIMIT, capacity, load_config, window_state, _window_arg
-from lib.template_library import render_send_template, resolve_send_template, send_templates
+from lib.template_library import (next_approved_send_template,render_send_template,
+                                  require_send_template_approval,resolve_send_template,send_templates)
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -102,6 +103,8 @@ def mutate_control(store,root,*,action,request_id,expected_revision,changes=None
         if 'template' in changes:
             resolve_send_template(store,changes['template'])
     elif changes:raise CycleError('continuous_send_request_invalid')
+    if action=='start' or action=='save' and changes.get('automaticEnabled') is True:
+        require_send_template_approval(store,root)
     payload=encoded({'action':action,'changes':changes})
     plan=current['planId']
     with store.tx():
@@ -173,11 +176,14 @@ def _candidate(root,store,plan,control_value):
     if not candidates:return None,state
     # The immutable delivery key is also the durable dedupe key.  Confirmed, rejected and
     # preflight-cancelled rows remain audit evidence and must never be picked as a fresh delivery.
-    candidate=next((row for row in candidates if not store.db.execute(
-      'SELECT 1 FROM cycle_delivery WHERE plan_id=? AND creator_id=? AND pid=? AND source_id=?',
-      (plan,row['creatorId'],str(row['pid']),row['source']['sourceId'])).fetchone()),None)
+    candidate=None;spec=None
+    for row in candidates:
+        if store.db.execute('SELECT 1 FROM cycle_delivery WHERE plan_id=? AND creator_id=? AND pid=? AND source_id=?',
+          (plan,row['creatorId'],str(row['pid']),row['source']['sourceId'])).fetchone():continue
+        selected=next_approved_send_template(store,root,plan,row['creatorId'],'it')
+        if selected is not None:candidate,spec=row,selected;break
     if candidate is None:return None,state
-    candidate=json.loads(encoded(candidate));spec=resolve_send_template(store,control_value['template'])
+    candidate=json.loads(encoded(candidate))
     candidate['message']=render_send_template(spec,candidate['name'],candidate['offer'],candidate['handle'])
     candidate['message'].setdefault('templateRevision',spec['revision'])
     candidate['executionMode']='continuous-v1';candidate['continuousControlRevision']=control_value['revision']

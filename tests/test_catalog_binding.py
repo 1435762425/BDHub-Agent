@@ -87,6 +87,32 @@ class CatalogBindingTests(unittest.TestCase):
         self.assertEqual((applied['qualifying'],applied['promoted']),(1,1))
         self.assertEqual(self.bindings.get('it','selected','1','2')['list_id'],'99')
 
+    def test_current_offer_reconciliation_deactivates_changes_and_can_restore_exact_binding(self):
+        self.bindings.promote(self.spec, self.card, "intent-1", now=101.0)
+        current = self.spec['offer']
+        same = self.bindings.reconcile_current_offers(
+            'it', 'selected', [current], evidence_ref='screen-1', now=102.0)
+        self.assertEqual(same['unchanged'], 1)
+        changed = dict(current)
+        changed['creatorPercent'] = '14'
+        changed['planFingerprint'] = digest(changed)
+        result = self.bindings.reconcile_current_offers(
+            'it', 'selected', [changed], evidence_ref='screen-2', now=103.0)
+        self.assertEqual(result['waiting_refresh'], 1)
+        self.assertEqual(self.bindings.get('it', 'selected', '1', '2')['state'], 'waiting_refresh')
+        result = self.bindings.reconcile_current_offers(
+            'it', 'selected', [], evidence_ref='screen-3', now=104.0)
+        self.assertEqual(result['inactive'], 1)
+        result = self.bindings.reconcile_current_offers(
+            'it', 'selected', [current], evidence_ref='screen-4', now=105.0)
+        self.assertEqual(result['active'], 1)
+        self.assertEqual(self.bindings.active_pids(), {'1'})
+        events = list(self.bindings.db.execute(
+            "SELECT state FROM catalog_current_binding_event ORDER BY observed_at"
+        ))
+        self.assertEqual([row[0] for row in events],
+                         ['active', 'waiting_refresh', 'inactive', 'active'])
+
 
 if __name__ == "__main__":
     unittest.main()

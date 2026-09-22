@@ -853,6 +853,32 @@ BEGIN SELECT RAISE(ABORT,'taplink reconcile attempt is append only'); END;
 """)
 
 
+SECOND_CYCLE_TEMPLATE_REVIEW = Migration(14, "send_template_semantic_review_v1", """
+CREATE TABLE IF NOT EXISTS send_template_review(
+  template_id TEXT PRIMARY KEY,
+  content_fingerprint TEXT NOT NULL,
+  state TEXT NOT NULL,
+  revision INTEGER NOT NULL,
+  updated_at REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS send_template_review_event(
+  request_id TEXT PRIMARY KEY,
+  template_id TEXT NOT NULL,
+  content_fingerprint TEXT NOT NULL,
+  state TEXT NOT NULL,
+  expected_revision INTEGER NOT NULL,
+  result_revision INTEGER NOT NULL,
+  created_at REAL NOT NULL
+);
+CREATE TRIGGER IF NOT EXISTS send_template_review_event_no_update
+BEFORE UPDATE ON send_template_review_event
+BEGIN SELECT RAISE(ABORT,'send template review event is append only'); END;
+CREATE TRIGGER IF NOT EXISTS send_template_review_event_no_delete
+BEFORE DELETE ON send_template_review_event
+BEGIN SELECT RAISE(ABORT,'send template review event is append only'); END;
+""")
+
+
 DATABASES = {
     "catalog-links": ("catalog-links.sqlite", (CATALOG_LINKS,)),
     "second-cycle": ("second-cycle.sqlite", (SECOND_CYCLE, SECOND_CYCLE_INDEXES,
@@ -866,7 +892,8 @@ DATABASES = {
                                                 SECOND_CYCLE_CONVERSATION_WORKBENCH,
                                                 SECOND_CYCLE_AUTOMATED_WORKFLOW,
                                                 SECOND_CYCLE_ACCOUNT_IDENTITY,
-                                                SECOND_CYCLE_CONTINUOUS_OPERATIONS)),
+                                                SECOND_CYCLE_CONTINUOUS_OPERATIONS,
+                                                SECOND_CYCLE_TEMPLATE_REVIEW)),
 }
 
 REGISTRY_SQL = """

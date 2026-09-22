@@ -1,14 +1,15 @@
 import {execFile} from "node:child_process";
 import {join} from "node:path";
 import {projectRoot} from "../creator-identities/refresh.ts";
+import {enabledMarket} from "../markets/registry.ts";
 
-export type LinkNamingConfig={version:string;template:string;tailLength:number;maxLength:number;shortNameMaxLength:number};
+export type LinkNamingConfig={version:string;template:string;tailLength:number;maxLength:number;shortNameMaxLength:number;market?:string;language?:string;locale?:string};
 export type LinkNamingPreviewRow={pid:string;campaignId:string;title:string;creatorPercent:string;publicPercent:string|null;totalPercent:string|null;shortName:string|null;name:string|null;tail:string;length:number;limit:number;error:string|null};
 export type LinkNamingState={config:LinkNamingConfig;fingerprint:string;placeholders:string[];defaults?:LinkNamingConfig;preview:LinkNamingPreviewRow[];saved?:boolean;error?:string};
 
 const PLACEHOLDERS=new Set(["short_name","creator_percent","public_percent","total_percent","tail","pid_last6","campaign_last6","market"]);
 
-function validateConfig(value:unknown):LinkNamingConfig{
+function validateConfig(value:unknown,expectedMarket?:string):LinkNamingConfig{
  if(!value||typeof value!=="object")throw Error('invalid_link_naming');
  const v=value as Record<string,unknown>;
  if(typeof v.version!=="string"||!v.version)throw Error('invalid_link_naming');
@@ -18,14 +19,22 @@ function validateConfig(value:unknown):LinkNamingConfig{
  if(found.some(name=>!PLACEHOLDERS.has(name)))throw Error('invalid_link_naming');
  if(!found.includes("short_name"))throw Error('invalid_link_naming');
  const bounded=(raw:unknown,low:number,high:number)=>{if(!Number.isSafeInteger(raw)||(raw as number)<low||(raw as number)>high)throw Error('invalid_link_naming');return raw as number;};
- return {version:v.version,template:v.template,
+ const rawMarket=v.market===undefined?"it":v.market;
+ if(typeof rawMarket!=="string")throw Error('invalid_link_naming');
+ const market=expectedMarket??rawMarket,registered=enabledMarket(market);
+ if(!registered||rawMarket!==market)throw Error('invalid_link_naming');
+ const hasMetadata=v.market!==undefined||v.language!==undefined||v.locale!==undefined;
+ if((market!=="it"||hasMetadata)&&(v.market!==market||v.language!==registered.templateLanguage||v.locale!==registered.locale))throw Error('invalid_link_naming');
+ const config:LinkNamingConfig={version:v.version,template:v.template,
   tailLength:bounded(v.tailLength,4,12),maxLength:bounded(v.maxLength,10,50),shortNameMaxLength:bounded(v.shortNameMaxLength,1,40)};
+ if(market!=="it"||hasMetadata){config.market=market;config.language=registered.templateLanguage;config.locale=registered.locale;}
+ return config;
 }
 
-export function validateNaming(value:unknown):LinkNamingState{
+export function validateNaming(value:unknown,expectedMarket?:string):LinkNamingState{
  if(!value||typeof value!=="object")throw Error('invalid_link_naming');
  const v=value as Record<string,unknown>;
- const config=validateConfig(v.config);
+ const config=validateConfig(v.config,expectedMarket);
  if(typeof v.fingerprint!=="string"||!/^[0-9a-f]{16,128}$/.test(v.fingerprint))throw Error('invalid_link_naming');
  if(!Array.isArray(v.placeholders)||v.placeholders.length>16||!v.placeholders.every(p=>typeof p==="string"&&PLACEHOLDERS.has(p)))throw Error('invalid_link_naming');
  if(!Array.isArray(v.preview)||v.preview.length>20)throw Error('invalid_link_naming');
@@ -38,25 +47,29 @@ export function validateNaming(value:unknown):LinkNamingState{
   ...(typeof v.saved==="boolean"?{saved:v.saved}:{}),...(typeof v.error==="string"?{error:v.error}:{})};
 }
 
-function runNaming(args:string[]):Promise<LinkNamingState>{
+function runNaming(args:string[],market="it"):Promise<LinkNamingState>{
  const root=projectRoot();
  return new Promise((resolve,reject)=>{
-  execFile(join(root,".venv/bin/python"),[join(root,"scripts/link-naming.py"),...args],
+  execFile(join(root,".venv/bin/python"),[join(root,"scripts/link-naming.py"),...args,"--market",market],
    {cwd:root,timeout:30000,maxBuffer:2*1024*1024,env:{...process.env,PYTHONDONTWRITEBYTECODE:"1"}},(error,out)=>{
-    try{const parsed=validateNaming(JSON.parse(out));if(error&&!parsed.error)throw error;resolve(parsed);}
+    try{const parsed=validateNaming(JSON.parse(out),market);if(error&&!parsed.error)throw error;resolve(parsed);}
     catch{reject(Error('link_naming_unavailable'));}
    });
  });
 }
 
-export function readNaming():Promise<LinkNamingState>{return runNaming(["show"]);}
-export function previewNaming(config:unknown):Promise<LinkNamingState>{return runNaming(["preview","--json",JSON.stringify(validateConfig(config))]);}
-export function saveNaming(config:unknown):Promise<LinkNamingState>{return runNaming(["save","--json",JSON.stringify(validateConfig(config))]);}
-export function validateNamingRequest(value:unknown):{action:"preview"|"save";config:LinkNamingConfig}{
+export function readNaming(market="it"):Promise<LinkNamingState>{return runNaming(["show"],market);}
+export function previewNaming(config:unknown,market="it"):Promise<LinkNamingState>{return runNaming(["preview","--json",JSON.stringify(validateConfig(config,market))],market);}
+export function saveNaming(config:unknown,market="it"):Promise<LinkNamingState>{return runNaming(["save","--json",JSON.stringify(validateConfig(config,market))],market);}
+export function validateNamingRequest(value:unknown):{action:"preview"|"save";market:string;config:LinkNamingConfig}{
  if(!value||typeof value!=="object")throw Error('invalid_link_naming_request');
  const v=value as Record<string,unknown>;
  if(v.action!=="preview"&&v.action!=="save")throw Error('invalid_link_naming_request');
+ const keys=Object.keys(v).sort().join(",");
+ if(keys!=="action,config"&&keys!=="action,config,market")throw Error('invalid_link_naming_request');
+ const market=v.market===undefined?"it":v.market;
+ if(typeof market!=="string"||!enabledMarket(market))throw Error('invalid_link_naming_request');
  // A bad template is a bad request, not an unavailable service.
- try{return {action:v.action,config:validateConfig(v.config)};}
+ try{return {action:v.action,market,config:validateConfig(v.config,market)};}
  catch{throw Error('invalid_link_naming_request');}
 }

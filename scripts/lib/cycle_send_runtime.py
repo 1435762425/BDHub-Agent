@@ -11,8 +11,8 @@ from lib.italy_im_delivery import ItalyVerifiedProductCard,card_binding_sha256,C
 ROOT=Path(__file__).resolve().parents[2]
 spec=importlib.util.spec_from_file_location('cycle_card_reader',ROOT/'scripts/prepare-cycle-materials.py');module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
 
-def descriptor(c):
- value={'product_id':c['pid'],'list_id':c['listId'],'campaign_id':c['wireCampaignId'],'list_name':c['listName'],'campaign_name':c['campaignName'],'market':'it','account_name':'acc6','verified_at':datetime.fromtimestamp(c['checkedAt'],timezone.utc).isoformat(),'origin':CARD_ORIGIN,'evidence_sha256':digest(c['evidenceRefs']),'verified':True,'title_key':CARD_TITLE_KEY}
+def descriptor(c,market='it',account_name='acc6',origin=CARD_ORIGIN):
+ value={'product_id':c['pid'],'list_id':c['listId'],'campaign_id':c['wireCampaignId'],'list_name':c['listName'],'campaign_name':c['campaignName'],'market':market,'account_name':account_name,'verified_at':datetime.fromtimestamp(c['checkedAt'],timezone.utc).isoformat(),'origin':origin,'evidence_sha256':digest(c['evidenceRefs']),'verified':True,'title_key':CARD_TITLE_KEY}
  value['binding_sha256']=card_binding_sha256(value);return ItalyVerifiedProductCard(**value)
 
 def fresh_card(candidate,account,identity,headers,maintenance,stopped,*,request_budget=None):
