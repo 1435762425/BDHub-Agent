@@ -1,9 +1,8 @@
 """The creator-lead sending pool.
 
 One position is a pair of *one creator and one product*: that is what a message is about. The
-cooldown, however, belongs to the creator, because the operator's rule is "at most one message per
-creator per day" — so a creator in cooldown makes every one of their positions unavailable, and when
-the cooldown ends the best remaining position takes the slot.
+Proactive outreach to the same creator is spaced at least 72 hours apart. Every product position
+shares that cooldown; when it ends, the best remaining position takes the slot.
 
 The pool is never stored. Its order depends on the current time, so any saved order is stale within
 minutes. It is recomputed from the tables that already exist, and a creator moves from one layer to
@@ -27,9 +26,8 @@ from contextlib import closing
 from datetime import date
 from decimal import Decimal,InvalidOperation
 from pathlib import Path
+from lib.outreach_policy import MARKETING_COOLDOWN_SECONDS,last_contact_by_creator
 
-UNLOCKED_COOLDOWN = 86400   # one message per creator per day
-LOCKED_COOLDOWN = 172800    # four weeks without a reply: at least 48 hours between products
 RESOLVED_PENDING = frozenset({'resolved_by_human','suppressed_no_reply','resolved_no_reply','answered','no_reply'})
 _ELIGIBLE_CACHE = {}
 # ``ready`` holds one position per creator -- the slot that would be sent next. A creator's other
@@ -180,11 +178,7 @@ def _build(conn, now, limit, eligible_pids=None,root=None,market='it'):
         if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' "
                         "AND name='creator_collaboration_current'").fetchone() else {}
     )
-    last_sent = {row[0]: row[1] for row in _rows(
-        conn, "SELECT d.creator_id,max(p.started) FROM cycle_delivery d "
-              "JOIN cycle_delivery_part p ON p.delivery_id=d.id "
-              "WHERE "+("d.plan_id=? AND " if plan_id else "")+"d.state IN ('confirmed','partial_delivery') AND p.kind='card' GROUP BY d.creator_id",
-              (plan_id,) if plan_id else ())}
+    last_sent = last_contact_by_creator(conn, plan_id)
     sent_pairs = {(row[0], str(row[1])): row[2] for row in _rows(
         conn, "SELECT d.creator_id,d.pid,max(p.started) FROM cycle_delivery d "
               "JOIN cycle_delivery_part p ON p.delivery_id=d.id "
@@ -216,7 +210,7 @@ def _build(conn, now, limit, eligible_pids=None,root=None,market='it'):
                   bool(relationship['inbox_until'] and relationship['inbox_until']>now) or \
                   bool(pending_row and pending_row[0] not in RESOLVED_PENDING)
         previously = last_sent.get(creator)
-        ready_at = None if previously is None else previously + (UNLOCKED_COOLDOWN if unlocked else LOCKED_COOLDOWN)
+        ready_at = None if previously is None else previously + MARKETING_COOLDOWN_SECONDS
         pair_sent = sent_pairs.get((creator, str(row['pid'])))
         product_active=eligible_pids is None or str(row['pid']) in eligible_pids
         if pair_sent is not None:
@@ -297,7 +291,7 @@ def _build(conn, now, limit, eligible_pids=None,root=None,market='it'):
               'inactive':len(layers['excluded'])+len(layers['product_inactive'])}
     business['total']=business['sendable']+business['waiting']+business['inactive']
     return {'schema':'bdhub.lead-pool.v3','available': True, 'now': now, 'counts': counts,
-            'cooldown': {'unlocked': UNLOCKED_COOLDOWN, 'locked': LOCKED_COOLDOWN},
+            'cooldown': {'unlocked': MARKETING_COOLDOWN_SECONDS, 'locked': MARKETING_COOLDOWN_SECONDS},
             'layers': {name: len(rows) for name, rows in layers.items()},
             'pools': {name: rows[:limit] for name, rows in layers.items()},
             'business':business,'reasons':{name:len(rows) for name,rows in layers.items() if name not in ('ready','sent')},

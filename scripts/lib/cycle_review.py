@@ -2,6 +2,7 @@
 import json,time
 from datetime import datetime,timezone
 from pathlib import Path
+from lib.outreach_policy import MARKETING_COOLDOWN_SECONDS,last_contact_by_creator
 from lib.second_cycle import CycleError,encoded,digest,assess_offer
 from lib.cycle_materials import select_offers,render,name_key
 SCHEMA='''CREATE TABLE IF NOT EXISTS cycle_review_batch(id TEXT PRIMARY KEY,request_id TEXT NOT NULL UNIQUE,request_json TEXT NOT NULL,snapshot_hash TEXT NOT NULL,payload TEXT NOT NULL,created_at REAL NOT NULL);
@@ -329,6 +330,7 @@ def choose_candidates(store,plan,identity_reader,limit=3,positions=None):
  else:
   rows=store.db.execute('SELECT e.payload,r.creator_id,r.oec,r.evidence_ref FROM cycle_identity_resolution r JOIN source_edge e USING(plan_id,source_id) WHERE r.plan_id=?',(plan,)).fetchall()
  candidates=[];skipped=[]
+ last_contacts=last_contact_by_creator(store.db,plan)
  for row in rows:
   edge=json.loads(row['payload'])
   key=(str(row['creator_id']),str(edge['pid']))
@@ -339,12 +341,9 @@ def choose_candidates(store,plan,identity_reader,limit=3,positions=None):
    skipped.append({'sourceId':edge['sourceId'],'reason':'offer_not_in_current_catalog'});continue
   if not control or control['mode']!='auto' or control['rejected'] or control['inbox_until']:
    skipped.append({'sourceId':edge['sourceId'],'reason':'relationship_blocked'});continue
-  if store.db.execute("SELECT 1 FROM sqlite_master WHERE name='cycle_delivery'").fetchone():
-   last=store.db.execute("SELECT max(p.started) FROM cycle_delivery d JOIN cycle_delivery_part p ON p.delivery_id=d.id WHERE d.plan_id=? AND d.creator_id=? AND d.state IN ('confirmed','partial_delivery')",(plan,row['creator_id'])).fetchone()[0]
-   if last and store.clock()-last<(86400 if control['unlocked'] else 172800):
-    # 达人级冷却（已解锁 24h / 未解锁 48h）。**必须记原因**：不记的话"可发层有多少位置"和
-    # "这一批发了多少"就对不平，操作者只会看到一批莫名少掉的人。
-    skipped.append({'sourceId':edge['sourceId'],'reason':'marketing_cooldown'});continue
+  last=last_contacts.get(row['creator_id'])
+  if last is not None and store.clock()-last<MARKETING_COOLDOWN_SECONDS:
+   skipped.append({'sourceId':edge['sourceId'],'reason':'marketing_cooldown'});continue
   person=identity_reader(row['creator_id'],row['oec'])
   if not person or not person.get('handle'):
    skipped.append({'sourceId':edge['sourceId'],'reason':'current_identity_missing'});continue

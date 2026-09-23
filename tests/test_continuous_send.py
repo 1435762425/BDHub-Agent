@@ -188,7 +188,7 @@ class ContinuousSendTests(unittest.TestCase):
     def test_live_history_uses_current_cooldown_not_the_retired_32_day_canary_rule(self):
         base={'identityVerified':True,'hasMore':False,'senderCounts':{
           'ourMessages':1,'creatorReplies':1,'showcaseNotifications':1,'otherOrUnknown':0},
-          'outboundCreateTimeRaw':[int((NOW-90000)*1000)],'outboundTimeMissingCount':0}
+          'outboundCreateTimeRaw':[int((NOW-259200)*1000)],'outboundTimeMissingCount':0}
         continuous._continuous_history_eligible(base,NOW,True)
         with self.assertRaisesRegex(Exception,'recent_contact'):
             continuous._continuous_history_eligible(
@@ -196,6 +196,25 @@ class ContinuousSendTests(unittest.TestCase):
         with self.assertRaisesRegex(Exception,'unknown_message'):
             continuous._continuous_history_eligible(
               base|{'senderCounts':base['senderCounts']|{'otherOrUnknown':1}},NOW,True)
+
+    def test_live_history_72h_boundary_and_own_card_exception(self):
+        for unlocked in (False, True):
+            for age in (259199, 259200, 259201):
+                history={'identityVerified':True,'hasMore':False,
+                  'senderCounts':{'ourMessages':1,'otherOrUnknown':0},
+                  'outboundCreateTimeRaw':[int((NOW-age)*1000)],'outboundTimeMissingCount':0}
+                with self.subTest(unlocked=unlocked,age=age):
+                    if age<259200:
+                        with self.assertRaisesRegex(Exception,'recent_contact'):
+                            continuous._continuous_history_eligible(history,NOW,unlocked)
+                    else:
+                        continuous._continuous_history_eligible(history,NOW,unlocked)
+            history['outboundCreateTimeRaw']=[int(NOW*1000)]
+            continuous._continuous_history_eligible(history,NOW,unlocked,own_current_refs=1)
+            history['senderCounts']['ourMessages']=2
+            history['outboundCreateTimeRaw'].append(int((NOW-1)*1000))
+            with self.assertRaisesRegex(Exception,'recent_contact'):
+                continuous._continuous_history_eligible(history,NOW,unlocked,own_current_refs=1)
 
     def test_local_card_checks_both_offer_and_material_fingerprints_in_their_own_domains(self):
         current=candidate('c1','1729480061238089885')

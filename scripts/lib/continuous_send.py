@@ -15,6 +15,7 @@ import time
 from contextlib import closing, contextmanager
 from dataclasses import asdict
 from pathlib import Path
+from lib.outreach_policy import MARKETING_COOLDOWN_SECONDS
 
 from lib.cycle_delivery import Deliveries
 from lib.cycle_executor import execute
@@ -43,7 +44,7 @@ ACTIVE_PENDING_STATES = frozenset({
 
 
 def _continuous_history_eligible(history,now,unlocked,own_current_refs=0,required_messages=1):
-    """Live preflight aligned with the current 24/48-hour relationship policy."""
+    """Live preflight for the same 72-hour proactive outreach policy in every market."""
     if history.get('identityVerified') is not True or history.get('hasMore') is True:
         raise CycleError('history_incomplete')
     counts=history.get('senderCounts')
@@ -54,8 +55,7 @@ def _continuous_history_eligible(history,now,unlocked,own_current_refs=0,require
     if any(type(stamp) is not int or not 946684800000<=stamp<=int(now*1000)+300000 for stamp in times) or \
        len(times)!=own or history.get('outboundTimeMissingCount'):
         raise CycleError('message_time_missing')
-    cooldown=86400 if unlocked else 172800
-    recent=[stamp for stamp in times if stamp>=int((now-cooldown)*1000)]
+    recent=[stamp for stamp in times if stamp>int((now-MARKETING_COOLDOWN_SECONDS)*1000)]
     if len(recent)>own_current_refs:raise CycleError('recent_contact_needs_allowance_review')
     if not unlocked and own+required_messages>5:raise CycleError('recipient_message_limit')
 

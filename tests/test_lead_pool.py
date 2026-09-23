@@ -9,7 +9,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'scripts'))
-from lib.lead_pool import LAYER_ORDER, LOCKED_COOLDOWN, UNLOCKED_COOLDOWN, pool  # noqa: E402
+from lib.lead_pool import LAYER_ORDER, pool  # noqa: E402
 from lib.schema_migrations import apply_database  # noqa: E402
 
 NOW = 1_800_000_000.0
@@ -140,19 +140,37 @@ class Layers(unittest.TestCase):
             self.assertEqual(counts['cooling'], 2)
             self.assertEqual(counts['ready'], 1)
 
-    def test_an_unlocked_creator_comes_off_cooldown_sooner(self):
+    def test_every_relationship_uses_72_hours_for_all_product_positions(self):
+        for unlocked in (0, 1):
+            for elapsed, expected_ready in ((259199, 0), (259200, 1), (259201, 1)):
+                with self.subTest(unlocked=unlocked, elapsed=elapsed), tempfile.TemporaryDirectory() as folder:
+                    fixture(folder, [('a', '1' * 19, 1), ('a', '2' * 19, 2)],
+                            [('a', unlocked, 'auto', 0)],
+                            deliveries=[('a', '9' * 19, NOW - elapsed)])
+                    result = pool(folder, now=NOW)
+                    self.assertEqual(layers(result)['ready'], expected_ready)
+                    self.assertEqual(layers(result)['cooling'], 0 if expected_ready else 2)
+                    self.assertEqual(result['cooldown'], {'unlocked': 259200, 'locked': 259200})
+
+    def test_cooldown_begins_at_the_last_component_of_previous_outreach(self):
         with tempfile.TemporaryDirectory() as folder:
-            fixture(folder, [('locked', '1' * 19, 1), ('unlocked', '2' * 19, 2)],
-                    [('locked', 0, 'auto', 0), ('unlocked', 1, 'auto', 0)],
-                    deliveries=[('locked', '9' * 19, NOW - 100000), ('unlocked', '8' * 19, NOW - 100000)])
-            counts = layers(pool(folder, now=NOW))
-            # 100000s is past the 24h unlocked cooldown but inside the 48h locked one.
-            self.assertGreater(UNLOCKED_COOLDOWN, 0)
-            self.assertLess(UNLOCKED_COOLDOWN, 100000)
-            self.assertGreater(LOCKED_COOLDOWN, 100000)
-            self.assertEqual(counts['ready'], 1)
-            self.assertEqual(counts['cooling'], 1)
-            self.assertEqual(pool(folder, now=NOW)['pools']['ready'][0]['handle'], 'unlocked')
+            fixture(folder, [('a', '1' * 19, 1)], [('a', 1, 'auto', 0)],
+                    deliveries=[('a', '9' * 19, NOW - 259201)])
+            with closing(sqlite3.connect(Path(folder) / 'var/second-cycle.sqlite')) as db, db:
+                db.execute('INSERT INTO cycle_delivery_part VALUES(?,?,?)', ('d0', 'text', NOW - 259199))
+            self.assertEqual(layers(pool(folder, now=NOW))['cooling'], 1)
+
+    def test_observed_institution_outbound_cools_all_product_positions(self):
+        with tempfile.TemporaryDirectory() as folder:
+            fixture(folder, [('a', '1' * 19, 1), ('a', '2' * 19, 2)], [('a', 1, 'auto', 0)])
+            with closing(sqlite3.connect(Path(folder) / 'var/second-cycle.sqlite')) as db, db:
+                db.execute('ALTER TABLE relationship ADD COLUMN oec TEXT')
+                db.execute("UPDATE relationship SET oec='123'")
+                db.execute('CREATE TABLE inbox_event(plan_id TEXT,cid TEXT,message_id TEXT,oec TEXT,kind TEXT,occurred_ms INTEGER)')
+                db.execute('INSERT INTO inbox_event VALUES(?,?,?,?,?,?)',
+                           ('p', '88', '10', '123', 'ourMessages', int((NOW - 259199) * 1000)))
+            self.assertEqual(layers(pool(folder, now=NOW))['cooling'], 2)
+            self.assertEqual(layers(pool(folder, now=NOW+1))['ready'], 1)
 
     def test_an_open_case_waits_for_a_reply_rather_than_for_time(self):
         with tempfile.TemporaryDirectory() as folder:

@@ -1,5 +1,6 @@
 """Plan-owned card/text outbox. External effects require explicit runtime permits."""
 import json,re,uuid
+from lib.outreach_policy import MARKETING_COOLDOWN_SECONDS,last_contact_by_creator
 from lib.second_cycle import CycleError,digest,encoded,assess_offer
 SCHEMA='''CREATE TABLE IF NOT EXISTS cycle_platform_signal(id INTEGER PRIMARY KEY AUTOINCREMENT,delivery_id TEXT NOT NULL,at REAL NOT NULL,outcome TEXT,code TEXT,native_status INTEGER,check_code INTEGER,check_message TEXT,response_ref TEXT);
 CREATE TABLE IF NOT EXISTS cycle_conversation_intent(delivery_id TEXT PRIMARY KEY,request_ref TEXT NOT NULL UNIQUE,state TEXT NOT NULL,cid TEXT,receipt TEXT);
@@ -28,7 +29,7 @@ class Deliveries:
    self.s.db.execute('INSERT INTO cycle_delivery VALUES(?,?,?,?,?,?,?,?,?,?)',(id,plan,candidate['creatorId'],candidate['oecId'],candidate['pid'],source,encoded(candidate),self.s.clock(),self.s.clock()+1800,'ready'))
    for kind in ('card','text'):self.s.db.execute('INSERT INTO cycle_delivery_part(delivery_id,kind,request_ref) VALUES(?,?,?)',(id,kind,str(uuid.uuid4())))
   return self.get(id)
- def _eligible(self,plan,c):
+ def _eligible(self,plan,c,*,current_delivery_id=None):
   p=self.s._plan(plan);r=self.s.db.execute('SELECT * FROM relationship WHERE plan_id=? AND creator_id=?',(plan,c['creatorId'])).fetchone()
   if p['state']!='active' or p['revision']!=c['planRevision']:raise CycleError('plan_changed')
   if not r or r['oec']!=c['oecId'] or r['mode']!='auto' or r['rejected'] or r['inbox_until'] or r['revision']!=c['controlRevision']:raise CycleError('relationship_changed')
@@ -37,15 +38,15 @@ class Deliveries:
   current={o['offerKey']:o for _,o in self.s._offers(plan)}
   if digest(current.get(c['offer']['offerKey']))!=digest(c['offer']):raise CycleError('offer_changed')
   if c['message']['version']!=4 or c['message']['deliveryOrder']!='card_then_text':raise CycleError('message_not_v4')
-  prior=self.s.db.execute("SELECT max(p.started) FROM cycle_delivery d JOIN cycle_delivery_part p ON p.delivery_id=d.id WHERE d.plan_id=? AND d.creator_id=? AND p.kind='card' AND d.state IN ('confirmed','partial_delivery')",(plan,c['creatorId'])).fetchone()[0]
-  if prior and self.s.clock()-prior<(86400 if r['unlocked'] else 172800):raise CycleError('marketing_cooldown')
+  prior=last_contact_by_creator(self.s.db,plan,creator_id=c['creatorId'],current_delivery_id=current_delivery_id).get(c['creatorId'])
+  if prior is not None and self.s.clock()-prior<MARKETING_COOLDOWN_SECONDS:raise CycleError('marketing_cooldown')
  def begin(self,id,kind,*,authorized_snapshot_hash,recipient_verified=False,allowance_verified=False):
   # Authorization is supplied by the plan runtime, never inferred from existence of a review.
   with self.s.tx():
    d=self.get(id);c=d['snapshot']
    if authorized_snapshot_hash!=digest(c):raise CycleError('execution_authorization_missing')
    if not recipient_verified or not allowance_verified:raise CycleError('execution_evidence_missing')
-   self._eligible(d['plan_id'],c)
+   self._eligible(d['plan_id'],c,current_delivery_id=id)
    if self.s.clock()>=d['expires']:raise CycleError('delivery_expired')
    if self.s.db.execute("SELECT 1 FROM cycle_delivery WHERE plan_id=? AND state='unknown'",(d['plan_id'],)).fetchone():raise CycleError('delivery_unknown')
    if self.s.db.execute("SELECT 1 FROM sqlite_master WHERE name='service_reply'").fetchone() and self.s.db.execute("SELECT 1 FROM service_reply WHERE plan_id=? AND state IN ('inflight','accepted','unknown')",(d['plan_id'],)).fetchone():raise CycleError('reply_reconciliation_required')
@@ -154,7 +155,7 @@ class Deliveries:
   with self.s.tx():
    d=self.get(id)
    if approved_hash!=digest(d['snapshot']):raise CycleError('execution_authorization_missing')
-   self._eligible(d['plan_id'],d['snapshot'])
+   self._eligible(d['plan_id'],d['snapshot'],current_delivery_id=id)
    if self.s.clock()>=d['expires']:raise CycleError('delivery_expired')
    if self.s.db.execute("SELECT 1 FROM cycle_delivery WHERE plan_id=? AND state='unknown'",(d['plan_id'],)).fetchone():raise CycleError('delivery_unknown')
    row=self.conversation_intent(id)

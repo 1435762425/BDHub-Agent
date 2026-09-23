@@ -9,6 +9,7 @@ from decimal import Decimal, InvalidOperation
 import hashlib
 import json
 from pathlib import Path
+from lib.outreach_policy import MARKETING_COOLDOWN_SECONDS,last_contact_by_creator
 import sqlite3
 import time
 from lib.product_stock_policy import require_stock,full_managed,mark_full_managed
@@ -259,7 +260,7 @@ class CycleStore:
         consumed=set();cooldown=set()
         if self.db.execute("SELECT 1 FROM sqlite_master WHERE name='cycle_delivery'").fetchone():
             consumed={(r[0],r[1],r[2]) for r in self.db.execute("SELECT creator_id,pid,source_id FROM cycle_delivery WHERE plan_id=? AND state IN ('ready','running','unknown','confirmed','partial_delivery')",(p,))}
-            cooldown={r[0] for r in self.db.execute("SELECT d.creator_id,max(p.started),r.unlocked FROM cycle_delivery d JOIN cycle_delivery_part p ON p.delivery_id=d.id JOIN relationship r ON r.plan_id=d.plan_id AND r.creator_id=d.creator_id WHERE d.plan_id=? AND d.state IN ('confirmed','partial_delivery') GROUP BY d.creator_id",(p,)) if r[1] and self.clock()-r[1]<(86400 if r[2] else 172800)}
+        cooldown={creator for creator,stamp in last_contact_by_creator(self.db,p).items() if self.clock()-stamp<MARKETING_COOLDOWN_SECONDS}
         return {r['creator_id'] for r in self.db.execute('SELECT o.*,r.mode,r.rejected,r.inbox_until FROM opportunity o JOIN relationship r USING(plan_id,creator_id) WHERE o.plan_id=?',(p,)) if r['creator_id'] not in cooldown and (r['pid'],r['offer_key']) in eligible and r['mode']=='auto' and not r['rejected'] and not r['inbox_until'] and (r['creator_id'],r['pid'],json.loads(r['payload'])['sourceId']) not in consumed and (window_end is None or json.loads(r['payload'])['windowEnd']==window_end)}
     def _prepared(self,p,new,established,window_end=None):
         people=self._eligible_people(p,window_end)
