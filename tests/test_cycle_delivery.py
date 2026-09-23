@@ -52,6 +52,37 @@ class DeliveryTests(unittest.TestCase):
   self.s.import_edges(self.p,[edge(person='c2',source='e2')]);candidate=self.c|{'creatorId':'c2','oecId':'456','source':{'sourceId':'e2'}}
   did=self.d.prepare(self.p,candidate)['id'];self.d.begin(did,'card',authorized_snapshot_hash=digest(candidate),recipient_verified=True,allowance_verified=True)
   with self.assertRaisesRegex(CycleError,'cancel_not_safe'):self.d.cancel_unsubmitted(did,'conversation_needs_content_review')
+ def test_operator_can_isolate_unconfirmed_conversation_without_erasing_original_intent(self):
+  intent=self.d.prepare_conversation(self.id)
+  self.d.begin_conversation(self.id,digest(self.c))
+  self.d.unknown(self.id,'card')
+  result=self.d.quarantine_unknown_conversation(self.id,'quarantine-it-20260923',
+                                                observed_conversations=748,matching_conversations=0)
+  self.assertEqual(result['state'],'quarantined_unknown')
+  self.assertEqual([(p['kind'],p['state'],p['started']) for p in result['parts']],
+                   [('card','ready',None),('text','ready',None)])
+  self.assertEqual(self.d.conversation_intent(self.id)['request_ref'],intent['request_ref'])
+  self.assertEqual(self.d.conversation_intent(self.id)['state'],'inflight')
+  self.assertEqual(self.s.db.execute('SELECT mode FROM relationship WHERE plan_id=? AND creator_id=?',
+                                     (self.p,self.c['creatorId'])).fetchone()[0],'human')
+  self.assertEqual(self.s.db.execute("SELECT count(*) FROM service_case WHERE plan_id=? AND creator_id=? AND state='open'",
+                                     (self.p,self.c['creatorId'])).fetchone()[0],1)
+  self.assertEqual(self.d.quarantine_unknown_conversation(self.id,'quarantine-it-20260923',
+                   observed_conversations=748,matching_conversations=0)['state'],'quarantined_unknown')
+  with self.assertRaisesRegex(CycleError,'quarantine_request_conflict'):
+   self.d.quarantine_unknown_conversation(self.id,'different-request-id',observed_conversations=748,matching_conversations=0)
+ def test_quarantine_rejects_started_component_or_unverified_platform_scope(self):
+  self.d.prepare_conversation(self.id)
+  self.d.begin_conversation(self.id,digest(self.c))
+  self.d.unknown(self.id,'card')
+  with self.assertRaisesRegex(CycleError,'quarantine_evidence_invalid'):
+   self.d.quarantine_unknown_conversation(self.id,'quarantine-it-20260923',
+                                          observed_conversations=748,matching_conversations=1)
+  self.s.db.execute("UPDATE cycle_delivery_part SET state='inflight',started=? WHERE delivery_id=? AND kind='card'",
+                    (self.now,self.id))
+  with self.assertRaisesRegex(CycleError,'quarantine_scope_changed'):
+   self.d.quarantine_unknown_conversation(self.id,'quarantine-it-20260923',
+                                          observed_conversations=748,matching_conversations=0)
  def test_missing_quota_evidence_no_dispatch(self):
   with self.assertRaisesRegex(CycleError,'execution_evidence_missing'):self.d.begin(self.id,'card',authorized_snapshot_hash=digest(self.c),recipient_verified=True)
  def test_reserved_source_exits_ready_supply_without_deleting_history(self):

@@ -91,15 +91,57 @@ class Deliveries:
    self.s.db.execute("DELETE FROM cycle_contact_reservation WHERE plan_id=? AND oec=? AND reserved>=?",
      (d['plan_id'],d['oec'],d['created']))
   return self.get(id)
+ def quarantine_unknown_conversation(self,id,request_id,*,observed_conversations,matching_conversations):
+  """Isolate one ambiguous create without altering its original request or parts."""
+  if not isinstance(request_id,str) or not re.fullmatch(r'[A-Za-z0-9._:-]{8,120}',request_id):raise CycleError('quarantine_request_invalid')
+  if type(observed_conversations) is not int or observed_conversations<0 or matching_conversations!=0:
+   raise CycleError('quarantine_evidence_invalid')
+  from lib.cycle_service import Service
+  Service(self.s)
+  with self.s.tx():
+   d=self.get(id)
+   prior=self.s.db.execute("SELECT payload FROM cycle_delivery_check WHERE delivery_id=? AND kind='conversation_quarantine' ORDER BY checked DESC LIMIT 1",(id,)).fetchone()
+   if prior:
+    if json.loads(prior[0]).get('requestId')!=request_id:raise CycleError('quarantine_request_conflict')
+    return self.get(id)
+   intent=self.conversation_intent(id)
+   if d['state']!='unknown' or not intent or intent['state']!='inflight' or intent['cid'] or intent['receipt'] or \
+      any(p['state']!='ready' or p['started'] is not None or p['receipt'] or p['confirmation'] for p in d['parts']):
+    raise CycleError('quarantine_scope_changed')
+   rel=self.s.db.execute('SELECT mode FROM relationship WHERE plan_id=? AND creator_id=? AND oec=?',
+                         (d['plan_id'],d['creator_id'],d['oec'])).fetchone()
+   if not rel:raise CycleError('relationship_missing')
+   self.s.db.execute("UPDATE cycle_delivery SET state='quarantined_unknown' WHERE id=?",(id,))
+   if rel['mode']=='auto':
+    self.s.db.execute("UPDATE relationship SET mode='human',revision=revision+1 WHERE plan_id=? AND creator_id=?",
+                      (d['plan_id'],d['creator_id']))
+   now=self.s.clock();case_id='case-'+digest([id,'conversation_quarantine'])[:24]
+   self.s.db.execute("INSERT OR IGNORE INTO service_case VALUES(?,?,?,'open',0,'conversation_create_unknown',?,?,'not_sent')",
+                     (case_id,d['plan_id'],d['creator_id'],now,now))
+   evidence={'status':'quarantined_unknown','reason':'conversation_create_result_unknown',
+             'requestId':request_id,'originalRequestRef':intent['request_ref'],
+             'observedConversations':observed_conversations,'matchingConversations':0,
+             'platformWrites':0,'cardStarted':False,'textStarted':False}
+   self.s.db.execute('INSERT INTO cycle_delivery_check VALUES(?,?,?,?)',
+                     (id,'conversation_quarantine',now,encoded(evidence)))
+  return self.get(id)
  def reserve_contact(self,id):
   with self.s.tx():
-   d=self.get(id);r=self.s.db.execute('SELECT unlocked FROM relationship WHERE plan_id=? AND creator_id=?',(d['plan_id'],d['creator_id'])).fetchone()
+   d=self.get(id)
+   if not self.contact_capacity_available(id):raise CycleError('new_contact_capacity_reached')
+   r=self.s.db.execute('SELECT unlocked FROM relationship WHERE plan_id=? AND creator_id=?',(d['plan_id'],d['creator_id'])).fetchone()
    if r[0]:return
    old=self.s.db.execute('SELECT reserved FROM cycle_contact_reservation WHERE plan_id=? AND oec=?',(d['plan_id'],d['oec'])).fetchone()
    if old and old[0]>self.s.clock()-86400:return
-   count=self.s.db.execute("SELECT count(*) FROM (SELECT oec FROM cycle_contact_reservation WHERE plan_id=? AND reserved>? UNION SELECT d.oec FROM cycle_delivery d JOIN cycle_delivery_part p ON p.delivery_id=d.id WHERE d.plan_id=? AND p.kind='card' AND p.started>?)",(d['plan_id'],self.s.clock()-86400,d['plan_id'],self.s.clock()-86400)).fetchone()[0]
-   if count>=500:raise CycleError('new_contact_capacity_reached')
    self.s.db.execute('INSERT INTO cycle_contact_reservation VALUES(?,?,?) ON CONFLICT(plan_id,oec) DO UPDATE SET reserved=excluded.reserved',(d['plan_id'],d['oec'],self.s.clock()))
+ def contact_capacity_available(self,id):
+  d=self.get(id);r=self.s.db.execute('SELECT unlocked FROM relationship WHERE plan_id=? AND creator_id=?',(d['plan_id'],d['creator_id'])).fetchone()
+  if not r:return False
+  if r[0]:return True
+  old=self.s.db.execute('SELECT reserved FROM cycle_contact_reservation WHERE plan_id=? AND oec=?',(d['plan_id'],d['oec'])).fetchone()
+  if old and old[0]>self.s.clock()-86400:return True
+  count=self.s.db.execute("SELECT count(*) FROM (SELECT oec FROM cycle_contact_reservation WHERE plan_id=? AND reserved>? UNION SELECT d.oec FROM cycle_delivery d JOIN cycle_delivery_part p ON p.delivery_id=d.id WHERE d.plan_id=? AND p.kind='card' AND p.started>?)",(d['plan_id'],self.s.clock()-86400,d['plan_id'],self.s.clock()-86400)).fetchone()[0]
+  return count<500
  def conversation_intent(self,id):
   row=self.s.db.execute('SELECT * FROM cycle_conversation_intent WHERE delivery_id=?',(id,)).fetchone()
   return dict(row) if row else None

@@ -37,7 +37,11 @@ def main():
             print(json.dumps(state,ensure_ascii=False),flush=True)
             if state['state'] in ('waiting_reconciliation','paused') and state.get('stopReason') not in ('send_pool_empty','recipient_limit'):break
             if args.once:break
-            time.sleep(5 if state['state']=='waiting_window' else 1)
+            confirmed_now=state['state']=='sending' and state.get('lastSuccessAt')==state.get('seenAt')
+            delay=0.25 if confirmed_now else 300 if state['state']=='waiting_capacity' else 5 if state['state']=='waiting_window' else 1
+            until=time.monotonic()+delay
+            while not STOP and time.monotonic()<until:
+                time.sleep(max(0,min(1,until-time.monotonic())))
         current=control(store,ROOT)
         if STOP or current['stopRequested'] or not (current['runRequested'] or current['automaticEnabled']):
             publish_runtime(store,plan,'stopped',stop_reason='stop_requested' if STOP or current['stopRequested'] else 'disabled')

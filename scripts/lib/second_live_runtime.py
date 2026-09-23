@@ -31,6 +31,8 @@ ROOT = Path(__file__).resolve().parents[2]
 VAR = ROOT / "var"
 LEGACY = Path("/Users/bjn00003/BDHub/01-BDSystem-V2")
 LEGACY_GATE_DIRECTORY = LEGACY / "data/runtime/im-http-write-gates"
+_AUTH_CACHE = {}
+_AUTH_CACHE_SECONDS = 60
 SAFE_CODES = frozenset({"live_sender_binding_required", "live_sender_binding_mismatch", "live_sender_invalid",
     "live_runtime_unavailable", "live_runtime_closed", "live_stopped", "live_maintenance_due",
     "live_guard_busy", "live_guard_invalid", "live_identity_changed", "live_interval_invalid",
@@ -97,7 +99,7 @@ def _fingerprint(path):
 
 
 @contextmanager
-def _authenticated(report, *, stopped):
+def _authenticated(report, *, stopped, read_only=False):
     try:
         with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
             account, identity, load_identity, guard, maintenance, capability = _load_runtime()
@@ -120,6 +122,7 @@ def _authenticated(report, *, stopped):
         raise SecondLiveRuntimeError("live_guard_busy" if str(error) == "account_in_use" else "live_guard_invalid") from None
     except Exception:
         raise SecondLiveRuntimeError("live_runtime_unavailable") from None
+    guarded_held = True
     try:
         def available():
             if stopped():
@@ -131,22 +134,37 @@ def _authenticated(report, *, stopped):
         available()
         try:
             bundle = load_identity(path)
-            auth = authenticate_it(account, identity, bundle.headers, report,
-                maintenance_due=maintenance, stopped=stopped, use_environment_proxy=True)
+            cache_key = (str(path), before, capability)
+            cached = _AUTH_CACHE.get(cache_key) if not read_only else None
+            cache_hit = bool(cached and time.monotonic() - cached["at"] < _AUTH_CACHE_SECONDS)
+            if cache_hit:
+                auth = cached["auth"]
+            else:
+                auth = authenticate_it(account, identity, bundle.headers, report,
+                    maintenance_due=maintenance, stopped=stopped, use_environment_proxy=True)
         except ItalyImAuthError:
             raise
         except Exception:
             raise SecondLiveRuntimeError("live_runtime_unavailable") from None
         available()
+        if not read_only and not cache_hit:
+            _AUTH_CACHE.clear()
+            _AUTH_CACHE[cache_key] = {"auth": auth, "at": time.monotonic()}
         report.update(canonicalGuard="existing_readonly_mutex", sendCapability=capability,
                       oldLeaseWrites=0, legacyDatabaseWrites=0, identityFileWrites=0,
-                      outerWallDeadlineRequired=True)
+                      outerWallDeadlineRequired=True, authCacheHit=cache_hit)
+        if read_only:
+            # The authenticated token is a snapshot. Release the profile mutex
+            # before a long inbox scan; available() still rejects a rotated file.
+            guarded.__exit__(None, None, None)
+            guarded_held = False
         yield account, identity, bundle.headers, auth, maintenance, available
     finally:
         try:
             report["identityFileUnchanged"] = _fingerprint(path) == before
         finally:
-            guarded.__exit__(None, None, None)
+            if guarded_held:
+                guarded.__exit__(None, None, None)
 
 
 def read_sender_binding(report, *, stopped=lambda: False):

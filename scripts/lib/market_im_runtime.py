@@ -4,17 +4,20 @@ from __future__ import annotations
 import hashlib
 import json
 import time
-from contextlib import contextmanager
+from contextlib import ExitStack,contextmanager
 from pathlib import Path
 from urllib.parse import urlsplit
 
 from lib.italy_im_auth import ItalyImAuthContext
 from lib.italy_im_delivery import ItalyImDeliveryAdapter
 from lib.italy_im_session import ItalyImReadSession
+from lib.cycle_burst import RequestBudget
 from lib.legacy_runtime import configure_vendored_bdhub
 from lib.market_accounts import load_config
 
 INFO='/api/v1/affiliate/partner/info';IM_ID='/api/v1/affiliate/partner/im/id/get';IM_TOKEN='/api/v1/affiliate/partner/im/token/get'
+_AUTH_CACHE={}
+_AUTH_CACHE_SECONDS=60
 
 
 def _data(payload):
@@ -36,7 +39,7 @@ def authenticated(root,market,report,*,canary=False,read_only=False,capability='
   if (generation or {}).get('capabilities',{}).get(required,{}).get('state')!='verified':
    raise ValueError('market_send_capability_unverified')
  configure_vendored_bdhub(root=root,legacy_root=root.parent/'01-BDSystem-V2')
- from bdhub.enrich.profile_lease import ProfileLease
+ from bdhub.enrich.profile_lease import ProfileBusyError,ProfileLease
  from bdhub.hub.markets import identity_for
  from bdhub.research.commerce_transport import CommerceTransport
  from bdhub.send.taplink.transport import account_for
@@ -46,38 +49,68 @@ def authenticated(root,market,report,*,canary=False,read_only=False,capability='
  headers_path=Path(account.headers_json);before=hashlib.sha256(headers_path.read_bytes()).hexdigest()
  class Reader(CommerceTransport):
   READ_ENDPOINTS=frozenset({(INFO,'GET'),(IM_ID,'GET'),(IM_TOKEN,'GET')});WRITE_ENDPOINTS=frozenset()
- reader=Reader(identity,account,allow_write=False);reader.session.trust_env=True
- lease=ProfileLease(account.profile_dir,account=account.name,market=market,operation='agent-im-send-canary')
+ reader=None
+ lease=ProfileLease(account.profile_dir,account=account.name,market=market,
+                    operation='agent-im-read' if read_only else 'agent-im-send-canary')
+ auth_started=time.monotonic()
  try:
-  with lease:
+  with ExitStack() as guard:
+   deadline=time.monotonic()+5 if read_only else 0
+   while True:
+    try:
+     guard.enter_context(lease)
+     break
+    except ProfileBusyError:
+     if not read_only or stopped() or time.monotonic()>=deadline:raise
+     time.sleep(0.1)
    if stopped() or scheduled_relogin.maintenance_due(account,initialize=False,ignore_retry_throttle=True):raise ValueError('market_send_account_unavailable')
-   params={'aid':identity.aid,'partner_id':str(identity.partner_id)}
-   partner=_data(reader.require_read(reader._xhr(method='GET',path=INFO,params=params|{'partner_type':1},payload=None,write=False)))
-   rows=(partner.get('partner_biz_role_info') or {}).get('market_list',[])
-   matches=[row for row in rows if str(row.get('market_region'))==str(identity.im_market) and
-            any(str(item.get('partner_id')) in {str(identity.partner_id),str(identity.im_market_partner_id)} for item in (row.get('type_list') or []))]
-   if len(matches)!=1:raise ValueError('market_institution_not_verified')
-   market_row=matches[0];market_id=str(market_row.get('market_id') or '')
-   im=_data(reader.require_read(reader._xhr(method='GET',path=IM_ID,params=params|{'user_id':market_id,'type':0},payload=None,write=False)))
-   im_id=str(im.get('im_id') or '')
-   token=_data(reader.require_read(reader._xhr(method='GET',path=IM_TOKEN,params=params|{'im_id':im_id},payload=None,write=False)))
-   endpoint=urlsplit(str(token.get('api_url') or ''));portal=urlsplit(identity.home);partner_host=f'{portal.scheme}://{portal.netloc}'
-   if not im_id.isdigit() or not token.get('token') or not endpoint.hostname:raise ValueError('market_im_auth_invalid')
-   safe_headers={key:value for key,value in reader.headers.items() if key.lower() in {'user-agent','accept-language'}}
-   auth=ItalyImAuthContext(account.name,im_id,token,{'market':market,'account':account.name,
-    'market_region':str(identity.im_market),'partner_host':partner_host,'im_host':endpoint.hostname,
-    'partner':partner,'market_row':market_row,'market_id':market_id,'partner_id':str(identity.partner_id)},safe_headers,0)
+   if hashlib.sha256(headers_path.read_bytes()).hexdigest()!=before:raise ValueError('market_send_identity_changed')
+   cache_key=(market,account.name,(generation or {}).get('generationId') if not canary else None,before)
+   cached=_AUTH_CACHE.get(cache_key) if not read_only and not canary else None
+   cache_hit=bool(cached and time.monotonic()-cached['at']<_AUTH_CACHE_SECONDS)
+   if cache_hit:
+    auth=cached['auth'];partner_host=cached['partnerHost']
+   else:
+    reader=Reader(identity,account,allow_write=False);reader.session.trust_env=True
+    params={'aid':identity.aid,'partner_id':str(identity.partner_id)}
+    partner=_data(reader.require_read(reader._xhr(method='GET',path=INFO,params=params|{'partner_type':1},payload=None,write=False)))
+    rows=(partner.get('partner_biz_role_info') or {}).get('market_list',[])
+    matches=[row for row in rows if str(row.get('market_region'))==str(identity.im_market) and
+             any(str(item.get('partner_id')) in {str(identity.partner_id),str(identity.im_market_partner_id)} for item in (row.get('type_list') or []))]
+    if len(matches)!=1:raise ValueError('market_institution_not_verified')
+    market_row=matches[0];market_id=str(market_row.get('market_id') or '')
+    im=_data(reader.require_read(reader._xhr(method='GET',path=IM_ID,params=params|{'user_id':market_id,'type':0},payload=None,write=False)))
+    im_id=str(im.get('im_id') or '')
+    token=_data(reader.require_read(reader._xhr(method='GET',path=IM_TOKEN,params=params|{'im_id':im_id},payload=None,write=False)))
+    endpoint=urlsplit(str(token.get('api_url') or ''));portal=urlsplit(identity.home);partner_host=f'{portal.scheme}://{portal.netloc}'
+    if not im_id.isdigit() or not token.get('token') or not endpoint.hostname:raise ValueError('market_im_auth_invalid')
+    safe_headers={key:value for key,value in reader.headers.items() if key.lower() in {'user-agent','accept-language'}}
+    auth=ItalyImAuthContext(account.name,im_id,token,{'market':market,'account':account.name,
+     'market_region':str(identity.im_market),'partner_host':partner_host,'im_host':endpoint.hostname,
+     'partner':partner,'market_row':market_row,'market_id':market_id,'partner_id':str(identity.partner_id)},safe_headers,0)
    report.update(market=market,account=account.name,sendCapability='read_only' if read_only else 'canary' if canary else 'enabled',
-                 identityFileUnchanged=True,platformWrites=0,realSends=0)
+                 identityFileUnchanged=True,platformWrites=0,realSends=0,
+                 authDurationMs=round((time.monotonic()-auth_started)*1000,1),authCacheHit=cache_hit)
+   if hashlib.sha256(headers_path.read_bytes()).hexdigest()!=before:raise ValueError('market_send_identity_changed')
+   if not read_only and not canary and not cache_hit:
+    _AUTH_CACHE.clear()
+    _AUTH_CACHE[cache_key]={'auth':auth,'partnerHost':partner_host,'at':time.monotonic()}
+   # The IM token is an immutable snapshot. Only authentication needs the profile
+   # lease; read-only polling must not monopolize it while scanning conversations.
+   if read_only:guard.close()
+   def session_unavailable():
+    if hashlib.sha256(headers_path.read_bytes()).hexdigest()!=before:raise ValueError('market_send_identity_changed')
+    return scheduled_relogin.maintenance_due(account,initialize=False,ignore_retry_throttle=True)
    with ItalyImReadSession(auth,report,use_environment_proxy=True,stopped=stopped,
-                           maintenance_due=lambda:scheduled_relogin.maintenance_due(account,initialize=False,ignore_retry_throttle=True)) as session:
+                           maintenance_due=session_unavailable,
+                           request_budget=RequestBudget(qps=2 if read_only else 3)) as session:
     yield {'account':account,'identity':identity,'auth':auth,'session':session,
            'adapter':None if read_only else ItalyImDeliveryAdapter(auth,session),
            'partnerHost':partner_host,'headersPath':headers_path,'beforeHash':before}
    if hashlib.sha256(headers_path.read_bytes()).hexdigest()!=before:raise ValueError('market_send_identity_changed')
   report['identityFileUnchanged']=True
  finally:
-  reader.session.close()
+  if reader is not None:reader.session.close()
 
 
 @contextmanager

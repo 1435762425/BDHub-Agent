@@ -123,6 +123,28 @@ class SecondLiveRuntimeTests(unittest.TestCase):
                 self.assertTrue(f.state['guarded'])
             self.assertFalse(f.state['guarded'])
 
+    def test_read_only_auth_releases_guard_before_inbox_scan_and_rejects_rotation(self):
+        with self.fixture() as f:
+            with M._authenticated({},stopped=f.stopped,read_only=True) as context:
+                self.assertEqual(f.state['authCalls'],1)
+                self.assertFalse(f.state['guarded'])
+                context[-1]()
+                f.identity_file.write_text('rotated')
+                self.assert_code('live_identity_changed',context[-1])
+            self.assertFalse(f.state['guarded'])
+
+    def test_sender_reuses_short_lived_auth_only_for_same_identity_file(self):
+        with self.fixture() as f:
+            with M._authenticated({},stopped=f.stopped): pass
+            report={}
+            with M._authenticated(report,stopped=f.stopped):
+                self.assertTrue(report['authCacheHit'])
+            self.assertEqual(f.state['authCalls'],1)
+            f.identity_file.write_text('rotated')
+            with M._authenticated(report,stopped=f.stopped):
+                self.assertFalse(report['authCacheHit'])
+            self.assertEqual(f.state['authCalls'],2)
+
     def test_sender_hash_is_canonical_identity_only_and_token_independent(self):
         source = auth(); expected = {"account": "acc6", "market": "it", "im_id": "101", "market_id": "202", "partner_id": "303"}
         result = M.sender_binding_sha256(source)

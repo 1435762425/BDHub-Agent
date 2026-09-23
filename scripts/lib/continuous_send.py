@@ -165,7 +165,7 @@ def _identities(root):
 
 
 def _candidate(root,store,plan,control_value,*,limit=200):
-    state=pool(root,now=store.clock(),limit=limit)
+    state=pool(root,now=store.clock(),limit=limit,cache_eligible_seconds=30)
     positions=[(row['creatorId'],row['pid']) for row in (state.get('pools') or {}).get('ready',[])]
     if not positions:return None,state
     with closing(_identities(root)) as ids:
@@ -242,6 +242,7 @@ def execute_once(root,store,*,authenticated=None,authorized_now=None):
         if candidate is None:return publish_runtime(store,plan,'paused',stop_reason='send_pool_empty')
         if authorized_now is not None:candidate['authorizedNowRequestId']=authorized_now
     from lib.second_live_runtime import _authenticated,live_runtime,sender_binding_sha256
+    from lib.cycle_burst import RequestBudget
     transport_report={} if authorized_now is None else {'authorizedSendRequestId':authorized_now}
     auth_context=authenticated or _authenticated(transport_report,stopped=lambda:control(store,root)['stopRequested'])
     with auth_context as context:
@@ -263,7 +264,8 @@ def execute_once(root,store,*,authenticated=None,authorized_now=None):
             # send capability.  A fresh empty dict would erase that proof and make every real send
             # fail closed as live_market_send_unavailable after authentication succeeded.
             with live_runtime(c['senderBindingHash'],transport_report,authenticated_context=context,card_validator=validator,
-                              stopped=lambda:control(store,root)['stopRequested'],send_interval=0.75) as rt:
+                              stopped=lambda:control(store,root)['stopRequested'],send_interval=0.75,
+                              request_budget=RequestBudget(qps=3)) as rt:
                 yield {**rt,'card':previous}
         def authorize(c):
             current=control(store,root)
@@ -306,6 +308,8 @@ def execute_once(root,store,*,authenticated=None,authorized_now=None):
                 return publish_runtime(store,plan,'sending',delivery=None,stop_reason=code,failed_delta=1)
             if getattr(error,'check_code',None) is not None and error.check_code<0:
                 return publish_runtime(store,plan,'sending',delivery=None,stop_reason='recipient_limit',failed_delta=1)
+            if code=='new_contact_capacity_reached':
+                return publish_runtime(store,plan,'waiting_capacity',delivery=active,stop_reason=code)
             if code in PREFLIGHT_TERMINAL:
                 try:deliveries.cancel_unsubmitted(delivery['id'],code)
                 except CycleError:pass
@@ -330,7 +334,8 @@ def status(root,store=None,*,include_preview=True):
         runtime['confirmedToday']=_today_confirmed(store,plan,now)
         recent=store.db.execute("SELECT count(DISTINCT d.id) FROM cycle_delivery d JOIN cycle_delivery_part p ON p.delivery_id=d.id WHERE d.plan_id=? AND d.state='confirmed' AND p.kind='card' AND p.started>?",(plan,now-300)).fetchone()[0]
         runtime['speedPerMinute']=round(recent/5,2)
-        unknown=[{'deliveryId':row['id'],'creatorId':row['creator_id'],'pid':row['pid']} for row in store.db.execute("SELECT id,creator_id,pid FROM cycle_delivery WHERE plan_id=? AND state='unknown' AND json_extract(snapshot,'$.executionMode')='continuous-v1'",(plan,))]
+        unknown=[{'deliveryId':row['id'],'creatorId':row['creator_id'],'pid':row['pid']} for row in store.db.execute("SELECT id,creator_id,pid FROM cycle_delivery WHERE plan_id=? AND state IN ('unknown','quarantined_unknown') AND json_extract(snapshot,'$.executionMode')='continuous-v1'",(plan,))]
+        runtime['unknown']=max(runtime['unknown'],len(unknown))
         sample=None;remaining=None
         if include_preview:
             try:

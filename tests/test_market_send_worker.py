@@ -11,7 +11,15 @@ class MarketSendWorkerTests(unittest.TestCase):
     def test_an_empty_ready_pool_waits_without_relaunch_churn(self):
         self.assertEqual(MODULE.expected_wait_state('market_send_candidate_missing'),'waiting_pool')
         self.assertEqual(MODULE.expected_wait_state('ProfileBusyError'),'waiting_account')
+        self.assertEqual(MODULE.expected_wait_state('new_contact_capacity_reached'),'waiting_capacity')
         self.assertIsNone(MODULE.expected_wait_state('market_send_result_unknown'))
+
+    def test_confirmed_send_has_no_fixed_thirty_second_gap(self):
+        self.assertEqual(MODULE.next_delay(sent=True,waiting=None,interval=30),0.25)
+        self.assertEqual(MODULE.next_delay(sent=True,waiting=None,interval=30,inbox_waiting_now=True),3)
+        self.assertEqual(MODULE.next_delay(sent=False,waiting='waiting_account',interval=30),3)
+        self.assertEqual(MODULE.next_delay(sent=False,waiting='waiting_pool',interval=30),30)
+        self.assertEqual(MODULE.next_delay(sent=False,waiting='waiting_capacity',interval=30),300)
 
 
 if __name__=='__main__':unittest.main()

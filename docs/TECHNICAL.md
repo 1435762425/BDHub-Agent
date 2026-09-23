@@ -200,11 +200,15 @@ Pure HTTP 验证依赖 `Pillow==12.3.0`、`opencv-python-headless==4.14.0.94` �
 
 BR/MY/UK 正式外发逐次读取保存的北京时间窗口、当前停止/启动状态、账号维护状态和 `catalog_current_binding` 的 active、Offer 指纹、`listId` 与卡片 payload。卡与文字各有独立 requestRef，先恢复 `ready/running/unknown` 原 delivery；发起过的平台组件只读精确回查，回查未确认不改用新话术/新账号重发。`/api/send` 的 reconcile 在关闭窗口时也可核验原意图且不新写。会话创建意图若已 inflight/received 但不能与请求证据精确关联，停在需核验状态。MY 的首次真实 sender 在页面“发送”请求后走一条 canary，卡和文字均确认后才把同账号 `message_send` 能力发布为 verified；未完成前自动调度不能代替这次页面启动。
 
-持续发送按 `lead_pool.v3` 当前顺序领取一位达人，复检后把 creator/OECID、PID、Offer、`currentListId`、模板 revision、最终正文、关系控制 revision 和确定性 claim key 写入不可变 `cycle_delivery.snapshot`。执行只用本地 `catalog_current_binding` 核对材料，不远程刷新卡；`cycle_delivery` 唯一键、24 小时预留和同达人 active delivery 共同防重复。unknown 使进程进入 `waiting_reconciliation`，恢复只运行原 delivery 的 `verify_only`，不会领取下一位或重发。
+持续发送按 `lead_pool.v3` 当前顺序领取一位达人，复检后把 creator/OECID、PID、Offer、`currentListId`、模板 revision、最终正文、关系控制 revision 和确定性 claim key 写入不可变 `cycle_delivery.snapshot`。执行只用本地 `catalog_current_binding` 核对材料，不远程刷新卡；`cycle_delivery` 唯一键、24 小时预留和同达人 active delivery 共同防重复。unknown 使进程进入 `waiting_reconciliation`，恢复只运行原 delivery 的 `verify_only`，不会领取下一位或重发。唯一例外是用户针对一条“建会话结果未知、卡和文字均未开始”的 IT 原意图明确授权隔离：原会话请求与零回执保留，delivery 标记 `quarantined_unknown`，该达人进入人工案件，其余达人可继续；页面仍把它计作未决，不改成失败或成功，也不对该达人重发。
+
+滚动 24 小时新联系达到本地 500 位时，发送 worker 保留已冻结意图并进入 `waiting_capacity`，按窗口和额度释放周期继续检查，不以每几秒重启探测。容量预检在建会话与发卡前进行；最终预留仍在不可变意图的短事务中复核。现有单账号串行发送、逐组件回查和写门禁是当前正式实现；每市场 30 位/分钟是目标而不是已验收速度，实测以完整文字回查确认计数。更高并发通道在 2026-09-23 的 BR/UK 有界真实试验中未提高到目标，未作为常驻执行模式保留。
 
 显式运维 canary 可带 `authorizedNowRequestId` 绕过日常时间窗一次，但仍使用同一不可变 delivery、材料/关系/额度门禁、ACC6 写锁和逐组件回查；普通 start 永远遵守 16:30–24:00。实时预检按当前关系政策执行：未结 pending/人工案件、未知消息、未回复累计 5 条以及达人级 24/48 小时冷却会阻止发送；历史已解决回复或橱窗不永久封锁。卡加文字需要两个剩余额度，发卡前即核验；若历史遗留卡已确认但文字尚未尝试、又触及五条限制，仅把文字结算为未发送并保留部分触达证据。明确未提交的预检拒绝把 delivery 与两组件结算为 cancelled，保留审计但不重复领取；任一组件开始后禁止取消已提交部分。2026-09-21 真实 canary 最终完成 1 位达人，卡和文字均 confirmed、unknown 0。
 
 收信投影的 `outbound_episode` 固定比较 delivery/达人/OEC/PID/Offer/listId/冻结正文等不可变字段；同一次交付从“卡已确认”推进到“卡+文字已确认”不能因可变 `cycle_delivery.state` 改动而报冲突。只读收信持续轮询中，账号暂忙属于正常资源等待；发送 worker 保留原页面授权并短退避后继续。确认 unknown 或不能解释的范围错误才停领取。worker 存活判断同时核对进程状态，`ps` 的僵尸 PID 不阻止受控恢复。
+
+四市场收信认证时短暂持有对应账号 profile 租约，拿到独立 IM token 且核对身份文件后释放，再扫描只读会话；每次 IM 读取前仍复核维护状态和身份文件指纹，外发则从认证到组件回查一直持有租约。BR/MY/UK 收信在账号正忙时最多等待 5 秒抢占两次发送之间的空档，仍忙则显示 `waiting_account` 并在 3 秒后复试。外发进程仅在本进程内短暂复用同账号、同身份文件指纹的 IM 认证结果（最长 60 秒；BR/MY/UK 还绑定当前代次）；每位达人仍重开只读核验会话，逐项重新检查当前状态与平台回执。确认发送后约 0.25 秒领取下一位，空池、账号暂忙和窗口外仍退避；四市场外发单会话沿已验证的 3 QPS IM 请求预算运行，卡片、文字写门禁和原意图精确回查不变。发送进程内的 `lead_pool` 仅缓存同一不可变货盘 head 的合格 PID 集合 30 秒；来源、关系和实际候选每次重算，领用与写入仍以当前 Offer、绑定和平台历史复检。调度器在某市场已授权发送或启用 Agent 时也维持该市场收信，即使自动货盘运营开关关闭。
 
 发送话术由 `cycle_materials.py` 和 `market-content.json` 的 16 个跨市场固定模板投影。IT 的 `send_message_template*` revision 继续支持系统模板编辑、自定义和归档；BR/MY/UK 使用相同内部模板键的本地化固定正文。`send_template_review*` 保存当前内容 fingerprint 的 pending/approved/rejected 审核；任一市场固定正文或 IT revision 变化后 fingerprint 变化，该条自动回到 pending。`operations_workflow.save_setting()`、`continuous_send.mutate_control()` 和市场真实发送 runtime 都要求当前批准数至少为 10。候选领取查询该 plan+creator 历史 `cycle_delivery.snapshot.message.template`，只选尚未使用的 approved 模板，全部耗尽时不重复轮转。所有正文只允许 `{creator_handle}`、`{product_name}`、`{creator_commission}`，后二者必需；market、language、locale、模板键、revision 与最终正文共同进入交付合同，禁止跨市场回退。
 
@@ -216,7 +220,7 @@ BR/MY/UK 正式外发逐次读取保存的北京时间窗口、当前停止/启�
 
 `/api/inbox?days=7|14|30` 返回同一收信控制器的北京日统计；结果页画确认触达达人、有回复达人和加橱窗达人三条趋势线。未确认卡片与异常单列，不计入成功。bridge 与纯展示模型复核期间 totals 等于每日行求和、`today` 等于同日期行；不可用、空数据或恒等式不成立时不显示成业务 0。
 
-IT 收信每轮从 IM 最近会话保留部分热点名额，其余从最旧 checkpoint 公平补扫；默认12个/30秒。BR/MY/UK worker 分别保存状态与分页发现游标，最近会话与旧 checkpoint 同轮调度，市场/账号各自独立；新会话只有精确匹配现有关系后才落本市场事件。首次 checkpoint 若已存在本项目确认发送，以该次文字开始时间作历史边界，之后的达人回复形成真实 pending；否则初次导入仍标记历史。收信事件与正文分别写 `inbox_event`、`inbox_content*`，再投影当前 turn；发送端在逐写前仍核对当前消息与关系，收信 worker 存活不代表覆盖新鲜。
+IT 收信每轮从 IM 最近会话保留部分热点名额，其余从最旧 checkpoint 公平补扫；默认12个/30秒。BR/MY/UK 默认每轮20个/10秒、只读 IM 请求预算2 QPS，分别保存状态与分页发现游标，最近会话与旧 checkpoint 同轮调度，市场/账号各自独立；新会话只有精确匹配现有关系后才落本市场事件。首次 checkpoint 若已存在本项目确认发送，以该次文字开始时间作历史边界，之后的达人回复形成真实 pending；否则初次导入仍标记历史。收信事件与正文分别写 `inbox_event`、`inbox_content*`，再投影当前 turn；发送端在逐写前仍核对当前消息与关系，收信 worker 存活不代表覆盖新鲜。
 
 点击日期后，GET `/api/inbox?date=YYYY-MM-DD&offset=0&limit=50` 调用 `cycle_stats.day_detail()` 只读同一 SQLite，单页上限 100、偏移上限 5000。明细只投影投递、实时回复、加橱窗、历史已确认服务回复和当日新建人工案件的白名单字段；不下发原始 delivery snapshot、平台 payload、receipt、confirmation 或身份凭据。`total` 必须等于当日这些明细类型的统计求和，分页游标、日期和字段长度在 CLI/bridge 两层校验；确认文字跟随商品卡展示，不重复算成第二条触达。
 

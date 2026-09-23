@@ -32,6 +32,11 @@ poll=importlib.util.module_from_spec(spec);spec.loader.exec_module(poll)
 NOW=datetime(2026,9,23,17,0,tzinfo=timezone(timedelta(hours=8))).timestamp()
 
 class MarketLaunchContracts(unittest.TestCase):
+ def test_inbox_profile_contention_is_a_short_wait_not_an_attention_failure(self):
+  Busy=type('ProfileBusyError',(Exception,),{})
+  self.assertEqual(poll.failure_state(Busy()),'waiting_account')
+  self.assertEqual(poll.failure_state(RuntimeError()),'attention')
+
  def setUp(self):
   self.tmp=tempfile.TemporaryDirectory();self.root=Path(self.tmp.name);(self.root/'var').mkdir()
   with CycleStore(self.root/'var/second-cycle.sqlite',lambda:NOW) as store:store.plan('bjn-local-research','my')
@@ -67,6 +72,11 @@ class MarketLaunchContracts(unittest.TestCase):
   self.store.db.execute("INSERT INTO inbox_checkpoint VALUES(?,?,?,?,?,'tracking')",(self.plan,'2','102',NOW-1000,NOW-500))
   recent=[{'conversationId':'1','oecId':'101','conversationType':2}]
   self.assertEqual(poll._merge_targets(self.store,self.plan,recent,[],2),[('1','101'),('2','102')])
+ def test_orphan_checkpoint_cannot_break_the_cold_inbox_scan(self):
+  Inbox(self.store)
+  self.store.db.execute("INSERT INTO inbox_checkpoint VALUES(?,?,?,?,?,'tracking')",
+                        (self.plan,'999','999',NOW-1000,NOW-500))
+  self.assertEqual(poll._merge_targets(self.store,self.plan,[],[],12),[])
 
  def test_source_resume_selects_original_scope_and_error_code_is_redacted(self):
   db=sqlite3.connect(self.root/'var/global-source.sqlite')

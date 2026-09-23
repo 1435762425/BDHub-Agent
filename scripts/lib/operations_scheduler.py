@@ -673,9 +673,12 @@ def _background(root,store,jobs,automation,stamp,maintenance_enabled=None):
     if {'continuous_send_control','cycle_delivery','cycle_delivery_part'}<=tables:
         from lib.continuous_send import control as send_control,launch_worker,worker_state
         control=send_control(store,root)
+        unresolved_it=store.db.execute("""SELECT 1 FROM cycle_delivery d JOIN plan p ON p.id=d.plan_id
+            WHERE p.market='it' AND p.institution='bjn-local-research' AND d.state='unknown'
+              AND json_extract(d.snapshot,'$.executionMode')='continuous-v1' LIMIT 1""").fetchone()
         if (enabled['continuous_send']['enabled'] or control['automaticEnabled'] or control['runRequested']) and \
            (control['automaticEnabled'] or control['runRequested']) and \
-           not control['stopRequested'] and not worker_state(root)['running']:
+           not control['stopRequested'] and not unresolved_it and not worker_state(root)['running']:
             launch_worker(root)
     from lib.operations_workflow import setting as market_setting
     from lib.market_registry import enabled_market_keys
@@ -685,7 +688,13 @@ def _background(root,store,jobs,automation,stamp,maintenance_enabled=None):
         plan_row=store.db.execute("SELECT id FROM plan WHERE market=? AND institution='bjn-local-research' AND state='active'",(market,)).fetchone()
         if not plan_row:continue
         current=market_setting(store,market)
-        if current['automaticOperationsEnabled']:
+        sender_control=__import__('lib.market_send_control',fromlist=['control']).control(store,market)
+        agent_enabled=agent_setting(store,plan_row[0])['enabled']
+        # Inbox is part of the authorized send/reply loop even when the broader
+        # catalog automation switch is off (MY is currently operated this way).
+        if current['automaticOperationsEnabled'] or agent_enabled or (
+            not sender_control['stopRequested'] and
+            (current['continuousSendEnabled'] or sender_control['automaticEnabled'] or sender_control['runRequested'])):
             inbox_state=_read(Path(root)/f'var/market-inbox-{market}.json',{})
             inbox_pid=inbox_state.get('pid')
             inbox_alive=pid_alive(inbox_pid)
@@ -700,7 +709,7 @@ def _background(root,store,jobs,automation,stamp,maintenance_enabled=None):
                     _write(Path(root)/f'var/market-inbox-{market}.json',
                            {'pid':child.pid,'running':True,'state':'starting','startedAt':time.time()})
                 except OSError:pass
-        if plan_row and agent_setting(store,plan_row[0])['enabled']:
+        if agent_enabled:
             reply_state=_read(Path(root)/f'var/agent-reply-status-{market}.json',{})
             reply_pid=reply_state.get('pid')
             reply_alive=pid_alive(reply_pid)
@@ -715,7 +724,6 @@ def _background(root,store,jobs,automation,stamp,maintenance_enabled=None):
                     _write(Path(root)/f'var/agent-reply-status-{market}.json',
                            {'pid':child.pid,'state':'starting','checkedAt':time.time()})
                 except OSError:pass
-        sender_control=__import__('lib.market_send_control',fromlist=['control']).control(store,market)
         if (current['continuousSendEnabled'] or sender_control['automaticEnabled'] or sender_control['runRequested']) and \
            not sender_control['stopRequested'] and not market_sender_state(root,market)['running']:
             sender=market_sender_state(root,market)

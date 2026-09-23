@@ -31,6 +31,7 @@ from pathlib import Path
 UNLOCKED_COOLDOWN = 86400   # one message per creator per day
 LOCKED_COOLDOWN = 172800    # four weeks without a reply: at least 48 hours between products
 RESOLVED_PENDING = frozenset({'resolved_by_human','suppressed_no_reply','resolved_no_reply','answered','no_reply'})
+_ELIGIBLE_CACHE = {}
 # ``ready`` holds one position per creator -- the slot that would be sent next. A creator's other
 # positions stay in ``queued``: they are not lost, they simply are not the next thing to do.
 LAYER_ORDER = ('ready', 'queued', 'cooling', 'awaiting_reply', 'excluded', 'product_inactive', 'sent')
@@ -44,7 +45,7 @@ def _rows(conn, sql, args=()):
     return conn.execute(sql, args).fetchall()
 
 
-def pool(root, *, market='it', now=None, limit=20):
+def pool(root, *, market='it', now=None, limit=20, cache_eligible_seconds=0):
     """Build the pool. ``limit`` caps how many rows each layer returns, not the counts."""
     root = Path(root)
     db = root / 'var/second-cycle.sqlite'
@@ -56,14 +57,21 @@ def pool(root, *, market='it', now=None, limit=20):
         tables={row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         required={'source_edge_index','lead_query_run','lead_query_selection','lead_query_head'}
         if not required<=tables:return {'available':False,'counts':{},'layers':{},'pools':{},'schema':'bdhub.lead-pool.v3'}
-        eligible=_eligible_pids(conn,now,tables,market)
+        eligible=_eligible_pids(conn,now,tables,market,db_path=str(db.resolve()),cache_seconds=cache_eligible_seconds)
         return _build(conn, now, limit, eligible_pids=eligible,root=root,market=market)
 
 
-def _eligible_pids(conn,now,tables,market='it'):
+def _eligible_pids(conn,now,tables,market='it',*,db_path='',cache_seconds=0):
     if not {'plan','catalog','catalog_head'}<=tables:return None
     from lib.second_cycle import assess_offer
     pids=set()
+    cache_key=None
+    if cache_seconds:
+        heads=tuple(row[0] for row in conn.execute("SELECT c.id FROM catalog_head h JOIN catalog c ON c.id=h.snapshot_id "
+                                                  "JOIN plan p ON p.id=h.plan_id WHERE p.market=? ORDER BY c.id",(market,)))
+        cache_key=(db_path,market,heads)
+        cached=_ELIGIBLE_CACHE.get(cache_key)
+        if cached and time.monotonic()-cached[0]<cache_seconds:return cached[1]
     rows=conn.execute("SELECT c.payload FROM catalog_head h JOIN catalog c ON c.id=h.snapshot_id "
                       "JOIN plan p ON p.id=h.plan_id WHERE p.market=?",(market,)).fetchall()
     for row in rows:
@@ -72,6 +80,9 @@ def _eligible_pids(conn,now,tables,market='it'):
         for offer in offers if isinstance(offers,list) else []:
             if isinstance(offer,dict) and offer.get('pid') is not None and assess_offer(offer,now)['eligible']:
                 pids.add(str(offer['pid']))
+    if cache_key is not None:
+        _ELIGIBLE_CACHE.clear()
+        _ELIGIBLE_CACHE[cache_key]=(time.monotonic(),pids)
     return pids
 
 

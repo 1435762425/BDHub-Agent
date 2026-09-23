@@ -20,6 +20,7 @@ def execute(deliveries,id,runtime_factory,authorize,preflight,*,verify_only=Fals
     intent=deliveries.prepare_conversation(id)
     if intent['state']=='ready':
      authorize(c)
+     if not deliveries.contact_capacity_available(id):raise CycleError('new_contact_capacity_reached')
      try:
       with rt.get('component_gate', nullcontext)(), rt['write_gate']() as mark_create:
        def create_permit(scope):
@@ -39,6 +40,7 @@ def execute(deliveries,id,runtime_factory,authorize,preflight,*,verify_only=Fals
    with rt.get('component_gate', nullcontext)():
     if not recovering:
      authorize(c);preflight(c,rt,conv)
+     if kind=='card' and not deliveries.contact_capacity_available(id):raise CycleError('new_contact_capacity_reached')
      if kind=='card':card=rt['validate_card'](card)
      else:rt['validate_card'](card)
      def permit(scope):

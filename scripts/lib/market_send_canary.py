@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import time
 from contextlib import closing
 from dataclasses import asdict
 from pathlib import Path
@@ -72,9 +73,10 @@ def _preflight_conversation(store,session,plan,candidate,conversation,delivery_i
 
 
 def _candidate(root,market,store,plan,initial,require_new_conversation=True):
- state=pool(root,market=market,now=store.clock(),limit=None);conversations={row['oecId']:row for row in initial.get('conversations',[])}
- offers=[offer for _,offer in store._offers(plan)];by_pid={}
- for offer in offers:by_pid.setdefault(str(offer['pid']),[]).append(offer)
+ state=pool(root,market=market,now=store.clock(),limit=None,cache_eligible_seconds=30)
+ conversations={row['oecId']:row for row in initial.get('conversations',[])}
+ offers_by_pid={}
+ for _,offer in store._offers(plan):offers_by_pid.setdefault(str(offer['pid']),[]).append(offer)
  with closing(sqlite3.connect((Path(root)/'var/creator-identities.sqlite').resolve().as_uri()+'?mode=ro',uri=True)) as identities,closing(sqlite3.connect((Path(root)/'var/catalog-links.sqlite').resolve().as_uri()+'?mode=ro',uri=True)) as links:
   identities.row_factory=sqlite3.Row;links.row_factory=sqlite3.Row
   for slot in (state.get('pools') or {}).get('ready',[]):
@@ -83,7 +85,7 @@ def _candidate(root,market,store,plan,initial,require_new_conversation=True):
    if store.db.execute('SELECT 1 FROM cycle_delivery WHERE plan_id=? AND creator_id=? AND pid=?',(plan,slot['creatorId'],str(slot['pid']))).fetchone():continue
    person=identities.execute("SELECT current_handle FROM creator_identity WHERE market=? AND creator_id=? AND oec_id=? AND handle_conflict=0",(market,slot['creatorId'],relation['oec'])).fetchone()
    if not person:continue
-   current=sorted((offer for offer in by_pid.get(str(slot['pid']),[]) if assess_offer(offer,store.clock())['eligible']),
+   current=sorted((offer for offer in offers_by_pid.get(str(slot['pid']),[]) if assess_offer(offer,store.clock())['eligible']),
                   key=lambda offer:(0 if offer.get('catalogSource')=='selected' else 1,-float(offer.get('creatorPercent') or 0),str(offer.get('campaignId') or '')))
    for offer in current:
     binding=links.execute("SELECT * FROM catalog_current_binding WHERE market=? AND catalog_source=? AND pid=? AND campaign_id=? AND state='active'",(market,offer['catalogSource'],offer['pid'],offer['campaignId'])).fetchone()
@@ -105,7 +107,12 @@ def _candidate(root,market,store,plan,initial,require_new_conversation=True):
 
 
 def run(root,market,request_id,*,canary=True,page_control=False,reconcile_only=False):
- root=Path(root);pair=load_config(root)['markets'][market];communications=pair['roles']['communications'];report={'market':market,'account':communications,'requestId':request_id,'platformWrites':0,'realSends':0}
+ root=Path(root);pair=load_config(root)['markets'][market];communications=pair['roles']['communications']
+ report={'market':market,'account':communications,'requestId':request_id,'platformWrites':0,'realSends':0}
+ checkpoint=time.monotonic();timing={}
+ def checkpoint_time(name):
+  nonlocal checkpoint
+  now=time.monotonic();timing[name]=round((now-checkpoint)*1000,1);checkpoint=now
  with CycleStore(root/'var/second-cycle.sqlite') as store:
   require_send_template_approval(store,root,market)
   plan=store.db.execute("SELECT id FROM plan WHERE institution='bjn-local-research' AND market=? AND state='active'",(market,)).fetchone()
@@ -120,8 +127,11 @@ def run(root,market,request_id,*,canary=True,page_control=False,reconcile_only=F
    active=_unsettled(store,plan,canary=canary)
   if store.db.execute("SELECT 1 FROM cycle_delivery WHERE plan_id=? AND state='unknown' AND id<>? LIMIT 1",(plan,active['id'] if active else '')).fetchone():
    raise CycleError('market_send_result_unknown')
+  checkpoint_time('preAuth')
   with authenticated(root,market,report,canary=canary) as runtime:
+   checkpoint_time('auth')
    session=runtime['session'];adapter=runtime['adapter'];initial=session.initialize(0)
+   checkpoint_time('initial')
    if active:
     delivery=Deliveries(store).get(active['id']);candidate=delivery['snapshot'];did=delivery['id']
    else:
@@ -129,6 +139,7 @@ def run(root,market,request_id,*,canary=True,page_control=False,reconcile_only=F
     if not candidate:raise CycleError('market_send_candidate_missing')
     _binding_current(root,market,candidate)
     delivery=Deliveries(store).prepare(plan,candidate);did=delivery['id'];candidate=delivery['snapshot']
+   checkpoint_time('candidate')
    if not reconcile_only:_dispatch_allowed(store,market,canary=canary,page_control=page_control)
    intent=Deliveries(store).conversation_intent(did)
    if candidate.get('conversationId'):
@@ -139,6 +150,7 @@ def run(root,market,request_id,*,canary=True,page_control=False,reconcile_only=F
     raise CycleError('market_send_conversation_result_unknown')
    else:
     if reconcile_only:return report|{'state':'nothing_to_reconcile','deliveryId':did}
+    if not Deliveries(store).contact_capacity_available(did):raise CycleError('new_contact_capacity_reached')
     conversation_intent=Deliveries(store).prepare_conversation(did)
     with write_gate(root,runtime['auth'],stopped=lambda: page_control and _stopped(store,market)) as mark:
      def permit_create(scope):
@@ -147,7 +159,9 @@ def run(root,market,request_id,*,canary=True,page_control=False,reconcile_only=F
       ref=Deliveries(store).begin_conversation(did,digest(candidate));mark();report['platformWrites']+=1;return {'dispatchAllowed':True,'requestRef':ref,'stage':'create_conversation'}
      receipt=adapter.create_once(candidate['oecId'],conversation_intent['request_ref'],before_dispatch=permit_create)
     Deliveries(store).save_conversation(did,receipt);conversation=session.conversation(receipt['conversationId'],candidate['oecId']);Deliveries(store).confirm_conversation(did,receipt['conversationId'],candidate['oecId'])
+   checkpoint_time('conversation')
    _preflight_conversation(store,session,plan,candidate,conversation,did)
+   checkpoint_time('preflight')
    origin=runtime['partnerHost']+'/api/v1/affiliate/partner/im/product_list/list';card=descriptor(candidate['card'],market,communications,origin)
    if Deliveries(store).interrupted_by_inquiry(did):raise CycleError('market_send_inquiry_interrupted')
    for kind in ('card','text'):
@@ -169,6 +183,7 @@ def run(root,market,request_id,*,canary=True,page_control=False,reconcile_only=F
       if Deliveries(store).interrupted_by_inquiry(did):raise CycleError('market_send_inquiry_interrupted') from None
       raise
     if kind=='text' and Deliveries(store).interrupted_by_inquiry(did):raise CycleError('market_send_inquiry_interrupted')
+    if kind=='card' and not Deliveries(store).contact_capacity_available(did):raise CycleError('new_contact_capacity_reached')
     with write_gate(root,runtime['auth'],stopped=lambda: page_control and _stopped(store,market)) as mark:
      def permit(scope,expected=kind):
       if scope.get('market')!=market or scope.get('account')!=communications or scope.get('componentKind')!=expected:raise CycleError('dispatch_scope_mismatch')
@@ -180,8 +195,9 @@ def run(root,market,request_id,*,canary=True,page_control=False,reconcile_only=F
     Deliveries(store).record_check(did,kind,proof)
     if proof.get('status')!='confirmed':Deliveries(store).unknown(did,kind);raise CycleError('market_send_result_unknown')
     Deliveries(store).confirm(did,kind,{'status':'confirmed','requestRef':part['request_ref'],'oecId':candidate['oecId'],'kind':kind,'messageId':proof['messageId'],'evidenceRef':proof['evidenceRef']})
+    checkpoint_time(kind)
    final=Deliveries(store).get(did);report.update(deliveryId=did,state=final['state'],pid=candidate['pid'],creatorId=candidate['creatorId'],
-      realSends=0 if reconcile_only else int(final['state']=='confirmed'),unknown=int(final['state']=='unknown'))
+      realSends=0 if reconcile_only else int(final['state']=='confirmed'),unknown=int(final['state']=='unknown'),timingMs=timing)
    if canary and (page_control or reconcile_only) and final['state']=='confirmed':
     from lib.account_identity import promote_capabilities
     promote_capabilities(store,market=market,account=communications,capabilities=['message_send'],

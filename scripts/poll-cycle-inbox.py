@@ -37,8 +37,8 @@ def tick(limit):
   signal.signal(signal.SIGALRM,deadline);signal.setitimer(signal.ITIMER_REAL,55)
   try:
    if targets:
-    with _authenticated(report,stopped=lambda:STOP) as (_,_,_,auth,maintenance,available):
-     reader=ItalyImReadSession(auth,report,maintenance_due=maintenance,stopped=lambda:STOP)
+    with _authenticated(report,stopped=lambda:STOP,read_only=True) as (_,_,_,auth,_,available):
+     reader=ItalyImReadSession(auth,report,maintenance_due=available,stopped=lambda:STOP)
      recent=reader.initialize(0)['conversations']
      checked={cid:stamp for stamp,cid,_,_ in targets}
      hot=[];seen=set()
