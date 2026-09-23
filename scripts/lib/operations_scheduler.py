@@ -486,7 +486,7 @@ class SubprocessStageExecutor:
             return {'state':'completed','itemCount':count,
                     'complete':True,'platformWrites':writes,'scope':{'sources':sources},'payload':{'routes':outputs}}
         if stage=='kalodata':
-            sales=self._call(['scripts/leads-run.py',*market_flag,'--limit','5000','--max-pages','20'],'kalodata-sales')
+            sales=self._call(['scripts/leads-run.py','--market',market,'--limit','5000','--max-pages','20'],'kalodata-sales')
             stopped=str((sales.get('payload') or {}).get('stopped') or sales.get('errorCode') or '')
             state='quota_exhausted' if stopped=='kalodata_daily_quota_exhausted' else sales['state']
             completed=int((sales.get('payload') or {}).get('done') or 0)
@@ -551,7 +551,7 @@ class SubprocessStageExecutor:
                 result.update(state='needs_human',complete=False,errorCode=('identity_'+reason)[:120])
             return result
         if stage=='send_pool':
-            result=self._call(['scripts/lead-pool.py','status','--limit','1',*market_flag],'send-pool')
+            result=self._call(['scripts/lead-pool.py','status','--limit','1','--market',market],'send-pool')
             result['itemCount']=int(((result.get('payload') or {}).get('counts') or {}).get('positions') or 0);return result
         raise CycleError('workflow_stage_invalid')
 

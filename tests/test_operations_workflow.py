@@ -1,6 +1,7 @@
 import tempfile
 import unittest
 import sys
+import os
 import importlib.util
 from datetime import datetime
 from pathlib import Path
@@ -9,7 +10,8 @@ from zoneinfo import ZoneInfo
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
-from lib.operations_workflow import (create_run, finish_stage, resume_short_names, save_setting, setting, start_stage,
+from lib.operations_workflow import (create_run, finish_stage, resume_kalodata_preflight,
+                                     resume_short_names, save_setting, setting, start_stage,
                                      status, update_checkpoint)  # noqa:E402
 from lib.schema_migrations import apply_database  # noqa:E402
 from lib.second_cycle import CycleError, CycleStore  # noqa:E402
@@ -169,6 +171,51 @@ class OperationsWorkflowTests(unittest.TestCase):
             self.store.db.execute("UPDATE workflow_run SET error_code='result_unknown' WHERE run_id=?", (run_id,))
         with self.assertRaisesRegex(CycleError, "recovery_state_invalid"):
             resume_short_names(self.store, "it", run_id, "resume-short-names-0004", root=self.root)
+
+    def _kalodata_preflight_failed_run(self):
+        run = create_run(self.store, market="it", trigger_source="manual", scheduled_at=NOW + 86400,
+                         request_id="workflow-kalodata-recovery-0001", sources=["campaign"])
+        for stage in ("catalog", "taplink_prepare"):
+            prior = next((row["outputGenerationId"] for row in reversed(status(self.store)["current"]["stages"])
+                          if row["outputGenerationId"]), None)
+            start_stage(self.store, run["runId"], stage, input_generation_id=prior)
+            finish_stage(self.store, run["runId"], stage, state="completed", item_count=5)
+        generation = status(self.store)["current"]["stages"][2]["outputGenerationId"]
+        start_stage(self.store, run["runId"], "kalodata", input_generation_id=generation)
+        finish_stage(self.store, run["runId"], "kalodata", state="failed", item_count=0,
+                     platform_writes=0, error_code="kalodata-sales_failed")
+        return run["runId"]
+
+    def test_kalodata_preflight_recovery_only_requeues_original_stage(self):
+        run_id = self._kalodata_preflight_failed_run()
+        resumed = resume_kalodata_preflight(self.store, "it", run_id,
+                                            "resume-kalodata-preflight-0001", root=self.root)
+        self.assertEqual(resumed["state"], "running")
+        self.assertEqual(resumed["stages"][3]["state"], "queued")
+        self.assertEqual(resumed["stages"][1]["state"], "completed")
+        self.assertEqual(resumed["stages"][2]["state"], "completed")
+        self.assertEqual(resumed["stages"][4]["state"], "waiting_upstream")
+        self.assertTrue(resume_kalodata_preflight(self.store, "it", run_id,
+                                                  "resume-kalodata-preflight-0001", root=self.root)["duplicate"])
+        with self.assertRaisesRegex(CycleError, "recovery_already_requested"):
+            resume_kalodata_preflight(self.store, "it", run_id,
+                                      "resume-kalodata-preflight-0002", root=self.root)
+
+    def test_kalodata_preflight_recovery_rejects_possible_read_or_writes(self):
+        run_id = self._kalodata_preflight_failed_run()
+        status_file = self.root / "var/leads-run.json"
+        status_file.write_text("{}")
+        os.utime(status_file, (NOW + 1, NOW + 1))
+        with self.assertRaisesRegex(CycleError, "external_read_possible"):
+            resume_kalodata_preflight(self.store, "it", run_id,
+                                      "resume-kalodata-preflight-0003", root=self.root)
+        os.utime(status_file, (NOW - 1, NOW - 1))
+        with self.store.tx():
+            self.store.db.execute("UPDATE workflow_stage_run SET platform_writes=1 WHERE run_id=? "
+                                  "AND stage='kalodata'", (run_id,))
+        with self.assertRaisesRegex(CycleError, "recovery_state_invalid"):
+            resume_kalodata_preflight(self.store, "it", run_id,
+                                      "resume-kalodata-preflight-0003", root=self.root)
 
 
 if __name__ == "__main__":

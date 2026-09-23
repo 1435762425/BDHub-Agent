@@ -138,6 +138,8 @@ Campaign 每 2 天完整刷新，全托按周刷新；货盘 generation 发布�
 
 IT Campaign-only 的 `taplink_prepare` 若仅因 `catalog_short_names_incomplete` 在平台写入前停为 `needs_human`，补齐当前短名后可通过 `operations-workflow.py resume-short-names` 恢复**原 run 的原阶段**。入口核对市场、原 Campaign generation、前后阶段屏障、零阶段写入、无活跃 claim、当前短名缺口为零；恢复请求和旧错误写入同 run 的持久 checkpoint，重复请求幂等。恢复后由现有 scheduler 领取该阶段，不重跑 Campaign，也不重建任何原外部写入意图。
 
+`campaign-join.py`、`catalog-names.py`、`leads-run.py` 和 `lead-pool.py` 的 CLI 都要求显式 `--market`；scheduler 即使执行 IT 也必须传 `--market it`。若旧调度器因 `leads-run.py` 漏参而在 5 秒内使原 `kalodata` 阶段以 `kalodata-sales_failed` 结束、阶段计数和写入均为 0，且 `leads-run.json` 未在该阶段启动后更新，可用 `operations-workflow.py resume-kalodata-preflight` 在持久 checkpoint 记录原错误后重排同一阶段。任何可能已开始读取的运行均不能用该入口恢复。
+
 外层批处理报告必须汇总每个内部 pass 的 `platformWrites`，阶段 item count 取最终队列 summary，不能把重复 pass 相加。Kalodata 的 B 类完成数读取视频 generation 的 `counts.completed`；额度耗尽仍发布已完成的 A/B 数和断点。OECID 阶段先循环 `IdentityBridge.freeze/dispatch` 到当前 head 无未交接 source edge，再本地复用既有终态证据，最后运行精确 batch；`pending>0`、`queue_stalled` 或技术 blocked 一律 `needs_human`，不得发布 OECID generation 或提前进入发送池。
 
 Campaign 货盘阶段固定执行 `status/verify unresolved → join-all --confirm → campaign-collect --screen`；默认联系邮箱只在本机配置读取，不进入 argv。`join-all` 以最多 100 个活动为一个持久批次，验证码成功后只重放同一 Campaign 加入请求一次，unknown 阻断后续采集。TapLink 阶段对 IT 执行 `seed/read → names → create`，对非 IT 执行 `seed → localized names → read → create`，短名缺口非零时 fail closed。非 IT OECID cohort 若中途 blocked，只落库 code0 且身份精确匹配的前缀目标，其余目标保持 pending；16201010 触发 communications 账号最多两次自动重登，不得把整批丢弃或把 blocked 写成 unresolved。账号在同 market/account/institution 下重登时，已验证的逐能力 canary 随新身份代次继承；新验证的 blocked/failed 仍优先。持续发送空池为 `waiting_pool` 常驻等待，不退出形成重启循环。

@@ -78,6 +78,11 @@
 
 - 四市场 `/api/send` 均已回读 `waiting_capacity`、本地滚动24小时新联系 `500/500`；发送worker、四市场收信及 scheduler 仍存活。最早本地额度释放分别是北京时间2026-09-24 IT16:30:07、BR16:30:31、MY16:34:01、UK16:30:11。到时仍须核对发送窗口、原冻结意图、关系/材料和平台额度；不是预告平台一定接受发送。IT有2条隔离未决建会话原意图，其他三个市场当前发送unknown0。30位/分钟**每市场**目标仍未完成，下一窗口按真实文字回查的完整分钟重新测量。
 
+## 21:13 IT TapLink 完成及 Kalodata 预检故障修复
+
+- 原 Campaign-only 工作流的 `taplink_prepare` 已完成，587个准备项全部 `ready`，阶段记录377次平台写入。随后 `kalodata` 在0.1秒内以 `kalodata-sales_failed` 停住，处理数和阶段写入均为0。根因是调度器调用要求必填 `--market` 的 `leads-run.py` 时对 IT 省略参数；旧 `leads-run.json` 的修改时间早于该阶段，CLI 没有进入首个状态写入或平台读取。同步修正 `lead-pool.py status` 的同类 IT 参数缺口。
+- 以原阶段精确状态、零处理/零写入、短时失败、旧状态文件未更新、上游 generation、无 claim 为门禁，新增持久幂等的 Kalodata 预检失败恢复入口。在线备份 `var/backups/state/second-cycle-before-it-kalodata-preflight-recovery-20260923T1313Z.sqlite` integrity ok 后，以请求 `it-kalodata-preflight-recovery-20260923-001` 恢复同一 run 的 Kalodata 阶段；新 scheduler 已用 `--market it` 启动真实只读任务，首个快照111目标、完成2、网络请求5、错误0。此阶段仍在进行，OECID、发送池未宣称完成。Python全量1,151项通过。
+
 ## 20:56 IT Campaign 原工作流续跑
 
 - `workflow-038da43ec820264f5b155e183fdd` 的 `catalog` 阶段已发布原 generation，111个活动、9,049条 Offer、平台写入25次且无加入 unknown。`taplink_prepare` 因调度器调用必填 `--market` 的 `catalog-names.py` 时漏参，停为 `needs_human/catalog_short_names_incomplete`；该阶段写入0、后续阶段未启动。修正固定 argv 后，另外按原商品范围补齐73个短名，实时 status 为 scope538/ready538/missing0/invalidSourceTitles0。

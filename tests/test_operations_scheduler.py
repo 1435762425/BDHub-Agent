@@ -232,6 +232,21 @@ class StageWiring(unittest.TestCase):
         self.assertEqual((result['state'],result['itemCount']),('completed',1))
         self.assertEqual(calls[0][0][:3],['scripts/leads-run.py','--market','br'])
 
+    def test_it_kalodata_and_send_pool_pass_required_market(self):
+        def answers(args,_label):
+            if args[0]=='scripts/leads-run.py':
+                return {'state':'failed','itemCount':0,'complete':False,'platformWrites':0,
+                        'errorCode':'preflight-test','payload':{}}
+            return {'state':'completed','itemCount':0,'complete':True,'platformWrites':0,
+                    'payload':{'counts':{'positions':1}}}
+        executor,calls=self.executor(answers)
+        executor.execute(None,{'market':'it','applicableSources':['campaign']},'kalodata',{'jobs':{}})
+        self.assertEqual(calls[0][0][:3],['scripts/leads-run.py','--market','it'])
+        calls.clear()
+        result=executor.execute(None,{'market':'it','applicableSources':['campaign']},'send_pool',{'jobs':{}})
+        self.assertEqual(result['itemCount'],1)
+        self.assertEqual(calls[0][0][-2:],['--market','it'])
+
     def test_non_it_selected_taplink_seeds_the_full_live_pool(self):
         def answers(args,_label):
             payload={'missing':0} if args[0]=='scripts/catalog-names.py' else {}
