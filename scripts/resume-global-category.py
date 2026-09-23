@@ -39,6 +39,12 @@ def _call(run_id,action):
  return child.returncode
 
 
+def repair_decision(scope):
+ if not scope['pages']:return 'total_drift_without_duplicate_pages'
+ if scope['attempt']>4:return 'repair_exhausted'
+ return 'repair'
+
+
 def main():
  p=argparse.ArgumentParser(description=__doc__);p.add_argument('--run-id',required=True);a=p.parse_args()
  if not re.fullmatch(r'[A-Za-z0-9_-]{1,100}',a.run_id):p.error('invalid run id')
@@ -54,10 +60,10 @@ def main():
     action='collect'
    elif state['state']=='partial' and state['reason']=='category_endpoint_total_mismatch':
     with closing(GlobalSources(ROOT/'var/global-source.sqlite',readonly=True)) as source:
-     attempt=source.partial_repair_scope(a.run_id)['attempt']
-    if attempt>4:
-     _publish(state,'repair_exhausted',2);return 2
-    action='repair'
+     decision=repair_decision(source.partial_repair_scope(a.run_id))
+    if decision!='repair':
+     _publish(state,decision,2);return 2
+    action=decision
    else:
     _publish(state,'attention',2);return 2
    code=_call(a.run_id,action);after=_state(a.run_id);_publish(after,action,code)

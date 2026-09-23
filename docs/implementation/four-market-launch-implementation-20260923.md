@@ -77,3 +77,8 @@
 ## 19:33 四市场本地容量终态
 
 - 四市场 `/api/send` 均已回读 `waiting_capacity`、本地滚动24小时新联系 `500/500`；发送worker、四市场收信及 scheduler 仍存活。最早本地额度释放分别是北京时间2026-09-24 IT16:30:07、BR16:30:31、MY16:34:01、UK16:30:11。到时仍须核对发送窗口、原冻结意图、关系/材料和平台额度；不是预告平台一定接受发送。IT有2条隔离未决建会话原意图，其他三个市场当前发送unknown0。30位/分钟**每市场**目标仍未完成，下一窗口按真实文字回查的完整分钟重新测量。
+
+## 20:17 IT 类目动态总数断点
+
+- 四市场发送与Agent worker均存活。四个发送页实时回读 `waiting_capacity` 和500/500，当前没有新发送unknown；IT的2条 `quarantined_unknown` 继续单列。Agent设置四市场均启用首条验证，20点已过15:00–16:00回复窗口，真实V2首条仍待下一窗口和合格入站。IT最旧收信checkpoint约96分钟；仅此冷水位不能代替活跃入站SLO，后续继续追踪。
+- IT 原类目 run 第13类 `603014` 末页后记录215页、3225行、3225唯一PID，前145页 reported total 3226、后70页3225，零跨页重复。旧 `partial/category_endpoint_total_mismatch` 是平台动态总数，`partial_repair_scope()` 因没有重复页返回空范围，旧续跑驱动连续空转并以 `round_limit` 停下。驱动现见空修复范围直接报告 `total_drift_without_duplicate_pages`，不再热循环。当前不把3225直接改成 completed：保留原 run 和旧已发布完整head，在源库在线备份 `var/backups/state/global-source-before-it-partition-retry-20260923T121228Z.sqlite`（114,425,856字节、integrity ok）后，用项目既有 `--retry-partial-category` 只重读这个未发布分区。首40页成功，身份文件未变、平台写入0；其余12个已完成分区保留。`resume-global-category.py` PID 87908与子 worker PID 87909 单实例持锁续读，scheduler PID 88033恢复；约20:17下一页66。若再次出现动态总数且无重复页，驱动会明确停下供证据处置，不重复空转。普通周更10,000行/9,998唯一PID的partial仍须等ACC9空闲后再处理。

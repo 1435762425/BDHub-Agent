@@ -2,6 +2,12 @@
 
 更新时间：2026-09-23（Asia/Shanghai）。本文件是当前开发交接入口；产品规则以 [项目文档](../PROJECT.md) 为准，技术结构以 [技术文档](../TECHNICAL.md) 为准。动态数量是本次只读快照，后续以 `var/` 台账和页面 API 回读为准。下方旧日期章节均为历史快照，不代表当前开关与数量。
 
+## 0V. 2026-09-23 20:17 额度等待与 IT 类目断点
+
+- 四市场 `/api/send` 均为 `waiting_capacity`、滚动24小时新联系500/500，原页面授权与发送worker均存活；四市场 Agent 启用首条验证，当前均在回复窗口外。发送真实 unknown0，IT另保留2条用户选择隔离的 `quarantined_unknown`。最早本地额度释放仍为次日北京时间 IT16:30:07、BR16:30:31、MY16:34:01、UK16:30:11，实际续跑须重新复检。
+- IT 类目原 run `it-global-20260921-9bbc623e09e9` 曾停在12/28类 `partial`：第13类平台1–145页报3226、第146–215页报3225；末页后3225行/3225唯一PID、零重复。原邻域修复入口因无重复页可复读而空转80轮，现已改为明确停止。ACC9 profile空闲、无 workflow claim/来源worker后，对 `global-source.sqlite` 作在线备份 `var/backups/state/global-source-before-it-partition-retry-20260923T121228Z.sqlite`（integrity ok）；按既有 `--retry-partial-category` 只重读该未发布第13类。首40页成功，身份未变化，原 run恢复 `collecting`，另12个已完成分区和旧完整head不变。单实例 `resume-global-category.py` PID 87908及其子 worker 87909 持各自锁继续推进，scheduler PID 88033 已恢复；约20:17第13类下一页66。继续监测原 run，不能重复启动或抢ACC9。普通周更partial仍待其完成后处理。
+- 内存压力查询约47%空闲，数据卷可用约14GiB；备份目录约19GiB，未清理任何历史备份/数据库。收信worker均存活，IT最旧checkpoint约96分钟，仍须区分活跃来信及时性与历史公平补扫。新增无重复页热循环正反合同后Python全量1,143项与文档检查通过；每市场各30位/分钟目标未验收。
+
 ## 0U. 2026-09-23 19:33 四市场额度等待
 
 - 四市场当前均已使用滚动24小时新联系500/500，四个发送worker仍存活并显示 `waiting_capacity`，四市场收信及 scheduler 存活。只读台账的最早本地额度释放：北京时间次日IT16:30:07、BR16:30:31、MY16:34:01、UK16:30:11；到时仍须以实时窗口、账号和原意图复检为准。UK原 `received` 会话已用原 requestRef/CID恢复并双组件确认，UK发送unknown0；IT保留2条隔离未决。每市场30位/分钟目标未实现，明日额度释放后继续按真实回执测量。
