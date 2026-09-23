@@ -10,6 +10,11 @@ CREATE TABLE IF NOT EXISTS service_reply_runtime(plan_id TEXT PRIMARY KEY,seen R
 ACK='Ricevuto, verifichiamo e ti aggiorniamo appena possibile.'
 SAMPLE='Per questa collaborazione ti proponiamo di promuovere di nuovo il prodotto: non inviamo un nuovo campione. Se lo hai ancora, puoi usarlo per un nuovo video o LIVE.'
 REPLACEMENT='Capito. Puoi contattare direttamente il negozio e chiedere se è possibile ricevere un altro campione o una sostituzione.'
+
+def _decision_wait_for(db,reply_id):
+ row=db.execute("SELECT output_json FROM agent_reply_decision_v2 WHERE service_reply_id=? AND state='ready' ORDER BY created_at DESC LIMIT 1",(reply_id,)).fetchone()
+ return (json.loads(row[0]).get('waitFor') if row else None)
+
 class AutoReplies:
  def __init__(self,store):
   self.s=store;self.service=Service(store);store.db.executescript(SCHEMA)
@@ -101,6 +106,38 @@ class AutoReplies:
    if old:return old
    self.s.db.execute("INSERT INTO service_reply(id,plan_id,creator_id,pending_revision,oec,cid,kind,case_id,text,context_hash,state,request_ref,receipt,proof,created,started,control_revision) VALUES(?,?,?,?,?,?,?,NULL,?,?,\'ready\',?,NULL,NULL,?,NULL,?)",(reply_id,plan,creator,pending_revision,rel['oec'],cid,action,text.strip(),digest(context),str(uuid.uuid4()),self.s.clock(),rel['revision']))
    return self.get(reply_id)
+ def prepare_generated(self,plan,creator,cid,pending_revision,turn_id,decision_id,text,
+                       *,handoff_case_id=None,wait_for='none',expected_control_revision=None):
+  """Freeze one generated body under the same receipt and context fence as legacy replies."""
+  kind=('agent_handoff_v2' if handoff_case_id else
+        'agent_request_detail_v2' if wait_for in ('contact','clarification') else 'agent_generated_v2')
+  if not isinstance(text,str) or not text.strip() or len(text)>1200 or \
+     not isinstance(decision_id,str) or not decision_id.startswith('agent-decision-'):
+   raise CycleError('agent_generated_reply_invalid')
+  with self.s.tx():
+   rel=self.s.db.execute('SELECT * FROM relationship WHERE plan_id=? AND creator_id=?',(plan,creator)).fetchone()
+   pending=self.s.db.execute('SELECT * FROM inbox_pending WHERE plan_id=? AND creator_id=?',(plan,creator)).fetchone()
+   expected_mode='human' if handoff_case_id else 'auto'
+   if not rel or rel['mode']!=expected_mode or rel['revision']!=expected_control_revision or \
+      rel['rejected'] and not handoff_case_id or \
+      not pending or pending['revision']!=pending_revision:
+    raise CycleError('reply_context_changed')
+   if handoff_case_id:
+    case=self.s.db.execute("SELECT 1 FROM service_case WHERE id=? AND plan_id=? AND creator_id=? AND state='open'",
+                           (handoff_case_id,plan,creator)).fetchone()
+    if not case:raise CycleError('handoff_changed')
+   context=self.service.context(plan,creator)
+   if {row['cid'] for row in context if not row['historical']}!={cid}:
+    raise CycleError('reply_context_changed')
+   reply_id='agent-reply-'+digest([plan,creator,turn_id,decision_id])[:24]
+   old=self.get(reply_id)
+   if old:
+    if old['text']!=text or old['kind']!=kind:raise CycleError('reply_request_conflict')
+    return old
+   self.s.db.execute("INSERT INTO service_reply(id,plan_id,creator_id,pending_revision,oec,cid,kind,case_id,text,context_hash,state,request_ref,receipt,proof,created,started,control_revision) VALUES(?,?,?,?,?,?,?,?,?,?,'ready',?,NULL,NULL,?,NULL,?)",
+    (reply_id,plan,creator,pending_revision,rel['oec'],cid,kind,handoff_case_id,text.strip(),digest(context),
+     str(uuid.uuid4()),self.s.clock(),rel['revision']))
+   return self.get(reply_id)
  def begin(self,id):
   with self.s.tx():
    q=self.get(id);p=self.s.db.execute('SELECT * FROM inbox_pending WHERE plan_id=? AND creator_id=?',(q['plan_id'],q['creator_id'])).fetchone();r=self.s.db.execute('SELECT * FROM relationship WHERE plan_id=? AND creator_id=?',(q['plan_id'],q['creator_id'])).fetchone()
@@ -109,7 +146,8 @@ class AutoReplies:
    if (not manual and not self.enabled(q['plan_id'])) or self.s._plan(q['plan_id'])['state']!='active' or \
       (not manual and (not p or p['revision']!=q['pending_revision'] or p['due_at']>self.s.clock())) or \
       not r or r['revision']!=q['control_revision'] or r['mode']=='paused' or digest(self.service.context(q['plan_id'],q['creator_id']))!=q['context_hash']:raise CycleError('reply_context_changed')
-   if q['kind']=='answer' and r['mode']!='auto':raise CycleError('reply_human_control')
+   if not manual and (r['mode']!='human' if q['case_id'] else r['mode']!='auto'):
+    raise CycleError('reply_human_control')
    if q['case_id']:
     case=self.s.db.execute('SELECT * FROM service_case WHERE id=?',(q['case_id'],)).fetchone()
     if not case or case['state']!='open' or case['ack_state']=='confirmed':raise CycleError('handoff_changed')
@@ -135,7 +173,10 @@ class AutoReplies:
    else:
     p=self.s.db.execute('SELECT revision FROM inbox_pending WHERE plan_id=? AND creator_id=?',(q['plan_id'],q['creator_id'])).fetchone()
     if p and p[0]==q['pending_revision']:
-     self.s.db.execute("UPDATE inbox_pending SET state='answered' WHERE plan_id=? AND creator_id=?",(q['plan_id'],q['creator_id']))
+     state='waiting_contact' if q['kind']=='agent_request_detail_v2' and \
+      _decision_wait_for(self.s.db,q['id'])=='contact' else \
+      'waiting_clarification' if q['kind']=='agent_request_detail_v2' else 'answered'
+     self.s.db.execute("UPDATE inbox_pending SET state=? WHERE plan_id=? AND creator_id=?",(state,q['plan_id'],q['creator_id']))
      self.s.db.execute("UPDATE relationship SET inbox_until=0,revision=revision+1 WHERE plan_id=? AND creator_id=? AND mode='auto'",(q['plan_id'],q['creator_id']))
      rows=self.service.context(q['plan_id'],q['creator_id']);watermark=max((r['eventRowid'] for r in rows),default=0)
      self.s.db.execute('INSERT INTO service_cursor VALUES(?,?,?) ON CONFLICT(plan_id,creator_id) DO UPDATE SET event_rowid=excluded.event_rowid',(q['plan_id'],q['creator_id'],watermark))

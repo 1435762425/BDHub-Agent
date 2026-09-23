@@ -4,7 +4,7 @@ import json,sys
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1];sys.dont_write_bytecode=True;sys.path.insert(0,str(ROOT/'scripts'))
 from lib.second_cycle import CycleError,CycleStore
-from lib.template_library import (agent_setting,agent_templates,archive_send_template,create_send_template,
+from lib.template_library import (agent_setting,agent_templates,archive_manual_template,archive_send_template,create_send_template,
  manual_templates,review_send_template,selected_send_template,send_template_reviews,send_templates,
  save_agent_setting,update_agent_template,update_send_template,upsert_manual_template)
 from lib.reply_events import load_policy
@@ -24,7 +24,7 @@ def snapshot(store,market='it'):
  from lib.market_content import market_content
  content=market_content(ROOT,market)
  return {'market':market,'language':content['language'],'languageLabel':content['languageLabel'],'locale':content['locale'],
-  'sendTemplates':send_templates(store,market=market),'manualTemplates':manual_templates(store,market=market),
+  'sendTemplates':send_templates(store,market=market),'manualTemplates':manual_templates(store,include_archived=True,market=market),
   'agentTemplates':agent_templates(store,policy,market),
   'agentSetting':setting,'review':send_template_reviews(store,ROOT,market),'platformWrites':0,'realSends':0}
 
@@ -33,7 +33,7 @@ def main():
   raw=sys.stdin.read(20001)
   if len(raw.encode())>20000:raise CycleError('input_too_large')
   req=json.loads(raw or '{}');action=req.get('action');market=req.get('market');readonly=action=='status'
-  if action not in ('status','create_send','update_send','archive_send','upsert_manual','update_agent','save_agent','review_send'):
+  if action not in ('status','create_send','update_send','archive_send','upsert_manual','archive_manual','update_agent','save_agent','review_send'):
    raise CycleError('invalid_action')
   from lib.market_registry import market as market_record
   try:definition=market_record(ROOT,market)
@@ -62,6 +62,9 @@ def main():
    elif action=='upsert_manual':
     if set(req)!={'action','market','requestId','templateId','expectedRevision','name','category','body'}:raise CycleError('invalid_input')
     upsert_manual_template(store,req['requestId'],req['templateId'],req['expectedRevision'],req['name'],req['category'],req['body'],market)
+   elif action=='archive_manual':
+    if set(req)!={'action','market','templateId','expectedRevision'}:raise CycleError('invalid_input')
+    archive_manual_template(store,req['templateId'],req['expectedRevision'],market)
    elif action=='update_agent':
     if set(req)!={'action','market','templateKey','expectedRevision','body'}:raise CycleError('invalid_input')
     update_agent_template(store,load_policy(),req['templateKey'],req['expectedRevision'],req['body'],market)

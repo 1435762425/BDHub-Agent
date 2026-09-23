@@ -2,6 +2,15 @@
 
 更新时间：2026-09-23（Asia/Shanghai）。本文件是当前开发交接入口；产品规则以 [项目文档](../PROJECT.md) 为准，技术结构以 [技术文档](../TECHNICAL.md) 为准。动态数量是本次只读快照，后续以 `var/` 台账和页面 API 回读为准。下方旧日期章节均为历史快照，不代表当前开关与数量。
 
+## 0J. 2026-09-23 会话与多轮 Agent 回复升级
+
+- 用户已逐项确认样品、物流/售后、佣金、合作确认、商品卡、其他商品、Boost、联系方式、付费、停联和人工接管规则；新增 [升级计划](../architecture/conversation-agent-upgrade-plan-20260923.md)，产品与技术真相源已同步。会话页面的待人工、AI 待处理、待达人补充、本轮已结束四个互斥队列已上线；人工队列新增手动解除并同时选择普通合作/付费合作/不再联系。状态推进带最新消息和 revision 校验，解除不代表立即发送二发。
+- 原固定三模板执行改为版本化多轮指南、真实会话上下文、结构化模型判断与冻结正文；设置页可见 DeepSeek `deepseek-flash`、API endpoint、脱敏连接状态、完整编译提示词、多轮试聊和生产判断记录。人工模板补充搜索、编辑和归档。旧五动作真值只保留历史，不进入新版 worker 执行决策。
+- 启动前核对发现 IT Agent durable 设置实际为 `enabled=1`、旧 worker PID 39010 运行，且历史 `service_reply` 已有确认记录。依项目“开发期间自动回复关闭”约定，已将设置改为 `enabled=0`/revision 2，旧 worker 正常退出；收信 worker PID 46147 保持运行。新 Web 生产构建在 `127.0.0.1:5198`，当前监听 PID 43805。
+- 迁移前备份 `var/backups/state/20260923T050849Z-before-conversation-agent-v2`：33 库、1,206,353,920 字节、`valid=true`、凭据 0。增量 `second-cycle` migration v18 已应用，迁移检查 ready。38 条现有 IT 入站完成只读影子回放并取得可解析结果；随后针对纯感谢/表情补充指南，对受影响的样本单独复跑。新规则分流不能与旧 35 条五动作真值直接比较，不代表真实业务效果。BR/MY/UK 做了对应语言的合成试聊，真实回复 transport 尚未分别验收。
+- 本轮验证：Python `1108` 项、Web `163` 项、TypeScript、Next 生产构建、124 份 Markdown 与 diff 检查通过。真实平台发送、TapLink 写入和新 Agent 实际业务回复均为 0。当前 IT 会话投影：待人工 0、AI 待处理 0、待达人补充 0、本轮已结束 35。Agent 设置回读 `enabled=false`、rollout=`pilot_required`、worker 未运行；Web 实际 GET 回读成功。
+- 新执行器的第一次真实回复仍需用户先在页面开启 Agent，再在 Agent 设置页点“开始首条真实回复验证”；首条确认后自动停在 `pilot_complete_waiting_resume`，检查真实会话与回执后才可在页面点“继续自动回复”。这两步尚未执行。当前 IT 只有代码/影子/页面验收，BR/MY/UK 真实 transport 状态为 `market_agent_transport_pending`。图片/语音若无可用文字，先请求达人文字补充，不宣称已具备媒体理解。
+
 ## 0I. 2026-09-23 BR/MY 达人详情与顶部统计
 
 - 顶部“已查询/查得到/搜索不到”此前只请求 IT 的 `/api/identity-queue`，BR/MY 因此前端分支直接显示横杠。本轮改为从当前市场的 `lead_query_head → lead_query_selection → source_edge_index` 和身份结果读取：BR 为 1,789 / 1,746 / 43，MY 为 4,534 / 4,388 / 146，去重单位为 handle。两市场“有回复/已加橱窗”均为真实 0，当前 live `inbox_event` 无对应事件。

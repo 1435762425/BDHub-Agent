@@ -224,6 +224,16 @@ Agent 与二发没有优先级关系，只有互斥窗口：默认北京时间 `
 
 模型只选择受控动作，不能生成自由正文或直接构造 transport 参数。`no_reply`、固定模板和 `human` 的状态变化由确定性代码执行；身份、金额、资格、额度、去重、暂停、授权和外部结果继续由台账保证。当前 Agent 开关为关闭；GET、构建、发布和服务重启都不会启动回复 worker。
 
+### 5.5.1 多轮回复 V2（2026-09-23）
+
+上述五动作/固定模板是历史 V1 合同。V2 的生效指南来自 `config/agent-reply-guide-v2.txt` 或 append-only `agent_reply_guide_revision`；`agent_reply_v2.py` 从目标消息时刻以前的入站、已确认二发 episode 和已确认服务回复构建市场隔离上下文，编译完整提示词并通过现有 DeepSeek adapter 返回 `reply/no_reply/request_detail/handoff` 结构。校验消息证据、正文、等待和人工理由；模型输出只形成决策，不提供账号、PID 写入或 transport 参数。每次调用在 `agent_reply_decision_v2` 保留真实输入、输出/错误、指南版本、模型和关联 `service_reply`，失败最多三次，不把模型异常当作人工案件或发送成功。
+
+试聊由 `scripts/agent-replies.py simulate` 和 `/api/agent-replies` 调用相同提示词/模型与结构校验；仅持久化本机试验记录，平台写入为 0，不改真实 pending/case/control。`trace` 只返回本机已保存的输入、判断和关联发送 ID，不暴露密钥。BR/MY/UK 试聊按市场 locale 工作；真实回复 transport 仍只验收 IT，其他市场 worker 显示 `market_agent_transport_pending`，不得复用 IT 账号。已存的旧 `turn_review` 和固定模板可供历史追溯，不作为 V2 执行真值。
+
+正式 worker 在原 `15:00–16:00` 窗口调用 V2，重新核对最新 turn、pending/control revision、人工案件和消息上下文后，才使用 `AutoReplies.prepare_generated` 冻结唯一正文。`service_reply` 新 kind 分别为 `agent_generated_v2`、`agent_request_detail_v2`、`agent_handoff_v2`；仍走现有发送门禁、持久 request ref、accepted/unknown 原意图回查。澄清或联系方式确认送达后，pending 进入 `waiting_clarification/waiting_contact`，继续阻止二发直至新入站处理。人工交接先落 case/达人级锁，再准备唯一确认消息；接管后常规 AI 回复停止。`control_event` 保留两次唯一页面动作：`agent-v2-first-send` 启动首条真实回复验证，首条确认后 worker 停在 `pilot_complete_waiting_resume`；`agent-v2-full-run` 由用户检查回执后继续。普通 Agent 开关开启不绕过首次启动。由于新执行器尚未完成真实平台 canary，当前 durable Agent 开关保持关闭，开发与 Web 发布不自动恢复。
+
+人工解除通过 `resolve_manual` 原子校验最新 turn、case/pending/control 与合作状态 revision，选择 `normal/paid/rejected` 并推进 cursor。普通完成解除人工锁，仍需重新经过完整二发门禁；`paid/rejected` 保留普通二发排除。带 request ID 的重复提交幂等，外部写入数为 0。当前会话队列统一为 `human/agent/waiting/completed/all`，其中等待达人补充单列，已处理 Agent 回复归本轮已结束；待办时长只用于未处理事项。
+
 ## 6. 数据与状态
 
 ### 6.1 主要 SQLite
@@ -331,7 +341,8 @@ pending → started/submitted → confirmed
 | `/api/workflow` | workflow 状态、立即运行与安全停止 |
 | `/api/send` | 持续发送设置、发送/停止、unknown 原意图核验和进程状态 |
 | `/api/template-library` | 二发模板、人工模板、Agent 固定模板和互斥窗口；所有 mutation 使用字段白名单与 revision |
-| `/api/conversations` | 默认需人工队列、会话详情、原文中译、草稿、人工文本/商品卡、人工回复确认和达人拒绝标签；图片入口当前明确禁用 |
+| `/api/conversations` | 待人工/AI 待处理/待达人补充/本轮已结束互斥队列、会话详情、原文中译、草稿、人工文本/商品卡与手动解除接管；图片发送入口当前明确禁用 |
+| `/api/agent-replies` | 当前模型/endpoint/指南/编译提示词只读状态、指南 revision 保存、多轮试聊、历史 turn 影子重放与本机调用记录；无平台发送命令 |
 | `/api/reply-review` | 事件级样本、双模型影子分类、turn 标准动作和受控案件应用；无发送动作 |
 | `/api/inbox` | 收信 worker、今日/最近 14 日统计、可分页日明细和待人工 |
 | `/api/jobs` | 手动作业与定时意向 |
@@ -344,7 +355,7 @@ Web 不再构建 `/flow-demo`、浏览器演示页、旧 local runtime、second-
 
 会话页在 AppShell 中使用无最大宽度布局，并在桌面按 `队列 / 时间线与编辑器 / 达人与事项` 占满剩余视口。详情只投影白名单经营字段；人工事项确认直接结算当前 case/pending 且不发送消息。`creator_collaboration_event/current` 保存 `normal/collaborated/paid/rejected`，状态 mutation 同时校验 collaboration 与 relationship revision；showcase 只升级系统默认，人工选择优先。达人库顶部的“已查询/查得到/搜索不到”：IT 保留 `/api/identity-queue` 的互斥 handle 口径；BR/MY/UK 从本市场 `lead_query_head → lead_query_selection → source_edge_index` 当前范围与身份结果读取，resolved 优先于 unresolved。“有回复/已加橱窗”从 live `inbox_event` 按 `creator_id` 去重，历史补录不计入。达人详情的平台 Profile 字段仅从 `creator-identities.sqlite.identity_observation.fields` 读取；另从当前线索关联该 `creator_id`，最多展示 8 条 PID、币种、14 天窗口和原始数值 GMV，不合并成平台画像总 GMV。
 
-会话时间线把 `inbox_event.kind=showcaseNotifications` 投影为“达人已将商品添加到橱窗”，不把它送入回复分类器。队列状态只投影 `human / agent / completed`；持久 pending 即使早期短冻结时间已过，仍属于 Agent 待回复，不能因 `relationship.inbox_until` 到期永久跳过。
+会话时间线把 `inbox_event.kind=showcaseNotifications` 投影为“达人已将商品添加到橱窗”，不把它送入回复分类器。队列状态投影 `human / agent / waiting / completed`；已确认普通回复从旧 Agent 队列归入本轮结束，待联系人资料或澄清归入 waiting。持久 pending 即使早期短冻结时间已过，仍属于 AI 待处理，不能因 `relationship.inbox_until` 到期永久跳过。
 
 ## 9. 账号与外部系统
 

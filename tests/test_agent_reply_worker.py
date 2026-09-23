@@ -49,9 +49,15 @@ class AgentReplyWorkerTests(unittest.TestCase):
   db.execute("UPDATE cycle_bulk_runtime SET phase='waiting_window'")
   db.execute("INSERT INTO cycle_delivery_part VALUES('inflight')")
   self.assertTrue(WORKER.send_dispatch_active(self.store))
- def test_operator_review_wins_before_model_classification(self):
-  self.store.db.execute('CREATE TABLE turn_review(turn_id TEXT,revision INTEGER,correct_action TEXT)')
-  self.store.db.execute("INSERT INTO turn_review VALUES('turn-1',1,'human')")
-  self.assertEqual(WORKER.reviewed_action(self.store,{'turn_id':'turn-1'})['action'],'human')
+ def test_waiting_for_creator_is_not_reclassified_without_new_input(self):
+  db=self.store.db
+  db.execute('CREATE TABLE inbox_pending(plan_id TEXT,creator_id TEXT,state TEXT,due_at REAL)')
+  db.execute('CREATE TABLE relationship(plan_id TEXT,creator_id TEXT,mode TEXT,rejected INTEGER)')
+  db.execute('CREATE TABLE service_case(plan_id TEXT,creator_id TEXT,state TEXT)')
+  db.execute("INSERT INTO relationship VALUES('p','c','auto',0)")
+  db.execute("INSERT INTO inbox_pending VALUES('p','c','waiting_contact',10)")
+  self.assertEqual(WORKER.pending_rows(self.store,'p',1000),[])
+  db.execute("UPDATE inbox_pending SET state='awaiting_content'")
+  self.assertEqual(len(WORKER.pending_rows(self.store,'p',1000)),1)
 
 if __name__=='__main__':unittest.main()

@@ -60,7 +60,8 @@ def run_reply(store,replies,q):
      else:
       with store.tx():
        store.db.execute("UPDATE service_reply SET state='cancelled' WHERE id=? AND state='ready'",(q['id'],))
-       store.db.execute("UPDATE inbox_pending SET revision=revision+1,state='awaiting_content',due_at=? WHERE plan_id=? AND creator_id=? AND revision=?",(time.time()+60,q['plan_id'],q['creator_id'],q['pending_revision']))
+       if q['kind']!='agent_handoff_v2':
+        store.db.execute("UPDATE inbox_pending SET revision=revision+1,state='awaiting_content',due_at=? WHERE plan_id=? AND creator_id=? AND revision=?",(time.time()+60,q['plan_id'],q['creator_id'],q['pending_revision']))
      raise
    current=replies.get(q['id']);receipt=json.loads(current['receipt']) if current['receipt'] else {}
    proof=rt['adapter'].readback_card(conv,card,q['request_ref'],message_id=receipt.get('messageId')) if card else rt['adapter'].readback(conv,q['text'],q['request_ref'],message_id=receipt.get('messageId'))

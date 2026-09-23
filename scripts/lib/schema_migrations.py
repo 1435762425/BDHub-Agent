@@ -994,6 +994,53 @@ CREATE INDEX IF NOT EXISTS workflow_resource_owner
 """)
 
 
+SECOND_CYCLE_AGENT_CONVERSATION = Migration(18, "agent_conversation_v2", """
+CREATE TABLE IF NOT EXISTS agent_reply_guide_revision(
+  plan_id TEXT NOT NULL,
+  revision INTEGER NOT NULL,
+  body TEXT NOT NULL,
+  content_hash TEXT NOT NULL,
+  created_at REAL NOT NULL,
+  PRIMARY KEY(plan_id,revision)
+);
+CREATE TRIGGER IF NOT EXISTS agent_reply_guide_no_update
+BEFORE UPDATE ON agent_reply_guide_revision BEGIN SELECT RAISE(ABORT,'agent guide revision is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS agent_reply_guide_no_delete
+BEFORE DELETE ON agent_reply_guide_revision BEGIN SELECT RAISE(ABORT,'agent guide revision is immutable'); END;
+CREATE TABLE IF NOT EXISTS agent_reply_decision_v2(
+  decision_id TEXT PRIMARY KEY,
+  plan_id TEXT NOT NULL,
+  market TEXT NOT NULL,
+  creator_id TEXT,
+  turn_id TEXT,
+  pending_revision INTEGER,
+  guide_revision INTEGER NOT NULL,
+  input_hash TEXT NOT NULL,
+  input_json TEXT NOT NULL,
+  output_json TEXT,
+  provider TEXT NOT NULL,
+  model TEXT NOT NULL,
+  mode TEXT NOT NULL CHECK(mode IN ('simulation','production')),
+  state TEXT NOT NULL,
+  service_reply_id TEXT,
+  created_at REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS agent_reply_decision_creator
+ON agent_reply_decision_v2(plan_id,creator_id,created_at DESC);
+CREATE INDEX IF NOT EXISTS agent_reply_decision_turn
+ON agent_reply_decision_v2(plan_id,turn_id,mode,created_at DESC);
+CREATE TABLE IF NOT EXISTS agent_reply_simulation_turn(
+  session_id TEXT NOT NULL,
+  turn_no INTEGER NOT NULL,
+  market TEXT NOT NULL,
+  user_text TEXT NOT NULL,
+  decision_id TEXT NOT NULL,
+  created_at REAL NOT NULL,
+  PRIMARY KEY(session_id,turn_no)
+);
+""")
+
+
 DATABASES = {
     "catalog-links": ("catalog-links.sqlite", (CATALOG_LINKS,)),
     "second-cycle": ("second-cycle.sqlite", (SECOND_CYCLE, SECOND_CYCLE_INDEXES,
@@ -1011,7 +1058,8 @@ DATABASES = {
                                                 SECOND_CYCLE_TEMPLATE_REVIEW,
                                                 SECOND_CYCLE_MARKET_TEMPLATE_SCOPE,
                                                 SECOND_CYCLE_MARKET_READ_MODEL,
-                                                SECOND_CYCLE_WORKFLOW_RESOURCES)),
+                                                SECOND_CYCLE_WORKFLOW_RESOURCES,
+                                                SECOND_CYCLE_AGENT_CONVERSATION)),
 }
 
 REGISTRY_SQL = """

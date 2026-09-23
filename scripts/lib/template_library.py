@@ -274,6 +274,21 @@ def upsert_manual_template(store,request_id,template_id,expected_revision,name,c
    store.db.execute("UPDATE market_manual_reply_template SET name=?,category=?,state='active',current_revision=?,updated_at=? WHERE plan_id=? AND template_id=?",(name,category,revision,now,plan,template_id))
  return next(value for value in manual_templates(store,True,market) if value['id']==template_id)
 
+def archive_manual_template(store,template_id,expected_revision,market='it'):
+ if not isinstance(template_id,str) or not MANUAL_ID.fullmatch(template_id) or \
+    type(expected_revision) is not int or expected_revision<1:
+  raise CycleError('template_request_invalid')
+ plan=_template_plan(store,market)
+ with store.tx():
+  row=store.db.execute('SELECT state,current_revision FROM market_manual_reply_template '
+                       'WHERE plan_id=? AND template_id=?',(plan,template_id)).fetchone()
+  if not row or row['current_revision']!=expected_revision:
+   raise CycleError('template_revision_conflict')
+  if row['state']!='archived':
+   store.db.execute("UPDATE market_manual_reply_template SET state='archived',updated_at=? "
+                    'WHERE plan_id=? AND template_id=?',(store.clock(),plan,template_id))
+ return {'templateId':template_id,'state':'archived','revision':expected_revision}
+
 def agent_templates(store,policy,market='it'):
  plan=_template_plan(store,market)
  if market=='it':

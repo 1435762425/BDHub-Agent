@@ -3,7 +3,7 @@ from contextlib import closing
 from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'scripts'))
 from lib.conversation_workbench import (complete_reviewed_human,confirm_manual_reply,conversation_detail,
- list_conversations,reject_creator,save_draft,set_collaboration)
+ list_conversations,reject_creator,resolve_manual,save_draft,set_collaboration)
 from lib.cycle_auto_reply import AutoReplies
 from lib.cycle_inbox import Inbox
 from lib.cycle_service import Service
@@ -28,6 +28,46 @@ class ConversationWorkbenchTests(unittest.TestCase):
  def test_default_human_queue_explains_reason(self):
   result=list_conversations(self.root,self.store,'human')
   self.assertEqual(result['total'],1);self.assertEqual(result['items'][0]['humanReasonLabel'],'链接打不开')
+ def _release(self,outcome):
+  detail=conversation_detail(self.root,self.store,'999')
+  request_id='release-'+outcome+'-0001'
+  result=resolve_manual(self.store,'999',detail['case']['id'],detail['latestTurnId'],outcome,
+   detail['creator']['revision'],detail['case']['pendingRevision'],
+   detail['creator']['collaboration']['revision'],request_id)
+  self.assertEqual(result['outcome'],outcome)
+  self.assertTrue(resolve_manual(self.store,'999',detail['case']['id'],detail['latestTurnId'],outcome,
+   detail['creator']['revision'],detail['case']['pendingRevision'],
+   detail['creator']['collaboration']['revision'],request_id)['duplicate'])
+  rel=self.store.db.execute("SELECT mode,rejected FROM relationship WHERE creator_id='creator-1'").fetchone()
+  self.assertEqual(rel['mode'],'auto')
+  self.assertEqual(bool(rel['rejected']),outcome=='rejected')
+  self.assertEqual(conversation_detail(self.root,self.store,'999')['creator']['collaboration']['status'],outcome)
+ def test_manual_release_normal(self):self._release('normal')
+ def test_manual_release_paid(self):self._release('paid')
+ def test_manual_release_rejected(self):self._release('rejected')
+ def test_manual_release_rejects_newer_message_or_control(self):
+  detail=conversation_detail(self.root,self.store,'999')
+  self.store.db.execute("UPDATE relationship SET revision=revision+1")
+  with self.assertRaisesRegex(CycleError,'manual_resolution_changed'):
+   resolve_manual(self.store,'999',detail['case']['id'],detail['latestTurnId'],'normal',
+    detail['creator']['revision'],detail['case']['pendingRevision'],0,'release-stale-0001')
+  self.assertEqual(self.store.db.execute('SELECT state FROM service_case').fetchone()[0],'open')
+ def test_manual_case_keeps_new_message_and_can_release_after_reading_it(self):
+  old=conversation_detail(self.root,self.store,'999')
+  self.store.db.execute('INSERT INTO inbound_turn VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',
+   ('turn-'+('d'*24),self.plan,'creator-1','123','999','1001','e'*64,'text',
+    'Ho un altro problema',int((NOW+1)*1000),0,NOW+1))
+  self.store.db.execute("UPDATE inbox_pending SET revision=2,state='awaiting_classification'")
+  self.store.db.execute("UPDATE relationship SET revision=revision+1")
+  current=conversation_detail(self.root,self.store,'999')
+  self.assertEqual(current['case']['id'],old['case']['id'])
+  self.assertEqual(current['case']['pendingRevision'],2)
+  self.assertEqual(current['latestTurnId'],'turn-'+('d'*24))
+  result=resolve_manual(self.store,'999',current['case']['id'],current['latestTurnId'],'normal',
+   current['creator']['revision'],current['case']['pendingRevision'],
+   current['creator']['collaboration']['revision'],'release-after-new-message')
+  self.assertEqual(result['state'],'resolved')
+  self.assertEqual(self.store.db.execute('SELECT revision FROM service_resolution').fetchone()[0],2)
  def test_agent_queue_includes_waiting_replies_without_a_processing_category(self):
   self.store.db.execute('DELETE FROM service_case')
   self.store.db.execute("UPDATE relationship SET mode='auto'")

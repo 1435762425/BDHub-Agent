@@ -45,6 +45,7 @@
 | 货盘链路与 Campaign | [货盘页链路](architecture/catalog-page-chain.md)、[非全托 Campaign](architecture/non-full-managed-campaign-v1.md) |
 | PID 来源、选入、链接、刷新和清理 | [PID 生命周期树](architecture/pid-lifecycle-v1.md) |
 | 线索、OECID、发送池与 AI 回复 | [达人发送池与 AI 回复策略 v1](architecture/creator-pool-and-reply-policy-v1.md) |
+| 多轮 AI 回复与会话页面升级 | [会话与 Agent 回复升级计划](architecture/conversation-agent-upgrade-plan-20260923.md) |
 | 旧发送池/工作台实施记录 | [线索发送池](architecture/lead-sending-pool.md)、[工作台方案](architecture/send-monitor-reply-calendar-v1.md)（仅用于追溯，冲突处以当前策略为准） |
 | 身份与关系 | [稳定身份](architecture/creator-identity-and-rename.md)、[二发确认规则](architecture/second-cycle-confirmed-policy.md) |
 | 账号与维护 | [账号调度](architecture/account-scheduling.md)、[双账号生命周期](architecture/dual-account-lifecycle.md) |

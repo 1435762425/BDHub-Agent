@@ -1,12 +1,16 @@
 """Market-scoped read model and local controls for the conversation workbench."""
 import json,re,sqlite3,time
+from datetime import datetime
+from zoneinfo import ZoneInfo
 from contextlib import closing
 from pathlib import Path
 from lib.second_cycle import CycleError,digest,encoded
 from lib.template_library import agent_setting,manual_templates
 from lib.cycle_service import Service
 
-HUMAN_REASONS={'human':'需要人工判断','paid_or_budget':'付费或预算','catalog_request':'更多商品目录','whatsapp':'WhatsApp',
+HUMAN_REASONS={'human':'需要人工判断','paid_or_budget':'付费或预算','fixed_fee_negotiation_requires_human':'付费合作条件',
+ 'product_card_broken':'商品卡打不开','card_commission_mismatch':'商品卡佣金不一致','stop_contact':'要求停止联系',
+ 'catalog_request':'更多商品目录','whatsapp':'WhatsApp',
  'boost':'Boost','complaint':'投诉','do_not_contact':'明确停联','commission_issue':'佣金异常',
  'link_issue':'链接打不开','multiple_pid':'多个 PID 不明确','multiple_requests':'多个诉求',
  'unsupported_attachment':'图片或附件','unclassified':'无法理解','unsupported_input':'图片或暂不支持的输入',
@@ -17,6 +21,15 @@ INTENT_REASONS={'paid_collaboration':'paid_or_budget','commission_anomaly':'comm
  'collaboration_product_request':'catalog_request','ambiguous_request':'unclassified',
  'other':'multiple_requests'}
 SHOWCASE_TEXT='达人已将商品添加到橱窗'
+
+def _human_label(db,plan,creator,reason):
+ if db.execute("SELECT 1 FROM sqlite_master WHERE name='agent_reply_decision_v2'").fetchone():
+  row=db.execute("SELECT output_json FROM agent_reply_decision_v2 WHERE plan_id=? AND creator_id=? AND mode='production' AND state='ready' ORDER BY created_at DESC LIMIT 1",(plan,creator)).fetchone()
+  if row:
+   result=json.loads(row[0])
+   if result.get('route')=='handoff' and isinstance(result.get('handoffReason'),str):
+    return result['handoffReason'][:120]
+ return HUMAN_REASONS.get(reason,reason) if reason else None
 
 def _plan_id(store,market):
  row=store.db.execute("SELECT id FROM plan WHERE market=? AND institution='bjn-local-research'",(market,)).fetchone()
@@ -87,10 +100,15 @@ def _human_reason(decision):
  return INTENT_REASONS.get(decision.get('intentCode'),decision.get('intentCode') if decision.get('intentCode') in HUMAN_REASONS else 'human')
 
 def list_conversations(root,store,view='human',query='',limit=30,offset=0,market='it'):
- if view not in ('human','agent','completed','all') or type(limit) is not int or not 1<=limit<=100 or type(offset) is not int or offset<0 or offset>5000:raise CycleError('conversation_query_invalid')
+ if view not in ('human','agent','waiting','completed','all') or type(limit) is not int or not 1<=limit<=100 or type(offset) is not int or offset<0 or offset>5000:raise CycleError('conversation_query_invalid')
  handles=_handles(root,market);db=store.db;plan=db.execute("SELECT id FROM plan WHERE market=? AND institution='bjn-local-research'",(market,)).fetchone()
  if not plan:raise CycleError('plan_missing')
  plan=plan[0]
+ setting=agent_setting(store,plan);clock=datetime.fromtimestamp(store.clock(),ZoneInfo('Asia/Shanghai')).strftime('%H:%M')
+ try:
+  runtime=json.loads((Path(root)/'var/agent-reply-status.json').read_text(encoding='utf-8'))
+  agent_failed=runtime.get('state')=='failed'
+ except (OSError,ValueError,TypeError):agent_failed=False
  rows=[]
  for rel in db.execute('SELECT * FROM relationship WHERE plan_id=?',(plan,)):
   latest=db.execute('SELECT * FROM inbound_turn WHERE plan_id=? AND creator_id=? ORDER BY coalesce(occurred_ms,observed_at*1000) DESC,message_id DESC LIMIT 1',(plan,rel['creator_id'])).fetchone()
@@ -99,26 +117,38 @@ def list_conversations(root,store,view='human',query='',limit=30,offset=0,market
   reply=db.execute('SELECT state,kind,started,text FROM service_reply WHERE plan_id=? AND creator_id=? ORDER BY created DESC LIMIT 1',(plan,rel['creator_id'])).fetchone() if db.execute("SELECT 1 FROM sqlite_master WHERE name='service_reply'").fetchone() else None
   showcase=_latest_showcase(db,plan,rel['oec'])
   decision=_latest_decision(db,latest['turn_id']) if latest else None;action=decision.get('action') if decision else None
+  v2=db.execute("SELECT output_json FROM agent_reply_decision_v2 WHERE plan_id=? AND turn_id=? AND mode='production' AND state='ready' ORDER BY created_at DESC LIMIT 1",(plan,latest['turn_id'])).fetchone() if latest and db.execute("SELECT 1 FROM sqlite_master WHERE name='agent_reply_decision_v2'").fetchone() else None
+  meaning=(json.loads(v2[0]).get('meaningZh') if v2 else decision.get('meaningZh') if decision else None)
   if case or rel['mode']=='human' or (action=='human' and pending and pending['state']!='resolved_by_human') or (pending and pending['state']=='human'):state='human'
-  elif pending and pending['state'] in ('awaiting_classification','review_partial','template_ready','policy_review','facts_ready_for_review','needs_facts'):state='agent'
-  elif reply and reply['state']=='confirmed' or pending and pending['state'] in ('answered','no_reply'):state='agent'
+  elif pending and pending['state'] in ('waiting_contact','waiting_clarification'):state='waiting'
+  elif pending and pending['state'] in ('awaiting_content','awaiting_classification','review_partial','template_ready','policy_review','facts_ready_for_review','needs_facts'):state='agent'
+  elif reply and reply['state']=='confirmed' or pending and pending['state'] in ('answered','no_reply','resolved_by_human'):state='completed'
   elif latest:state='completed'
   else:continue
   handle=handles.get(rel['creator_id'])
   if query and query.casefold() not in f"{handle or ''} {rel['oec']} {(latest['text'] if latest else '')}".casefold():continue
   reason=(case['reason'] if case else _human_reason(decision) if action=='human' else None)
+  status_label=('待人工处理' if state=='human' else
+                '等待达人提供联系方式' if state=='waiting' and pending['state']=='waiting_contact' else
+                '等待达人说明' if state=='waiting' else
+                'AI 已关闭' if state=='agent' and not setting['enabled'] else
+                'AI 运行异常' if state=='agent' and agent_failed else
+                '等待回复窗口' if state=='agent' and not(setting['replyStart']<=clock<setting['replyEnd']) else
+                '等待 AI 处理' if state=='agent' else '本轮已结束')
   occurred=(latest['occurred_ms']/1000 if latest and latest['occurred_ms'] else latest['observed_at'] if latest else 0)
   showcase_at=(showcase['occurred_ms']/1000 if showcase and showcase['occurred_ms'] else showcase['observed_at'] if showcase else 0)
   display_at=max(occurred,showcase_at);display_text=SHOWCASE_TEXT if showcase_at>occurred else latest['text'] if latest else None
   rows.append({'conversationId':latest['cid'] if latest else None,'creatorId':rel['creator_id'],'oec':rel['oec'],'handle':handle,
-   'state':state,'humanReason':reason,'humanReasonLabel':HUMAN_REASONS.get(reason,reason) if reason else None,
-   'latestText':display_text,'latestAt':display_at,'waitingSeconds':max(0,int(store.clock()-display_at)) if display_at else 0,
-   'unread':bool(pending and pending['state'] in ('awaiting_classification','review_partial','template_ready','policy_review','facts_ready_for_review','needs_facts','human')),
+   'state':state,'queueStatusLabel':status_label,'humanReason':reason,
+   'humanReasonLabel':_human_label(db,plan,rel['creator_id'],reason),
+   'latestText':display_text,'latestMeaningZh':meaning if latest and display_text==latest['text'] else None,
+   'latestAt':display_at,'waitingSeconds':max(0,int(store.clock()-display_at)) if display_at and state in ('human','agent') else 0,
+   'unread':bool(pending and pending['state'] in ('awaiting_content','awaiting_classification','review_partial','template_ready','policy_review','facts_ready_for_review','needs_facts','human')),
    'action':action,'caseId':case['id'] if case else None})
- order={'human':0,'agent':1,'completed':2}
+ order={'human':0,'agent':1,'waiting':2,'completed':3}
  rows.sort(key=lambda r:(order[r['state']],-r['waitingSeconds'],r['creatorId']))
  filtered=rows if view=='all' else [r for r in rows if r['state']==view]
- counts={key:sum(r['state']==key for r in rows) for key in ('human','agent','completed')};counts['all']=len(rows)
+ counts={key:sum(r['state']==key for r in rows) for key in ('human','agent','waiting','completed')};counts['all']=len(rows)
  return {'available':True,'view':view,'query':query,'counts':counts,'total':len(filtered),'offset':offset,'limit':limit,
   'nextOffset':offset+limit if offset+limit<len(filtered) else None,'items':filtered[offset:offset+limit],
   'platformWrites':0,'realSends':0}
@@ -156,9 +186,9 @@ def conversation_detail(root,store,cid,market='it'):
  manual=_latest_manual_reply(db,plan,creator,turn_at)
  draft=db.execute('SELECT text,revision,updated_at FROM conversation_draft WHERE plan_id=? AND cid=?',(plan,cid)).fetchone()
  if case:
-  case_payload={'id':case['id'],'reason':case['reason'],'reasonLabel':HUMAN_REASONS.get(case['reason'],case['reason']),
+  case_payload={'id':case['id'],'reason':case['reason'],'reasonLabel':_human_label(db,plan,creator,case['reason']),
    'createdAt':case['created'],'revision':case['assessment_revision'],'virtual':False,'turnId':None,
-   'pendingRevision':case['assessment_revision']}
+   'pendingRevision':pending['revision'] if pending else case['assessment_revision']}
  elif decision and decision.get('action')=='human' and pending and pending['state']!='resolved_by_human':
   case_payload={'id':'review-'+turn['turn_id'][5:],'reason':reason,'reasonLabel':HUMAN_REASONS.get(reason,reason),
    'createdAt':(turn['occurred_ms']/1000 if turn['occurred_ms'] else turn['observed_at']),
@@ -166,8 +196,17 @@ def conversation_detail(root,store,cid,market='it'):
  else:case_payload=None
  from lib.collaboration_status import current as collaboration_current
  collaboration=collaboration_current(store,creator,plan)
- return {'available':True,'conversationId':cid,'creator':{'creatorId':creator,'oec':rel['oec'],'handle':handles.get(creator),'mode':rel['mode'],'rejected':bool(rel['rejected']),'unlocked':bool(rel['unlocked']),'revision':rel['revision'],'collaboration':collaboration},
-  'timeline':timeline,'episodes':episodes,'case':case_payload,
+ agent_decisions=[]
+ if db.execute("SELECT 1 FROM sqlite_master WHERE name='agent_reply_decision_v2'").fetchone():
+  for row in db.execute("SELECT decision_id,guide_revision,output_json,state,service_reply_id,created_at FROM agent_reply_decision_v2 WHERE plan_id=? AND creator_id=? AND mode='production' ORDER BY created_at DESC LIMIT 12",(plan,creator)):
+   result=json.loads(row['output_json']) if row['state']=='ready' and row['output_json'] else None
+   agent_decisions.append({'decisionId':row['decision_id'],'guideRevision':row['guide_revision'],
+                           'route':result['route'] if result else None,
+                           'reasonZh':result['reasonSummaryZh'] if result else None,
+                           'state':row['state'],'serviceReplyId':row['service_reply_id'],
+                           'createdAt':row['created_at']})
+ return {'available':True,'conversationId':cid,'latestTurnId':turn['turn_id'],'creator':{'creatorId':creator,'oec':rel['oec'],'handle':handles.get(creator),'mode':rel['mode'],'rejected':bool(rel['rejected']),'unlocked':bool(rel['unlocked']),'revision':rel['revision'],'collaboration':collaboration},
+  'timeline':timeline,'episodes':episodes,'case':case_payload,'agentDecisions':agent_decisions,
   'metrics':_creator_metrics(root,db,plan,creator,rel['oec'],market),
   'manualReply':({'id':manual['id'],'kind':manual['kind'],'confirmedAt':manual['confirmed_at']} if manual else None),
   'draft':{'text':draft['text'],'revision':draft['revision'],'updatedAt':draft['updated_at']} if draft else {'text':'','revision':0,'updatedAt':0},
@@ -235,6 +274,72 @@ def confirm_manual_reply(store,cid,case_id,turn_id,virtual,expected_control_revi
   if not isinstance(case_id,str) or not re.fullmatch(r'case-[a-f0-9]{24}',case_id):raise CycleError('manual_confirmation_invalid')
   result=Service(store).resolve_case(plan,case_id,expected_pending_revision,expected_control_revision,note)
  return {**result,'manualReplyId':manual['id'] if manual else None,'platformWrites':0,'realSends':0}
+
+def resolve_manual(store,cid,case_id,latest_turn_id,outcome,expected_control_revision,
+                   expected_pending_revision,expected_status_revision,request_id,market='it'):
+ """One explicit operator action closes the case and decides future outreach eligibility."""
+ if not isinstance(cid,str) or not cid.isdigit() or outcome not in ('normal','paid','rejected') or \
+    not isinstance(case_id,str) or not re.fullmatch(r'(?:case|review)-[a-f0-9]{24}',case_id) or \
+    not isinstance(latest_turn_id,str) or not re.fullmatch(r'turn-[a-f0-9]{24}',latest_turn_id) or \
+    not isinstance(request_id,str) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._:-]{7,119}',request_id) or \
+    any(type(value) is not int or value<0 for value in (expected_control_revision,
+       expected_pending_revision,expected_status_revision)):
+  raise CycleError('manual_resolution_invalid')
+ plan=_plan_id(store,market);payload=encoded(['manual_resolution_v2',cid,case_id,latest_turn_id,outcome])
+ from lib.collaboration_status import current as collaboration_current,_insert as insert_collaboration
+ with store.tx():
+  prior=store.db.execute('SELECT payload FROM control_event WHERE plan_id=? AND event_id=?',(plan,request_id)).fetchone()
+  if prior:
+   if prior[0]!=payload:raise CycleError('manual_resolution_conflict')
+   return {'state':'resolved','duplicate':True,'outcome':outcome,'platformWrites':0,'realSends':0}
+  turn=store.db.execute('SELECT * FROM inbound_turn WHERE plan_id=? AND cid=? '
+   'ORDER BY coalesce(occurred_ms,observed_at*1000) DESC,message_id DESC LIMIT 1',(plan,cid)).fetchone()
+  if not turn or turn['turn_id']!=latest_turn_id:raise CycleError('manual_resolution_changed')
+  rel=store.db.execute('SELECT * FROM relationship WHERE plan_id=? AND creator_id=?',(plan,turn['creator_id'])).fetchone()
+  pending=store.db.execute('SELECT * FROM inbox_pending WHERE plan_id=? AND creator_id=?',(plan,turn['creator_id'])).fetchone()
+  if not rel or rel['mode']!='human' or rel['revision']!=expected_control_revision or \
+     not pending or pending['revision']!=expected_pending_revision:
+   raise CycleError('manual_resolution_changed')
+  status=collaboration_current(store,turn['creator_id'],plan)
+  if status['revision']!=expected_status_revision or outcome=='normal' and \
+     (status['status'] in ('paid','rejected') or rel['rejected']):
+   raise CycleError('manual_resolution_status_changed')
+  case=store.db.execute('SELECT * FROM service_case WHERE id=? AND plan_id=? AND creator_id=? AND state=\'open\'',
+                        (case_id,plan,turn['creator_id'])).fetchone()
+  if not case:
+   decision=_latest_decision(store.db,turn['turn_id'])
+   if case_id!='review-'+turn['turn_id'][5:] or not decision or decision.get('action')!='human' or \
+      store.db.execute("SELECT 1 FROM service_case WHERE plan_id=? AND creator_id=? AND state='open'",(plan,turn['creator_id'])).fetchone():
+    raise CycleError('manual_resolution_changed')
+   case_id='case-'+digest([plan,turn['creator_id'],turn['turn_id'],'manual-resolution-v2'])[:24]
+   now=store.clock()
+   store.db.execute("INSERT INTO service_case VALUES(?,?,?,'open',?,?,?,?, 'not_sent')",
+                    (case_id,plan,turn['creator_id'],pending['revision'],'manual_completion',now,now))
+   store.db.execute('INSERT OR IGNORE INTO service_case_turn VALUES(?,?)',(case_id,turn['turn_id']))
+  elif case['assessment_revision']!=pending['revision']:
+   store.db.execute('UPDATE service_case SET assessment_revision=?,updated=? WHERE id=? AND state=\'open\'',
+                    (pending['revision'],store.clock(),case_id))
+   store.db.execute('INSERT OR IGNORE INTO service_case_turn VALUES(?,?)',(case_id,turn['turn_id']))
+  now=store.clock();note='manual_resolution_v2:'+outcome
+  store.db.execute('INSERT INTO service_resolution VALUES(?,?,?,?)',(case_id,pending['revision'],note,now))
+  store.db.execute("UPDATE service_case SET state='resolved',updated=? WHERE id=?",(now,case_id))
+  store.db.execute("UPDATE inbox_pending SET state='resolved_by_human' WHERE plan_id=? AND creator_id=? AND revision=?",
+                   (plan,turn['creator_id'],pending['revision']))
+  watermark=store.db.execute("SELECT coalesce(max(rowid),0) FROM inbox_event WHERE plan_id=? AND oec=? AND kind='creatorReplies'",
+                             (plan,rel['oec'])).fetchone()[0]
+  store.db.execute('INSERT INTO service_cursor VALUES(?,?,?) ON CONFLICT(plan_id,creator_id) '
+                   'DO UPDATE SET event_rowid=max(event_rowid,excluded.event_rowid)',
+                   (plan,turn['creator_id'],watermark))
+  if outcome in ('paid','rejected'):
+   insert_collaboration(store,plan,turn['creator_id'],'manual',status['status'],outcome,
+                        {'reason':'manual_resolution_v2','caseId':case_id},request_id=None,
+                        revision=status['revision']+1)
+  store.db.execute('UPDATE relationship SET mode=\'auto\',rejected=?,inbox_until=0,revision=revision+1 '
+                   'WHERE plan_id=? AND creator_id=? AND revision=?',
+                   (int(outcome=='rejected' or bool(rel['rejected'])),plan,turn['creator_id'],rel['revision']))
+  store.db.execute('INSERT INTO control_event VALUES(?,?,?)',(plan,request_id,payload))
+ return {'state':'resolved','duplicate':False,'outcome':outcome,'caseId':case_id,
+         'relationshipRevision':expected_control_revision+1,'platformWrites':0,'realSends':0}
 
 def set_collaboration(store,cid,status,expected_status_revision,expected_control_revision,request_id,market='it'):
  if not isinstance(cid,str) or not cid.isdigit():raise CycleError('collaboration_request_invalid')
