@@ -26,8 +26,12 @@ def run_reply(root,store,replies,reply,market,*,pilot=False,authorized_now=False
  recovering=reply['state'] in ('inflight','accepted','unknown')
  if not recovering and not agent_setting(store,reply['plan_id'])['enabled']:
   raise CycleError('agent_reply_disabled')
- with authenticated(root,market,report,canary=pilot,capability='agent_reply',stopped=stopped) as runtime:
+ with authenticated(root,market,report,canary=pilot,read_only=recovering,
+                    capability='agent_reply',stopped=stopped) as runtime:
   session=runtime['session'];adapter=runtime['adapter']
+  if recovering:
+   from lib.italy_im_delivery import ItalyImDeliveryAdapter
+   adapter=ItalyImDeliveryAdapter(runtime['auth'],session)
   conversation=session.conversation(reply['cid'],reply['oec'])
   if not recovering:
    history=session.history_summary(conversation,include_events=True,include_contents=True)
@@ -48,8 +52,15 @@ def run_reply(root,store,replies,reply,market,*,pilot=False,authorized_now=False
     try:
      receipt=adapter.send_once(conversation,reply['text'],reply['request_ref'],before_dispatch=permit)
      replies.accepted(reply['id'],receipt)
-    except Exception:
-     if replies.get(reply['id'])['state']=='inflight':replies.unknown(reply['id'])
+    except Exception as error:
+     latest=replies.get(reply['id'])
+     if latest['state']=='inflight':replies.unknown(reply['id'])
+     elif latest['state']=='ready' and latest['started'] is None and not latest['receipt'] and not latest['proof'] and \
+          str(error) in ('reply_context_changed','reply_human_control','handoff_changed'):
+      with store.tx():
+       store.db.execute("UPDATE service_reply SET state='cancelled',proof=? WHERE id=? AND state='ready' AND started IS NULL",
+                        (json.dumps({'status':'cancelled','reason':str(error),'platformWrites':0}),reply['id']))
+      return report|{'state':'cancelled'}
      raise
   current=replies.get(reply['id']);receipt=json.loads(current['receipt']) if current['receipt'] else {}
   proof=adapter.readback(conversation,reply['text'],reply['request_ref'],message_id=receipt.get('messageId'))

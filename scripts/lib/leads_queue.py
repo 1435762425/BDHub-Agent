@@ -39,6 +39,15 @@ CREATE TABLE IF NOT EXISTS leads_attempt(
 -- Page receipts, written before anything is imported so a crash cannot lose or duplicate a page.
 CREATE TABLE IF NOT EXISTS leads_page(
   pid TEXT NOT NULL, cursor TEXT NOT NULL, payload TEXT NOT NULL, PRIMARY KEY(pid,cursor));
+-- Page receipts belong to a particular market, PID and 14-day query window.  The original
+-- leads_page table is retained as the last *completed* query for older read-side consumers.
+CREATE TABLE IF NOT EXISTS leads_page_scope(
+  query_id TEXT NOT NULL, pid TEXT NOT NULL, cursor TEXT NOT NULL, payload TEXT NOT NULL,
+  PRIMARY KEY(query_id,cursor));
+CREATE INDEX IF NOT EXISTS leads_page_scope_pid ON leads_page_scope(pid);
+CREATE TABLE IF NOT EXISTS leads_page_legacy_history(
+  pid TEXT NOT NULL, window_end TEXT NOT NULL, cursor TEXT NOT NULL, payload TEXT NOT NULL,
+  PRIMARY KEY(pid,window_end,cursor));
 '''
 
 
@@ -93,6 +102,10 @@ class Ledger:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.db = sqlite3.connect(self.path, timeout=15)
         self.db.row_factory = sqlite3.Row
+        tables={row[0] for row in self.db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        if 'leads_page' in tables and not {'leads_page_scope','leads_page_legacy_history'}<=tables:
+            self.db.close()
+            raise ValueError('leads_receipt_scope_migration_required')
         self.db.executescript(SCHEMA)
 
     def close(self):
@@ -121,6 +134,28 @@ class Ledger:
         with self.db:
             self.db.execute('DELETE FROM leads_attempt WHERE pid=?', (pid,))
         return stamp
+
+    def succeeded_with_pages(self, pid, query_id, *, window_end, leads, at):
+        """Publish the complete page set and query clock together in this ledger."""
+        pages=list(self.db.execute('SELECT cursor,payload FROM leads_page_scope WHERE query_id=? AND pid=?',
+                                   (query_id,pid)))
+        if not pages:raise ValueError('leads_receipts_missing')
+        with self.db:
+            prior=self.db.execute('SELECT window_end FROM leads_query WHERE pid=?',(pid,)).fetchone()
+            if prior and prior[0]:
+                self.db.execute('INSERT OR IGNORE INTO leads_page_legacy_history '
+                                'SELECT pid,?,cursor,payload FROM leads_page WHERE pid=?',
+                                (prior[0],pid))
+            self.db.execute('DELETE FROM leads_page WHERE pid=?',(pid,))
+            self.db.executemany('INSERT INTO leads_page(pid,cursor,payload) VALUES(?,?,?)',
+                                [(pid,cursor,payload) for cursor,payload in pages])
+            self.db.execute('INSERT INTO leads_query(pid,queried_at,state,window_end,leads,note) '
+                            'VALUES(?,?,?,?,?,?) ON CONFLICT(pid) DO UPDATE SET '
+                            'queried_at=excluded.queried_at,state=excluded.state,'
+                            'window_end=excluded.window_end,leads=excluded.leads,note=excluded.note',
+                            (pid,at,'completed',window_end,leads,'队列查询'))
+            self.db.execute('DELETE FROM leads_attempt WHERE pid=?',(pid,))
+        return at
 
     def failed(self, pid, code, *, at=None):
         """Record the failure without giving the product a refresh clock."""

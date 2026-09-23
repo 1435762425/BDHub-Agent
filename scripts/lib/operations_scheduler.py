@@ -15,7 +15,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from lib.operations_workflow import create_run,finish_stage,status as workflow_status
+from lib.operations_workflow import create_run,finish_stage,retry_failed_stage,status as workflow_status
 from lib.process_liveness import pid_alive
 from lib.second_cycle import CycleError, CycleStore, digest
 from lib.workflow_dispatch import claim_ready
@@ -273,17 +273,25 @@ class SubprocessStageExecutor:
             child=self.runner(command,cwd=str(self.root),capture_output=True,text=True,timeout=timeout,
                               env={**os.environ,'PYTHONDONTWRITEBYTECODE':'1'})
         lines=[line for line in (child.stdout or '').splitlines() if line.strip()]
-        try:payload=json.loads(lines[-1]) if lines else {}
-        except ValueError:payload={}
+        try:payload=json.loads(lines[-1]) if lines else None
+        except ValueError:payload=None
         evidence={}
         if report.exists():
             try:evidence=json.loads(report.read_text(encoding='utf-8'))
             except (OSError,ValueError):evidence={}
+        if not isinstance(payload,dict) or not payload:
+            return {'state':'failed','itemCount':0,'complete':False,'platformWrites':0,
+                    'errorCode':f'{label}_report_invalid','payload':{}}
         reported_state=str(evidence.get('state') or evidence.get('status') or payload.get('state') or payload.get('status') or '')
         writes=max(_report_platform_writes(evidence),_report_platform_writes(payload))
         items=max(_report_item_count(evidence),_report_item_count(payload))
-        if child.returncode or reported_state in {'blocked','failed','partial','needs_human'}:
-            code=str(payload.get('error') or evidence.get('error') or _child_error(child.stderr) or f'{label}_failed')
+        stopped=payload.get('stopped') or evidence.get('stopped')
+        errors=payload.get('errors') or evidence.get('errors')
+        invalid_stop=stopped not in (None,'queue_empty','nothing_missing','kalodata_daily_quota_exhausted')
+        if child.returncode or reported_state in {'blocked','failed','partial','needs_human','stopped'} or \
+                payload.get('error') or evidence.get('error') or invalid_stop or errors:
+            code=str(payload.get('error') or evidence.get('error') or
+                     (stopped if invalid_stop else None) or _child_error(child.stderr) or f'{label}_failed')
             return {'state':'needs_human' if reported_state=='needs_human' or 'maintenance' in code or 'auth' in code else 'failed',
                     'itemCount':items,'complete':False,'platformWrites':writes,
                     'errorCode':code[:120],'payload':{'report':str(report.relative_to(self.root)) if report.exists() else None}}
@@ -489,12 +497,37 @@ class SubprocessStageExecutor:
             return {'state':'completed','itemCount':count,
                     'complete':True,'platformWrites':writes,'scope':{'sources':sources},'payload':{'routes':outputs}}
         if stage=='kalodata':
-            sales=self._call(['scripts/leads-run.py','--market',market,'--limit','5000','--max-pages','20'],'kalodata-sales')
-            stopped=str((sales.get('payload') or {}).get('stopped') or sales.get('errorCode') or '')
-            state='quota_exhausted' if stopped=='kalodata_daily_quota_exhausted' else sales['state']
-            completed=int((sales.get('payload') or {}).get('done') or 0)
-            if state!='completed':return {**sales,'state':state,'complete':False,'itemCount':completed,'scope':{'sources':sources,'aCompleted':completed}}
-            if market!='it':return {**sales,'state':'completed','complete':True,'itemCount':completed,'scope':{'sources':sources,'aCompleted':completed}}
+            completed=0;sales_passes=[]
+            for _ in range(1000):
+                sales=self._call(['scripts/leads-run.py','--market',market,'--limit','5000','--max-pages','20'],'kalodata-sales')
+                payload=sales.get('payload') or {};stopped=payload.get('stopped') or sales.get('errorCode')
+                if sales['state']!='completed' and stopped!='kalodata_daily_quota_exhausted':
+                    return {**sales,'complete':False,'itemCount':completed,
+                            'scope':{'sources':sources,'aCompleted':completed,'passes':sales_passes}}
+                done=payload.get('done');targets=payload.get('targets');due=payload.get('dueQueue');stuck=payload.get('stuck')
+                if any(type(value) is not int or value<0 for value in (done,targets,due,stuck)) or \
+                        targets>due or done>targets or payload.get('market',market)!=market:
+                    return {**sales,'state':'failed','complete':False,'itemCount':completed,
+                            'errorCode':'kalodata_scope_report_invalid','scope':{'sources':sources,'aCompleted':completed}}
+                completed+=done
+                sales_passes.append({'done':done,'targets':targets,'dueQueue':due,'stopped':stopped})
+                state='quota_exhausted' if stopped=='kalodata_daily_quota_exhausted' else sales['state']
+                if state!='completed':
+                    return {**sales,'state':state,'complete':False,'itemCount':completed,
+                            'scope':{'sources':sources,'aCompleted':completed,'passes':sales_passes}}
+                if payload.get('errors') or stuck or done!=targets or stopped not in (None,'queue_empty'):
+                    return {**sales,'state':'needs_human','complete':False,'itemCount':completed,
+                            'errorCode':'kalodata_scope_incomplete',
+                            'scope':{'sources':sources,'aCompleted':completed,'passes':sales_passes}}
+                if due==targets:break
+                if not done:
+                    return {**sales,'state':'failed','complete':False,'itemCount':completed,
+                            'errorCode':'kalodata_queue_stalled','scope':{'sources':sources,'aCompleted':completed}}
+            else:
+                return {'state':'failed','complete':False,'itemCount':completed,'platformWrites':0,
+                        'errorCode':'kalodata_scope_iteration_limit','scope':{'sources':sources,'aCompleted':completed}}
+            sales={**sales,'itemCount':completed,'scope':{'sources':sources,'aCompleted':completed,'passes':sales_passes}}
+            if market!='it':return sales
             initialized=self._call(['scripts/kalodata-video-crawl.py','init'],'kalodata-video-init')
             generation=(initialized.get('payload') or {}).get('generationId')
             if initialized['state']!='completed' or not generation:return {**initialized,'state':'failed','complete':False,'errorCode':'video_generation_missing'}
@@ -579,8 +612,21 @@ def tick(root,*,now=None,executor=None):
         policy=load_policy(root);active=[]
         for market,snapshot in snapshots.items():
             automation=snapshot['setting'];current=snapshot['current'];sources,due_times=_scheduled_sources(root,store,market,stamp,automation,policy)
+            key='workflow' if market=='it' else f'workflow:{market}'
             future=[value for value in due_times.values() if value>stamp]
-            progress['nextDue']['workflow' if market=='it' else f'workflow:{market}']=min(future) if future else min(due_times.values())
+            progress['nextDue'][key]=min(future) if future else min(due_times.values())
+            if current and current['state']=='failed' and current['triggerSource']=='schedule':
+                if not automation['automaticOperationsEnabled']:continue
+                retry=retry_failed_stage(store,current['runId'],now=stamp)
+                if retry['state']=='resumed':current=workflow_status(store,market)['current']
+                elif retry['state']=='waiting':
+                    progress['nextDue'][key]=retry['nextAt'];continue
+                else:
+                    progress['error']=progress['error'] or retry.get('reason') or 'workflow_retry_exhausted'
+                    continue
+            if current and current['state']=='needs_human':
+                progress['error']=progress['error'] or current.get('errorCode') or 'workflow_needs_human'
+                continue
             if not current or current['state'] not in ('queued','running','stop_requested'):
                 if automation['automaticOperationsEnabled'] and sources:
                     scheduled=min(due_times[source] for source in sources)

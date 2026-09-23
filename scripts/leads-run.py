@@ -118,7 +118,7 @@ def run(root, *, market='it', limit=None, max_pages=2, provider_factory=None, cl
     except (FileNotFoundError,ValueError):currency='EUR' if market=='it' else None
     region='GB' if market=='uk' else market.upper()
     report = {'startedAt': clock(), 'batchSize': planned['batchSize'], 'dueQueue': planned['dueQueue'],
-              'targets': len(items), 'done': 0, 'leads': 0, 'rawPositive': 0, 'networkRequests': 0, 'stopped': None,
+              'targets': len(items), 'stuck': len(planned['built']['stuck']), 'done': 0, 'leads': 0, 'rawPositive': 0, 'networkRequests': 0, 'stopped': None,
               'errors': [], 'skipped': {}, 'platformWrites': 0,'market':market,'kalodataRegion':region,'currency':currency}
     if not items:
         report['stopped'] = 'queue_empty'
@@ -143,12 +143,13 @@ def run(root, *, market='it', limit=None, max_pages=2, provider_factory=None, cl
             for row in items:
                 pid = row['pid']
                 offer_key = 'campaign:' + binds.get(pid, 'unknown')
+                query = claim_for(root,pid,'',offer_key,window,market)['id']
                 cursor, done = '', False
                 try:
                     gathered=[];fingerprints=[]
                     while not done:
-                        saved = ledger.db.execute('SELECT payload FROM leads_page WHERE pid=? AND cursor=?',
-                                                  (pid, cursor)).fetchone()
+                        saved = ledger.db.execute('SELECT payload FROM leads_page_scope WHERE query_id=? AND pid=? AND cursor=?',
+                                                  (query,pid,cursor)).fetchone()
                         if saved:
                             receipt = json.loads(saved[0])
                         else:
@@ -161,20 +162,20 @@ def run(root, *, market='it', limit=None, max_pages=2, provider_factory=None, cl
                             receipt = parse_page(body, claim, clock(), max_pages=max_pages,market=market,currency=currency)
                             # The receipt is durable before anything is imported.
                             with ledger.db:
-                                ledger.db.execute('INSERT OR REPLACE INTO leads_page VALUES(?,?,?)',
-                                                  (pid, cursor, encoded(receipt)))
+                                ledger.db.execute('INSERT OR REPLACE INTO leads_page_scope VALUES(?,?,?,?)',
+                                                  (query,pid,cursor,encoded(receipt)))
                         gathered.extend(receipt['edges']);fingerprints.append(receipt['rowsFingerprint'])
                         for reason, count in (receipt.get('skipped') or {}).items():
                             report['skipped'][reason] = report['skipped'].get(reason, 0) + count
                         done = receipt['done']
                         cursor = receipt['nextCursor']
-                    target=plan_id(root,market);query=claim_for(root,pid,'',offer_key,window,market)['id']
+                    target=plan_id(root,market)
                     published=publish_query(root,plan_id=target,query_id=query,pid=pid,edges=gathered,
                                             receipt_fingerprints=fingerprints,
                                             policy_version=config['version'],limit=config['leadsPerPid'],
                                             window_start=window[0],window_end=window[1],at=clock())
                     report['rawPositive']+=published['rawPositive'];report['leads']+=published['selected']
-                    ledger.succeeded(pid, window_end=window[1], leads=published['selected'],note='队列查询', at=clock())
+                    ledger.succeeded_with_pages(pid,query,window_end=window[1],leads=published['selected'],at=clock())
                     report['done'] += 1
                 except CycleError as error:
                     code = str(error)

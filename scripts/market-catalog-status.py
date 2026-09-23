@@ -2,6 +2,7 @@
 """Read or refresh the safe catalogue onboarding status for one enabled market."""
 import argparse
 from collections import Counter
+from contextlib import closing
 import json
 import sqlite3
 import sys
@@ -90,7 +91,7 @@ def run_decisions(store,market,run_id):
                     'eligibleListedSelected':int(selected.get(1) or 0),'eligibleListedUnselected':int(selected.get(0) or 0)}
  selection=ROOT/('var/global-selection.sqlite' if market=='it' else f'var/global-selection-{market}.sqlite')
  if selection.exists() and run_id:
-  with sqlite3.connect(selection.resolve().as_uri()+'?mode=ro',uri=True) as ledger:
+  with closing(sqlite3.connect(selection.resolve().as_uri()+'?mode=ro',uri=True)) as ledger:
    run=ledger.execute('SELECT id FROM intake_run WHERE source_run=? ORDER BY created DESC LIMIT 1',(run_id,)).fetchone()
    if run:
     items=list(ledger.execute('SELECT pid,state FROM intake_item WHERE run_id=?',(run[0],)))
@@ -152,7 +153,7 @@ def public_screen(value):
 def published_screen(market):
  """Read the published screening ledger without re-evaluating every Offer on a page GET."""
  saved=recorded_screen(ROOT,'campaign',market)
- with sqlite3.connect((ROOT/'var/second-cycle.sqlite').resolve().as_uri()+'?mode=ro',uri=True) as db:
+ with closing(sqlite3.connect((ROOT/'var/second-cycle.sqlite').resolve().as_uri()+'?mode=ro',uri=True)) as db:
   head=db.execute('''SELECT h.snapshot_id FROM catalog_head h JOIN plan p ON p.id=h.plan_id
    WHERE p.institution='bjn-local-research' AND p.market=? AND h.source=?''',(market,f'live-{market}-campaign')).fetchone()
  if not saved or not head or saved['snapshot']!=head[0]:
@@ -194,7 +195,7 @@ def status(market):
     downstream['deliveriesConfirmed']=store.db.execute("SELECT count(*) FROM cycle_delivery WHERE plan_id=? AND state='confirmed'",(plan,)).fetchone()[0]
   links=ROOT/'var/catalog-links.sqlite'
   if links.exists():
-   with sqlite3.connect(links.resolve().as_uri()+'?mode=ro',uri=True) as db:
+   with closing(sqlite3.connect(links.resolve().as_uri()+'?mode=ro',uri=True)) as db:
     if db.execute("SELECT 1 FROM sqlite_master WHERE name='catalog_current_binding'").fetchone():
      for source,count in db.execute("SELECT catalog_source,count(*) FROM catalog_current_binding WHERE market=? AND state='active' GROUP BY catalog_source",(market,)):
       downstream['activeTapLinks']+=count

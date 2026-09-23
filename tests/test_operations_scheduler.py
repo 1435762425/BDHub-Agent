@@ -80,6 +80,43 @@ class SchedulerFlow(unittest.TestCase):
         self.assertEqual(_scheduled_sources(self.root,self.store,'it',NOW+86400,automation,policy)[0],[])
         self.assertEqual(_scheduled_sources(self.root,self.store,'it',NOW+2*86400,automation,policy)[0],['campaign'])
 
+    def test_failed_downstream_stage_retries_original_run_after_cooldown(self):
+        save_setting(self.store,'it','retry-setting-001',0,
+                     {'automaticOperationsEnabled':True,'fullCatalogWeeklyEnabled':False})
+        class FailingExecutor(FakeExecutor):
+            def execute(self,store,run,stage,jobs):
+                result=super().execute(store,run,stage,jobs)
+                if stage=='taplink_prepare':result.update(state='failed',complete=False,
+                                                          errorCode='temporary_failure')
+                return result
+        executor=FailingExecutor()
+        for offset in range(4):
+            tick(self.root,now=NOW+offset,executor=executor)
+            if workflow_status(self.store)['current']['state']=='failed':break
+        failed=workflow_status(self.store)['current'];prior_calls=len(executor.calls)
+        tick(self.root,now=failed['finishedAt']+3599,executor=executor)
+        self.assertEqual(len(executor.calls),prior_calls)
+        tick(self.root,now=failed['finishedAt']+3601,executor=executor)
+        self.assertEqual([stage for _,stage in executor.calls[prior_calls:]],['taplink_prepare'])
+        self.assertEqual(workflow_status(self.store)['current']['runId'],failed['runId'])
+
+    def test_unknown_failure_is_not_retried_as_a_new_platform_intent(self):
+        save_setting(self.store,'it','unknown-setting-001',0,
+                     {'automaticOperationsEnabled':True,'fullCatalogWeeklyEnabled':False})
+        class UnknownExecutor(FakeExecutor):
+            def execute(self,store,run,stage,jobs):
+                result=super().execute(store,run,stage,jobs)
+                if stage=='catalog':result.update(state='failed',complete=False,
+                                                  errorCode='selection_result_unknown')
+                return result
+        executor=UnknownExecutor()
+        tick(self.root,now=NOW,executor=executor)
+        tick(self.root,now=NOW+1,executor=executor)
+        failed=workflow_status(self.store)['current'];prior_calls=len(executor.calls)
+        tick(self.root,now=failed['finishedAt']+3601,executor=executor)
+        self.assertEqual(len(executor.calls),prior_calls)
+        self.assertEqual(workflow_status(self.store)['current']['state'],'needs_human')
+
     def test_two_ready_kalodata_markets_execute_together_but_no_more_than_policy_cap(self):
         from lib.operations_workflow import create_run,start_stage,finish_stage
         for market in ('br','uk'):
@@ -224,7 +261,8 @@ class StageWiring(unittest.TestCase):
 
     def test_br_taplink_and_kalodata_are_pinned_to_br(self):
         def answers(args,_label):
-            payload={'missing':0} if args[0]=='scripts/catalog-names.py' else {'done':1}
+            payload={'missing':0} if args[0]=='scripts/catalog-names.py' else \
+                {'market':'br','done':1,'targets':1,'dueQueue':1,'stuck':0,'errors':[],'stopped':None}
             return {'state':'completed','itemCount':1,'complete':True,'platformWrites':0,'payload':payload}
         executor,calls=self.executor(answers)
         self.assertEqual(executor.execute(None,{'market':'br','applicableSources':['campaign']},'taplink_prepare',{'jobs':{}})['state'],'completed')
@@ -359,7 +397,8 @@ class StageWiring(unittest.TestCase):
             (root/'config/operations-policy.json').write_text((ROOT/'config/operations-policy.json').read_text())
             with closing(sqlite3.connect(root/'var/global-source-uk.sqlite')) as db,db:
                 db.executescript('CREATE TABLE global_source_run(id TEXT,scope TEXT,state TEXT,updated REAL,identity_unchanged INTEGER);'
-                  'CREATE TABLE global_source_operator_acceptance(run_id TEXT,accepted_at REAL);')
+                  'CREATE TABLE global_source_operator_acceptance(run_id TEXT,accepted_at REAL);'
+                  'CREATE TABLE global_source_head(run_id TEXT);')
                 db.execute("INSERT INTO global_source_run VALUES('r',?,'accepted_partial',?,1)",(json.dumps({'market':'uk','partitionMode':'category_l1_v1'}),NOW-86400))
                 db.execute("INSERT INTO global_source_operator_acceptance VALUES('r',?)",(NOW-86400,))
             executor=SubprocessStageExecutor(root);calls=[]
@@ -482,7 +521,8 @@ class StageWiring(unittest.TestCase):
 
     def test_kalodata_counts_completed_video_pids_at_quota(self):
         def answers(args,_label):
-            if args[0]=='scripts/leads-run.py':payload={'done':1261}
+            if args[0]=='scripts/leads-run.py':payload={'done':1261,'targets':1261,'dueQueue':1261,
+                                                        'stuck':0,'errors':[],'stopped':None}
             elif args[1]=='init':payload={'generationId':'video-generation-test'}
             else:payload={'error':'kalodata_daily_quota_exhausted',
                           'status':{'counts':{'completed':20}}}
@@ -493,6 +533,37 @@ class StageWiring(unittest.TestCase):
         self.assertEqual(result['itemCount'],1281)
         self.assertEqual(result['scope']['aCompleted'],1261)
         self.assertEqual(result['scope']['bCompleted'],20)
+
+    def test_kalodata_sales_consumes_every_due_batch_before_identity(self):
+        reports=iter(({'market':'br','done':5000,'targets':5000,'dueQueue':8000,'stuck':0,'errors':[],'stopped':None},
+                      {'market':'br','done':3000,'targets':3000,'dueQueue':3000,'stuck':0,'errors':[],'stopped':None}))
+        def answers(args,_label):
+            return {'state':'completed','itemCount':0,'complete':True,'platformWrites':0,'payload':next(reports)}
+        executor,calls=self.executor(answers)
+        result=executor.execute(None,{'market':'br','applicableSources':['campaign']},'kalodata',{'jobs':{}})
+        self.assertEqual((result['state'],result['itemCount'],len(calls)),('completed',8000,2))
+
+    def test_kalodata_stuck_pid_blocks_generation(self):
+        def answers(args,_label):
+            return {'state':'completed','itemCount':0,'complete':True,'platformWrites':0,
+                    'payload':{'market':'br','done':0,'targets':0,'dueQueue':0,'stuck':1,
+                               'errors':[],'stopped':'queue_empty'}}
+        result=self.executor(answers)[0].execute(
+            None,{'market':'br','applicableSources':['campaign']},'kalodata',{'jobs':{}})
+        self.assertEqual(result['state'],'needs_human')
+        self.assertFalse(result['complete'])
+
+    def test_success_exit_without_valid_report_or_with_busy_lock_is_failure(self):
+        class Result:
+            returncode=0;stderr=''
+            def __init__(self,stdout):self.stdout=stdout
+        outputs=iter(('', '{"done":0,"targets":3,"dueQueue":3,"stopped":"browser_lock_busy"}\n'))
+        executor=SubprocessStageExecutor(ROOT,runner=lambda *_args,**_kwargs:Result(next(outputs)))
+        invalid=executor._call(['scripts/leads-run.py'],'missing-output')
+        busy=executor._call(['scripts/leads-run.py'],'busy-lock')
+        self.assertEqual(invalid['errorCode'],'missing-output_report_invalid')
+        self.assertEqual((invalid['state'],busy['state'],busy['errorCode']),
+                         ('failed','failed','browser_lock_busy'))
 
     def test_stage_adapter_preserves_an_explicit_needs_human_result(self):
         class Result:

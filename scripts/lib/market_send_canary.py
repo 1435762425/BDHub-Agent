@@ -51,6 +51,16 @@ def _unsettled(store,plan,*,canary=False):
     return dict(row) if row else None
 
 
+def _recovering(store,plan):
+    row=store.db.execute("""SELECT DISTINCT d.* FROM cycle_delivery d
+      LEFT JOIN cycle_delivery_part p ON p.delivery_id=d.id
+      WHERE d.plan_id=? AND d.state IN ('running','unknown')
+        AND json_extract(d.snapshot,'$.executionMode') IN ('market-canary-v1','market-continuous-v1')
+        AND (d.state='unknown' OR p.state IN ('inflight','accepted','unknown'))
+      ORDER BY d.created LIMIT 1""",(plan,)).fetchone()
+    return dict(row) if row else None
+
+
 def _record_create_failure(store,delivery_id,error):
  intent=Deliveries(store).conversation_intent(delivery_id)
  if not intent or intent['state']!='inflight':return False
@@ -135,23 +145,29 @@ def run(root,market,request_id,*,canary=True,page_control=False,reconcile_only=F
   nonlocal checkpoint
   now=time.monotonic();timing[name]=round((now-checkpoint)*1000,1);checkpoint=now
  with CycleStore(root/'var/second-cycle.sqlite') as store:
-  require_send_template_approval(store,root,market)
   plan=store.db.execute("SELECT id FROM plan WHERE institution='bjn-local-research' AND market=? AND state='active'",(market,)).fetchone()
   if not plan:raise CycleError('plan_missing')
   plan=plan[0]
-  if reconcile_only:
-   active=_unsettled(store,plan,canary=False) or _unsettled(store,plan,canary=True)
-   if active is None:return report|{'state':'nothing_to_reconcile'}
+  active=_recovering(store,plan)
+  recovering_only=reconcile_only or active is not None
+  if active is not None:
    canary=json.loads(active['snapshot']).get('executionMode')=='market-canary-v1'
+  elif reconcile_only:
+   return report|{'state':'nothing_to_reconcile'}
   else:
+   require_send_template_approval(store,root,market)
    _dispatch_allowed(store,market,canary=canary,page_control=page_control)
    active=_unsettled(store,plan,canary=canary)
-  if store.db.execute("SELECT 1 FROM cycle_delivery WHERE plan_id=? AND state='unknown' AND id<>? LIMIT 1",(plan,active['id'] if active else '')).fetchone():
+  if not recovering_only and store.db.execute("SELECT 1 FROM cycle_delivery WHERE plan_id=? AND state='unknown' AND id<>? LIMIT 1",(plan,active['id'] if active else '')).fetchone():
    raise CycleError('market_send_result_unknown')
   checkpoint_time('preAuth')
-  with authenticated(root,market,report,canary=canary) as runtime:
+  with authenticated(root,market,report,canary=canary,
+                     read_only=recovering_only) as runtime:
    checkpoint_time('auth')
    session=runtime['session'];adapter=runtime['adapter'];initial=session.initialize(0)
+   if recovering_only:
+    from lib.italy_im_delivery import ItalyImDeliveryAdapter
+    adapter=ItalyImDeliveryAdapter(runtime['auth'],session)
    checkpoint_time('initial')
    if active:
     delivery=Deliveries(store).get(active['id']);candidate=delivery['snapshot'];did=delivery['id']
@@ -161,7 +177,7 @@ def run(root,market,request_id,*,canary=True,page_control=False,reconcile_only=F
     _binding_current(root,market,candidate)
     delivery=Deliveries(store).prepare(plan,candidate);did=delivery['id'];candidate=delivery['snapshot']
    checkpoint_time('candidate')
-   if not reconcile_only:_dispatch_allowed(store,market,canary=canary,page_control=page_control)
+   if not recovering_only:_dispatch_allowed(store,market,canary=canary,page_control=page_control)
    intent=Deliveries(store).conversation_intent(did)
    if candidate.get('conversationId'):
     conversation=session.conversation(candidate['conversationId'],candidate['oecId'])
@@ -174,7 +190,7 @@ def run(root,market,request_id,*,canary=True,page_control=False,reconcile_only=F
    elif intent and intent['state']=='inflight':
     raise CycleError('market_send_conversation_result_unknown')
    else:
-    if reconcile_only:return report|{'state':'nothing_to_reconcile','deliveryId':did}
+    if recovering_only:return report|{'state':'waiting_reconciliation','deliveryId':did,'stopReason':'conversation_result_unknown'}
     if not Deliveries(store).contact_capacity_available(did):raise CycleError('new_contact_capacity_reached')
     conversation_intent=Deliveries(store).prepare_conversation(did)
     with write_gate(root,runtime['auth'],stopped=lambda: page_control and _stopped(store,market)) as mark:
@@ -189,7 +205,7 @@ def run(root,market,request_id,*,canary=True,page_control=False,reconcile_only=F
       raise
     Deliveries(store).save_conversation(did,receipt);conversation=session.conversation(receipt['conversationId'],candidate['oecId']);Deliveries(store).confirm_conversation(did,receipt['conversationId'],candidate['oecId'])
    checkpoint_time('conversation')
-   _preflight_conversation(store,session,plan,candidate,conversation,did)
+   if not recovering_only:_preflight_conversation(store,session,plan,candidate,conversation,did)
    checkpoint_time('preflight')
    origin=runtime['partnerHost']+'/api/v1/affiliate/partner/im/product_list/list';card=descriptor(candidate['card'],market,communications,origin)
    if Deliveries(store).interrupted_by_inquiry(did):raise CycleError('market_send_inquiry_interrupted')
@@ -205,7 +221,7 @@ def run(root,market,request_id,*,canary=True,page_control=False,reconcile_only=F
      Deliveries(store).confirm(did,kind,{'status':'confirmed','requestRef':part['request_ref'],'oecId':candidate['oecId'],'kind':kind,'messageId':proof['messageId'],'evidenceRef':proof['evidenceRef']})
      continue
     if part['state']!='ready':raise CycleError('market_send_part_unavailable')
-    if reconcile_only:break
+    if recovering_only:break
     if kind=='text':
      try:_preflight_conversation(store,session,plan,candidate,conversation,did)
      except CycleError:
@@ -226,7 +242,7 @@ def run(root,market,request_id,*,canary=True,page_control=False,reconcile_only=F
     Deliveries(store).confirm(did,kind,{'status':'confirmed','requestRef':part['request_ref'],'oecId':candidate['oecId'],'kind':kind,'messageId':proof['messageId'],'evidenceRef':proof['evidenceRef']})
     checkpoint_time(kind)
    final=Deliveries(store).get(did);report.update(deliveryId=did,state=final['state'],pid=candidate['pid'],creatorId=candidate['creatorId'],
-      realSends=0 if reconcile_only else int(final['state']=='confirmed'),unknown=int(final['state']=='unknown'),timingMs=timing)
+      realSends=0 if recovering_only else int(final['state']=='confirmed'),unknown=int(final['state']=='unknown'),timingMs=timing)
    if canary and (page_control or reconcile_only) and final['state']=='confirmed':
     from lib.account_identity import promote_capabilities
     promote_capabilities(store,market=market,account=communications,capabilities=['message_send'],

@@ -133,13 +133,28 @@ def production_context(root, store, plan, market, turn_id):
                                 (plan, creator, stamp*1000, MAX_HISTORY)):
         messages.append({'id': row['message_id'], 'direction': 'inbound', 'text': row['text'],
                          'format': row['format'], 'at': row['occurred_ms']/1000 if row['occurred_ms'] else row['observed_at']})
-    for row in store.db.execute('SELECT episode_id,pid,list_id,sent_at,payload_json FROM outbound_episode '
-                                'WHERE plan_id=? AND creator_id=? AND sent_at<=? ORDER BY sent_at DESC LIMIT ?',
-                                (plan, creator, stamp, MAX_HISTORY)):
-        body = _message_text(row['payload_json'])
-        if body:
-            messages.append({'id': row['episode_id'], 'direction': 'outbound', 'text': body,
-                             'pid': row['pid'], 'listId': row['list_id'], 'at': row['sent_at']})
+    has_delivery_parts=store.db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='cycle_delivery_part'").fetchone()
+    if has_delivery_parts:
+     for row in store.db.execute('''SELECT e.episode_id,e.pid,e.list_id,e.payload_json,
+                                  card.started card_at,text.state text_state,text.started text_at
+                                  FROM outbound_episode e
+                                  JOIN cycle_delivery_part card ON card.delivery_id=e.delivery_id
+                                    AND card.kind='card' AND card.state='confirmed'
+                                  LEFT JOIN cycle_delivery_part text ON text.delivery_id=e.delivery_id
+                                    AND text.kind='text'
+                                  WHERE e.plan_id=? AND e.creator_id=?
+                                  ORDER BY card.started DESC LIMIT ?''',
+                                (plan, creator, MAX_HISTORY)):
+         if row['card_at'] is not None and row['card_at'] <= stamp:
+             messages.append({'id': row['episode_id'] + ':card', 'direction': 'outbound',
+                              'format': 'product_card', 'text': None,
+                              'pid': row['pid'], 'listId': row['list_id'], 'at': row['card_at']})
+         if row['text_state'] == 'confirmed' and row['text_at'] is not None and row['text_at'] <= stamp:
+             body = _message_text(row['payload_json'])
+             if body:
+                 messages.append({'id': row['episode_id'] + ':text', 'direction': 'outbound',
+                                  'format': 'text', 'text': body, 'pid': row['pid'],
+                                  'listId': row['list_id'], 'at': row['text_at']})
     for row in store.db.execute("SELECT id,text,started,created,kind,state FROM service_reply "
                                 "WHERE plan_id=? AND creator_id=? AND state='confirmed' AND "
                                 "coalesce(started,created)<=? ORDER BY created DESC LIMIT ?",

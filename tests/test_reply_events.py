@@ -9,9 +9,11 @@ ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT/'scripts'))
 
 from lib.cycle_delivery import Deliveries  # noqa:E402
+from lib.cycle_auto_reply import AutoReplies  # noqa:E402
 from lib.cycle_inbox import Inbox  # noqa:E402
 from lib.cycle_service import Service  # noqa:E402
 from lib.reply_events import DeepSeekClassifier,JevClassifier,apply_turn_review,backfill,batch_classify,classify,evaluation_summary,load_policy,review,review_turn,status  # noqa:E402
+from lib.agent_reply_v2 import production_context  # noqa:E402
 from lib.schema_migrations import apply_database  # noqa:E402
 from lib.second_cycle import CycleError,CycleStore,digest  # noqa:E402
 from test_second_cycle import NOW,edge,offer  # noqa:E402
@@ -68,6 +70,23 @@ class ReplyEvents(unittest.TestCase):
    second=backfill(s)
    self.assertEqual(second['episodesAdded'],0)
    self.assertEqual(s.db.execute('SELECT count(*) FROM outbound_episode').fetchone()[0],1)
+
+ def test_agent_history_shows_only_components_confirmed_before_the_turn(self):
+  with CycleStore(self.db,clock=lambda:self.now) as s:
+   AutoReplies(s)
+   delivery=s.db.execute('SELECT id FROM cycle_delivery LIMIT 1').fetchone()[0]
+   s.db.execute("UPDATE cycle_delivery_part SET state='ready',started=NULL WHERE delivery_id=? AND kind='text'",(delivery,))
+   backfill(s)
+   turn=s.db.execute('SELECT turn_id FROM inbound_turn LIMIT 1').fetchone()[0]
+   before=production_context(ROOT,s,self.plan,'it',turn)['messages']
+   self.assertEqual([row['format'] for row in before if row['direction']=='outbound'],['product_card'])
+   self.assertFalse(any(row.get('text')=='Ciao!' for row in before))
+   s.db.execute("UPDATE cycle_delivery_part SET state='confirmed',started=? WHERE delivery_id=? AND kind='text'",(self.now-5,delivery))
+   after=production_context(ROOT,s,self.plan,'it',turn)['messages']
+   self.assertTrue(any(row.get('text')=='Ciao!' for row in after))
+   s.db.execute("UPDATE cycle_delivery_part SET started=? WHERE delivery_id=? AND kind='text'",(self.now+5,delivery))
+   future=production_context(ROOT,s,self.plan,'it',turn)['messages']
+   self.assertFalse(any(row.get('text')=='Ciao!' for row in future))
 
  def test_five_action_shadow_is_evidence_bound_reviewed_and_never_executable(self):
   with CycleStore(self.db,clock=lambda:self.now) as s:

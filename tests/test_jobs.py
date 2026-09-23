@@ -39,8 +39,33 @@ class ConfigFile(unittest.TestCase):
             self.assertEqual(saved['jobs']['taplink_prepare']['at'],'07:30')
             self.assertEqual(load(folder)['jobs']['taplink_prepare']['at'],'07:30')
 
+    def test_market_runtime_windows_cannot_be_saved_as_global_jobs(self):
+        with tempfile.TemporaryDirectory() as folder:
+            with self.assertRaisesRegex(ValueError,'job_window_uses_market_setting'):
+                save(folder,{'jobs':{'agent_reply':{'at':'14:00'}}})
+            with self.assertRaisesRegex(ValueError,'job_window_uses_market_setting'):
+                save(folder,{'jobs':{'continuous_send':{'at':'18:00'}}})
+            self.assertFalse(Path(folder,'config/jobs.json').exists())
+
 
 class Reporting(unittest.TestCase):
+    def test_agent_and_send_times_are_scoped_to_the_current_market(self):
+        with tempfile.TemporaryDirectory() as folder:
+            var=Path(folder,'var');var.mkdir()
+            with closing(sqlite3.connect(var/'second-cycle.sqlite')) as db,db:
+                db.executescript('CREATE TABLE plan(id TEXT,market TEXT,institution TEXT);'
+                                 'CREATE TABLE agent_reply_setting(plan_id TEXT,enabled INTEGER,reply_start TEXT);'
+                                 'CREATE TABLE continuous_send_control(plan_id TEXT,automatic_enabled INTEGER,'
+                                 'run_requested INTEGER,window_start TEXT);')
+                for market,agent_at,send_at in (('it','15:00','16:30'),('br','14:00','17:00')):
+                    db.execute("INSERT INTO plan VALUES(?,?,'bjn-local-research')",(market,market))
+                    db.execute('INSERT INTO agent_reply_setting VALUES(?,1,?)',(market,agent_at))
+                    db.execute('INSERT INTO continuous_send_control VALUES(?,1,0,?)',(market,send_at))
+            italy={row['id']:row for row in status(folder,'it')['jobs']}
+            brazil={row['id']:row for row in status(folder,'br')['jobs']}
+            self.assertEqual((italy['agent_reply']['at'],italy['continuous_send']['at']),('15:00','16:30'))
+            self.assertEqual((brazil['agent_reply']['at'],brazil['continuous_send']['at']),('14:00','17:00'))
+            self.assertTrue(brazil['agent_reply']['enabled'])
     def test_all_rows_are_real_controls_and_scheduler_is_off(self):
         with tempfile.TemporaryDirectory() as folder:
             state=status(folder);self.assertEqual(state['version'],'jobs-v3')

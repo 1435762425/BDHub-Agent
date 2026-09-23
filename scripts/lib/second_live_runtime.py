@@ -38,7 +38,7 @@ SAFE_CODES = frozenset({"live_sender_binding_required", "live_sender_binding_mis
     "live_guard_busy", "live_guard_invalid", "live_identity_changed", "live_interval_invalid",
     "live_var_invalid", "legacy_gate_busy", "legacy_gate_unknown", "legacy_gate_invalid",
     "legacy_recent_dispatch", "legacy_send_conflict", "legacy_state_unavailable", "live_gate_failed",
-    "live_mark_reused", "live_market_send_unavailable"})
+    "live_mark_reused", "live_market_send_unavailable", "live_read_only"})
 
 
 class SecondLiveRuntimeError(RuntimeError):
@@ -311,12 +311,12 @@ def _new_gate_directory(var_dir):
 
 
 @contextmanager
-def live_runtime(expected_sender_binding_hash, report, *, var_dir=VAR, stopped=lambda: False, card_validator=None, send_interval=None, authenticated_context=None, request_budget=None):
+def live_runtime(expected_sender_binding_hash, report, *, var_dir=VAR, stopped=lambda: False, card_validator=None, send_interval=None, authenticated_context=None, request_budget=None, read_only=False):
     if not isinstance(expected_sender_binding_hash, str) or re.fullmatch(r"[0-9a-f]{64}", expected_sender_binding_hash) is None:
         raise SecondLiveRuntimeError("live_sender_binding_required")
     gate_directory = _new_gate_directory(var_dir)
     with (nullcontext(authenticated_context) if authenticated_context is not None else _authenticated(report, stopped=stopped)) as (account, identity, headers, auth, maintenance, available):
-        if report.get("sendCapability") not in {"canary", "enabled"}:
+        if not read_only and report.get("sendCapability") not in {"canary", "enabled"}:
             raise SecondLiveRuntimeError("live_market_send_unavailable")
         binding = sender_binding_sha256(auth)
         if binding != expected_sender_binding_hash:
@@ -341,12 +341,13 @@ def live_runtime(expected_sender_binding_hash, report, *, var_dir=VAR, stopped=l
             gate_state = check_legacy_gate(auth.im_id, interval=policy.im_send_interval_seconds)
             report["legacyWriteGate"] = gate_state
             check_legacy_send_state(report)
-        conflicts()
+        if not read_only:conflicts()
         report.update(senderBindingHash=binding, senderWriteIntervalSeconds=interval,
             writeGateScope="new_system_sender_only", crossProjectAtomicCoordination=False,
             legacyGateWrites=0, legacyServicesStopped=0)
         @contextmanager
         def write_gate():
+            if read_only:raise SecondLiveRuntimeError("live_read_only")
             conflicts()
             try:
                 manager = _shared_gate(auth.im_id, interval=interval, stopped=lambda: closed or stopped(), directory=gate_directory)

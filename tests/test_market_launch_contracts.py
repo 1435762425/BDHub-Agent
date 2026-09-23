@@ -156,8 +156,8 @@ class MarketLaunchContracts(unittest.TestCase):
    def readback(self,_conversation,_text,ref,*,message_id=None):
     return {'status':'confirmed','requestRef':ref,'conversationId':'999','messageId':'123','evidenceRef':'im-history:123'}
   @contextmanager
-  def auth(_root,market,_report,*,canary,capability,stopped):
-   self.assertEqual((market,canary,capability),('my',False,'agent_reply'))
+  def auth(_root,market,_report,*,canary,read_only,capability,stopped):
+   self.assertEqual((market,canary,read_only,capability),('my',False,False,'agent_reply'))
    yield {'session':Session(),'adapter':Adapter(),'auth':object(),'account':type('A',(),{'name':'acc8'})()}
   @contextmanager
   def gate(*_args,**_kwargs):yield lambda:marks.append('write')

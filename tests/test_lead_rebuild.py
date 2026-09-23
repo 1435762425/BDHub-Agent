@@ -17,8 +17,12 @@ class LeadRebuildTests(unittest.TestCase):
    root=Path(folder);(root/'var').mkdir()
    with closing(sqlite3.connect(root/'var/kalodata-leads.sqlite')) as db,db:
     db.executescript('CREATE TABLE leads_query(pid);CREATE TABLE leads_page(pid);CREATE TABLE leads_attempt(pid);'
+                     'CREATE TABLE leads_page_scope(query_id TEXT);'
+                     'CREATE TABLE leads_page_legacy_history(pid TEXT);'
                      "INSERT INTO leads_query VALUES('p');INSERT INTO leads_page VALUES('p');"
-                     "INSERT INTO leads_attempt VALUES('p');")
+                     "INSERT INTO leads_attempt VALUES('p');"
+                     "INSERT INTO leads_page_scope VALUES('scope');"
+                     "INSERT INTO leads_page_legacy_history VALUES('p');")
    with closing(sqlite3.connect(root/'var/second-cycle.sqlite')) as db,db:
     db.executescript('CREATE TABLE lead_query_head(pid);CREATE TABLE lead_query_run(id);'
       'CREATE TABLE lead_query_selection(id);CREATE TABLE source_edge_index(id);'
@@ -29,6 +33,9 @@ class LeadRebuildTests(unittest.TestCase):
    self.assertEqual(reset_current(root)['mode'],'preview')
    result=reset_current(root,confirmed=True)
    self.assertEqual(result['after']['currentHeads'],0);self.assertEqual(result['after']['leadPages'],0)
+   self.assertEqual(result['after']['scopedPages'],0)
+   with closing(sqlite3.connect(root/'var/kalodata-leads.sqlite')) as db:
+    self.assertEqual(db.execute('SELECT count(*) FROM leads_page_legacy_history').fetchone()[0],1)
    self.assertEqual((result['after']['historicalRuns'],result['after']['historicalSelections'],
                      result['after']['sourceEdges'],result['after']['sentPairs']),(1,1,1,1))
 

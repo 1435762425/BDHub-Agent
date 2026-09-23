@@ -59,7 +59,11 @@ def load(root):
 
 
 def save(root,raw):
-    config=validate(raw);path=config_path(root);path.parent.mkdir(parents=True,exist_ok=True)
+    config=validate(raw);path=config_path(root)
+    previous=load(root)['jobs']
+    if any(config['jobs'][key]!=previous[key] for key in ('agent_reply','continuous_send')):
+        raise ValueError('job_window_uses_market_setting')
+    path.parent.mkdir(parents=True,exist_ok=True)
     temporary=path.with_suffix('.json.tmp');temporary.write_text(json.dumps(config,ensure_ascii=False,indent=2)+'\n',encoding='utf-8');temporary.replace(path)
     return config
 
@@ -101,14 +105,24 @@ def last_run(root,market):
 
 def status(root=None,market='it'):
     root=Path(root or Path(__file__).resolve().parents[2]);config=load(root);last=last_run(root,market);jobs=[]
+    cycle=root/'var/second-cycle.sqlite'
+    agent_start=_scalar(cycle,"SELECT a.reply_start FROM agent_reply_setting a JOIN plan p ON p.id=a.plan_id "
+                        "WHERE p.market=? AND p.institution='bjn-local-research'",(market,))
+    send_start=_scalar(cycle,"SELECT c.window_start FROM continuous_send_control c JOIN plan p ON p.id=c.plan_id "
+                       "WHERE p.market=? AND p.institution='bjn-local-research'",(market,))
     for job in JOBS:
         setting=config['jobs'][job['id']]
         enabled=(bool(_scalar(root/'var/second-cycle.sqlite',
             "SELECT a.enabled FROM agent_reply_setting a JOIN plan p ON p.id=a.plan_id WHERE p.market=? AND p.institution='bjn-local-research'",(market,)))
-            if job['id']=='agent_reply' else setting['enabled'])
+            if job['id']=='agent_reply' else
+            bool(_scalar(cycle,"SELECT (c.automatic_enabled OR c.run_requested) FROM continuous_send_control c "
+                         "JOIN plan p ON p.id=c.plan_id WHERE p.market=? AND p.institution='bjn-local-research'",
+                         (market,))) if job['id']=='continuous_send' else setting['enabled'])
+        at=(agent_start if agent_start is not None else job['defaultAt']) if job['id']=='agent_reply' else \
+            (send_start if send_start is not None else job['defaultAt']) if job['id']=='continuous_send' else setting['at']
         jobs.append({'id':job['id'],'name':job['name'],'group':job['group'],'description':job['description'],
           'manual':job['manual'],'manualEndpoint':MANUAL_ENDPOINTS[job['manual']],
           'lastRunAt':last.get(job['id']),'enabled':enabled,'schedulable':True,
-          'at':setting['at'],'cadence':job.get('cadence','daily'),'weekday':setting.get('weekday')})
+          'at':at,'cadence':job.get('cadence','daily'),'weekday':setting.get('weekday')})
     from lib.operations_scheduler import scheduler_state
     return {'version':config['version'],'market':market,'jobs':jobs,'schedulerReady':True,'scheduler':scheduler_state(root)}

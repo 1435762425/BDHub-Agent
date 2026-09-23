@@ -240,6 +240,53 @@ def request_stop(store, run_id, expected_state="running"):
     return run_payload(store, run_id) | {"duplicate": False}
 
 
+def retry_failed_stage(store, run_id, *, now=None, delay=3600, max_retries=3):
+    """Resume one failed scheduled stage from its original upstream generation."""
+    _required(store)
+    stamp=store.clock() if now is None else float(now)
+    with store.tx():
+        run=store.db.execute('SELECT * FROM workflow_run WHERE run_id=?',(run_id,)).fetchone()
+        if not run or run['state']!='failed' or run['trigger_source']!='schedule':
+            return {'state':'not_applicable'}
+        stage=store.db.execute("SELECT * FROM workflow_stage_run WHERE run_id=? AND state='failed' ORDER BY position LIMIT 1",
+                               (run_id,)).fetchone()
+        if not stage or stage['platform_writes'] or not stage['finished_at']:
+            store.db.execute("UPDATE workflow_run SET state='needs_human',error_code='workflow_retry_requires_review' WHERE run_id=?",
+                             (run_id,))
+            return {'state':'needs_human','reason':'workflow_retry_requires_review'}
+        code=str(stage['error_code'] or '')
+        if code=='global_catalog_not_published' or any(value in code.lower() for value in ('unknown','unresolved','ambiguous')):
+            store.db.execute("UPDATE workflow_run SET state='needs_human',error_code='workflow_retry_requires_review' WHERE run_id=?",
+                             (run_id,))
+            return {'state':'needs_human','reason':'workflow_retry_requires_review'}
+        prior=store.db.execute("SELECT value_json FROM workflow_checkpoint WHERE run_id=? AND stage=? AND checkpoint_key='auto_retry'",
+                               (run_id,stage['stage'])).fetchone()
+        attempts=int(json.loads(prior[0])['attempts']) if prior else 0
+        if attempts>=max_retries:
+            store.db.execute("UPDATE workflow_run SET state='needs_human',error_code='workflow_retry_exhausted' WHERE run_id=?",
+                             (run_id,))
+            return {'state':'exhausted','attempts':attempts}
+        due=float(stage['finished_at'])+delay
+        if stamp<due:return {'state':'waiting','nextAt':due,'attempts':attempts}
+        if store.db.execute('SELECT 1 FROM workflow_stage_claim WHERE stage_run_id=?',(stage['stage_run_id'],)).fetchone():
+            store.db.execute("UPDATE workflow_run SET state='needs_human',error_code='workflow_retry_claim_active' WHERE run_id=?",
+                             (run_id,))
+            return {'state':'needs_human','reason':'workflow_retry_claim_active'}
+        if store.db.execute("SELECT 1 FROM workflow_run WHERE market=? AND run_id!=? AND state IN ('queued','running','stop_requested')",
+                            (run['market'],run_id)).fetchone():
+            return {'state':'waiting','nextAt':stamp+60,'attempts':attempts}
+        evidence={'attempts':attempts+1,'previousError':code,'previousFinishedAt':stage['finished_at'],
+                  'previousPlatformWrites':stage['platform_writes']}
+        store.db.execute("INSERT INTO workflow_checkpoint VALUES(?,?,?,?,?) ON CONFLICT(run_id,stage,checkpoint_key) "
+                         "DO UPDATE SET value_json=excluded.value_json,updated_at=excluded.updated_at",
+                         (run_id,stage['stage'],'auto_retry',encoded(evidence),stamp))
+        store.db.execute("UPDATE workflow_stage_run SET state='queued',started_at=NULL,finished_at=NULL,error_code=NULL "
+                         "WHERE stage_run_id=?",(stage['stage_run_id'],))
+        store.db.execute("UPDATE workflow_run SET state='running',finished_at=NULL,error_code=NULL WHERE run_id=?",
+                         (run_id,))
+        return {'state':'resumed','attempts':attempts+1,'stage':stage['stage']}
+
+
 def resume_short_names(store, market, run_id, request_id, *, root=ROOT):
     """Requeue the original IT TapLink stage after its pre-write name gap is filled."""
     _required(store)

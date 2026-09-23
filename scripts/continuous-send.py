@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 
 ROOT=Path(__file__).resolve().parents[1];sys.dont_write_bytecode=True;sys.path.insert(0,str(ROOT/'scripts'))
-from lib.continuous_send import launch_worker,mutate_control,status  # noqa:E402
+from lib.continuous_send import launch_worker,mutate_control,reconcile_once,status  # noqa:E402
 from lib.second_cycle import CycleError,CycleStore  # noqa:E402
 
 def main():
@@ -21,16 +21,20 @@ def main():
             from lib.market_send_canary import run as reconcile_market
             reconcile_market(ROOT,market,'market-reconcile-'+market+'-'+str(__import__('time').time_ns()),
                              canary=False,reconcile_only=True)
+        reconcile_result=None
         with CycleStore(ROOT/'var/second-cycle.sqlite',readonly=args.action=='status') as store:
             if market=='it':
-                if args.action not in ('status','reconcile'):
+                if args.action=='reconcile':
+                    reconcile_result=reconcile_once(ROOT,store)
+                    result=None
+                elif args.action!='status':
                     changes=body.get('changes') if args.action=='save' else None
                     result=mutate_control(store,ROOT,action=args.action,request_id=body.get('requestId'),expected_revision=body.get('expectedRevision'),changes=changes)
                 else:result=None
             else:
                 from lib.market_send_control import mutate
                 result=None if args.action in ('status','reconcile') else mutate(store,ROOT,market,action=args.action,request_id=body.get('requestId'),expected_revision=body.get('expectedRevision'),changes=body.get('changes') if args.action=='save' else None)
-        if market=='it':worker_pid=launch_worker(ROOT) if args.action=='reconcile' or args.action=='start' and not result.get('duplicate') else None
+        if market=='it':worker_pid=launch_worker(ROOT) if args.action=='start' and not result.get('duplicate') else None
         else:
             from lib.market_send_control import launch_worker as launch_market_worker
             worker_pid=launch_market_worker(ROOT,market).get('pid') if args.action=='start' and not result.get('duplicate') else None
@@ -40,6 +44,7 @@ def main():
                 from lib.market_send_control import status as market_status
                 output=market_status(ROOT,store,market)
             if worker_pid:output['workerPid']=worker_pid
+            if reconcile_result is not None:output['reconcile']=reconcile_result
         print(json.dumps(output,ensure_ascii=False));return 0
     except (CycleError,ValueError,TypeError,json.JSONDecodeError) as error:
         print(json.dumps({'error':str(error)},ensure_ascii=False));return 2

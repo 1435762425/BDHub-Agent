@@ -1,24 +1,28 @@
 #!/usr/bin/env python3
 """Conversation workbench read model and local draft controls."""
-import argparse,importlib.util,json,re,sqlite3,sys
+import argparse,json,re,sqlite3,sys
 from contextlib import closing
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1];sys.dont_write_bytecode=True;sys.path.insert(0,str(ROOT/'scripts'))
 from lib.conversation_workbench import (complete_reviewed_human,confirm_manual_reply,conversation_detail,
- list_conversations,reject_creator,resolve_manual,save_draft,set_collaboration,workspace_status)
+ list_conversations,reconcile_manual_reply,reject_creator,resolve_manual,save_draft,set_collaboration,workspace_status)
 from lib.cycle_auto_reply import AutoReplies
 from lib.second_cycle import CycleError,CycleStore,digest
 
 def main():
- p=argparse.ArgumentParser();p.add_argument('action',choices=('list','detail','status','save-draft','complete-human','confirm-manual','resolve-manual','reject-creator','set-collaboration','send-text','send-card','translate'));p.add_argument('--market',required=True);p.add_argument('--view',default='human');p.add_argument('--query',default='');p.add_argument('--limit',type=int,default=30);p.add_argument('--offset',type=int,default=0);p.add_argument('--cid');a=p.parse_args()
+ p=argparse.ArgumentParser();p.add_argument('action',choices=('list','detail','status','save-draft','complete-human','confirm-manual','resolve-manual','reject-creator','set-collaboration','send-text','send-card','reconcile-manual','translate'));p.add_argument('--market',required=True);p.add_argument('--view',default='human');p.add_argument('--query',default='');p.add_argument('--limit',type=int,default=30);p.add_argument('--offset',type=int,default=0);p.add_argument('--cid');a=p.parse_args()
  try:
   from lib.market_registry import market as market_record
   market_record(ROOT,a.market)
-  readonly=a.action not in ('save-draft','complete-human','confirm-manual','resolve-manual','reject-creator','set-collaboration','send-text','send-card')
+  readonly=a.action not in ('save-draft','complete-human','confirm-manual','resolve-manual','reject-creator','set-collaboration','send-text','send-card','reconcile-manual')
   with CycleStore(ROOT/'var/second-cycle.sqlite',readonly=readonly) as store:
    if a.action=='list':result=list_conversations(ROOT,store,a.view,a.query,a.limit,a.offset,a.market)
    elif a.action=='detail':result=conversation_detail(ROOT,store,a.cid,a.market)
    elif a.action=='status':result=workspace_status(ROOT,store,a.market)
+   elif a.action=='reconcile-manual':
+    raw=sys.stdin.read(10001)
+    if len(raw.encode())>10000:raise CycleError('input_too_large')
+    req=json.loads(raw);result=reconcile_manual_reply(store,a.cid,req.get('requestId'),a.market)
    elif a.action=='save-draft':
     raw=sys.stdin.read(10001)
     if len(raw.encode())>10000:raise CycleError('input_too_large')
@@ -68,9 +72,9 @@ def main():
        row=links.execute("SELECT card_payload FROM catalog_current_binding WHERE market=? AND pid=? AND list_id=? AND state='active'",(a.market,episode['pid'],episode['list_id'])).fetchone()
       if not row:raise CycleError('manual_card_stale')
       q=replies.prepare_manual_card(turn['plan_id'],turn['creator_id'],a.cid,json.loads(row[0]),req.get('expectedControlRevision'),request_id)
-    spec=importlib.util.spec_from_file_location('manual_reply_runtime',ROOT/'scripts/run-auto-replies.py');runtime=importlib.util.module_from_spec(spec);spec.loader.exec_module(runtime)
+    from lib.reply_transport import run_reply
     if q['state']=='confirmed':state='confirmed';new_dispatch=False
-    else:new_dispatch=q['state']=='ready';state=runtime.run_reply(store,replies,q)
+    else:new_dispatch=q['state']=='ready';state=run_reply(store,replies,q,root=ROOT)
     result={'state':state,'replyId':q['id'],'requestRef':q['request_ref'],'platformWrites':int(new_dispatch),'realSends':int(new_dispatch)}
    else:
     raw=sys.stdin.read(10001);req=json.loads(raw);text=req.get('text');target=req.get('target')

@@ -1,5 +1,6 @@
-import importlib.util,sys,json,unittest
+import importlib.util,sys,json,unittest,io
 from contextlib import contextmanager
+from contextlib import redirect_stdout
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -36,5 +37,9 @@ class RunnerTests(unittest.TestCase):
    with self.assertRaises(TimeoutError):module.run_reply(self.s,self.auto,q)
    self.assertEqual(module.run_reply(self.s,self.auto,self.auto.get(q['id'])),'confirmed')
   self.assertEqual(self.sent,1)
+ def test_retired_v1_executable_cannot_enable_automatic_reply(self):
+  output=io.StringIO()
+  with redirect_stdout(output):self.assertEqual(module.main(),2)
+  self.assertEqual(json.loads(output.getvalue())['error'],'legacy_auto_reply_retired')
 del AutoReplyTests
 if __name__=='__main__':unittest.main()

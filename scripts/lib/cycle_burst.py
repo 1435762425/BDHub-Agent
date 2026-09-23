@@ -21,25 +21,11 @@ from lib.second_live_runtime import _authenticated, live_runtime, sender_binding
 from lib.italy_im_delivery import ItalyVerifiedProductCard
 from lib.cycle_inbox import Inbox
 from lib.cycle_service import Service
+from lib.request_budget import RequestBudget
 
 ROOT = Path(__file__).resolve().parents[2]
 _spec = importlib.util.spec_from_file_location('cycle_send_history', ROOT/'scripts/cycle-send.py')
 _history = importlib.util.module_from_spec(_spec); _spec.loader.exec_module(_history)
-
-
-class RequestBudget:
-    """Aggregate IM reads + creates + sends; waiting lanes never create bursts."""
-    def __init__(self, qps=3, *, clock=time.monotonic, sleep=time.sleep):
-        if type(qps) not in (int, float) or not 1 <= qps <= 3:
-            raise ValueError('invalid_request_budget')
-        self.interval, self.clock, self.sleep = 1/qps, clock, sleep
-        self.lock = threading.Lock(); self.next_at = 0; self.requests = 0; self.wait_seconds = 0
-
-    def acquire(self):
-        with self.lock:
-            delay=max(0, self.next_at-self.clock()); self.wait_seconds+=delay
-            self.sleep(delay); self.requests+=1
-            self.next_at = self.clock()+self.interval
 
 
 class CardCache:

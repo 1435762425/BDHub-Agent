@@ -106,7 +106,8 @@ def list_conversations(root,store,view='human',query='',limit=30,offset=0,market
  plan=plan[0]
  setting=agent_setting(store,plan);clock=datetime.fromtimestamp(store.clock(),ZoneInfo('Asia/Shanghai')).strftime('%H:%M')
  try:
-  runtime=json.loads((Path(root)/'var/agent-reply-status.json').read_text(encoding='utf-8'))
+  status_file='agent-reply-status.json' if market=='it' else f'agent-reply-status-{market}.json'
+  runtime=json.loads((Path(root)/'var'/status_file).read_text(encoding='utf-8'))
   agent_failed=runtime.get('state')=='failed'
  except (OSError,ValueError,TypeError):agent_failed=False
  rows=[]
@@ -118,6 +119,10 @@ def list_conversations(root,store,view='human',query='',limit=30,offset=0,market
   showcase=_latest_showcase(db,plan,rel['oec'])
   decision=_latest_decision(db,latest['turn_id']) if latest else None;action=decision.get('action') if decision else None
   v2=db.execute("SELECT output_json FROM agent_reply_decision_v2 WHERE plan_id=? AND turn_id=? AND mode='production' AND state='ready' ORDER BY created_at DESC LIMIT 1",(plan,latest['turn_id'])).fetchone() if latest and db.execute("SELECT 1 FROM sqlite_master WHERE name='agent_reply_decision_v2'").fetchone() else None
+  failed_model=False
+  if latest and not v2 and db.execute("SELECT 1 FROM sqlite_master WHERE name='agent_reply_decision_v2'").fetchone():
+   failed_model=db.execute("SELECT count(*) FROM agent_reply_decision_v2 WHERE plan_id=? AND turn_id=? "
+                           "AND mode='production' AND state='unknown'",(plan,latest['turn_id'])).fetchone()[0]>=3
   meaning=(json.loads(v2[0]).get('meaningZh') if v2 else decision.get('meaningZh') if decision else None)
   if case or rel['mode']=='human' or (action=='human' and pending and pending['state']!='resolved_by_human') or (pending and pending['state']=='human'):state='human'
   elif pending and pending['state'] in ('waiting_contact','waiting_clarification'):state='waiting'
@@ -132,6 +137,7 @@ def list_conversations(root,store,view='human',query='',limit=30,offset=0,market
                 '等待达人提供联系方式' if state=='waiting' and pending['state']=='waiting_contact' else
                 '等待达人说明' if state=='waiting' else
                 'AI 已关闭' if state=='agent' and not setting['enabled'] else
+                'AI 模型连续失败，需检查' if state=='agent' and failed_model else
                 'AI 运行异常' if state=='agent' and agent_failed else
                 '等待回复窗口' if state=='agent' and not(setting['replyStart']<=clock<setting['replyEnd']) else
                 '等待 AI 处理' if state=='agent' else '本轮已结束')
@@ -172,7 +178,18 @@ def conversation_detail(root,store,cid,market='it'):
    'status':'historical' if row['historical'] else 'received','source':'showcase'})
  for row in db.execute('SELECT * FROM outbound_episode WHERE plan_id=? AND creator_id=? ORDER BY sent_at',(plan,creator)):
   payload=json.loads(row['payload_json']);message=payload.get('message') or {}
-  timeline.append({'id':row['episode_id'],'direction':'outbound','kind':'text','text':message.get('textIt'),'occurredAt':row['sent_at'],'status':'confirmed','source':'batch','pid':row['pid'],'listId':row['list_id']})
+  parts={part['kind']:part for part in db.execute('SELECT kind,state,started FROM cycle_delivery_part '
+                                                 'WHERE delivery_id=?',(row['delivery_id'],))}
+  card=parts.get('card');sent_text=parts.get('text')
+  if card and card['state']=='confirmed':
+   timeline.append({'id':row['episode_id']+':card','direction':'outbound','kind':'product_card',
+                    'text':f"[商品卡 PID {row['pid']}]",'occurredAt':card['started'] or row['sent_at'],
+                    'status':'confirmed','source':'batch','pid':row['pid'],'listId':row['list_id']})
+  if sent_text and sent_text['state']=='confirmed':
+   timeline.append({'id':row['episode_id']+':text','direction':'outbound','kind':'text',
+                    'text':message.get('textIt') or message.get('text') or message.get('body'),
+                    'occurredAt':sent_text['started'] or row['sent_at'],
+                    'status':'confirmed','source':'batch','pid':row['pid'],'listId':row['list_id']})
  if db.execute("SELECT 1 FROM sqlite_master WHERE name='service_reply'").fetchone():
   for row in db.execute('SELECT * FROM service_reply WHERE plan_id=? AND creator_id=? ORDER BY created',(plan,creator)):
    card=json.loads(row['text']) if row['kind']=='manual_card' else None
@@ -184,6 +201,14 @@ def conversation_detail(root,store,cid,market='it'):
  decision=_latest_decision(db,turn['turn_id']);reason=_human_reason(decision)
  turn_at=(turn['occurred_ms']/1000 if turn['occurred_ms'] else turn['observed_at'])
  manual=_latest_manual_reply(db,plan,creator,turn_at)
+ pending_manual=[]
+ if db.execute("SELECT 1 FROM sqlite_master WHERE name='service_reply'").fetchone():
+  pending_manual=[{'id':row['id'],'kind':row['kind'],'requestId':row['request_ref'],'state':row['state']}
+                  for row in db.execute("SELECT id,kind,request_ref,state FROM service_reply "
+                                        "WHERE plan_id=? AND creator_id=? AND cid=? "
+                                        "AND kind IN ('manual','manual_card') "
+                                        "AND state IN ('ready','inflight','accepted','unknown') "
+                                        "ORDER BY created DESC LIMIT 100",(plan,creator,cid))]
  draft=db.execute('SELECT text,revision,updated_at FROM conversation_draft WHERE plan_id=? AND cid=?',(plan,cid)).fetchone()
  if case:
   case_payload={'id':case['id'],'reason':case['reason'],'reasonLabel':_human_label(db,plan,creator,case['reason']),
@@ -209,8 +234,29 @@ def conversation_detail(root,store,cid,market='it'):
   'timeline':timeline,'episodes':episodes,'case':case_payload,'agentDecisions':agent_decisions,
   'metrics':_creator_metrics(root,db,plan,creator,rel['oec'],market),
   'manualReply':({'id':manual['id'],'kind':manual['kind'],'confirmedAt':manual['confirmed_at']} if manual else None),
+  'pendingManualReplies':pending_manual,
   'draft':{'text':draft['text'],'revision':draft['revision'],'updatedAt':draft['updated_at']} if draft else {'text':'','revision':0,'updatedAt':0},
   'manualTemplates':manual_templates(store,market=market),'platformWrites':0,'realSends':0}
+
+def reconcile_manual_reply(store,cid,request_id,market='it',*,verify=None):
+ """Read back a previously submitted manual intent without creating a new one."""
+ if market!='it' or not isinstance(cid,str) or not cid.isdigit() or \
+    not isinstance(request_id,str) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._:-]{7,119}',request_id):
+  raise CycleError('manual_reconcile_scope_invalid')
+ plan=_plan_id(store,market)
+ row=store.db.execute("SELECT * FROM service_reply WHERE plan_id=? AND cid=? AND request_ref=? "
+                      "AND kind IN ('manual','manual_card')",(plan,cid,request_id)).fetchone()
+ if not row:raise CycleError('manual_reconcile_intent_missing')
+ from lib.cycle_auto_reply import AutoReplies
+ replies=AutoReplies(store);reply=dict(row)
+ if reply['state'] in ('inflight','accepted','unknown'):
+  if verify is None:
+   from lib.reply_transport import run_reply
+   verify=lambda store,replies,reply:run_reply(store,replies,reply)
+  verify(store,replies,reply)
+ current=replies.get(reply['id'])
+ return {'state':current['state'],'replyId':reply['id'],'requestRef':request_id,
+         'platformWrites':0,'realSends':0}
 
 def save_draft(store,cid,text,expected_revision,market='it'):
  if not isinstance(cid,str) or not cid.isdigit() or not isinstance(text,str) or len(text)>4000 or type(expected_revision) is not int or expected_revision<0:raise CycleError('conversation_draft_invalid')

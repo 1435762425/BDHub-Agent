@@ -49,6 +49,28 @@ class AgentReplyWorkerTests(unittest.TestCase):
   db.execute("UPDATE cycle_bulk_runtime SET phase='waiting_window'")
   db.execute("INSERT INTO cycle_delivery_part VALUES('inflight')")
   self.assertTrue(WORKER.send_dispatch_active(self.store))
+ def test_dispatch_mutex_is_limited_to_the_same_market(self):
+  db=self.store.db
+  db.execute('CREATE TABLE plan(id TEXT,market TEXT)')
+  db.execute('CREATE TABLE cycle_delivery(id TEXT,plan_id TEXT)')
+  db.execute('CREATE TABLE cycle_delivery_part(delivery_id TEXT,state TEXT)')
+  db.execute("INSERT INTO plan VALUES('br-plan','br'),('it-plan','it')")
+  db.execute("INSERT INTO cycle_delivery VALUES('br-delivery','br-plan')")
+  db.execute("INSERT INTO cycle_delivery_part VALUES('br-delivery','inflight')")
+  self.assertTrue(WORKER.send_dispatch_active(self.store,'br'))
+  self.assertFalse(WORKER.send_dispatch_active(self.store,'my'))
+  db.execute("UPDATE cycle_delivery_part SET state='confirmed'")
+  self.assertFalse(WORKER.send_dispatch_active(self.store,'br'))
+ def test_failed_model_turn_is_deferred_without_blocking_a_new_turn(self):
+  db=self.store.db
+  db.execute('CREATE TABLE agent_reply_decision_v2(plan_id TEXT,turn_id TEXT,mode TEXT,state TEXT,created_at REAL)')
+  db.execute("INSERT INTO agent_reply_decision_v2 VALUES('p','old','production','unknown',100)")
+  self.assertFalse(WORKER.decision_retry_ready(self.store,'p','old',200))
+  self.assertTrue(WORKER.decision_retry_ready(self.store,'p','old',3700))
+  self.assertTrue(WORKER.decision_retry_ready(self.store,'p','new',200))
+  db.execute("INSERT INTO agent_reply_decision_v2 VALUES('p','old','production','unknown',200)")
+  db.execute("INSERT INTO agent_reply_decision_v2 VALUES('p','old','production','unknown',300)")
+  self.assertFalse(WORKER.decision_retry_ready(self.store,'p','old',10000))
  def test_waiting_for_creator_is_not_reclassified_without_new_input(self):
   db=self.store.db
   db.execute('CREATE TABLE inbox_pending(plan_id TEXT,creator_id TEXT,state TEXT,due_at REAL)')

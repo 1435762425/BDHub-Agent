@@ -111,6 +111,17 @@ class SecondLiveRuntimeTests(unittest.TestCase):
             self.assertEqual(error.exception.code, "live_market_send_unavailable")
             fixture.adapter.assert_not_called()
 
+    def test_read_only_reconciliation_works_without_send_capability_or_write_gate(self):
+        with self.fixture() as fixture:
+            fixture.loaded.return_value=(*fixture.loaded.return_value[:-1], "unsupported")
+            with M.live_runtime(M.sender_binding_sha256(fixture.auth), {}, var_dir=fixture.var,
+                                read_only=True) as runtime:
+                self.assert_code("live_read_only", lambda: runtime['write_gate']().__enter__())
+                fixture.adapter.assert_called_once()
+            fixture.legacy_gate.assert_not_called()
+            fixture.legacy_sql.assert_not_called()
+            self.assertEqual(fixture.state['marks'],0)
+
     def test_borrowed_runtime_reuses_outer_guard_and_auth_but_closes_each_session(self):
         with self.fixture() as f:
             report={}

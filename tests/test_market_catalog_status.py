@@ -1,6 +1,7 @@
 import importlib.util
 import sqlite3
 import unittest
+from contextlib import closing
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -38,7 +39,7 @@ class PublishedScreenTests(unittest.TestCase):
    db.close()
 
  def test_category_reference_stays_inside_current_source_lineage(self):
-  with sqlite3.connect(':memory:') as db:
+  with closing(sqlite3.connect(':memory:')) as db:
    db.executescript('''CREATE TABLE global_source_head(scope_hash TEXT,run_id TEXT);
     CREATE TABLE global_source_run(id TEXT,scope TEXT,scope_hash TEXT,state TEXT,created REAL,updated REAL,identity_unchanged INTEGER);
     CREATE TABLE global_source_partition(run_id TEXT,page_count INTEGER,state TEXT);

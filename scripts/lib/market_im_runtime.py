@@ -11,7 +11,7 @@ from urllib.parse import urlsplit
 from lib.italy_im_auth import ItalyImAuthContext
 from lib.italy_im_delivery import ItalyImDeliveryAdapter
 from lib.italy_im_session import ItalyImReadSession
-from lib.cycle_burst import RequestBudget
+from lib.request_budget import RequestBudget
 from lib.legacy_runtime import configure_vendored_bdhub
 from lib.market_accounts import load_config
 
@@ -28,7 +28,7 @@ def _data(payload):
 @contextmanager
 def authenticated(root,market,report,*,canary=False,read_only=False,capability='message_send',stopped=lambda:False):
  root=Path(root);pair=load_config(root)['markets'][market];account_name=pair['roles']['communications']
- if capability not in ('message_send','agent_reply') or canary and read_only:raise ValueError('market_im_capability_invalid')
+ if capability not in ('message_send','agent_reply'):raise ValueError('market_im_capability_invalid')
  if canary:
   if market not in {'br','my','uk'}:raise ValueError('market_send_canary_unavailable')
  else:

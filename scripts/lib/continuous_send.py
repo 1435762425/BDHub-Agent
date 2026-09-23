@@ -218,33 +218,53 @@ def _active_delivery(store,plan):
     return dict(row) if row else None
 
 
+def _reconcile_delivery(store,plan):
+    """Only an already submitted component may be read back by the reconcile action."""
+    row=store.db.execute("""SELECT DISTINCT d.* FROM cycle_delivery d
+      LEFT JOIN cycle_delivery_part p ON p.delivery_id=d.id
+      WHERE d.plan_id=? AND d.state IN ('running','unknown')
+        AND json_extract(d.snapshot,'$.executionMode')='continuous-v1'
+        AND (d.state='unknown' OR p.state IN ('inflight','accepted','unknown'))
+      ORDER BY d.created LIMIT 1""",(plan,)).fetchone()
+    return dict(row) if row else None
+
+
 def _legacy_batch_active(store):
     return bool(store.db.execute("SELECT 1 FROM cycle_bulk_freeze WHERE state IN ('starting','running','stop_requested','waiting_reconciliation')").fetchone()) if store.db.execute("SELECT 1 FROM sqlite_master WHERE name='cycle_bulk_freeze'").fetchone() else False
 
 
-def execute_once(root,store,*,authenticated=None,authorized_now=None):
+def execute_once(root,store,*,authenticated=None,authorized_now=None,reconcile_only=False):
     """Advance at most one delivery. Tests can inject an authenticated context; status calls never enter."""
     root=Path(root);_required(store);plan=_plan(store);cfg=control(store,root);now=store.clock()
     if authorized_now is not None:_request(authorized_now)
-    if cfg['stopRequested'] or not (cfg['runRequested'] or cfg['automaticEnabled']):
+    if not reconcile_only and (cfg['stopRequested'] or not (cfg['runRequested'] or cfg['automaticEnabled'])):
         return publish_runtime(store,plan,'off',stop_reason='disabled')
-    window=window_state(cfg['window'],now)
-    if not window['open'] and authorized_now is None:
+    window=window_state(cfg['window'],now) if not reconcile_only else {'open':False}
+    if not reconcile_only and not window['open'] and authorized_now is None:
         return publish_runtime(store,plan,'waiting_window',stop_reason='outside_send_window')
-    if _legacy_batch_active(store):return publish_runtime(store,plan,'paused',stop_reason='legacy_batch_active')
-    active=_active_delivery(store,plan);candidate=None
+    if not reconcile_only and _legacy_batch_active(store):return publish_runtime(store,plan,'paused',stop_reason='legacy_batch_active')
+    active=_reconcile_delivery(store,plan) if reconcile_only else _active_delivery(store,plan)
+    if reconcile_only and active is None:return {'state':'nothing_to_reconcile','platformWrites':0,'realSends':0}
+    candidate=None
     if active:
         delivery=Deliveries(store).get(active['id']);candidate=delivery['snapshot']
-        if candidate.get('authorizedNowRequestId')!=authorized_now:
+        if not reconcile_only and candidate.get('authorizedNowRequestId')!=authorized_now:
             raise CycleError('continuous_send_authorization_changed')
+        if reconcile_only and not candidate.get('conversationId'):
+            intent=Deliveries(store).conversation_intent(active['id'])
+            if not intent or intent['state'] not in ('received','confirmed') or not intent['cid']:
+                return {'state':'waiting_reconciliation','deliveryId':active['id'],
+                        'stopReason':'conversation_result_unknown','platformWrites':0,'realSends':0}
     else:
         candidate,pool_state=_candidate(root,store,plan,cfg)
         if candidate is None:return publish_runtime(store,plan,'paused',stop_reason='send_pool_empty')
         if authorized_now is not None:candidate['authorizedNowRequestId']=authorized_now
     from lib.second_live_runtime import _authenticated,live_runtime,sender_binding_sha256
-    from lib.cycle_burst import RequestBudget
+    from lib.request_budget import RequestBudget
     transport_report={} if authorized_now is None else {'authorizedSendRequestId':authorized_now}
-    auth_context=authenticated or _authenticated(transport_report,stopped=lambda:control(store,root)['stopRequested'])
+    auth_context=authenticated or _authenticated(transport_report,
+        stopped=(lambda:False) if reconcile_only else (lambda:control(store,root)['stopRequested']),
+        read_only=reconcile_only)
     with auth_context as context:
         account,identity,headers,auth,maintenance,available=context
         if active is None:
@@ -252,7 +272,8 @@ def execute_once(root,store,*,authenticated=None,authorized_now=None):
             candidate['senderBindingHash']=sender_binding_sha256(auth)
             delivery=Deliveries(store).prepare(plan,candidate);active={'id':delivery['id'],'creator_id':delivery['creator_id'],'pid':delivery['pid']}
         else:delivery=Deliveries(store).get(active['id'])
-        deliveries=Deliveries(store);publish_runtime(store,plan,'sending',delivery=active,worker_pid=os.getpid())
+        deliveries=Deliveries(store)
+        if not reconcile_only:publish_runtime(store,plan,'sending',delivery=active,worker_pid=os.getpid())
         @contextmanager
         def runtime(c,read_only=False):
             previous=descriptor(c['card'])
@@ -264,10 +285,11 @@ def execute_once(root,store,*,authenticated=None,authorized_now=None):
             # send capability.  A fresh empty dict would erase that proof and make every real send
             # fail closed as live_market_send_unavailable after authentication succeeded.
             with live_runtime(c['senderBindingHash'],transport_report,authenticated_context=context,card_validator=validator,
-                              stopped=lambda:control(store,root)['stopRequested'],send_interval=0.75,
-                              request_budget=RequestBudget(qps=3)) as rt:
+                              stopped=(lambda:False) if reconcile_only else (lambda:control(store,root)['stopRequested']),send_interval=0.75,
+                              request_budget=RequestBudget(qps=3),read_only=reconcile_only) as rt:
                 yield {**rt,'card':previous}
         def authorize(c):
+            if reconcile_only:raise CycleError('reconcile_dispatch_forbidden')
             current=control(store,root)
             if current['stopRequested'] or not (current['runRequested'] or current['automaticEnabled']):raise CycleError('continuous_send_stopped')
             if c.get('continuousControlRevision')>current['revision'] or c.get('executionMode')!='continuous-v1':raise CycleError('continuous_send_scope_changed')
@@ -295,14 +317,18 @@ def execute_once(root,store,*,authenticated=None,authorized_now=None):
                relation['inbox_until']>store.clock() or open_case or pending and pending['state'] in ACTIVE_PENDING_STATES:
                 raise CycleError('conversation_needs_content_review')
         try:
-            result=execute(deliveries,delivery['id'],runtime,authorize,preflight,verify_only=delivery['state']=='unknown')
+            result=execute(deliveries,delivery['id'],runtime,authorize,preflight,
+                           verify_only=reconcile_only or delivery['state']=='unknown')
         except BaseException as error:
             latest=deliveries.get(delivery['id']);code=getattr(error,'code',None) or (str(error) if isinstance(error,CycleError) else type(error).__name__)
             if getattr(error,'response_ref',None):
                 store.db.execute('INSERT INTO cycle_platform_signal(delivery_id,at,outcome,code,native_status,check_code,check_message,response_ref) VALUES(?,?,?,?,?,?,?,?)',
                   (delivery['id'],store.clock(),*[getattr(error,key,None) for key in ('outcome','code','native_status','check_code','check_message','response_ref')]))
-            if latest['state']=='unknown':return publish_runtime(store,plan,'waiting_reconciliation',delivery=active,stop_reason=code,unknown=1)
-            if code=='recipient_message_limit' and latest['parts'][0]['state']=='confirmed' and \
+            if latest['state']=='unknown':
+                if reconcile_only:return {'state':'waiting_reconciliation','deliveryId':active['id'],'stopReason':code,'platformWrites':0,'realSends':0}
+                return publish_runtime(store,plan,'waiting_reconciliation',delivery=active,stop_reason=code,unknown=1)
+            if reconcile_only:raise
+            if code in PREFLIGHT_TERMINAL and latest['parts'][0]['state']=='confirmed' and \
                latest['parts'][1]['state']=='ready':
                 deliveries.cancel_pending_text(delivery['id'],code)
                 return publish_runtime(store,plan,'sending',delivery=None,stop_reason=code,failed_delta=1)
@@ -315,9 +341,15 @@ def execute_once(root,store,*,authenticated=None,authorized_now=None):
                 except CycleError:pass
                 else:return publish_runtime(store,plan,'sending',delivery=None,stop_reason=code,failed_delta=1)
             return publish_runtime(store,plan,'paused',delivery=active,stop_reason=code,failed_delta=1)
+    if reconcile_only:
+        return {'state':result['state'],'deliveryId':active['id'],'platformWrites':0,'realSends':0}
     if result['state']=='confirmed':return publish_runtime(store,plan,'sending',delivery=None,confirmed_delta=1,unknown=0)
     if result['state']=='unknown':return publish_runtime(store,plan,'waiting_reconciliation',delivery=active,stop_reason='result_unknown',unknown=1)
     return publish_runtime(store,plan,'paused',delivery=active,stop_reason=result['state'])
+
+
+def reconcile_once(root,store,*,authenticated=None):
+    return execute_once(root,store,authenticated=authenticated,reconcile_only=True)
 
 
 def _today_confirmed(store,plan,now):

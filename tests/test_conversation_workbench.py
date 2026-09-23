@@ -3,7 +3,7 @@ from contextlib import closing
 from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'scripts'))
 from lib.conversation_workbench import (complete_reviewed_human,confirm_manual_reply,conversation_detail,
- list_conversations,reject_creator,resolve_manual,save_draft,set_collaboration)
+ list_conversations,reconcile_manual_reply,reject_creator,resolve_manual,save_draft,set_collaboration)
 from lib.cycle_auto_reply import AutoReplies
 from lib.cycle_inbox import Inbox
 from lib.cycle_service import Service
@@ -28,6 +28,33 @@ class ConversationWorkbenchTests(unittest.TestCase):
  def test_default_human_queue_explains_reason(self):
   result=list_conversations(self.root,self.store,'human')
   self.assertEqual(result['total'],1);self.assertEqual(result['items'][0]['humanReasonLabel'],'链接打不开')
+ def test_manual_unknown_is_visible_and_only_original_intent_is_reconciled(self):
+  replies=AutoReplies(self.store)
+  request_id='manual-audit-unknown-001'
+  frozen=replies.prepare_manual(self.plan,'creator-1','999','Ciao',1,request_id)
+  self.store.db.execute("UPDATE service_reply SET state='unknown' WHERE id=?",(frozen['id'],))
+  detail=conversation_detail(self.root,self.store,'999')
+  self.assertEqual(detail['pendingManualReplies'],[{'id':frozen['id'],'kind':'manual',
+                                                    'requestId':request_id,'state':'unknown'}])
+  calls=[]
+  def verify(store,current,reply):
+   calls.append((reply['id'],reply['request_ref'],reply['state']))
+   store.db.execute("UPDATE service_reply SET state='confirmed' WHERE id=?",(reply['id'],))
+  result=reconcile_manual_reply(self.store,'999',request_id,verify=verify)
+  self.assertEqual(calls,[(frozen['id'],request_id,'unknown')])
+  self.assertEqual((result['state'],result['platformWrites'],result['realSends']),('confirmed',0,0))
+  with self.assertRaisesRegex(CycleError,'manual_reconcile_intent_missing'):
+   reconcile_manual_reply(self.store,'998',request_id,verify=verify)
+  with self.assertRaisesRegex(CycleError,'manual_reconcile_scope_invalid'):
+   reconcile_manual_reply(self.store,'999',request_id,market='br',verify=verify)
+
+ def test_manual_reconcile_does_not_dispatch_a_ready_intent(self):
+  replies=AutoReplies(self.store);request_id='manual-audit-ready-001'
+  frozen=replies.prepare_manual(self.plan,'creator-1','999','Ciao',1,request_id)
+  result=reconcile_manual_reply(self.store,'999',request_id,
+                                verify=lambda *_:self.fail('ready intent must not be dispatched'))
+  self.assertEqual(result['state'],'ready')
+  self.assertEqual(replies.get(frozen['id'])['state'],'ready')
  def _release(self,outcome):
   detail=conversation_detail(self.root,self.store,'999')
   request_id='release-'+outcome+'-0001'
@@ -77,6 +104,20 @@ class ConversationWorkbenchTests(unittest.TestCase):
   self.assertNotIn('processing',result['counts'])
   with self.assertRaisesRegex(CycleError,'conversation_query_invalid'):
    list_conversations(self.root,self.store,'processing')
+ def test_three_model_failures_are_visible_on_the_pending_conversation(self):
+  from lib.template_library import DEFAULT_AGENT_SETTING,save_agent_setting
+  enabled={key:value for key,value in DEFAULT_AGENT_SETTING.items() if key not in ('revision','updatedAt')}
+  save_agent_setting(self.store,self.plan,0,{**enabled,'enabled':True})
+  self.store.db.execute('DELETE FROM service_case')
+  self.store.db.execute("UPDATE relationship SET mode='auto'")
+  self.store.db.execute("UPDATE inbox_pending SET state='awaiting_content'")
+  for index in range(3):
+   self.store.db.execute("INSERT INTO agent_reply_decision_v2(decision_id,plan_id,market,creator_id,turn_id,"
+                         "guide_revision,input_hash,input_json,provider,model,mode,state,created_at) "
+                         "VALUES(?,?,?,?,?,1,'hash','{}','deepseek','test','production','unknown',?)",
+                         ('agent-decision-'+str(index)*24,self.plan,'it','creator-1','turn-'+'a'*24,NOW+index))
+  item=list_conversations(self.root,self.store,'agent')['items'][0]
+  self.assertEqual(item['queueStatusLabel'],'AI 模型连续失败，需检查')
  def test_detail_timeline_and_draft_revision(self):
   detail=conversation_detail(self.root,self.store,'999');self.assertEqual(detail['creator']['handle'],'alice');self.assertEqual(detail['timeline'][0]['text'],'Ho un problema')
   saved=save_draft(self.store,'999','Risposta',0);self.assertEqual(saved['revision'],1)

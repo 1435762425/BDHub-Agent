@@ -7,6 +7,8 @@ import tempfile
 import unittest
 from contextlib import closing
 from pathlib import Path
+from datetime import date
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'scripts'))
@@ -20,6 +22,10 @@ import importlib.util  # noqa: E402
 spec = importlib.util.spec_from_file_location('leads_run', ROOT / 'scripts/leads-run.py')
 leads_run = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(leads_run)
+receipt_spec = importlib.util.spec_from_file_location('migrate_lead_receipts',
+                                                     ROOT / 'scripts/migrate-lead-receipts.py')
+receipt_migration = importlib.util.module_from_spec(receipt_spec)
+receipt_spec.loader.exec_module(receipt_migration)
 
 
 def kalodata_body(rows):
@@ -144,6 +150,51 @@ class Locking(unittest.TestCase):
 
 
 class Execution(unittest.TestCase):
+    def test_legacy_ledger_requires_explicit_additive_receipt_migration(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path=Path(folder)/'var/kalodata-leads.sqlite';path.parent.mkdir()
+            with closing(sqlite3.connect(path)) as db,db:
+                db.executescript('CREATE TABLE leads_query(pid TEXT PRIMARY KEY,queried_at REAL,state TEXT,'
+                                 'window_end TEXT,leads INTEGER,note TEXT);'
+                                 'CREATE TABLE leads_page(pid TEXT,cursor TEXT,payload TEXT);'
+                                 'CREATE TABLE leads_attempt(pid TEXT);')
+            with self.assertRaisesRegex(ValueError,'leads_receipt_scope_migration_required'):
+                Ledger(folder)
+            self.assertEqual(set(receipt_migration.check(folder,'it')['pending']),
+                             {'leads_page_scope','leads_page_legacy_history'})
+            self.assertTrue(receipt_migration.apply(folder,'it')['ready'])
+            self.assertTrue(receipt_migration.apply(folder,'it')['ready'])
+            Ledger(folder).close()
+
+    def test_refresh_uses_new_window_and_preserves_previous_receipts(self):
+        class FirstDay(date):
+            @classmethod
+            def today(cls): return cls(2026, 9, 1)
+
+        class RefreshDay(date):
+            @classmethod
+            def today(cls): return cls(2026, 9, 9)
+
+        with tempfile.TemporaryDirectory() as folder:
+            pid = '1' * 19
+            lock = fixture(folder, [pid])
+            first = FakeProvider({pid: kalodata_body([creator('first_creator')])})
+            refreshed = FakeProvider({pid: kalodata_body([creator('new_creator')])})
+            with patch.object(leads_run, 'date', FirstDay):
+                old = leads_run.run(folder, limit=1, provider_factory=factory(first),
+                                    clock=lambda: 1000.0, browser_lock=lock)
+            with patch.object(leads_run, 'date', RefreshDay):
+                new = leads_run.run(folder, limit=1, provider_factory=factory(refreshed),
+                                    clock=lambda: 1000.0 + 8 * 86400, browser_lock=lock)
+            self.assertEqual((old['networkRequests'], new['networkRequests']), (1, 1))
+            self.assertEqual(refreshed.calls, [pid])
+            with closing(sqlite3.connect(Path(folder) / 'var/kalodata-leads.sqlite')) as db:
+                current = db.execute('SELECT payload FROM leads_page WHERE pid=?', (pid,)).fetchone()[0]
+                self.assertEqual(json.loads(current)['sourceRows'][0]['handle'], 'new_creator')
+                self.assertEqual(db.execute('SELECT count(*) FROM leads_page_scope WHERE pid=?', (pid,)).fetchone()[0], 2)
+                self.assertEqual(db.execute('SELECT count(*) FROM leads_page_legacy_history WHERE pid=?', (pid,)).fetchone()[0], 1)
+                self.assertEqual(db.execute('SELECT window_end FROM leads_query WHERE pid=?', (pid,)).fetchone()[0], '2026-09-07')
+
     def test_a_successful_run_records_leads_and_starts_the_refresh_clock(self):
         with tempfile.TemporaryDirectory() as folder:
             pids = ['1' * 19, '2' * 19]

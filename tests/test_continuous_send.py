@@ -144,6 +144,47 @@ class ContinuousSendTests(unittest.TestCase):
                 continuous.execute_once(self.root,self.store,authorized_now='short')
         finally:continuous.window_state,continuous._candidate=original_window,original_candidate
 
+    def test_reconcile_ignores_stop_and_window_but_never_claims_a_new_candidate(self):
+        with patch.object(continuous,'_candidate',side_effect=AssertionError('candidate_must_not_run')), \
+             patch.object(continuous,'window_state',side_effect=AssertionError('window_must_not_gate_readback')):
+            result=continuous.reconcile_once(self.root,self.store)
+        self.assertEqual(result['state'],'nothing_to_reconcile')
+        self.assertEqual(result['platformWrites'],0)
+
+    def test_reconcile_uses_read_only_runtime_and_cannot_dispatch_later_text(self):
+        base=candidate('c1','1729480061238089885')
+        base['card']['listId']='8650756273145355030'
+        base.update(executionMode='continuous-v1',conversationId='88',senderBindingHash='a'*64)
+        with self.store.tx():
+            self.store.db.execute('INSERT INTO cycle_delivery VALUES(?,?,?,?,?,?,?,?,?,?)',
+                ('delivery-unknown',self.plan,'c1',base['oecId'],base['pid'],base['source']['sourceId'],
+                 json.dumps(base),NOW,NOW+1800,'unknown'))
+            self.store.db.execute("INSERT INTO cycle_delivery_part(delivery_id,kind,request_ref,state) VALUES('delivery-unknown','card','card-ref','unknown')")
+            self.store.db.execute("INSERT INTO cycle_delivery_part(delivery_id,kind,request_ref,state) VALUES('delivery-unknown','text','text-ref','ready')")
+        seen={}
+        @contextmanager
+        def auth(_report,**options):
+            seen['readOnlyAuth']=options['read_only']
+            yield SimpleNamespace(),SimpleNamespace(),{},SimpleNamespace(),lambda:False,lambda:None
+        @contextmanager
+        def live(_binding,_report,**options):
+            seen['readOnlyRuntime']=options['read_only']
+            yield {'adapter':SimpleNamespace(),'reads':SimpleNamespace()}
+        def verify(_deliveries,_id,_runtime,authorize,_preflight,**options):
+            seen['verifyOnly']=options['verify_only']
+            with _runtime(base):pass
+            with self.assertRaisesRegex(Exception,'reconcile_dispatch_forbidden'):
+                authorize(base)
+            return {'state':'running'}
+        with patch('lib.second_live_runtime._authenticated',side_effect=auth), \
+             patch('lib.second_live_runtime.live_runtime',side_effect=live), \
+             patch.object(continuous,'execute',side_effect=verify), \
+             patch.object(continuous,'_candidate',side_effect=AssertionError('candidate_must_not_run')):
+            result=continuous.reconcile_once(self.root,self.store)
+        self.assertEqual(result['state'],'running',result)
+        self.assertEqual(result['platformWrites'],0)
+        self.assertEqual(seen,{'readOnlyAuth':True,'readOnlyRuntime':True,'verifyOnly':True})
+
     def test_live_history_uses_current_cooldown_not_the_retired_32_day_canary_rule(self):
         base={'identityVerified':True,'hasMore':False,'senderCounts':{
           'ourMessages':1,'creatorReplies':1,'showcaseNotifications':1,'otherOrUnknown':0},
