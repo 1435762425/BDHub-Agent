@@ -118,6 +118,36 @@ class ItalyImSessionTests(unittest.TestCase):
         self.assertEqual(old['events'],new['events']);self.assertNotIn('contents',old)
         self.assertEqual(new['contents'][0]['text'],'PRIVATE_MESSAGE_BODY');self.assertEqual(new['contents'][0]['format'],'text')
 
+    def test_history_page_uses_native_older_cursor_and_keeps_summary_compatible(self):
+        requests = []
+        def reply(command, sequence, kwargs):
+            if command == 608:
+                body = W.vb(1, info())
+            else:
+                fields = W.wire_fields(W.one(W.wire_fields(W.one(W.wire_fields(kwargs['data']), 8)), 301))
+                requests.append(fields)
+                body = W.vb(1, message()) + W.vi(2, 77) + W.vi(3, 1)
+            return SimpleNamespace(status_code=200, headers={}, content=envelope(command, sequence, body))
+        s, _, _, _ = session(HTTP(reply));conv = s.conversation('10', '100')
+        page = s.history_page(conv, cursor=99, limit=30)
+        self.assertEqual((W.one(requests[0], 4), W.one(requests[0], 5), W.one(requests[0], 6)), (1, 99, 30))
+        self.assertEqual((page['requestCursor'], page['nextCursor'], page['direction']), ('99', '77', 'older'))
+        self.assertEqual(len(page['bodySha256']), 64)
+        self.assertEqual(page['contents'][0]['text'], 'PRIVATE_MESSAGE_BODY')
+
+    def test_paged_history_requires_valid_native_cursor_but_hot_summary_stays_one_page(self):
+        for bad_cursor in (b'', W.vb(2, '77'), W.vi(2, 1 << 63)):
+            def reply(command, sequence, _):
+                body = W.vb(1, info()) if command == 608 else W.vb(1, message()) + bad_cursor + W.vi(3, 1)
+                return SimpleNamespace(status_code=200, headers={}, content=envelope(command, sequence, body))
+            s, _, _, _ = session(HTTP(reply));conv = s.conversation('10', '100')
+            self.assertTrue(s.history_summary(conv)['hasMore'])
+            with self.assertRaises(ItalyImReadError):s.history_page(conv)
+        s, _, http, _ = session();conv = s.conversation('10', '100')
+        for kwargs in ({'cursor': True}, {'cursor': -1}, {'limit': 0}, {'limit': 51}):
+            with self.assertRaises(ItalyImReadError):s.history_page(conv, **kwargs)
+        self.assertEqual(len(http.calls), 1)
+
     def test_mx_host_and_cookie_or_write_command_are_rejected_before_http(self):
         original=W.READ_HOST;http=HTTP()
         with self.assertRaises(ItalyImReadError):ItalyImReadSession(auth(host=original),{},http=http)

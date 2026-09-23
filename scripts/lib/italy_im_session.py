@@ -318,12 +318,25 @@ class ItalyImReadSession:
         self.on_update()
         return result
 
-    def history_summary(self, conversation, *, include_sender_counts=False, include_events=False, include_contents=False):
+    def history_page(self, conversation, *, cursor=0, limit=20):
+        """Read one OLDER page with the native cursor, never derive it from message IDs.
+
+        Protocol evidence: retained 12c8c68... SDK, MessagesInConversationRequestBody
+        fields 4/5/6 = direction/anchor_index/limit; ResponseBody fields 2/3 =
+        next_cursor/has_more. MessageDirection.OLDER = 1.
+        """
+        return self.history_summary(conversation, include_events=True, include_contents=True,
+                                    cursor=cursor, limit=limit, include_pagination=True)
+
+    def history_summary(self, conversation, *, include_sender_counts=False, include_events=False,
+                        include_contents=False, cursor=0, limit=20, include_pagination=False):
         if not isinstance(conversation, VerifiedConversation) or self.verified.get(conversation.conversation_id) is not conversation:
             raise ItalyImReadError("im_conversation_unverified")
+        if type(cursor) is not int or not 0 <= cursor <= (1 << 63) - 1 or type(limit) is not int or not 1 <= limit <= 50:
+            raise ItalyImReadError("im_input_invalid")
         wire = self.wire
         request = (wire.vb(1, conversation.full_cid) + wire.vi(2, conversation.conversation_type)
-                   + wire.vi(3, int(conversation.conversation_id)) + wire.vi(4, 1) + wire.vi(5, 0) + wire.vi(6, 20))
+                   + wire.vi(3, int(conversation.conversation_id)) + wire.vi(4, 1) + wire.vi(5, cursor) + wire.vi(6, limit))
         body, _, _ = self._read(301, request)
         try:
             decoded = wire.wire_fields(body)
@@ -336,6 +349,12 @@ class ItalyImReadSession:
             if type(more) is not int or more not in (0, 1):
                 raise ItalyImReadError("im_response_invalid")
             result = {"messageCount": len(rows), "hasMore": bool(more), "identityVerified": True, "messageBodiesStored": False}
+            if include_pagination:
+                next_cursor = wire.one(decoded, 2, 0 if not more else None)
+                if type(next_cursor) is not int or not 0 <= next_cursor <= (1 << 63) - 1 or len(rows) > limit:
+                    raise ItalyImReadError("im_response_invalid")
+                result.update(requestCursor=str(cursor), nextCursor=str(next_cursor), direction="older",
+                              pageLimit=limit, bodySha256=hashlib.sha256(body).hexdigest())
         except ItalyImReadError:
             raise
         except Exception:

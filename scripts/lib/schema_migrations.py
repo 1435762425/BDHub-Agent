@@ -1041,6 +1041,29 @@ CREATE TABLE IF NOT EXISTS agent_reply_simulation_turn(
 """)
 
 
+SECOND_CYCLE_INBOX_HISTORY = Migration(19, "inbox_history_coverage_v1", """
+CREATE TABLE IF NOT EXISTS inbox_history_checkpoint(
+ plan_id TEXT NOT NULL, cid TEXT NOT NULL, oec TEXT NOT NULL,
+ identity_key TEXT NOT NULL, next_cursor TEXT NOT NULL,
+ state TEXT NOT NULL, pages INTEGER NOT NULL, started_at REAL NOT NULL,
+ updated_at REAL NOT NULL, PRIMARY KEY(plan_id,cid)
+);
+CREATE TABLE IF NOT EXISTS inbox_history_page(
+ plan_id TEXT NOT NULL, cid TEXT NOT NULL, page_number INTEGER NOT NULL,
+ request_cursor TEXT NOT NULL, next_cursor TEXT NOT NULL, has_more INTEGER NOT NULL,
+ message_count INTEGER NOT NULL, message_ids_hash TEXT NOT NULL,
+ body_sha256 TEXT NOT NULL, added INTEGER NOT NULL, contents_added INTEGER NOT NULL,
+ observed_at REAL NOT NULL, PRIMARY KEY(plan_id,cid,page_number),
+ UNIQUE(plan_id,cid,request_cursor)
+);
+""")
+
+
+SECOND_CYCLE_INBOX_HISTORY_DEFERRED = Migration(20, "inbox_history_hot_handoff_v1", """
+ALTER TABLE inbox_history_page ADD COLUMN deferred_to_hot INTEGER NOT NULL DEFAULT 0;
+""")
+
+
 DATABASES = {
     "catalog-links": ("catalog-links.sqlite", (CATALOG_LINKS,)),
     "second-cycle": ("second-cycle.sqlite", (SECOND_CYCLE, SECOND_CYCLE_INDEXES,
@@ -1059,7 +1082,9 @@ DATABASES = {
                                                 SECOND_CYCLE_MARKET_TEMPLATE_SCOPE,
                                                 SECOND_CYCLE_MARKET_READ_MODEL,
                                                 SECOND_CYCLE_WORKFLOW_RESOURCES,
-                                                SECOND_CYCLE_AGENT_CONVERSATION)),
+                                                SECOND_CYCLE_AGENT_CONVERSATION,
+                                                SECOND_CYCLE_INBOX_HISTORY,
+                                                SECOND_CYCLE_INBOX_HISTORY_DEFERRED)),
 }
 
 REGISTRY_SQL = """

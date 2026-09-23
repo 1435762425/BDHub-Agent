@@ -2,13 +2,14 @@ import sqlite3
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 from contextlib import closing
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
-from lib.schema_migrations import apply_all, check_all  # noqa: E402
+from lib.schema_migrations import DATABASES, apply_all, check_all  # noqa: E402
 
 
 class SchemaMigrations(unittest.TestCase):
@@ -27,7 +28,7 @@ class SchemaMigrations(unittest.TestCase):
     def test_check_is_read_only_and_apply_is_idempotent(self):
         before = check_all(self.root)
         self.assertFalse(before["ready"])
-        self.assertEqual([len(state["pending"]) for state in before["databases"]],[1,18])
+        self.assertEqual([len(state["pending"]) for state in before["databases"]],[1,20])
         # A check must not create its own registry.
         with closing(sqlite3.connect(self.root / "var" / "catalog-links.sqlite")) as db:
             self.assertFalse(db.execute("SELECT 1 FROM sqlite_master WHERE name='agent_schema_migration'").fetchone())
@@ -63,6 +64,22 @@ class SchemaMigrations(unittest.TestCase):
             self.assertTrue(db.execute("SELECT 1 FROM sqlite_master WHERE name='creator_collaboration_current'").fetchone())
             self.assertTrue(db.execute("SELECT 1 FROM sqlite_master WHERE name='continuous_send_control'").fetchone())
             self.assertTrue(db.execute("SELECT 1 FROM sqlite_master WHERE name='taplink_reconcile_attempt'").fetchone())
+            self.assertTrue(db.execute("SELECT 1 FROM sqlite_master WHERE name='inbox_history_checkpoint'").fetchone())
+            self.assertTrue(db.execute("SELECT 1 FROM sqlite_master WHERE name='inbox_history_page'").fetchone())
+            self.assertIn('deferred_to_hot', {r[1] for r in db.execute('PRAGMA table_info(inbox_history_page)')})
+
+    def test_v19_upgrade_preserves_existing_history_page(self):
+        filename, migrations = DATABASES['second-cycle']
+        with patch.dict(DATABASES, {'second-cycle': (filename, migrations[:-1])}):
+            apply_all(self.root)
+        path = self.root / 'var' / filename
+        with closing(sqlite3.connect(path)) as db, db:
+            db.execute("INSERT INTO inbox_history_page VALUES('plan','10',1,'0','80',1,5,'ids','body',0,0,123)")
+        result = apply_all(self.root)
+        self.assertTrue(result['ready'])
+        with closing(sqlite3.connect(path)) as db:
+            self.assertEqual(db.execute('SELECT request_cursor,next_cursor,message_count,deferred_to_hot FROM inbox_history_page').fetchone(),
+                             ('0', '80', 5, 0))
 
     def test_missing_database_is_never_created_by_check_or_apply(self):
         missing = self.root / "var" / "second-cycle.sqlite"
