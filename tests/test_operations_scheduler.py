@@ -404,11 +404,17 @@ class StageWiring(unittest.TestCase):
             (root/'config/operations-policy.json').write_text((ROOT/'config/operations-policy.json').read_text())
             with closing(sqlite3.connect(root/'var/global-source.sqlite')) as db,db:
                 db.executescript('CREATE TABLE global_source_run(id TEXT,scope TEXT,state TEXT,updated REAL,identity_unchanged INTEGER);'
-                  'CREATE TABLE global_source_operator_acceptance(run_id TEXT,accepted_at REAL);')
+                  'CREATE TABLE global_source_operator_acceptance(run_id TEXT,accepted_at REAL);'
+                  'CREATE TABLE global_source_head(scope_hash TEXT,run_id TEXT);')
                 db.execute("INSERT INTO global_source_run VALUES('baseline',?,'completed',?,1)",
                            (json.dumps({'market':'it','partitionMode':'category_l1_v1'}),NOW-90*86400))
+                db.execute("INSERT INTO global_source_head VALUES('scope','baseline')")
             self.assertEqual(full_catalog_collection_mode(root,'it',NOW)['mode'],'plain')
             self.assertEqual(full_catalog_collection_mode(root,'it',NOW)['reason'],'operator_plain_only')
+            with closing(sqlite3.connect(root/'var/global-source.sqlite')) as db,db:
+                db.execute("DELETE FROM global_source_head")
+            with self.assertRaisesRegex(ValueError,'it_plain_baseline_unavailable'):
+                full_catalog_collection_mode(root,'it',NOW)
         with tempfile.TemporaryDirectory() as folder:
             root=Path(folder);(root/'var').mkdir();(root/'config').mkdir()
             (root/'config/operations-policy.json').write_text((ROOT/'config/operations-policy.json').read_text())

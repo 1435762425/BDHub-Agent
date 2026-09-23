@@ -56,6 +56,11 @@ def full_catalog_collection_mode(root, market, now, *, policy=None):
                      AND r.state IN ('completed','accepted_partial') AND r.identity_unchanged=1""",
                 (market,),
             ).fetchone()
+            head = (db.execute(
+                """SELECT r.scope FROM global_source_head h JOIN global_source_run r ON r.id=h.run_id
+                   WHERE json_extract(r.scope,'$.market')=? AND r.state IN ('completed','accepted_partial')
+                     AND r.identity_unchanged=1""", (market,),
+            ).fetchone() if market == "it" else None)
     except sqlite3.Error as error:
         # A transient lock or incompatible history must never silently expand a weekly read into
         # the expensive category-wide crawl.  Preserve the published head and surface the blocker.
@@ -66,6 +71,11 @@ def full_catalog_collection_mode(root, market, now, *, policy=None):
             raise ValueError("it_plain_baseline_unavailable")
         return {"mode": "category", "reason": "market_onboarding", "lastCategoryAt": None}
     if market == "it":
+        try:
+            if not head or json.loads(head[0]).get("partitionMode") != "category_l1_v1":
+                raise ValueError("it_plain_baseline_unavailable")
+        except (TypeError, json.JSONDecodeError):
+            raise ValueError("it_plain_baseline_unavailable") from None
         return {"mode": "plain", "reason": "operator_plain_only", "lastCategoryAt": float(last)}
     age = max(0.0, float(now) - float(last))
     threshold = policy["fullManagedCategoryRefreshDays"] * 86400
