@@ -53,6 +53,7 @@
 | Agent 与系统 | [Agent runtime](architecture/agent-runtime.md)、[系统设计](architecture/system-design.md) |
 | 自动运营首页与持续工作流 | [开发计划 v1](architecture/automated-operations-workflow-v1.md) |
 | 全市场统一前端、并发与性能整理 | [开发计划 v1](architecture/multimarket-ui-runtime-hardening-plan-v1.md) |
+| 四市场首次正式全量启动与持续监测 | [启动、修复与监测计划（2026-09-23）](architecture/four-market-production-launch-plan-20260923.md) |
 
 ### 实现与验收证据
 
