@@ -305,6 +305,8 @@ class GlobalSources:
                data['total']!=run['reported_total'] or request_payload!=list_request(page,run['reported_total']) or \
                not self.db.execute('SELECT 1 FROM global_source_page WHERE run_id=? AND page=?',(id,page)).fetchone():
                 raise GlobalSourceError('partial_query_repair_invalid')
+            if len(cleaned)>request_payload['page_size']:
+                raise GlobalSourceError('page_size_mismatch')
             added=0;now=self.clock()
             for product in cleaned:
                 pid=product['product_id']
