@@ -9,7 +9,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(ROOT / "scripts"))
 
-from lib.operations_workflow import create_run, request_stop, save_setting, status  # noqa:E402
+from lib.operations_workflow import create_run, request_stop, resume_short_names, save_setting, status  # noqa:E402
 from lib.second_cycle import CycleError, CycleStore  # noqa:E402
 
 
@@ -24,7 +24,7 @@ def request_stop_for_market(store, market, run_id, expected_state="running"):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=("status", "save", "run", "stop"))
+    parser.add_argument("action", choices=("status", "save", "run", "stop", "resume-short-names"))
     parser.add_argument("--json")
     args = parser.parse_args()
     try:
@@ -50,10 +50,13 @@ def main():
                                     request_id=body.get("requestId"),only_stage=only,sources=sources)
                 created=result
                 result = status(store, market) | {"created": created}
-            else:
+            elif args.action == "stop":
                 result = request_stop_for_market(store, market, body.get("runId"), body.get("expectedState", "running"))
                 result = status(store, market) | {"stopped": result}
-        if args.action == "run":
+            else:
+                resumed = resume_short_names(store, market, body.get("runId"), body.get("requestId"))
+                result = status(store, market) | {"resumed": resumed}
+        if args.action in ("run", "resume-short-names"):
             from lib.operations_scheduler import scheduler_state,start_scheduler
             if not scheduler_state(ROOT)['running']:start_scheduler(ROOT)
         print(json.dumps(result, ensure_ascii=False))

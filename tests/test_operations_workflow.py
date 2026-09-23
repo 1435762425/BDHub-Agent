@@ -9,7 +9,7 @@ from zoneinfo import ZoneInfo
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
-from lib.operations_workflow import (create_run, finish_stage, save_setting, setting, start_stage,
+from lib.operations_workflow import (create_run, finish_stage, resume_short_names, save_setting, setting, start_stage,
                                      status, update_checkpoint)  # noqa:E402
 from lib.schema_migrations import apply_database  # noqa:E402
 from lib.second_cycle import CycleError, CycleStore  # noqa:E402
@@ -108,6 +108,67 @@ class OperationsWorkflowTests(unittest.TestCase):
         self.assertEqual(self.store.db.execute("SELECT state FROM workflow_run WHERE run_id=?",(run["runId"],)).fetchone()[0],"queued")
         stopped=_cli.request_stop_for_market(self.store,"it",run["runId"],"queued")
         self.assertEqual(stopped["market"],"it")
+
+    def _short_name_blocked_run(self, *, writes=0, error="catalog_short_names_incomplete"):
+        run = create_run(self.store, market="it", trigger_source="manual", scheduled_at=NOW + 86400,
+                         request_id="workflow-short-name-recovery-0001", sources=["campaign"])
+        start_stage(self.store, run["runId"], "catalog")
+        finish_stage(self.store, run["runId"], "catalog", state="completed", item_count=5,
+                     scope={"campaign": 5}, platform_writes=2)
+        generation = status(self.store)["current"]["stages"][1]["outputGenerationId"]
+        start_stage(self.store, run["runId"], "taplink_prepare", input_generation_id=generation)
+        finish_stage(self.store, run["runId"], "taplink_prepare", state="needs_human",
+                     platform_writes=writes, error_code=error)
+        return run["runId"]
+
+    def test_short_name_recovery_requeues_original_stage_once_and_preserves_evidence(self):
+        run_id = self._short_name_blocked_run()
+        resumed = resume_short_names(self.store, "it", run_id, "resume-short-names-0001", root=self.root)
+        self.assertFalse(resumed["duplicate"])
+        self.assertEqual(resumed["state"], "running")
+        self.assertEqual(resumed["stages"][2]["state"], "queued")
+        self.assertEqual(resumed["stages"][1]["platformWrites"], 2)
+        self.assertEqual(resumed["stages"][1]["state"], "completed")
+        self.assertEqual(resumed["stages"][3]["state"], "waiting_upstream")
+        evidence = self.store.db.execute(
+            "SELECT value_json FROM workflow_checkpoint WHERE run_id=? AND stage='taplink_prepare' "
+            "AND checkpoint_key='recovery:catalog_short_names_incomplete'", (run_id,),
+        ).fetchone()[0]
+        self.assertIn('catalog_short_names_incomplete', evidence)
+        self.assertTrue(resume_short_names(self.store, "it", run_id,
+                                           "resume-short-names-0001", root=self.root)["duplicate"])
+        with self.assertRaisesRegex(CycleError, "recovery_already_requested"):
+            resume_short_names(self.store, "it", run_id, "resume-short-names-0002", root=self.root)
+
+    def test_short_name_recovery_rejects_unresolved_gap_and_prior_writes(self):
+        from unittest.mock import patch
+        run_id = self._short_name_blocked_run()
+        with patch("lib.catalog_names.gap", return_value={"scope": 1, "ready": 0, "missing": 1,
+                                                          "invalidSourceTitles": 0}):
+            with self.assertRaisesRegex(CycleError, "catalog_short_names_incomplete"):
+                resume_short_names(self.store, "it", run_id, "resume-short-names-0003", root=self.root)
+        self.assertEqual(status(self.store)["current"]["state"], "needs_human")
+        with self.store.tx():
+            self.store.db.execute("UPDATE workflow_stage_run SET platform_writes=1 WHERE run_id=? "
+                                  "AND stage='taplink_prepare'", (run_id,))
+        with self.assertRaisesRegex(CycleError, "recovery_state_invalid"):
+            resume_short_names(self.store, "it", run_id, "resume-short-names-0003", root=self.root)
+
+    def test_short_name_recovery_rejects_other_error_market_and_active_claim(self):
+        run_id = self._short_name_blocked_run()
+        with self.assertRaisesRegex(CycleError, "market_mismatch"):
+            resume_short_names(self.store, "br", run_id, "resume-short-names-0004", root=self.root)
+        stage_id = status(self.store)["current"]["stages"][2]["stageRunId"]
+        with self.store.tx():
+            self.store.db.execute("INSERT INTO workflow_stage_claim VALUES(?,?,?,?,?,?,?)",
+                                  (stage_id, "test-owner", 1, NOW + 300, NOW, 12345, NOW))
+        with self.assertRaisesRegex(CycleError, "recovery_claim_active"):
+            resume_short_names(self.store, "it", run_id, "resume-short-names-0004", root=self.root)
+        with self.store.tx():
+            self.store.db.execute("DELETE FROM workflow_stage_claim WHERE stage_run_id=?", (stage_id,))
+            self.store.db.execute("UPDATE workflow_run SET error_code='result_unknown' WHERE run_id=?", (run_id,))
+        with self.assertRaisesRegex(CycleError, "recovery_state_invalid"):
+            resume_short_names(self.store, "it", run_id, "resume-short-names-0004", root=self.root)
 
 
 if __name__ == "__main__":

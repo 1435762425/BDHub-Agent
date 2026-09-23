@@ -2,6 +2,11 @@
 
 更新时间：2026-09-23（Asia/Shanghai）。本文件是当前开发交接入口；产品规则以 [项目文档](../PROJECT.md) 为准，技术结构以 [技术文档](../TECHNICAL.md) 为准。动态数量是本次只读快照，后续以 `var/` 台账和页面 API 回读为准。下方旧日期章节均为历史快照，不代表当前开关与数量。
 
+## 0X. 2026-09-23 20:56 IT 原 Campaign 工作流恢复
+
+- IT `workflow-038da43ec820264f5b155e183fdd` 的 `taplink_prepare` 实际停在 `needs_human/catalog_short_names_incomplete`，该阶段平台写入 0；原 `catalog` 已完成并发布 generation，后续阶段仍等待上游。73 个短名补齐后实时检查为 scope538、ready538、missing0、无无效来源标题；恢复前 workflow claim/resource 均为 0。已为这一精确的写入前停点实现持久幂等恢复入口，保留原错误、时间和零写入证据在 checkpoint。Python 全量1,148项与文档检查通过。
+- 在本机第二周期库在线备份 `var/backups/state/second-cycle-before-it-short-name-recovery-20260923T1253Z.sqlite`（integrity ok）后，以请求 `it-short-names-recovery-20260923-001` 原子重排原 run 的 TapLink 阶段；Campaign 的25次平台写入和原 generation 未重跑。新 scheduler PID95251 已领取该阶段，先完成只读卡核验和短名步骤，20:55 起正在同阶段创建标准卡。此处是**运行中**，不是 TapLink 完成；后续 Kalodata、OECID、发送池依次等待本阶段真实结算。IT 按分类全托采集保持关闭，旧完整 head 和停止 run 保留。
+
 ## 0W. 2026-09-23 20:36 停止 IT 类目并转 Campaign
 
 - 用户明确要求不再按分类抓 IT 全托货盘、推进下一步。IT 类目父/子进程组已安全停止，来源锁释放；在在线备份 `var/backups/state/global-source-before-it-operator-stop-20260923T123540Z.sqlite`（integrity ok）后，原未发布 run `it-global-20260921-9bbc623e09e9` 以确定性操作事件结算 `stopped/operator_stopped_category_collection`，保留1701页、25,410商品、16/28已完成类和第17类断点，不发布为完整覆盖。旧完整 head `it-global-cat-20260921-01` 保留。IT `fullCatalogWeeklyEnabled=false`/revision3、自动运营总开关仍开；scheduler 不再选 `selected` 来源或自动续跑这个已停止 run，UK 全托不受影响。

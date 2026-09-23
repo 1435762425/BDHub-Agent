@@ -240,6 +240,80 @@ def request_stop(store, run_id, expected_state="running"):
     return run_payload(store, run_id) | {"duplicate": False}
 
 
+def resume_short_names(store, market, run_id, request_id, *, root=ROOT):
+    """Requeue the original IT TapLink stage after its pre-write name gap is filled."""
+    _required(store)
+    market = _market(market)
+    request_id = _request_id(request_id)
+    if not isinstance(run_id, str):
+        raise CycleError("workflow_recovery_scope_invalid")
+    checkpoint_key = "recovery:catalog_short_names_incomplete"
+    with store.tx():
+        run = store.db.execute("SELECT * FROM workflow_run WHERE run_id=?", (run_id,)).fetchone()
+        if not run:
+            raise CycleError("workflow_run_missing")
+        if run["market"] != market:
+            raise CycleError("workflow_market_mismatch")
+        if market != "it":
+            raise CycleError("workflow_recovery_scope_invalid")
+        prior = store.db.execute(
+            "SELECT value_json FROM workflow_checkpoint WHERE run_id=? AND stage='taplink_prepare' AND checkpoint_key=?",
+            (run_id, checkpoint_key),
+        ).fetchone()
+        if prior:
+            if json.loads(prior["value_json"])["requestId"] != request_id:
+                raise CycleError("workflow_recovery_already_requested")
+            return run_payload(store, run_id) | {"duplicate": True}
+        stages = list(store.db.execute(
+            "SELECT * FROM workflow_stage_run WHERE run_id=? ORDER BY position", (run_id,),
+        ))
+        by_stage = {row["stage"]: row for row in stages}
+        current = by_stage.get("taplink_prepare")
+        catalog = by_stage.get("catalog")
+        if (run["state"] != "needs_human" or run["error_code"] != "catalog_short_names_incomplete"
+                or run["stop_requested_at"] is not None
+                or json.loads(run["applicable_sources_json"]) != ["campaign"]
+                or not current or current["state"] != "needs_human"
+                or current["error_code"] != "catalog_short_names_incomplete"
+                or current["platform_writes"] != 0 or current["output_generation_id"] is not None
+                or not catalog or catalog["state"] != "completed"
+                or not catalog["output_generation_id"]
+                or current["input_generation_id"] != catalog["output_generation_id"]
+                or any(row["state"] not in STAGE_SUCCESS for row in stages[:current["position"]])
+                or any(row["state"] != "waiting_upstream" for row in stages[current["position"] + 1:])):
+            raise CycleError("workflow_recovery_state_invalid")
+        if store.db.execute("SELECT 1 FROM workflow_stage_claim WHERE stage_run_id=?",
+                            (current["stage_run_id"],)).fetchone():
+            raise CycleError("workflow_recovery_claim_active")
+        if store.db.execute(
+            "SELECT 1 FROM workflow_run WHERE market=? AND run_id!=? AND state IN ('queued','running','stop_requested')",
+            (market, run_id),
+        ).fetchone():
+            raise CycleError("workflow_run_active")
+        from lib.catalog_names import gap
+        names = gap(root, market)
+        if names["missing"] != 0 or names["invalidSourceTitles"] != 0:
+            raise CycleError("catalog_short_names_incomplete")
+        now = store.clock()
+        evidence = {"requestId": request_id, "previousErrorCode": current["error_code"],
+                    "previousStartedAt": current["started_at"], "previousFinishedAt": current["finished_at"],
+                    "previousPlatformWrites": current["platform_writes"], "shortNames": {
+                        "scope": names["scope"], "ready": names["ready"], "missing": names["missing"]}}
+        store.db.execute(
+            "INSERT INTO workflow_checkpoint VALUES(?,?,?,?,?)",
+            (run_id, "taplink_prepare", checkpoint_key, encoded(evidence), now),
+        )
+        store.db.execute(
+            "UPDATE workflow_stage_run SET state='queued',started_at=NULL,finished_at=NULL,error_code=NULL "
+            "WHERE stage_run_id=?", (current["stage_run_id"],),
+        )
+        store.db.execute(
+            "UPDATE workflow_run SET state='running',finished_at=NULL,error_code=NULL WHERE run_id=?",
+            (run_id,),
+        )
+    return run_payload(store, run_id) | {"duplicate": False}
+
+
 def start_stage(store, run_id, stage, *, input_generation_id=None):
     _required(store)
     if stage not in STAGES:

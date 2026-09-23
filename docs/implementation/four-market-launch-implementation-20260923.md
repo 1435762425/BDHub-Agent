@@ -78,6 +78,11 @@
 
 - 四市场 `/api/send` 均已回读 `waiting_capacity`、本地滚动24小时新联系 `500/500`；发送worker、四市场收信及 scheduler 仍存活。最早本地额度释放分别是北京时间2026-09-24 IT16:30:07、BR16:30:31、MY16:34:01、UK16:30:11。到时仍须核对发送窗口、原冻结意图、关系/材料和平台额度；不是预告平台一定接受发送。IT有2条隔离未决建会话原意图，其他三个市场当前发送unknown0。30位/分钟**每市场**目标仍未完成，下一窗口按真实文字回查的完整分钟重新测量。
 
+## 20:56 IT Campaign 原工作流续跑
+
+- `workflow-038da43ec820264f5b155e183fdd` 的 `catalog` 阶段已发布原 generation，111个活动、9,049条 Offer、平台写入25次且无加入 unknown。`taplink_prepare` 因调度器调用必填 `--market` 的 `catalog-names.py` 时漏参，停为 `needs_human/catalog_short_names_incomplete`；该阶段写入0、后续阶段未启动。修正固定 argv 后，另外按原商品范围补齐73个短名，实时 status 为 scope538/ready538/missing0/invalidSourceTitles0。
+- 新增只服务 IT Campaign 这一精确停点的 `resume-short-names`：事务内核对原 run、上游 generation、阶段顺序、零写入、无 claim 和当前短名缺口，持久记录恢复 requestId、旧错误与旧时间；只把原 TapLink 阶段恢复为 queued，重复请求幂等，不重新运行 Campaign。已在备份 `var/backups/state/second-cycle-before-it-short-name-recovery-20260923T1253Z.sqlite`（integrity ok）后执行恢复。新 scheduler PID95251 已领取原阶段，20:55 只读卡核验完成并开始标准卡创建；真实阶段终态及 Kalodata/OECID/发送池仍待回读。全量Python1,148项、文档检查通过。
+
 ## 20:36 用户停止 IT 按类目全托采集，转入 Campaign
 
 - 用户两次明确要求停止 IT 完整/按类目全托采集并推进下一步。原 `resume-global-category.py` 父PID87908与 `collect-global-opportunity.py` 子PID87909 属同一新会话进程组，整组收到SIGTERM并在当前页边界退出；两把锁、ACC9 profile均释放。没有删除来源库或重建 run。状态停在原 run 1701页/25,410商品/16个类目完成，旧完整head仍为 `it-global-cat-20260921-01`。在线备份 `var/backups/state/global-source-before-it-operator-stop-20260923T123540Z.sqlite` 校验 integrity ok 后，新领域操作 `stop_unpublished_category()` 原子写 `stopped/operator_stopped_category_collection`、当前分区同态和操作事件；所有已读页与未完成断点留存，不发布半成品。IT 全托自动刷新开关由revision2保存为revision3/关闭，自动运营与发送授权不变；UK全托未修改。
