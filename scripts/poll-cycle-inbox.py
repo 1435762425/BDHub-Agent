@@ -39,7 +39,19 @@ def tick(limit):
    if targets:
     with _authenticated(report,stopped=lambda:STOP) as (_,_,_,auth,maintenance,available):
      reader=ItalyImReadSession(auth,report,maintenance_due=maintenance,stopped=lambda:STOP)
-     for _,cid,oec,kind in targets[:limit]:
+     recent=reader.initialize(0)['conversations']
+     checked={cid:stamp for stamp,cid,_,_ in targets}
+     hot=[];seen=set()
+     for item in recent:
+      cid=str(item.get('conversationId') or '');oec=str(item.get('oecId') or '')
+      if item.get('conversationType')!=2 or not cid.isdigit() or not oec.isdigit() or cid in seen:continue
+      if checked.get(cid,0)>store.clock()-90:continue
+      if not store.db.execute('SELECT 1 FROM relationship WHERE plan_id=? AND oec=?',(plan,oec)).fetchone():continue
+      seen.add(cid);hot.append((0,cid,oec,2))
+     hot=hot[:max(1,limit//2)]
+     selected=hot+[row for row in targets if row[1] not in {item[1] for item in hot}][:limit-len(hot)]
+     report['recentConversations']=len(recent)
+     for _,cid,oec,kind in selected:
       if STOP or (ROOT/'var/cycle-inbox.pause').exists() or store._plan(plan)['state']!='active':break
       conv=reader.conversation(cid,oec,conversation_type=kind)
       history=reader.history_summary(conv,include_events=True,include_contents=True)
@@ -57,7 +69,7 @@ def tick(limit):
  return report
 
 def main():
- p=argparse.ArgumentParser(description=__doc__);p.add_argument('--worker',action='store_true');p.add_argument('--limit',type=int,default=6);p.add_argument('--interval',type=int,default=60);p.add_argument('--stop',type=Path,help='stop request written by the launcher; honored between rounds');a=p.parse_args()
+ p=argparse.ArgumentParser(description=__doc__);p.add_argument('--worker',action='store_true');p.add_argument('--limit',type=int,default=12);p.add_argument('--interval',type=int,default=30);p.add_argument('--stop',type=Path,help='stop request written by the launcher; honored between rounds');a=p.parse_args()
  if not 1<=a.limit<=12 or a.interval<30:p.error('limit 1..12; interval >=30')
  if a.stop is not None and not a.stop.resolve().is_relative_to(ROOT/'var'):p.error('stop must live under var')
  signal.signal(signal.SIGTERM,stop);signal.signal(signal.SIGINT,stop)

@@ -370,31 +370,35 @@ def intent_payload(row):
             "errorCode": row["error_code"], "createdAt": row["created_at"]}
 
 
+def recover_abandoned(store, *, now=None):
+    """Settle dead maintenance owners even when no new worker can be launched."""
+    _required(store)
+    stamp=store.clock() if now is None else float(now)
+    recovered=[]
+    with store.tx():
+        active=list(store.db.execute("SELECT * FROM account_maintenance_intent WHERE state IN ('draining','running')"))
+        for current in active:
+            checkpoint=json.loads(current['checkpoint_json'] or '{}')
+            worker_pid=checkpoint.get('workerPid')
+            abandoned=(worker_pid is not None and not _worker_alive(worker_pid)) or (
+                worker_pid is None and current['started_at'] is not None and current['started_at']<stamp-60)
+            if not abandoned:continue
+            store.db.execute("UPDATE account_maintenance_intent SET state='failed_known',finished_at=?,error_code=?,checkpoint_json=? WHERE intent_id=?",
+                             (stamp,'account_maintenance_worker_exited',encoded({'stage':'failed_known','errorCode':'account_maintenance_worker_exited'}),current['intent_id']))
+            recovered.append(current['intent_id'])
+    return recovered
+
+
 def claim_next(store, *, now=None, active_writes=False):
     """Claim globally: communications wins when both roles are due; only one intent may run."""
     _required(store)
     stamp = store.clock() if now is None else float(now)
     if active_writes:
         return None
+    recover_abandoned(store,now=stamp)
     with store.tx():
-        active = list(store.db.execute(
-            "SELECT * FROM account_maintenance_intent WHERE state IN ('draining','running')"
-        ))
-        for current in active:
-            checkpoint = json.loads(current["checkpoint_json"] or "{}")
-            worker_pid = checkpoint.get("workerPid")
-            abandoned = (worker_pid is not None and not _worker_alive(worker_pid)) or (
-                worker_pid is None and current["started_at"] is not None and current["started_at"] < stamp - 60
-            )
-            if not abandoned:
-                return None
-            store.db.execute(
-                "UPDATE account_maintenance_intent SET state='failed_known',finished_at=?,error_code=?,"
-                "checkpoint_json=? WHERE intent_id=?",
-                (stamp, "account_maintenance_worker_exited",
-                 encoded({"stage": "failed_known", "errorCode": "account_maintenance_worker_exited"}),
-                 current["intent_id"]),
-            )
+        if store.db.execute("SELECT 1 FROM account_maintenance_intent WHERE state IN ('draining','running')").fetchone():
+            return None
         rows = list(store.db.execute(
             "SELECT * FROM account_maintenance_intent WHERE state='queued' AND scheduled_at<=?",
             (stamp,),
@@ -492,6 +496,9 @@ def execute_claimed(store, root, intent_id, adapter=None):
                 "WHERE intent_id=?", (state, store.clock(), code,
                 encoded({"stage": state, "errorCode": code}), intent_id),
             )
+    finally:
+        if hasattr(adapter,'release_drain'):
+            adapter.release_drain()
     return intent_payload(store.db.execute("SELECT * FROM account_maintenance_intent WHERE intent_id=?",
                                            (intent_id,)).fetchone())
 

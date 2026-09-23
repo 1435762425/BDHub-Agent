@@ -243,6 +243,7 @@ class ProjectAccountIdentityAdapter:
     def __init__(self, root):
         self.root = Path(root).resolve()
         self.context = None
+        self._drain_lease = None
 
     def prepare(self, market, account, role):
         from lib.market_accounts import load_config
@@ -253,9 +254,27 @@ class ProjectAccountIdentityAdapter:
                         "fullManaged": bool((pair.get("catalogCapabilities") or {}).get("fullManaged"))}
 
     def drain(self, account):
-        # Candidates use isolated profiles and the global maintenance queue is single-concurrency.
-        # Existing task drain/fence remains enforced by each business worker before it can write.
-        return None
+        # Hold the current project profile until the candidate is published or discarded.
+        # The communication/catalog workers use the same lease, so an in-flight operation
+        # finishes before the identity generation can change.
+        from lib.legacy_runtime import configure_vendored_bdhub
+        configure_vendored_bdhub(root=self.root,legacy_root=self.root.parent/'01-BDSystem-V2')
+        from bdhub.enrich.profile_lease import ProfileLease,ProfileBusyError
+        current=project_identity_paths(self.root,account)
+        if current is None:return None
+        lease=ProfileLease(current['profileDir'],account=account,market=self.context['market'],
+                           operation='agent-account-maintenance')
+        deadline=time.monotonic()+120
+        while True:
+            try:lease.__enter__();self._drain_lease=lease;return None
+            except ProfileBusyError:
+                if time.monotonic()>=deadline:raise ValueError('account_drain_timeout') from None
+                time.sleep(2)
+
+    def release_drain(self):
+        if self._drain_lease is not None:
+            lease,self._drain_lease=self._drain_lease,None
+            lease.__exit__(None,None,None)
 
     def refresh(self, account):
         return self._capture(account, headed=False, timeout_seconds=60)
@@ -401,8 +420,21 @@ class ProjectAccountIdentityAdapter:
         return result["capabilities"]
 
     def reconnect_inbox(self, account, previous, generated):
-        # Publishing a generation does not start a disabled inbox worker. A running worker resolves
-        # the latest project identity on its next controlled restart.
+        # Each inbox round authenticates afresh. Release the old generation's lease and
+        # require a later checkpoint before claiming that monitoring reconnected.
+        self.release_drain()
+        market=self.context['market']
+        status=self.root/'var'/('cycle-inbox-status.json' if market=='it' else f'market-inbox-{market}.json')
+        try:before=json.loads(status.read_text(encoding='utf-8')).get('checkedAt') or 0
+        except (OSError,ValueError):return False
+        deadline=time.monotonic()+60
+        while time.monotonic()<deadline:
+            try:
+                after=json.loads(status.read_text(encoding='utf-8'))
+                if (after.get('checkedAt') or 0)>before and after.get('state')!='attention' and not after.get('errorCode'):
+                    return True
+            except (OSError,ValueError):pass
+            time.sleep(3)
         return False
 
     def discard(self, result):

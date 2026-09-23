@@ -1,4 +1,4 @@
 {
-  "limit": 6,
-  "interval": 60
+  "limit": 12,
+  "interval": 30
 }

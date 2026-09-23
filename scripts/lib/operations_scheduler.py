@@ -3,8 +3,11 @@ from __future__ import annotations
 
 import json
 import os
+import re
+import signal
 import sqlite3
 import subprocess
+import threading
 import time
 from contextlib import closing
 from concurrent.futures import FIRST_COMPLETED,ThreadPoolExecutor,wait
@@ -72,6 +75,31 @@ def _report_item_count(payload):
         value=summary.get('total') if isinstance(summary,dict) else None
         if type(value) is int and value>=0:return value
     return 0
+
+
+def _child_error(stderr):
+    """Keep only a stable error code; never persist subprocess stderr or credentials."""
+    if not isinstance(stderr,str):return None
+    for line in reversed(stderr.splitlines()):
+        match=re.search(r'(?:[A-Za-z_]+Error): ([A-Za-z][A-Za-z0-9_]{2,79})\s*$',line)
+        if match:return match.group(1)
+    return None
+
+
+def collecting_source_run(root,market,account):
+    """Resume a frozen source read before starting another run with the same scope."""
+    path=Path(root)/('var/global-source.sqlite' if market=='it' else f'var/global-source-{market}.sqlite')
+    if not path.exists():return None
+    with closing(sqlite3.connect(path.resolve().as_uri()+'?mode=ro',uri=True)) as db:
+        rows=db.execute("SELECT id,scope FROM global_source_run WHERE state='collecting' ORDER BY created,id").fetchall()
+    matches=[]
+    for run_id,raw in rows:
+        try:scope=json.loads(raw)
+        except (TypeError,ValueError):continue
+        if scope.get('market')==market and scope.get('account')==account:
+            matches.append({'runId':run_id,'partitioned':scope.get('partitionMode')=='category_l1_v1'})
+    if len(matches)>1:raise CycleError('multiple_collecting_source_runs')
+    return matches[0] if matches else None
 
 
 def accepted_partial_selection(root,market):
@@ -198,7 +226,7 @@ def _scheduled_sources(root,store,market,stamp,automation,policy):
 class SubprocessStageExecutor:
     """Production adapter. Every command is fixed argv; no shell or user text is interpolated."""
     def __init__(self,root,runner=subprocess.run,clock=time.time):
-        self.root=Path(root);self.runner=runner;self.clock=clock
+        self.root=Path(root);self.runner=runner;self.clock=clock;self._claims=threading.local()
 
     def _call(self,args,label,timeout=14400):
         stamp=time.strftime('%Y%m%d-%H%M%S')
@@ -207,8 +235,43 @@ class SubprocessStageExecutor:
         if args[0] in {'scripts/catalog-clean.py','scripts/campaign-collect.py',
                        'scripts/catalog-link-batch.py','scripts/identity-batch.py'} and '--report' not in command:
             command+=['--report',str(report)]
-        child=self.runner(command,cwd=str(self.root),capture_output=True,text=True,timeout=timeout,
-                          env={**os.environ,'PYTHONDONTWRITEBYTECODE':'1'})
+        if self.runner is subprocess.run and getattr(self._claims,'ticket',None):
+            ticket=self._claims.ticket
+            read_fd,write_fd=os.pipe()
+            wrapper=('import os,sys; fd=int(sys.argv[1]); ready=os.read(fd,1); os.close(fd); '
+                     'os.execv(sys.argv[2],sys.argv[2:]) if ready==b"1" else os._exit(125)')
+            try:
+                process=subprocess.Popen([command[0],'-c',wrapper,str(read_fd),*command],
+                    cwd=str(self.root),stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.PIPE,
+                    text=True,start_new_session=True,pass_fds=(read_fd,),
+                    env={**os.environ,'PYTHONDONTWRITEBYTECODE':'1'})
+            finally:os.close(read_fd)
+            try:
+                with CycleStore(self.root/'var/second-cycle.sqlite') as claim_store:
+                    with claim_store.tx():
+                        claim_store.db.execute("UPDATE workflow_stage_claim SET worker_pid=? WHERE stage_run_id=? AND owner_id=? AND fence=?",
+                            (process.pid,ticket['stageRunId'],ticket['ownerId'],ticket['fence']))
+                        if claim_store.db.execute('SELECT changes()').fetchone()[0]!=1:
+                            raise CycleError('workflow_stage_fence_stale')
+                os.write(write_fd,b'1')
+                try:stdout,stderr=process.communicate(timeout=timeout)
+                except subprocess.TimeoutExpired:
+                    os.killpg(process.pid,signal.SIGTERM)
+                    try:process.communicate(timeout=10)
+                    except subprocess.TimeoutExpired:
+                        os.killpg(process.pid,signal.SIGKILL);process.communicate()
+                    raise
+                child=subprocess.CompletedProcess(command,process.returncode,stdout,stderr)
+            except BaseException:
+                if process.poll() is None:
+                    try:os.killpg(process.pid,signal.SIGTERM)
+                    except ProcessLookupError:pass
+                    process.communicate()
+                raise
+            finally:os.close(write_fd)
+        else:
+            child=self.runner(command,cwd=str(self.root),capture_output=True,text=True,timeout=timeout,
+                              env={**os.environ,'PYTHONDONTWRITEBYTECODE':'1'})
         lines=[line for line in (child.stdout or '').splitlines() if line.strip()]
         try:payload=json.loads(lines[-1]) if lines else {}
         except ValueError:payload={}
@@ -220,7 +283,7 @@ class SubprocessStageExecutor:
         writes=max(_report_platform_writes(evidence),_report_platform_writes(payload))
         items=max(_report_item_count(evidence),_report_item_count(payload))
         if child.returncode or reported_state in {'blocked','failed','partial','needs_human'}:
-            code=str(payload.get('error') or evidence.get('error') or f'{label}_failed')
+            code=str(payload.get('error') or evidence.get('error') or _child_error(child.stderr) or f'{label}_failed')
             return {'state':'needs_human' if reported_state=='needs_human' or 'maintenance' in code or 'auth' in code else 'failed',
                     'itemCount':items,'complete':False,'platformWrites':writes,
                     'errorCode':code[:120],'payload':{'report':str(report.relative_to(self.root)) if report.exists() else None}}
@@ -271,9 +334,18 @@ class SubprocessStageExecutor:
                             'payload':{'state':'accepted_partial','published':True,'reusedPublishedSnapshot':frozen}}
                 else:
                     rid=f'{market}-global-'+time.strftime('%Y%m%d')+'-'+digest([run['runId'],'selected'])[:12]
-                    collect=['scripts/collect-global-opportunity.py',*market_flag,'--run-id',rid,'--pages','40','--worker']
                     from lib.operations_policy import full_catalog_collection_mode
+                    from lib.market_accounts import catalog_read_account
                     collection_mode=full_catalog_collection_mode(self.root,market,self.clock())
+                    source_path=self.root/('var/global-source.sqlite' if market=='it' else f'var/global-source-{market}.sqlite')
+                    existing=(collecting_source_run(self.root,market,
+                        catalog_read_account(self.root,market=market))
+                        if source_path.exists() and (self.root/'config/market-accounts.json').exists() else None)
+                    if existing:
+                        rid=existing['runId']
+                        collection_mode={**collection_mode,'mode':'category' if existing['partitioned'] else 'plain',
+                                         'resumedExisting':rid}
+                    collect=['scripts/collect-global-opportunity.py',*market_flag,'--run-id',rid,'--pages','40','--worker']
                     if collection_mode['mode']=='category':collect.append('--by-category')
                     result=self._call(collect,'global-catalog')
                     if result['state']!='completed':return result
@@ -508,7 +580,17 @@ def tick(root,*,now=None,executor=None):
             if not current or current['state'] not in ('queued','running','stop_requested'):
                 if automation['automaticOperationsEnabled'] and sources:
                     scheduled=min(due_times[source] for source in sources)
-                    current=create_run(store,market=market,trigger_source='schedule',scheduled_at=scheduled,sources=sources)
+                    attempts=store.db.execute("SELECT count(*) FROM workflow_run WHERE market=? AND trigger_source='schedule' AND scheduled_at=?",
+                                              (market,scheduled)).fetchone()[0]
+                    same_failure=bool(current and current['state']=='failed' and current['scheduledAt']==scheduled)
+                    retry_at=(current['finishedAt'] or stamp)+3600 if same_failure else stamp
+                    if same_failure and (attempts>=4 or stamp<retry_at):
+                        progress['nextDue']['workflow' if market=='it' else f'workflow:{market}']=retry_at if attempts<4 else None
+                        progress['error']=progress['error'] or current.get('errorCode') or 'workflow_retry_exhausted'
+                    else:
+                        request_id=f'{market}:schedule:{int(scheduled)}:retry:{attempts}' if attempts else None
+                        current=create_run(store,market=market,trigger_source='schedule',scheduled_at=scheduled,
+                                           sources=sources,request_id=request_id)
             if current and current['state'] in ('queued','running','stop_requested'):active.append(current)
         for row in active:
             if row['state']!='stop_requested':continue
@@ -533,12 +615,20 @@ def tick(root,*,now=None,executor=None):
 
         def execute_one(task):
             with CycleStore(database) as stage_store:
-                return executor.execute(stage_store,task['run'],task['stage']['stage'],jobs)
+                if isinstance(executor,SubprocessStageExecutor):
+                    executor._claims.ticket=task['ticket']|{'ownerId':owner_id}
+                try:return executor.execute(stage_store,task['run'],task['stage']['stage'],jobs)
+                finally:
+                    if isinstance(executor,SubprocessStageExecutor):executor._claims.ticket=None
 
         with ThreadPoolExecutor(max_workers=len(tasks)) as pool:
             pending={pool.submit(execute_one,task):task for task in tasks}
             while pending:
                 done,_=wait(tuple(pending),timeout=30,return_when=FIRST_COMPLETED)
+                # Long catalog reads may take hours. Independent inbox/send/Agent and account
+                # maintenance supervision must still advance while those subprocesses run.
+                try:_background(root,store,jobs,it_automation,time.time(),maintenance_enabled=any_automation)
+                except (CycleError,sqlite3.Error,OSError) as error:progress['error']=str(error)[:120]
                 for future in done:
                     task=pending.pop(future);run=task['run'];stage=task['stage']['stage'];ticket=task['ticket']
                     try:result=future.result()
@@ -572,7 +662,7 @@ def _background(root,store,jobs,automation,stamp,maintenance_enabled=None):
     enabled=jobs['jobs']
     from lib.job_run import start as start_job,state as job_state
     if (automation['automaticOperationsEnabled'] or enabled['inbox_monitor']['enabled']) and not (job_state(root,'inbox') or {}).get('running'):
-        try:start_job(root,'inbox',{'limit':6,'interval':60})
+        try:start_job(root,'inbox',{'limit':12,'interval':30})
         except (ValueError,OSError):pass
     from lib.template_library import agent_setting
     plan=store.db.execute("SELECT id FROM plan WHERE institution='bjn-local-research' AND market='it'").fetchone()
@@ -592,11 +682,58 @@ def _background(root,store,jobs,automation,stamp,maintenance_enabled=None):
     for market in enabled_market_keys(root):
         if market=='it':continue
         current=market_setting(store,market)
+        if current['automaticOperationsEnabled']:
+            inbox_state=_read(Path(root)/f'var/market-inbox-{market}.json',{})
+            inbox_pid=inbox_state.get('pid')
+            try:inbox_alive=type(inbox_pid) is int and inbox_pid>0 and os.kill(inbox_pid,0) is None
+            except OSError:inbox_alive=False
+            if not inbox_alive:
+                log=Path(root)/f'var/market-inbox-{market}.log'
+                try:
+                    with log.open('a',encoding='utf-8') as handle:
+                        child=subprocess.Popen([str(Path(root)/'.venv/bin/python'),str(Path(root)/'scripts/poll-market-inbox.py'),
+                                          '--market',market,'--worker'],cwd=str(root),stdin=subprocess.DEVNULL,
+                                          stdout=handle,stderr=subprocess.STDOUT,start_new_session=True,
+                                          env={**os.environ,'PYTHONDONTWRITEBYTECODE':'1'})
+                    _write(Path(root)/f'var/market-inbox-{market}.json',
+                           {'pid':child.pid,'running':True,'state':'starting','startedAt':time.time()})
+                except OSError:pass
+        plan_row=store.db.execute("SELECT id FROM plan WHERE market=? AND institution='bjn-local-research'",(market,)).fetchone()
+        if plan_row and agent_setting(store,plan_row[0])['enabled']:
+            reply_state=_read(Path(root)/f'var/agent-reply-status-{market}.json',{})
+            reply_pid=reply_state.get('pid')
+            try:reply_alive=type(reply_pid) is int and reply_pid>0 and os.kill(reply_pid,0) is None
+            except OSError:reply_alive=False
+            if not reply_alive:
+                log=Path(root)/f'var/agent-reply-{market}.log'
+                try:
+                    with log.open('a',encoding='utf-8') as handle:
+                        child=subprocess.Popen([str(Path(root)/'.venv/bin/python'),str(Path(root)/'scripts/run-agent-replies.py'),
+                            '--worker','--market',market],cwd=str(root),stdin=subprocess.DEVNULL,
+                            stdout=handle,stderr=subprocess.STDOUT,start_new_session=True,
+                            env={**os.environ,'PYTHONDONTWRITEBYTECODE':'1'})
+                    _write(Path(root)/f'var/agent-reply-status-{market}.json',
+                           {'pid':child.pid,'state':'starting','checkedAt':time.time()})
+                except OSError:pass
         if current['continuousSendEnabled'] and not market_sender_state(root,market)['running']:
-            try:launch_market_sender(root,market)
-            except OSError:pass
+            sender=market_sender_state(root,market)
+            error=sender.get('error') or ''
+            uncertain=error in ('market_send_result_unknown','market_send_conversation_result_unknown')
+            cooling=sender.get('state')=='attention' and stamp-float(sender.get('checkedAt') or stamp)<300
+            if not uncertain and not cooling:
+                try:launch_market_sender(root,market)
+                except OSError:pass
     if (automation['automaticOperationsEnabled'] if maintenance_enabled is None else maintenance_enabled):
-        from lib.account_identity import assignments,current_generation,next_due,request_maintenance,status as account_status
+        from lib.account_identity import assignments,current_generation,next_due,request_maintenance,recover_abandoned,status as account_status
+        abandoned=recover_abandoned(store,now=stamp)
+        for intent_id in abandoned:
+            prior=store.db.execute('SELECT * FROM account_maintenance_intent WHERE intent_id=?',(intent_id,)).fetchone()
+            published=current_generation(store,prior['market'],prior['account'])
+            if published and published['publishedAt'] and published['publishedAt']>=(prior['started_at'] or stamp):
+                continue
+            request_id='maintenance-recovery-'+digest([intent_id,prior['operation']])[:24]
+            request_maintenance(store,root,market=prior['market'],account=prior['account'],
+                                operation=prior['operation'],request_id=request_id,scheduled_at=stamp+300)
         try:rows=assignments(root)
         except (OSError,ValueError):rows=[]
         for row in rows:
@@ -608,7 +745,8 @@ def _background(root,store,jobs,automation,stamp,maintenance_enabled=None):
             except CycleError as error:
                 if str(error) not in ('account_maintenance_active',):raise
         queue=account_status(store,root)['queue'] if rows else []
-        if any(item['state']=='queued' for item in queue) and not any(item['state'] in ('draining','running') for item in queue):
+        if any(item['state']=='queued' and item['scheduledAt']<=stamp for item in queue) and \
+           not any(item['state'] in ('draining','running') for item in queue):
             log=Path(root)/'var/account-maintenance.log'
             try:
                 with log.open('a',encoding='utf-8') as handle:

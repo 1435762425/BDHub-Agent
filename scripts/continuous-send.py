@@ -17,7 +17,10 @@ def main():
         from lib.market_registry import market as market_record
         try:market_record(ROOT,market)
         except (TypeError,ValueError):raise CycleError('continuous_send_market_invalid') from None
-        if args.action=='reconcile' and market!='it':raise CycleError('market_send_reconcile_pending')
+        if args.action=='reconcile' and market!='it':
+            from lib.market_send_canary import run as reconcile_market
+            reconcile_market(ROOT,market,'market-reconcile-'+market+'-'+str(__import__('time').time_ns()),
+                             canary=False,reconcile_only=True)
         with CycleStore(ROOT/'var/second-cycle.sqlite',readonly=args.action=='status') as store:
             if market=='it':
                 if args.action not in ('status','reconcile'):
@@ -26,7 +29,7 @@ def main():
                 else:result=None
             else:
                 from lib.market_send_control import mutate
-                result=None if args.action=='status' else mutate(store,ROOT,market,action=args.action,request_id=body.get('requestId'),expected_revision=body.get('expectedRevision'),changes=body.get('changes') if args.action=='save' else None)
+                result=None if args.action in ('status','reconcile') else mutate(store,ROOT,market,action=args.action,request_id=body.get('requestId'),expected_revision=body.get('expectedRevision'),changes=body.get('changes') if args.action=='save' else None)
         if market=='it':worker_pid=launch_worker(ROOT) if args.action=='reconcile' or args.action=='start' and not result.get('duplicate') else None
         else:
             from lib.market_send_control import launch_worker as launch_market_worker

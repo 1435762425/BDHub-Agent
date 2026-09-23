@@ -33,7 +33,7 @@ def mutate(store,root,market,*,action,request_id,expected_revision,changes=None)
  if definition['runtimeState']!='ready':raise CycleError('market_runtime_unavailable')
  if action not in ('save','start','stop') or not isinstance(request_id,str) or not REQUEST_ID.fullmatch(request_id) or type(expected_revision) is not int or expected_revision<0:raise CycleError('continuous_send_request_invalid')
  changes=changes or {};allowed={'automaticEnabled','window','template'}
- if market not in ('br','uk') and (action=='start' or changes.get('automaticEnabled') is True):
+ if market not in ('br','my','uk') and (action=='start' or changes.get('automaticEnabled') is True):
   raise CycleError('market_send_runtime_unavailable')
  if action=='save':
   if not changes or set(changes)-allowed:raise CycleError('continuous_send_setting_invalid')
@@ -69,13 +69,28 @@ def mutate(store,root,market,*,action,request_id,expected_revision,changes=None)
 def status(root,store,market):
  root=Path(root);definition=require_operational(root,market);plan=_plan(store,market);cfg=control(store,market);now=store.clock();worker=worker_state(root,market)
  confirmed=store.db.execute("SELECT count(*) FROM cycle_delivery WHERE plan_id=? AND state='confirmed'",(plan,)).fetchone()[0]
- unknown=[{'deliveryId':row['id'],'creatorId':row['creator_id'],'pid':row['pid']} for row in store.db.execute("SELECT id,creator_id,pid FROM cycle_delivery WHERE plan_id=? AND state='unknown'",(plan,))]
- recent=store.db.execute("SELECT count(*) FROM cycle_delivery WHERE plan_id=? AND state='confirmed' AND created>=?",(plan,now-86400)).fetchone()[0]
+ unknown=[{'deliveryId':row['id'],'creatorId':row['creator_id'],'pid':row['pid']} for row in store.db.execute("""SELECT DISTINCT d.id,d.creator_id,d.pid FROM cycle_delivery d
+ LEFT JOIN cycle_conversation_intent c ON c.delivery_id=d.id
+ WHERE d.plan_id=? AND (d.state='unknown' OR c.state IN ('inflight','received') OR EXISTS(
+ SELECT 1 FROM cycle_delivery_part p WHERE p.delivery_id=d.id AND p.state IN ('inflight','accepted','unknown')))
+ ORDER BY d.created LIMIT 100""",(plan,))]
+ failed=store.db.execute("SELECT count(*) FROM cycle_delivery WHERE plan_id=? AND state IN ('rejected','failed_known')",(plan,)).fetchone()[0]
+ from datetime import datetime,timedelta,timezone
+ day_start=datetime.fromtimestamp(now,timezone(timedelta(hours=8))).replace(hour=0,minute=0,second=0,microsecond=0).timestamp()
+ today=store.db.execute("""SELECT count(*) FROM cycle_delivery d JOIN cycle_delivery_part p ON p.delivery_id=d.id
+ WHERE d.plan_id=? AND d.state='confirmed' AND p.kind='text' AND p.started>=?""",(plan,day_start)).fetchone()[0]
+ last_success=store.db.execute("""SELECT max(p.started) FROM cycle_delivery d JOIN cycle_delivery_part p ON p.delivery_id=d.id
+ WHERE d.plan_id=? AND d.state='confirmed' AND p.kind='text'""",(plan,)).fetchone()[0]
+ recent_confirmed=store.db.execute("""SELECT count(*) FROM cycle_delivery d JOIN cycle_delivery_part p ON p.delivery_id=d.id
+ WHERE d.plan_id=? AND d.state='confirmed' AND p.kind='text' AND p.started>=?""",(plan,now-300)).fetchone()[0]
+ used=store.db.execute("""SELECT count(*) FROM (SELECT oec FROM cycle_contact_reservation WHERE plan_id=? AND reserved>?
+ UNION SELECT d.oec FROM cycle_delivery d JOIN cycle_delivery_part p ON p.delivery_id=d.id
+ WHERE d.plan_id=? AND p.kind='card' AND p.started>?)""",(plan,now-86400,plan,now-86400)).fetchone()[0]
  try:remaining=int((pool(root,market=market,now=now,limit=1).get('layers') or {}).get('ready') or 0)
  except Exception:remaining=None
- runtime={'state':worker.get('state','off'),'currentDeliveryId':(worker.get('result') or {}).get('deliveryId'),'currentCreatorId':(worker.get('result') or {}).get('creatorId'),'currentPid':(worker.get('result') or {}).get('pid'),'confirmedToday':confirmed,'failedKnown':0,'unknown':len(unknown),'startedAt':worker.get('startedAt'),'seenAt':worker.get('checkedAt'),'lastSuccessAt':worker.get('checkedAt') if confirmed else None,'stoppedAt':None,'stopReason':worker.get('error') or worker.get('reason'),'workerPid':worker.get('pid') if worker.get('running') else None,'speedPerMinute':0}
- return {'schemaVersion':'bdhub.continuous-send.v1','market':market,'account':definition['accounts']['communications'],'control':cfg,'runtime':runtime,'window':window_state(cfg['window'],now),'capacity':{'windowSeconds':86400,'limit':NEW_CONTACT_LIMIT,'used':recent,'remaining':max(0,NEW_CONTACT_LIMIT-recent)},'poolRemaining':remaining,'sample':None,'unknownDeliveries':unknown,'templates':send_templates(store,market=market),'legacyBatchRetired':True,'platformWrites':0,'realSends':0}
+ runtime={'state':'waiting_reconciliation' if unknown else worker.get('state','off'),'currentDeliveryId':(worker.get('result') or {}).get('deliveryId'),'currentCreatorId':(worker.get('result') or {}).get('creatorId'),'currentPid':(worker.get('result') or {}).get('pid'),'confirmedToday':today,'confirmedTotal':confirmed,'failedKnown':failed,'unknown':len(unknown),'startedAt':worker.get('startedAt'),'seenAt':worker.get('checkedAt'),'lastSuccessAt':last_success,'stoppedAt':None,'stopReason':worker.get('error') or worker.get('reason'),'workerPid':worker.get('pid') if worker.get('running') else None,'speedPerMinute':round(recent_confirmed/5,2)}
+ return {'schemaVersion':'bdhub.continuous-send.v1','market':market,'account':definition['accounts']['communications'],'control':cfg,'runtime':runtime,'window':window_state(cfg['window'],now),'capacity':{'windowSeconds':86400,'limit':NEW_CONTACT_LIMIT,'used':used,'remaining':max(0,NEW_CONTACT_LIMIT-used)},'poolRemaining':remaining,'sample':None,'unknownDeliveries':unknown,'templates':send_templates(store,market=market),'legacyBatchRetired':True,'platformWrites':0,'realSends':0}
 
 def launch_worker(root,market):
- if market not in ('br','uk'):raise CycleError('market_send_runtime_unavailable')
+ if market not in ('br','my','uk'):raise CycleError('market_send_runtime_unavailable')
  return launch(root,market)

@@ -70,12 +70,14 @@ def main():
     update_agent_template(store,load_policy(),req['templateKey'],req['expectedRevision'],req['body'],market)
    else:
     if set(req)!={'action','market','expectedRevision','setting'}:raise CycleError('invalid_input')
-    if market!='it' and req['setting'].get('enabled') is True:raise CycleError('market_agent_runtime_unavailable')
     saved=save_agent_setting(store,plan,req['expectedRevision'],req['setting'])
     if market=='it':
      from lib.send_batch import save_config
      save_config(ROOT,{'windowEnabled':True,'window':[saved['sendStart'],saved['sendEnd']]})
    result=snapshot(store,market)
+  if action=='save_agent' and market!='it' and req['setting']['enabled']:
+   from lib.operations_scheduler import scheduler_state,start_scheduler
+   if not scheduler_state(ROOT)['running']:start_scheduler(ROOT)
   print(json.dumps(result,ensure_ascii=False));return 0
  except Exception as error:
   print(json.dumps({'error':str(error) if isinstance(error,CycleError) else 'template_library_unavailable'},ensure_ascii=False));return 2

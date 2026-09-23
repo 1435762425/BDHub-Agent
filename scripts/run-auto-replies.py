@@ -27,7 +27,7 @@ def escalate(store,plan,creator,revision,reason):
   if not old:store.db.execute("INSERT INTO service_case VALUES(?,?,?,'open',?,?,?,?, 'not_sent')",('case-'+digest([plan,creator,revision])[:24],plan,creator,revision,reason,time.time(),time.time()))
   store.db.execute("UPDATE inbox_pending SET state='human' WHERE plan_id=? AND creator_id=?",(plan,creator));store.db.execute("UPDATE relationship SET mode='human',revision=revision+1 WHERE plan_id=? AND creator_id=? AND mode='auto'",(plan,creator))
 
-def run_reply(store,replies,q):
+def run_reply(store,replies,q,*,authorized_now=False,stopped=lambda:STOP):
  report={};recovering=q['state'] in ('inflight','accepted','unknown');card=None
  if q['kind']=='manual_card':
   from lib.cycle_send_runtime import descriptor
@@ -40,14 +40,20 @@ def run_reply(store,replies,q):
     previous=json.loads(fact[0]);current=ReplyFacts(store,refresh).call('get_current_creator_commission',q['plan_id'],q['creator_id'])
     if (current['pid'],current['creatorPercent'])!=(previous['pid'],previous['creatorPercent']):
      store.db.execute("UPDATE service_reply SET state='cancelled' WHERE id=? AND state='ready'",(q['id'],));store.db.execute("UPDATE inbox_pending SET revision=revision+1,state='awaiting_content',due_at=? WHERE plan_id=? AND creator_id=? AND revision=?",(time.time()+60,q['plan_id'],q['creator_id'],q['pending_revision']));return 'facts_changed'
-  binding=read_sender_binding(report,stopped=lambda:STOP)
-  with live_runtime(binding,report,stopped=lambda:STOP) as rt:
+  binding=read_sender_binding(report,stopped=stopped)
+  with live_runtime(binding,report,stopped=stopped) as rt:
    conv=rt['reads'].conversation(q['cid'],q['oec'])
    if not recovering:
     h=rt['reads'].history_summary(conv,include_contents=True)
     Inbox(store).ingest(q['plan_id'],conv.conversation_id,q['oec'],h);replies.service.capture(q['plan_id'],conv.conversation_id,q['oec'],h['contents'])
     def permit(scope):
      kind='card' if card else 'text'
+     if q['kind'] in ('agent_generated_v2','agent_request_detail_v2','agent_handoff_v2'):
+      from lib.template_library import agent_setting
+      from lib.market_agent_reply import _window_open
+      setting=agent_setting(store,q['plan_id'])
+      if stopped() or not setting['enabled'] or not authorized_now and not _window_open(setting,store.clock()):
+       raise CycleError('agent_reply_stopped')
      if scope.get('oecId')!=q['oec'] or scope.get('conversationId')!=q['cid'] or scope.get('componentKind')!=kind or scope.get('requestRef')!=q['request_ref']:raise CycleError('reply_scope_mismatch')
      if card and (scope.get('productId'),scope.get('listId'),scope.get('bindingSha256'))!=(card.product_id,card.list_id,card.binding_sha256):raise CycleError('reply_scope_mismatch')
      if not card and scope.get('textSha256')!=hashlib.sha256(q['text'].encode()).hexdigest():raise CycleError('reply_scope_mismatch')

@@ -16,17 +16,8 @@ from lib.template_library import agent_setting,send_template_reviews  # noqa:E40
 LABELS={'catalog':'货盘','taplink_prepare':'TapLink','kalodata':'Kalodata','oecid':'OECID','send_pool':'发送池'}
 
 def _idle_continuous(store,market,account):
- from lib.market_send_worker import state as worker_state
- from lib.operations_workflow import setting
- control=setting(store,market);worker=worker_state(ROOT,market)
- plan=store.db.execute("SELECT id FROM plan WHERE institution='bjn-local-research' AND market=?",(market,)).fetchone()
- confirmed=store.db.execute("SELECT count(*) FROM cycle_delivery WHERE plan_id=? AND state='confirmed'",(plan[0],)).fetchone()[0] if plan else 0
- unknown=store.db.execute("SELECT count(*) FROM cycle_delivery WHERE plan_id=? AND state='unknown'",(plan[0],)).fetchone()[0] if plan else 0
- return {'schemaVersion':'bdhub.continuous-send.v1','market':market,'account':account,
-  'control':{'automaticEnabled':control['continuousSendEnabled'],'runRequested':False,'stopRequested':False,'revision':control['revision']},
-  'runtime':{'state':worker.get('state','off'),'currentDeliveryId':(worker.get('result') or {}).get('deliveryId'),'confirmedToday':confirmed,'failedKnown':0,'unknown':unknown,
-             'lastSuccessAt':worker.get('checkedAt') if confirmed else None,'stopReason':worker.get('error'),'speedPerMinute':0},
-  'poolRemaining':0,'unknownDeliveries':[],'legacyBatchRetired':True,'platformWrites':0,'realSends':0}
+ from lib.market_send_control import status
+ return status(ROOT,store,market)
 
 def home(store,market='it'):
  workflow=workflow_status(store,market);current=workflow['current']
@@ -42,9 +33,11 @@ def home(store,market='it'):
  stages=[]
  for key,label in LABELS.items():
   row=by_stage.get(key);state=row['state'] if row else ('disabled' if not workflow['setting']['automaticOperationsEnabled'] else 'waiting_upstream')
+  last=store.db.execute("""SELECT max(s.finished_at) FROM workflow_stage_run s JOIN workflow_run r ON r.run_id=s.run_id
+    WHERE r.market=? AND s.stage=? AND s.state IN ('completed','quota_exhausted')""",(market,key)).fetchone()[0]
   stages.append({'id':key,'label':label,'state':state,'counts':row['counts'] if row else {},
-   'processed':sum(value for value in (row['counts'] if row else {}).values() if isinstance(value,int)),
-   'lastSuccessAt':row['finishedAt'] if row and row['state'] in ('completed','quota_exhausted') else None,
+   'processed':int((row['counts'] if row else {}).get('items') or 0),
+   'lastSuccessAt':last,
    'nextAt':None,'checkpoint':row['checkpoint'] if row else {},'stopReason':row['errorCode'] if row else None,
    'platformWrites':row['platformWrites'] if row else 0,'generationId':row['outputGenerationId'] if row else None})
  stages.append({'id':'continuous_send','label':'持续二发','state':continuous['runtime']['state'],
@@ -52,8 +45,9 @@ def home(store,market='it'):
   'processed':continuous['runtime']['confirmedToday'],'lastSuccessAt':continuous['runtime']['lastSuccessAt'],
   'nextAt':None,'checkpoint':{'deliveryId':continuous['runtime']['currentDeliveryId']},
   'stopReason':continuous['runtime']['stopReason'],'platformWrites':0,'generationId':None})
- stages.append({'id':'agent_reply','label':'Agent 回复','state':latest_agent['state'] if latest_agent else ('disabled' if not agent['enabled'] else 'queued'),
-  'counts':dict(latest_agent) if latest_agent else {},'processed':latest_agent['confirmed'] if latest_agent else 0,
+ agent_counts={key:int(latest_agent[key] or 0) for key in ('claimed','no_reply','prepared','human','confirmed','unknown')} if latest_agent else {}
+ stages.append({'id':'agent_reply','label':'Agent 回复','state':'disabled' if not agent['enabled'] else latest_agent['state'] if latest_agent else 'queued',
+  'counts':agent_counts,'processed':latest_agent['confirmed'] if latest_agent else 0,
   'lastSuccessAt':latest_agent['finished_at'] if latest_agent and latest_agent['state']=='completed' else None,
   'nextAt':None,'checkpoint':{},'stopReason':latest_agent['error'] if latest_agent else None,
   'platformWrites':0,'generationId':None})
@@ -65,6 +59,14 @@ def home(store,market='it'):
  for stage in stages:
   if stage['state'] in ('failed','needs_human','waiting_reconciliation','paused') and stage['stopReason'] not in (None,'send_pool_empty','outside_send_window'):
    issues.append({'kind':'stage','id':stage['id'],'title':stage['label'],'reason':stage['stopReason'] or stage['state']})
+ if store.db.execute("SELECT 1 FROM sqlite_master WHERE name='inbox_checkpoint'").fetchone():
+  old=store.db.execute('SELECT min(checked_at),count(*) FROM inbox_checkpoint WHERE plan_id=?',(plan,)).fetchone()
+  if old[0] is not None and store.clock()-old[0]>300:
+   issues.append({'kind':'inbox','id':f'{market}-inbox-lag','title':'收信覆盖落后',
+                  'reason':f'{old[1]} 个会话中最旧检查已过去 {int((store.clock()-old[0])/60)} 分钟'})
+  elif old[1]==0 and store.db.execute("SELECT 1 FROM cycle_delivery WHERE plan_id=? AND state='confirmed' LIMIT 1",(plan,)).fetchone():
+   issues.append({'kind':'inbox','id':f'{market}-inbox-baseline','title':'收信尚未建立基线',
+                  'reason':'已确认外发，但未见该市场的收信 checkpoint'})
  for row in accounts['queue']:
   if row['market']!=market:continue
   if row['state']=='needs_human':issues.append({'kind':'account','id':row['intentId'],'title':row['account'].upper(),'reason':row['errorCode']})

@@ -18,6 +18,7 @@
 """
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -29,7 +30,27 @@ from lib.job_run import load_config, save_config, status as job_status  # noqa: 
 
 
 def status(root, market, days=14):
-    job = job_status(root, 'inbox')['inbox'] if market=='it' else {'config':{'limit':6,'interval':60},'configInvalid':False,'run':None}
+    if market=='it':job=job_status(root,'inbox')['inbox']
+    else:
+        config={'limit':12,'interval':30};run=None
+        try:
+            state=json.loads((Path(root)/f'var/market-inbox-{market}.json').read_text(encoding='utf-8'))
+            pid=state.get('pid');alive=False
+            if type(pid) is int and pid>0:
+                try:os.kill(pid,0);alive=True
+                except OSError:pass
+            else:raise ValueError('market_inbox_pid_invalid')
+            summary=state.get('status') or {}
+            progress={key:state.get(key,0) for key in ('processed','added','historical','liveReplies','indexedTargets')}
+            progress.update(serviceDecisions=0,errorCode=state.get('errorCode'),state=state.get('state',''),
+                checkedAt=state.get('checkedAt') or 0,
+                **{key:summary.get(key) or 0 for key in ('conversations','events','historicalEvents','gaps','pendingContent','lastCheckedAt')},
+                automaticRepliesEnabled=bool(summary.get('automaticRepliesEnabled')))
+            run={'name':'inbox','label':'收信监控','pid':pid,'startedAt':state.get('startedAt') or 0,
+                 'log':f'var/market-inbox-{market}.log','config':config,'platformWrites':False,
+                 'running':alive and state.get('running') is True,'stopping':False,'progress':progress}
+        except (OSError,ValueError,TypeError):pass
+        job={'config':config,'configInvalid':False,'run':run}
     stats = daily(root, market=market,count=days)
     return {'available': stats['available'],'market':market,
             'config': job['config'],

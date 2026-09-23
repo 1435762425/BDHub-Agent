@@ -51,11 +51,12 @@ def provider_status(root, store, plan, market):
     content = market_content(root, market)
     setting = agent_setting(store, plan)
     try:
-        runtime=json.loads((Path(root)/'var/agent-reply-status.json').read_text(encoding='utf-8'))
-        state=runtime.get('state') if market=='it' else 'market_agent_transport_pending'
+        status_file='agent-reply-status.json' if market=='it' else f'agent-reply-status-{market}.json'
+        runtime=json.loads((Path(root)/'var'/status_file).read_text(encoding='utf-8'))
+        state=runtime.get('state')
         state=state if isinstance(state,str) and len(state)<=80 else 'unknown'
     except (OSError,ValueError,TypeError):
-        state='market_agent_transport_pending' if market!='it' else 'unknown'
+        state='unknown'
     return {'provider': 'DeepSeek', 'model': MODEL, 'endpoint': ENDPOINT,
             'credentialConfigured': _credential_configured(), 'market': market,
             'language': content['language'], 'locale': content['locale'],
@@ -65,7 +66,6 @@ def provider_status(root, store, plan, market):
 
 
 def rollout_stage(store,plan,market):
-    if market!='it':return 'transport_pending'
     full=store.db.execute("SELECT 1 FROM control_event WHERE plan_id=? AND event_id='agent-v2-full-run'",
                           (plan,)).fetchone()
     if full:return 'full'
@@ -80,7 +80,7 @@ def rollout_stage(store,plan,market):
 
 
 def authorize_rollout(store,plan,market,stage,request_id):
-    if market!='it' or stage not in ('pilot','full') or not isinstance(request_id,str) or \
+    if stage not in ('pilot','full') or not isinstance(request_id,str) or \
             not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._:-]{7,119}',request_id):
         raise CycleError('agent_rollout_invalid')
     from lib.template_library import agent_setting

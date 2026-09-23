@@ -16,8 +16,62 @@ from lib.second_cycle import CycleError,CycleStore,assess_offer,digest
 from lib.template_library import next_approved_send_template,render_send_template,require_send_template_approval
 
 
+def _dispatch_allowed(store,market,*,canary=False,page_control=False):
+    if canary and not page_control:return
+    from lib.market_send_control import control
+    from lib.operations_workflow import setting
+    from lib.send_batch import window_state
+    current=control(store,market)
+    operations=setting(store,market)
+    if current['stopRequested'] or not (current['runRequested'] or current['automaticEnabled'] or
+                                        operations['continuousSendEnabled']):
+        raise CycleError('continuous_send_stopped')
+    if not window_state(current['window'],store.clock())['open']:
+        raise CycleError('outside_send_window')
+
+
+def _binding_current(root,market,candidate):
+    from lib.catalog_binding import offer_fingerprint
+    offer=candidate['offer']
+    path=Path(root)/'var/catalog-links.sqlite'
+    with closing(sqlite3.connect(path.resolve().as_uri()+'?mode=ro',uri=True)) as links:
+        row=links.execute('''SELECT state,offer_fingerprint,list_id,card_payload
+          FROM catalog_current_binding WHERE market=? AND catalog_source=? AND pid=? AND campaign_id=?''',
+          (market,offer['catalogSource'],str(offer['pid']),str(offer['campaignId']))).fetchone()
+    if not row or row[0]!='active' or row[1]!=offer_fingerprint(offer) or \
+       str(row[2])!=str(candidate['card']['listId']) or digest(json.loads(row[3]))!=digest(candidate['card']):
+        raise CycleError('card_binding_changed')
+
+
+def _unsettled(store,plan,*,canary=False):
+    row=store.db.execute("""SELECT * FROM cycle_delivery WHERE plan_id=? AND state IN ('ready','running','unknown')
+      AND json_extract(snapshot,'$.executionMode')=? ORDER BY created LIMIT 1""",
+      (plan,'market-canary-v1' if canary else 'market-continuous-v1')).fetchone()
+    return dict(row) if row else None
+
+
+def _preflight_conversation(store,session,plan,candidate,conversation,delivery_id):
+    from lib.continuous_send import _continuous_history_eligible,ACTIVE_PENDING_STATES
+    from lib.cycle_inbox import Inbox
+    from lib.cycle_service import Service
+    history=session.history_summary(conversation,include_sender_counts=True,include_events=True,include_contents=True)
+    Inbox(store).ingest(plan,conversation.conversation_id,candidate['oecId'],history)
+    Service(store).capture(plan,conversation.conversation_id,candidate['oecId'],history.get('contents',[]))
+    relation=store.db.execute('SELECT mode,rejected,inbox_until,unlocked FROM relationship WHERE plan_id=? AND creator_id=?',
+                              (plan,candidate['creatorId'])).fetchone()
+    own=sum(part['state']=='confirmed' for part in Deliveries(store).get(delivery_id)['parts'] if part['kind']=='card')
+    _continuous_history_eligible(history,store.clock(),bool(relation['unlocked']) if relation else False,own)
+    pending=store.db.execute('SELECT state FROM inbox_pending WHERE plan_id=? AND creator_id=?',
+                             (plan,candidate['creatorId'])).fetchone()
+    case=store.db.execute("SELECT 1 FROM service_case WHERE plan_id=? AND creator_id=? AND state='open'",
+                          (plan,candidate['creatorId'])).fetchone()
+    if not relation or relation['mode']!='auto' or relation['rejected'] or relation['inbox_until']>store.clock() or \
+       case or pending and pending['state'] in ACTIVE_PENDING_STATES:
+        raise CycleError('conversation_needs_content_review')
+
+
 def _candidate(root,market,store,plan,initial,require_new_conversation=True):
- state=pool(root,market=market,now=store.clock(),limit=200);conversations={row['oecId']:row for row in initial.get('conversations',[])}
+ state=pool(root,market=market,now=store.clock(),limit=None);conversations={row['oecId']:row for row in initial.get('conversations',[])}
  offers=[offer for _,offer in store._offers(plan)];by_pid={}
  for offer in offers:by_pid.setdefault(str(offer['pid']),[]).append(offer)
  with closing(sqlite3.connect((Path(root)/'var/creator-identities.sqlite').resolve().as_uri()+'?mode=ro',uri=True)) as identities,closing(sqlite3.connect((Path(root)/'var/catalog-links.sqlite').resolve().as_uri()+'?mode=ro',uri=True)) as links:
@@ -33,7 +87,7 @@ def _candidate(root,market,store,plan,initial,require_new_conversation=True):
    for offer in current:
     binding=links.execute("SELECT * FROM catalog_current_binding WHERE market=? AND catalog_source=? AND pid=? AND campaign_id=? AND state='active'",(market,offer['catalogSource'],offer['pid'],offer['campaignId'])).fetchone()
     if not binding:continue
-    card=json.loads(binding['card_payload']);locale={'br':'pt-BR','uk':'en-GB'}[market]
+    card=json.loads(binding['card_payload']);locale={'br':'pt-BR','my':'ms-MY','uk':'en-GB'}[market]
     name_row=store.db.execute("SELECT payload FROM cycle_product_name WHERE pid=? AND locale=? ORDER BY rowid DESC LIMIT 1",(offer['pid'],locale)).fetchone()
     if not name_row:continue
     name=json.loads(name_row[0]);template=next_approved_send_template(store,root,plan,slot['creatorId'],market)
@@ -49,39 +103,75 @@ def _candidate(root,market,store,plan,initial,require_new_conversation=True):
  return None
 
 
-def run(root,market,request_id,*,canary=True):
+def run(root,market,request_id,*,canary=True,page_control=False,reconcile_only=False):
  root=Path(root);pair=load_config(root)['markets'][market];communications=pair['roles']['communications'];report={'market':market,'account':communications,'requestId':request_id,'platformWrites':0,'realSends':0}
  with CycleStore(root/'var/second-cycle.sqlite') as store:
   require_send_template_approval(store,root,market)
   plan=store.db.execute("SELECT id FROM plan WHERE institution='bjn-local-research' AND market=? AND state='active'",(market,)).fetchone()
   if not plan:raise CycleError('plan_missing')
   plan=plan[0]
-  if store.db.execute("SELECT 1 FROM cycle_delivery WHERE plan_id=? AND state='unknown' LIMIT 1",(plan,)).fetchone():
+  if reconcile_only:
+   active=_unsettled(store,plan,canary=False) or _unsettled(store,plan,canary=True)
+   if active is None:return report|{'state':'nothing_to_reconcile'}
+   canary=json.loads(active['snapshot']).get('executionMode')=='market-canary-v1'
+  else:
+   _dispatch_allowed(store,market,canary=canary,page_control=page_control)
+   active=_unsettled(store,plan,canary=canary)
+  if store.db.execute("SELECT 1 FROM cycle_delivery WHERE plan_id=? AND state='unknown' AND id<>? LIMIT 1",(plan,active['id'] if active else '')).fetchone():
    raise CycleError('market_send_result_unknown')
   with authenticated(root,market,report,canary=canary) as runtime:
-   session=runtime['session'];adapter=runtime['adapter'];initial=session.initialize(0);candidate=_candidate(root,market,store,plan,initial,canary)
-   if not candidate:raise CycleError('market_send_candidate_missing')
-   delivery=Deliveries(store).prepare(plan,candidate);did=delivery['id'];candidate=delivery['snapshot']
+   session=runtime['session'];adapter=runtime['adapter'];initial=session.initialize(0)
+   if active:
+    delivery=Deliveries(store).get(active['id']);candidate=delivery['snapshot'];did=delivery['id']
+   else:
+    candidate=_candidate(root,market,store,plan,initial,canary)
+    if not candidate:raise CycleError('market_send_candidate_missing')
+    _binding_current(root,market,candidate)
+    delivery=Deliveries(store).prepare(plan,candidate);did=delivery['id'];candidate=delivery['snapshot']
+   if not reconcile_only:_dispatch_allowed(store,market,canary=canary,page_control=page_control)
+   intent=Deliveries(store).conversation_intent(did)
    if candidate.get('conversationId'):
     conversation=session.conversation(candidate['conversationId'],candidate['oecId'])
+   elif intent and intent['state']=='confirmed':
+    conversation=session.conversation(intent['cid'],candidate['oecId'])
+   elif intent and intent['state'] in ('inflight','received'):
+    raise CycleError('market_send_conversation_result_unknown')
    else:
+    if reconcile_only:return report|{'state':'nothing_to_reconcile','deliveryId':did}
     conversation_intent=Deliveries(store).prepare_conversation(did)
-    with write_gate(root,runtime['auth']) as mark:
+    with write_gate(root,runtime['auth'],stopped=lambda: page_control and _stopped(store,market)) as mark:
      def permit_create(scope):
       if scope.get('market')!=market or scope.get('account')!=communications or scope.get('oecId')!=candidate['oecId']:raise CycleError('conversation_scope_mismatch')
+      _dispatch_allowed(store,market,canary=canary,page_control=page_control);_binding_current(root,market,candidate)
       ref=Deliveries(store).begin_conversation(did,digest(candidate));mark();report['platformWrites']+=1;return {'dispatchAllowed':True,'requestRef':ref,'stage':'create_conversation'}
      receipt=adapter.create_once(candidate['oecId'],conversation_intent['request_ref'],before_dispatch=permit_create)
     Deliveries(store).save_conversation(did,receipt);conversation=session.conversation(receipt['conversationId'],candidate['oecId']);Deliveries(store).confirm_conversation(did,receipt['conversationId'],candidate['oecId'])
-   history=session.history_summary(conversation,include_sender_counts=True)
-   from lib.continuous_send import _continuous_history_eligible
-   relation=store.db.execute('SELECT unlocked FROM relationship WHERE plan_id=? AND creator_id=?',(plan,candidate['creatorId'])).fetchone()
-   _continuous_history_eligible(history,store.clock(),bool(relation[0]) if relation else False)
+   _preflight_conversation(store,session,plan,candidate,conversation,did)
    origin=runtime['partnerHost']+'/api/v1/affiliate/partner/im/product_list/list';card=descriptor(candidate['card'],market,communications,origin)
+   if Deliveries(store).interrupted_by_inquiry(did):raise CycleError('market_send_inquiry_interrupted')
    for kind in ('card','text'):
     part=next(row for row in Deliveries(store).get(did)['parts'] if row['kind']==kind)
-    with write_gate(root,runtime['auth']) as mark:
+    if part['state']=='confirmed':continue
+    if part['state'] in ('inflight','accepted','unknown'):
+     receipt=json.loads(part['receipt']) if part['receipt'] else {}
+     proof=adapter.readback_card(conversation,card,part['request_ref'],message_id=receipt.get('messageId')) if kind=='card' else adapter.readback(conversation,candidate['message']['textIt'],part['request_ref'],message_id=receipt.get('messageId'))
+     Deliveries(store).record_check(did,kind,proof)
+     if proof.get('status')!='confirmed':
+      Deliveries(store).unknown(did,kind);raise CycleError('market_send_result_unknown')
+     Deliveries(store).confirm(did,kind,{'status':'confirmed','requestRef':part['request_ref'],'oecId':candidate['oecId'],'kind':kind,'messageId':proof['messageId'],'evidenceRef':proof['evidenceRef']})
+     continue
+    if part['state']!='ready':raise CycleError('market_send_part_unavailable')
+    if reconcile_only:break
+    if kind=='text':
+     try:_preflight_conversation(store,session,plan,candidate,conversation,did)
+     except CycleError:
+      if Deliveries(store).interrupted_by_inquiry(did):raise CycleError('market_send_inquiry_interrupted') from None
+      raise
+    if kind=='text' and Deliveries(store).interrupted_by_inquiry(did):raise CycleError('market_send_inquiry_interrupted')
+    with write_gate(root,runtime['auth'],stopped=lambda: page_control and _stopped(store,market)) as mark:
      def permit(scope,expected=kind):
       if scope.get('market')!=market or scope.get('account')!=communications or scope.get('componentKind')!=expected:raise CycleError('dispatch_scope_mismatch')
+      _dispatch_allowed(store,market,canary=canary,page_control=page_control);_binding_current(root,market,candidate)
       Deliveries(store).reserve_contact(did);value=Deliveries(store).begin(did,expected,authorized_snapshot_hash=digest(candidate),recipient_verified=True,allowance_verified=True);mark();report['platformWrites']+=1;return {**value,'stage':scope['stage'],'componentKind':expected,**{key:scope[key] for key in ('productId','listId','campaignId','bindingSha256') if key in scope}}
      receipt=adapter.send_card_once(conversation,card,part['request_ref'],before_dispatch=permit) if kind=='card' else adapter.send_once(conversation,candidate['message']['textIt'],part['request_ref'],before_dispatch=permit)
     Deliveries(store).receipt(did,kind,receipt)
@@ -89,5 +179,15 @@ def run(root,market,request_id,*,canary=True):
     Deliveries(store).record_check(did,kind,proof)
     if proof.get('status')!='confirmed':Deliveries(store).unknown(did,kind);raise CycleError('market_send_result_unknown')
     Deliveries(store).confirm(did,kind,{'status':'confirmed','requestRef':part['request_ref'],'oecId':candidate['oecId'],'kind':kind,'messageId':proof['messageId'],'evidenceRef':proof['evidenceRef']})
-   final=Deliveries(store).get(did);report.update(deliveryId=did,state=final['state'],pid=candidate['pid'],creatorId=candidate['creatorId'],realSends=1,unknown=0)
+   final=Deliveries(store).get(did);report.update(deliveryId=did,state=final['state'],pid=candidate['pid'],creatorId=candidate['creatorId'],
+      realSends=0 if reconcile_only else int(final['state']=='confirmed'),unknown=int(final['state']=='unknown'))
+   if canary and (page_control or reconcile_only) and final['state']=='confirmed':
+    from lib.account_identity import promote_capabilities
+    promote_capabilities(store,market=market,account=communications,capabilities=['message_send'],
+                         evidence_ref='cycle-delivery:'+did)
  return report
+
+
+def _stopped(store,market):
+    try:_dispatch_allowed(store,market);return False
+    except CycleError:return True

@@ -40,7 +40,6 @@ def tick(authorized_now=None,market="it"):
   plan_row=store.db.execute("SELECT id FROM plan WHERE market=? AND institution='bjn-local-research'",(market,)).fetchone()
   if not plan_row:raise CycleError('plan_missing')
   plan=plan_row[0];setting=agent_setting(store,plan);now=store.clock()
-  if market!='it':return {'state':'market_agent_transport_pending','market':market,'platformWrites':0,'realSends':0}
   if not setting['enabled']:return {'state':'disabled','platformWrites':0,'realSends':0}
   stage=rollout_stage(store,plan,market)
   if send_dispatch_active(store):return {'state':'send_dispatch_active','platformWrites':0,'realSends':0}
@@ -50,7 +49,9 @@ def tick(authorized_now=None,market="it"):
     replies=AutoReplies(store)
     spec=importlib.util.spec_from_file_location('agent_reply_runtime',ROOT/'scripts/run-auto-replies.py')
     runtime=importlib.util.module_from_spec(spec);spec.loader.exec_module(runtime)
-    state=runtime.run_reply(store,replies,replies.get(unresolved[0]))
+    state=runtime.run_reply(store,replies,replies.get(unresolved[0]),stopped=lambda:STOP) if market=='it' else __import__(
+      'lib.market_agent_reply',fromlist=['run_reply']).run_reply(ROOT,store,replies,replies.get(unresolved[0]),market,
+                                                   pilot=stage=='pilot_running',stopped=lambda:STOP)['state']
     return {'state':'original_intent_rechecked','replyState':state,'platformWrites':0,'realSends':0}
    return {'state':'first_send_requires_page_start' if stage=='pilot_required' else 'pilot_complete_waiting_resume',
            'platformWrites':0,'realSends':0}
@@ -72,22 +73,33 @@ def tick(authorized_now=None,market="it"):
    report['noReply']+=int(applied['route']=='no_reply')
    report['human']+=int(applied['route']=='handoff')
    report['prepared']+=int(applied['replyId'] is not None)
-  q=store.db.execute("SELECT id FROM service_reply WHERE plan_id=? AND state IN ('ready','inflight','accepted','unknown') AND (kind IN ('agent_generated_v2','agent_request_detail_v2','agent_handoff_v2') OR state IN ('inflight','accepted','unknown')) ORDER BY CASE state WHEN 'unknown' THEN 0 WHEN 'inflight' THEN 1 ELSE 2 END,created LIMIT 1",(plan,)).fetchone()
+  q=store.db.execute("SELECT id FROM service_reply WHERE plan_id=? AND state IN ('ready','inflight','accepted','unknown') AND (kind IN ('agent_generated_v2','agent_request_detail_v2','agent_handoff_v2') OR ?='it' AND state IN ('inflight','accepted','unknown')) ORDER BY CASE state WHEN 'unknown' THEN 0 WHEN 'inflight' THEN 1 ELSE 2 END,created LIMIT 1",(plan,market)).fetchone()
   if q:
    spec=importlib.util.spec_from_file_location('agent_reply_runtime',ROOT/'scripts/run-auto-replies.py');runtime=importlib.util.module_from_spec(spec);spec.loader.exec_module(runtime)
    queued=replies.get(q[0]);new_dispatch=queued['state']=='ready'
-   state=runtime.run_reply(store,replies,queued);report['realSends']=int(new_dispatch);report['platformWrites']=int(new_dispatch);report['confirmed']+=int(state=='confirmed');report['unknown']+=int(state=='unknown')
+   if market=='it':
+    state=runtime.run_reply(store,replies,queued,authorized_now=authorized_now is not None,
+                            stopped=lambda:STOP);writes=int(new_dispatch)
+   else:
+    from lib.market_agent_reply import run_reply as market_run_reply
+    result=market_run_reply(ROOT,store,replies,queued,market,pilot=stage=='pilot_running',
+                            authorized_now=authorized_now is not None,stopped=lambda:STOP)
+    state=result['state'];writes=result['platformWrites']
+   report['realSends']=int(new_dispatch and state=='confirmed');report['platformWrites']=writes;report['confirmed']+=int(state=='confirmed');report['unknown']+=int(state=='unknown')
   report['state']='completed';store.db.execute("UPDATE agent_reply_run SET state='completed',finished_at=?,claimed=?,no_reply=?,prepared=?,human=?,confirmed=?,unknown=? WHERE run_id=?",(store.clock(),report['claimed'],report['noReply'],report['prepared'],report['human'],report['confirmed'],report['unknown'],run_id));return report|{'replyProjection':projection}
 def main():
  p=argparse.ArgumentParser();p.add_argument('--worker',action='store_true');p.add_argument('--interval',type=int,default=60);p.add_argument('--stop',type=Path);p.add_argument('--authorized-now');p.add_argument('--market',default='it');a=p.parse_args();signal.signal(signal.SIGTERM,stop);signal.signal(signal.SIGINT,stop)
  if a.worker and a.authorized_now:p.error('--authorized-now cannot be used with --worker')
- with (ROOT/'var/agent-reply-worker.lock').open('a') as lock:
+ with (ROOT/'var'/('agent-reply-worker.lock' if a.market=='it' else f'agent-reply-worker-{a.market}.lock')).open('a') as lock:
   fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
   while not STOP and not (a.stop and a.stop.exists()):
    try:result=tick(a.authorized_now,a.market)
    except Exception as e:result={'state':'failed','error':str(e) if isinstance(e,CycleError) else type(e).__name__,'platformWrites':0,'realSends':0}
-   (ROOT/'var/agent-reply-status.json').write_text(json.dumps(result,ensure_ascii=False,indent=2)+'\n');print(json.dumps(result,ensure_ascii=False),flush=True)
+   status_path=ROOT/'var'/('agent-reply-status.json' if a.market=='it' else f'agent-reply-status-{a.market}.json')
+   status_path.write_text(json.dumps(result|{'pid':__import__('os').getpid(),'checkedAt':time.time()},ensure_ascii=False,indent=2)+'\n')
+   print(json.dumps(result,ensure_ascii=False),flush=True)
    if not a.worker:break
+   if a.market!='it' and result.get('state')=='disabled':break
    a.authorized_now=None
    for _ in range(max(30,a.interval)):
     if STOP or (a.stop and a.stop.exists()):break

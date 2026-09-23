@@ -1,0 +1,63 @@
+"""Market-scoped V2 Agent text delivery with one durable intent and exact readback."""
+import hashlib
+import json
+from pathlib import Path
+
+from lib.cycle_inbox import Inbox
+from lib.cycle_service import Service
+from lib.market_im_runtime import authenticated,write_gate
+from lib.second_cycle import CycleError
+from lib.template_library import agent_setting
+
+
+def _window_open(setting,stamp):
+ from datetime import datetime,timedelta,timezone
+ local=datetime.fromtimestamp(stamp,timezone(timedelta(hours=8)))
+ minute=local.hour*60+local.minute
+ start=sum(int(part)*factor for part,factor in zip(setting['replyStart'].split(':'),(60,1)))
+ end=sum(int(part)*factor for part,factor in zip(setting['replyEnd'].split(':'),(60,1)))
+ return start<=minute<end
+
+
+def run_reply(root,store,replies,reply,market,*,pilot=False,authorized_now=False,stopped=lambda:False):
+ root=Path(root);report={'market':market,'platformWrites':0,'realSends':0}
+ if reply['kind'] not in ('agent_generated_v2','agent_request_detail_v2','agent_handoff_v2'):
+  raise CycleError('market_agent_reply_kind_invalid')
+ recovering=reply['state'] in ('inflight','accepted','unknown')
+ if not recovering and not agent_setting(store,reply['plan_id'])['enabled']:
+  raise CycleError('agent_reply_disabled')
+ with authenticated(root,market,report,canary=pilot,capability='agent_reply',stopped=stopped) as runtime:
+  session=runtime['session'];adapter=runtime['adapter']
+  conversation=session.conversation(reply['cid'],reply['oec'])
+  if not recovering:
+   history=session.history_summary(conversation,include_events=True,include_contents=True)
+   Inbox(store).ingest(reply['plan_id'],reply['cid'],reply['oec'],history)
+   Service(store).capture(reply['plan_id'],reply['cid'],reply['oec'],history.get('contents',[]))
+   if stopped():raise CycleError('agent_reply_stopped')
+   with write_gate(root,runtime['auth'],stopped=stopped) as mark:
+    def permit(scope):
+     current=agent_setting(store,reply['plan_id'])
+     if stopped() or not current['enabled'] or not authorized_now and not _window_open(current,store.clock()):
+      raise CycleError('agent_reply_stopped')
+     if scope.get('market')!=market or scope.get('oecId')!=reply['oec'] or \
+        scope.get('conversationId')!=reply['cid'] or scope.get('componentKind')!='text' or \
+        scope.get('requestRef')!=reply['request_ref'] or \
+        scope.get('textSha256')!=hashlib.sha256(reply['text'].encode()).hexdigest():
+      raise CycleError('reply_scope_mismatch')
+     allowed=replies.begin(reply['id']);mark();report['platformWrites']+=1;return allowed
+    try:
+     receipt=adapter.send_once(conversation,reply['text'],reply['request_ref'],before_dispatch=permit)
+     replies.accepted(reply['id'],receipt)
+    except Exception:
+     if replies.get(reply['id'])['state']=='inflight':replies.unknown(reply['id'])
+     raise
+  current=replies.get(reply['id']);receipt=json.loads(current['receipt']) if current['receipt'] else {}
+  proof=adapter.readback(conversation,reply['text'],reply['request_ref'],message_id=receipt.get('messageId'))
+  if proof['status']=='confirmed':replies.confirm(reply['id'],proof)
+  else:replies.unknown(reply['id'])
+  report['state']=replies.get(reply['id'])['state'];report['realSends']=int(report['state']=='confirmed' and not recovering)
+  if pilot and report['state']=='confirmed':
+   from lib.account_identity import promote_capabilities
+   promote_capabilities(store,market=market,account=runtime['account'].name,
+                        capabilities=['agent_reply'],evidence_ref='service-reply:'+reply['id'])
+ return report

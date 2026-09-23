@@ -23,7 +23,7 @@ SEND_PATH = "/v1/message/send"
 CARD_CONTENT = "[商品列表]"
 CARD_TITLE_KEY = "ttspc_im_communication_list_preview_message_title3"
 CARD_ORIGIN = PARTNER_HOST + "/api/v1/affiliate/partner/im/product_list/list"
-CARD_SENDERS=frozenset({('it','acc6'),('br','acc1'),('uk','acc11')})
+CARD_SENDERS=frozenset({('it','acc6'),('br','acc1'),('my','acc8'),('uk','acc11')})
 SAFE_CODES = frozenset({"it_delivery_auth_invalid", "it_delivery_session_mismatch", "it_delivery_input_invalid",
     "it_delivery_conversation_unverified", "it_delivery_dispatch_not_allowed", "it_delivery_duplicate_dispatch",
     "it_delivery_stopped", "it_delivery_maintenance_due", "it_delivery_auth_expired", "it_delivery_create_unknown",

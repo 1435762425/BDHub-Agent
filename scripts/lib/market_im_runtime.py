@@ -23,15 +23,17 @@ def _data(payload):
 
 
 @contextmanager
-def authenticated(root,market,report,*,canary=False,stopped=lambda:False):
+def authenticated(root,market,report,*,canary=False,read_only=False,capability='message_send',stopped=lambda:False):
  root=Path(root);pair=load_config(root)['markets'][market];account_name=pair['roles']['communications']
+ if capability not in ('message_send','agent_reply') or canary and read_only:raise ValueError('market_im_capability_invalid')
  if canary:
-  if market not in {'br','uk'}:raise ValueError('market_send_canary_unavailable')
+  if market not in {'br','my','uk'}:raise ValueError('market_send_canary_unavailable')
  else:
   from lib.account_identity import current_generation
   from lib.second_cycle import CycleStore
   with CycleStore(root/'var/second-cycle.sqlite',readonly=True) as store:generation=current_generation(store,market,account_name)
-  if (generation or {}).get('capabilities',{}).get('message_send',{}).get('state')!='verified':
+  required='inbox_read' if read_only else capability
+  if (generation or {}).get('capabilities',{}).get(required,{}).get('state')!='verified':
    raise ValueError('market_send_capability_unverified')
  configure_vendored_bdhub(root=root,legacy_root=root.parent/'01-BDSystem-V2')
  from bdhub.enrich.profile_lease import ProfileLease
@@ -65,10 +67,12 @@ def authenticated(root,market,report,*,canary=False,stopped=lambda:False):
    auth=ItalyImAuthContext(account.name,im_id,token,{'market':market,'account':account.name,
     'market_region':str(identity.im_market),'partner_host':partner_host,'im_host':endpoint.hostname,
     'partner':partner,'market_row':market_row,'market_id':market_id,'partner_id':str(identity.partner_id)},safe_headers,0)
-   report.update(market=market,account=account.name,sendCapability='canary' if canary else 'enabled',
+   report.update(market=market,account=account.name,sendCapability='read_only' if read_only else 'canary' if canary else 'enabled',
                  identityFileUnchanged=True,platformWrites=0,realSends=0)
-   with ItalyImReadSession(auth,report,use_environment_proxy=True) as session:
-    yield {'account':account,'identity':identity,'auth':auth,'session':session,'adapter':ItalyImDeliveryAdapter(auth,session),
+   with ItalyImReadSession(auth,report,use_environment_proxy=True,stopped=stopped,
+                           maintenance_due=lambda:scheduled_relogin.maintenance_due(account,initialize=False,ignore_retry_throttle=True)) as session:
+    yield {'account':account,'identity':identity,'auth':auth,'session':session,
+           'adapter':None if read_only else ItalyImDeliveryAdapter(auth,session),
            'partnerHost':partner_host,'headersPath':headers_path,'beforeHash':before}
    if hashlib.sha256(headers_path.read_bytes()).hexdigest()!=before:raise ValueError('market_send_identity_changed')
   report['identityFileUnchanged']=True

@@ -24,7 +24,12 @@ class Inbox:
    if not rel:raise CycleError('relationship_missing')
    cp=db.execute('SELECT * FROM inbox_checkpoint WHERE plan_id=? AND cid=?',(plan,cid)).fetchone()
    if cp and cp['oec']!=oec:raise CycleError('checkpoint_identity_conflict')
-   baseline=cp['baseline_at'] if cp else now;overlap=False
+   baseline=cp['baseline_at'] if cp else now;known_contact=False
+   if not cp and db.execute("SELECT 1 FROM sqlite_master WHERE name='cycle_delivery_part'").fetchone():
+    sent=db.execute("""SELECT max(p.started) FROM cycle_delivery d JOIN cycle_delivery_part p ON p.delivery_id=d.id
+      WHERE d.plan_id=? AND d.oec=? AND p.kind='text' AND p.state='confirmed'""",(plan,oec)).fetchone()[0]
+    if sent is not None:baseline=min(baseline,float(sent));known_contact=True
+   overlap=False
    for mid,e in unique.items():
     prev=db.execute('SELECT payload FROM inbox_event WHERE plan_id=? AND cid=? AND message_id=?',(plan,cid,mid)).fetchone()
     if prev:
@@ -35,7 +40,7 @@ class Inbox:
    for mid,e in unique.items():
     if db.execute('SELECT 1 FROM inbox_event WHERE plan_id=? AND cid=? AND message_id=?',(plan,cid,mid)).fetchone():continue
     stamp=e.get('createTimeRaw');valid=type(stamp) is int and 946684800000<=stamp<=int(now*1000)+300000
-    old=not cp or not valid or stamp<baseline*1000 or gap
+    old=(not cp and not known_contact) or not valid or stamp<baseline*1000 or gap
     db.execute('INSERT INTO inbox_event VALUES(?,?,?,?,?,?,?,?,?)',(plan,cid,mid,oec,e['kind'],stamp if valid else None,encoded(e),int(old),now));added+=1;historical+=int(old)
     if e['kind'] in ('creatorReplies','showcaseNotifications'):unlock=True
     if e['kind']=='creatorReplies' and not old:live+=1
@@ -60,10 +65,12 @@ def inbox_status(store,plan):
  enabled=False
  if db.execute("SELECT 1 FROM sqlite_master WHERE name='service_reply_config'").fetchone():
   config=db.execute('SELECT enabled FROM service_reply_config WHERE plan_id=?',(plan,)).fetchone();enabled=bool(config and config[0])
+ oldest=db.execute('SELECT min(checked_at) FROM inbox_checkpoint WHERE plan_id=?',(plan,)).fetchone()[0]
  return {'events':db.execute('SELECT count(*) FROM inbox_event WHERE plan_id=?',(plan,)).fetchone()[0],
  'historicalEvents':db.execute('SELECT count(*) FROM inbox_event WHERE plan_id=? AND historical=1',(plan,)).fetchone()[0],
  'conversations':db.execute('SELECT count(*) FROM inbox_checkpoint WHERE plan_id=?',(plan,)).fetchone()[0],
  'gaps':db.execute("SELECT count(*) FROM inbox_checkpoint WHERE plan_id=? AND state='gap'",(plan,)).fetchone()[0],
  'pendingContent':db.execute('SELECT count(*) FROM inbox_pending WHERE plan_id=?',(plan,)).fetchone()[0],
  'lastCheckedAt':db.execute('SELECT max(checked_at) FROM inbox_checkpoint WHERE plan_id=?',(plan,)).fetchone()[0],
+ 'oldestCheckedAt':oldest,'oldestAgeSeconds':max(0,int(store.clock()-oldest)) if oldest else None,
  'automaticRepliesEnabled':enabled}

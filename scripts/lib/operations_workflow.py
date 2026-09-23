@@ -330,9 +330,10 @@ def finish_stage(store, run_id, stage, *, state, item_count=0, scope=None, paylo
                  encoded(facts), now, now),
             )
         store.db.execute(
-            "UPDATE workflow_stage_run SET state=?,output_generation_id=?,platform_writes=?,finished_at=?,"
+            "UPDATE workflow_stage_run SET state=?,output_generation_id=?,platform_writes=?,counts_json=?,finished_at=?,"
             "error_code=? WHERE run_id=? AND stage=?",
-            (state, generation_id, platform_writes, now, error_code, run_id, stage),
+            (state, generation_id, platform_writes,
+             encoded({**json.loads(row['counts_json'] or '{}'),'items':item_count}),now,error_code,run_id,stage),
         )
         if state in STAGE_SUCCESS:
             _release_next(store, run_id)

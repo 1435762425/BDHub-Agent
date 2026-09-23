@@ -94,7 +94,7 @@ def last_run(root,market):
       'taplink_prepare':_workflow_stage(root,'taplink_prepare',market),
       'kalodata_leads':_workflow_stage(root,'kalodata',market),'oecid':_workflow_stage(root,'oecid',market),
       'send_pool_publish':_workflow_stage(root,'send_pool',market),
-      'inbox_monitor':_status_stamp(root/'var/cycle-inbox-status.json') if market=='it' else None,
+      'inbox_monitor':_status_stamp(root/('var/cycle-inbox-status.json' if market=='it' else f'var/market-inbox-{market}.json')),
       'agent_reply':_scalar(cycle,"SELECT max(a.finished_at) FROM agent_reply_run a JOIN plan p ON p.id=a.plan_id WHERE p.market=?",(market,)),
       'continuous_send':_scalar(cycle,"SELECT max(c.last_success_at) FROM continuous_send_runtime c JOIN plan p ON p.id=c.plan_id WHERE p.market=?",(market,))}
 
@@ -103,9 +103,12 @@ def status(root=None,market='it'):
     root=Path(root or Path(__file__).resolve().parents[2]);config=load(root);last=last_run(root,market);jobs=[]
     for job in JOBS:
         setting=config['jobs'][job['id']]
+        enabled=(bool(_scalar(root/'var/second-cycle.sqlite',
+            "SELECT a.enabled FROM agent_reply_setting a JOIN plan p ON p.id=a.plan_id WHERE p.market=? AND p.institution='bjn-local-research'",(market,)))
+            if job['id']=='agent_reply' else setting['enabled'])
         jobs.append({'id':job['id'],'name':job['name'],'group':job['group'],'description':job['description'],
           'manual':job['manual'],'manualEndpoint':MANUAL_ENDPOINTS[job['manual']],
-          'lastRunAt':last.get(job['id']),'enabled':setting['enabled'],'schedulable':True,
+          'lastRunAt':last.get(job['id']),'enabled':enabled,'schedulable':True,
           'at':setting['at'],'cadence':job.get('cadence','daily'),'weekday':setting.get('weekday')})
     from lib.operations_scheduler import scheduler_state
     return {'version':config['version'],'market':market,'jobs':jobs,'schedulerReady':True,'scheduler':scheduler_state(root)}
