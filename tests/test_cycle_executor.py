@@ -60,5 +60,20 @@ class ExecutorTests(unittest.TestCase):
   def denied(c):raise CycleError('denied')
   def forbidden(*a,**kw):raise AssertionError('runtime opened')
   with self.assertRaisesRegex(CycleError,'denied'):execute(self.d,self.id,forbidden,denied,lambda *a:None)
+ def test_local_capacity_blocks_before_conversation_create(self):
+  rt=self.runtime(new=True)
+  self.s.db.executemany('INSERT INTO cycle_contact_reservation VALUES(?,?,?)',
+                        [(self.p,f'other-{i}',self.now) for i in range(500)])
+  with self.assertRaisesRegex(CycleError,'new_contact_capacity_reached'):
+   execute(self.d,self.id,rt,lambda c:None,lambda *a:None)
+  self.assertEqual(self.calls,[])
+  self.assertEqual(self.d.conversation_intent(self.id)['state'],'ready')
+ def test_local_capacity_blocks_before_card_in_existing_conversation(self):
+  rt=self.runtime()
+  self.s.db.executemany('INSERT INTO cycle_contact_reservation VALUES(?,?,?)',
+                        [(self.p,f'other-{i}',self.now) for i in range(500)])
+  with self.assertRaisesRegex(CycleError,'new_contact_capacity_reached'):
+   execute(self.d,self.id,rt,lambda c:None,lambda *a:None)
+  self.assertEqual(self.calls,[])
 del DeliveryTests
 if __name__=='__main__':unittest.main()
