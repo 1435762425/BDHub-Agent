@@ -1,8 +1,10 @@
 import sys,unittest,tempfile
 from pathlib import Path
+from types import SimpleNamespace
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'scripts'))
 from lib.second_cycle import CycleStore,CycleError,digest
 from lib.cycle_delivery import Deliveries
+from lib.market_send_canary import _record_create_failure
 from test_second_cycle import offer,edge,NOW
 class DeliveryTests(unittest.TestCase):
  def setUp(self):
@@ -83,6 +85,17 @@ class DeliveryTests(unittest.TestCase):
   with self.assertRaisesRegex(CycleError,'quarantine_scope_changed'):
    self.d.quarantine_unknown_conversation(self.id,'quarantine-it-20260923',
                                           observed_conversations=748,matching_conversations=0)
+ def test_ambiguous_create_keeps_original_intent_and_redacted_platform_signal(self):
+  self.d.prepare_conversation(self.id)
+  self.d.begin_conversation(self.id,digest(self.c))
+  error=SimpleNamespace(outcome='result_unknown',code='it_delivery_create_unknown',
+                        native_status=12345,check_code=None,response_ref='it-im-create:'+'a'*64)
+  self.assertTrue(_record_create_failure(self.s,self.id,error))
+  self.assertEqual(self.d.get(self.id)['state'],'unknown')
+  self.assertTrue(all(part['state']=='ready' and part['started'] is None for part in self.d.get(self.id)['parts']))
+  self.assertEqual(self.d.conversation_intent(self.id)['state'],'inflight')
+  self.assertEqual(self.s.db.execute('SELECT native_status FROM cycle_platform_signal WHERE delivery_id=?',
+                                     (self.id,)).fetchone()[0],12345)
  def test_missing_quota_evidence_no_dispatch(self):
   with self.assertRaisesRegex(CycleError,'execution_evidence_missing'):self.d.begin(self.id,'card',authorized_snapshot_hash=digest(self.c),recipient_verified=True)
  def test_reserved_source_exits_ready_supply_without_deleting_history(self):

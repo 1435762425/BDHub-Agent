@@ -286,6 +286,18 @@ class ItalyImDeliveryTests(unittest.TestCase):
                 with self.assertRaises(ItalyImDeliveryError) as error:adapter.send_once(conversation, TEXT, REQUEST, before_dispatch=gate)
                 self.assertEqual(error.exception.outcome, "not_submitted");self.assertEqual(len(http.calls), before)
 
+    def test_create_nonzero_code_preserves_redacted_signal_without_calling_it_success(self):
+        _, _, adapter, http, _, _ = fixture()
+        http.create_hook = lambda _: SimpleNamespace(status_code=200, headers={},
+            json=lambda: {"code": 12345, "message": "PRIVATE_PLATFORM_TEXT", "data": {}})
+        with self.assertRaises(ItalyImDeliveryError) as caught:
+            adapter.create_once("100", REQUEST, before_dispatch=allow)
+        error = caught.exception
+        self.assertEqual(error.outcome, "result_unknown")
+        self.assertEqual(error.native_status, 12345)
+        self.assertTrue(error.response_ref.startswith("it-im-create:"))
+        self.assertNotIn("PRIVATE", str(error))
+
     def test_dispatch_shares_read_session_pacer_but_callback_remains_the_authority(self):
         _, session, adapter, http, clock, report = fixture();session.next_request_at = 5
         scopes = []

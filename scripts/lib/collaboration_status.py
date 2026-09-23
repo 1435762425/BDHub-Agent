@@ -155,10 +155,10 @@ def set_manual(store, creator_id, new_status, request_id, expected_status_revisi
     }
 
 
-def observe_showcase(store, creator_id, evidence):
+def observe_showcase(store, creator_id, evidence, *, plan_id=None):
     """Upgrade the system default only; a prior manual choice always wins."""
     _required(store)
-    plan_id = _plan(store)
+    plan_id = plan_id or _plan(store)
     with store.tx():
         old = current(store, creator_id, plan_id)
         if old["source"] == "manual" or old["status"] != "normal":

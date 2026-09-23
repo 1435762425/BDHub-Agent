@@ -51,6 +51,17 @@ def _unsettled(store,plan,*,canary=False):
     return dict(row) if row else None
 
 
+def _record_create_failure(store,delivery_id,error):
+ intent=Deliveries(store).conversation_intent(delivery_id)
+ if not intent or intent['state']!='inflight':return False
+ if getattr(error,'response_ref',None):
+  store.db.execute('INSERT INTO cycle_platform_signal(delivery_id,at,outcome,code,native_status,check_code,check_message,response_ref) VALUES(?,?,?,?,?,?,?,?)',
+    (delivery_id,store.clock(),getattr(error,'outcome',None),getattr(error,'code',None),
+     getattr(error,'native_status',None),getattr(error,'check_code',None),None,error.response_ref))
+ Deliveries(store).unknown(delivery_id,'card')
+ return True
+
+
 def _preflight_conversation(store,session,plan,candidate,conversation,delivery_id):
     from lib.continuous_send import _continuous_history_eligible,ACTIVE_PENDING_STATES
     from lib.cycle_inbox import Inbox
@@ -157,7 +168,11 @@ def run(root,market,request_id,*,canary=True,page_control=False,reconcile_only=F
       if scope.get('market')!=market or scope.get('account')!=communications or scope.get('oecId')!=candidate['oecId']:raise CycleError('conversation_scope_mismatch')
       _dispatch_allowed(store,market,canary=canary,page_control=page_control);_binding_current(root,market,candidate)
       ref=Deliveries(store).begin_conversation(did,digest(candidate));mark();report['platformWrites']+=1;return {'dispatchAllowed':True,'requestRef':ref,'stage':'create_conversation'}
-     receipt=adapter.create_once(candidate['oecId'],conversation_intent['request_ref'],before_dispatch=permit_create)
+     try:receipt=adapter.create_once(candidate['oecId'],conversation_intent['request_ref'],before_dispatch=permit_create)
+     except BaseException as error:
+      if _record_create_failure(store,did,error):
+       raise CycleError('market_send_conversation_result_unknown') from None
+      raise
     Deliveries(store).save_conversation(did,receipt);conversation=session.conversation(receipt['conversationId'],candidate['oecId']);Deliveries(store).confirm_conversation(did,receipt['conversationId'],candidate['oecId'])
    checkpoint_time('conversation')
    _preflight_conversation(store,session,plan,candidate,conversation,did)

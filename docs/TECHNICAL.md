@@ -200,7 +200,7 @@ Pure HTTP 验证依赖 `Pillow==12.3.0`、`opencv-python-headless==4.14.0.94` �
 
 BR/MY/UK 正式外发逐次读取保存的北京时间窗口、当前停止/启动状态、账号维护状态和 `catalog_current_binding` 的 active、Offer 指纹、`listId` 与卡片 payload。卡与文字各有独立 requestRef，先恢复 `ready/running/unknown` 原 delivery；发起过的平台组件只读精确回查，回查未确认不改用新话术/新账号重发。`/api/send` 的 reconcile 在关闭窗口时也可核验原意图且不新写。会话创建意图若已 inflight/received 但不能与请求证据精确关联，停在需核验状态。MY 的首次真实 sender 在页面“发送”请求后走一条 canary，卡和文字均确认后才把同账号 `message_send` 能力发布为 verified；未完成前自动调度不能代替这次页面启动。
 
-持续发送按 `lead_pool.v3` 当前顺序领取一位达人，复检后把 creator/OECID、PID、Offer、`currentListId`、模板 revision、最终正文、关系控制 revision 和确定性 claim key 写入不可变 `cycle_delivery.snapshot`。执行只用本地 `catalog_current_binding` 核对材料，不远程刷新卡；`cycle_delivery` 唯一键、24 小时预留和同达人 active delivery 共同防重复。unknown 使进程进入 `waiting_reconciliation`，恢复只运行原 delivery 的 `verify_only`，不会领取下一位或重发。唯一例外是用户针对一条“建会话结果未知、卡和文字均未开始”的 IT 原意图明确授权隔离：原会话请求与零回执保留，delivery 标记 `quarantined_unknown`，该达人进入人工案件，其余达人可继续；页面仍把它计作未决，不改成失败或成功，也不对该达人重发。
+持续发送按 `lead_pool.v3` 当前顺序领取一位达人，复检后把 creator/OECID、PID、Offer、`currentListId`、模板 revision、最终正文、关系控制 revision 和确定性 claim key 写入不可变 `cycle_delivery.snapshot`。执行只用本地 `catalog_current_binding` 核对材料，不远程刷新卡；`cycle_delivery` 唯一键、24 小时预留和同达人 active delivery 共同防重复。unknown 使进程进入 `waiting_reconciliation`，恢复只运行原 delivery 的 `verify_only`，不会领取下一位或重发。用户对 IT “建会话结果未知、卡和文字均未开始”选择隔离后，逐条原意图仍须只读核验并满足零匹配证据，才能将该达人隔离：原会话请求与零回执保留，delivery 标记 `quarantined_unknown`，该达人进入人工案件，其余达人可继续；页面仍把它计作未决，不改成失败或成功，也不对该达人重发。建会话若返回无法确认的业务码，仅保存脱敏码与响应哈希；不把非零码自动推断为明确失败。
 
 滚动 24 小时新联系达到本地 500 位时，发送 worker 保留已冻结意图并进入 `waiting_capacity`，按窗口和额度释放周期继续检查，不以每几秒重启探测。容量预检在建会话与发卡前进行；最终预留仍在不可变意图的短事务中复核。现有单账号串行发送、逐组件回查和写门禁是当前正式实现；每市场 30 位/分钟是目标而不是已验收速度，实测以完整文字回查确认计数。更高并发通道在 2026-09-23 的 BR/UK 有界真实试验中未提高到目标，未作为常驻执行模式保留。
 
@@ -220,7 +220,7 @@ BR/MY/UK 正式外发逐次读取保存的北京时间窗口、当前停止/启�
 
 `/api/inbox?days=7|14|30` 返回同一收信控制器的北京日统计；结果页画确认触达达人、有回复达人和加橱窗达人三条趋势线。未确认卡片与异常单列，不计入成功。bridge 与纯展示模型复核期间 totals 等于每日行求和、`today` 等于同日期行；不可用、空数据或恒等式不成立时不显示成业务 0。
 
-IT 收信每轮从 IM 最近会话保留部分热点名额，其余从最旧 checkpoint 公平补扫；默认12个/30秒。BR/MY/UK 默认每轮20个/10秒、只读 IM 请求预算2 QPS，分别保存状态与分页发现游标，最近会话与旧 checkpoint 同轮调度，市场/账号各自独立；新会话只有精确匹配现有关系后才落本市场事件。首次 checkpoint 若已存在本项目确认发送，以该次文字开始时间作历史边界，之后的达人回复形成真实 pending；否则初次导入仍标记历史。收信事件与正文分别写 `inbox_event`、`inbox_content*`，再投影当前 turn；发送端在逐写前仍核对当前消息与关系，收信 worker 存活不代表覆盖新鲜。
+IT 收信每轮从 IM 最近会话保留部分热点名额，其余从最旧 checkpoint 公平补扫；默认12个/30秒。BR/MY/UK 默认每轮20个/10秒、只读 IM 请求预算2 QPS，分别保存状态与分页发现游标，最近会话与旧 checkpoint 同轮调度，市场/账号各自独立；新会话只有精确匹配现有关系后才落本市场事件。冷 checkpoint 也必须重新匹配本 plan 的当前关系；加橱窗合作状态投影显式使用收信 plan，不能回落到 IT。首次 checkpoint 若已存在本项目确认发送，以该次文字开始时间作历史边界，之后的达人回复形成真实 pending；否则初次导入仍标记历史。收信事件与正文分别写 `inbox_event`、`inbox_content*`，再投影当前 turn；发送端在逐写前仍核对当前消息与关系，收信 worker 存活不代表覆盖新鲜。
 
 点击日期后，GET `/api/inbox?date=YYYY-MM-DD&offset=0&limit=50` 调用 `cycle_stats.day_detail()` 只读同一 SQLite，单页上限 100、偏移上限 5000。明细只投影投递、实时回复、加橱窗、历史已确认服务回复和当日新建人工案件的白名单字段；不下发原始 delivery snapshot、平台 payload、receipt、confirmation 或身份凭据。`total` 必须等于当日这些明细类型的统计求和，分页游标、日期和字段长度在 CLI/bridge 两层校验；确认文字跟随商品卡展示，不重复算成第二条触达。
 

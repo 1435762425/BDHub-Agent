@@ -52,6 +52,20 @@ class CollaborationStatusTests(unittest.TestCase):
         with self.assertRaisesRegex(CycleError, "relationship_control_changed"):
             set_manual(self.store, "creator-a", "normal", "collaboration-request-0002", 1, 1)
 
+    def test_showcase_observation_stays_in_its_market_plan(self):
+        br = self.store.plan("bjn-local-research", "br")
+        self.store.db.execute("INSERT INTO relationship VALUES(?,?,?,'auto',0,1,0,0)",
+                              (br, "creator-br", "201"))
+        observed = observe_showcase(self.store, "creator-br", {"messageId": "br-m1"}, plan_id=br)
+        self.assertTrue(observed["changed"])
+        self.assertEqual(observed["status"], "collaborated")
+        self.assertEqual(self.store.db.execute(
+            "SELECT count(*) FROM creator_collaboration_current WHERE plan_id=? AND creator_id='creator-br'",
+            (br,)).fetchone()[0], 1)
+        self.assertEqual(self.store.db.execute(
+            "SELECT count(*) FROM creator_collaboration_current WHERE plan_id=? AND creator_id='creator-br'",
+            (self.plan,)).fetchone()[0], 0)
+
 
 if __name__ == "__main__":
     unittest.main()

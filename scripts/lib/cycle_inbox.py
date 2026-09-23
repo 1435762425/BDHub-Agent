@@ -56,7 +56,7 @@ class Inbox:
    db.execute('INSERT INTO inbox_checkpoint VALUES(?,?,?,?,?,?) ON CONFLICT(plan_id,cid) DO UPDATE SET checked_at=excluded.checked_at,state=excluded.state',(plan,cid,oec,baseline,now,state))
   if showcase_live and self.s.db.execute("SELECT 1 FROM sqlite_master WHERE name='creator_collaboration_current'").fetchone():
    from lib.collaboration_status import observe_showcase
-   observe_showcase(self.s,rel['creator_id'],{'conversationId':cid,'count':showcase_live,'observedAt':now})
+   observe_showcase(self.s,rel['creator_id'],{'conversationId':cid,'count':showcase_live,'observedAt':now},plan_id=plan)
   return dict(added=added,historical=historical,liveReplies=live,state=state,realSends=0)
 
 def inbox_status(store,plan):

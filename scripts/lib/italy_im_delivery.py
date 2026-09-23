@@ -437,14 +437,23 @@ class ItalyImDeliveryAdapter:
         response = self._dispatch(scope, before_dispatch, headers=headers, payload=payload)
         try:
             body = response.json()
-            if not isinstance(body, dict) or type(body.get("code")) is not int or body["code"] != 0 or not isinstance(body.get("data"), dict):raise ValueError()
-            cid = _native_id(body["data"].get("conversation_short_id"));is_new = body["data"].get("is_new")
-            if is_new is not None and type(is_new) is not bool:raise ValueError()
-            if body["data"].get("creator_oec_id") is not None and _native_id(body["data"]["creator_oec_id"]) != oec_id:raise ValueError()
+            response_ref=(self.native['market']+"-im-create:"+
+                          hashlib.sha256(json.dumps(body, sort_keys=True, ensure_ascii=False).encode()).hexdigest())
+            try:
+                if not isinstance(body, dict) or type(body.get("code")) is not int or body["code"] != 0 or not isinstance(body.get("data"), dict):raise ValueError()
+                cid = _native_id(body["data"].get("conversation_short_id"));is_new = body["data"].get("is_new")
+                if is_new is not None and type(is_new) is not bool:raise ValueError()
+                if body["data"].get("creator_oec_id") is not None and _native_id(body["data"]["creator_oec_id"]) != oec_id:raise ValueError()
+            except Exception:
+                raise ItalyImDeliveryError("it_delivery_create_unknown",outcome="result_unknown",
+                                           native_status=body.get("code") if isinstance(body,dict) else None,
+                                           response_ref=response_ref) from None
             return {"conversationId": cid, "requestRef": request_ref, "isNew": is_new, "candidate": True,
-                    "evidenceRef": self.native['market']+"-im-create:" + hashlib.sha256(json.dumps(body, sort_keys=True, ensure_ascii=False).encode()).hexdigest()}
+                    "evidenceRef": response_ref}
         except ImProbeDeadline:
             raise ItalyImDeliveryError("it_delivery_wall_timeout", outcome="result_unknown") from None
+        except ItalyImDeliveryError:
+            raise
         except Exception:
             raise ItalyImDeliveryError("it_delivery_create_unknown", outcome="result_unknown") from None
 
