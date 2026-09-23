@@ -1,16 +1,16 @@
 "use client";
 
 import Link from "next/link";
-import SendBatchPanel from "./SendBatchPanel";
+import ContinuousSendPanel from "./ContinuousSendPanel";
 import StatsCalendarPanel from "./StatsCalendarPanel";
 import {useInboxMonitor} from "./useInboxMonitor";
-import {useSendBatch} from "./useSendBatch";
+import {useContinuousSend} from "./useContinuousSend";
 import {Card,PageHeading,Pill} from "../bdhub/ui";
 
 export type WorkspaceSection="send"|"history";
 const tabs:{section:WorkspaceSection;label:string}[]=[{section:"send",label:"发送"},{section:"history",label:"结果与历史"}];
 
-function SendWorkspace({market}:{market:string}){const controller=useSendBatch(market);return <SendBatchPanel market={market} controller={controller}/>;}
+function SendWorkspace({market}:{market:string}){const controller=useContinuousSend(market);return <ContinuousSendPanel market={market} controller={controller}/>;}
 function HistoryWorkspace({market}:{market:string}){const controller=useInboxMonitor(market);return <StatsCalendarPanel controller={controller}/>;}
 function Unavailable({section}:{section:WorkspaceSection}){return <div className="grid gap-5 lg:grid-cols-2"><Card title={section==="send"?"发送":"结果与历史"}><p className="p-5 text-sm leading-6 text-gray-500">页面结构已统一；当前市场账号、语言内容或写能力尚未验收，真实动作保持关闭。</p></Card><Card title="市场隔离"><p className="p-5 text-sm leading-6 text-gray-500">此处不会读取其他市场的模板、发送池、统计或 delivery。</p></Card></div>;}
 

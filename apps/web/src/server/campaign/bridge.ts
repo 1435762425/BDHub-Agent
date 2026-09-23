@@ -1,6 +1,6 @@
 import {execFile} from "node:child_process";
 import {join} from "node:path";
-import {projectRoot} from "../creator-identities/refresh.ts";
+import {projectRoot} from "../runtime/project-root.ts";
 import {operationalMarket} from "../markets/registry.ts";
 
 /** 非全托（Campaign）商品的筛分/入池摘要。数字来自本地账本，单位是 offer 与 PID。 */

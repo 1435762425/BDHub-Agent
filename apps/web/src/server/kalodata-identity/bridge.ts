@@ -1,6 +1,6 @@
 import {execFile} from "node:child_process";
 import {join} from "node:path";
-import {projectRoot} from "../creator-identities/refresh.ts";
+import {projectRoot} from "../runtime/project-root.ts";
 
 /** The Kalodata grabber's login card, plus the product id used to test the scraping path. */
 export type KalodataIdentityConfig={version:string;activationCode:string;canaryPid:string};

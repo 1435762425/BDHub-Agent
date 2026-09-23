@@ -1,5 +1,5 @@
 import {execFile} from "node:child_process";import {join} from "node:path";
-import {projectRoot} from "../creator-identities/refresh.ts";import {isLocalRequest} from "../runtime/validation.ts";
+import {projectRoot} from "../runtime/project-root.ts";import {isLocalRequest} from "../runtime/validation.ts";
 import {enabledMarket} from "../markets/registry.ts";
 const id=(value:unknown)=>{if(typeof value!=="string"||!/^[A-Za-z0-9][A-Za-z0-9._:-]{7,119}$/.test(value))throw Error("invalid_workflow_request");return value;};
 const revision=(value:unknown)=>{if(typeof value!=="number"||!Number.isSafeInteger(value)||value<0)throw Error("invalid_workflow_request");return value;};

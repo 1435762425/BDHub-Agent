@@ -1,6 +1,6 @@
 import {execFile} from "node:child_process";
 import {join} from "node:path";
-import {projectRoot} from "../creator-identities/refresh.ts";
+import {projectRoot} from "../runtime/project-root.ts";
 import {isLocalRequest} from "../runtime/validation.ts";
 import {REPLY_ACTIONS} from "../../features/second-outreach/reply-review-contracts.ts";
 import type {ReplyAction,ReplyDecision,ReplyReviewItem,ReplyReviewState,ReplyReviewStatus} from "../../features/second-outreach/reply-review-contracts.ts";

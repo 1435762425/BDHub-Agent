@@ -1,6 +1,6 @@
 import {execFile} from "node:child_process";
 import {join} from "node:path";
-import {projectRoot} from "../creator-identities/refresh.ts";
+import {projectRoot} from "../runtime/project-root.ts";
 import {enabledMarket} from "../markets/registry.ts";
 
 /** 收信监控与按天统计。监控本身是既有的只读脚本，这里只读它的状态、并启停它。 */

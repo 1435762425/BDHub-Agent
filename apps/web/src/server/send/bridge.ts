@@ -1,5 +1,5 @@
 import {execFile} from "node:child_process";import {join} from "node:path";
-import {projectRoot} from "../creator-identities/refresh.ts";
+import {projectRoot} from "../runtime/project-root.ts";
 import type {ContinuousSendState,SendTemplateOption} from "../../features/second-outreach/send-contracts.ts";
 import {enabledMarket,operationalMarket} from "../markets/registry.ts";
 

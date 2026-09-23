@@ -1,7 +1,7 @@
 import {execFile} from "node:child_process";
-import {existsSync} from "node:fs";
-import {dirname,join,resolve} from "node:path";
+import {join} from "node:path";
 import {InputError} from "../runtime/validation.ts";
+import {findProjectRoot} from "../runtime/project-root.ts";
 import type {ProfileRefreshRequest} from "../../features/creator-identities/refresh-contracts.ts";
 import {enabledMarket} from "../markets/registry.ts";
 
@@ -33,10 +33,8 @@ export function parseRefreshQuery(url:string):{command:"list"|"status";input:Rec
   throw new InputError("达人或刷新任务编号无效。");
 }
 export function projectRoot(start=process.cwd()):string {
-  for(let dir=resolve(start);;dir=dirname(dir)){
-    if(existsSync(join(dir,"scripts/lib/creator_identity.py"))&&existsSync(join(dir,"apps/web/package.json")))return dir;
-    if(dirname(dir)===dir)break;
-  }
+  const root=findProjectRoot(start);
+  if(root!==null)return root;
   throw new ProfileRefreshError("refresh_unavailable",503,"未定位到本机画像工作目录。");
 }
 export function decodeRefreshOutput(output:string):unknown {

@@ -1,6 +1,6 @@
 import {execFile} from "node:child_process";
 import {join} from "node:path";
-import {projectRoot} from "../creator-identities/refresh.ts";
+import {projectRoot} from "../runtime/project-root.ts";
 
 /** The stage that turns a Kalodata handle into a platform OECID, and therefore into a pool position. */
 export type IdentityConfig={batchSize:number;cohortSize:number};

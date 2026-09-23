@@ -1,6 +1,6 @@
 import {execFile} from "node:child_process";
 import {join} from "node:path";
-import {projectRoot} from "../creator-identities/refresh.ts";
+import {projectRoot} from "../runtime/project-root.ts";
 
 /** One schedulable job: what it does, whether it can be started by hand, and the operator's intent. */
 export type WorkbenchJob={id:string;name:string;group:string;description:string;manual:string;manualEndpoint:string|null;lastRunAt:number|null;enabled:boolean;at:string|null;schedulable:boolean;cadence:"daily"|"weekly";weekday:number|null};

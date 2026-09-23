@@ -1,6 +1,6 @@
 import {execFile} from "node:child_process";
 import {join} from "node:path";
-import {projectRoot} from "../creator-identities/refresh.ts";
+import {projectRoot} from "../runtime/project-root.ts";
 import {operationalMarket} from "../markets/registry.ts";
 import {isLocalRequest} from "../runtime/validation.ts";
 import {singleflight} from "../runtime/singleflight.ts";

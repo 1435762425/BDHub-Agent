@@ -2,7 +2,7 @@
 import {useEffect,useMemo,useState} from "react";
 import {Button,Card,Dialog,Input,Notice,Pill,TextArea} from "../bdhub/ui";
 import type {SendTemplate,TemplateLibraryState} from "../../server/template-library/bridge";
-import type {SendController} from "./useSendBatch";
+import type {SendController} from "./useContinuousSend";
 
 const DEFAULT_BODY="Ciao @{creator_handle}! Per {product_name} abbiamo una commissione del {creator_commission}% per te 👏 Ti va di creare un nuovo video o LIVE?";
 const renderSample=(body:string)=>body.replaceAll("{creator_handle}","creator_demo").replaceAll("{product_name}","questo prodotto").replaceAll("{creator_commission}","13");

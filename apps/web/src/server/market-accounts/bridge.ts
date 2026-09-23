@@ -1,7 +1,7 @@
 import {execFile,spawn} from 'node:child_process';
 import {readFileSync} from 'node:fs';
 import {join} from 'node:path';
-import {projectRoot} from '../creator-identities/refresh.ts';
+import {projectRoot} from '../runtime/project-root.ts';
 import {isLocalRequest} from '../runtime/validation.ts';
 import {enabledMarket} from '../markets/registry.ts';
 export type AccountRow={account:string;role:string;responsibilities:string[];state:string;enabled?:boolean;localEnabled?:boolean;localRevision?:number;legacyLeaseBusy?:boolean;legacyOperation?:string|null;lastLogin?:string|null;nextMaintenance?:string|null;plannedLoginMaintenance?:string|number|null;identityUpdatedAt?:number|null;evidence?:{checkedAt:number;capabilities:Record<string,string>;tokenHasExplicitExpiry:boolean}|null;identityGeneration?:{generationId:string;state:string;publishedAt:number;browserRef:string;httpRef:string;imRef:string;capabilities:Record<string,{state:string}>}|null;maintenanceIntent?:{intentId:string;state:string;operation:string;errorCode:string|null;checkpoint?:{stage?:string;visibleBrowser?:boolean;generationId?:string;inboxReconnected?:boolean}}|null};

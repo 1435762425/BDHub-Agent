@@ -1,6 +1,6 @@
 import {execFile} from "node:child_process";
 import {join} from "node:path";
-import {projectRoot} from "../creator-identities/refresh.ts";
+import {projectRoot} from "../runtime/project-root.ts";
 
 /** The two catalogue actions that actually do platform work, and whether each is running. */
 export type JobConfig={limit?:number;readLimit?:number;creates?:number;lanes?:number;qps?:number;maxRequests?:number;passes?:number};

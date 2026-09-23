@@ -1,6 +1,6 @@
 import {execFile} from "node:child_process";
 import {join} from "node:path";
-import {projectRoot} from "../creator-identities/refresh.ts";
+import {projectRoot} from "../runtime/project-root.ts";
 
 /** Thresholds for admitting a collected full-managed product into the selected pool. */
 export type CatalogScreenConfig={version:string;minSales:number;minRating:number;minCommissionGapPoints:number;allowUnrated:boolean};

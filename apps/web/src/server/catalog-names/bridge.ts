@@ -1,7 +1,7 @@
 import {execFile,spawn} from "node:child_process";
 import {openSync} from "node:fs";
 import {join} from "node:path";
-import {projectRoot} from "../creator-identities/refresh.ts";
+import {projectRoot} from "../runtime/project-root.ts";
 
 /** How many TapLink card names would use a real AI short name, and how many would be truncated. */
 export type NameSample={pid:string;title:string};

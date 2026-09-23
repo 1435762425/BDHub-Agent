@@ -1,6 +1,6 @@
 import {execFile} from "node:child_process";
 import {join} from "node:path";
-import {projectRoot} from "../creator-identities/refresh.ts";
+import {projectRoot} from "../runtime/project-root.ts";
 import {isLocalRequest} from "../runtime/validation.ts";
 export type GlobalProduct={pid:string;title:string;listedSelected:boolean|null;selectionObservation?:{state:string;observedAt:number}|null;totalCommissionRaw:string|null;publicCommissionRaw:string|null;detailsChecked:boolean;stockChecked:boolean;selectedOffers:Array<{stock:string|null;creatorPercent:string|null;endAt:string|null;assessment:{eligible:boolean;reasons:string[]}}>};
 export type GlobalStatus={selectionBatch?:{performance?:{confirmedPerMinute:number;configuredQps:number;lanes:number;confirmedThisRun:number;elapsedSeconds:number};id:string;total:number;states:Record<string,number>;updatedAt:number|null}|null;available:boolean;executionAllowed:false;displayRunId?:string;displayIsComplete?:boolean;activePublished?:{id:string;products:number;updated:number}|null;id?:string;market?:string;source?:string;state?:string;products?:number;listedSelectedProducts?:number;listedUnselectedProducts?:number;pages?:number;reportedTotal?:number|null;detailProducts?:number;reason?:string|null;published?:boolean;updatedAt?:number;elapsedSeconds?:number;partitionMode?:"category_l1_v1"|null;categoryCount?:number|null;categoriesCompleted?:number|null;categoryMemberships?:number|null;categoryOverlap?:number|null;coverage?:string;items:GlobalProduct[];totalMatches:number;offset:number;limit:number};

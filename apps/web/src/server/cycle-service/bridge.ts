@@ -1,6 +1,6 @@
 import {execFile} from "node:child_process";
 import {join} from "node:path";
-import {projectRoot} from "../creator-identities/refresh.ts";
+import {projectRoot} from "../runtime/project-root.ts";
 import {isLocalRequest} from "../runtime/validation.ts";
 import {enabledMarket} from "../markets/registry.ts";
 export type ServiceCase={handle?:string|null;id:string;creator_id:string;assessment_revision:number;control_revision:number;reason:string;overdue:boolean;ack_state:string;messages:Array<{messageId:string;text:string|null;format:string}>};

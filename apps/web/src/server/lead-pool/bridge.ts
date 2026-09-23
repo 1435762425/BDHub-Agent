@@ -1,6 +1,6 @@
 import {execFile} from "node:child_process";
 import {join} from "node:path";
-import {projectRoot} from "../creator-identities/refresh.ts";
+import {projectRoot} from "../runtime/project-root.ts";
 
 /** Counts in 达人×商品 units, plus the four layers the pool is split into. */
 export type LeadPoolCounts={leads:number;merged:number;unresolved:number;queued:number;positions:number;

@@ -1,6 +1,6 @@
 import {readFileSync,statSync} from "node:fs";
 import {join} from "node:path";
-import {projectRoot} from "../creator-identities/refresh.ts";
+import {projectRoot} from "../runtime/project-root.ts";
 import type {MarketRegistry,MarketSummary} from "../../features/shell/market-types";
 
 const KEY=/^[a-z]{2}$/;

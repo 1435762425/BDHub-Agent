@@ -1,7 +1,7 @@
 import {execFile,spawn} from "node:child_process";
 import {join} from "node:path";
 import {openSync} from "node:fs";
-import {projectRoot} from "../creator-identities/refresh.ts";
+import {projectRoot} from "../runtime/project-root.ts";
 
 /** Queue shape for PID -> creator-lead queries. Numbers only; the platform is not contacted. */
 export type LeadsQueueConfig={version:string;refreshDays:number;leadsPerPid:number;windowDays:number;batchSize:number;maxAttempts:number};
