@@ -7,14 +7,15 @@ import sqlite3
 import subprocess
 import time
 from contextlib import closing
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import FIRST_COMPLETED,ThreadPoolExecutor,wait
 from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from lib.operations_workflow import (STAGES, create_run, finish_stage, run_payload, setting,
-                                     start_stage, status as workflow_status)
+from lib.operations_workflow import create_run,finish_stage,status as workflow_status
 from lib.second_cycle import CycleError, CycleStore, digest
+from lib.workflow_dispatch import claim_ready
+from lib.workflow_resources import assert_current,heartbeat,release
 
 
 BEIJING = ZoneInfo('Asia/Shanghai')
@@ -35,6 +36,19 @@ def _read(path,default):
 def _write(path,value):
     path=Path(path);path.parent.mkdir(parents=True,exist_ok=True);temporary=path.with_suffix(path.suffix+'.tmp')
     temporary.write_text(json.dumps(value,ensure_ascii=False,indent=2)+'\n',encoding='utf-8');temporary.replace(path)
+
+
+def _project_read_models(root,targets,progress):
+    projector=root/'.venv/bin/python'
+    if not projector.exists():return
+    for market,view in sorted(set(targets)):
+        try:
+            result=subprocess.run([str(projector),str(root/'scripts/project-market-read-model.py'),'project',
+                                   '--market',market,'--view',view],cwd=str(root),capture_output=True,timeout=60,
+                                  env={**os.environ,'PYTHONDONTWRITEBYTECODE':'1'})
+            if result.returncode:progress.setdefault('projectionErrors',[]).append(f'{market}:{view}')
+        except (OSError,subprocess.TimeoutExpired):
+            progress.setdefault('projectionErrors',[]).append(f'{market}:{view}')
 
 
 def _report_platform_writes(payload):
@@ -477,6 +491,7 @@ def tick(root,*,now=None,executor=None):
     if not database.exists():progress['error']='workflow_database_missing';_write(status_path(root),progress);return progress
     from lib.jobs import load
     jobs=load(root)
+    projected=[]
     with CycleStore(database) as store:
         from lib.market_registry import enabled_market_keys
         markets=enabled_market_keys(root);snapshots={market:workflow_status(store,market) for market in markets}
@@ -494,59 +509,60 @@ def tick(root,*,now=None,executor=None):
                     scheduled=min(due_times[source] for source in sources)
                     current=create_run(store,market=market,trigger_source='schedule',scheduled_at=scheduled,sources=sources)
             if current and current['state'] in ('queued','running','stop_requested'):active.append(current)
-        # Bring other markets to the same read-only Kalodata barrier before starting it.  Once two
-        # are ready, execute at most the policy cap in parallel; all write stages remain serial.
-        def queued(run):return next((row for row in run['stages'] if row['state']=='queued'),None)
-        non_kalodata=[row for row in active if queued(row) and queued(row)['stage']!='kalodata']
-        priority=lambda row:(0 if row.get('triggerSource') in ('manual','recovery') else 1,
-                             row['scheduledAt'],row['market'])
-        current=min(non_kalodata or active,key=priority) if active else None
-        if not current or current['state'] not in ('queued','running','stop_requested'):
-            _write(status_path(root),progress);return progress
-        market=current['market'];progress['runId']=current['runId'];progress['market']=market
-        if current['state']=='stop_requested':
+        for row in active:
+            if row['state']!='stop_requested':continue
             with store.tx():
-                store.db.execute("UPDATE workflow_stage_run SET state='stopped',finished_at=? WHERE run_id=? AND state IN ('queued','waiting_upstream')",(stamp,current['runId']))
-                store.db.execute("UPDATE workflow_run SET state='stopped',finished_at=? WHERE run_id=?",(stamp,current['runId']))
-            progress['stage']='stopped';_write(status_path(root),progress);return progress
-        stage=queued(current)
-        if not stage:_write(status_path(root),progress);return progress
-        kalodata_ready=sorted([row for row in active if queued(row) and queued(row)['stage']=='kalodata'],
-                              key=lambda row:(row['scheduledAt'],row['market']))
-        if stage['stage']=='kalodata' and len(kalodata_ready)>1:
-            batch=kalodata_ready[:policy['kalodataMaxParallelMarkets']]
-            progress['runId']=batch[0]['runId'];progress['market']=batch[0]['market'];progress['stage']='kalodata'
-            progress['parallelMarkets']=[row['market'] for row in batch]
-            for row in batch:
-                key=f"{row['market']}:kalodata" if row['market']!='it' else 'kalodata'
-                progress['lastAttempt'][key]=stamp
-                prior=next((item['outputGenerationId'] for item in reversed(row['stages'][:queued(row)['position']]) if item['outputGenerationId']),None)
-                start_stage(store,row['runId'],'kalodata',input_generation_id=prior)
-            _write(status_path(root),progress)
-            with ThreadPoolExecutor(max_workers=len(batch)) as pool:
-                futures=[pool.submit(executor.execute,None,row,'kalodata',jobs) for row in batch]
-                results=[future.result() for future in futures]
-            for row,result in zip(batch,results):
-                finish_stage(store,row['runId'],'kalodata',state=result['state'],item_count=result.get('itemCount',0),
-                  scope=result.get('scope'),payload=result.get('payload'),complete=result.get('complete',True),
-                  platform_writes=result.get('platformWrites',0),error_code=result.get('errorCode'))
-                key=f"{row['market']}:kalodata" if row['market']!='it' else 'kalodata'
-                if result['state'] in ('completed','quota_exhausted','skipped'):progress['lastSuccess'][key]=stamp
-                elif progress['error'] is None:progress['error']=result.get('errorCode') or result['state']
+                store.db.execute("UPDATE workflow_stage_run SET state='stopped',finished_at=? WHERE run_id=? AND state IN ('queued','waiting_upstream')",(stamp,row['runId']))
+                store.db.execute("UPDATE workflow_run SET state='stopped',finished_at=? WHERE run_id=?",(stamp,row['runId']))
+            projected.append((row['market'],'operations'))
+        active=[row for row in active if row['state']!='stop_requested']
+        owner_id=f'scheduler-{os.getpid()}-{int(stamp*1000)}'
+        selection=claim_ready(store,root,active,policy,owner_id,max_parallel=min(14,len(active) or 1),worker_pid=os.getpid())
+        tasks=selection['claimed']
+        if selection['recovered']:progress['recoveredStageRuns']=selection['recovered']
+        if not tasks:
+            _project_read_models(root,projected,progress)
             _write(status_path(root),progress);return progress
-        stage_key=stage['stage'] if market=='it' else f"{market}:{stage['stage']}"
-        progress['stage']=stage['stage'];progress['lastAttempt'][stage_key]=stamp;_write(status_path(root),progress)
-        previous=next((row['outputGenerationId'] for row in reversed(current['stages'][:stage['position']]) if row['outputGenerationId']),None)
-        start_stage(store,current['runId'],stage['stage'],input_generation_id=previous)
-        try:result=executor.execute(store,current,stage['stage'],jobs)
-        except BaseException as error:
-            result={'state':'failed','itemCount':0,'complete':False,'platformWrites':0,
-                    'scope':{},'payload':{},'errorCode':str(error) if isinstance(error,(CycleError,ValueError)) else type(error).__name__}
-        finish_stage(store,current['runId'],stage['stage'],state=result['state'],item_count=result.get('itemCount',0),
-          scope=result.get('scope'),payload=result.get('payload'),complete=result.get('complete',True),
-          platform_writes=result.get('platformWrites',0),error_code=result.get('errorCode'))
-        if result['state'] in ('completed','quota_exhausted','skipped'):progress['lastSuccess'][stage_key]=stamp
-        else:progress['error']=result.get('errorCode') or result['state']
+        first=tasks[0];progress.update(runId=first['run']['runId'],market=first['run']['market'],stage=first['stage']['stage'],
+                                     parallelMarkets=[task['run']['market'] for task in tasks])
+        for task in tasks:
+            market=task['run']['market'];stage=task['stage']['stage']
+            progress['lastAttempt'][stage if market=='it' else f'{market}:{stage}']=stamp
+        _write(status_path(root),progress)
+
+        def execute_one(task):
+            with CycleStore(database) as stage_store:
+                return executor.execute(stage_store,task['run'],task['stage']['stage'],jobs)
+
+        with ThreadPoolExecutor(max_workers=len(tasks)) as pool:
+            pending={pool.submit(execute_one,task):task for task in tasks}
+            while pending:
+                done,_=wait(tuple(pending),timeout=30,return_when=FIRST_COMPLETED)
+                for future in done:
+                    task=pending.pop(future);run=task['run'];stage=task['stage']['stage'];ticket=task['ticket']
+                    try:result=future.result()
+                    except BaseException as error:
+                        result={'state':'failed','itemCount':0,'complete':False,'platformWrites':0,
+                                'scope':{},'payload':{},'errorCode':str(error) if isinstance(error,(CycleError,ValueError)) else type(error).__name__}
+                    try:
+                        assert_current(store,ticket['stageRunId'],owner_id,ticket['fence'])
+                        finish_stage(store,run['runId'],stage,state=result['state'],item_count=result.get('itemCount',0),
+                          scope=result.get('scope'),payload=result.get('payload'),complete=result.get('complete',True),
+                          platform_writes=result.get('platformWrites',0),error_code=result.get('errorCode'))
+                        release(store,ticket['stageRunId'],owner_id,ticket['fence'])
+                    except (CycleError,sqlite3.Error) as error:
+                        progress['error']=str(error)[:120];continue
+                    market=run['market'];key=stage if market=='it' else f'{market}:{stage}'
+                    if result['state'] in ('completed','quota_exhausted','skipped'):progress['lastSuccess'][key]=stamp
+                    elif progress['error'] is None:progress['error']=result.get('errorCode') or result['state']
+                    projected.append((market,'operations'))
+                    if stage in ('catalog','taplink_prepare'):projected.append((market,'catalog'))
+                for task in pending.values():
+                    ticket=task['ticket']
+                    try:heartbeat(store,ticket['stageRunId'],owner_id,ticket['fence'],lease_seconds=300)
+                    except (CycleError,sqlite3.Error) as error:progress['error']=str(error)[:120]
+                if done:_write(status_path(root),progress)
+    _project_read_models(root,projected,progress)
     _write(status_path(root),progress);return progress
 
 

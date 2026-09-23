@@ -37,6 +37,7 @@ class SchedulerFlow(unittest.TestCase):
         (self.root/'var').mkdir();(self.root/'config').mkdir()
         (self.root/'config/operations-policy.json').write_text((ROOT/'config/operations-policy.json').read_text())
         (self.root/'config/markets.json').write_text((ROOT/'config/markets.json').read_text())
+        (self.root/'config/market-accounts.json').write_text((ROOT/'config/market-accounts.json').read_text())
         with CycleStore(self.root/'var/second-cycle.sqlite',lambda:NOW) as store:store.plan('bjn-local-research','it')
         apply_database(self.root,'second-cycle',clock=lambda:NOW)
         self.store=CycleStore(self.root/'var/second-cycle.sqlite',lambda:NOW)
@@ -98,7 +99,22 @@ class SchedulerFlow(unittest.TestCase):
         self.assertEqual(progress['parallelMarkets'],['br','uk'])
         self.assertEqual(sorted(calls),[('br','kalodata'),('uk','kalodata')])
 
-    def test_manual_recovery_runs_before_an_older_scheduled_market(self):
+    def test_different_supply_accounts_execute_catalog_at_the_same_time(self):
+        from lib.operations_workflow import create_run
+        for market in ('br','uk'):
+            self.store.plan('bjn-local-research',market)
+            create_run(self.store,market=market,trigger_source='manual',scheduled_at=NOW,
+                       request_id=f'supply-parallel-{market}',only_stage='catalog',sources=['campaign'])
+        barrier=threading.Barrier(2);calls=[]
+        class ConcurrentCatalog:
+            def execute(self,_store,run,stage,_jobs):
+                calls.append((run['market'],stage));barrier.wait(timeout=2)
+                return {'state':'completed','itemCount':1,'complete':True,'platformWrites':0}
+        progress=tick(self.root,now=NOW,executor=ConcurrentCatalog())
+        self.assertEqual(progress['parallelMarkets'],['br','uk'])
+        self.assertEqual(sorted(calls),[('br','catalog'),('uk','catalog')])
+
+    def test_manual_and_older_scheduled_market_advance_independently(self):
         from lib.operations_workflow import create_run
         self.store.plan('bjn-local-research','br')
         save_setting(self.store,'it','scheduler-priority-setting',0,{'automaticOperationsEnabled':True})
@@ -108,8 +124,49 @@ class SchedulerFlow(unittest.TestCase):
                           request_id='manual-priority-br',only_stage='oecid',sources=['campaign'])
         executor=FakeExecutor();progress=tick(self.root,now=NOW,executor=executor)
         self.assertEqual(progress['runId'],manual['runId'])
-        self.assertEqual(executor.calls,[(manual['runId'],'oecid')])
-        self.assertNotEqual(progress['runId'],scheduled['runId'])
+        self.assertEqual(progress['parallelMarkets'],['br','it'])
+        self.assertEqual(set(executor.calls),{(manual['runId'],'oecid'),(scheduled['runId'],'taplink_clean')})
+
+    def test_quota_and_unknown_market_do_not_block_another_kalodata_market(self):
+        from lib.operations_workflow import create_run
+        for market in ('br','uk'):self.store.plan('bjn-local-research',market)
+        runs={market:create_run(self.store,market=market,trigger_source='manual',scheduled_at=NOW,
+                                request_id=f'parallel-fault-{market}',only_stage='kalodata',sources=['campaign'])
+              for market in ('it','br','uk')}
+        calls=[]
+        class FaultExecutor:
+            def execute(self,_store,run,_stage,_jobs):
+                calls.append(run['market']);state={'br':'quota_exhausted','it':'needs_human','uk':'completed'}[run['market']]
+                return {'state':state,'itemCount':1,'complete':state=='completed','platformWrites':0,
+                        'errorCode':'result_unknown' if state=='needs_human' else None}
+        first=tick(self.root,now=NOW,executor=FaultExecutor())
+        self.assertEqual(first['parallelMarkets'],['br','it'])
+        self.assertEqual(len(calls),2)
+        second=tick(self.root,now=NOW+10,executor=FaultExecutor())
+        self.assertEqual(second['parallelMarkets'],['uk'])
+        self.assertEqual(sorted(calls),['br','it','uk'])
+        self.assertEqual(workflow_status(self.store,'it')['current']['state'],'needs_human')
+        self.assertEqual(workflow_status(self.store,'uk')['current']['state'],'completed')
+
+    def test_dead_claim_recovers_original_checkpoint_before_reexecution(self):
+        from lib.operations_workflow import create_run,update_checkpoint
+        from lib.workflow_resources import claim
+        run=create_run(self.store,market='it',trigger_source='manual',scheduled_at=NOW,
+                       request_id='recover-stage-request',only_stage='catalog',sources=['campaign'])
+        stage=next(item for item in run['stages'] if item['state']=='queued')
+        claim(self.store,stage['stageRunId'],'scheduler-dead-owner',[('workflow:it',1),('supply:acc9',1)],
+              lease_seconds=5,worker_pid=999999)
+        update_checkpoint(self.store,run['runId'],'catalog','page',{'number':7})
+        seen=[]
+        class RecoveryExecutor:
+            def execute(self,_store,current,stage,_jobs):
+                seen.append((stage,next(row['checkpoint'] for row in current['stages'] if row['stage']==stage)))
+                return {'state':'completed','itemCount':1,'complete':True,'platformWrites':0}
+        first=tick(self.root,now=NOW+100,executor=RecoveryExecutor())
+        self.assertEqual(first['recoveredStageRuns'],[stage['stageRunId']])
+        self.assertEqual(seen,[])
+        tick(self.root,now=NOW+110,executor=RecoveryExecutor())
+        self.assertEqual(seen,[('catalog',{'key':'page','value':{'number':7}})])
 
 
 class StageWiring(unittest.TestCase):
@@ -224,6 +281,17 @@ class StageWiring(unittest.TestCase):
         self.assertEqual(result['state'],'completed');self.assertEqual(result['platformWrites'],2)
         self.assertEqual([args[:2] for args,_ in calls],[['scripts/campaign-join.py','status'],
                          ['scripts/campaign-join.py','join-all'],['scripts/campaign-collect.py','--max-requests']])
+
+    def test_campaign_only_market_never_calls_full_managed_worker(self):
+        def answers(args,_label):
+            payload={'available':False} if args[1]=='status' else {'state':'completed'} if args[1]=='join-all' else {'status':'completed','screening':{'recorded':True},'offers':3}
+            return {'state':'completed','itemCount':3,'complete':True,'platformWrites':0,'payload':payload}
+        executor,calls=self.executor(answers)
+        for market in ('br','my'):
+            calls.clear();result=executor.execute(None,{'market':market,'applicableSources':['campaign']},'catalog',{'jobs':{}})
+            self.assertEqual(result['state'],'completed')
+            self.assertEqual([args[0] for args,_ in calls],['scripts/campaign-join.py','scripts/campaign-join.py','scripts/campaign-collect.py'])
+            self.assertTrue(all('--market' in args and args[args.index('--market')+1]==market for args,_ in calls))
 
     def test_new_market_full_managed_catalog_uses_first_level_category_partitions(self):
         def answers(args,_label):

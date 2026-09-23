@@ -37,7 +37,7 @@ def _prior_generation(run,stage):
               if row['outputGenerationId']),None)
 
 
-def claim_ready(store,root,runs,policy,owner_id,*,max_parallel=14,accounts=None,worker_pid=None,pid_alive=None):
+def claim_ready(store,root,runs,policy,owner_id,*,max_parallel=14,accounts=None,worker_pid=None,pid_alive=None,lease_seconds=300):
  """Reserve ready stages by oldest success, then existing checkpoint, then market."""
  if type(max_parallel) is not int or not 1<=max_parallel<=14:raise CycleError('workflow_parallel_limit_invalid')
  recovered=recover_expired(store,pid_alive=pid_alive)
@@ -52,7 +52,7 @@ def claim_ready(store,root,runs,policy,owner_id,*,max_parallel=14,accounts=None,
   if len(claimed)>=max_parallel:break
   needed=resources(root,market,stage['stage'],policy,accounts=accounts)
   try:
-   ticket=claim(store,stage['stageRunId'],owner_id,needed,worker_pid=worker_pid,
+   ticket=claim(store,stage['stageRunId'],owner_id,needed,worker_pid=worker_pid,lease_seconds=lease_seconds,
                 input_generation_id=_prior_generation(run,stage))
   except CycleError as error:
    if str(error)=='workflow_resource_busy':continue
