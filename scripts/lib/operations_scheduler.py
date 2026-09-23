@@ -342,6 +342,9 @@ class SubprocessStageExecutor:
                         catalog_read_account(self.root,market=market))
                         if source_path.exists() and (self.root/'config/market-accounts.json').exists() else None)
                     if existing:
+                        if market=='it' and existing['partitioned']:
+                            return {'state':'needs_human','itemCount':0,'complete':False,'platformWrites':0,
+                                    'errorCode':'it_category_collection_disabled'}
                         rid=existing['runId']
                         collection_mode={**collection_mode,'mode':'category' if existing['partitioned'] else 'plain',
                                          'resumedExisting':rid}

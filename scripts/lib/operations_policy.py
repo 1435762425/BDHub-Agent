@@ -36,11 +36,13 @@ def load_policy(root):
 
 
 def full_catalog_collection_mode(root, market, now, *, policy=None):
-    """Return category for onboarding/monthly discovery, otherwise the bounded weekly query."""
+    """Choose the bounded weekly query; only markets still using discovery run category reads."""
     root = Path(root)
     policy = policy or load_policy(root)
     path = root / ("var/global-source.sqlite" if market == "it" else f"var/global-source-{market}.sqlite")
     if not path.exists():
+        if market == "it":
+            raise ValueError("it_plain_baseline_unavailable")
         return {"mode": "category", "reason": "market_onboarding", "lastCategoryAt": None}
     try:
         with closing(sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True)) as db:
@@ -60,7 +62,11 @@ def full_catalog_collection_mode(root, market, now, *, policy=None):
         raise ValueError("category_history_unavailable") from error
     last = row[0] if row else None
     if last is None:
+        if market == "it":
+            raise ValueError("it_plain_baseline_unavailable")
         return {"mode": "category", "reason": "market_onboarding", "lastCategoryAt": None}
+    if market == "it":
+        return {"mode": "plain", "reason": "operator_plain_only", "lastCategoryAt": float(last)}
     age = max(0.0, float(now) - float(last))
     threshold = policy["fullManagedCategoryRefreshDays"] * 86400
     if age >= threshold:

@@ -1,6 +1,7 @@
 import json
 import os
 import sqlite3
+import subprocess
 import tempfile
 import unittest
 import sys
@@ -338,7 +339,7 @@ class StageWiring(unittest.TestCase):
             (root/'config/operations-policy.json').write_text((ROOT/'config/operations-policy.json').read_text())
             executor=SubprocessStageExecutor(root);calls=[]
             executor._call=lambda args,label,timeout=14400:(calls.append((args,label)) or answers(args,label))
-            result=executor.execute(None,{'runId':'workflow-test','applicableSources':['selected']},'catalog',{'jobs':{}})
+            result=executor.execute(None,{'runId':'workflow-test','market':'uk','applicableSources':['selected']},'catalog',{'jobs':{}})
             self.assertEqual((result['state'],result['itemCount']),('completed',31809))
             self.assertIn('--by-category',calls[0][0])
             self.assertEqual(result['platformWrites'],21)
@@ -396,6 +397,30 @@ class StageWiring(unittest.TestCase):
                 db.execute("INSERT INTO global_source_run VALUES('r',?,'completed',?,1)",(json.dumps({'market':'uk','partitionMode':'category_l1_v1'}),NOW-31*86400))
                 db.execute("INSERT INTO global_source_run VALUES('overlay',?,'completed',?,1)",(json.dumps({'market':'uk','partitionMode':'category_l1_v1','coverageOverlay':{'baselineRunId':'r'}}),NOW))
             self.assertEqual(full_catalog_collection_mode(root,'uk',NOW)['mode'],'category')
+
+    def test_it_weekly_full_managed_remains_plain_after_thirty_days(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder);(root/'var').mkdir();(root/'config').mkdir()
+            (root/'config/operations-policy.json').write_text((ROOT/'config/operations-policy.json').read_text())
+            with closing(sqlite3.connect(root/'var/global-source.sqlite')) as db,db:
+                db.executescript('CREATE TABLE global_source_run(id TEXT,scope TEXT,state TEXT,updated REAL,identity_unchanged INTEGER);'
+                  'CREATE TABLE global_source_operator_acceptance(run_id TEXT,accepted_at REAL);')
+                db.execute("INSERT INTO global_source_run VALUES('baseline',?,'completed',?,1)",
+                           (json.dumps({'market':'it','partitionMode':'category_l1_v1'}),NOW-90*86400))
+            self.assertEqual(full_catalog_collection_mode(root,'it',NOW)['mode'],'plain')
+            self.assertEqual(full_catalog_collection_mode(root,'it',NOW)['reason'],'operator_plain_only')
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder);(root/'var').mkdir();(root/'config').mkdir()
+            (root/'config/operations-policy.json').write_text((ROOT/'config/operations-policy.json').read_text())
+            with self.assertRaisesRegex(ValueError,'it_plain_baseline_unavailable'):
+                full_catalog_collection_mode(root,'it',NOW)
+
+    def test_it_category_cli_is_rejected_before_creating_a_source_run(self):
+        result=subprocess.run([sys.executable,str(ROOT/'scripts/collect-global-opportunity.py'),
+                               '--market','it','--run-id','test-it-category-disabled','--pages','1','--by-category'],
+                              cwd=ROOT,capture_output=True,text=True)
+        self.assertEqual(result.returncode,2)
+        self.assertIn('it_category_collection_disabled',result.stderr)
 
     def test_category_history_read_failure_never_defaults_to_an_expensive_category_crawl(self):
         with tempfile.TemporaryDirectory() as folder:
