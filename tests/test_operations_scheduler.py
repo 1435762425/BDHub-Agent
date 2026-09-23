@@ -9,6 +9,7 @@ import threading
 from contextlib import closing
 from datetime import datetime
 from pathlib import Path
+from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
 ROOT=Path(__file__).resolve().parents[1];sys.path.insert(0,str(ROOT/'scripts'))
@@ -481,8 +482,12 @@ class StageWiring(unittest.TestCase):
             elif args[1]=='prepare':payload={'states':{'result_unknown':1},'error':None}
             else:payload={'states':{'result_unknown':1},'error':None}
             return {'state':'completed','itemCount':0,'complete':True,'platformWrites':0,'payload':payload}
-        executor,calls=self.executor(answers);result=executor.execute(
-            None,{'runId':'workflow-test','applicableSources':['selected']},'catalog',{'jobs':{}})
+        executor,calls=self.executor(answers)
+        # This test targets the unknown selection barrier, not the independent live
+        # IT category-baseline prerequisite stored only in production var/.
+        with patch('lib.operations_policy.full_catalog_collection_mode',return_value={'mode':'plain'}):
+            result=executor.execute(None,{'runId':'workflow-test','applicableSources':['selected']},
+                                    'catalog',{'jobs':{}})
         self.assertEqual(result['state'],'needs_human')
         self.assertEqual(result['errorCode'],'global_selection_unresolved')
         self.assertEqual(len(calls),4)
