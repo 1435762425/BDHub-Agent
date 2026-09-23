@@ -19,6 +19,9 @@ export default function AppShell({children,currentMarket,markets}:{children:Reac
   {href:`${base}/ops/jobs`,label:"运行与设置",icon:"settings",match:`${base}/ops`},
  ];
  const conversationWide=pathname.startsWith(`${base}/conversations`);
+ const connectedOrder=new Map(["br","my","uk","it"].map((key,index)=>[key,index]));
+ const connectedMarkets=markets.filter(row=>row.runtimeState!=="planned").sort((a,b)=>(connectedOrder.get(a.key)??100)-(connectedOrder.get(b.key)??100));
+ const plannedMarkets=markets.filter(row=>row.runtimeState==="planned");
  const [collapsed,setCollapsed]=useState(false),[mobile,setMobile]=useState(false);
  useEffect(()=>{try{setCollapsed(localStorage.getItem("bdhub-agent-sidebar")==="collapsed");}catch{}},[]);
  useEffect(()=>setMobile(false),[pathname]);
@@ -36,7 +39,8 @@ export default function AppShell({children,currentMarket,markets}:{children:Reac
    <div className={`mx-2 mt-3 rounded-xl border border-gray-200 bg-gray-50 px-3 py-2.5 dark:border-gray-800 dark:bg-gray-800/50 ${collapsed?"lg:hidden":""}`}>
     <label htmlFor="market-switch" className="text-[11px] text-gray-400">当前市场</label>
     <select id="market-switch" value={currentMarket.key} onChange={event=>{const target=event.target.value;window.location.assign(pathname.replace(new RegExp(`^/${currentMarket.key}(?=/|$)`),`/${target}`));}} className="mt-1 w-full rounded-lg border border-gray-200 bg-white px-2 py-1.5 text-xs font-medium text-gray-700 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200">
-     {markets.map(row=><option key={row.key} value={row.key}>{row.label} · {row.shortLabel}</option>)}
+     <optgroup label="正式接入">{connectedMarkets.map(row=><option key={row.key} value={row.key}>{row.label} · {row.shortLabel}</option>)}</optgroup>
+     <optgroup label="待接入">{plannedMarkets.map(row=><option key={row.key} value={row.key}>{row.label} · {row.shortLabel}</option>)}</optgroup>
     </select>
     <p className="mt-1 text-[11px] leading-4 text-gray-400">{currentMarket.runtimeState==="planned"?"统一页面已就绪 · 真实动作未启用":currentMarket.capabilities.fullManagedCatalog===true?"Campaign + 全托货盘":"仅 Campaign 货盘"}</p>
    </div>
