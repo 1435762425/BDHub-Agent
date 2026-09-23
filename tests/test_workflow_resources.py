@@ -12,6 +12,7 @@ class WorkflowResourceTests(unittest.TestCase):
   with CycleStore(root/'var/second-cycle.sqlite',lambda:self.now[0]) as store:store.plan('bjn-local-research','it')
   apply_database(root,'second-cycle',clock=lambda:self.now[0]);self.store=CycleStore(root/'var/second-cycle.sqlite',lambda:self.now[0])
   for index in range(4):
+   self.store.db.execute("INSERT INTO workflow_run(run_id,market,trigger_source,scheduled_at,applicable_sources_json,config_revision,state,started_at) VALUES(?,?,?,?,?,?,?,?)",(f'run-{index}','it','manual',100,'[]',0,'queued',100))
    self.store.db.execute("INSERT INTO workflow_stage_run(stage_run_id,run_id,stage,position,state) VALUES(?,?,?,?,?)",(f'stage-{index}',f'run-{index}','kalodata',index,'queued'))
  def tearDown(self):self.store.close();self.tmp.cleanup()
 
@@ -36,5 +37,18 @@ class WorkflowResourceTests(unittest.TestCase):
   self.assertEqual(self.store.db.execute("SELECT state FROM workflow_stage_run WHERE stage_run_id='stage-0'").fetchone()[0],'queued')
   replacement=claim(self.store,'stage-0','scheduler-owner-b',[('communications:acc6',1)],worker_pid=1000)
   self.assertGreater(replacement['fence'],claimed['fence'])
+
+ def test_expired_live_owner_keeps_resource_until_explicit_recovery(self):
+  import os
+  claim(self.store,'stage-0','scheduler-owner-a',[('supply:acc9',1)],lease_seconds=5,worker_pid=os.getpid(),input_generation_id='generation-prior')
+  self.assertEqual(self.store.db.execute("SELECT input_generation_id FROM workflow_stage_run WHERE stage_run_id='stage-0'").fetchone()[0],'generation-prior')
+  self.now[0]=106
+  with self.assertRaisesRegex(CycleError,'resource_busy'):
+   claim(self.store,'stage-1','scheduler-owner-b',[('supply:acc9',1)],worker_pid=99999)
+  self.assertEqual(recover_expired(self.store,pid_alive=lambda pid:pid==os.getpid()),[])
+  with self.assertRaisesRegex(CycleError,'resource_busy'):
+   claim(self.store,'stage-1','scheduler-owner-b',[('supply:acc9',1)],worker_pid=99999)
+  self.assertEqual(recover_expired(self.store,pid_alive=lambda _pid:False),['stage-0'])
+  claim(self.store,'stage-1','scheduler-owner-b',[('supply:acc9',1)],worker_pid=99999)
 
 if __name__=='__main__':unittest.main()
