@@ -4,12 +4,12 @@
 
 ## 0H. 2026-09-23 全市场统一页面实施进度
 
-- 分支 `codex/v1-runtime-alignment`，统一实现提交 `58e1121`；MY 并行任务的文件继续保留在工作树。14 市场 registry 与共享页面已接通，10 个 planned 市场只显示未验收状态；BR/MY 保留全托 Tab 并显示空态。全托商品只读明细已恢复搜索、公开/总佣金、选入观察、方案与 30 条分页。IT 当前正在采集批次显示 495 个商品，明细明确提示使用上次完整发布的 31,809 个商品快照，避免混淆。
-- 多市场 API 的 market 显式门禁、模板本地化 v15、读模型 v16、资源 lease/fence v17 已增量应用；`migrate-agent.py check` 为 ready。跨市场 workflow stop 现于 CLI 读取 run 所属 market 后拒绝错市场操作。资源表已存在，**调度器尚未接入并行资源 claim**，不能把 migration 当成 P3 验收。
-- 前置备份 `var/backups/state/20260923T015703Z-before-multimarket-v15-v17`：33 库、1,201,410,048 字节、独立验证 `valid=true`；另在临时空目录完整恢复 33 库并自动清理。统一页面任务未触发平台写入、真实发送、自动回复、账号重登或 TapLink 创建/删除；MY 并行任务自己的业务执行单独记账。
-- 本轮验证：Python 1079 项、Web 158 项、TypeScript、Next build、123 份 Markdown 检查通过。5198 Web 已替换为 PID 28238，原 operations scheduler PID 64799、inbox PID 46147 未重启。14×11=154 个页面 HTTP/HTML 检查全部通过；IT/BR/MY/UK 各五个关键只读 API 回读均匹配请求 market。BR URL 携带已完成 IT runId 的 stop 请求被 409 `workflow_market_mismatch` 拒绝，原 run 状态未改变。
-- BR/MY 货盘浏览器网络 trace 各 1 次，全托 API 请求严格 0。六页 Chrome/CDP 各 3 次 trace 保存在 `var/multimarket-perf-after-20260923.json`：IT 首页 LCP p95 1.764 秒，合作页 1.448 秒，UK 货盘资源稳定 p95 1.259 秒。旧基线文件采到 HTTP 500，不能用作改前比较；IT 首页状态 GET 约 1.1 秒、UK 货盘约 0.8 秒，仍需状态变化投影和同口径复测。
-- 2026-09-23 10:31 只读设置：IT/BR/UK 自动运营开、MY 关；四市场持续发送均关。IT Agent 设置为开，但本轮读到的 `service_reply`、`cycle_delivery` 和 `agent_reply_run` 新增均为 0，不能把设置开等同于真实回复。MY OECID 由另一任务的单实例 scheduler 管理；其发送池、设置与备份完成并明确释放前，不改 `operations_scheduler.py`、`operations_workflow.py`、`catalog_prepare.py`、`catalog-link-prepare.py` 及关联测试。
+- 分支 `codex/v1-runtime-alignment`，统一实现提交 `58e1121`、文档 `5936f6f`、资源 fence 修复 `778cd7c`、状态读性能 `ab8f4f7`、并行资源选择 `3004c98`、调度接线 `e20373c`；MY 任务的七个无关改动仍保留在工作树。14 市场 registry 与共享页面已接通，10 个 planned 市场只显示未验收状态；BR/MY 保留全托 Tab 并显示空态。全托商品只读明细已恢复搜索、公开/总佣金、选入观察、方案与 30 条分页。IT 当前正在采集批次显示 495 个商品，明细明确提示使用上次完整发布的 31,809 个商品快照，避免混淆。
+- 多市场 API 的 market 显式门禁、模板本地化 v15、读模型 v16、资源 lease/fence v17 已增量应用；`migrate-agent.py check` 为 ready。跨市场 workflow stop 现于 CLI 读取 run 所属 market 后拒绝错市场操作。资源 claim 已接入调度器：不同货盘账号可并行、Kalodata 两槽、owner/fence/heartbeat 与死进程断点恢复均有合成测试；真实多市场同时到期尚未发生，不能把合成测试当成平台结果。
+- 前置备份 `var/backups/state/20260923T015703Z-before-multimarket-v15-v17`：33 库、1,201,410,048 字节、独立验证 `valid=true`；另在临时空目录完整恢复 33 库并自动清理。发布后备份 `var/backups/state/20260923T033601Z-multimarket-release-20260923`：33 库、1,206,353,920 字节、`valid=true`，同样完成临时空目录恢复。统一页面任务未触发平台写入、真实发送、自动回复、账号重登或 TapLink 创建/删除；MY 并行任务自己的业务执行单独记账。
+- 本轮验证：Python 1090 项、Web 158 项、TypeScript、Next build、123 份 Markdown 检查通过，migration check ready。5198 Web 已替换为 PID 28238，operations scheduler 已从 PID 64799 安全替换为 PID 31455，inbox PID 46147 未重启。新 scheduler 连续空闲 tick 无错误；当前 active workflow 0、resource claim 0。14×11=154 个页面 HTTP/HTML 检查全部通过；发布后 IT/BR/MY/UK 各五个关键只读 API 回读 20/20 匹配请求 market。BR URL 携带已完成 IT runId 的 stop 请求被 409 `workflow_market_mismatch` 拒绝，原 run 状态未改变。
+- BR/MY 货盘浏览器网络 trace 各 1 次，全托 API 请求严格 0。六页 Chrome/CDP 各 3 次的初次 trace 保存在 `var/multimarket-perf-after-20260923.json`；旧基线文件采到 HTTP 500，不能用作改前比较。IT 首页状态 GET 同口径 8 次 p95 从 1,955 ms 降到 361 ms，三次 trace 的 LCP p95 从 1,764 ms 降到 484 ms。UK 货盘 GET p95 从 1,140 ms 降到 232 ms，资源稳定 p95 从 1,259 ms 降到 519 ms。改后 trace 分别为 `var/multimarket-home-after-fast-status-20260923.json` 和 `var/multimarket-uk-catalog-after-fast-status-20260923.json`。IT 合作页 LCP p95 仍为 1,448 ms；发送状态实时构建候选是主要耗时，后续须做不影响发送资格的展示快照或拆分加载。调度器已在 stage 状态变化后投影读模型；四市场 operations/catalog 八份快照均已本地投影成功。
+- 2026-09-23 10:31 只读设置：IT/BR/UK 自动运营开、MY 关；四市场持续发送均关。IT Agent 设置为开，但本轮读到的 `service_reply`、`cycle_delivery` 和 `agent_reply_run` 新增均为 0，不能把设置开等同于真实回复。用户确认优先多市场主线，MY 可暂停；MY OECID run 已完成、自动运营设置仍关、无 MY 子进程。本轮没有续跑 MY 发送池或触发其平台动作。
 
 ## 0G. 2026-09-21 多市场 cadence、Campaign 失效、话术审核与统一页面
 

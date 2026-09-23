@@ -62,7 +62,9 @@ React 组件不能直接读写 SQLite、启动任意命令或实现资格规则�
 
 市场注册表由 `config/markets.json` 提供 14 个固定 key。IT/BR/MY/UK 已有已核实的运行元数据；其余市场为 `planned`，未知 locale、账号和全托能力保持 `null`。页面复用同一组件；planned 市场仅显示未验收状态，服务端动作在 registry 门禁处拒绝。所有市场级 Route 必须显式接收单个 `market`，写请求还要核对 URL 与 body 的 market；CLI 和返回结构再次校验市场。BR/MY 的全托 Tab 是明确空态，不启动全托读取。
 
-首页和货盘可读取 `market_read_head` 指向的不可变 `market_read_generation`，过期或缺失时才回退到当前本机台账聚合。同市场的并发 GET 由 Web `singleflight` 合并为一次 Python 读取；商品明细在展开后按 30 条服务端分页读取。`workflow_stage_claim` 与 `workflow_resource_slot` 记录待接入调度器的资源 lease/fence，表存在不表示并行调度已经上线。
+首页和货盘可读取 `market_read_head` 指向的不可变 `market_read_generation`，过期或缺失时才回退到当前本机台账聚合。同市场的并发 GET 由 Web `singleflight` 合并为一次 Python 读取；商品明细在展开后按 30 条服务端分页读取。调度器在 stage 终态后投影该市场的 operations 快照，货盘/链接阶段另投影 catalog 快照；投影失败单列错误，不改动 workflow 的业务结果。
+
+首页的持续发送阶段只读 `continuous_send_runtime` 与确认数，不重建完整发送候选；发送工作台仍执行完整候选复检并展示真实例子。货盘首页从已发布 `campaign_screen_run` 读取摘要，并以当前 `catalog_head.snapshot_id` 校验来源；不匹配时返回 `screen_stale`，完整动态筛分留在非全托 Tab。这样首屏不会每次重新解析全量 Offer，发送和资格判断仍走原领域服务。
 
 ## 4. 仓库结构
 
@@ -125,7 +127,7 @@ UK 2026-09-21 已停止的首轮类目读取由用户明确接受为部分快照
 
 Campaign 每 2 天完整刷新，全托按周刷新；货盘 generation 发布后统一计算应有标准链接。新建后即时回读失败的单 PID 被隔离，整批写请求结束后执行一次公共回读，再按 30/120 秒两次轮询；仍未找到记 `skipped_unknown`，原 `catalog_link_intent` 保持 unknown 且永不重复 POST。只有平台回读确认整张列表 invalid 的链接才由周一清洗建立删除意图；仅不符合内部期限/佣金门槛的卡只本地停用，不删除。BR/UK 尚未完成各市场单条 DELETE canary，调度器固定跳过其平台清理。删除整批收口后一次重读完整列表；仍存在记 `failed_known`，不重复 DELETE。持续发送只用本地 `catalog_current_binding` 校验 Offer 指纹与 `currentListId`，不调用 `fresh_card()`。
 
-`operations_scheduler.py` 按市场读取不可变 `workflow_run/workflow_stage_run`。清洗、货盘、链接准备、OECID 与发送池发布仍串行；两个同时到达 Kalodata barrier 的市场可由 `ThreadPoolExecutor` 最多并行 2 个。新项目只读 Kalodata HTTP session 持共享 `LOCK_SH`，旧项目和登录器的 `LOCK_EX` 仍会阻止并发；每市场继续使用独立 region、currency、queue、checkpoint 和 SQLite。全托命令由 `full_catalog_collection_mode()` 决定首次/月度 `--by-category` 或周更普通查询。若当前 head 是用户接受的部分快照且对应选入队列仍有 pending，catalog stage 先续跑该冻结队列、不重新采集。标准主链只由各市场 `market_automation_setting` 总开关授权，`config/jobs.json` 保存共享北京时间，`config/operations-policy.json` 保存 2 天/30 天/双市场/10 条审核等稳定策略；全托、持续发送和 Agent 保留各自独立开关。
+`operations_scheduler.py` 按市场读取不可变 `workflow_run/workflow_stage_run`。同一市场仍按上游 generation 串行；不同市场按 `workflow:{market}` 与货盘/通信账号资源槽并行，Kalodata 使用全局两槽 semaphore。`workflow_stage_claim/workflow_resource_slot` 在短事务中原子领取，保存 owner/fence/300 秒 lease；执行中每 30 秒续租，只有确认 owner 进程已结束才释放过期槽并从原 checkpoint 恢复。到期候选按上次成功最早、已有断点、market key 排序。新项目只读 Kalodata HTTP session 持共享 `LOCK_SH`，旧项目和登录器的 `LOCK_EX` 仍会阻止并发；每市场继续使用独立 region、currency、queue、checkpoint 和 SQLite。全托命令由 `full_catalog_collection_mode()` 决定首次/月度 `--by-category` 或周更普通查询。若当前 head 是用户接受的部分快照且对应选入队列仍有 pending，catalog stage 先续跑该冻结队列、不重新采集。标准主链只由各市场 `market_automation_setting` 总开关授权，`config/jobs.json` 保存共享北京时间，`config/operations-policy.json` 保存 2 天/30 天/双市场/10 条审核等稳定策略；全托、持续发送和 Agent 保留各自独立开关。
 
 外层批处理报告必须汇总每个内部 pass 的 `platformWrites`，阶段 item count 取最终队列 summary，不能把重复 pass 相加。Kalodata 的 B 类完成数读取视频 generation 的 `counts.completed`；额度耗尽仍发布已完成的 A/B 数和断点。OECID 阶段先循环 `IdentityBridge.freeze/dispatch` 到当前 head 无未交接 source edge，再本地复用既有终态证据，最后运行精确 batch；`pending>0`、`queue_stalled` 或技术 blocked 一律 `needs_human`，不得发布 OECID generation 或提前进入发送池。
 
