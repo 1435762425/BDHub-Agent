@@ -2,6 +2,21 @@
 
 更新时间：2026-09-23（Asia/Shanghai）。本文件是当前开发交接入口；产品规则以 [项目文档](../PROJECT.md) 为准，技术结构以 [技术文档](../TECHNICAL.md) 为准。动态数量是本次只读快照，后续以 `var/` 台账和页面 API 回读为准。下方旧日期章节均为历史快照，不代表当前开关与数量。
 
+## 0P. 2026-09-23 四市场发送与 Agent 页面启动
+
+- 用户授权 Codex 代为完成 Agent 页面动作；已逐市场在 IT/BR/MY/UK 的作业页开启开关，再在 Agent 设置页点击“开始首条真实回复验证”。四个 `agent-v2-first-send` 事件均在主库，四市场真实 Agent 回复仍为0：当前已过15:00–16:00，没有本轮新合格入站。首条实际发送后需先核对内容和回执，再按已获用户授权在页面继续自动回复。
+- 发送继续运行。约17:20 的北京日结果页确认触达 IT89、BR50、MY45、UK48；IT 商品卡91、文字89，单卡/未完成部分不算完整触达。四市场发送 unknown0，收信 worker运行。IT 最旧 checkpoint 仍落后约100分钟，其他三市场已收录新会话并保持数分钟级轮询；指标会随发送变化，下一次以实时台账为准。
+- IT 原类目 run 第一分区的1个缺漏 PID 通过原请求邻域补洞找到；第二分区的1行重复在21页复读新增0/重复页精确复现后按原稳定重复行合同通过。`scripts/resume-global-category.py` 正按原 run 继续28类，不并发读另一类目来源。独立普通周更10,000行/9,998唯一PID仍为partial，新增带回执补洞及稳定重复页修复代码与测试，但 ACC9 忙于类目run，尚未实际读回或发布。
+- 现场修复与证据追加至[实施记录](../implementation/four-market-launch-implementation-20260923.md)。最近 Python全量1,125项、Web164项、TypeScript/生产构建及文档检查通过；30分钟线程心跳继续追踪72小时、跨日、下次Campaign刷新及 Agent 首条结果。旧0N/0M/0L均为当时快照。
+
+## 0N. 2026-09-23 四市场真实发送窗口首轮
+
+- 用户已在四市场发送页完成页面启动；MY 初次因 `runtimeState=paused` 被拒绝、零外部写入，调整注册表为 `ready` 后再次页面启动。MY 首条 `market-canary-v1` 卡/马来语文字双确认，ACC8 `message_send` 已按原 delivery 证据发布 verified，随后进入正式 worker。约16:54 快照：本轮完整确认 IT23、BR22、MY17、UK20，四市场发送 unknown0；IT 已有同一达人第二模板 `brief` 的真实双回执。数量持续变化，不代表最终总量。
+- 现场发现收信 `reply_event_conflict`（卡确认→文字确认触发可变状态差异）及同账号 `live_guard_busy`/`ProfileBusyError` 使 worker 退出，已在[实施记录](../implementation/four-market-launch-implementation-20260923.md)中给出原意图保留和修复证据。四市场收信与发送 worker 已按安全点换用修复代码，未另开授权；当前 BR/MY/UK 的收信 checkpoint 随外发增长，IT 最旧 checkpoint 仍落后约100分钟，需持续追赶。
+- IT 曾有一张卡作为该达人无回复前第5条我方消息确认，后续文字会成为第6条。该卡保留，未尝试文字结算为 `partial_delivery`，不计完整触达；新领取现在发卡前预留卡＋文字两个剩余额度。进程存活判断排除僵尸 PID，避免旧子进程退出后假报在线。最新 Python全量1,122项、Web164项、typecheck/生产构建、迁移与文档检查通过。
+- IT 原类目续跑在第298页因 reported total 4,466 与唯一PID 4,465不一致，保留 `partial` 未发布。后续普通周更仍在执行，原已发布的完整类目 head 保持；等 ACC9 空闲后按重复页补洞/复读，不并发抢账号或直接接受差额。
+- 当前 Agent 四市场仍关闭，V2 首条真实回复尚待用户在各市场页面启动、等待回复窗口与真实入站；本轮真实发送成功不等于 AI 业务闭环已验收。30分钟心跳继续监测72小时、跨日和下次Campaign刷新。
+
 ## 0M. 2026-09-23 四市场正式启动实施中
 
 - 用户已明确要求按[启动计划](../architecture/four-market-production-launch-plan-20260923.md)补齐实质缺口并开始实施。代码、状态修复与现场结果见[实施记录](../implementation/four-market-launch-implementation-20260923.md)；本节记录动态运行边界，下面0L是启动前历史快照。

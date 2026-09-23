@@ -103,6 +103,8 @@ UK 2026-09-21 已停止的首轮类目读取由用户明确接受为部分快照
 
 普通周更和类目快照共用一个 `scope_hash`，但普通接口有 10,000 结果窗口。`GlobalSources.finish_session()` 在当前 head 为类目快照或组合快照时，原子发布 `coverageOverlay` 派生 run：复制原覆盖的 PID、类目成员及部分接受证据，只用周更同 PID 的新商品事实覆盖旧 payload；周更范围外 PID 继续留在原始周更 run，不写进覆盖 head。派生 run 保留原始类目接受终态与完成类目数，`coverageOverlay` 保存原基线、周更 run、重叠和范围外数量。月度 cadence 只计算原始类目 run，不让派生 run 的发布时间重置 30 天。当前 head、原类目快照、普通周更可各自只读分页；筛分与选入必须按 `source_run` 关联，不能取全库最新一条拼成一个漏斗。`reconcile-global-coverage.py` 仅在备份后为已被普通周更替换的旧 head 做一次本机回补，不调用平台。
 
+普通查询在末页出现少量跨页重复 PID 时，`global_source_query_repair_page` 记录按原 request payload 复读的重复页邻域、响应摘要及新发现的 PID。`--repair-partial-query` 仅追加原 run 的缺漏成员；如无缺漏，`--accept-stable-query-duplicates` 还要求所有重复页精确重现、没有新增，且差额在原有稳定重复行门槛内，才把终态改为 `endpoint_end_stable_duplicate_rows_N`。状态分别呈现返回行数、唯一商品数、稳定重复行数；未验证的 `partial` 保留旧完整 head，稳定验证后才可按原覆盖基线发布周更 overlay。两个 CLI 动作均只读取平台，不发商品卡或消息。
+
 类目 endpoint 的 `reported_total` 是行数，不保证 PID 唯一。若完整末页出现少量重复行，`global_source_partition_repair_page` 先保存重复页邻域补洞回执；必要时完整复读该类目。只有完整复读新增 0，或重复页精确复现，且重复差额不超过 `max(5, reported_total/1000)` 时，才以 `endpoint_end_stable_duplicate_rows_*` 结束，并在状态中单列 `stableDuplicateRows`。普通 partial 不能发布 head、筛分或选入；唯一例外是用户明确执行的 `accept_partial_snapshot`，它以独立终态和覆盖标签发布，不能冒充 completed。
 
 全托 catalog stage 随后在该市场固定货盘账号执行 `selection prepare → verify/reconcile unresolved → execute-fast --native-listing`；正式配置每轮 300 PID、8 lanes/8 QPS、每个 listing/readback group 最多 100 PID，批末统一回读并循环到 pending 为 0。TikTok 当前前端 SDK 虽声明 `/pick_up/batch_select`，但 2026-09-21 UK 页面没有批选 UI，EU 后端 v1/v2/v3 均返回非 API HTML，尚不能作为正式写端点；当前已验证的 `/pick_up/select` payload 仍只接受一个 PID/Campaign。选入请求先落持久意图；验证码明确拒绝或登录失效只有在“已选池缺失＋当前 listing 未选入＋同账号验证/新代次”三项证据齐全时才重放同一冻结请求。登录失效由 workflow 自动串行重登供给账号并确认能力代次继承；网络歧义或 code0 未回读不重发；批后两次间隔回读及最多两次验证码恢复仍缺失时记 `skipped_unknown`，后续 generation 也不重新入队。UK 真实完整轮次约 61–75 confirmed/分钟，平台验证耗时仍是主要瓶颈。
@@ -177,6 +179,7 @@ Pure HTTP 验证依赖 `Pillow==12.3.0`、`opencv-python-headless==4.14.0.94` �
 | `lead_priority.py` | A/B 合并、最高单条视频和最终发送顺序的纯函数合同；真实池由 `lead_pool.py` 按同一规则实现 |
 | `cycle_review.py` | 从当前发送池领取前的身份、Offer、材料、关系和去重复检 |
 | `cycle_delivery.py` | 发送意图、组件状态、平台信号和额度预留 |
+| `process_liveness.py` | 项目 worker/claim 的 PID 存活判定；僵尸子进程不算可运行 |
 | `cycle_executor.py` | 卡片→文字、回执与原意图只读恢复 |
 | `continuous_send.py` / `continuous-send-worker.py` | IT 持续发送控制、逐条快照、窗口、跨日恢复与进程统计 |
 | `market_send_control.py` / `market_send_canary.py` / `market-send-worker.py` | BR/MY/UK 同一不可变 delivery 的市场发送、能力首条验证、逐写停止/材料复检与原组件回查 |
@@ -199,7 +202,9 @@ BR/MY/UK 正式外发逐次读取保存的北京时间窗口、当前停止/启�
 
 持续发送按 `lead_pool.v3` 当前顺序领取一位达人，复检后把 creator/OECID、PID、Offer、`currentListId`、模板 revision、最终正文、关系控制 revision 和确定性 claim key 写入不可变 `cycle_delivery.snapshot`。执行只用本地 `catalog_current_binding` 核对材料，不远程刷新卡；`cycle_delivery` 唯一键、24 小时预留和同达人 active delivery 共同防重复。unknown 使进程进入 `waiting_reconciliation`，恢复只运行原 delivery 的 `verify_only`，不会领取下一位或重发。
 
-显式运维 canary 可带 `authorizedNowRequestId` 绕过日常时间窗一次，但仍使用同一不可变 delivery、材料/关系/额度门禁、ACC6 写锁和逐组件回查；普通 start 永远遵守 16:30–24:00。实时预检按当前关系政策执行：未结 pending/人工案件、未知消息、未回复累计 5 条以及达人级 24/48 小时冷却会阻止发送；历史已解决回复或橱窗不永久封锁。明确未提交的预检拒绝把 delivery 与两组件结算为 cancelled，保留审计但不重复领取；任一组件开始后禁止取消。2026-09-21 真实 canary 最终完成 1 位达人，卡和文字均 confirmed、unknown 0。
+显式运维 canary 可带 `authorizedNowRequestId` 绕过日常时间窗一次，但仍使用同一不可变 delivery、材料/关系/额度门禁、ACC6 写锁和逐组件回查；普通 start 永远遵守 16:30–24:00。实时预检按当前关系政策执行：未结 pending/人工案件、未知消息、未回复累计 5 条以及达人级 24/48 小时冷却会阻止发送；历史已解决回复或橱窗不永久封锁。卡加文字需要两个剩余额度，发卡前即核验；若历史遗留卡已确认但文字尚未尝试、又触及五条限制，仅把文字结算为未发送并保留部分触达证据。明确未提交的预检拒绝把 delivery 与两组件结算为 cancelled，保留审计但不重复领取；任一组件开始后禁止取消已提交部分。2026-09-21 真实 canary 最终完成 1 位达人，卡和文字均 confirmed、unknown 0。
+
+收信投影的 `outbound_episode` 固定比较 delivery/达人/OEC/PID/Offer/listId/冻结正文等不可变字段；同一次交付从“卡已确认”推进到“卡+文字已确认”不能因可变 `cycle_delivery.state` 改动而报冲突。只读收信持续轮询中，账号暂忙属于正常资源等待；发送 worker 保留原页面授权并短退避后继续。确认 unknown 或不能解释的范围错误才停领取。worker 存活判断同时核对进程状态，`ps` 的僵尸 PID 不阻止受控恢复。
 
 发送话术由 `cycle_materials.py` 和 `market-content.json` 的 16 个跨市场固定模板投影。IT 的 `send_message_template*` revision 继续支持系统模板编辑、自定义和归档；BR/MY/UK 使用相同内部模板键的本地化固定正文。`send_template_review*` 保存当前内容 fingerprint 的 pending/approved/rejected 审核；任一市场固定正文或 IT revision 变化后 fingerprint 变化，该条自动回到 pending。`operations_workflow.save_setting()`、`continuous_send.mutate_control()` 和市场真实发送 runtime 都要求当前批准数至少为 10。候选领取查询该 plan+creator 历史 `cycle_delivery.snapshot.message.template`，只选尚未使用的 approved 模板，全部耗尽时不重复轮转。所有正文只允许 `{creator_handle}`、`{product_name}`、`{creator_commission}`，后二者必需；market、language、locale、模板键、revision 与最终正文共同进入交付合同，禁止跨市场回退。
 

@@ -31,3 +31,22 @@
 1. 用户分别在市场发送页明确点击“发送”。MY 先执行一条原账号首发 canary；IT/BR/UK 沿当前已验证能力启动。窗口保持北京时间16:30–24:00；未到窗口时进程等待。首发卡与文字、模板、市场、OECID和回执必须逐项核实。
 2. 用户在各市场作业页开启 Agent，再在 Agent 设置页点“开始首条真实回复验证”；首条确认后查看真实内容与回执，再点“继续自动回复”。没有新的合格入站时保持等待，不制造测试消息。窗口为15:00–16:00。
 3. IT 原类目采集、完整货盘发布、后续 Campaign/TapLink/Kalodata/OECID/发送池应走到真实终态；收信延迟、平台额度、账号维护、跨日及下一次两天 Campaign 刷新仍需观察。未确认结果只按原意图核验，不盲发。
+
+## 16:30 后真实平台结果与现场修复
+
+- 用户分别在四市场发送页执行首次“发送”。IT、BR、UK 控制各自记录了页面 `runRequested=1`；MY 首次点击因市场注册表仍为 `paused` 被拒绝，零 delivery/零写入。修正 MY 运行注册表为 `ready` 后，用户再次页面点击；首条 MY canary 的卡和马来语文字双确认，项目账号 ACC8 `message_send` 能力由该 delivery 精确证据升为 verified。MY 之后按同一窗口继续正式发送。
+- 约16:52 只读快照：本轮新增完整确认 IT19、BR20、MY15、UK18；四市场发送 `unknown=0`。IT 前两位再次触达已真实使用第二条话术 `brief`，另三市场首触达按固定 `standard`；样本中的市场语言、卡片来源和当前 `listId` 均匹配。当前确认数仍在变化，这些不是本轮最终业务总量。
+- IT 收信 worker 曾在卡确认后文字确认导致 delivery 从 `running` 变 `confirmed` 时，把可变状态混入不可变 episode 指纹而抛 `reply_event_conflict`；在在线库副本上验证修复后安全更换收信 worker。现有 episode 保留原字节，后续只核对不可变身份与正文，不删改旧事实。BR/UK/MY 收信 worker 同步加载相同修复；当前 checkpoint 分别持续增长，暂无收信错误。
+- 发送与收信同账号抢租约时，IT sender 曾因 `live_guard_busy` 退出，BR/MY/UK 曾因 `ProfileBusyError` 进入 attention。现均将账号占用列为短暂等待，并复用用户已有页面授权恢复 worker；未新建发送授权、未因忙换账号。僵尸 PID 误判存活也已在公共进程判断处修复，避免安全退出后无法重新拉起。
+- IT 一位达人原有4条我方消息，旧逻辑在发卡前只检查“尚未达到5”，导致商品卡作为第5条确认后文字触及上限。新增“卡+文字需要两个剩余槽位”的发前检查；对已确认的卡保留原证据，只结算未尝试的文字为 `partial_delivery`，不将其算作完整触达，也不补发第6条。单测覆盖第4条前的拒绝和原意图的部分结算。
+- IT 原类目 run 在第298页出现 reported total 4,466、唯一 PID 4,465，进入 `partial/category_endpoint_total_mismatch`，未发布。调度器随后启动普通周更 run；当前完整类目 head 仍是 `it-global-cat-20260921-01`。原类目需要在 ACC9 空闲后按重复页补洞/完整复读证据处理，不能自动改成完整；普通周更仍在进行，独立监测不得与修复并发抢 ACC9。
+- 最新代码/故障修复后 Python全量1,122项、Web生产构建已通过；真实发送中额外校验卡/文字双回执、四市场账号/语言、unknown、24小时额度及收信。Agent 设置和首条真实回复仍待页面动作及真实入站，不计为已完成AI闭环。
+
+## 17:20 后续运行与普通周更重复页修复
+
+- 用户又明确授权由 Codex 代为开启四市场 AI。已在 IT/BR/MY/UK 页面各自开启 Agent，并分别点击“开始首条真实回复验证”；`agent_reply_setting.enabled=1` 与每个 plan 的 `agent-v2-first-send` 持久事件均已回读。当前已过15:00–16:00，平台 Agent 真实发送仍为0；首条必须等下一回复窗口与合格新入站，确认真实结果后才在对应页面继续自动回复。
+- IT 曾在无回复累计第4条之后发卡成功，第5条文字触发上限，形成一张已确认卡、文字未尝试。修复改为**发卡前同时核对卡＋文字两条余量**，并对该旧意图仅结算未开始的文字，保留卡的精确证据。结果页“确认触达达人”现在只算卡＋文字完整确认；已确认但不完整的卡留在商品卡数，未伪装为完整触达。IT sender 已复用原页面授权恢复。
+- 同账号收信与发送的短暂抢锁曾让 market worker 退出；现在短退避等待账号空闲，scheduler 同时识别手动页面启动的 `runRequested`。项目 worker/claim 的存活检查排除 macOS 僵尸 PID；因此安全退出不会再以 `kill(pid,0)` 假报存活。约17:20 `/api/inbox` 北京日确认触达：IT89、BR50、MY45、UK48；IT 卡91、文字89，差额单列。四市场发送 `unknown=0`，收信 worker 均运行；IT 老 checkpoint 仍需持续补扫。
+- IT 类目 run 首个分区 reported 4,466/唯一4,465，在邻域5页补洞中找到1个真实PID并达到reported total。第二个分区 reported984/唯一983，21页邻域复读新增0且重复页精确复现后，以原 `stableDuplicateRows=1` 合同通过。已有 `scripts/resume-global-category.py` 按同一证据合同顺序完成28个分区；它不替换原 run，也不并发创建另一覆盖 head。进度与停止原因在 `var/it-category-completion.*`。
+- IT 普通周更 `it-global-20260923-235726fa0695` 在10,000平台行中有9,998唯一PID，于末页保持 `partial`；现增加 `global_source_query_repair_page` 原请求复读证据与 `--repair-partial-query`。找到缺失PID则按唯一数发布；若重复页全部精确复现且无新增，`--accept-stable-query-duplicates` 才接受单列稳定重复行。该普通周更**尚未**实际修复或发布；ACC9当前用于类目run，待其空闲后再执行读回，之前完整head继续服务。
+- 最新 Python全量1,125项、Web164项、TypeScript/Next生产构建、文档检查均通过；新增普通查询缺口补洞/稳定重复行、部分卡不计完整触达等正反合同测试。真实业务仍在继续，测试通过不替代平台回执与72小时观察。
