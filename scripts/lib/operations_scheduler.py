@@ -426,17 +426,18 @@ class SubprocessStageExecutor:
                 else:return {'state':'failed','itemCount':count,'complete':False,'platformWrites':writes,
                             'errorCode':'selected_catalog_iteration_limit','scope':{'sources':sources},'payload':{}}
             if 'campaign' in sources:
-                join_status=self._call(['scripts/campaign-join.py','status',*market_flag],'campaign-join-status')
+                join_market_flag=['--market',market]
+                join_status=self._call(['scripts/campaign-join.py','status',*join_market_flag],'campaign-join-status')
                 if join_status['state']!='completed':return join_status|{'platformWrites':writes}
                 join_payload=join_status.get('payload') or {}
                 if join_payload.get('available') and join_payload.get('unresolved'):
-                    verified=self._call(['scripts/campaign-join.py','verify',*market_flag],'campaign-join-verify')
+                    verified=self._call(['scripts/campaign-join.py','verify',*join_market_flag],'campaign-join-verify')
                     if verified['state']!='completed':return verified|{'platformWrites':writes}
                     verified_payload=verified.get('payload') or {}
                     if verified_payload.get('unresolved'):
                         return {**verified,'state':'needs_human','complete':False,
                                 'errorCode':'campaign_join_result_unknown','platformWrites':writes}
-                joined=self._call(['scripts/campaign-join.py','join-all',*market_flag,'--confirm'],'campaign-join')
+                joined=self._call(['scripts/campaign-join.py','join-all',*join_market_flag,'--confirm'],'campaign-join')
                 writes+=joined.get('platformWrites',0);joined_payload=joined.get('payload') or {}
                 if joined['state']!='completed':return joined|{'platformWrites':writes}
                 if joined_payload.get('state')=='needs_verification' or joined_payload.get('unresolved'):

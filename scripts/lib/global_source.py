@@ -188,6 +188,27 @@ class GlobalSources:
                     self.db.execute("UPDATE global_source_partition SET state='collecting',updated=? WHERE run_id=? AND category_id=?",(self.clock(),id,row['category_id']))
                     row=self.db.execute("SELECT * FROM global_source_partition WHERE run_id=? AND category_id=?",(id,row['category_id'])).fetchone()
         return dict(row) if row else None
+    def stop_unpublished_category(self,id):
+        """Keep every observed page while closing an operator-stopped category run."""
+        reason='operator_stopped_category_collection'
+        with self.tx():
+            run=self.get(id)
+            if run['state']=='stopped' and run['terminal_reason']==reason:
+                return self.status(id)
+            if run['state']!='collecting' or run['scope'].get('partitionMode')!='category_l1_v1' or \
+               self.db.execute('SELECT 1 FROM global_source_head WHERE run_id=?',(id,)).fetchone():
+                raise GlobalSourceError('category_stop_scope_invalid')
+            active=self.db.execute("SELECT category_id FROM global_source_partition WHERE run_id=? AND state='collecting'",(id,)).fetchall()
+            if len(active)>1:raise GlobalSourceError('category_stop_scope_invalid')
+            now=self.clock()
+            if active:
+                self.db.execute("UPDATE global_source_partition SET state='stopped',terminal_reason=?,updated=? WHERE run_id=? AND category_id=?",
+                                (reason,now,id,active[0][0]))
+            self.db.execute("UPDATE global_source_run SET state='stopped',terminal_reason=?,updated=? WHERE id=?",
+                            (reason,now,id))
+            self.db.execute("INSERT INTO global_source_attempt(run_id,page,at,code) VALUES(?,?,?,?)",
+                            (id,run['next_page'],now,reason))
+        return self.status(id)
     def partition_page(self,id,category_id,page,data,*,request_payload):
         data=normalize_page(data)
         if not isinstance(data,dict) or type(data.get('has_more')) is not bool or type(data.get('total')) is not int or data['total']<0 or not isinstance(data.get('products'),list):raise GlobalSourceError('page_shape_invalid')
@@ -629,7 +650,8 @@ class GlobalSources:
         pages=sum(row['page_count'] for row in partitions) if partitioned else r['next_page']-1
         reported=sum((row['reported_total'] or 0) for row in partitions) if partitioned else r['reported_total']
         memberships=self.db.execute('SELECT count(*) FROM global_source_product_category WHERE run_id=?',(id,)).fetchone()[0] if partitioned else count
-        next_partition=next((row for row in partitions if row['state'] in ('collecting','queued','blocked')),None)
+        next_partition=(next((row for row in partitions if row['state'] in ('collecting','queued','blocked')),None)
+                        if r['state']!='stopped' else None)
         stable_duplicates=(sum(max(0,(row['reported_total'] or 0)-row['unique_count']) for row in partitions if row['state']=='completed')
                            if partitioned else int((r['terminal_reason'] or '').rsplit('_',1)[-1])
                            if (r['terminal_reason'] or '').startswith('endpoint_end_stable_duplicate_rows_') else 0)

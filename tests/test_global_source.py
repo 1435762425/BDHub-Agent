@@ -117,6 +117,28 @@ class SourceTests(unittest.TestCase):
   self.assertEqual((result['products'],result['reportedTotal'],result['categoryMemberships'],result['categoryOverlap']),(3,4,4,1))
   self.assertEqual((result['categoryCount'],result['categoriesCompleted'],result['pages']),(2,2,2))
   self.assertEqual(result['coverage'],'category_l1_endpoint_and_totals');self.assertTrue(result['published'])
+ def test_operator_stop_preserves_unpublished_category_pages_and_closes_open_scope(self):
+  self.s.blocked('one','fixture_end')
+  categories=[{'category_id':'600001','name':'家居用品','is_leaf':False},
+              {'category_id':'600002','name':'玩具','is_leaf':False}]
+  self.s.start_partitioned('stoppedcat',self.scope,categories)
+  self.s.next_partition('stoppedcat')
+  self.s.partition_page('stoppedcat','600001',1,page([1],False,1),
+                        request_payload=list_request(1,category_id='600001'))
+  self.s.next_partition('stoppedcat')
+  self.s.partition_page('stoppedcat','600002',1,page([2],True,3),
+                        request_payload=list_request(1,category_id='600002'))
+  before=self.s.status('stoppedcat')
+  stopped=self.s.stop_unpublished_category('stoppedcat')
+  self.assertEqual((stopped['state'],stopped['reason'],stopped['products'],stopped['pages']),
+                   ('stopped','operator_stopped_category_collection',before['products'],before['pages']))
+  self.assertFalse(stopped['published']);self.assertIsNone(stopped['nextCategory'])
+  self.assertEqual(self.s.db.execute("SELECT state FROM global_source_partition WHERE run_id='stoppedcat' ORDER BY position").fetchall()[0][0],'completed')
+  self.assertEqual(self.s.db.execute("SELECT state FROM global_source_partition WHERE run_id='stoppedcat' ORDER BY position").fetchall()[1][0],'stopped')
+  self.assertEqual(self.s.stop_unpublished_category('stoppedcat')['state'],'stopped')
+  self.assertIsNone(self.s.next_partition('stoppedcat'))
+  with self.assertRaisesRegex(GlobalSourceError,'category_stop_scope_invalid'):
+   self.s.stop_unpublished_category('one')
  def test_zero_result_category_may_omit_products(self):
   self.s.blocked('one','fixture_end')
   self.s.start_partitioned('emptycat',self.scope,[{'category_id':'600099','name':'空类目','is_leaf':False}])

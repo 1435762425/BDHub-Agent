@@ -2,6 +2,12 @@
 
 更新时间：2026-09-23（Asia/Shanghai）。本文件是当前开发交接入口；产品规则以 [项目文档](../PROJECT.md) 为准，技术结构以 [技术文档](../TECHNICAL.md) 为准。动态数量是本次只读快照，后续以 `var/` 台账和页面 API 回读为准。下方旧日期章节均为历史快照，不代表当前开关与数量。
 
+## 0W. 2026-09-23 20:36 停止 IT 类目并转 Campaign
+
+- 用户明确要求不再按分类抓 IT 全托货盘、推进下一步。IT 类目父/子进程组已安全停止，来源锁释放；在在线备份 `var/backups/state/global-source-before-it-operator-stop-20260923T123540Z.sqlite`（integrity ok）后，原未发布 run `it-global-20260921-9bbc623e09e9` 以确定性操作事件结算 `stopped/operator_stopped_category_collection`，保留1701页、25,410商品、16/28已完成类和第17类断点，不发布为完整覆盖。旧完整 head `it-global-cat-20260921-01` 保留。IT `fullCatalogWeeklyEnabled=false`/revision3、自动运营总开关仍开；scheduler 不再选 `selected` 来源或自动续跑这个已停止 run，UK 全托不受影响。
+- IT Campaign-only 工作流 `workflow-038da43ec820264f5b155e183fdd` 已按用户的“下一步”创建并由新 scheduler PID91559执行。先发现旧调度器对 IT `campaign-join.py` 漏传必填 `--market`，导致自动 workflow 在平台写入前失败；代码和正反合同已修复。新 run 的 Campaign catalog 阶段现已完成：111个活动、9,049条Offer，阶段记录平台写入25次，加入台账无unknown。当前 `taplink_prepare` 在同 run 内运行，首个子任务 `catalog-link-batch.py --route campaign --creates 0` 只读核验材料；之后仍需阶段结算并推进Kalodata、OECID与发送池，不重复启动。IT普通周更 partial 属全托来源，用户已取消IT全托采集，目前不主动修复或重新采集。
+- 四市场发送因各自本地新联系500/500保持 `waiting_capacity`，四个sender/收信/Agent worker均存活。每市场30位/分钟目标仍未达成；下次窗口和回复窗口按原回执继续验收。本轮Python全量1,145项与文档检查通过，动态数据以实时台账为准。
+
 ## 0V. 2026-09-23 20:17 额度等待与 IT 类目断点
 
 - 四市场 `/api/send` 均为 `waiting_capacity`、滚动24小时新联系500/500，原页面授权与发送worker均存活；四市场 Agent 启用首条验证，当前均在回复窗口外。发送真实 unknown0，IT另保留2条用户选择隔离的 `quarantined_unknown`。最早本地额度释放仍为次日北京时间 IT16:30:07、BR16:30:31、MY16:34:01、UK16:30:11，实际续跑须重新复检。

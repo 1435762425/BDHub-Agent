@@ -78,6 +78,11 @@
 
 - 四市场 `/api/send` 均已回读 `waiting_capacity`、本地滚动24小时新联系 `500/500`；发送worker、四市场收信及 scheduler 仍存活。最早本地额度释放分别是北京时间2026-09-24 IT16:30:07、BR16:30:31、MY16:34:01、UK16:30:11。到时仍须核对发送窗口、原冻结意图、关系/材料和平台额度；不是预告平台一定接受发送。IT有2条隔离未决建会话原意图，其他三个市场当前发送unknown0。30位/分钟**每市场**目标仍未完成，下一窗口按真实文字回查的完整分钟重新测量。
 
+## 20:36 用户停止 IT 按类目全托采集，转入 Campaign
+
+- 用户两次明确要求停止 IT 完整/按类目全托采集并推进下一步。原 `resume-global-category.py` 父PID87908与 `collect-global-opportunity.py` 子PID87909 属同一新会话进程组，整组收到SIGTERM并在当前页边界退出；两把锁、ACC9 profile均释放。没有删除来源库或重建 run。状态停在原 run 1701页/25,410商品/16个类目完成，旧完整head仍为 `it-global-cat-20260921-01`。在线备份 `var/backups/state/global-source-before-it-operator-stop-20260923T123540Z.sqlite` 校验 integrity ok 后，新领域操作 `stop_unpublished_category()` 原子写 `stopped/operator_stopped_category_collection`、当前分区同态和操作事件；所有已读页与未完成断点留存，不发布半成品。IT 全托自动刷新开关由revision2保存为revision3/关闭，自动运营与发送授权不变；UK全托未修改。
+- IT Campaign-only 的下一轮 `workflow-038da43ec820264f5b155e183fdd` 已创建。它最初在 `campaign-join.py status` 失败，原因是 scheduler 使用“IT省略market”的通用 argv，而该CLI要求 `--market it`。修正 status/verify/join-all 三处并添加 IT/非IT argv 合同测试后，安全替换 scheduler并以明确的新 manual run 继续；原失败 schedule run 和平台意图保留。新 run 的 Campaign catalog 阶段已完成：join job completed、无加入 unknown，111个活动、9,049条 Offer，阶段记录平台写入25次。随后 `taplink_prepare` 进入 `catalog-link-batch.py --route campaign --creates 0` 的只读核验，当前仍在运行；Kalodata、OECID、发送池仍须等同一 workflow 的上游阶段结算，不把活动加入或部分商品读取当完整闭环。
+
 ## 20:17 IT 类目动态总数断点
 
 - 四市场发送与Agent worker均存活。四个发送页实时回读 `waiting_capacity` 和500/500，当前没有新发送unknown；IT的2条 `quarantined_unknown` 继续单列。Agent设置四市场均启用首条验证，20点已过15:00–16:00回复窗口，真实V2首条仍待下一窗口和合格入站。IT最旧收信checkpoint约96分钟；仅此冷水位不能代替活跃入站SLO，后续继续追踪。

@@ -281,6 +281,23 @@ class StageWiring(unittest.TestCase):
         self.assertEqual(result['state'],'completed');self.assertEqual(result['platformWrites'],2)
         self.assertEqual([args[:2] for args,_ in calls],[['scripts/campaign-join.py','status'],
                          ['scripts/campaign-join.py','join-all'],['scripts/campaign-collect.py','--max-requests']])
+        self.assertTrue(all(args[2:4]==['--market','it'] for args,_ in calls
+                            if args[0]=='scripts/campaign-join.py'))
+
+    def test_it_campaign_join_verification_keeps_explicit_market_scope(self):
+        def answers(args,_label):
+            if args[1]=='status':payload={'available':True,'unresolved':['123']}
+            elif args[1]=='verify':payload={'unresolved':[]}
+            elif args[1]=='join-all':payload={'state':'completed','unresolved':[]}
+            else:payload={'status':'completed','screening':{'recorded':True},'offers':7}
+            return {'state':'completed','itemCount':0,'complete':True,'platformWrites':0,'payload':payload}
+        executor,calls=self.executor(answers)
+        result=executor.execute(None,{'market':'it','applicableSources':['campaign']},'catalog',{'jobs':{}})
+        self.assertEqual(result['state'],'completed')
+        self.assertEqual([args[1] for args,_ in calls if args[0]=='scripts/campaign-join.py'],
+                         ['status','verify','join-all'])
+        self.assertTrue(all(args[2:4]==['--market','it'] for args,_ in calls
+                            if args[0]=='scripts/campaign-join.py'))
 
     def test_campaign_only_market_never_calls_full_managed_worker(self):
         def answers(args,_label):
