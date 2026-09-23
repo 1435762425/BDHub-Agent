@@ -22,7 +22,11 @@ export interface IdentityOverviewCounts {
 }
 export interface CreatorIdentityOverview extends IdentityOverviewCounts {
   datasetStatus:IdentityDatasetStatus; market:IdentityMarket; repliedCreators:number|null;showcaseCreators:number|null;
+  identityStage:{resolved:number;unresolved:number}|null;
   markets:({market:IdentityMarket}&IdentityOverviewCounts)[];
+}
+export interface CreatorLeadGmv {
+  pid:string;gmv:string;currency:string;windowStart:string;windowEnd:string;units:number;
 }
 export interface IdentityAlias {
   handle:string; firstObservedAt:string; lastObservedAt:string; isCurrent:boolean;
@@ -33,7 +37,7 @@ export interface IdentityProfileField {
 }
 export interface CreatorIdentityDetail {
   datasetStatus:IdentityDatasetStatus; creator:CreatorIdentitySummary|null; aliases:IdentityAlias[];
-  latestProfileObservedAt:string|null; fields:IdentityProfileField[];
+  latestProfileObservedAt:string|null; fields:IdentityProfileField[];leadGmv:CreatorLeadGmv[];
   latestObservation:{kind:"profile"|"failure";outcome:"observed"|"unknown"|"timeout"|"not_found"|"blocked"|"error";observedAt:string}|null;
 }
 export interface IdentitySourceResolution {

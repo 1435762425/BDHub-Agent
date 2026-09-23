@@ -44,6 +44,42 @@ test("overview counts replies and showcase adoption by distinct creator",t=>{
   const event=cycle.prepare("INSERT INTO inbox_event VALUES('p',?,?,?)");event.run('111','creatorReplies',0);event.run('111','creatorReplies',0);event.run('111','showcaseNotifications',0);event.run('222','showcaseNotifications',0);event.run('222','creatorReplies',1);cycle.close();
   const overview=f.open(cyclePath).overview('it');assert.equal(overview.repliedCreators,1);assert.equal(overview.showcaseCreators,2);
 });
+test("BR and MY identity cards and current product GMV use only their own selected lead evidence",t=>{
+  const f=fixture(t),cyclePath=join(f.dir,"cycle.sqlite"),cycle=new DatabaseSync(cyclePath);
+  const brId="creator_"+"4".repeat(32),myId="creator_"+"5".repeat(32);
+  f.create(brId,"br","333","br_name",TIMES[1]);f.create(myId,"my","555","my_name",TIMES[1]);
+  cycle.exec(`CREATE TABLE plan(id TEXT,market TEXT,institution TEXT,state TEXT);
+    CREATE TABLE relationship(plan_id TEXT,creator_id TEXT,oec TEXT);
+    CREATE TABLE inbox_event(plan_id TEXT,oec TEXT,kind TEXT,historical INTEGER);
+    CREATE TABLE lead_query_head(plan_id TEXT,query_id TEXT);
+    CREATE TABLE lead_query_selection(query_id TEXT,source_id TEXT);
+    CREATE TABLE source_edge_index(plan_id TEXT,source_id TEXT,source_handle TEXT,pid TEXT,revenue_value TEXT,revenue_currency TEXT,window_start TEXT,window_end TEXT,units INTEGER);
+    CREATE TABLE cycle_identity_resolution(plan_id TEXT,source_id TEXT,creator_id TEXT);
+    CREATE TABLE cycle_identity_outcome(plan_id TEXT,source_id TEXT,status TEXT);`);
+  for(const [plan,market,query] of [["p-br","br","q-br"],["p-my","my","q-my"]]){
+    cycle.prepare("INSERT INTO plan VALUES(?,?,'bjn-local-research','active')").run(plan,market);
+    cycle.prepare("INSERT INTO lead_query_head VALUES(?,?)").run(plan,query);
+  }
+  const add=(plan,query,source,handle,pid,gmv,currency)=>{
+    cycle.prepare("INSERT INTO lead_query_selection VALUES(?,?)").run(query,source);
+    cycle.prepare("INSERT INTO source_edge_index VALUES(?,?,?,?,?,?,?,?,?)").run(plan,source,handle,pid,gmv,currency,"2026-09-06","2026-09-19",2);
+  };
+  add("p-br","q-br","br-a","br_name","1".repeat(19),"772.34","BRL");
+  add("p-br","q-br","br-b","missing","2".repeat(19),null,"BRL");
+  add("p-br","q-br","br-c","br_name","3".repeat(19),null,"BRL");
+  add("p-my","q-my","my-a","my_name","4".repeat(19),"1013.06","MYR");
+  cycle.prepare("INSERT INTO cycle_identity_resolution VALUES('p-br','br-a',?)").run(brId);
+  cycle.prepare("INSERT INTO cycle_identity_resolution VALUES('p-my','my-a',?)").run(myId);
+  cycle.prepare("INSERT INTO cycle_identity_outcome VALUES('p-br','br-b','unresolved')").run();
+  cycle.prepare("INSERT INTO cycle_identity_outcome VALUES('p-br','br-c','unresolved')").run();
+  cycle.close();
+  const store=f.open(cyclePath);
+  assert.deepEqual(store.overview("br").identityStage,{resolved:1,unresolved:1});
+  assert.deepEqual(store.overview("my").identityStage,{resolved:1,unresolved:0});
+  assert.deepEqual(store.detail("br",brId).leadGmv,[{pid:"1".repeat(19),gmv:"772.34",currency:"BRL",windowStart:"2026-09-06",windowEnd:"2026-09-19",units:2}]);
+  assert.equal(store.detail("br",brId).latestProfileObservedAt,null);
+  assert.equal(store.detail("my",myId).leadGmv[0].currency,"MYR");
+});
 test("old handle search returns both canonical candidates after name reuse without merging",t=>{
   const store=fixture(t).open(),result=store.list({market:"it",q:"old_name"});
   assert.equal(result.total,2);assert.deepEqual(new Set(result.items.map(row=>row.oecId)),new Set(["111","222"]));

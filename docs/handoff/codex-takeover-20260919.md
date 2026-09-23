@@ -2,6 +2,13 @@
 
 更新时间：2026-09-23（Asia/Shanghai）。本文件是当前开发交接入口；产品规则以 [项目文档](../PROJECT.md) 为准，技术结构以 [技术文档](../TECHNICAL.md) 为准。动态数量是本次只读快照，后续以 `var/` 台账和页面 API 回读为准。下方旧日期章节均为历史快照，不代表当前开关与数量。
 
+## 0I. 2026-09-23 BR/MY 达人详情与顶部统计
+
+- 顶部“已查询/查得到/搜索不到”此前只请求 IT 的 `/api/identity-queue`，BR/MY 因此前端分支直接显示横杠。本轮改为从当前市场的 `lead_query_head → lead_query_selection → source_edge_index` 和身份结果读取：BR 为 1,789 / 1,746 / 43，MY 为 4,534 / 4,388 / 146，去重单位为 handle。两市场“有回复/已加橱窗”均为真实 0，当前 live `inbox_event` 无对应事件。
+- `creator-identities.sqlite` 当前 BR 有 1,746 个、MY 有 4,388 个稳定身份，但其 1,755 / 4,388 条 `profile` 观察仅保存了精确 Find 的姓名/OECID，没有 `fields` 画像。既有只读 Profile canary：BR 1 次、MY 4 次均 HTTP 200、业务码 `100000`、`systemError3=true`，没有形成可用 GMV/粉丝等 Profile 字段；保留已确认 Find/OECID，不把 Profile 故障算成登录失效或重新登录理由。
+- 当前 Kalodata 商品线索中，BR 有 1,637 位、MY 有 4,388 位已解析达人带有数值 GMV。本轮在达人详情按 PID、币种和各自 14 天窗口单列最多 8 条当前线索金额，明确不称为达人全店成交额，也不填入平台 Profile 字段。BR/MY 实际页面已显示身份数和分开的 GMV 卡；错市场 creatorId 返回 404。
+- Web 159 项、TypeScript、Next build 与文档检查通过；5198 Web PID 35451。未做新的 Profile 平台请求、账号重登或平台写入。后续如需平台总 GMV/粉丝画像，先取得该市场可用 Profile 回执并验证导入链路，再按 OECID 持久队列补采；当前 code `100000` 不足以宣称成功。
+
 ## 0H. 2026-09-23 全市场统一页面实施进度
 
 - 分支 `codex/v1-runtime-alignment`，统一实现提交 `58e1121`、文档 `5936f6f`、资源 fence 修复 `778cd7c`、状态读性能 `ab8f4f7`、并行资源选择 `3004c98`、调度接线 `e20373c`；MY 任务的七个无关改动仍保留在工作树。14 市场 registry 与共享页面已接通，10 个 planned 市场只显示未验收状态；BR/MY 保留全托 Tab 并显示空态。全托商品只读明细已恢复搜索、公开/总佣金、选入观察、方案与 30 条分页。IT 当前正在采集批次显示 495 个商品，明细明确提示使用上次完整发布的 31,809 个商品快照，避免混淆。

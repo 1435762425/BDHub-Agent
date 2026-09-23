@@ -43,7 +43,7 @@ export default function ProfileRefreshPanel({creatorId,market,available,onComple
   const latest=data?.jobs[0],active=data?.jobs.some(j=>j.status==="queued"||j.status==="running");
   return <div className="space-y-3 rounded-xl border border-gray-200 p-4 dark:border-gray-700">
     <div className="flex flex-wrap items-center justify-between gap-3"><div><p className="text-sm font-medium text-gray-800 dark:text-gray-200">更新平台画像</p><p className="mt-1 text-xs leading-5 text-gray-500">按 OECID 刷新，名字变化后仍保留同一档案。</p></div><Button size="sm" disabled={!available||!restored||!data||busy||Boolean(pending)||active} onClick={()=>void submit({market,creatorId,requestId:crypto.randomUUID()})}><Icon name="arrow" className="size-4"/>{busy?"提交中…":active?"刷新进行中":"刷新画像"}</Button></div>
-    {!available&&<p className="text-xs text-gray-500">此市场的画像写能力尚未验收；入口保留但不可执行。</p>}
+    {!available&&<p className="text-xs text-gray-500">此市场的平台 Profile 读取能力尚未验收；入口保留但不可执行。</p>}
     {latest&&<div className="flex flex-wrap items-center gap-2 text-xs text-gray-500" aria-live="polite"><Pill tone={latest.status==="completed"?"success":latest.status==="blocked"?"warning":"brand"}>{labels[latest.status]}</Pill><span>{latest.status==="completed"?"已保存新观察，名字和来源记录可继续追溯。":latest.status==="blocked"?knownErrors[latest.errorCode||""]||"未取得可用的新观察，原档案已保留。":latest.status==="running"?"正在核对平台身份与画像。":"任务已保存，关闭页面后仍可继续。"}</span></div>}
     {data&&!data.workerOnline&&<p className="text-xs leading-5 text-gray-500">采集服务暂未在线，已提交的任务会保留在本机。</p>}
     {(error||readError)&&<p role="alert" className="text-xs leading-5 text-error-500">{error||readError}</p>}

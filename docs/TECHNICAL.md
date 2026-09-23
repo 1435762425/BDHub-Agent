@@ -342,7 +342,7 @@ Web 不再构建 `/flow-demo`、浏览器演示页、旧 local runtime、second-
 
 运营首页 canonical route 为 `/{market}`；合作工作台为 `/{market}/workspace/send` 和 `/{market}/workspace/history`。会话为 `/{market}/conversations`、`/{market}/conversations/templates` 和 `/{market}/conversations/agent`，默认 view=`human`；旧 `/ops/reply-evaluation` 重定向到 Agent 高级评测区。运行设置为 `/{market}/ops/kalodata`、`/{market}/ops/jobs`、`/{market}/ops/accounts`。
 
-会话页在 AppShell 中使用无最大宽度布局，并在桌面按 `队列 / 时间线与编辑器 / 达人与事项` 占满剩余视口。详情只投影白名单经营字段；人工事项确认直接结算当前 case/pending 且不发送消息。`creator_collaboration_event/current` 保存 `normal/collaborated/paid/rejected`，状态 mutation 同时校验 collaboration 与 relationship revision；showcase 只升级系统默认，人工选择优先。达人库顶部的“已查询/查得到/搜索不到”复用 `/api/identity-queue` 的互斥 handle 口径；“有回复/已加橱窗”从 live `inbox_event` 按 `creator_id` 去重，历史补录不计入。
+会话页在 AppShell 中使用无最大宽度布局，并在桌面按 `队列 / 时间线与编辑器 / 达人与事项` 占满剩余视口。详情只投影白名单经营字段；人工事项确认直接结算当前 case/pending 且不发送消息。`creator_collaboration_event/current` 保存 `normal/collaborated/paid/rejected`，状态 mutation 同时校验 collaboration 与 relationship revision；showcase 只升级系统默认，人工选择优先。达人库顶部的“已查询/查得到/搜索不到”：IT 保留 `/api/identity-queue` 的互斥 handle 口径；BR/MY/UK 从本市场 `lead_query_head → lead_query_selection → source_edge_index` 当前范围与身份结果读取，resolved 优先于 unresolved。“有回复/已加橱窗”从 live `inbox_event` 按 `creator_id` 去重，历史补录不计入。达人详情的平台 Profile 字段仅从 `creator-identities.sqlite.identity_observation.fields` 读取；另从当前线索关联该 `creator_id`，最多展示 8 条 PID、币种、14 天窗口和原始数值 GMV，不合并成平台画像总 GMV。
 
 会话时间线把 `inbox_event.kind=showcaseNotifications` 投影为“达人已将商品添加到橱窗”，不把它送入回复分类器。队列状态只投影 `human / agent / completed`；持久 pending 即使早期短冻结时间已过，仍属于 Agent 待回复，不能因 `relationship.inbox_until` 到期永久跳过。
 

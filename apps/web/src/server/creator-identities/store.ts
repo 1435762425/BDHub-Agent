@@ -1,7 +1,7 @@
 import {existsSync} from "node:fs";
 import {DatabaseSync} from "node:sqlite";
 import {profileObservationOrder} from "./observation-order.ts";
-import type {CreatorIdentityDetail,CreatorIdentityList,CreatorIdentityOverview,CreatorIdentitySummary,IdentityMarket,IdentityOverviewCounts,IdentityProfileField,IdentitySourceResolution,ProfileFieldStatus,ProfileFieldValue} from "../../features/creator-identities/contracts.ts";
+import type {CreatorIdentityDetail,CreatorIdentityList,CreatorIdentityOverview,CreatorIdentitySummary,CreatorLeadGmv,IdentityMarket,IdentityOverviewCounts,IdentityProfileField,IdentitySourceResolution,ProfileFieldStatus,ProfileFieldValue} from "../../features/creator-identities/contracts.ts";
 
 export const PROFILE_FIELDS=["handle","creator_oecuid","selection_region","follower_cnt","med_gmv_revenue","video_gmv","live_gmv","units_sold","video_avg_view_cnt","industry_groups","content_groups","top_video_data","product_price_range","video_publish_cnt_30d","ec_video_publish_cnt_30d","live_streaming_cnt_30d","ec_live_streaming_cnt_30d","gpm","ec_live_gpm","ec_video_gpm","partnered_brand","sales_performance_end_time"] as const;
 const STATES=new Set(["absent","no_value","unauthorized","error","zero","value"]);
@@ -109,7 +109,46 @@ export class CreatorIdentityReadStore {
       JOIN plan p ON p.id=e.plan_id WHERE p.market=? AND e.historical=0`).get(market)!;
     return {repliedCreators:Number(row.replied||0),showcaseCreators:Number(row.showcase||0)};
   }
-  overview(market:IdentityMarket):CreatorIdentityOverview{const counts=this.counts(market);return {datasetStatus:this.datasetStatus,market,...counts,...this.interactionCounts(market),markets:[{market,...counts}]};}
+  private hasCycleTables(names:string[]){if(!this.cycle)return false;const found=new Set(this.cycle.prepare("SELECT name FROM sqlite_master WHERE type='table'").all().map(row=>String(row.name)));return names.every(name=>found.has(name));}
+  private currentIdentityStage(market:IdentityMarket){
+    if(market==="it"||!this.hasCycleTables(["plan","lead_query_head","lead_query_selection","source_edge_index","cycle_identity_resolution","cycle_identity_outcome"]))return null;
+    const plan=this.cycle!.prepare("SELECT id FROM plan WHERE market=? AND institution='bjn-local-research' AND state='active'").get(market);
+    if(!plan)return null;
+    const row=this.cycle!.prepare(`WITH handles AS (
+      SELECT lower(x.source_handle) handle,
+       max(CASE WHEN r.creator_id IS NOT NULL THEN 1 ELSE 0 END) resolved,
+       max(CASE WHEN o.status='unresolved' THEN 1 ELSE 0 END) unresolved
+      FROM lead_query_head h CROSS JOIN lead_query_selection s CROSS JOIN source_edge_index x
+      LEFT JOIN cycle_identity_resolution r ON r.plan_id=x.plan_id AND r.source_id=x.source_id
+      LEFT JOIN cycle_identity_outcome o ON o.plan_id=x.plan_id AND o.source_id=x.source_id
+      WHERE h.plan_id=? AND s.query_id=h.query_id AND x.plan_id=h.plan_id AND x.source_id=s.source_id
+      GROUP BY lower(x.source_handle))
+      SELECT coalesce(sum(resolved),0) resolved,
+       coalesce(sum(CASE WHEN resolved=0 AND unresolved=1 THEN 1 ELSE 0 END),0) unresolved FROM handles`).get(plan.id)!;
+    return {resolved:Number(row.resolved),unresolved:Number(row.unresolved)};
+  }
+  private currentLeadGmv(market:IdentityMarket,creatorId:string):CreatorLeadGmv[]{
+    if(!this.hasCycleTables(["plan","lead_query_head","lead_query_selection","source_edge_index","cycle_identity_resolution"]))return [];
+    const plan=this.cycle!.prepare("SELECT id FROM plan WHERE market=? AND institution='bjn-local-research' AND state='active'").get(market);
+    if(!plan)return [];
+    const rows=this.cycle!.prepare(`WITH ranked AS (
+      SELECT x.pid,x.revenue_value gmv,x.revenue_currency currency,x.window_start window_start,
+       x.window_end window_end,x.units,
+       row_number() OVER(PARTITION BY x.pid,x.window_start,x.window_end,x.revenue_currency
+        ORDER BY CAST(x.revenue_value AS REAL) DESC,x.source_id) position
+      FROM lead_query_head h CROSS JOIN lead_query_selection s CROSS JOIN source_edge_index x
+      JOIN cycle_identity_resolution r ON r.plan_id=x.plan_id AND r.source_id=x.source_id
+      WHERE h.plan_id=? AND r.creator_id=? AND s.query_id=h.query_id AND x.plan_id=h.plan_id
+       AND x.source_id=s.source_id AND x.revenue_value IS NOT NULL)
+      SELECT pid,gmv,currency,window_start,window_end,units FROM ranked WHERE position=1
+      ORDER BY CAST(gmv AS REAL) DESC,pid LIMIT 8`).all(plan.id,creatorId);
+    return rows.flatMap(row=>{
+      const pid=String(row.pid),gmv=decimal(row.gmv),currency=String(row.currency||""),windowStart=String(row.window_start||""),windowEnd=String(row.window_end||""),units=integer(row.units);
+      return /^\d{19}$/.test(pid)&&gmv!==null&&/^[A-Z]{3}$/.test(currency)&&/^\d{4}-\d{2}-\d{2}$/.test(windowStart)&&/^\d{4}-\d{2}-\d{2}$/.test(windowEnd)&&units!==null?
+       [{pid,gmv,currency,windowStart,windowEnd,units}]:[];
+    });
+  }
+  overview(market:IdentityMarket):CreatorIdentityOverview{const counts=this.counts(market);return {datasetStatus:this.datasetStatus,market,...counts,...this.interactionCounts(market),identityStage:this.currentIdentityStage(market),markets:[{market,...counts}]};}
   list({market="it",status="verified",q="",offset=0,limit=20}:{market?:IdentityMarket;status?:"verified"|"pending";q?:string;offset?:number;limit?:number}={}):CreatorIdentityList{
     const base={datasetStatus:this.datasetStatus,market,status,offset,limit};if(!this.db)return {...base,items:[],total:0};
     const search=like(q);
@@ -127,7 +166,7 @@ export class CreatorIdentityReadStore {
     return {...base,total,items:rows.map(identity)};
   }
   detail(market:IdentityMarket,creatorId:string):CreatorIdentityDetail{
-    const empty:CreatorIdentityDetail={datasetStatus:this.datasetStatus,creator:null,aliases:[],latestProfileObservedAt:null,fields:[],latestObservation:null};if(!this.db)return empty;
+    const empty:CreatorIdentityDetail={datasetStatus:this.datasetStatus,creator:null,aliases:[],latestProfileObservedAt:null,fields:[],leadGmv:[],latestObservation:null};if(!this.db)return empty;
     const row=this.db.prepare(`SELECT ${ID_COLUMNS} FROM creator_identity i WHERE i.market=? AND i.creator_id=?`).get(market,creatorId);
     if(!row)return empty;
     const scope=[String(row.market),String(row.oec_id)];
@@ -155,7 +194,7 @@ export class CreatorIdentityReadStore {
     const kind=event?.kind==="profile"?"profile":"failure";
     const outcome=event?.outcome;
     const allowed=new Set(["observed","unknown","timeout","not_found","blocked","error"]);
-    return {datasetStatus:this.datasetStatus,creator:identity(row),aliases,latestProfileObservedAt:observedAt,fields,
+    return {datasetStatus:this.datasetStatus,creator:identity(row),aliases,latestProfileObservedAt:observedAt,fields,leadGmv:this.currentLeadGmv(market,creatorId),
       latestObservation:event?{kind,outcome:allowed.has(String(outcome))?outcome as NonNullable<CreatorIdentityDetail["latestObservation"]>["outcome"]:"error",observedAt:String(event.observed_at)}:null};
   }
   source({market,oecId,externalId}:{market:IdentityMarket;oecId?:string;externalId?:string}):IdentitySourceResolution{
