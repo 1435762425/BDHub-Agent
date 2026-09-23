@@ -1,6 +1,6 @@
 # BDHub-Agent 技术文档
 
-当前实现合同，整理于 2026-09-23。产品规则见 [PROJECT.md](PROJECT.md)，运行快照见[当前交接](handoff/codex-takeover-20260919.md)。本文保留模块入口、状态边界及恢复方法，实验数值与事故流水只链接证据。
+当前实现合同，整理于 2026-09-24。产品规则见 [PROJECT.md](PROJECT.md)，运行快照见[当前交接](handoff/codex-takeover-20260919.md)。本文保留模块入口、状态边界及恢复方法，实验数值与事故流水只链接证据。
 
 ## 1. 架构与环境
 
@@ -62,6 +62,8 @@ IT `full_catalog_collection_mode()` 固定普通周更，拒绝新的 `--by-cate
 - 恢复短名或 Kalodata 漏参预检需精确校验原错误、原阶段、零写入、当前证据和 claim，恢复事件写原 checkpoint；专用入口不得用于已实际执行的失败。
 - 长任务等待仍监督收信、发送、Agent 和账号维护。错误只向页面提供脱敏稳定码；普通失败退避与 unknown 核验分开。
 
+`workflow_recovery.py` 对原选入轮次和后起零写重复轮次核验 schedule/config、原 upstream generation、已发布 source/overlay 与精确选入回执；活动失配仍拒绝。恢复保留原请求与累计写计数，以幂等 checkpoint 重排原 catalog，不把其它 source 改算本轮成功。实际恢复前需核对运行进程并加载对应 scheduler，检查通过不产生新授权。
+
 ### 2.4 线索与身份
 
 `leads_queue.py` 管理 PID 到期/尝试，`leads-run.py` 读取 A 类，`kalodata_video_scan.py` 管理 B 类扫描、作者缓存与 current 投影。`leads_page_scope` 以市场/PID/查询窗口生成 query ID，原窗口断点复用，新窗口重新读取；完整发布后才更新 queried_at，旧 receipt 转历史表。
@@ -96,7 +98,7 @@ worker 在等待窗口、池或容量时常驻退避；同账号在途写串行�
 
 `cycle_inbox.py`、`poll-cycle-inbox.py`、`poll-market-inbox.py` 负责最近会话发现与旧 checkpoint 公平补扫；`inbox_event/inbox_content*` 保存事件和正文。新会话精确匹配本市场关系后落库；冷 checkpoint 也重新校验 plan，合作状态不能回退 IT。
 
-机构后台 `ourMessages` 与达人消息一并持久化正文、发生时间、精确 messageId 和市场/会话身份。保存或编辑我方正文不创建达人回复任务；只有外发、尚无达人入站的会话也可打开。`conversation_workbench.py` 与 V2 上下文读取同一事实；与本地 delivery/service_reply 的重复按精确 messageId 合并，不能按文本相同去重，不能把我方消息误作达人 pending。`observed_messages.py` 按 plan/OEC/cid/messageId 排除本系统已有回执，只把其余平台消息投影为 observed。当前每会话读最新 20 条，优先补其中缺失的机构正文；超出返回窗口的旧消息仍须分页覆盖核验，不宣称全史已补齐，不从未知意图推断成功。
+机构后台 `ourMessages` 与达人消息一并持久化正文、发生时间、精确 messageId 和市场/会话身份。保存或编辑我方正文不创建达人回复任务；只有外发、尚无达人入站的会话也可打开。`conversation_workbench.py` 与 V2 上下文读取同一事实；与本地 delivery/service_reply 的重复按精确 messageId 合并，不能按文本相同去重，不能把我方消息误作达人 pending。`observed_messages.py` 按 plan/OEC/cid/messageId 排除本系统已有回执，只把其余平台消息投影为 observed。热读每会话取最新 20 条，优先补缺失机构正文；`inbox-history.py` 使用原生 OLDER 游标做有界历史补扫，按页原子保存去重回执和断点。历史断点绑定原账号、IM 身份、完整 CID/OEC 与市场；不推进热读水位，不解除 gap/unknown，不创建回复任务。`completeOlderRange` 只证明从首次成功读取时间向旧的游标链完成；延后热读项单列，不能据此声称全部正文已入库。
 
 首次 checkpoint 有项目已确认外发时，以文字开始时间区分实时回复；否则首次导入为历史。已确认卡和文字按各自 `cycle_delivery_part` 状态/时间投影，不用 episode 冻结正文冒充已发文字。showcaseNotifications 单列系统事件，不输入文字分类器。消息完整性以覆盖/水位证明，worker 存活不足以证明新鲜。
 
@@ -111,6 +113,8 @@ IT 默认热点＋冷 checkpoint 每轮 12 个/30 秒；其他三市场 20 个/1
 `run-agent-replies.py` 先回查 inflight/accepted/unknown，再处理新 turn；模型失败逐达人隔离，同输入最多三次。确定未提交而上下文过期的 ready 可审计终结，已提交只核验。IT 人工/Agent 共用 `reply_transport.py`，其他市场用 `market_agent_reply.py`，均冻结唯一 `service_reply` 正文/requestRef 再发送。
 
 运营在机构后台于目标入站之后已回复时，旧 turn 暂停自动回答；不擅自结案，下一条达人来信重新进入处理。prepare 与逐写前校验最新 turn、pending/control revision、人工案件及平台外发。澄清/联系方式确认送达进入 waiting_clarification/waiting_contact，礼貌回复未提供资料仍保持等待。handoff 先建 case 和锁，再准备唯一确认消息；人工接管后 AI 停止。
+
+`evaluate-agent-v2.py` 复用生产 prompt 和校验器，读取固定四市场多轮合成案例。默认零模型调用；显式 `--call-model` 保存全输入输出、指南 hash 与失败样本，`--guide-db` 只读生效指南。筛查和逐条复核分开，合成通过率不代表生产准确率。
 
 首次真实启动由 `agent-v2-first-send` 页面事件授权，首条确认后停在 pilot_complete_waiting_resume，再由 `agent-v2-full-run` 继续。simulate 与 trace 不调用平台 transport；`--authorized-now` 单次请求不能和常驻 worker 合用。旧 run-auto-replies 入口返回 legacy_auto_reply_retired，V1 turn_review/固定模板只用于历史评测。
 
@@ -132,7 +136,9 @@ IT 默认热点＋冷 checkpoint 每轮 12 个/30 秒；其他三市场 20 个/1
 
 外部写入统一 pending → submitted → confirmed/failed_known/unknown；unknown 无自动重试资格。账号锁约束同身份操作，lease/fence 拒绝过期 worker 迟到提交，stop 在安全点退出。多 lane 共享预算，不各自累加。当前 schema registry 尚未覆盖全部库；新增迁移必须 additive、幂等并测试旧库升级，不能删库重建。
 
-`state-backup.py` 按 `config/state-backup.json` 显式清单执行 SQLite online backup，保存 hash、quick_check、schema；新业务库未入清单则失败。备份目录/文件为 0700/0600，敏感配置独立管理。restore 只接受空目标并生成回执；跨机器切换需排空写 worker 后最终备份，多库备份不声称跨库单事务。
+`state-backup.py` 按 `config/state-backup.json` 显式清单执行 SQLite online backup，保存 hash、quick_check、schema；新业务库未入清单则失败。备份目录/文件为 0700/0600，敏感配置独立管理。restore 只接受空目标并生成回执；跨机器切换需排空写 worker 后最终备份，多库备份不声称跨库单事务。`retention-plan` 校验现存备份并只生成保留建议（默认 7 天全部、30 天每日、84 天每周，每种库清单至少 3 份）；迁移标签、损坏和不明文件保留，无删除操作。
+
+`delivery-diagnostics.py` 只读发送台账与已有 timing，按完整确认触达的首次组件开始时间汇总。组件开始到首次确认回查包含等待/恢复，不能当 HTTP 耗时；缺失认证样本时不能判定认证瓶颈。
 
 ## 4. API 与 Web
 
@@ -198,6 +204,8 @@ npm run dev   # 开发；生产使用 npm run start，不能同时占用 5198
 
 生产在用 `.next` 不由验证构建覆盖：使用隔离输出/复制目录。部署前核对 PID/cwd/worker 依赖，替换后回读 API；源码变更不自动重启持久 worker 或改授权。状态查询使用 CLI status/check，不用 run-agent-replies 等执行入口探测状态。手动作业优先页面/job-run，不绕过同名作业锁另开底层 CLI。
 
-迁移/回填前先 `state-backup.py create --label <label>` 并 verify；apply 仅按明确范围升级既有库。`migrate-lead-receipts.py` 缺 schema 拒绝运行，不在 worker 启动时隐式升级；backfill-current-bindings/leads 的 check 只读，apply 只本地投影，无平台调用。只读检查直接 SQLite 时使用 mode=ro。
+历史补扫：`inbox-history.py --market <market> --cid <cid> --oec <oec>` 默认只读本地状态，显式 `--read --max-pages 5 --page-size 20` 才做平台只读与历史写入；单会话锁和暂停文件约束执行，断点未完可重跑同一命令。
+
+迁移/回填前先 `state-backup.py create --label <label>` 并 verify（单库变更可只做该库 online backup，保存 hash/quick_check 回执）；apply 仅按明确范围升级既有库。`migrate-lead-receipts.py` 缺 schema 拒绝运行，不在 worker 启动时隐式升级；backfill-current-bindings/leads 的 check 只读，apply 只本地投影，无平台调用。只读检查直接 SQLite 时使用 mode=ro。
 
 交付分别报告：合同测试、类型/构建、本机 API、只读真实数据、平台回执、业务结果。不把历史测试数、旧吞吐或存活进程当当前验收。结构改进与历史实测限制见[整改方向](implementation/audit-remediation-priorities-20260923.md)。
