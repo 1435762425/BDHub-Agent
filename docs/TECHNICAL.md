@@ -101,6 +101,8 @@ React 组件不能直接读写 SQLite、启动任意命令或实现资格规则�
 
 UK 2026-09-21 已停止的首轮类目读取由用户明确接受为部分快照：`global_source_run.state=accepted_partial`、`coverage/reason=operator_accepted_partial`，并把当时 64,089 个唯一商品、4,280 页、13/30 个完整类目和接受时点写入 `global_source_operator_acceptance`。这类 head 可以继续筛选和选入，但 API 与页面不得投影为完整覆盖；冻结选入队列清零后的周更使用普通查询，达到 30 天再使用类目刷新。当前产品注册表只有 IT/UK 支持全托，BR/MY 明确不适用。
 
+普通周更和类目快照共用一个 `scope_hash`，但普通接口有 10,000 结果窗口。`GlobalSources.finish_session()` 在当前 head 为类目快照或组合快照时，原子发布 `coverageOverlay` 派生 run：复制原覆盖的 PID、类目成员及部分接受证据，只用周更同 PID 的新商品事实覆盖旧 payload；周更范围外 PID 继续留在原始周更 run，不写进覆盖 head。派生 run 保留原始类目接受终态与完成类目数，`coverageOverlay` 保存原基线、周更 run、重叠和范围外数量。月度 cadence 只计算原始类目 run，不让派生 run 的发布时间重置 30 天。当前 head、原类目快照、普通周更可各自只读分页；筛分与选入必须按 `source_run` 关联，不能取全库最新一条拼成一个漏斗。`reconcile-global-coverage.py` 仅在备份后为已被普通周更替换的旧 head 做一次本机回补，不调用平台。
+
 类目 endpoint 的 `reported_total` 是行数，不保证 PID 唯一。若完整末页出现少量重复行，`global_source_partition_repair_page` 先保存重复页邻域补洞回执；必要时完整复读该类目。只有完整复读新增 0，或重复页精确复现，且重复差额不超过 `max(5, reported_total/1000)` 时，才以 `endpoint_end_stable_duplicate_rows_*` 结束，并在状态中单列 `stableDuplicateRows`。普通 partial 不能发布 head、筛分或选入；唯一例外是用户明确执行的 `accept_partial_snapshot`，它以独立终态和覆盖标签发布，不能冒充 completed。
 
 全托 catalog stage 随后在该市场固定货盘账号执行 `selection prepare → verify/reconcile unresolved → execute-fast --native-listing`；正式配置每轮 300 PID、8 lanes/8 QPS、每个 listing/readback group 最多 100 PID，批末统一回读并循环到 pending 为 0。TikTok 当前前端 SDK 虽声明 `/pick_up/batch_select`，但 2026-09-21 UK 页面没有批选 UI，EU 后端 v1/v2/v3 均返回非 API HTML，尚不能作为正式写端点；当前已验证的 `/pick_up/select` payload 仍只接受一个 PID/Campaign。选入请求先落持久意图；验证码明确拒绝或登录失效只有在“已选池缺失＋当前 listing 未选入＋同账号验证/新代次”三项证据齐全时才重放同一冻结请求。登录失效由 workflow 自动串行重登供给账号并确认能力代次继承；网络歧义或 code0 未回读不重发；批后两次间隔回读及最多两次验证码恢复仍缺失时记 `skipped_unknown`，后续 generation 也不重新入队。UK 真实完整轮次约 61–75 confirmed/分钟，平台验证耗时仍是主要瓶颈。
