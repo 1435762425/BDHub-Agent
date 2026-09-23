@@ -1,106 +1,32 @@
-# BDHub-Agent 文档管理
+# 文档导航
 
-项目只保留两个主文档入口：
+当前规则只在 [PROJECT.md](PROJECT.md)（产品）与 [TECHNICAL.md](TECHNICAL.md)（实现）维护。[AGENTS.md](../AGENTS.md) 规定执行边界，[当前交接](handoff/codex-takeover-20260919.md) 记录带时间的运行快照。日期化报告只证明当时的范围和结果，不提供当前执行授权。
 
-1. [项目文档](PROJECT.md)：做什么、为什么、业务怎样运行、什么算完成；后续产品开发以此为依据。
-2. [技术文档](TECHNICAL.md)：系统怎样实现、状态存在哪里、模块如何协作、怎样运行和验证。
+## 按问题阅读
 
-[AGENTS.md](../AGENTS.md) 只管理 Agent 的执行边界和阅读路由；[当前交接](handoff/codex-takeover-20260919.md) 只管理动态进度。它们都不建立第三套产品或技术规则。
-
-## 文档层级
-
-| 层级 | 文档 | 应包含 | 不应包含 |
-| --- | --- | --- | --- |
-| 产品真相 | `PROJECT.md` | 目标、范围、角色、流程、业务规则、验收、路线图 | PID、进程号、临时故障、代码细节 |
-| 技术真相 | `TECHNICAL.md` | 架构、模块、数据、API、运行、配置、测试、技术债 | 临时运行数量、历史流水、未经确认的产品规则 |
-| Agent 路由 | `AGENTS.md` | 必读资料、授权边界、开发/验证方式 | 详细业务规则、动态状态、事故长文 |
-| 当前状态 | `handoff/codex-takeover-20260919.md` | Git、进程、数量、当前风险、下一步和本轮验证 | 永久产品规则、完整架构说明 |
-| 支撑资料 | `architecture/`、`implementation/`、`research/` | 细节设计、实现证据、实验、调查 | 与主文档竞争“当前真相” |
-| 历史追溯 | `archive/` | 被替代的入口、状态流水和旧方案 | 当前开发指令 |
-
-## 权威顺序
-
-1. 用户当前明确指令；
-2. `PROJECT.md` 的产品规则；
-3. `TECHNICAL.md` 的实现契约；
-4. 当前代码、测试和 `var/` 实时台账；
-5. 当前交接页的动态快照；
-6. 日期化架构、实现和研究资料；
-7. 归档。
-
-当产品文档与实际状态不一致时，不让代码或旧报告默默改写产品规则：先确认差异属于需求变化、实现缺口还是运行故障，再更新相应主文档。
-
-## 支撑资料索引
-
-### 产品细节与历史决定
-
-- [旧 PRD 详细版](archive/batch-era/PRD-20260913.md)：2026-09-13 批次需求来源，不是当前发送流程。
-- [决策来源记录](archive/batch-era/DECISIONS-20260913.md)：逐轮确认与历史未决项，不覆盖当前规则。
-
-### 架构细节
-
-| 领域 | 资料 |
+| 问题 | 资料 |
 | --- | --- |
-| 历史批次与备料方案 | [已退役批次架构](architecture/batch-outreach-v2.md)、[历史货盘先备链](architecture/catalog-first-preparation.md) |
-| 货盘链路与 Campaign | [货盘页链路](architecture/catalog-page-chain.md)、[非全托 Campaign](architecture/non-full-managed-campaign-v1.md) |
-| PID 来源、选入、链接、刷新和清理 | [PID 生命周期树](architecture/pid-lifecycle-v1.md) |
-| 线索与发送池历史设计、V1 回复追溯 | [发送池与回复策略 v1](architecture/creator-pool-and-reply-policy-v1.md)（当前排序见 `PROJECT.md`，当前回复见下一行 V2） |
-| 多轮 AI 回复与会话页面升级 | [会话与 Agent 回复升级计划](architecture/conversation-agent-upgrade-plan-20260923.md) |
-| 旧发送池/工作台实施记录 | [线索发送池](architecture/lead-sending-pool.md)、[工作台方案](architecture/send-monitor-reply-calendar-v1.md)（仅用于追溯，冲突处以当前策略为准） |
-| 身份与关系 | [稳定身份](architecture/creator-identity-and-rename.md)、[二发确认规则](architecture/second-cycle-confirmed-policy.md) |
-| 账号与维护 | [账号调度](architecture/account-scheduling.md)、[双账号生命周期](architecture/dual-account-lifecycle.md) |
-| 多市场扩展 | [多市场接入标准](architecture/market-rollout-standard-v1.md) |
-| Agent 与系统 | [Agent runtime](architecture/agent-runtime.md)、[系统设计](architecture/system-design.md) |
-| 自动运营首页与持续工作流 | [开发计划 v1](architecture/automated-operations-workflow-v1.md) |
-| 全市场统一前端、并发与性能整理 | [开发计划 v1](architecture/multimarket-ui-runtime-hardening-plan-v1.md) |
-| 四市场首次正式全量启动与持续监测 | [启动、修复与监测计划（2026-09-23）](architecture/four-market-production-launch-plan-20260923.md) |
+| 下一步改进与验收指标 | [审计与整改方向](implementation/audit-remediation-priorities-20260923.md) |
+| 商品全生命周期 | [PID 生命周期](architecture/pid-lifecycle-v1.md)、[Campaign](architecture/non-full-managed-campaign-v1.md) |
+| 工作流、市场与账号 | [自动运营设计](architecture/automated-operations-workflow-v1.md)、[市场接入标准](architecture/market-rollout-standard-v1.md)、[账号生命周期](architecture/dual-account-lifecycle.md) |
+| 身份与排序 | [稳定身份](architecture/creator-identity-and-rename.md)、[排序验证](implementation/lead-priority-simulation-20260920.md) |
+| 会话与当前 Agent | [V2 设计](architecture/conversation-agent-upgrade-plan-20260923.md) |
+| 四市场真实平台结果/限制 | [启动实测](implementation/four-market-launch-implementation-20260923.md)、[接入证据](implementation/br-my-uk-onboarding-20260921.md) |
+| OECID 成本与恢复 | [真实吞吐](implementation/identity-oecid-throughput-20260920.md)、[12 QPS 验收](implementation/identity-12qps-500-release.md) |
+| Kalodata 数据口径 | [GMV 实测](implementation/kalodata-gmv-live-probe-20260920.md)、[视频证据](implementation/kalodata-zero-sale-video-evidence-20260920.md) |
+| 回复模型历史局限 | [V1 人工评测](implementation/reply-model-evaluation-20260920.md)，不能外推当前 V2 |
+| 平台协议与资源 | [TikTok 合同](contracts/tiktok/README.md)、[vendor](../vendor/README.md) |
+| 旧需求/决策/状态 | [归档](archive/README.md)，仅按具体问题查阅 |
 
-### 实现与验收证据
+## 维护规则
 
-`implementation/` 保存“当时实现了什么、如何测试、有哪些限制”。常用入口：
+- 产品规则、范围或验收变化更新 PROJECT；模块、数据、接口、运行或测试变化更新 TECHNICAL。
+- 数量、进程、提交、当前故障只更新 handoff；一次实验和事故放 implementation/research，注明时间、范围、证据与限制。
+- 旧实现文件可为历史事实保留；被替代的设计标注历史。重复跳转和过时操作提示可直接删除，链接指向唯一内容；不为每次删减另存整份快照。
+- 主文档与代码不一致时先识别需求变化、实现缺口或运行故障，不从历史报告推导新规则。
 
-- [货盘主动动作与事故复盘](implementation/catalog-actions-and-incident-20260915.md)
-- [货盘页面整理](implementation/catalog-ui-reorg-20260914.md)
-- [商品短名](implementation/catalog-short-names-20260915.md)
-- [OECID 阶段](implementation/creator-identity-oecid-stage-20260915.md)
-- [线索查询队列](implementation/leads-query-queue-v1.md)
-- [作业面板与 Kalodata 身份](implementation/workbench-jobs-and-kalodata-identity.md)
-- [ACC9 单品建链](implementation/acc9-catalog-link-canary.md)
-- [意大利标准 TapLink 全量补齐](implementation/italy-taplink-completion-20260920.md)
-- [意大利回复分类最终人工评测](implementation/reply-model-evaluation-20260920.md)
-- [Kalodata 意大利 PID GMV 实时口径探查](implementation/kalodata-gmv-live-probe-20260920.md)
-- [12 QPS / 500 人身份验收](implementation/identity-12qps-500-release.md)
-- [会话工作台、模板库与互斥回复窗口](implementation/conversation-workbench-and-template-library-20260920.md)
-- [四市场正式启动修复与现场验证](implementation/four-market-launch-implementation-20260923.md)
-
-### 接口、研究与归档
-
-- `contracts/tiktok/`：TikTok 接口、字段和工具边界。
-- `contracts/legacy-interface-inventory.md`：旧 BDHub 能力索引，仅供只读借鉴。
-- `research/`：模型、旧逻辑、匹配数据和 UI 调查；不自动成为业务规则。
-- [Kalodata 网页可见字段清单](research/kalodata-web-fields-20260920.md)：直接基于已登录 IT 网页整理，不以当前接口字段代替网页口径。
-- `archive/`：已被当前口径取代的状态流水和旧入口，只用于追溯。
-- [早期前端原型验收](archive/design/tailadmin-prototype-qa-20260912.md)、[早期页面映射](archive/design/tailadmin-page-map-20260911.md)与[旧 DeepSeek 交接](archive/handoff/deepseek-harness-20260914.md)已归档；旧链接仅作跳转。
-- [协议层说明](../vendor/README.md)：当前 vendor 的来源清单、本地补丁、资源和安全重建方法。
-
-## 更新规则
-
-| 变化 | 必须更新 |
-| --- | --- |
-| 产品目标、范围、规则、用户流程、验收标准 | `PROJECT.md` |
-| 模块、调用链、数据、API、配置、运行、部署、测试 | `TECHNICAL.md` |
-| Git、动态数量、进程、当前故障、下一步 | 当前 handoff |
-| Agent 执行权限或文档路由 | `AGENTS.md` |
-| 一次实验、压测、发布或事故 | `implementation/` 或 `research/` |
-
-同一事实只保留一个主归属。其他文档使用链接引用，不复制长段正文；旧说明被取代时标记“已被取代”，不继续堆多个“最新”。
-
-文档变更后运行：
+检查所有非忽略 Markdown 的本地路径、图片与标题锚点：
 
 ```bash
-PYTHONDONTWRITEBYTECODE=1 \
-  /Users/bjn00003/BDHub/BDHub-Agent/.venv/bin/python \
-  scripts/check-docs.py
+PYTHONDONTWRITEBYTECODE=1 .venv/bin/python scripts/check-docs.py
 ```
-
-检查会确认主文档完整，扫描 Git 已跟踪与尚未提交的非忽略 Markdown，验证本地文件、图片和 Markdown 标题锚点。`var/`、依赖和构建产物不纳入文档检查。

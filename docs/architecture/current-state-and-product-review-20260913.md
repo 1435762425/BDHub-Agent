@@ -143,7 +143,7 @@ flowchart TB
 
 ## 证据入口
 
-- 当前产品与技术：`docs/PROJECT.md`、`docs/TECHNICAL.md`；历史需求与决策来源：`docs/PRD.md`、`docs/DECISIONS.md`。
+- 当前产品与技术：`docs/PROJECT.md`、`docs/TECHNICAL.md`；历史需求与决策来源：`docs/archive/batch-era/PRD-20260913.md`、`docs/archive/batch-era/DECISIONS-20260913.md`。
 - 实际API与服务：`apps/web/src/app/api/`、`apps/web/src/server/`、`scripts/lib/`。
 - 稳定身份与匹配：`docs/implementation/creator-discovery.md`、`registry-profile-matching-sync.md`、`existing-profile-auto-analysis.md`。
 - 模拟运行：`docs/implementation/local-runtime-v1.md`。

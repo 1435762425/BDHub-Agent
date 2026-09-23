@@ -2,7 +2,7 @@
 
 > 历史批次设计与实施记录：下文固定在 2026-09-20 的 frozen-v2 阶段。当前发送已改为持续发送和逐达人不可变 delivery，旧冻结入口已退役；`batch-tasks.sqlite` 与 `cycle_bulk*` 只保留结果追溯。本文不是恢复旧 worker、冻结批次或旧授权的操作指南。当前流程见[项目文档](../PROJECT.md)与[技术文档](../TECHNICAL.md)。
 
-当前产品基线：[项目文档](../PROJECT.md)。[旧 PRD](../PRD.md)保留 2026-09-13 批次需求细节；本轮实现与验证：[B.17](../implementation/batch-preparation-foundation-v2.md)。本架构覆盖旧的边发边补策略。本文“已实现”均注明是代码/本地验证还是平台验收，不把设计当运行事实。
+当前产品基线：[项目文档](../PROJECT.md)。[旧 PRD](../archive/batch-era/PRD-20260913.md)保留 2026-09-13 批次需求细节；本轮实现与验证：[B.17](../implementation/batch-preparation-foundation-v2.md)。本架构覆盖旧的边发边补策略。本文“已实现”均注明是代码/本地验证还是平台验收，不把设计当运行事实。
 
 ## 架构关系
 

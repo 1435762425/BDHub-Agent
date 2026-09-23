@@ -64,8 +64,8 @@ npm run start
 
 | 内容 | 入口 |
 | --- | --- |
-| 产品需求与完成标准 | [详细 PRD](../PRD.md) |
-| 已确认条件、待决策问题 | [决策登记](../DECISIONS.md) |
+| 产品需求与完成标准 | [详细 PRD](batch-era/PRD-20260913.md) |
+| 已确认条件、待决策问题 | [决策登记](batch-era/DECISIONS-20260913.md) |
 | 架构取舍与落地顺序 | [架构方案](../architecture/system-design.md) |
 | 匹配实现与规模验证 | [结构召回实现](../implementation/structured-matching-v1.md) |
 | 新匹配体系与 token 预算 | [匹配设计与测算](../architecture/matching-and-token-budget.md) |
@@ -74,9 +74,9 @@ npm run start
 | 必要旧接口与事实来源 | [接口迁入清单](../contracts/legacy-interface-inventory.md) |
 | 本地持久运行 | [范围、命令与恢复验证](../implementation/local-runtime-v1.md) |
 | 个性化意语草稿 | [使用边界、版本与用量记录](../implementation/italy-outreach-drafts.md) |
-| 视觉与交互验收 | [验收报告及当前点验限制](../../design-qa.md) |
+| 视觉与交互验收 | [验收报告及当前点验限制](design/tailadmin-prototype-qa-20260912.md) |
 | 前端原型与来源 | [运行/路由/演示流程](../../apps/web/README.md) · [源码清单](../../apps/web/TAILADMIN-SOURCE.json) · [第三方许可](../../apps/web/THIRD_PARTY_NOTICES.md) |
-| 已选 TailAdmin 的设计推进 | [设计执行稿](../../design/tailadmin-design-brief.md) · [14视图映射](../../design/tailadmin-page-map.md) · [许可核对与历史研究](../research/tailadmin-license-review.md) |
+| 已选 TailAdmin 的设计推进 | [设计执行稿](design/tailadmin-design-brief-20260911.md) · [14视图映射](design/tailadmin-page-map-20260911.md) · [许可核对与历史研究](../research/tailadmin-license-review.md) |
 | UI 模板研究归档 | [图文选择目录](../../design/template-catalog.html) · [模板研究](../research/ui-template-options.md) |
 | 公开 Agent 案例与反证 | [案例复核](../research/agent-cases-review.md) |
 | 旧文件和自定义 Skills 整理 | [清理结果与恢复清单](../research/cleanup-register.md) |

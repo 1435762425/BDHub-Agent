@@ -1,6 +1,6 @@
 # B.17 全量批次准备基础与TapLink门槛
 
-实施日期：2026-09-14。用户已确认TapLink纳入并要求开始实施。当前设计基线为[PRD](../PRD.md)和[批次架构](../architecture/batch-outreach-v2.md)。历史研发文档归档，AGENTS/README改为精简的当前入口；手动暂停AI回复明确保留。
+实施日期：2026-09-14。用户已确认TapLink纳入并要求开始实施。当前设计基线为[PRD](../archive/batch-era/PRD-20260913.md)和[批次架构](../architecture/batch-outreach-v2.md)。历史研发文档归档，AGENTS/README改为精简的当前入口；手动暂停AI回复明确保留。
 
 ## 本轮交付
 
