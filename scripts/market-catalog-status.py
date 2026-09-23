@@ -12,7 +12,7 @@ sys.path.insert(0,str(ROOT/'scripts'))
 
 from lib.account_identity import current_generation  # noqa:E402
 from lib.campaign_join import preview as campaign_preview,status as campaign_status  # noqa:E402
-from lib.campaign_screen import status as screen_status  # noqa:E402
+from lib.campaign_screen import recorded as recorded_screen  # noqa:E402
 from lib.global_source import GlobalSources  # noqa:E402
 from lib.market_accounts import load_config  # noqa:E402
 from lib.market_registry import market as market_record  # noqa:E402
@@ -86,6 +86,23 @@ def public_screen(value):
   'multiCampaignPids','counts','reasons') if key in value} | {'pool':{'counts':pool.get('counts') or {}}}
 
 
+def published_screen(market):
+ """Read the published screening ledger without re-evaluating every Offer on a page GET."""
+ saved=recorded_screen(ROOT,'campaign',market)
+ with sqlite3.connect((ROOT/'var/second-cycle.sqlite').resolve().as_uri()+'?mode=ro',uri=True) as db:
+  head=db.execute('''SELECT h.snapshot_id FROM catalog_head h JOIN plan p ON p.id=h.plan_id
+   WHERE p.institution='bjn-local-research' AND p.market=? AND h.source=?''',(market,f'live-{market}-campaign')).fetchone()
+ if not saved or not head or saved['snapshot']!=head[0]:
+  return {'available':False,'market':market,'source':'campaign',
+          'reason':'screen_stale' if saved and head else 'snapshot_missing'}
+ counts=saved['counts'];states=counts.get('states') or {};pool_counts=saved.get('poolCounts') or {}
+ return {'available':True,'market':market,'source':'campaign','snapshot':saved['snapshot'],
+         'runId':saved['runId'],'offers':sum(states.values()),'distinctPids':sum(pool_counts.values()),
+         'eligiblePids':int(counts.get('eligiblePids') or 0),
+         'multiCampaignPids':int(counts.get('multiCampaignPids') or 0),
+         'counts':states,'reasons':counts.get('reasons') or {},'pool':{'counts':pool_counts}}
+
+
 def status(market):
  meta=market_record(ROOT,market);pair=load_config(ROOT)['markets'][market]
  with CycleStore(ROOT/'var/second-cycle.sqlite',readonly=True) as store:
@@ -106,7 +123,7 @@ def status(market):
  capabilities={key:value['state'] for key,value in (generation or {}).get('capabilities',{}).items()}
  try:campaign=campaign_status(ROOT,market=market)
  except (OSError,ValueError,sqlite3.Error):campaign={'available':False,'reason':'not_previewed'}
- try:screen=screen_status(ROOT,market=market)
+ try:screen=published_screen(market)
  except (OSError,ValueError,sqlite3.Error):screen={'available':False,'reason':'snapshot_missing'}
  return {'schemaVersion':'bdhub.market-catalog.v1','market':market,'label':meta['label'],
   'capabilities':meta['capabilities'],'account':supply,'accountCapabilities':capabilities,

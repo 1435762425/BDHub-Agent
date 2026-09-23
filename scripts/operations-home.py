@@ -33,7 +33,7 @@ def home(store,market='it'):
  all_accounts=account_status(store,ROOT);accounts={**all_accounts,
   'accounts':[row for row in all_accounts['accounts'] if row['market']==market],
   'queue':[row for row in all_accounts['queue'] if row['market']==market]}
- continuous=continuous_status(ROOT,store) if market=='it' else _idle_continuous(store,
+ continuous=continuous_status(ROOT,store,include_preview=False) if market=='it' else _idle_continuous(store,
   market,next(row['account'] for row in accounts['accounts']
               if row['market']==market and row['role']=='communications'))
  jobs=jobs_status(ROOT,market);plan=store.db.execute("SELECT id FROM plan WHERE institution='bjn-local-research' AND market=?",(market,)).fetchone()[0]

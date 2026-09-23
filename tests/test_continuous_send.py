@@ -62,6 +62,15 @@ class ContinuousSendTests(unittest.TestCase):
         self.assertTrue(stopped['stopRequested']);self.assertFalse(stopped['runRequested'])
         self.assertEqual(self.store.db.execute('SELECT count(*) FROM cycle_bulk').fetchone()[0],0)
 
+    def test_home_summary_keeps_runtime_without_rebuilding_the_send_candidate(self):
+        with (patch.object(continuous,'_candidate',side_effect=AssertionError('candidate_must_not_run')),
+              patch.object(continuous,'capacity',side_effect=AssertionError('capacity_must_not_run'))):
+            result=status(self.root,self.store,include_preview=False)
+        self.assertEqual(result['market'],'it')
+        self.assertEqual(result['runtime']['confirmedToday'],0)
+        self.assertIsNone(result['sample'])
+        self.assertIsNone(result['poolRemaining'])
+
     def test_start_is_blocked_until_ten_semantic_templates_are_approved(self):
         with self.store.tx():
             self.store.db.execute('DELETE FROM send_template_review')

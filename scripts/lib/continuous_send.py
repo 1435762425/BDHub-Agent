@@ -164,8 +164,8 @@ def _identities(root):
     return sqlite3.connect((Path(root)/'var/creator-identities.sqlite').resolve().as_uri()+'?mode=ro',uri=True)
 
 
-def _candidate(root,store,plan,control_value):
-    state=pool(root,now=store.clock(),limit=200)
+def _candidate(root,store,plan,control_value,*,limit=200):
+    state=pool(root,now=store.clock(),limit=limit)
     positions=[(row['creatorId'],row['pid']) for row in (state.get('pools') or {}).get('ready',[])]
     if not positions:return None,state
     with closing(_identities(root)) as ids:
@@ -317,7 +317,7 @@ def _today_confirmed(store,plan,now):
     return store.db.execute("SELECT count(DISTINCT d.id) FROM cycle_delivery d JOIN cycle_delivery_part p ON p.delivery_id=d.id WHERE d.plan_id=? AND d.state='confirmed' AND p.kind='card' AND p.started>=?",(plan,start)).fetchone()[0]
 
 
-def status(root,store=None):
+def status(root,store=None,*,include_preview=True):
     root=Path(root);owned=store is None;store=store or __import__('lib.second_cycle',fromlist=['CycleStore']).CycleStore(root/'var/second-cycle.sqlite')
     try:
         _required(store);plan=_plan(store);cfg=control(store,root);runtime=_runtime(store,plan);now=store.clock()
@@ -326,20 +326,21 @@ def status(root,store=None):
         recent=store.db.execute("SELECT count(DISTINCT d.id) FROM cycle_delivery d JOIN cycle_delivery_part p ON p.delivery_id=d.id WHERE d.plan_id=? AND d.state='confirmed' AND p.kind='card' AND p.started>?",(plan,now-300)).fetchone()[0]
         runtime['speedPerMinute']=round(recent/5,2)
         unknown=[{'deliveryId':row['id'],'creatorId':row['creator_id'],'pid':row['pid']} for row in store.db.execute("SELECT id,creator_id,pid FROM cycle_delivery WHERE plan_id=? AND state='unknown' AND json_extract(snapshot,'$.executionMode')='continuous-v1'",(plan,))]
-        sample=None
-        try:
-            preview,pool_state=_candidate(root,store,plan,cfg);remaining=int((pool_state.get('layers') or {}).get('ready') or 0)
-            if preview:
-                sample={'handle':preview['handle'],'pid':str(preview['pid']),
-                        'productName':(preview.get('name') or {}).get('mentionIt') or '',
-                        'creatorCommission':str((preview.get('offer') or {}).get('creatorPercent') or ''),
-                        'listId':str((preview.get('card') or {}).get('listId') or ''),
-                        'messageIt':preview['message']['textIt'],'messageZh':preview['message'].get('translationZh') or '',
-                        'templateRevision':preview['message'].get('templateRevision')}
-        except Exception:remaining=None
+        sample=None;remaining=None
+        if include_preview:
+            try:
+                preview,pool_state=_candidate(root,store,plan,cfg,limit=20);remaining=int((pool_state.get('layers') or {}).get('ready') or 0)
+                if preview:
+                    sample={'handle':preview['handle'],'pid':str(preview['pid']),
+                            'productName':(preview.get('name') or {}).get('mentionIt') or '',
+                            'creatorCommission':str((preview.get('offer') or {}).get('creatorPercent') or ''),
+                            'listId':str((preview.get('card') or {}).get('listId') or ''),
+                            'messageIt':preview['message']['textIt'],'messageZh':preview['message'].get('translationZh') or '',
+                            'templateRevision':preview['message'].get('templateRevision')}
+            except Exception:remaining=None
         return {'schemaVersion':'bdhub.continuous-send.v1','market':'it','account':'acc6','control':cfg,
-                'runtime':runtime,'window':window_state(cfg['window'],now),'capacity':capacity(root,now=now),
-                'poolRemaining':remaining,'sample':sample,'unknownDeliveries':unknown,'templates':send_templates(store),
+                'runtime':runtime,'window':window_state(cfg['window'],now),'capacity':capacity(root,now=now) if include_preview else None,
+                'poolRemaining':remaining,'sample':sample,'unknownDeliveries':unknown,'templates':send_templates(store) if include_preview else [],
                 'legacyBatchRetired':True,'platformWrites':0,'realSends':0}
     finally:
         if owned:store.close()
