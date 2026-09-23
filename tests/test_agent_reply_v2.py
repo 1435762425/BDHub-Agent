@@ -41,6 +41,11 @@ class AgentReplyV2Tests(unittest.TestCase):
   self.assertIn('it-IT',calls[0][0]['content'])
   self.assertEqual(self.store.db.execute('SELECT count(*) FROM service_reply').fetchone()[0],0)
   self.assertEqual(self.store.db.execute('SELECT count(*) FROM service_case').fetchone()[0],0)
+ def test_simulation_carries_a_previous_contact_wait(self):
+  context=simulation_context('it','it-IT',[{'direction':'inbound','text':'Va bene'}],'contact')
+  self.assertEqual(context['previousWaitFor'],'contact')
+  with self.assertRaisesRegex(CycleError,'agent_simulation_invalid'):
+   simulation_context('it','it-IT',[{'direction':'inbound','text':'Va bene'}],'unknown')
  def test_decision_cannot_cite_unseen_message_or_emit_body_for_no_reply(self):
   context=simulation_context('it','it-IT',[{'direction':'inbound','text':'Grazie'}])
   with self.assertRaisesRegex(CycleError,'agent_decision_unresolved'):
@@ -104,6 +109,27 @@ class AgentReplyV2Tests(unittest.TestCase):
   context=self.live_context();generated=self.generated(context,'request_detail','Mi mandi il contatto WhatsApp?')
   reply_id=apply_production(self.store,self.plan,context,generated)['replyId']
   self.confirm_local(reply_id)
+  self.assertEqual(self.store.db.execute('SELECT state FROM inbox_pending').fetchone()[0],'waiting_contact')
+ def test_polite_ack_without_contact_keeps_the_original_wait(self):
+  context=self.live_context();generated=self.generated(context,'request_detail','Mi mandi il contatto WhatsApp?')
+  reply_id=apply_production(self.store,self.plan,context,generated)['replyId']
+  self.confirm_local(reply_id)
+  now=self.store.clock()+1
+  self.store.db.execute('INSERT INTO inbox_event VALUES(?,?,?,?,?,?,?,?,?)',
+   (self.plan,'999','2','123','creatorReplies',int(now*1000),encoded({'kind':'creatorReplies'}),0,now))
+  self.store.db.execute('INSERT INTO inbound_turn VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',
+   ('turn-'+'b'*24,self.plan,'creator-1','123','999','2','b'*64,'text','Va bene',int(now*1000),0,now))
+  AutoReplies(self.store).service.capture(self.plan,'999','123',[{'messageId':'2','format':'text',
+   'text':'Va bene','nativeType':'text','rawSha256':'b'*64}])
+  self.store.db.execute("UPDATE inbox_pending SET revision=2,state='awaiting_content'")
+  self.store.db.execute('UPDATE relationship SET revision=revision+1')
+  current=production_context(ROOT,self.store,self.plan,'it','turn-'+'b'*24)
+  self.assertEqual(current['previousWaitFor'],'contact')
+  raw=self.decision(evidence='2',route='no_reply',body=None)
+  raw['waitFor']='contact'
+  followup=generate(ROOT,self.store,self.plan,'it',current,mode='production',
+   call=lambda *_args,**_kwargs:{'content':json.dumps(raw)})
+  self.assertIsNone(apply_production(self.store,self.plan,current,followup)['replyId'])
   self.assertEqual(self.store.db.execute('SELECT state FROM inbox_pending').fetchone()[0],'waiting_contact')
  def test_handoff_locks_creator_before_ack_and_keeps_it_locked(self):
   context=self.live_context();generated=self.generated(context,'handoff','Ricevuto, ti rispondiamo.')

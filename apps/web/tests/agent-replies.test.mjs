@@ -16,7 +16,7 @@ test('simulation carries bounded history and cannot become a send command',async
  const calls=[];const api=createAgentRepliesHandlers(async(...args)=>{calls.push(args);return {decisionId:'agent-decision-'+'a'.repeat(24)};});
  const valid={action:'simulate',market:'it',history:[{direction:'inbound',text:'Certo'}]};
  assert.equal((await api.POST(new Request(base,{method:'POST',headers,body:JSON.stringify(valid)}))).status,200);
- assert.deepEqual(calls[0],['simulate','it',{history:valid.history},undefined]);
+ assert.deepEqual(calls[0],['simulate','it',{history:valid.history,previousWaitFor:null},undefined]);
  assert.equal((await api.POST(new Request(base,{method:'POST',headers,body:JSON.stringify({...valid,send:true})}))).status,400);
  assert.equal(calls.length,1);
 });

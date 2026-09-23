@@ -157,13 +157,24 @@ def production_context(root, store, plan, market, turn_id):
                                (plan, creator)).fetchone()
     from lib.collaboration_status import current
     collab = current(store, creator, plan)
+    previous_wait_for=None
+    last_reply=store.db.execute("SELECT id,kind FROM service_reply WHERE plan_id=? AND creator_id=? "
+                                "AND state='confirmed' AND coalesce(started,created)<=? "
+                                "ORDER BY coalesce(started,created) DESC,created DESC LIMIT 1",
+                                (plan,creator,stamp)).fetchone()
+    if last_reply and last_reply['kind']=='agent_request_detail_v2':
+        prior=store.db.execute("SELECT output_json FROM agent_reply_decision_v2 WHERE service_reply_id=? "
+                               "AND state='ready' LIMIT 1",(last_reply['id'],)).fetchone()
+        if prior:
+            previous_wait_for=json.loads(prior['output_json']).get('waitFor')
     return {'market': market, 'locale': market_content(root, market)['locale'],
             'creatorId': creator, 'turnId': turn_id, 'conversationId': turn['cid'],
             'pendingRevision': pending['revision'] if pending else None,
             'controlRevision': rel['revision'] if rel else None,
             'creatorControl': {'mode': rel['mode'], 'rejected': bool(rel['rejected']),
                                'collaboration': collab['status']} if rel else None,
-            'messages': messages, 'historyTruncated': len(messages) >= MAX_HISTORY}
+            'messages': messages, 'historyTruncated': len(messages) >= MAX_HISTORY,
+            'previousWaitFor': previous_wait_for}
 
 
 def prompt(root, store, plan, market):
@@ -177,6 +188,7 @@ def prompt(root, store, plan, market):
               "route 为 reply/no_reply/request_detail/handoff；replyText 在 no_reply 时为 null，其他需要回复时是该市场语言；"
               "waitFor 仅为 none/contact/clarification。handoffReason 只在 handoff 时填写。"
               "evidenceMessageIds 可引用输入消息的 id（包括已发邀请的 episode id），至少包含一条达人入站。"
+              "若 previousWaitFor 表示刚向达人索取联系方式或澄清，而达人只说好的或谢谢、没有提供信息，route=no_reply；系统继续等待原信息。"
               "不输出 Markdown。\n\n业务指南：\n" + current['body'])
     return {'guideRevision': current['revision'], 'guideHash': current['hash'],
             'system': system, 'provider': 'DeepSeek', 'model': MODEL, 'endpoint': ENDPOINT}
@@ -209,12 +221,12 @@ def validate_decision(raw, context):
             raise CycleError('agent_decision_invalid')
     body = raw['replyText']
     if raw['route'] == 'no_reply':
-        if body is not None or raw['waitFor'] != 'none':
+        if body is not None or raw['waitFor'] not in ('none', context.get('previousWaitFor')):
             raise CycleError('agent_decision_invalid')
     elif not isinstance(body, str) or not body.strip() or len(body) > 1200:
         raise CycleError('agent_decision_invalid')
     if raw['route'] == 'request_detail' and raw['waitFor'] == 'none' or \
-            raw['route'] != 'request_detail' and raw['waitFor'] != 'none':
+            raw['route'] not in ('request_detail','no_reply') and raw['waitFor'] != 'none':
         raise CycleError('agent_decision_invalid')
     if raw['route'] == 'handoff':
         if not isinstance(raw['handoffReason'], str) or not raw['handoffReason'].strip() or \
@@ -275,8 +287,10 @@ def generate(root, store, plan, market, context, mode='simulation', call=None):
     return {'decisionId': decision_id, 'decision': raw, 'cached': False, 'input': input_value}
 
 
-def simulation_context(market, locale, history):
+def simulation_context(market, locale, history, previous_wait_for=None):
     if not isinstance(history, list) or not 1 <= len(history) <= 20:
+        raise CycleError('agent_simulation_invalid')
+    if previous_wait_for not in (None,'contact','clarification'):
         raise CycleError('agent_simulation_invalid')
     messages = []
     for index, row in enumerate(history):
@@ -290,7 +304,8 @@ def simulation_context(market, locale, history):
         raise CycleError('agent_simulation_invalid')
     return {'market': market, 'locale': locale, 'creatorId': None, 'turnId': None,
             'conversationId': None, 'pendingRevision': None, 'controlRevision': None,
-            'creatorControl': None, 'messages': messages, 'historyTruncated': False}
+            'creatorControl': None, 'messages': messages, 'historyTruncated': False,
+            'previousWaitFor': previous_wait_for}
 
 
 def apply_production(store, plan, context, generated):
@@ -327,8 +342,11 @@ def apply_production(store, plan, context, generated):
                                      (plan, context['conversationId'], turn['message_id'] if turn else '')).fetchone()
             if not event:
                 raise CycleError('agent_context_changed')
-            store.db.execute("UPDATE inbox_pending SET state='no_reply' WHERE plan_id=? AND creator_id=? AND revision=?",
-                             (plan,creator,pending['revision']))
+            waiting=context.get('previousWaitFor')
+            state=('waiting_contact' if waiting=='contact' else
+                   'waiting_clarification' if waiting=='clarification' else 'no_reply')
+            store.db.execute("UPDATE inbox_pending SET state=? WHERE plan_id=? AND creator_id=? AND revision=?",
+                             (state,plan,creator,pending['revision']))
             store.db.execute("UPDATE relationship SET inbox_until=0,revision=revision+1 WHERE plan_id=? AND creator_id=? AND revision=?",
                              (plan,creator,rel['revision']))
             store.db.execute('INSERT INTO service_cursor VALUES(?,?,?) ON CONFLICT(plan_id,creator_id) '

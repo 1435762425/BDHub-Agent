@@ -69,9 +69,10 @@ def main():
                         raise CycleError('agent_input_invalid')
                     result = save_guide(ROOT, store, plan, request['expectedRevision'], request['body'])
                 else:
-                    if set(request) != {'history'} or args.turn_id or args.decision_id:
+                    if set(request) not in ({'history'},{'history','previousWaitFor'}) or args.turn_id or args.decision_id:
                         raise CycleError('agent_input_invalid')
-                    context = simulation_context(args.market, content['locale'], request['history'])
+                    context = simulation_context(args.market, content['locale'], request['history'],
+                                                 request.get('previousWaitFor'))
                     result = generate(ROOT, store, plan, args.market, context)
             result = {**result, 'platformWrites': 0, 'realSends': 0}
         print(json.dumps(result, ensure_ascii=False))

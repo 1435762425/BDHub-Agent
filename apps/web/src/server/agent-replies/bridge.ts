@@ -56,10 +56,11 @@ export function createAgentRepliesHandlers(invoke=run){return {
        !Number.isSafeInteger(value.expectedRevision)||Number(value.expectedRevision)<0)throw Error();
     action="save-guide";input={body:value.body,expectedRevision:value.expectedRevision};
    }else if(value.action==="simulate"){
-    if(Object.keys(value).sort().join(",")!=="action,history,market"||!Array.isArray(value.history)||
+    if(!["action,history,market","action,history,market,previousWaitFor"].includes(Object.keys(value).sort().join(","))||
+       value.previousWaitFor!=null&&!['contact','clarification'].includes(String(value.previousWaitFor))||!Array.isArray(value.history)||
        value.history.length<1||value.history.length>20||value.history.some(row=>!row||typeof row!=="object"||
        !["inbound","outbound"].includes(row.direction)||typeof row.text!=="string"||!row.text.trim()||row.text.length>2000))throw Error();
-    action="simulate";input={history:value.history};
+    action="simulate";input={history:value.history,previousWaitFor:value.previousWaitFor??null};
    }else if(value.action==="start-first"||value.action==="resume-full"){
     if(Object.keys(value).sort().join(",")!=="action,market,requestId"||typeof value.requestId!=="string"||
        !/^[A-Za-z0-9][A-Za-z0-9._:-]{7,119}$/.test(value.requestId))throw Error();
