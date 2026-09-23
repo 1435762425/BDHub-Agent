@@ -4,7 +4,7 @@ from types import SimpleNamespace
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'scripts'))
 from lib.second_cycle import CycleStore,CycleError,digest
 from lib.cycle_delivery import Deliveries
-from lib.market_send_canary import _record_create_failure
+from lib.market_send_canary import _record_create_failure,_received_conversation_id
 from test_second_cycle import offer,edge,NOW
 class DeliveryTests(unittest.TestCase):
  def setUp(self):
@@ -96,6 +96,15 @@ class DeliveryTests(unittest.TestCase):
   self.assertEqual(self.d.conversation_intent(self.id)['state'],'inflight')
   self.assertEqual(self.s.db.execute('SELECT native_status FROM cycle_platform_signal WHERE delivery_id=?',
                                      (self.id,)).fetchone()[0],12345)
+ def test_received_conversation_is_readback_confirmable_without_new_create(self):
+  intent=self.d.prepare_conversation(self.id)
+  self.d.begin_conversation(self.id,digest(self.c))
+  self.d.save_conversation(self.id,{'requestRef':intent['request_ref'],'conversationId':'123','candidate':True})
+  received=self.d.conversation_intent(self.id)
+  self.assertEqual(received['state'],'received')
+  self.d.confirm_conversation(self.id,_received_conversation_id(received),self.c['oecId'])
+  self.assertEqual(self.d.conversation_intent(self.id)['state'],'confirmed')
+  self.assertTrue(all(p['started'] is None for p in self.d.get(self.id)['parts']))
  def test_missing_quota_evidence_no_dispatch(self):
   with self.assertRaisesRegex(CycleError,'execution_evidence_missing'):self.d.begin(self.id,'card',authorized_snapshot_hash=digest(self.c),recipient_verified=True)
  def test_reserved_source_exits_ready_supply_without_deleting_history(self):

@@ -62,6 +62,16 @@ def _record_create_failure(store,delivery_id,error):
  return True
 
 
+def _received_conversation_id(intent):
+ try:receipt=json.loads(intent['receipt'] or '')
+ except (TypeError,ValueError):raise CycleError('market_send_conversation_result_unknown') from None
+ if not isinstance(receipt,dict) or receipt.get('requestRef')!=intent['request_ref'] or \
+    receipt.get('conversationId')!=intent['cid'] or receipt.get('candidate') is not True or \
+    not str(intent['cid'] or '').isascii() or not str(intent['cid'] or '').isdigit():
+  raise CycleError('market_send_conversation_result_unknown')
+ return intent['cid']
+
+
 def _preflight_conversation(store,session,plan,candidate,conversation,delivery_id):
     from lib.continuous_send import _continuous_history_eligible,ACTIVE_PENDING_STATES
     from lib.cycle_inbox import Inbox
@@ -157,7 +167,11 @@ def run(root,market,request_id,*,canary=True,page_control=False,reconcile_only=F
     conversation=session.conversation(candidate['conversationId'],candidate['oecId'])
    elif intent and intent['state']=='confirmed':
     conversation=session.conversation(intent['cid'],candidate['oecId'])
-   elif intent and intent['state'] in ('inflight','received'):
+   elif intent and intent['state']=='received':
+    cid=_received_conversation_id(intent)
+    conversation=session.conversation(cid,candidate['oecId'])
+    Deliveries(store).confirm_conversation(did,cid,candidate['oecId'])
+   elif intent and intent['state']=='inflight':
     raise CycleError('market_send_conversation_result_unknown')
    else:
     if reconcile_only:return report|{'state':'nothing_to_reconcile','deliveryId':did}

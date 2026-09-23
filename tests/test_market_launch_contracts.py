@@ -12,7 +12,7 @@ from pathlib import Path
 
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT/'scripts'))
-from lib.market_send_canary import _binding_current,_dispatch_allowed
+from lib.market_send_canary import _binding_current,_dispatch_allowed,_received_conversation_id
 from lib.schema_migrations import apply_database
 from lib.second_cycle import CycleError,CycleStore
 from lib.catalog_binding import offer_fingerprint
@@ -32,6 +32,15 @@ poll=importlib.util.module_from_spec(spec);spec.loader.exec_module(poll)
 NOW=datetime(2026,9,23,17,0,tzinfo=timezone(timedelta(hours=8))).timestamp()
 
 class MarketLaunchContracts(unittest.TestCase):
+ def test_received_conversation_resumes_only_the_original_exact_receipt(self):
+  intent={'request_ref':'original-ref','cid':'123','receipt':json.dumps({
+   'requestRef':'original-ref','conversationId':'123','candidate':True})}
+  self.assertEqual(_received_conversation_id(intent),'123')
+  for changed in ({'requestRef':'replacement-ref'}, {'conversationId':'456'}, {'candidate':False}):
+   invalid=intent|{'receipt':json.dumps(json.loads(intent['receipt'])|changed)}
+   with self.assertRaisesRegex(CycleError,'market_send_conversation_result_unknown'):
+    _received_conversation_id(invalid)
+
  def test_inbox_profile_contention_is_a_short_wait_not_an_attention_failure(self):
   Busy=type('ProfileBusyError',(Exception,),{})
   self.assertEqual(poll.failure_state(Busy()),'waiting_account')

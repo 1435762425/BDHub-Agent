@@ -63,3 +63,12 @@
 - IT 第二条建会话请求 `delivery-23819a2a7aa3f938433b26e1f182e9b8` 同样无回执、卡文均未开始；独立只读遍历平台当前858个会话，未找到其OEC，身份文件未变化。按用户前次对这一精确场景选择的隔离方式，保留原 `inflight` 请求、零组件提交与未知事实，追加本次858/0证据，隔离这位达人并让其余IT达人的真实发送继续；此举不是认定请求失败。当前IT有2条 `quarantined_unknown` 人工事项，仍计未决。UK一轮 `im_transport_error` 未生成发送unknown，原 worker在退避后安全恢复。
 - 定位到 BR/MY/UK 收信偶发 `relationship_missing` 的原因：`Inbox.ingest()` 在加橱窗通知后调用 `observe_showcase()`，其默认 plan 是 IT，导致非IT达人的合作状态投影错查IT关系。现显式传入收信 plan，并为BR跨市场隔离补测试；此前失败轮的checkpoint不伪造成功，重启后按原水位继续。建会话HTTP 200但业务响应不完整/非零时，后续新增脱敏原生码与响应哈希证据，仍保持 `result_unknown`，不自动重试。非IT建会话开始后异常也将 delivery 标为unknown并保存原会话意图，不只在worker状态留一个泛化错误。
 - 约19:16只读快照：完整确认IT990、BR501、MY500、UK455；IT滚动24小时新联系498/500，BR/MY各500/500、UK451/500。BR/MY等待额度，IT/UK继续窗口内发送；四市场每市场30位/分钟目标仍未达到，后续需在额度重新释放后重新测量，不把当前平台写入量或并发试验换算成达标。本轮最终Python全量1,139项与文档检查通过；Web业务代码未变。
+
+## 19:22 容量等待与平台读取退避
+
+- IT、BR、MY 新联系预留均达滚动24小时500位，持久sender保持 `waiting_capacity`、原 delivery/页面授权不清空，额度释放后继续复检。UK仍有43位本地额度，出现 `im_http_rejected` 且发送unknown0，普通错误退避5分钟；收信独立持续运行。约19:22累计完整确认IT993、BR501、MY500、UK461。上线代码与页面均不得把本地500限制改成“平台每日限额”或以换号绕开。
+- 针对反复的IT建会话无回执，`create_once()` 对HTTP200但业务码非0或响应不完整的情形，只记数值码和响应SHA供下次原意图调查，仍为 `result_unknown`；非IT建会话在请求已开始后异常也把delivery标为unknown并留原requestRef。不能将尚未拿到响应的历史两条意图事后补成明确失败。
+
+## 19:26 UK 原会话回执恢复
+
+- UK `delivery-e947b177740cfd1c40d0c5fd8f55fd6d` 在 `cycle_conversation_intent=received` 已持原请求的 CID/回执，但旧 market sender 把 `received` 与无回执的 `inflight` 一并判为未知并停下。现在仅在原 requestRef、回执CID和同达人平台会话身份同时匹配时，确认原会话意图并继续该 delivery，绝不二次创建会话；失配仍保持未知。该UK原 delivery 已真实完成卡和文字双回执，原会话意图变 `confirmed`，发送unknown0，worker再次持续运行。正反合同测试覆盖原回执及替代requestRef/CID/非候选回执拒绝。
