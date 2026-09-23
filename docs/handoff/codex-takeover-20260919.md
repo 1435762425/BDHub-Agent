@@ -2,6 +2,14 @@
 
 更新时间：2026-09-23（Asia/Shanghai）。本文件是当前开发交接入口；产品规则以 [项目文档](../PROJECT.md) 为准，技术结构以 [技术文档](../TECHNICAL.md) 为准。动态数量是本次只读快照，后续以 `var/` 台账和页面 API 回读为准。下方旧日期章节均为历史快照，不代表当前开关与数量。
 
+## 0M. 2026-09-23 四市场正式启动实施中
+
+- 用户已明确要求按[启动计划](../architecture/four-market-production-launch-plan-20260923.md)补齐实质缺口并开始实施。代码、状态修复与现场结果见[实施记录](../implementation/four-market-launch-implementation-20260923.md)；本节记录动态运行边界，下面0L是启动前历史快照。
+- 当前独立项目备份 `var/backups/state/20260923T074018Z-four-market-launch-20260923` 已在线校验 valid，33库、1,320,189,952字节、无凭据。旧9条未开始卡/文字的 `ready` 意图按原台账结算为cancelled，当前旧ready0、发送unknown0；没有清库。
+- IT 原类目采集 `it-global-20260921-9bbc623e09e9` 正由恢复 workflow `workflow-2179d4a2faefdf554279343db766` 从原断点续跑，28个类目尚未完成；完整旧head继续提供业务数据。BR/UK收信 worker已真实只读运行并形成checkpoint，MY收信连接成功但当前0会话；IT收信切到12个/30秒后最旧水位仍落后，须继续监测。
+- 四市场真实发送与Agent开关仍关闭；MY `message_send`、BR/MY/UK V2 `agent_reply` 的首次真实写入仍待页面动作与平台回执。页面只能由用户明确启动首条；不能因代码、测试和ready数自动打开。启动范围快照IT1,643、BR1,730、MY4,388、UK6,015位ready，之后以实时台账为准。
+- Python全量1,118项、Web164项、typecheck、生产构建及迁移检查通过；下一步在发送页完成首次真实启动后按平台回执、窗口、额度和原意图持续核验。已建立30分钟线程心跳“**四市场正式运行监测**”，至少跟进72小时和下一次Campaign两天刷新。
+
 ## 0L. 2026-09-23 四市场正式启动前只读检查与计划
 
 - 新增 [四市场正式启动、监测与闭环修复计划](../architecture/four-market-production-launch-plan-20260923.md)。用户本轮要求先检查与规划，后续再执行；本轮没有修改业务代码/数据库/开关、重启业务 worker 或发起平台业务写入，已有7个未提交修改文件原样保留。

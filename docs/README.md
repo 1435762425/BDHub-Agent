@@ -71,6 +71,7 @@
 - [Kalodata 意大利 PID GMV 实时口径探查](implementation/kalodata-gmv-live-probe-20260920.md)
 - [12 QPS / 500 人身份验收](implementation/identity-12qps-500-release.md)
 - [会话工作台、模板库与互斥回复窗口](implementation/conversation-workbench-and-template-library-20260920.md)
+- [四市场正式启动修复与现场验证](implementation/four-market-launch-implementation-20260923.md)
 
 ### 接口、研究与归档
 
