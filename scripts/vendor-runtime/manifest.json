@@ -1,0 +1,1025 @@
+{
+  "schemaVersion": 1,
+  "initialImportRevision": "7cdc180ebd73a3040a788440a131c73f0c17ce1a",
+  "upstreamRevision": "72dc12a71e566702232a279aac23fd547addea12",
+  "patch": {
+    "file": "local.patch",
+    "sha256": "9dd747706236610bd24b7930d73cdbb036bde004fe62a0febe7f75d7091652ce"
+  },
+  "files": [
+    {
+      "path": "bdhub/__init__.py",
+      "source": "upstream",
+      "upstreamSha256": "9f427d7b48374626455727d170c376652b8149ead26f7fdea790e51f85c58d71",
+      "sha256": "9f427d7b48374626455727d170c376652b8149ead26f7fdea790e51f85c58d71"
+    },
+    {
+      "path": "bdhub/account_lifecycle.py",
+      "source": "upstream",
+      "upstreamSha256": "69bf5b5dd2ae5965a2626ef0ddc6efb9b7786897037225e7b38bc7f6519c8d0d",
+      "sha256": "69bf5b5dd2ae5965a2626ef0ddc6efb9b7786897037225e7b38bc7f6519c8d0d"
+    },
+    {
+      "path": "bdhub/account_policy.py",
+      "source": "upstream",
+      "upstreamSha256": "600d9c3a6a03e0185695aca959f9925456b8eaa93933c1398246438fd27f8ffc",
+      "sha256": "600d9c3a6a03e0185695aca959f9925456b8eaa93933c1398246438fd27f8ffc"
+    },
+    {
+      "path": "bdhub/aiops/__init__.py",
+      "source": "empty",
+      "upstreamSha256": null,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "bdhub/aiops/contracts.py",
+      "source": "upstream",
+      "upstreamSha256": "8e98c89440ebdbe95daf3e9e235125523330172d7e1639af978be0cb6c18a9d8",
+      "sha256": "8e98c89440ebdbe95daf3e9e235125523330172d7e1639af978be0cb6c18a9d8"
+    },
+    {
+      "path": "bdhub/aiops/matching.py",
+      "source": "upstream",
+      "upstreamSha256": "5fe58a2fb1f86cbc6cc9e8512fb21249241812d7a1fb35963e6641809f46c004",
+      "sha256": "5fe58a2fb1f86cbc6cc9e8512fb21249241812d7a1fb35963e6641809f46c004"
+    },
+    {
+      "path": "bdhub/aiops/source.py",
+      "source": "upstream",
+      "upstreamSha256": "0473cd5be277f1eb887dc9268e506950f70a7abfb149bb971fb1d962174f4273",
+      "sha256": "0473cd5be277f1eb887dc9268e506950f70a7abfb149bb971fb1d962174f4273"
+    },
+    {
+      "path": "bdhub/auth_command.py",
+      "source": "upstream",
+      "upstreamSha256": "11d7c43233c9e4dab40495bc357d05e4b58dc867560466023b63b37475d96294",
+      "sha256": "11d7c43233c9e4dab40495bc357d05e4b58dc867560466023b63b37475d96294"
+    },
+    {
+      "path": "bdhub/config.py",
+      "source": "upstream",
+      "upstreamSha256": "4dad3f6c8252e612dad499c6ab0cfddaa8eac618054850a9007a7badc14a537c",
+      "sha256": "4dad3f6c8252e612dad499c6ab0cfddaa8eac618054850a9007a7badc14a537c"
+    },
+    {
+      "path": "bdhub/enrich/__init__.py",
+      "source": "upstream",
+      "upstreamSha256": "6d08782d29bafc3dc57b6ebaa54966a172facb5eeafb8a8bd10e9c05aaeeeefc",
+      "sha256": "6d08782d29bafc3dc57b6ebaa54966a172facb5eeafb8a8bd10e9c05aaeeeefc"
+    },
+    {
+      "path": "bdhub/enrich/client.py",
+      "source": "upstream",
+      "upstreamSha256": "81d3bad1daa0bf9b15faa3a94fbc8eec2573e845c533f455822afe5a424319e3",
+      "sha256": "81d3bad1daa0bf9b15faa3a94fbc8eec2573e845c533f455822afe5a424319e3"
+    },
+    {
+      "path": "bdhub/enrich/creator_profile.py",
+      "source": "upstream",
+      "upstreamSha256": "88371446a6de5f8c6ca1dd45c5d9af94ab067782044dfbdbb9a1025f8b87af34",
+      "sha256": "88371446a6de5f8c6ca1dd45c5d9af94ab067782044dfbdbb9a1025f8b87af34"
+    },
+    {
+      "path": "bdhub/enrich/identity_store.py",
+      "source": "upstream",
+      "upstreamSha256": "8c0fdd08506d8164c1655bcf369860e418539a94bb5ffa8166e1a8c2f5955a13",
+      "sha256": "8c0fdd08506d8164c1655bcf369860e418539a94bb5ffa8166e1a8c2f5955a13"
+    },
+    {
+      "path": "bdhub/enrich/markets.py",
+      "source": "upstream",
+      "upstreamSha256": "325298de3d64cdd8d8f28932c54279dcb5e6660e601c3b30d92aac3a8adfcdac",
+      "sha256": "325298de3d64cdd8d8f28932c54279dcb5e6660e601c3b30d92aac3a8adfcdac"
+    },
+    {
+      "path": "bdhub/enrich/profile_lease.py",
+      "source": "upstream",
+      "upstreamSha256": "1832494048c99d22a37b81303c2774f3aaaebd3e72aa15e527dee030f69a2037",
+      "sha256": "1832494048c99d22a37b81303c2774f3aaaebd3e72aa15e527dee030f69a2037"
+    },
+    {
+      "path": "bdhub/enrich/profile_transport.py",
+      "source": "upstream",
+      "upstreamSha256": "403587dd5856abe6d52b089b3394c89a47471af8ff3a6a64cd00e66704ad1d08",
+      "sha256": "403587dd5856abe6d52b089b3394c89a47471af8ff3a6a64cd00e66704ad1d08"
+    },
+    {
+      "path": "bdhub/enrich/pure_http_canary.py",
+      "source": "upstream",
+      "upstreamSha256": "a6b5bfb80f83a7e611660ce10c51fa8a7ad0ffd460008b24ebe044422c878f4a",
+      "sha256": "a6b5bfb80f83a7e611660ce10c51fa8a7ad0ffd460008b24ebe044422c878f4a"
+    },
+    {
+      "path": "bdhub/enrich/pure_http_runtime_manifest.json",
+      "source": "upstream",
+      "upstreamSha256": "2446a7edcd971387aa6f97cb14f97de584f73967799e9a79d3e53e5b15e93770",
+      "sha256": "2446a7edcd971387aa6f97cb14f97de584f73967799e9a79d3e53e5b15e93770"
+    },
+    {
+      "path": "bdhub/enrich/pure_http_worker.py",
+      "source": "upstream",
+      "upstreamSha256": "43da5cd6ccc47b3b1fc2d93bca6e843681049377e8937089c88f6932d69b82ba",
+      "sha256": "43da5cd6ccc47b3b1fc2d93bca6e843681049377e8937089c88f6932d69b82ba"
+    },
+    {
+      "path": "bdhub/enrich/pure_http_worker_child.py",
+      "source": "upstream",
+      "upstreamSha256": "32be8a387526f727a00f3894c02234c584767100135d1b33b8122a4a4af6d5b3",
+      "sha256": "32be8a387526f727a00f3894c02234c584767100135d1b33b8122a4a4af6d5b3"
+    },
+    {
+      "path": "bdhub/enrich/refresh_plan.py",
+      "source": "upstream",
+      "upstreamSha256": "27b8efbca985dd5c4926428607199af752c392a5eaa8773498e7f790365081d6",
+      "sha256": "27b8efbca985dd5c4926428607199af752c392a5eaa8773498e7f790365081d6"
+    },
+    {
+      "path": "bdhub/enrich/shared_backoff.py",
+      "source": "upstream",
+      "upstreamSha256": "caa8735d7d6faac92b9363210d1a11b5402597e39ff8c9b18e8eb46af041c869",
+      "sha256": "caa8735d7d6faac92b9363210d1a11b5402597e39ff8c9b18e8eb46af041c869"
+    },
+    {
+      "path": "bdhub/enrich/workflow.py",
+      "source": "upstream",
+      "upstreamSha256": "18d15a68883d854c5833140ccb7bb6e465a76a84dfbc3713611f7edf338494a3",
+      "sha256": "18d15a68883d854c5833140ccb7bb6e465a76a84dfbc3713611f7edf338494a3"
+    },
+    {
+      "path": "bdhub/handle_files.py",
+      "source": "upstream",
+      "upstreamSha256": "66da963830e8d9ac113844bee32b3a7df8f16a7acc77ff6ff60e35b35de931be",
+      "sha256": "66da963830e8d9ac113844bee32b3a7df8f16a7acc77ff6ff60e35b35de931be"
+    },
+    {
+      "path": "bdhub/hub/__init__.py",
+      "source": "upstream",
+      "upstreamSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "bdhub/hub/engine.py",
+      "source": "upstream",
+      "upstreamSha256": "2a059e4bff3b71bb2c5cbaae3ddf7fa156f27d8c1b7232836b5a008b63e1021a",
+      "sha256": "2a059e4bff3b71bb2c5cbaae3ddf7fa156f27d8c1b7232836b5a008b63e1021a"
+    },
+    {
+      "path": "bdhub/hub/file_intents.py",
+      "source": "upstream",
+      "upstreamSha256": "3fd77c1c35ad4ca65c849f1977612a670853c62852d94dbb17add0a6006fd9b5",
+      "sha256": "ed117626ce03f7dcedcd20f98187f8908262923f0dd888b0a441c9a610bd9409"
+    },
+    {
+      "path": "bdhub/hub/im_markets.py",
+      "source": "upstream",
+      "upstreamSha256": "249d8a10fba9d129d4acbc672b72cb1cb1b1a8802124e14b6031bf42f538bfbe",
+      "sha256": "249d8a10fba9d129d4acbc672b72cb1cb1b1a8802124e14b6031bf42f538bfbe"
+    },
+    {
+      "path": "bdhub/hub/keys.py",
+      "source": "upstream",
+      "upstreamSha256": "3e7253ac91276c6b2a809f5fdfb6f8c6f63923f588e2235494cfad157ba769bf",
+      "sha256": "3e7253ac91276c6b2a809f5fdfb6f8c6f63923f588e2235494cfad157ba769bf"
+    },
+    {
+      "path": "bdhub/hub/market_catalog.py",
+      "source": "upstream",
+      "upstreamSha256": "e0f6d92c9006159302be7466fbc324a5678c9fb3bce77a05d921d91b4e7277f8",
+      "sha256": "964e25efdf220b8ca670b853a21da825cc0ab3326728b70ba2168e8dd6da7008"
+    },
+    {
+      "path": "bdhub/hub/markets.py",
+      "source": "upstream",
+      "upstreamSha256": "6be5341d74ec0aa68f3df0b234527a4802d898c8a632bdd0dc7096bec02113b5",
+      "sha256": "ded21588070f65f74fa96fd8f1fc951c458ccb50c240337b1d8de6cd2f414883"
+    },
+    {
+      "path": "bdhub/hub/migration_runner.py",
+      "source": "upstream",
+      "upstreamSha256": "ec5d7d4fb06fc6e0ca7ec0e2081db719802a321913ee49ac783838e8ea177d2d",
+      "sha256": "ec5d7d4fb06fc6e0ca7ec0e2081db719802a321913ee49ac783838e8ea177d2d"
+    },
+    {
+      "path": "bdhub/hub/migrations/__init__.py",
+      "source": "upstream",
+      "upstreamSha256": "30c6db8cc45f9b2b9ca6088f93d3cea85579f4224bf5422ac5ba17b17dcd502f",
+      "sha256": "30c6db8cc45f9b2b9ca6088f93d3cea85579f4224bf5422ac5ba17b17dcd502f"
+    },
+    {
+      "path": "bdhub/hub/migrations/ai_operations_v1.py",
+      "source": "upstream",
+      "upstreamSha256": "e479d88aabe35a6a7eaad44afbdb5d99f6a98b366e88c4789d339b962356cea9",
+      "sha256": "e479d88aabe35a6a7eaad44afbdb5d99f6a98b366e88c4789d339b962356cea9"
+    },
+    {
+      "path": "bdhub/hub/migrations/campaign_ai_category_v1.py",
+      "source": "upstream",
+      "upstreamSha256": "03dadfd59be042682368f289ddb6e648ea8fe212a3f8bf59618f80d481e65a14",
+      "sha256": "03dadfd59be042682368f289ddb6e648ea8fe212a3f8bf59618f80d481e65a14"
+    },
+    {
+      "path": "bdhub/hub/migrations/contact_current_integrity_v1.py",
+      "source": "upstream",
+      "upstreamSha256": "622ada60ce0c01f0031257bd0e865d4215b1a9370dfdc62c530766cb0500c76b",
+      "sha256": "622ada60ce0c01f0031257bd0e865d4215b1a9370dfdc62c530766cb0500c76b"
+    },
+    {
+      "path": "bdhub/hub/migrations/contact_hint_semantics_v1.py",
+      "source": "upstream",
+      "upstreamSha256": "8f651b5242ce3c63027fbbb10f2188d06fab6019373ecd79ab7259eeadea676d",
+      "sha256": "8f651b5242ce3c63027fbbb10f2188d06fab6019373ecd79ab7259eeadea676d"
+    },
+    {
+      "path": "bdhub/hub/migrations/creator_classification_multilabel_v1.py",
+      "source": "upstream",
+      "upstreamSha256": "70e7b4c4423beb21337b7b6e62d19ba4b4d4b4460dfa152cdcd8c4fa4fcb3c50",
+      "sha256": "70e7b4c4423beb21337b7b6e62d19ba4b4d4b4460dfa152cdcd8c4fa4fcb3c50"
+    },
+    {
+      "path": "bdhub/hub/migrations/gpm_split_v1.py",
+      "source": "upstream",
+      "upstreamSha256": "856ab7e68b0a9640543ba4534ab2f2bd07f49b7ecf2c26f5b6a08a257986c3c4",
+      "sha256": "856ab7e68b0a9640543ba4534ab2f2bd07f49b7ecf2c26f5b6a08a257986c3c4"
+    },
+    {
+      "path": "bdhub/hub/migrations/im_delivery_intent_v1.py",
+      "source": "upstream",
+      "upstreamSha256": "dd4aec2799985bce36257cdaeaea7bfd1e68dbff3a5e3000bc62a60faae6ac69",
+      "sha256": "dd4aec2799985bce36257cdaeaea7bfd1e68dbff3a5e3000bc62a60faae6ac69"
+    },
+    {
+      "path": "bdhub/hub/migrations/im_history_recovery_v1.py",
+      "source": "upstream",
+      "upstreamSha256": "20b15683c72299098033ae5ec027942e32869ca677de8f5b721c6d1f33e4f813",
+      "sha256": "20b15683c72299098033ae5ec027942e32869ca677de8f5b721c6d1f33e4f813"
+    },
+    {
+      "path": "bdhub/hub/migrations/im_identity_handle_v1.py",
+      "source": "upstream",
+      "upstreamSha256": "2173f9788a3f73fe313012e6d05431576737917a48f0acd36e33ba3517f10265",
+      "sha256": "2173f9788a3f73fe313012e6d05431576737917a48f0acd36e33ba3517f10265"
+    },
+    {
+      "path": "bdhub/hub/migrations/im_operations_v1.py",
+      "source": "upstream",
+      "upstreamSha256": "cd3f985274a5d08302bb14d801875ac0600cc192bc60dc6e88a5ef3841212b96",
+      "sha256": "cd3f985274a5d08302bb14d801875ac0600cc192bc60dc6e88a5ef3841212b96"
+    },
+    {
+      "path": "bdhub/hub/migrations/im_operations_v10.py",
+      "source": "upstream",
+      "upstreamSha256": "0df5f94d7ff70b7a2a6b3a3935b37cf0a92ddeebbf896e18b4cf662a68359d36",
+      "sha256": "0df5f94d7ff70b7a2a6b3a3935b37cf0a92ddeebbf896e18b4cf662a68359d36"
+    },
+    {
+      "path": "bdhub/hub/migrations/im_operations_v2.py",
+      "source": "upstream",
+      "upstreamSha256": "ea2edb4a456d9eb3f5b1c2040e87cd3bb7a81b15f47594298c764c77638cc6fa",
+      "sha256": "ea2edb4a456d9eb3f5b1c2040e87cd3bb7a81b15f47594298c764c77638cc6fa"
+    },
+    {
+      "path": "bdhub/hub/migrations/im_operations_v3.py",
+      "source": "upstream",
+      "upstreamSha256": "3eed1d536365f5974e6833310df7f970fe0f9ab43a4c9fea91ac6ac74ddfefec",
+      "sha256": "3eed1d536365f5974e6833310df7f970fe0f9ab43a4c9fea91ac6ac74ddfefec"
+    },
+    {
+      "path": "bdhub/hub/migrations/im_operations_v4.py",
+      "source": "upstream",
+      "upstreamSha256": "c6fb8de26af330e1a2f8d9669af318edae85dc5fb581fed1bf3a84de42a87adb",
+      "sha256": "c6fb8de26af330e1a2f8d9669af318edae85dc5fb581fed1bf3a84de42a87adb"
+    },
+    {
+      "path": "bdhub/hub/migrations/im_operations_v5.py",
+      "source": "upstream",
+      "upstreamSha256": "2af76238e682a1344015f7352a3b252f3e58788896e2ac23a834a4a737b4fd2d",
+      "sha256": "2af76238e682a1344015f7352a3b252f3e58788896e2ac23a834a4a737b4fd2d"
+    },
+    {
+      "path": "bdhub/hub/migrations/im_operations_v6.py",
+      "source": "upstream",
+      "upstreamSha256": "a352cff3e8a23593da139643c6d91a676fa02ee2ffd572b589869cbb8961d9da",
+      "sha256": "a352cff3e8a23593da139643c6d91a676fa02ee2ffd572b589869cbb8961d9da"
+    },
+    {
+      "path": "bdhub/hub/migrations/im_operations_v7.py",
+      "source": "upstream",
+      "upstreamSha256": "df3de1041b020cc47f3afe826a2b53eaaffb6426d81584390c578db6fedb9f82",
+      "sha256": "df3de1041b020cc47f3afe826a2b53eaaffb6426d81584390c578db6fedb9f82"
+    },
+    {
+      "path": "bdhub/hub/migrations/im_operations_v8.py",
+      "source": "upstream",
+      "upstreamSha256": "b0d96f4237682ce1f51dfaee441ab02544e8744e5d8586117243833b31870faf",
+      "sha256": "b0d96f4237682ce1f51dfaee441ab02544e8744e5d8586117243833b31870faf"
+    },
+    {
+      "path": "bdhub/hub/migrations/im_operations_v9.py",
+      "source": "upstream",
+      "upstreamSha256": "f89cffa83f2c8da64882f1b1e686fe1d3d256bea7f31a28254e4339b81807b32",
+      "sha256": "f89cffa83f2c8da64882f1b1e686fe1d3d256bea7f31a28254e4339b81807b32"
+    },
+    {
+      "path": "bdhub/hub/migrations/mcn_relation_archive_v1.py",
+      "source": "upstream",
+      "upstreamSha256": "3c92c1f4f70a5ee771d31c41400c517be7ff0a30a5763949834d90d9e7d96b07",
+      "sha256": "3c92c1f4f70a5ee771d31c41400c517be7ff0a30a5763949834d90d9e7d96b07"
+    },
+    {
+      "path": "bdhub/hub/migrations/mcn_relation_sync_summary_v1.py",
+      "source": "upstream",
+      "upstreamSha256": "56521354d1b675a3faf470ade35d93c99dd733961fa428ee9e79a73394c32d6a",
+      "sha256": "56521354d1b675a3faf470ade35d93c99dd733961fa428ee9e79a73394c32d6a"
+    },
+    {
+      "path": "bdhub/hub/migrations/merchant_management_v1.py",
+      "source": "upstream",
+      "upstreamSha256": "10d20b359405d5b17b44e3576159b54c0d3c21cd188155d5c789be5377c3feaa",
+      "sha256": "10d20b359405d5b17b44e3576159b54c0d3c21cd188155d5c789be5377c3feaa"
+    },
+    {
+      "path": "bdhub/hub/migrations/mx_core_v1_data.py",
+      "source": "upstream",
+      "upstreamSha256": "ea93e1fe583d3a4e322d4e54d98a5675d9473f0cbcb4d4073646c2475535f1b6",
+      "sha256": "ea93e1fe583d3a4e322d4e54d98a5675d9473f0cbcb4d4073646c2475535f1b6"
+    },
+    {
+      "path": "bdhub/hub/migrations/mx_core_v1_schema.py",
+      "source": "upstream",
+      "upstreamSha256": "4e2d7724ea0f6cfa904064a74920b45dafa14e42ab291ce704bd5fb0c79aaff5",
+      "sha256": "4e2d7724ea0f6cfa904064a74920b45dafa14e42ab291ce704bd5fb0c79aaff5"
+    },
+    {
+      "path": "bdhub/hub/migrations/mx_only_data_cleanup.py",
+      "source": "upstream",
+      "upstreamSha256": "cf2a1b781556e8a79b877ce0a86a1bc13b97bf9fd8d5c3327eaaa63f10492aea",
+      "sha256": "cf2a1b781556e8a79b877ce0a86a1bc13b97bf9fd8d5c3327eaaa63f10492aea"
+    },
+    {
+      "path": "bdhub/hub/migrations/product_catalog_version_v1.py",
+      "source": "upstream",
+      "upstreamSha256": "9b2fa0e20b1a3e5851c342814c4e491161c8e14003a0b271664fc4da4bdfea05",
+      "sha256": "9b2fa0e20b1a3e5851c342814c4e491161c8e14003a0b271664fc4da4bdfea05"
+    },
+    {
+      "path": "bdhub/hub/migrations/product_category_normalization_v1.py",
+      "source": "upstream",
+      "upstreamSha256": "854af5afe7a104a4386c3d167e92d9c0104ccd3889b36f996f3fe79b6249d4e9",
+      "sha256": "854af5afe7a104a4386c3d167e92d9c0104ccd3889b36f996f3fe79b6249d4e9"
+    },
+    {
+      "path": "bdhub/hub/migrations/product_pool_qualification_v1.py",
+      "source": "upstream",
+      "upstreamSha256": "451f27c7bd7eb856caa2904836aa4e6c9c72ee9e6be5acb423d3fd5c54fb2830",
+      "sha256": "451f27c7bd7eb856caa2904836aa4e6c9c72ee9e6be5acb423d3fd5c54fb2830"
+    },
+    {
+      "path": "bdhub/hub/migrations/product_source_append_v1.py",
+      "source": "upstream",
+      "upstreamSha256": "46e729283784e53bdb69930572fefcb83db91b16731e3dcea4b54998ebfd2aab",
+      "sha256": "46e729283784e53bdb69930572fefcb83db91b16731e3dcea4b54998ebfd2aab"
+    },
+    {
+      "path": "bdhub/hub/migrations/product_source_detail_v1.py",
+      "source": "upstream",
+      "upstreamSha256": "d28e6ce5271d8dc7df03ce40bef3cb0b2b28d9c4d88cc0bc8a5e1ea0a4380b6e",
+      "sha256": "d28e6ce5271d8dc7df03ce40bef3cb0b2b28d9c4d88cc0bc8a5e1ea0a4380b6e"
+    },
+    {
+      "path": "bdhub/hub/migrations/product_source_pool_v1.py",
+      "source": "upstream",
+      "upstreamSha256": "c7d905650d8961a06cb22811fd202748364c1198fd046dd7de2d1ee32193820f",
+      "sha256": "c7d905650d8961a06cb22811fd202748364c1198fd046dd7de2d1ee32193820f"
+    },
+    {
+      "path": "bdhub/hub/migrations/promotion_site_category_v1.py",
+      "source": "upstream",
+      "upstreamSha256": "6f7074e9f8ecbec100d971ea1bb8df9ac06a2bea59995898db703249a02fe8c0",
+      "sha256": "6f7074e9f8ecbec100d971ea1bb8df9ac06a2bea59995898db703249a02fe8c0"
+    },
+    {
+      "path": "bdhub/hub/migrations/promotion_site_sample_request_v1.py",
+      "source": "upstream",
+      "upstreamSha256": "ab39d89f773c70d439ff11f43075811acbeab8a311f5295f49f30208c7d585d4",
+      "sha256": "ab39d89f773c70d439ff11f43075811acbeab8a311f5295f49f30208c7d585d4"
+    },
+    {
+      "path": "bdhub/hub/migrations/promotion_site_sample_request_v2.py",
+      "source": "upstream",
+      "upstreamSha256": "1f41926ce3425616811f28a4d581e01443133ea7e43eb085aabf664f5fa60de4",
+      "sha256": "1f41926ce3425616811f28a4d581e01443133ea7e43eb085aabf664f5fa60de4"
+    },
+    {
+      "path": "bdhub/hub/migrations/promotion_site_sharelink_batch_v1.py",
+      "source": "upstream",
+      "upstreamSha256": "59939f1386d01bb5833925e4696d7175d2eaf007be2254357faaabc35222cdbb",
+      "sha256": "59939f1386d01bb5833925e4696d7175d2eaf007be2254357faaabc35222cdbb"
+    },
+    {
+      "path": "bdhub/hub/migrations/promotion_site_sharelink_parallel_v1.py",
+      "source": "upstream",
+      "upstreamSha256": "44ca8b4cb792c9053610e71f8b25e37f19c873026692772112e631e9bf284970",
+      "sha256": "44ca8b4cb792c9053610e71f8b25e37f19c873026692772112e631e9bf284970"
+    },
+    {
+      "path": "bdhub/hub/migrations/promotion_site_workflow_v1.py",
+      "source": "upstream",
+      "upstreamSha256": "0dc1a4803fd27cf63e3fabd63fce79bfee0860243ac9f8ff89031d28e18cae6e",
+      "sha256": "0dc1a4803fd27cf63e3fabd63fce79bfee0860243ac9f8ff89031d28e18cae6e"
+    },
+    {
+      "path": "bdhub/hub/migrations/public_share_link_country_v1.py",
+      "source": "upstream",
+      "upstreamSha256": "95d38692915ec2fa28743d3e9ad0538f331228953c8ec26ee99f9a528a74d07e",
+      "sha256": "95d38692915ec2fa28743d3e9ad0538f331228953c8ec26ee99f9a528a74d07e"
+    },
+    {
+      "path": "bdhub/hub/migrations/public_share_link_v1.py",
+      "source": "upstream",
+      "upstreamSha256": "6b098ea896c7fd93e7debb560da3d47d9f8b6c24138469a63b256c657fe5e3e2",
+      "sha256": "6b098ea896c7fd93e7debb560da3d47d9f8b6c24138469a63b256c657fe5e3e2"
+    },
+    {
+      "path": "bdhub/hub/migrations/report_analysis_v1.py",
+      "source": "upstream",
+      "upstreamSha256": "8fc8761e7b56ed05aa71df306f7b214607d78e9dc5faa51ef747d3517f49c72a",
+      "sha256": "8fc8761e7b56ed05aa71df306f7b214607d78e9dc5faa51ef747d3517f49c72a"
+    },
+    {
+      "path": "bdhub/hub/migrations/report_analysis_v2.py",
+      "source": "upstream",
+      "upstreamSha256": "3af732a9090136ef8a1dd611be2e85a58b4b63c06d4ba79f9a9b8e639305ff68",
+      "sha256": "3af732a9090136ef8a1dd611be2e85a58b4b63c06d4ba79f9a9b8e639305ff68"
+    },
+    {
+      "path": "bdhub/hub/migrations/report_analysis_v3.py",
+      "source": "upstream",
+      "upstreamSha256": "2ddaf9f734ec7a58e5aa78092796ce79b2b3551ad10bf2b238e0197f87d5968a",
+      "sha256": "2ddaf9f734ec7a58e5aa78092796ce79b2b3551ad10bf2b238e0197f87d5968a"
+    },
+    {
+      "path": "bdhub/hub/migrations/report_analysis_v4.py",
+      "source": "upstream",
+      "upstreamSha256": "78f7b90bf8dad72c7eb7623c893915b07f6d57dbabf4ac7fdd59fc04661c3e70",
+      "sha256": "78f7b90bf8dad72c7eb7623c893915b07f6d57dbabf4ac7fdd59fc04661c3e70"
+    },
+    {
+      "path": "bdhub/hub/migrations/report_analysis_v5.py",
+      "source": "upstream",
+      "upstreamSha256": "6dca0ce10cf38e11a71adf425d232ee785f98986fd38aec89dcb12826de70837",
+      "sha256": "6dca0ce10cf38e11a71adf425d232ee785f98986fd38aec89dcb12826de70837"
+    },
+    {
+      "path": "bdhub/hub/migrations/report_analysis_v6.py",
+      "source": "upstream",
+      "upstreamSha256": "42b22447fc1aad779a77ac1e23f41e30f4819fcb4637b0070e03d404b685020c",
+      "sha256": "42b22447fc1aad779a77ac1e23f41e30f4819fcb4637b0070e03d404b685020c"
+    },
+    {
+      "path": "bdhub/hub/migrations/report_analysis_v7.py",
+      "source": "upstream",
+      "upstreamSha256": "7cb4dab7784db433eb0723692f22c06afd1409e53195d87e977e33aa5e9e0cde",
+      "sha256": "7cb4dab7784db433eb0723692f22c06afd1409e53195d87e977e33aa5e9e0cde"
+    },
+    {
+      "path": "bdhub/hub/migrations/retire_available_product_pool.py",
+      "source": "upstream",
+      "upstreamSha256": "435b3cfa8375e0229b3666e509bb77bfcb979a0254c89fbe564b957a0a9397e1",
+      "sha256": "435b3cfa8375e0229b3666e509bb77bfcb979a0254c89fbe564b957a0a9397e1"
+    },
+    {
+      "path": "bdhub/hub/migrations/retire_legacy_tables.py",
+      "source": "upstream",
+      "upstreamSha256": "3a318183d305ed4d901c0375de5678ef59c138a23baa55e40497c0730fc8a61a",
+      "sha256": "3a318183d305ed4d901c0375de5678ef59c138a23baa55e40497c0730fc8a61a"
+    },
+    {
+      "path": "bdhub/hub/migrations/retire_relationship_status_v1.py",
+      "source": "upstream",
+      "upstreamSha256": "1be1f264253c6e73fd648056613fe1d31fe5a08c2ec1d7055d576d19cd509b5a",
+      "sha256": "1be1f264253c6e73fd648056613fe1d31fe5a08c2ec1d7055d576d19cd509b5a"
+    },
+    {
+      "path": "bdhub/hub/migrations/sample_lifecycle_status_v1.py",
+      "source": "upstream",
+      "upstreamSha256": "45b6809abb5b0e8766ba9fda8f341c844e07ed3965eef8b067a3dfa070778a39",
+      "sha256": "45b6809abb5b0e8766ba9fda8f341c844e07ed3965eef8b067a3dfa070778a39"
+    },
+    {
+      "path": "bdhub/hub/migrations/sample_management_v1.py",
+      "source": "upstream",
+      "upstreamSha256": "030c8f035afd24e356b2afab93ae29b840e29cdabd48dd0e4c68f4e2a4af9fba",
+      "sha256": "030c8f035afd24e356b2afab93ae29b840e29cdabd48dd0e4c68f4e2a4af9fba"
+    },
+    {
+      "path": "bdhub/hub/migrations/sample_product_image_v1.py",
+      "source": "upstream",
+      "upstreamSha256": "7f36ded90ccb9f867a2f7002857a4a8ff729c821983ee3e922e6254dc8ab223e",
+      "sha256": "7f36ded90ccb9f867a2f7002857a4a8ff729c821983ee3e922e6254dc8ab223e"
+    },
+    {
+      "path": "bdhub/hub/migrations/sample_review_batch_v1.py",
+      "source": "upstream",
+      "upstreamSha256": "ebe23c91177e6a9f77ae52c35279047f6106018897bc24070ecbaa4c06760008",
+      "sha256": "ebe23c91177e6a9f77ae52c35279047f6106018897bc24070ecbaa4c06760008"
+    },
+    {
+      "path": "bdhub/hub/migrations/sample_review_queue_v1.py",
+      "source": "upstream",
+      "upstreamSha256": "189bd9670ddfbafb1b51202619b36c7711a1e967812cb1fbd19f627e23ecc05e",
+      "sha256": "189bd9670ddfbafb1b51202619b36c7711a1e967812cb1fbd19f627e23ecc05e"
+    },
+    {
+      "path": "bdhub/hub/migrations/sample_workflow_import_v1.py",
+      "source": "upstream",
+      "upstreamSha256": "7d454023b44c7df4ccdb7a1969e055f8244cbeff8dae203ccb52da51f99f4202",
+      "sha256": "7d454023b44c7df4ccdb7a1969e055f8244cbeff8dae203ccb52da51f99f4202"
+    },
+    {
+      "path": "bdhub/hub/migrations/sample_workflow_scope_v1.py",
+      "source": "upstream",
+      "upstreamSha256": "fff68233ad0383963d52cc58be996511f841543ec135cf441d12a95c184cdb4b",
+      "sha256": "fff68233ad0383963d52cc58be996511f841543ec135cf441d12a95c184cdb4b"
+    },
+    {
+      "path": "bdhub/hub/migrations/sample_workspace_simplification_v1.py",
+      "source": "upstream",
+      "upstreamSha256": "1090c73d6d7af5015ad9a6669b4568aaaa57993f8ae2f11ed1afcbc46c1a3e10",
+      "sha256": "1090c73d6d7af5015ad9a6669b4568aaaa57993f8ae2f11ed1afcbc46c1a3e10"
+    },
+    {
+      "path": "bdhub/hub/migrations/send_task_multi_market_v1.py",
+      "source": "upstream",
+      "upstreamSha256": "8f888c22a27257e4b32a3274650e175c72fbe0a5cd97f5ccec0ecdb26140c763",
+      "sha256": "8f888c22a27257e4b32a3274650e175c72fbe0a5cd97f5ccec0ecdb26140c763"
+    },
+    {
+      "path": "bdhub/hub/migrations/share_link_product_v1.py",
+      "source": "upstream",
+      "upstreamSha256": "0c41a315565361159a938add2f339b5143caef1f0aee43d78c135223ba2e9320",
+      "sha256": "0c41a315565361159a938add2f339b5143caef1f0aee43d78c135223ba2e9320"
+    },
+    {
+      "path": "bdhub/hub/migrations/share_link_record_v1.py",
+      "source": "upstream",
+      "upstreamSha256": "e84802e4722a37c0cc748203220454d8056b2c30dfb799208dc48f9e7cc35da3",
+      "sha256": "e84802e4722a37c0cc748203220454d8056b2c30dfb799208dc48f9e7cc35da3"
+    },
+    {
+      "path": "bdhub/hub/migrations/share_link_v1.py",
+      "source": "upstream",
+      "upstreamSha256": "06f0ce55dbbd78ac129cf1e06ad8f12a8d11903dd5d3c4292e522ccc8c02c063",
+      "sha256": "06f0ce55dbbd78ac129cf1e06ad8f12a8d11903dd5d3c4292e522ccc8c02c063"
+    },
+    {
+      "path": "bdhub/hub/migrations/website_catalog_release_v1.py",
+      "source": "upstream",
+      "upstreamSha256": "69935166033e6e0d3b13a482142451efd063f50d9d5f1f3c15f55891a6e97329",
+      "sha256": "69935166033e6e0d3b13a482142451efd063f50d9d5f1f3c15f55891a6e97329"
+    },
+    {
+      "path": "bdhub/hub/models.py",
+      "source": "upstream",
+      "upstreamSha256": "fa0cf468276bdfa538cfd7b9ba7d5e3762c84b7e45084b730f65ae50e3d42a47",
+      "sha256": "fa0cf468276bdfa538cfd7b9ba7d5e3762c84b7e45084b730f65ae50e3d42a47"
+    },
+    {
+      "path": "bdhub/hub/outcome.py",
+      "source": "upstream",
+      "upstreamSha256": "899a133bb398e81346e0f88cda77f2e21ccdef63270b6dc090db6cbe473a7da7",
+      "sha256": "899a133bb398e81346e0f88cda77f2e21ccdef63270b6dc090db6cbe473a7da7"
+    },
+    {
+      "path": "bdhub/hub/product_categories.py",
+      "source": "upstream",
+      "upstreamSha256": "aeaf971eabef4210896980919a62bfc4e1d0c1f5082fb33e6a66dfcb9f34c81b",
+      "sha256": "aeaf971eabef4210896980919a62bfc4e1d0c1f5082fb33e6a66dfcb9f34c81b"
+    },
+    {
+      "path": "bdhub/hub/profile_observation.py",
+      "source": "upstream",
+      "upstreamSha256": "48df50778fd4601fc4c4fd0f449dc70d8a2f6e95d72d22c4483d330f2e0b8b7e",
+      "sha256": "48df50778fd4601fc4c4fd0f449dc70d8a2f6e95d72d22c4483d330f2e0b8b7e"
+    },
+    {
+      "path": "bdhub/hub/repo/__init__.py",
+      "source": "empty",
+      "upstreamSha256": null,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "bdhub/hub/repo/creators.py",
+      "source": "upstream",
+      "upstreamSha256": "4782fab39d9930b5da035f79d1e9a503e69f383b630f7abcd519347e0bb0567a",
+      "sha256": "4782fab39d9930b5da035f79d1e9a503e69f383b630f7abcd519347e0bb0567a"
+    },
+    {
+      "path": "bdhub/hub/repo/enrich_runs.py",
+      "source": "upstream",
+      "upstreamSha256": "9008a098cc8d1f815d818d52f9c452f6b1b5462905d7aaf526779fe210f3916d",
+      "sha256": "9008a098cc8d1f815d818d52f9c452f6b1b5462905d7aaf526779fe210f3916d"
+    },
+    {
+      "path": "bdhub/hub/repo/identity_reader.py",
+      "source": "upstream",
+      "upstreamSha256": "e927dbad7c91b237810c8f22587634d015ef070a87d43c38e5de5a6866690fd8",
+      "sha256": "e927dbad7c91b237810c8f22587634d015ef070a87d43c38e5de5a6866690fd8"
+    },
+    {
+      "path": "bdhub/hub/repo/im.py",
+      "source": "upstream",
+      "upstreamSha256": "ebdf7d02365055c65691dd5a1c6486ad5262cf197ad6b862355619463b0bdfa5",
+      "sha256": "ebdf7d02365055c65691dd5a1c6486ad5262cf197ad6b862355619463b0bdfa5"
+    },
+    {
+      "path": "bdhub/hub/repo/im_states.py",
+      "source": "upstream",
+      "upstreamSha256": "bd5cc958eead653dbc1ef7615d005d48dbc9d4065d43c8b27fb95cbde116f0fc",
+      "sha256": "bd5cc958eead653dbc1ef7615d005d48dbc9d4065d43c8b27fb95cbde116f0fc"
+    },
+    {
+      "path": "bdhub/hub/repo/outreach.py",
+      "source": "upstream",
+      "upstreamSha256": "619fcc8cc40518c2f3ad7477cdeac8aae41945bcb6830195b8f7448cfaeb55ba",
+      "sha256": "619fcc8cc40518c2f3ad7477cdeac8aae41945bcb6830195b8f7448cfaeb55ba"
+    },
+    {
+      "path": "bdhub/hub/repo/profile_readiness.py",
+      "source": "upstream",
+      "upstreamSha256": "582c571e9299f2575b1872e3d24b24ef5eae7e5b948d6ea593cec0bcd6df7f12",
+      "sha256": "582c571e9299f2575b1872e3d24b24ef5eae7e5b948d6ea593cec0bcd6df7f12"
+    },
+    {
+      "path": "bdhub/hub/repo/profile_snapshots.py",
+      "source": "upstream",
+      "upstreamSha256": "fc159840a49d03d4e8190b2f1201eed88153f9d5ec83506e33117a0f3a9464c5",
+      "sha256": "fc159840a49d03d4e8190b2f1201eed88153f9d5ec83506e33117a0f3a9464c5"
+    },
+    {
+      "path": "bdhub/hub/repo/send_attribution.py",
+      "source": "upstream",
+      "upstreamSha256": "2a9ac02ef016a4311460d1e2558cb37c5f288a7f0e2ee656564a49fdb224dad6",
+      "sha256": "2a9ac02ef016a4311460d1e2558cb37c5f288a7f0e2ee656564a49fdb224dad6"
+    },
+    {
+      "path": "bdhub/hub/repo/send_tasks.py",
+      "source": "upstream",
+      "upstreamSha256": "34b9ad7cf89bbc4fdda677087023ea752dae6a7e4c87d6e3ff2420d6c4b44014",
+      "sha256": "34b9ad7cf89bbc4fdda677087023ea752dae6a7e4c87d6e3ff2420d6c4b44014"
+    },
+    {
+      "path": "bdhub/hub/repo/send_workers.py",
+      "source": "upstream",
+      "upstreamSha256": "7964c929663b35110b7b43e5ad051571bcaad03ecaa78171352caa04296f5bc1",
+      "sha256": "7964c929663b35110b7b43e5ad051571bcaad03ecaa78171352caa04296f5bc1"
+    },
+    {
+      "path": "bdhub/hub/schema.py",
+      "source": "upstream",
+      "upstreamSha256": "8b02aad8163d657cb4562a57a29d2cca31d871940d00012d843bec8d5bcedded",
+      "sha256": "8b02aad8163d657cb4562a57a29d2cca31d871940d00012d843bec8d5bcedded"
+    },
+    {
+      "path": "bdhub/hub/sql_values.py",
+      "source": "upstream",
+      "upstreamSha256": "b9af654ebedac607777dc9d62f1c6bb6eb87b8f2a51750334ad90486f2d49ad6",
+      "sha256": "b9af654ebedac607777dc9d62f1c6bb6eb87b8f2a51750334ad90486f2d49ad6"
+    },
+    {
+      "path": "bdhub/imbase/__init__.py",
+      "source": "upstream",
+      "upstreamSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "bdhub/imbase/account_binding.py",
+      "source": "upstream",
+      "upstreamSha256": "74110d36b239c779fa8e6af2718b5261c2bda84e8a37c8f1af140a4537184da2",
+      "sha256": "74110d36b239c779fa8e6af2718b5261c2bda84e8a37c8f1af140a4537184da2"
+    },
+    {
+      "path": "bdhub/imbase/http_readonly_probe.py",
+      "source": "upstream",
+      "upstreamSha256": "919c9ec98d3f927ede62b74c5d6a31f241e1c0958ce5817ab8f22b39afed6caa",
+      "sha256": "919c9ec98d3f927ede62b74c5d6a31f241e1c0958ce5817ab8f22b39afed6caa"
+    },
+    {
+      "path": "bdhub/imbase/transport.py",
+      "source": "upstream",
+      "upstreamSha256": "e74703a409fc5081e92430f83654fb683a8a43c7254a4b9f07800a97e576a5c7",
+      "sha256": "e74703a409fc5081e92430f83654fb683a8a43c7254a4b9f07800a97e576a5c7"
+    },
+    {
+      "path": "bdhub/research/__init__.py",
+      "source": "empty",
+      "upstreamSha256": null,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "bdhub/research/campaign_catalog.py",
+      "source": "upstream",
+      "upstreamSha256": "7c0b6f9e13e161ab05eb12feed7727705980f9c12fd3680c4311f6b5bc329252",
+      "sha256": "7c0b6f9e13e161ab05eb12feed7727705980f9c12fd3680c4311f6b5bc329252"
+    },
+    {
+      "path": "bdhub/research/catalog_rules.py",
+      "source": "upstream",
+      "upstreamSha256": "b269c2f2804e91c0ccbb6de9b6600261ff4bf39fb1d2097cc111f8d1e7db0b3d",
+      "sha256": "b269c2f2804e91c0ccbb6de9b6600261ff4bf39fb1d2097cc111f8d1e7db0b3d"
+    },
+    {
+      "path": "bdhub/research/commerce_build_selection.py",
+      "source": "upstream",
+      "upstreamSha256": "10ea7284357b6639f1c3042574bccd5dbc05a76ea7115c279666d7d5de79c401",
+      "sha256": "10ea7284357b6639f1c3042574bccd5dbc05a76ea7115c279666d7d5de79c401"
+    },
+    {
+      "path": "bdhub/research/commerce_fast_scan.py",
+      "source": "upstream",
+      "upstreamSha256": "93681312887f9300e935e350531cf4d2e5da8fa02dc6e9aaba0b9071aec812a4",
+      "sha256": "93681312887f9300e935e350531cf4d2e5da8fa02dc6e9aaba0b9071aec812a4"
+    },
+    {
+      "path": "bdhub/research/commerce_intake_fast.py",
+      "source": "upstream",
+      "upstreamSha256": "740c8659e0a3da5744b96ca2d66ec5b17df6bf524b0a3fc82dd4f9e3ec65405e",
+      "sha256": "740c8659e0a3da5744b96ca2d66ec5b17df6bf524b0a3fc82dd4f9e3ec65405e"
+    },
+    {
+      "path": "bdhub/research/commerce_links.py",
+      "source": "upstream",
+      "upstreamSha256": "2f8ff2831e9fe88d8e7a380d77eea7c6fb4cca1548bd060bf0fe22b7c38eb2fc",
+      "sha256": "2f8ff2831e9fe88d8e7a380d77eea7c6fb4cca1548bd060bf0fe22b7c38eb2fc"
+    },
+    {
+      "path": "bdhub/research/commerce_pool.py",
+      "source": "upstream",
+      "upstreamSha256": "628925aded2efa336ddbb9e346aa7b1a18a6bf7b78d456d01e0140e0f4fa9f6e",
+      "sha256": "628925aded2efa336ddbb9e346aa7b1a18a6bf7b78d456d01e0140e0f4fa9f6e"
+    },
+    {
+      "path": "bdhub/research/commerce_queue.py",
+      "source": "upstream",
+      "upstreamSha256": "9fdb6720d8cd12f3ed75448262cab8d67f980a048a1ad9811ae55ff101509dd0",
+      "sha256": "9fdb6720d8cd12f3ed75448262cab8d67f980a048a1ad9811ae55ff101509dd0"
+    },
+    {
+      "path": "bdhub/research/commerce_selected.py",
+      "source": "upstream",
+      "upstreamSha256": "e9c3625404e74539e31f7f379c31cc4201365c02a06828b223c5fb9e1ca1d886",
+      "sha256": "e9c3625404e74539e31f7f379c31cc4201365c02a06828b223c5fb9e1ca1d886"
+    },
+    {
+      "path": "bdhub/research/commerce_selection.py",
+      "source": "upstream",
+      "upstreamSha256": "334de21ca7aec7d5a7f6762d3473508f865e9130924ec6c599890fc643f469d8",
+      "sha256": "334de21ca7aec7d5a7f6762d3473508f865e9130924ec6c599890fc643f469d8"
+    },
+    {
+      "path": "bdhub/research/commerce_selection_lanes.py",
+      "source": "upstream",
+      "upstreamSha256": "51bfa0f09c9661bd6a4461ccdad4d4ae62e7f1a164effd4cf83ca02148cfd30d",
+      "sha256": "51bfa0f09c9661bd6a4461ccdad4d4ae62e7f1a164effd4cf83ca02148cfd30d"
+    },
+    {
+      "path": "bdhub/research/commerce_sources.py",
+      "source": "upstream",
+      "upstreamSha256": "da0ef696cae02c723b0f445ed9e6f0b2a397aa5cbb3a58046da169748e765479",
+      "sha256": "da0ef696cae02c723b0f445ed9e6f0b2a397aa5cbb3a58046da169748e765479"
+    },
+    {
+      "path": "bdhub/research/commerce_transport.py",
+      "source": "upstream",
+      "upstreamSha256": "f374d227f8fefdacc8355cd86bdaba4a53481479819869265941c425be4b2de0",
+      "sha256": "7efa90a22839c1c5f8782cf789fc4289dfdfdae5ae46e1b7ca43f5e357fa4c1e"
+    },
+    {
+      "path": "bdhub/research/commerce_verification.py",
+      "source": "upstream",
+      "upstreamSha256": "8841eca07a2a4cea769f7637d5a1a3bb459be9a1f06b161c75c6353d1f142257",
+      "sha256": "8841eca07a2a4cea769f7637d5a1a3bb459be9a1f06b161c75c6353d1f142257"
+    },
+    {
+      "path": "bdhub/research/kalodata.py",
+      "source": "upstream",
+      "upstreamSha256": "1c8c2a948fe24c1550c08dd55a81864ab55d4e8f94050f8dcacbc3fcf47c2442",
+      "sha256": "1c8c2a948fe24c1550c08dd55a81864ab55d4e8f94050f8dcacbc3fcf47c2442"
+    },
+    {
+      "path": "bdhub/research/kalodata_worker.py",
+      "source": "upstream",
+      "upstreamSha256": "b100229a8f72fd9eae515753ce56f50e1c3b4ef098f11186924c77dda5a09e52",
+      "sha256": "b100229a8f72fd9eae515753ce56f50e1c3b4ef098f11186924c77dda5a09e52"
+    },
+    {
+      "path": "bdhub/research/outreach_ai.py",
+      "source": "upstream",
+      "upstreamSha256": "2d98a3d0c7f36c636ba4fc41709639ed8f857f00bf8e0144ff2c83d13c273932",
+      "sha256": "2d98a3d0c7f36c636ba4fc41709639ed8f857f00bf8e0144ff2c83d13c273932"
+    },
+    {
+      "path": "bdhub/research/product_exploration.py",
+      "source": "upstream",
+      "upstreamSha256": "8428a8a0e2f75ca24333b22a0a81702b2090747930607cac1085679545672ff9",
+      "sha256": "8428a8a0e2f75ca24333b22a0a81702b2090747930607cac1085679545672ff9"
+    },
+    {
+      "path": "bdhub/research/product_exploration_worker.py",
+      "source": "upstream",
+      "upstreamSha256": "0796aae9ee8ed1f2ba634bf60ead4dba94b7629295cbdc349e9fc181079d9339",
+      "sha256": "0796aae9ee8ed1f2ba634bf60ead4dba94b7629295cbdc349e9fc181079d9339"
+    },
+    {
+      "path": "bdhub/research/product_source_store.py",
+      "source": "upstream",
+      "upstreamSha256": "6dc291be29c3b8bf7e90a96b7debcbbc5395cb11ff04d14efa4be92824fae4d3",
+      "sha256": "6dc291be29c3b8bf7e90a96b7debcbbc5395cb11ff04d14efa4be92824fae4d3"
+    },
+    {
+      "path": "bdhub/research/product_source_transport.py",
+      "source": "upstream",
+      "upstreamSha256": "b7a8a585e556e5cbc750eeb0a254418e7716feb677bbe75c0b9fac0e18e64c24",
+      "sha256": "b7a8a585e556e5cbc750eeb0a254418e7716feb677bbe75c0b9fac0e18e64c24"
+    },
+    {
+      "path": "bdhub/scheduled_relogin.py",
+      "source": "upstream",
+      "upstreamSha256": "af492160dea22cc244313159084937006463be9abfd1e8fa77339dd6b647e3b1",
+      "sha256": "af492160dea22cc244313159084937006463be9abfd1e8fa77339dd6b647e3b1"
+    },
+    {
+      "path": "bdhub/send/__init__.py",
+      "source": "empty",
+      "upstreamSha256": null,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "bdhub/send/attribution.py",
+      "source": "upstream",
+      "upstreamSha256": "5ccb6fb8daa8391328e982f3c20da63dce8c25a871609401cb88f1b9e730605a",
+      "sha256": "5ccb6fb8daa8391328e982f3c20da63dce8c25a871609401cb88f1b9e730605a"
+    },
+    {
+      "path": "bdhub/send/attribution_settlement.py",
+      "source": "upstream",
+      "upstreamSha256": "87959cf1cbf0ff7a8288db1518fdd722590f1d945c7b0621aa0db7d0761f902b",
+      "sha256": "87959cf1cbf0ff7a8288db1518fdd722590f1d945c7b0621aa0db7d0761f902b"
+    },
+    {
+      "path": "bdhub/send/component_sender.py",
+      "source": "upstream",
+      "upstreamSha256": "0d2cc8b57c0071c59b372bab2f8449a3644c4594abe0bc770027308183af3ab7",
+      "sha256": "0d2cc8b57c0071c59b372bab2f8449a3644c4594abe0bc770027308183af3ab7"
+    },
+    {
+      "path": "bdhub/send/http_auth.py",
+      "source": "upstream",
+      "upstreamSha256": "a809a9c191f104b42601c2e0e9310eade9b4dd354d7306e41514a751ba01ed41",
+      "sha256": "a809a9c191f104b42601c2e0e9310eade9b4dd354d7306e41514a751ba01ed41"
+    },
+    {
+      "path": "bdhub/send/http_canary.py",
+      "source": "upstream",
+      "upstreamSha256": "89da7ee388a97a19050a058bbfba0a7ee34d6596ce3d084de7f0bda0dda4e821",
+      "sha256": "89da7ee388a97a19050a058bbfba0a7ee34d6596ce3d084de7f0bda0dda4e821"
+    },
+    {
+      "path": "bdhub/send/http_card.py",
+      "source": "upstream",
+      "upstreamSha256": "002deb206a31c2b8faf2d8293c80cf457ec0d1fa04b3cf3f87625528fdde9361",
+      "sha256": "002deb206a31c2b8faf2d8293c80cf457ec0d1fa04b3cf3f87625528fdde9361"
+    },
+    {
+      "path": "bdhub/send/http_conversation.py",
+      "source": "upstream",
+      "upstreamSha256": "78d1d40304d391947fa10037d17c0b6b8ea633c953b795acca96c30a486dc6db",
+      "sha256": "78d1d40304d391947fa10037d17c0b6b8ea633c953b795acca96c30a486dc6db"
+    },
+    {
+      "path": "bdhub/send/http_protocol.py",
+      "source": "upstream",
+      "upstreamSha256": "57a2c321c0aa2ac8cf42440ed2170c32e55166b22e51b865b0afda85298e10aa",
+      "sha256": "57a2c321c0aa2ac8cf42440ed2170c32e55166b22e51b865b0afda85298e10aa"
+    },
+    {
+      "path": "bdhub/send/http_session.py",
+      "source": "upstream",
+      "upstreamSha256": "4c58f64f38f7711c74a0b9c5c93c7c81b2c0bd4812953f2763d5d3e273391bb6",
+      "sha256": "4c58f64f38f7711c74a0b9c5c93c7c81b2c0bd4812953f2763d5d3e273391bb6"
+    },
+    {
+      "path": "bdhub/send/http_trial.py",
+      "source": "upstream",
+      "upstreamSha256": "d873c7eb995e1e8523956be64d8d229995fc8f884425e578e9a0c1a251c39781",
+      "sha256": "d873c7eb995e1e8523956be64d8d229995fc8f884425e578e9a0c1a251c39781"
+    },
+    {
+      "path": "bdhub/send/http_write_gate.py",
+      "source": "upstream",
+      "upstreamSha256": "de73d4d2c552fbff8185e1a31cee70cf4d7b5bbfa47aae13298e450ba3f131eb",
+      "sha256": "de73d4d2c552fbff8185e1a31cee70cf4d7b5bbfa47aae13298e450ba3f131eb"
+    },
+    {
+      "path": "bdhub/send/runner.py",
+      "source": "upstream",
+      "upstreamSha256": "06fbd8e661e36553f11ce4b37a1ff5d40fe2f355c763f71ef1e1f415c6b86d71",
+      "sha256": "06fbd8e661e36553f11ce4b37a1ff5d40fe2f355c763f71ef1e1f415c6b86d71"
+    },
+    {
+      "path": "bdhub/send/sharelink/__init__.py",
+      "source": "empty",
+      "upstreamSha256": null,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "bdhub/send/sharelink/candidates.py",
+      "source": "upstream",
+      "upstreamSha256": "7180e3d82d4c6d3c292791a813cc6afcbc5be5a1efeaa6e3e0598b55730561d6",
+      "sha256": "7180e3d82d4c6d3c292791a813cc6afcbc5be5a1efeaa6e3e0598b55730561d6"
+    },
+    {
+      "path": "bdhub/send/sharelink/commission.py",
+      "source": "upstream",
+      "upstreamSha256": "5304115bdfb3024acde2df3a2f56e2aa79e4119528586b1859051344aabedd24",
+      "sha256": "5304115bdfb3024acde2df3a2f56e2aa79e4119528586b1859051344aabedd24"
+    },
+    {
+      "path": "bdhub/send/sharelink/joined_campaign_cache.py",
+      "source": "upstream",
+      "upstreamSha256": "9e7281a18a21fefb2e093390c98b5125aa3e8c620cfe02e61cf4a23def3899ea",
+      "sha256": "9e7281a18a21fefb2e093390c98b5125aa3e8c620cfe02e61cf4a23def3899ea"
+    },
+    {
+      "path": "bdhub/send/sharelink/models.py",
+      "source": "upstream",
+      "upstreamSha256": "99bd5d72aface7fefad7e9d3be346164b34e8d4ab44f9a1565ce05e8ba05a6e8",
+      "sha256": "99bd5d72aface7fefad7e9d3be346164b34e8d4ab44f9a1565ce05e8ba05a6e8"
+    },
+    {
+      "path": "bdhub/send/sharelink/transport.py",
+      "source": "upstream",
+      "upstreamSha256": "82e29dfbadd673fe6ebfd2b9e699031c2d3b489e9e73dffdf2ef3cbb4d0e00ff",
+      "sha256": "82e29dfbadd673fe6ebfd2b9e699031c2d3b489e9e73dffdf2ef3cbb4d0e00ff"
+    },
+    {
+      "path": "bdhub/send/taplink/__init__.py",
+      "source": "upstream",
+      "upstreamSha256": "a8106613d7f6ff403b699b3d33faea373050a6838bbfbf466078156c78124949",
+      "sha256": "a8106613d7f6ff403b699b3d33faea373050a6838bbfbf466078156c78124949"
+    },
+    {
+      "path": "bdhub/send/taplink/batches.py",
+      "source": "upstream",
+      "upstreamSha256": "9d3cc933b5c0092bf754a33d3a7b00456266a3f80d2ba4f83fd1abd84a25d981",
+      "sha256": "9d3cc933b5c0092bf754a33d3a7b00456266a3f80d2ba4f83fd1abd84a25d981"
+    },
+    {
+      "path": "bdhub/send/taplink/cleanup.py",
+      "source": "upstream",
+      "upstreamSha256": "9ae7b9445a6028f2c0644a9851efc5b3013d0f9f81dfd8eb87725720bc4727ff",
+      "sha256": "9ae7b9445a6028f2c0644a9851efc5b3013d0f9f81dfd8eb87725720bc4727ff"
+    },
+    {
+      "path": "bdhub/send/taplink/protocol.py",
+      "source": "upstream",
+      "upstreamSha256": "46367b6a6574ecaba7bcc4f8f531bd77b3132370e7fdfdbd254981edf1340092",
+      "sha256": "46367b6a6574ecaba7bcc4f8f531bd77b3132370e7fdfdbd254981edf1340092"
+    },
+    {
+      "path": "bdhub/send/taplink/rule_batches.py",
+      "source": "upstream",
+      "upstreamSha256": "b8748b74f79381a9e959aae6b0b6fbb6a9ae49fbdfb5d074f79fc3150e9a7300",
+      "sha256": "b8748b74f79381a9e959aae6b0b6fbb6a9ae49fbdfb5d074f79fc3150e9a7300"
+    },
+    {
+      "path": "bdhub/send/taplink/service.py",
+      "source": "upstream",
+      "upstreamSha256": "5781ac08abb824cb4c7abb9e2d44021c760c1c464049df4826d14049e8302a9f",
+      "sha256": "5781ac08abb824cb4c7abb9e2d44021c760c1c464049df4826d14049e8302a9f"
+    },
+    {
+      "path": "bdhub/send/taplink/transport.py",
+      "source": "upstream",
+      "upstreamSha256": "98119df4807f4124af2609befa7e11d997ca46e0318bc81b53a641e7512e9759",
+      "sha256": "98119df4807f4124af2609befa7e11d997ca46e0318bc81b53a641e7512e9759"
+    },
+    {
+      "path": "bdhub/send/template_rendering.py",
+      "source": "upstream",
+      "upstreamSha256": "0c9ea1dfa1c7f26859eb5e244e57c378a85239dabbfaf637c528add37fa42169",
+      "sha256": "0c9ea1dfa1c7f26859eb5e244e57c378a85239dabbfaf637c528add37fa42169"
+    },
+    {
+      "path": "bdhub/send/transport_scripts.py",
+      "source": "upstream",
+      "upstreamSha256": "f0f45ef9f4f0bd9564cbe4f315e9b1783f27e0f4670b3405ff260468f3e6cdfb",
+      "sha256": "f0f45ef9f4f0bd9564cbe4f315e9b1783f27e0f4670b3405ff260468f3e6cdfb"
+    },
+    {
+      "path": "bdhub/send/worker.py",
+      "source": "upstream",
+      "upstreamSha256": "212531b6abf750a64a448537492977b45cbafbe91baec301ac41daf56f59fb74",
+      "sha256": "212531b6abf750a64a448537492977b45cbafbe91baec301ac41daf56f59fb74"
+    }
+  ]
+}

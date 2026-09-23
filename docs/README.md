@@ -34,17 +34,17 @@
 
 ### 产品细节与历史决定
 
-- [旧 PRD 详细版](PRD.md)：2026-09-13 批次需求细节，现作为 `PROJECT.md` 的来源记录。
-- [决策登记](DECISIONS.md)：逐轮确认与历史未决项，现作为来源记录。
+- [旧 PRD 详细版](archive/batch-era/PRD-20260913.md)：2026-09-13 批次需求来源，不是当前发送流程。
+- [决策来源记录](archive/batch-era/DECISIONS-20260913.md)：逐轮确认与历史未决项，不覆盖当前规则。
 
 ### 架构细节
 
 | 领域 | 资料 |
 | --- | --- |
-| 批次与 V1 主流程 | [批次架构](architecture/batch-outreach-v2.md)、[货盘先备链](architecture/catalog-first-preparation.md) |
+| 历史批次与备料方案 | [已退役批次架构](architecture/batch-outreach-v2.md)、[历史货盘先备链](architecture/catalog-first-preparation.md) |
 | 货盘链路与 Campaign | [货盘页链路](architecture/catalog-page-chain.md)、[非全托 Campaign](architecture/non-full-managed-campaign-v1.md) |
 | PID 来源、选入、链接、刷新和清理 | [PID 生命周期树](architecture/pid-lifecycle-v1.md) |
-| 线索、OECID、发送池与 AI 回复 | [达人发送池与 AI 回复策略 v1](architecture/creator-pool-and-reply-policy-v1.md) |
+| 线索与发送池历史设计、V1 回复追溯 | [发送池与回复策略 v1](architecture/creator-pool-and-reply-policy-v1.md)（当前排序见 `PROJECT.md`，当前回复见下一行 V2） |
 | 多轮 AI 回复与会话页面升级 | [会话与 Agent 回复升级计划](architecture/conversation-agent-upgrade-plan-20260923.md) |
 | 旧发送池/工作台实施记录 | [线索发送池](architecture/lead-sending-pool.md)、[工作台方案](architecture/send-monitor-reply-calendar-v1.md)（仅用于追溯，冲突处以当前策略为准） |
 | 身份与关系 | [稳定身份](architecture/creator-identity-and-rename.md)、[二发确认规则](architecture/second-cycle-confirmed-policy.md) |
@@ -80,6 +80,8 @@
 - `research/`：模型、旧逻辑、匹配数据和 UI 调查；不自动成为业务规则。
 - [Kalodata 网页可见字段清单](research/kalodata-web-fields-20260920.md)：直接基于已登录 IT 网页整理，不以当前接口字段代替网页口径。
 - `archive/`：已被当前口径取代的状态流水和旧入口，只用于追溯。
+- [早期前端原型验收](archive/design/tailadmin-prototype-qa-20260912.md)、[早期页面映射](archive/design/tailadmin-page-map-20260911.md)与[旧 DeepSeek 交接](archive/handoff/deepseek-harness-20260914.md)已归档；旧链接仅作跳转。
+- [协议层说明](../vendor/README.md)：当前 vendor 的来源清单、本地补丁、资源和安全重建方法。
 
 ## 更新规则
 
@@ -101,4 +103,4 @@ PYTHONDONTWRITEBYTECODE=1 \
   scripts/check-docs.py
 ```
 
-检查会确认主文档完整，并验证仓库内所有 Markdown 本地链接。
+检查会确认主文档完整，扫描 Git 已跟踪与尚未提交的非忽略 Markdown，验证本地文件、图片和 Markdown 标题锚点。`var/`、依赖和构建产物不纳入文档检查。

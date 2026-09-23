@@ -1,3 +1,5 @@
+> 历史一发草稿能力：对应页面与队列已退役，保留当时的模型输入合同供研究，不是当前 V2 回复指令。
+
 # Italian collaboration interest draft, version 1
 
 This is a product capability definition, not a developer Skill or a tool registration.

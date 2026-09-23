@@ -58,7 +58,7 @@ React feature
   → SQLite / 外部平台
 ```
 
-React 组件不能直接读写 SQLite、启动任意命令或实现资格规则。Route 只接受白名单字段；bridge 同时校验请求和 CLI 返回结构，不把 stderr、凭据或原始私密数据返回浏览器。
+React 组件不能直接读写 SQLite、启动任意命令或实现资格规则。Route 只接受白名单字段；bridge 同时校验请求和 CLI 返回结构，不把 stderr、凭据或原始私密数据返回浏览器。各 bridge 共用 `server/runtime/project-root.ts` 定位项目根目录，避免依赖画像模块；画像入口对定位失败继续映射为原有稳定错误。
 
 市场注册表由 `config/markets.json` 提供 14 个固定 key。IT/BR/MY/UK 已有已核实的运行元数据；其余市场为 `planned`，未知 locale、账号和全托能力保持 `null`。页面复用同一组件；planned 市场仅显示未验收状态，服务端动作在 registry 门禁处拒绝。所有市场级 Route 必须显式接收单个 `market`，写请求还要核对 URL 与 body 的 market；CLI 和返回结构再次校验市场。BR/MY 的全托 Tab 是明确空态，不启动全托读取。
 
@@ -134,7 +134,7 @@ Campaign 每 2 天完整刷新，全托按周刷新；货盘 generation 发布�
 
 `operations_scheduler.py` 按市场读取不可变 `workflow_run/workflow_stage_run`。同一市场仍按上游 generation 串行；不同市场按 `workflow:{market}` 与货盘/通信账号资源槽并行，Kalodata 使用全局两槽 semaphore。`workflow_stage_claim/workflow_resource_slot` 在短事务中原子领取，保存 owner/fence/300 秒 lease；执行中每 30 秒续租，只有确认 owner 进程已结束才释放过期槽并从原 checkpoint 恢复。到期候选按上次成功最早、已有断点、market key 排序。新项目只读 Kalodata HTTP session 持共享 `LOCK_SH`，旧项目和登录器的 `LOCK_EX` 仍会阻止并发；每市场继续使用独立 region、currency、queue、checkpoint 和 SQLite。全托命令由 `full_catalog_collection_mode()` 决定首次/月度 `--by-category` 或周更普通查询。若当前 head 是用户接受的部分快照且对应选入队列仍有 pending，catalog stage 先续跑该冻结队列、不重新采集。标准主链只由各市场 `market_automation_setting` 总开关授权，`config/jobs.json` 保存共享北京时间，`config/operations-policy.json` 保存 2 天/30 天/双市场/10 条审核等稳定策略；全托、持续发送和 Agent 保留各自独立开关。
 
-调度器遇到失败的到期主链，保留原 run，间隔至少一小时以新 attempt 重试，至多三次自动补试；每次仍复用原有选入/建链/发送持久意图。全托开始新读取前先查同 market/account 仍 `collecting` 的来源 run，按其原读取模式继续原页码断点，即使本次周期已切换普通周更也不把原类目 run 留作阻塞。子进程启动先登记真实 child PID，再允许固定 argv 执行；父进程死亡而子进程仍存活时资源槽保持占用。长任务等待期间每30秒继续监督收信、发送、Agent 和账号维护。市场 sender 的普通失败有5分钟启动退避，未知发送结果不自动重启；维护 worker 失主若尚未发布新身份，5分钟后以新持久意图补试一次。仅把脱敏错误码写入 workflow，原 stderr 不进页面。
+调度器遇到已失败的定时阶段，只有该阶段记录零平台写入、没有 unknown/unresolved/ambiguous 且持久 claim 已释放时，才间隔至少一小时在同一个 run、同一个上游 generation 重排该阶段，最多三次；不重跑已完成的上游阶段。已有平台写入或结果含糊时转 `needs_human`，原意图只核验；三次补试耗尽也转 `needs_human`。自动运营关闭时不补试。全托开始新读取前先查同 market/account 仍 `collecting` 的来源 run，按其原读取模式继续原页码断点，即使本次周期已切换普通周更也不把原类目 run 留作阻塞。子进程启动先登记真实 child PID，再允许固定 argv 执行；父进程死亡而子进程仍存活时资源槽保持占用。长任务等待期间每30秒继续监督收信、发送、Agent 和账号维护。市场 sender 的普通失败有5分钟启动退避，未知发送结果不自动重启；维护 worker 失主若尚未发布新身份，5分钟后以新持久意图补试一次。仅把脱敏错误码写入 workflow，原 stderr 不进页面。
 
 IT Campaign-only 的 `taplink_prepare` 若仅因 `catalog_short_names_incomplete` 在平台写入前停为 `needs_human`，补齐当前短名后可通过 `operations-workflow.py resume-short-names` 恢复**原 run 的原阶段**。入口核对市场、原 Campaign generation、前后阶段屏障、零阶段写入、无活跃 claim、当前短名缺口为零；恢复请求和旧错误写入同 run 的持久 checkpoint，重复请求幂等。恢复后由现有 scheduler 领取该阶段，不重跑 Campaign，也不重建任何原外部写入意图。
 
@@ -172,6 +172,8 @@ Pure HTTP 验证依赖 `Pillow==12.3.0`、`opencv-python-headless==4.14.0.94` �
 
 线索合同已升级为 `leads-queue-v2`：每 PID 近 14 天、Kalodata `revenue DESC`，完整 page receipt 和全部正销量 `source_edge` 继续保留；`lead_query_head + lead_query_selection` 只发布当前最多 20 条。排序消费 `sourceRank`，并列时用 `units DESC, pid ASC`；原始 GMV 字符串只作证据，不跨币种直接比较。`scripts/backfill-current-leads.py` 可从本机历史 receipt 重建当前范围，不调用平台。
 
+`leads_page_scope` 以市场、PID、查询窗口生成的 query ID 保存分页回执：同一窗口中断后复用，刷新到新窗口重新请求。`leads_page` 只投影最后一次完整查询供旧读侧使用；覆盖前将既有页复制到 `leads_page_legacy_history`。发布当前线索与更新 `queried_at` 必须在完整分页后进行；显式全量重建会清当前 scoped cache，但保留历史证据。Kalodata stage 循环处理全部到期 PID；只有全部完成或真实额度耗尽才结束，锁占用、部分失败、stuck 或无效 CLI 报告不发布完成 generation。
+
 零销量视频证据是已确认但尚未接入真实发送池的 B 类输入：商品视频表按 `create_time DESC` 逐页读取，直到越过发布时间窗口或自然结束；窗口内所有达到播放量门槛的视频都调用详情解析作者，不使用“播放量前 20 条”，也不设置固定页数/视频数业务上限。列表没有作者，详情返回 Kalodata creator ID 与 handle；来源关联优先用稳定 creator ID，OECID 仍只接受当前精确 handle 的身份结果。重复页、日期不可解析、作者缺失、平台额度耗尽或中断都必须停止并保留明确状态，不得把不完整结果冒充正式统计。实测与成本见 [零销量视频证据](implementation/kalodata-zero-sale-video-evidence-20260920.md)。
 
 身份表应把 `市场 × OECID` 投影为稳定 `creatorId`，handle 变化只追加带观测时间的 alias。同一 OECID 改名时不得新建关系、重置冷却或丢失达人×PID 位置。
@@ -193,7 +195,7 @@ Pure HTTP 验证依赖 `Pillow==12.3.0`、`opencv-python-headless==4.14.0.94` �
 | `cycle_stats.py` | 按北京时间聚合确认发送、回复和橱窗事件 |
 | `template_library.py` | 二发模板、人工模板和 Agent 时间窗的版本化合同 |
 | `conversation_workbench.py` | 会话队列、完整时间线、草稿和人工操作读写模型 |
-| `run-agent-replies.py` / `market_agent_reply.py` | 独立窗口内的 V2 多轮 Agent 执行、持久回复意图和原意图回查 |
+| `run-agent-replies.py` / `reply_transport.py` / `market_agent_reply.py` | 独立窗口内的 V2 多轮 Agent 调度、IT 人工/Agent 共用回复 transport、非 IT 市场 transport 与原意图回查 |
 | `operations_workflow.py` | 自动运营开关、不可变 workflow run、阶段屏障、generation 和断点 |
 | `account_identity.py` | 账号身份代次、72 小时维护意图、能力观察和原子发布 |
 | `project_account_identity.py` | 项目自有可见浏览器重登、只读凭据自动填充、候选 profile/HTTP/IM 联合验证 |
@@ -203,7 +205,7 @@ Pure HTTP 验证依赖 `Pillow==12.3.0`、`opencv-python-headless==4.14.0.94` �
 
 `/api/send` 的 GET 只读当前控制、窗口、24 小时额度、池余量、真实话术例子和进程；POST 只接受 revision 化的保存、发送、停止与原 unknown 核验。多一个字段即拒绝。保存、GET、构建和重启都不启动 worker；只有用户“发送”、显式自动发送开关或已启用调度器在窗口内启动相应市场发送 worker。
 
-BR/MY/UK 正式外发逐次读取保存的北京时间窗口、当前停止/启动状态、账号维护状态和 `catalog_current_binding` 的 active、Offer 指纹、`listId` 与卡片 payload。卡与文字各有独立 requestRef，先恢复 `ready/running/unknown` 原 delivery；发起过的平台组件只读精确回查，回查未确认不改用新话术/新账号重发。`/api/send` 的 reconcile 在关闭窗口时也可核验原意图且不新写。会话创建意图若仍 `inflight` 且无精确回执，则停在需核验状态；若已 `received` 且原 requestRef、回执中的 CID 和同达人会话身份均匹配，可只确认原会话意图，再沿同一 delivery 继续未开始的卡文，不再次调用创建接口。MY 的首次真实 sender 在页面“发送”请求后走一条 canary，卡和文字均确认后才把同账号 `message_send` 能力发布为 verified；未完成前自动调度不能代替这次页面启动。
+BR/MY/UK 正式外发逐次读取保存的北京时间窗口、当前停止/启动状态、账号维护状态和 `catalog_current_binding` 的 active、Offer 指纹、`listId` 与卡片 payload。卡与文字各有独立 requestRef，先恢复 `ready/running/unknown` 原 delivery；发起过的平台组件只读精确回查，回查未确认不改用新话术/新账号重发。`/api/send` 的 reconcile 走独立只读路径：即使控制已停止或窗口关闭，也仅按原账号、原 requestRef 回查已经提交的组件；确认后立即返回，不领取新人或启动未提交组件。会话创建意图若仍 `inflight` 且无精确回执，则停在需核验状态；若已 `received` 且原 requestRef、回执中的 CID 和同达人会话身份均匹配，可只确认原会话意图，再沿同一 delivery 继续未开始的卡文，不再次调用创建接口。MY 的首次真实 sender 在页面“发送”请求后走一条 canary，卡和文字均确认后才把同账号 `message_send` 能力发布为 verified；未完成前自动调度不能代替这次页面启动。
 发送页把存活 worker 当前仍在处理的 `inflight/accepted/received` 作为在途，不误标为结果未知；worker 已失主、attention 或 delivery/组件明确 `unknown` 才列入未决并显示核验状态。卡文短暂在途时页面不应闪现“结果未知”。
 
 持续发送按 `lead_pool.v3` 当前顺序领取一位达人，复检后把 creator/OECID、PID、Offer、`currentListId`、模板 revision、最终正文、关系控制 revision 和确定性 claim key 写入不可变 `cycle_delivery.snapshot`。执行只用本地 `catalog_current_binding` 核对材料，不远程刷新卡；`cycle_delivery` 唯一键、24 小时预留和同达人 active delivery 共同防重复。unknown 使进程进入 `waiting_reconciliation`，恢复只运行原 delivery 的 `verify_only`，不会领取下一位或重发。用户对 IT “建会话结果未知、卡和文字均未开始”选择隔离后，逐条原意图仍须只读核验并满足零匹配证据，才能将该达人隔离：原会话请求与零回执保留，delivery 标记 `quarantined_unknown`，该达人进入人工案件，其余达人可继续；页面仍把它计作未决，不改成失败或成功，也不对该达人重发。建会话若返回无法确认的业务码，仅保存脱敏码与响应哈希；不把非零码自动推断为明确失败。
@@ -232,31 +234,23 @@ IT 收信每轮从 IM 最近会话保留部分热点名额，其余从最旧 che
 
 ### 5.5 Agent 与语义能力
 
-- `catalog_names.py`：批量商品短名；失败不自动无限重试。
-- `draft_provider.py`：商品短名和回复影子分类可复用的受控模型 provider；已退役的一发草稿队列不再位于 Web/worker 运行路径。
-- `ReplyClassifier`：接收受限的事件上下文，返回五种动作、意图、消息证据和关联 episode；provider 可为 DeepSeek 或 Jev。
-- `ReplyPolicyGuard`：检查多意图、附件、PID/listId 唯一性、模板版本和人工条件，并把不满足的结果强制收敛为 `human`。
-- `ReplyTemplateRegistry`：只提供版本化的 `sample_self_service`、`collaboration_ack`、`link_usage` 三条 Agent 固定模板；它与二发批量模板、人工回复模板完全分离。
+- `catalog_names.py` 用受控模型准备商品短名；`draft_provider.py` 同时为当前 V2 回复和历史影子评测提供 provider，不承载退役一发队列。
+- `reply_events.py` 保存外发 episode、入站 turn、关联和历史评测证据。episode 的冻结快照是审计事实；给 V2 模型构建对话时，商品卡与文字分别按 `cycle_delivery_part` 的确认状态和发生时间投影，未发送文字不能作为已发消息。
+- `agent_reply_v2.py` 根据版本化指南、当前市场语言及既有双向消息生成 `reply/no_reply/request_detail/handoff` 决策。它不决定账号、身份、资格、额度、暂停、授权或平台结果；正式正文先冻结为唯一 `service_reply` 再由 transport 执行。
+- `run-agent-replies.py` 在分类前优先只读回查已有 `inflight/accepted/unknown`；单个模型失败只延后该达人，不挡其他达人或原意图。相同输入最多三次模型调用；已用尽的事项继续保留在待处理队列供查看，不冒充已回复。过期且确定未提交的 ready 回复可审计地终结，已提交回复仅回查原意图。
+- IT 与 BR/MY/UK 的回复 transport 均使用原账号、原 requestRef 与精确回读；窗口和同账号在途写门禁按市场作用。默认北京时间 Agent `15:00–16:00`、缓冲 30 分钟、二发 `16:30–24:00`；等待二发窗口不占用 Agent 回复窗口。
 
-当前 V1 回复实现由 `reply_events.py`、`config/reply-policy.json`、`template_library.py` 和 `run-agent-replies.py` 组成：事件层把已确认外发投影为 `outbound_episode`，把达人入站正文投影为不可变 `inbound_turn`，并保存最多三个 `turn_episode_link` 候选；政策文件固定五种动作和三条模板 key，`agent_reply_template*` 保存可编辑正文 revision；设置表保存 Agent 开关、回复窗口和缓冲约束。分类输出必须引用真实 message ID 与原文片段，`link_usage` 还必须只有一个关联 PID/listId，否则确定性守卫改为 `human`。
+历史五动作分类器、`ReplyPolicyGuard`、三条固定模板、`turn_review` 和 Jev 同集评测仅保留审核与追溯能力，不作为 V2 正式执行真值。TypeSafe Jev 的密钥继续只从本机忽略的配置或环境变量读取。收信 worker 仅保存事件与冻结达人，不调用旧事实回复调度。用户一次性 `--authorized-now <request-id>` 不改变日常窗口，也不能与常驻 `--worker` 同用；当前各市场 Agent 开关与首条验证阶段以持久台账为准，构建与服务重启不改变它们。
 
-DeepSeek 是当前 Agent 分类器，人工 `turn_review` 存在时人工结论优先；TypeSafe Jev 保持影子 challenger。Jev 使用官方 System One 合同 `POST https://api.typesafe.ai/v1/systemone`，固定模型 `jev-1.13.0`；API key 只从本机 `config/typesafe.json`（0600、Git 忽略）或 `TYPESAFE_API_KEY` 读取。收信 worker 不再调用旧 `cycle_agent.py`，也不执行旧 `process_due()`；它只保存事件并立即冻结达人。旧事实工具、60 秒服务代码和既有评估记录只保留历史兼容。
-
-Agent 与二发没有优先级关系，只有互斥窗口：默认北京时间 `15:00–16:00` 集中回复、30 分钟缓冲、`16:30–24:00` 持续二发。等待发送窗口不阻塞 Agent；实际 `cycle_delivery_part in (inflight,accepted)` 才阻塞回复 dispatch，随后仍复用同一 ACC6 写门禁。Agent 每轮最多分类 20 个 pending turn、发送或恢复 1 个持久 `service_reply`；恢复 `inflight/accepted/unknown` 只读回查原意图，不创建新发送。
-
-`run-agent-replies.py --authorized-now <request-id>` 是用户明确要求立即处理当前合格队列时的一次性运维入口，不能与常驻 `--worker` 同用；它不改变日常窗口，每次仍只发送/核验一个持久意图。Agent durable setting 是常驻恢复的唯一开关，operations scheduler 不再依赖已退役的 jobs 子开关来重启 Agent worker。
-
-`cycle_scheduler.PERIODS` 同样不再包含 `reply_facts`：既有 `cycle_schedule` 历史行保留，但 claim、running/recover 判断和状态投影只接受当前五个供给阶段，`run-second-cycle.py` 也不再为该旧阶段生成命令。这样以后启动供给调度器也不会意外恢复事实型回复路径。
-
-模型只选择受控动作，不能生成自由正文或直接构造 transport 参数。`no_reply`、固定模板和 `human` 的状态变化由确定性代码执行；身份、金额、资格、额度、去重、暂停、授权和外部结果继续由台账保证。当前 Agent 开关为关闭；GET、构建、发布和服务重启都不会启动回复 worker。
+`scripts/run-auto-replies.py` 的旧 V1 可执行入口固定返回 `legacy_auto_reply_retired`。正式 IT 回复调用 `scripts/lib/reply_transport.py`；人工与 V2 Agent 共用同一个持久意图和回查实现，旧入口只保留兼容导入供历史测试读取。
 
 ### 5.5.1 多轮回复 V2（2026-09-23）
 
-上述五动作/固定模板是历史 V1 合同。V2 的生效指南来自 `config/agent-reply-guide-v2.txt` 或 append-only `agent_reply_guide_revision`；`agent_reply_v2.py` 从目标消息时刻以前的入站、已确认二发 episode 和已确认服务回复构建市场隔离上下文，编译完整提示词并通过现有 DeepSeek adapter 返回 `reply/no_reply/request_detail/handoff` 结构。校验消息证据、正文、等待和人工理由；模型输出只形成决策，不提供账号、PID 写入或 transport 参数。每次调用在 `agent_reply_decision_v2` 保留真实输入、输出/错误、指南版本、模型和关联 `service_reply`，失败最多三次，不把模型异常当作人工案件或发送成功。
+历史五动作/固定模板是 V1 合同。当前 V2 的生效指南来自 `config/agent-reply-guide-v2.txt` 或 append-only `agent_reply_guide_revision`；`agent_reply_v2.py` 从目标消息时刻以前的入站、已确认二发 episode 和已确认服务回复构建市场隔离上下文，编译完整提示词并通过现有 DeepSeek adapter 返回 `reply/no_reply/request_detail/handoff` 结构。校验消息证据、正文、等待和人工理由；模型输出只形成决策，不提供账号、PID 写入或 transport 参数。每次调用在 `agent_reply_decision_v2` 保留真实输入、输出/错误、指南版本、模型和关联 `service_reply`，失败最多三次，不把模型异常当作人工案件或发送成功。
 
-试聊由 `scripts/agent-replies.py simulate` 和 `/api/agent-replies` 调用相同提示词/模型与结构校验，上一轮 `request_detail` 的 `previousWaitFor` 随多轮试聊保留；仅持久化本机试验记录，平台写入为 0，不改真实 pending/case/control。`trace` 只返回本机已保存的输入、判断和关联发送 ID，不暴露密钥。BR/MY/UK 使用同市场账号的 `market_agent_reply.py` transport 与独立 worker 状态，正式发送经过该市场 Agent 页面首条验证→首条回执→页面继续三阶段；首条成功才发布 `agent_reply` 能力，外发 unknown 只回查原 `service_reply`。代码通路接通不等于三市场已经取得真实平台验收。已存的旧 `turn_review` 和固定模板可供历史追溯，不作为 V2 执行真值。
+试聊由 `scripts/agent-replies.py simulate` 和 `/api/agent-replies` 调用相同提示词/模型与结构校验，上一轮 `request_detail` 的 `previousWaitFor` 随多轮试聊保留；仅持久化本机试验记录，平台写入为 0，不改真实 pending/case/control。`trace` 只返回本机已保存的输入、判断和关联发送 ID，不暴露密钥。BR/MY/UK 使用同市场账号的 `market_agent_reply.py` transport 与独立 worker 状态，正式发送经过该市场 Agent 页面首条验证→首条回执→页面继续三阶段；首条成功才发布 `agent_reply` 能力，外发 unknown 只回查原 `service_reply`。代码通路接通不等于三市场已经取得真实平台验收；具体回执以当前交接与台账为准。已存的旧 `turn_review` 和固定模板可供历史追溯，不作为 V2 执行真值。
 
-正式 worker 在原 `15:00–16:00` 窗口调用 V2，重新核对最新 turn、pending/control revision、人工案件和消息上下文后，才使用 `AutoReplies.prepare_generated` 冻结唯一正文。`service_reply` 新 kind 分别为 `agent_generated_v2`、`agent_request_detail_v2`、`agent_handoff_v2`；仍走现有发送门禁、持久 request ref、accepted/unknown 原意图回查。澄清或联系方式确认送达后，pending 进入 `waiting_clarification/waiting_contact`，继续阻止二发；下一条若只是礼貌确认、尚未提供请求的信息，`no_reply` 仍维持原等待状态。人工交接先落 case/达人级锁，再准备唯一确认消息；接管后常规 AI 回复停止。`control_event` 保留两次唯一页面动作：`agent-v2-first-send` 启动首条真实回复验证，首条确认后 worker 停在 `pilot_complete_waiting_resume`；`agent-v2-full-run` 由用户检查回执后继续。普通 Agent 开关开启不绕过首次启动。由于新执行器尚未完成真实平台 canary，当前 durable Agent 开关保持关闭，开发与 Web 发布不自动恢复。
+正式 worker 在原 `15:00–16:00` 窗口调用 V2，重新核对最新 turn、pending/control revision、人工案件和消息上下文后，才使用 `AutoReplies.prepare_generated` 冻结唯一正文。`service_reply` 新 kind 分别为 `agent_generated_v2`、`agent_request_detail_v2`、`agent_handoff_v2`；仍走现有发送门禁、持久 request ref、accepted/unknown 原意图回查。澄清或联系方式确认送达后，pending 进入 `waiting_clarification/waiting_contact`，继续阻止二发；下一条若只是礼貌确认、尚未提供请求的信息，`no_reply` 仍维持原等待状态。人工交接先落 case/达人级锁，再准备唯一确认消息；接管后常规 AI 回复停止。`control_event` 保留两次唯一页面动作：`agent-v2-first-send` 启动首条真实回复验证，首条确认后 worker 停在 `pilot_complete_waiting_resume`；`agent-v2-full-run` 由用户检查回执后继续。普通 Agent 开关开启不绕过首次启动。各市场的实际 durable Agent 开关及首条验证阶段以本机台账为准；开发与 Web 发布不自动改变授权或恢复未完成回复。
 
 人工解除通过 `resolve_manual` 原子校验最新 turn、case/pending/control 与合作状态 revision，选择 `normal/paid/rejected` 并推进 cursor。普通完成解除人工锁，仍需重新经过完整二发门禁；`paid/rejected` 保留普通二发排除。带 request ID 的重复提交幂等，外部写入数为 0。当前会话队列统一为 `human/agent/waiting/completed/all`，其中等待达人补充单列，已处理 Agent 回复归本轮已结束；待办时长只用于未处理事项。
 
@@ -281,11 +275,13 @@ Agent 与二发没有优先级关系，只有互斥窗口：默认北京时间 `
 | `var/it-conversations.sqlite` | IT/ACC6 会话索引 |
 | `var/matching*.sqlite` | 已退出生产构建的独立匹配研究历史数据；仍纳入备份 |
 
-新增当前投影：`catalog-links.sqlite.catalog_current_binding*` 保存唯一标准卡；`second-cycle.sqlite.lead_query_*` 保存每 PID 当前 A 类范围，`source_edge_index` 为历史证据保存数值 GMV、币种及规范化索引；`kalodata_video_run/evidence/head` 保存完整视频证据，`kalodata_video_generation/scan_job/scan_page/scan_item` 保存全量 B 类断点，`kalodata_video_author_cache` 避免重复查作者，`video_lead_current` 保存每个达人×PID最高单条视频；`workflow_*` 保存自动主链的 run/stage/generation/checkpoint；`account_identity_generation/account_maintenance_intent/account_capability_observation` 保存账号身份代次；`creator_collaboration_*` 保存四态合作投影；`continuous_send_*` 保存持续发送控制与运行状态；`taplink_reconcile_attempt` 保存 unknown 批后只读轮询。`cycle_bulk*`、原准备记录、page receipt、`source_edge`、已发送记录和旧回复评估都不删除。
+新增当前投影：`catalog-links.sqlite.catalog_current_binding*` 保存唯一标准卡；`second-cycle.sqlite.lead_query_*` 保存每 PID 当前 A 类范围，`kalodata-leads*.sqlite.leads_page_scope` 保存市场与查询窗口绑定的分页回执、`leads_page_legacy_history` 保留被替换的旧回执，`source_edge_index` 为历史证据保存数值 GMV、币种及规范化索引；`kalodata_video_run/evidence/head` 保存完整视频证据，`kalodata_video_generation/scan_job/scan_page/scan_item` 保存全量 B 类断点，`kalodata_video_author_cache` 避免重复查作者，`video_lead_current` 保存每个达人×PID最高单条视频；`workflow_*` 保存自动主链的 run/stage/generation/checkpoint；`account_identity_generation/account_maintenance_intent/account_capability_observation` 保存账号身份代次；`creator_collaboration_*` 保存四态合作投影；`continuous_send_*` 保存持续发送控制与运行状态；`taplink_reconcile_attempt` 保存 unknown 批后只读轮询。`cycle_bulk*`、原准备记录、page receipt、`source_edge`、已发送记录和旧回复评估都不删除。
 
 `scripts/lib/schema_migrations.py` 当前以增量 registry 管理 `catalog-links.sqlite` 和 `second-cycle.sqlite`；自动工作流、账号身份与合作/持续发送分别使用 v11、v12、v13 三组 additive migration。其他历史表仍由各领域模块初始化。新增表/字段必须继续提供幂等升级和旧库兼容测试，不能靠删除本地 DB 重建。
 
 早期 `batch-tasks.sqlite` 与 `cycle_bulk*` 均为历史台账。Web 的旧任务、冻结、候补与 worker 唤醒入口已删除；历史数据库继续只读保留并纳入备份。当前发送只走 `continuous_send_control/runtime` 与不可变 `cycle_delivery`。
+
+活跃持续发送与市场 IM transport 从 `request_budget.py` 取得同账号请求预算，不再为限速导入历史 frozen 批次执行模块；`cycle_burst.py` 保留兼容导出供历史合同读取。Web 当前组件名为 `useContinuousSend` / `ContinuousSendPanel`，旧市场兼容路由仍指向同一持续发送页面。
 
 ### 6.2 状态原则
 
@@ -308,7 +304,7 @@ Agent 与二发没有优先级关系，只有互斥窗口：默认北京时间 `
 | `service_case` | `case_id, creator_id, action, state` | 聚合需处理的 turn、相关 episode/PID、人工原因和关闭证据 |
 | `reply_classification` | request ID、输入哈希、provider/model、政策版本、结构化输出 | 保存 DeepSeek/Jev 影子结果，不直接执行发送 |
 | `reply_review` | classification ID、revision、正误、正确动作、备注 | 旧 provider 级审核兼容记录，不再作为当前真值入口 |
-| `turn_review` | turn ID、revision、正确动作、备注 | 当前唯一人工真值；与 provider 解耦、append-only，可同时评估 DeepSeek/Jev |
+| `turn_review` | turn ID、revision、正确动作、备注 | 历史 V1 评测的人工真值；与 provider 解耦、append-only，不授权 V2 正式回复 |
 | `turn_review_application` | request ID、turn/review/control/pending revision、动作和结果 | 用户单独确认后把真值映射到当前案件；不可变、幂等、平台写入固定为 0 |
 | `review_reply_candidate` | turn/review revision、固定模板 key/text、状态 | 三种模板动作只形成 `reviewed_ready` 候选，保持达人冻结，不发送 |
 | `conversation_draft` | `plan_id, cid, revision` | 人工回复草稿；乐观 revision 防止覆盖另一窗口的更新 |
@@ -367,7 +363,7 @@ pending → started/submitted → confirmed
 | `/api/workflow` | workflow 状态、立即运行与安全停止 |
 | `/api/send` | 持续发送设置、发送/停止、unknown 原意图核验和进程状态 |
 | `/api/template-library` | 二发模板、人工模板、Agent 固定模板和互斥窗口；所有 mutation 使用字段白名单与 revision |
-| `/api/conversations` | 待人工/AI 待处理/待达人补充/本轮已结束互斥队列、会话详情、原文中译、草稿、人工文本/商品卡与手动解除接管；图片发送入口当前明确禁用 |
+| `/api/conversations` | 待人工/AI 待处理/待达人补充/本轮已结束互斥队列、会话详情、原文中译、草稿、人工文本/商品卡、原人工 unknown 意图只读核验与手动解除接管；图片发送入口当前明确禁用 |
 | `/api/agent-replies` | 当前模型/endpoint/指南/编译提示词只读状态、指南 revision 保存、多轮试聊、历史 turn 影子重放与本机调用记录；无平台发送命令 |
 | `/api/reply-review` | 事件级样本、双模型影子分类、turn 标准动作和受控案件应用；无发送动作 |
 | `/api/inbox` | 收信 worker、今日/最近 14 日统计、可分页日明细和待人工 |
@@ -418,10 +414,10 @@ Web 不再构建 `/flow-demo`、浏览器演示页、旧 local runtime、second-
 | `config/identity-run.json` | OECID 批大小和 cohort |
 | `config/link-prepare*.json` | 链接读取/创建运行参数 |
 | `config/send-batch.json` | 历史默认模板/窗口兼容输入；当前执行设置发布到 `continuous_send_control` |
-| `config/reply-policy.json` | 五种回复动作和三条 Agent 固定模板；不保存人工或二发自定义模板 |
+| `config/reply-policy.json` | 历史 V1 五动作及固定模板兼容输入；当前 V2 使用版本化回复指南 |
 | `config/state-backup.json` | 当前 SQLite 明确清单与历史快照排除规则 |
 | `config/typesafe.example.json` / 本机 `config/typesafe.json` | TypeSafe 官方 endpoint、固定 Jev 模型和本机 API key；真实文件 0600 且不入 Git |
-| `config/jobs.json` | 十个真实运营作业的北京时间；Agent 独立开关保留在作业页 |
+| `config/jobs.json` | 共享供给作业的北京时间；Agent/持续发送窗口从当前市场持久设置读取，不通过此文件修改 |
 | `config/operations-policy.json` | Campaign 2 天 cadence、全托 30 天类目刷新、Kalodata 双市场上限和二发模板审核下限 |
 | `config/market-accounts.json` | 市场账号固定角色、项目身份权威和维护目标 |
 | `config/markets.json` | 14 市场 key、运行状态、已核实 locale/currency/timezone/账号与 Campaign/全托能力；未知值保持 `null` |
@@ -431,7 +427,7 @@ Web 不再构建 `/flow-demo`、浏览器演示页、旧 local runtime、second-
 
 业务配置不得另建第二来源。敏感配置、邮箱、激活码、Cookie 和身份文件不入 Git。
 
-回复政策由 `config/reply-policy.json` 固定五种动作和初始模板；`agent_reply_template*` 保存三条正文 revision，`agent_reply_setting` 保存开关、回复时间和缓冲，`continuous_send_control` 保存二发窗口与模板。最终正文冻结在 `service_reply` 或 `cycle_delivery`；provider 连接配置继续只放本机敏感配置。
+历史 V1 回复政策保留在 `config/reply-policy.json` 与 `agent_reply_template*`；当前 V2 使用 `config/agent-reply-guide-v2.txt` / `agent_reply_guide_revision`。`agent_reply_setting` 保存当前市场开关、回复时间和缓冲，`continuous_send_control` 保存本市场二发窗口与模板。最终正文冻结在 `service_reply` 或 `cycle_delivery`；provider 连接配置继续只放本机敏感配置。
 
 ## 11. 运行方式
 
@@ -526,6 +522,8 @@ PYTHONDONTWRITEBYTECODE=1 \
 
 `check` 均只读。正式应用依次执行 `migrate-agent.py apply`、两个 backfill 的 `apply`；它们只修改本机 SQLite，不调用平台。应用前使用 SQLite backup API 备份三个相关数据库。
 
+Kalodata 分页回执的四市场增量升级单独使用 `scripts/migrate-lead-receipts.py check|apply`。`check` 只读且缺表时返回非零；`apply` 只对已存在的市场线索库增加 scoped/历史回执表，不调用平台，也不创建缺失的业务数据库。**先创建并验证在线备份，再执行 `apply`**；未升级的旧库由 `Ledger` 以 `leads_receipt_scope_migration_required` 拒绝运行，避免后台脚本首次启动时隐式改表。本机 2026-09-23 已完成四市场应用，当前状态仍应以 `check` 回读为准。
+
 ## 12. 测试与验证
 
 ### Python
@@ -590,15 +588,15 @@ PYTHONDONTWRITEBYTECODE=1 \
 
 - 当前增量 migration registry 只覆盖 `catalog-links.sqlite` 和 `second-cycle.sqlite` 的本轮新投影；其他 SQLite schema 仍分散在领域模块。
 - 历史 `batch-tasks.sqlite` 曾有长事务；当前 UI 已停止唤醒旧准备 worker。若未来为迁移/追溯再次运行它，仍需先完成事务/WAL 与恢复语义验证。
-- Python 全量测试夹具已显式关闭 SQLite connection；`-W default` 下 1081 项通过且未关闭数据库 `ResourceWarning` 为 0。
+- Python 全量测试使用独立临时数据库；2026-09-23 本轮 1196 项通过。4 条 SQLite `ResourceWarning` 已定位为货盘状态读取和一处测试夹具将事务上下文误当成关闭连接，修复后 `-W default` 下为 0。
 - Web package 已显式声明 ESM，Node 测试不再产生 module type warning；Next.js 构建仍有上游 `module.register()` deprecation warning。
 - 持续发送 start/stop、窗口等待、逐条不可变 delivery、跨日恢复和 unknown 原意图核验已接通；账号级平台日额度原生信号仍未取得，不能用本地 500 闸门冒充。
 - 历史 `cycle_bulk*` 只读保留用于追溯；旧 CLI 与动态选人回退均已退役，新执行不读取旧授权。
-- 35 条意大利 turn 已完成人工真值审核：DeepSeek 28/35（80.00%，误自动处理 2、误转人工 3），Jev 22/35（62.86%，误自动处理 3、误转人工 1）；双模型一致也仍有 2 条误自动处理。DeepSeek 暂作 Agent 分类器、Jev 保持 challenger，人工 `turn_review` 优先。真实回复 transport、持久意图和回查合同已经接入，但 Agent 设置仍为 `enabled=false`，本轮真实发送为 0；详细证据见 [最终人工评测](implementation/reply-model-evaluation-20260920.md)。
+- 历史 V1 的 35 条意大利 turn 人工评测、DeepSeek/Jev 同集结果见[最终人工评测](implementation/reply-model-evaluation-20260920.md)；该评测不代表当前 V2 的自动回复准确率或开关状态。
 - SQLite 备份、校验和空目录恢复工具已完成；当前首份基线仍只在本机，尚未配置异机副本、保留周期或自动调度。
 - 项目 Python 环境、依赖锁、协议源码和 IT/BR/MY/UK 八账号的新身份发布目录已独立；保存的登录账号密码仍只在运行时从旧账号配置只读使用，不复制进新仓库。其它市场仍需逐项迁移和验收。
 - 2026-09-21 起旧 BDHub 已将 ACC6/ACC9 停用并移出全部旧业务池。新项目的账号 overlay 只继承旧配置中的账号元数据与保存凭据读取能力；`enabled`、固定角色、业务池、profile/headers 和身份维护完全由新项目台账覆盖，避免旧项目停用状态反向关闭新项目。
-- vendored `pure_http_canary.py` 依赖同目录 `pure_http_runtime_manifest.json` 校验旧 `data/runtime` 的逐文件哈希；JSON 清单属于协议闭包，缺失时所有 OECID cohort 会在网络请求前以 manifest 无效失败。当前清单已随 vendor 提交，runtime/身份文件本身仍只读留在旧 BDHub。
+- vendored `pure_http_canary.py` 依赖同目录 `pure_http_runtime_manifest.json` 校验旧 `data/runtime` 的逐文件哈希；JSON 清单属于协议闭包。`scripts/vendor-legacy-bdhub.py --check` 用 `scripts/vendor-runtime/manifest.json` 核对源码、运行资源与本地补丁哈希，任一缺失/漂移返回非零。`--write` 只接受已审阅的上游版本与本地补丁，先在临时目录完整验证，再原子交换目标目录；旧 runtime/身份文件仍只读留在旧 BDHub。
 
 ## 15. 技术文档变更规则
 

@@ -2,7 +2,7 @@
 
 Next.js 16 / React 19 本机工作台，基于 TailAdmin Next.js Free。当前页面连接 `var/` 中的真实本地台账与 Python CLI；不同模块的外部能力边界不同，不能再把整个应用概括为“纯演示”或“全部生产可写”。
 
-真实发送仍暂停，AI 自动回复仍关闭。`/api/send` 支持预览、冻结、明确 start/stop 和原意图 unknown 核验；只有用户在冻结后点击“确认并开始”才启动发送 worker。
+`/api/send` 提供当前市场的持续发送控制、明确 start/stop 和原意图 unknown 核验；执行器逐达人保存不可变 delivery，旧冻结批次入口已退役。实际开关与 worker 状态以本机台账及当前交接为准；GET、普通参数保存、构建与重启不自行启动发送，真实执行仍通过页面动作与持久授权门禁。
 
 ## 运行
 
@@ -37,14 +37,16 @@ npm run build
 
 | 路由 | 当前用途 |
 | --- | --- |
-| `/it/workspace/send` | A/B 发送池、预览、冻结、明确启动、停止和 unknown 核验 |
+| `/it/workspace/send` | A/B 发送池、持续发送、明确启动、停止和原意图 unknown 核验 |
 | `/it/workspace/inbox` | 收信监控与人工事项 |
 | `/it/workspace/history` | 最近 14 日统计和只读日明细 |
 | `/it/catalog` | 全托/Campaign、筛分、标准 TapLink、A/B 线索和 OECID |
 | `/it/creators` | 稳定达人身份、别名与画像 |
 | `/ops/jobs` | 手动作业、材料周期、Kalodata 身份与命名设置 |
-| `/ops/accounts?market=it` | 意大利账号分工与能力证据，只读 |
-| `/ops/reply-evaluation` | DeepSeek/Jev 影子分类与人工真值；不发送 |
+| `/ops/accounts?market=it` | 当前市场账号分工、身份维护与能力证据 |
+| `/ops/reply-evaluation` | 历史 V1 DeepSeek/Jev 分类与人工真值追溯；不发送 |
+
+IT、BR、MY、UK 复用市场页面；当前回复执行使用多轮 V2，旧五动作与固定模板评测不作为 V2 执行真值。页面清单和业务规则以项目主文档为准。
 
 浏览器演示、`/flow-demo`、本地模拟器、旧二发预演/实测和 matching/outreach-drafts 页面已退出生产构建；对应 SQLite 仍作为历史数据保留并继续备份。产品规则见 [项目文档](../../docs/PROJECT.md)，实现结构见 [技术文档](../../docs/TECHNICAL.md)，动态运行状态见 [Codex 接管状态](../../docs/handoff/codex-takeover-20260919.md)。
 

@@ -1,6 +1,6 @@
 # 指定数量批次架构与实施蓝图
 
-> 当前实施说明（2026-09-20）：本文的“任意 N＋10% 候补”已接入当前 frozen-v2 发送台账。工作台旧 `batch-tasks.sqlite` 任务卡只读追溯，不再创建任务或唤醒旧 worker；新预览/冻结使用 send-preview v3，在不可变候选中区分 formal/reserve，unknown 不释放名额。两套并行任务真相源不再恢复。
+> 历史批次设计与实施记录：下文固定在 2026-09-20 的 frozen-v2 阶段。当前发送已改为持续发送和逐达人不可变 delivery，旧冻结入口已退役；`batch-tasks.sqlite` 与 `cycle_bulk*` 只保留结果追溯。本文不是恢复旧 worker、冻结批次或旧授权的操作指南。当前流程见[项目文档](../PROJECT.md)与[技术文档](../TECHNICAL.md)。
 
 当前产品基线：[项目文档](../PROJECT.md)。[旧 PRD](../PRD.md)保留 2026-09-13 批次需求细节；本轮实现与验证：[B.17](../implementation/batch-preparation-foundation-v2.md)。本架构覆盖旧的边发边补策略。本文“已实现”均注明是代码/本地验证还是平台验收，不把设计当运行事实。
 
