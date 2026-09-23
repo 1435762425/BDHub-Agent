@@ -2,6 +2,12 @@
 
 更新时间：2026-09-23（Asia/Shanghai）。本文件是当前开发交接入口；产品规则以 [项目文档](../PROJECT.md) 为准，技术结构以 [技术文档](../TECHNICAL.md) 为准。动态数量是本次只读快照，后续以 `var/` 台账和页面 API 回读为准。下方旧日期章节均为历史快照，不代表当前开关与数量。
 
+## 0AA. 2026-09-23 21:33 IT 普通全托周更恢复
+
+- 用户纠正前一轮范围：**只停 IT 按类目完整采集，普通全托周更必须接入**。原 `it-global-20260921-9bbc623e09e9` 继续 `stopped/operator_stopped_category_collection`，旧完整 head `it-global-cat-20260921-01` 不变。先尝试按既有入口修复原普通 run `it-global-20260923-235726fa0695`（10,000行/9,998唯一PID）；备份 `var/backups/state/global-source-before-it-plain-repair-20260923T1327Z.sqlite` integrity ok。原页邻域复读第60页保持无新增，下一页因平台实时列表漂移会使合并唯一 PID 超过原 reported total，合同以 `query_repair_union_exceeds_total` 拒绝；原 run 仍 `partial`、旧 head 不被半成品替换，不重复强行结算。
+- 已把 IT 全托模式改为**每周普通查询**：`full_catalog_collection_mode()` 对 IT 固定 `plain`，没有已发布类目基线时报错；IT CLI 拒绝新的 `--by-category`，scheduler 不续跑 IT 类目 `collecting` run，UK 类目策略不变。首页开关文案已调整。Python全量1,153项、Web164项、TypeScript和Next构建通过。本机第二周期库备份 `var/backups/state/second-cycle-before-it-plain-weekly-enable-20260923T1330Z.sqlite` integrity ok 后，IT `fullCatalogWeeklyEnabled` 从revision3恢复为revision4/true，自动运营仍开启；新 scheduler PID3002 和Web PID3257加载本轮代码，`/api/operations-home?market=it` 回读开关正确。
+- 到期调度只创建 `selected` 来源 workflow `workflow-9285ce7cb0c7427f9e13c0a67389`。TapLink清理前置已完成，当前 catalog 阶段 `collect-global-opportunity.py --run-id it-global-20260923-0537c0e0577f --pages 40 --worker` **没有 `--by-category`**；21:33 只读 source 为普通模式、63页/945唯一PID、reported total 10,000，原完整 head 仍服务。当前仅能证明正常普通采集启动，发布、选入、标准 TapLink 和下游必须等阶段真实完成。旧 Campaign-only workflow 的 Kalodata 视频阶段另因 `kalodata_video_author_missing` 保持 `needs_human`，原断点保留，不将其误报为新普通周更故障。
+
 ## 0Y. 2026-09-23 21:13 IT TapLink 完成，Kalodata 原阶段续跑
 
 - 原 IT Campaign-only run `workflow-038da43ec820264f5b155e183fdd` 的 `taplink_prepare` 已完成，准备 run 587/587 条全部 `ready`，阶段记录377次平台写入；没有把此前 `needs_human` 的零写入改写成既成事实。下游 `kalodata` 首试在0.1秒内 `kalodata-sales_failed`、处理0、阶段写入0；根因为 scheduler 对要求必填 `--market` 的 `leads-run.py` 漏传 IT 市场。原 `var/leads-run.json` 最后修改时间早于此次阶段启动，证明该 CLI 未进入其首个运行状态写入或平台读取。另提前修复同样必填参数的 `lead-pool.py`，避免末阶段再次停住。

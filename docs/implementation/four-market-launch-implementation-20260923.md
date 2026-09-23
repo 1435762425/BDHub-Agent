@@ -78,6 +78,11 @@
 
 - 四市场 `/api/send` 均已回读 `waiting_capacity`、本地滚动24小时新联系 `500/500`；发送worker、四市场收信及 scheduler 仍存活。最早本地额度释放分别是北京时间2026-09-24 IT16:30:07、BR16:30:31、MY16:34:01、UK16:30:11。到时仍须核对发送窗口、原冻结意图、关系/材料和平台额度；不是预告平台一定接受发送。IT有2条隔离未决建会话原意图，其他三个市场当前发送unknown0。30位/分钟**每市场**目标仍未完成，下一窗口按真实文字回查的完整分钟重新测量。
 
+## 21:33 用户纠正 IT 全托范围：普通周更继续
+
+- 用户明确只取消 IT 按类目的完整全托采集，普通全托采集必须继续。原停止的类目 run 与旧完整覆盖基线保持不变。原普通 run `it-global-20260923-235726fa0695` 为10,000平台行/9,998唯一PID；在线备份 `var/backups/state/global-source-before-it-plain-repair-20260923T1327Z.sqlite` integrity ok 后对两个重复页附近按原请求复读。第60页无新增，下一页因平台实时排序漂移会使合并唯一数超过原 reported total，确定性合同拒绝 `query_repair_union_exceeds_total`；原 run 继续 `partial`，没有用不同时间的页面伪造完整。
+- IT 的每周全托模式改为只选普通查询，缺已发布类目基线时明确失败；IT CLI 阻止新 `--by-category`，调度器不自动续跑 IT 类目 `collecting` run。`fullCatalogWeeklyEnabled` 在本机备份 `var/backups/state/second-cycle-before-it-plain-weekly-enable-20260923T1330Z.sqlite` integrity ok 后从revision3恢复为revision4/true，自动运营保持开启。到期调度新建仅含 `selected` 来源的 workflow `workflow-9285ce7cb0c7427f9e13c0a67389`，前置清理后实际以无 `--by-category` 的命令启动普通 run `it-global-20260923-0537c0e0577f`。21:33 为63页/945唯一PID，旧完整 head 未替换；发布和后续选入/建链待真实收口。页面文案、API和新Web实例已回读；Python全量1,153、Web164、TypeScript/构建通过。
+
 ## 21:13 IT TapLink 完成及 Kalodata 预检故障修复
 
 - 原 Campaign-only 工作流的 `taplink_prepare` 已完成，587个准备项全部 `ready`，阶段记录377次平台写入。随后 `kalodata` 在0.1秒内以 `kalodata-sales_failed` 停住，处理数和阶段写入均为0。根因是调度器调用要求必填 `--market` 的 `leads-run.py` 时对 IT 省略参数；旧 `leads-run.json` 的修改时间早于该阶段，CLI 没有进入首个状态写入或平台读取。同步修正 `lead-pool.py status` 的同类 IT 参数缺口。
