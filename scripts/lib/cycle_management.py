@@ -10,7 +10,7 @@ def sync_full_managed(cycle_path,source_path,expected_scope):
         p=cycle.db.execute("SELECT id FROM plan WHERE institution='bjn-local-research' AND market=?",(expected_scope['market'],)).fetchone()
         if not p:raise ValueError('management_plan_missing')
         count=0
-        for head in source.execute("SELECT r.* FROM global_source_head h JOIN global_source_run r ON r.id=h.run_id WHERE r.state='completed' AND r.identity_unchanged=1"):
+        for head in source.execute("SELECT r.* FROM global_source_head h JOIN global_source_run r ON r.id=h.run_id WHERE r.state IN ('completed','accepted_partial') AND r.identity_unchanged=1"):
             scope=json.loads(head['scope'])
             if any(scope.get(k)!=v for k,v in expected_scope.items()):continue
             if scope.get('source')!=SOURCE or scope.get('filter')!=FILTER:raise ValueError('management_source_mismatch')

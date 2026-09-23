@@ -2,6 +2,7 @@ import importlib.util
 import sqlite3
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 ROOT=Path(__file__).resolve().parents[1]
@@ -35,6 +36,22 @@ class PublishedScreenTests(unittest.TestCase):
     foreign=MODULE.published_screen('br')
     self.assertEqual(foreign['reason'],'snapshot_missing')
    db.close()
+
+ def test_category_reference_stays_inside_current_source_lineage(self):
+  with sqlite3.connect(':memory:') as db:
+   db.executescript('''CREATE TABLE global_source_head(scope_hash TEXT,run_id TEXT);
+    CREATE TABLE global_source_run(id TEXT,scope TEXT,scope_hash TEXT,state TEXT,created REAL,updated REAL,identity_unchanged INTEGER);
+    CREATE TABLE global_source_partition(run_id TEXT,page_count INTEGER,state TEXT);
+    CREATE TABLE global_source_product(run_id TEXT,pid TEXT);''')
+   db.executemany('INSERT INTO global_source_run VALUES(?,?,?,?,?,?,1)',[
+    ('current','{"market":"uk"}','institution-a','completed',30,30),
+    ('category-a','{"market":"uk","partitionMode":"category_l1_v1"}','institution-a','accepted_partial',10,10),
+    ('category-b','{"market":"uk","partitionMode":"category_l1_v1"}','institution-b','completed',20,20)])
+   db.execute("INSERT INTO global_source_head VALUES('institution-a','current')")
+   db.executemany('INSERT INTO global_source_product VALUES(?,?)',[('category-a','1'),('category-b','2'),('category-b','3')])
+   db.execute("INSERT INTO global_source_partition VALUES('category-a',3,'completed')")
+   result=MODULE.category_snapshot(SimpleNamespace(db=db),'uk')
+   self.assertEqual((result['runId'],result['products'],result['pages']),('category-a',1,3))
 
 
 if __name__=='__main__':unittest.main()

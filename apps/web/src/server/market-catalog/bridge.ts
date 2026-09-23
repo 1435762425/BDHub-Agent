@@ -10,7 +10,9 @@ export type MarketCatalogState={
  capabilities:{campaignCatalog:boolean;fullManagedCatalog:boolean};account:string;
  accountCapabilities:Record<string,string>;campaign:Record<string,unknown>;
  screen:Record<string,unknown>;fullManaged:Record<string,unknown>;
- downstream:{leadEdges:number;identityResolved:number;deliveriesConfirmed:number;activeTapLinks:number};
+ downstream:{leadEdges:number;identityResolved:number;deliveriesConfirmed:number;activeTapLinks:number;
+  activeSelectedTapLinks:number;activeCampaignTapLinks:number;currentSelectedCatalogOffers:number|null;
+  currentLeadEdges:number|null;currentResolvedLeadEdges:number|null;currentResolvedCreators:number|null};
  readOnly:true;platformWrites:0;realSends:0;
 };
 export type MarketProductRow={
@@ -20,7 +22,7 @@ export type MarketProductRow={
  selectedOffers:Array<{creatorPercent:string|null;eligible:boolean}>;
 };
 export type MarketProductsState={
- market:string;availability:"ready"|"unsupported"|"unavailable";items:MarketProductRow[];
+ market:string;scope:"current"|"category"|"weekly";availability:"ready"|"unsupported"|"unavailable";items:MarketProductRow[];
  total:number;offset:number;limit:30;displayRunId:string;latestRunId:string;
  observedAt:number|null;readOnly:true;platformWrites:0;
 };
@@ -43,14 +45,15 @@ function validateCatalog(raw:unknown,market:string):MarketCatalogState{
   !cap||cap.campaignCatalog!==true||cap.fullManagedCatalog!==definition.capabilities.fullManagedCatalog||
   !value.accountCapabilities||typeof value.accountCapabilities!=="object"||!value.campaign||typeof value.campaign!=="object"||
   !value.screen||typeof value.screen!=="object"||!value.fullManaged||typeof value.fullManaged!=="object"||!down||
-  ["leadEdges","identityResolved","deliveriesConfirmed","activeTapLinks"].some(key=>typeof down[key]!=="number"||!Number.isSafeInteger(down[key])||Number(down[key])<0)||
+  ["leadEdges","identityResolved","deliveriesConfirmed","activeTapLinks","activeSelectedTapLinks","activeCampaignTapLinks"].some(key=>typeof down[key]!=="number"||!Number.isSafeInteger(down[key])||Number(down[key])<0)||
+  ["currentSelectedCatalogOffers","currentLeadEdges","currentResolvedLeadEdges","currentResolvedCreators"].some(key=>down[key]!==null&&(!Number.isSafeInteger(down[key])||Number(down[key])<0))||
   value.readOnly!==true||value.platformWrites!==0||value.realSends!==0)throw Error("market_catalog_invalid");
  return value as unknown as MarketCatalogState;
 }
-function validateProducts(raw:unknown,market:string):MarketProductsState{
+function validateProducts(raw:unknown,market:string,scope:MarketProductsState["scope"]):MarketProductsState{
  if(!raw||typeof raw!=="object"||Array.isArray(raw))throw Error("market_products_invalid");
  const value=raw as MarketProductsState;
- if(value.market!==market||value.availability!=="ready"||!Array.isArray(value.items)||value.items.length>30||
+ if(value.market!==market||value.scope!==scope||value.availability!=="ready"||!Array.isArray(value.items)||value.items.length>30||
   !Number.isSafeInteger(value.total)||value.total<0||!Number.isSafeInteger(value.offset)||value.offset<0||
   value.limit!==30||typeof value.displayRunId!=="string"||!value.displayRunId||
   typeof value.latestRunId!=="string"||!value.latestRunId||value.readOnly!==true||value.platformWrites!==0||
@@ -70,29 +73,31 @@ function project(market:string){
   {cwd:root,timeout:60_000,maxBuffer:1024*1024,env:{...process.env,PYTHONDONTWRITEBYTECODE:"1"}},
   error=>error?reject(Error("market_catalog_projection_failed")):resolve()));
 }
-export function readProducts(market:string,offset:number,query:string){
- return run("market-catalog-status.py",["products","--market",market,"--offset",String(offset),"--query",query],market,validateProducts,20_000);
+export function readProducts(market:string,offset:number,query:string,scope:MarketProductsState["scope"]="current"){
+ return run("market-catalog-status.py",["products","--market",market,"--offset",String(offset),"--query",query,"--snapshot",scope],market,(raw,selected)=>validateProducts(raw,selected,scope),20_000);
 }
 async function get(request:Request){
  if(!isLocalRequest(request,false))return Response.json({error:"local_origin_required"},{status:403,headers});
  const url=new URL(request.url),params=url.searchParams;
  let market:string;
  try{
-  if(params.getAll("market").length!==1||[...params.keys()].some(key=>!["market","view","offset","q"].includes(key)))throw Error();
+  if(params.getAll("market").length!==1||[...params.keys()].some(key=>!["market","view","offset","q","snapshot"].includes(key)))throw Error();
   market=cleanMarket(params.get("market"));
  }catch{return Response.json({error:"invalid_query"},{status:400,headers});}
  const view=params.get("view");
  if(view!==null&&view!=="products")return Response.json({error:"invalid_query"},{status:400,headers});
  if(view==="products"){
-  if(params.getAll("view").length!==1||params.getAll("offset").length>1||params.getAll("q").length>1)return Response.json({error:"invalid_query"},{status:400,headers});
+  if(params.getAll("view").length!==1||params.getAll("offset").length>1||params.getAll("q").length>1||params.getAll("snapshot").length>1)return Response.json({error:"invalid_query"},{status:400,headers});
+  const scope=params.get("snapshot")??"current";
+  if(scope!=="current"&&scope!=="category"&&scope!=="weekly")return Response.json({error:"invalid_query"},{status:400,headers});
   const definition=operationalMarket(market)!;
-  if(definition.capabilities.fullManagedCatalog!==true)return Response.json({market,availability:definition.capabilities.fullManagedCatalog===false?"unsupported":"unavailable",items:[],total:0,offset:0,limit:30,observedAt:null,readOnly:true,platformWrites:0},{headers});
+  if(definition.capabilities.fullManagedCatalog!==true)return Response.json({market,scope,availability:definition.capabilities.fullManagedCatalog===false?"unsupported":"unavailable",items:[],total:0,offset:0,limit:30,observedAt:null,readOnly:true,platformWrites:0},{headers});
   const rawOffset=params.get("offset")??"0",query=params.get("q")??"";
   if(!/^(0|[1-9][0-9]{0,6})$/.test(rawOffset)||Number(rawOffset)>1_000_000||query.length>100)return Response.json({error:"invalid_query"},{status:400,headers});
-  try{return Response.json(await readProducts(market,Number(rawOffset),query),{headers});}
+  try{return Response.json(await readProducts(market,Number(rawOffset),query,scope),{headers});}
   catch{return Response.json({error:"market_products_unavailable"},{status:503,headers});}
  }
- if(params.has("offset")||params.has("q"))return Response.json({error:"invalid_query"},{status:400,headers});
+ if(params.has("offset")||params.has("q")||params.has("snapshot"))return Response.json({error:"invalid_query"},{status:400,headers});
  try{return Response.json(await singleflight(`catalog:${market}`,()=>readModel(market).catch(()=>readCatalog(market))),{headers});}
  catch{return Response.json({error:"market_catalog_unavailable"},{status:503,headers});}
 }

@@ -277,7 +277,8 @@ class SubprocessStageExecutor:
                     if collection_mode['mode']=='category':collect.append('--by-category')
                     result=self._call(collect,'global-catalog')
                     if result['state']!='completed':return result
-                    if (result.get('payload') or {}).get('state')!='completed' or (result.get('payload') or {}).get('published') is not True:
+                    collected=result.get('payload') or {}
+                    if (collected.get('state')!='completed' and not (collected.get('state')=='accepted_partial' and collected.get('coverageOverlay'))) or collected.get('published') is not True:
                         return {**result,'state':'failed','complete':False,'errorCode':'global_catalog_not_published'}
                     result.setdefault('scope',{})['collectionMode']=collection_mode
                 outputs.append(result);count+=int((result.get('payload') or {}).get('products') or 0)

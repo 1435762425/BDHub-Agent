@@ -334,6 +334,25 @@ class StageWiring(unittest.TestCase):
             self.assertEqual(result['state'],'completed')
             self.assertIn('--market',calls[0][0]);self.assertNotIn('--by-category',calls[0][0])
 
+    def test_weekly_overlay_published_from_accepted_category_is_a_valid_catalog_generation(self):
+        def answers(args,_label):
+            if args[0]=='scripts/collect-global-opportunity.py':
+                payload={'state':'accepted_partial','published':True,'products':3,
+                         'coverageOverlay':{'baselineRunId':'base','refreshRunId':'weekly'}}
+            elif args[0]=='scripts/sync-cycle-catalog.py':payload={'status':'completed'}
+            elif args[1] in ('prepare','verify'):payload={'states':{'pending':0},'error':None}
+            elif args[1]=='execute-fast':payload={'states':{'pending':0},'error':None}
+            else:payload={}
+            return {'state':'completed','itemCount':3,'complete':True,'platformWrites':0,'payload':payload}
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder);(root/'var').mkdir();(root/'config').mkdir()
+            (root/'config/operations-policy.json').write_text((ROOT/'config/operations-policy.json').read_text())
+            executor=SubprocessStageExecutor(root);calls=[]
+            executor._call=lambda args,label,timeout=14400:(calls.append(args) or answers(args,label))
+            result=executor.execute(None,{'runId':'workflow-uk-overlay','market':'uk','applicableSources':['selected']},'catalog',{'jobs':{}})
+            self.assertEqual(result['state'],'completed')
+            self.assertTrue(any(args[0]=='scripts/collect-global-opportunity.py' for args in calls))
+
     def test_category_refresh_returns_after_thirty_days(self):
         with tempfile.TemporaryDirectory() as folder:
             root=Path(folder);(root/'var').mkdir();(root/'config').mkdir()
@@ -342,6 +361,7 @@ class StageWiring(unittest.TestCase):
                 db.executescript('CREATE TABLE global_source_run(id TEXT,scope TEXT,state TEXT,updated REAL,identity_unchanged INTEGER);'
                   'CREATE TABLE global_source_operator_acceptance(run_id TEXT,accepted_at REAL);')
                 db.execute("INSERT INTO global_source_run VALUES('r',?,'completed',?,1)",(json.dumps({'market':'uk','partitionMode':'category_l1_v1'}),NOW-31*86400))
+                db.execute("INSERT INTO global_source_run VALUES('overlay',?,'completed',?,1)",(json.dumps({'market':'uk','partitionMode':'category_l1_v1','coverageOverlay':{'baselineRunId':'r'}}),NOW))
             self.assertEqual(full_catalog_collection_mode(root,'uk',NOW)['mode'],'category')
 
     def test_category_history_read_failure_never_defaults_to_an_expensive_category_crawl(self):

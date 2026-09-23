@@ -16,8 +16,20 @@ test("every active market GET rejects a missing market before invoking its backe
 test("unsupported full-managed market reports an empty state without running the catalog CLI",async()=>{
  const {GET}=await import("../src/app/api/market-catalog/route.ts");
  for(const market of ["br","my"]){
-  const response=await GET(new Request(`http://127.0.0.1:5198/api/market-catalog?market=${market}&view=products`,{headers:{host:"127.0.0.1:5198"}}));
-  assert.equal(response.status,200);
-  assert.deepEqual(await response.json(),{market,availability:"unsupported",items:[],total:0,offset:0,limit:30,observedAt:null,readOnly:true,platformWrites:0});
+  for(const scope of ["current","category","weekly"]){
+   const response=await GET(new Request(`http://127.0.0.1:5198/api/market-catalog?market=${market}&view=products&snapshot=${scope}`,{headers:{host:"127.0.0.1:5198"}}));
+   assert.equal(response.status,200);
+   assert.deepEqual(await response.json(),{market,scope,availability:"unsupported",items:[],total:0,offset:0,limit:30,observedAt:null,readOnly:true,platformWrites:0});
+  }
  }
+});
+
+test("catalog product snapshot selectors are exact and never reach a fallback market",async()=>{
+ const {GET}=await import("../src/app/api/market-catalog/route.ts");
+ for(const suffix of ["&snapshot=unknown","&snapshot=category&snapshot=weekly"]){
+  const response=await GET(new Request(`http://127.0.0.1:5198/api/market-catalog?market=uk&view=products${suffix}`,{headers:{host:"127.0.0.1:5198"}}));
+  assert.equal(response.status,400);
+ }
+ const summary=await GET(new Request("http://127.0.0.1:5198/api/market-catalog?market=uk&snapshot=weekly",{headers:{host:"127.0.0.1:5198"}}));
+ assert.equal(summary.status,400);
 });

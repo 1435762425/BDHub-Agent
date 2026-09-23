@@ -50,6 +50,7 @@ def full_catalog_collection_mode(root, market, now, *, policy=None):
                    LEFT JOIN global_source_operator_acceptance a ON a.run_id=r.id
                    WHERE json_extract(r.scope,'$.market')=?
                      AND json_extract(r.scope,'$.partitionMode')='category_l1_v1'
+                     AND json_extract(r.scope,'$.coverageOverlay') IS NULL
                      AND r.state IN ('completed','accepted_partial') AND r.identity_unchanged=1""",
                 (market,),
             ).fetchone()

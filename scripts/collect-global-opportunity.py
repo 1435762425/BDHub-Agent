@@ -135,10 +135,15 @@ def main():
     for _ in range(5 if busy else 2):
      if STOP:break
      time.sleep(1)
-   if s.status(a.run_id)['published'] and not a.audit_store:
+   observed=s.status(a.run_id);active=(observed.get('activePublished') or {}).get('id')
+   effective_run=a.run_id if observed['published'] else None
+   if active and active!=a.run_id:
+    overlay=s.get(active)['scope'].get('coverageOverlay') or {}
+    if overlay.get('refreshRunId')==a.run_id:effective_run=active
+   if effective_run and not a.audit_store:
     from lib.cycle_management import sync_full_managed
     sync_full_managed(ROOT/'var/second-cycle.sqlite',db,scope)
-   final=s.status(a.run_id)
+   final=s.status(effective_run or a.run_id)
    if not a.audit_store and final['state']!='collecting':
     # Screen at collection. This is the fixed step once a collection turn stops reading: it
     # applies the operator's thresholds to the listings already stored and records one decision
@@ -146,10 +151,11 @@ def main():
     # not cast doubt on a collection that already succeeded -- so it is reported, not raised.
     try:
      from lib.global_screen import screen_source
-     detail=screen_source(db,a.run_id,root=ROOT)
+     detail=screen_source(db,effective_run or a.run_id,root=ROOT)
      report['screen']={'runId':detail['runId'],'counts':detail['counts'],'reasons':detail['reasons']}
     except Exception as e:
      report['screen']={'error':str(e) if isinstance(e,ValueError) else type(e).__name__}
+    report['status']=final
     runtime_path.write_text(json.dumps(report,ensure_ascii=False,indent=2))
     print(json.dumps({'screen':report['screen']},ensure_ascii=False),flush=True)
    print(json.dumps(final,ensure_ascii=False),flush=True)

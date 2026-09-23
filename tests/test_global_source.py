@@ -166,4 +166,46 @@ class SourceTests(unittest.TestCase):
   self.assertTrue(status['published']);self.assertEqual(status['activePublished']['id'],'accepted')
   self.assertEqual(status['categoriesCompleted'],1);self.assertEqual(status['categoryCount'],2)
   self.assertEqual(self.s.accept_partial_snapshot('accepted')['action'],'accept_partial_snapshot')
+ def test_weekly_plain_refresh_overlays_only_existing_category_pids(self):
+  self.s.blocked('one','fixture_end')
+  categories=[{'category_id':'600001','name':'家居用品','is_leaf':False},
+              {'category_id':'600002','name':'玩具','is_leaf':False}]
+  self.s.start_partitioned('base',self.scope,categories);self.s.next_partition('base')
+  self.s.partition_page('base','600001',1,page([1,2],False,2),request_payload=list_request(1,category_id='600001'))
+  self.s.next_partition('base')
+  self.s.partition_page('base','600002',1,page([3],True,2),request_payload=list_request(1,category_id='600002'))
+  self.s.finish_session('base',True);self.s.accept_partial_snapshot('base')
+  self.now+=10;self.s.start('weekly',self.scope)
+  fresh=page([2,4]);fresh['products'][0]['title']='Updated product'
+  self.s.page('weekly',1,fresh);self.s.finish_session('weekly',True)
+  current=self.s.status();overlay=current['coverageOverlay']
+  self.assertEqual((current['products'],current['state'],current['coverage']),(3,'accepted_partial','operator_accepted_partial'))
+  self.assertEqual((overlay['baselineRunId'],overlay['overlapProducts'],overlay['refreshOutsideCoverage']),('base',1,1))
+  self.assertEqual((current['categoryCount'],current['categoriesCompleted']),(2,1))
+  products={row['pid']:row for row in self.s.products(limit=10)['items']}
+  self.assertEqual(set(products),{product(n)['product_id'] for n in (1,2,3)})
+  self.assertEqual(products[product(2)['product_id']]['title'],'Updated product')
+  self.assertFalse(self.s.status('weekly')['published'])
+  self.now+=10;self.s.start('weekly2',self.scope)
+  self.s.page('weekly2',1,page([3,5]));self.s.finish_session('weekly2',True)
+  second=self.s.status();self.assertEqual(second['products'],3)
+  self.assertEqual(second['coverageOverlay']['baselineRunId'],'base')
+  self.assertEqual(second['coverageOverlay']['refreshOutsideCoverage'],1)
+  self.assertEqual(self.s.reconcile_category_coverage('it',apply=True)['duplicate'],True)
+ def test_existing_plain_head_can_be_rebased_once_without_creating_products_outside_baseline(self):
+  self.s.blocked('one','fixture_end')
+  self.s.start_partitioned('base',self.scope,[{'category_id':'600001','name':'家居用品','is_leaf':False}]);self.s.next_partition('base')
+  self.s.partition_page('base','600001',1,page([1,2],False,2),request_payload=list_request(1,category_id='600001'))
+  self.s.finish_session('base',True)
+  self.now+=10;self.s.start('weekly',self.scope);self.s.page('weekly',1,page([2,3]))
+  # Reproduce a legacy publication where the bounded plain result replaced the category head.
+  with self.s.tx():
+   self.s.db.execute("UPDATE global_source_run SET identity_unchanged=1 WHERE id='weekly'")
+   self.s.db.execute("UPDATE global_source_head SET run_id='weekly'")
+  preview=self.s.reconcile_category_coverage('it')
+  self.assertEqual((preview['products'],preview['overlapProducts'],preview['refreshOutsideCoverage']),(2,1,1))
+  self.assertEqual(self.s.status()['id'],'weekly')
+  applied=self.s.reconcile_category_coverage('it',apply=True)
+  self.assertFalse(applied['duplicate']);self.assertEqual(self.s.status()['products'],2)
+  self.assertEqual(self.s.reconcile_category_coverage('it',apply=True)['runId'],applied['runId'])
 if __name__=='__main__':unittest.main()

@@ -420,8 +420,90 @@ class GlobalSources:
             if identity_unchanged is not True:
                 self.db.execute("UPDATE global_source_run SET state='blocked',terminal_reason='identity_changed' WHERE id=?",(id,));return
             if run['state']=='completed':
-                old=self.db.execute('SELECT r.created FROM global_source_head h JOIN global_source_run r ON r.id=h.run_id WHERE h.scope_hash=?',(run['scope_hash'],)).fetchone()
-                if not old or old[0]<run['created']:self.db.execute('INSERT INTO global_source_head VALUES(?,?) ON CONFLICT(scope_hash) DO UPDATE SET run_id=excluded.run_id',(run['scope_hash'],id))
+                old=self.db.execute('SELECT r.id,r.created,r.scope FROM global_source_head h JOIN global_source_run r ON r.id=h.run_id WHERE h.scope_hash=?',(run['scope_hash'],)).fetchone()
+                if not old or old['created']<run['created']:
+                    if old and run['scope'].get('partitionMode')!='category_l1_v1' and json.loads(old['scope']).get('partitionMode')=='category_l1_v1':
+                        self._publish_coverage_overlay_locked(old['id'],id)
+                    else:self.db.execute('INSERT INTO global_source_head VALUES(?,?) ON CONFLICT(scope_hash) DO UPDATE SET run_id=excluded.run_id',(run['scope_hash'],id))
+
+    def _publish_coverage_overlay_locked(self,baseline_id,refresh_id,*,allow_refresh_head=False):
+        """Publish only fresher rows whose PID already belongs to a category coverage baseline."""
+        baseline=self.get(baseline_id);refresh=self.get(refresh_id)
+        if baseline['scope_hash']!=refresh['scope_hash'] or baseline['scope']['market']!=refresh['scope']['market'] or \
+           baseline['scope'].get('partitionMode')!='category_l1_v1' or baseline['state'] not in ('completed','accepted_partial') or \
+           refresh['scope'].get('partitionMode')=='category_l1_v1' or refresh['state']!='completed' or \
+           not baseline['identity_unchanged'] or not refresh['identity_unchanged'] or baseline['created']>=refresh['created']:
+            raise GlobalSourceError('coverage_overlay_scope_invalid')
+        overlap=self.db.execute('''SELECT count(*) FROM global_source_product b JOIN global_source_product w
+          ON w.run_id=? AND w.pid=b.pid WHERE b.run_id=?''',(refresh_id,baseline_id)).fetchone()[0]
+        baseline_count=self.db.execute('SELECT count(*) FROM global_source_product WHERE run_id=?',(baseline_id,)).fetchone()[0]
+        refresh_count=self.db.execute('SELECT count(*) FROM global_source_product WHERE run_id=?',(refresh_id,)).fetchone()[0]
+        if not baseline_count or not refresh_count:raise GlobalSourceError('coverage_overlay_empty')
+        overlay_id='coverage-'+digest([baseline_id,refresh_id])[:28]
+        head=self.db.execute('SELECT run_id FROM global_source_head WHERE scope_hash=?',(baseline['scope_hash'],)).fetchone()
+        if not head or head[0] not in ({baseline_id,refresh_id} if allow_refresh_head else {baseline_id}):
+            if head and head[0]==overlay_id:return {'runId':overlay_id,'duplicate':True,'products':baseline_count,'overlapProducts':overlap,'refreshOutsideCoverage':refresh_count-overlap}
+            raise GlobalSourceError('coverage_overlay_head_changed')
+        if self.db.execute('SELECT 1 FROM global_source_run WHERE id=?',(overlay_id,)).fetchone():
+            raise GlobalSourceError('coverage_overlay_existing_run_without_head')
+        root_id=(baseline['scope'].get('coverageOverlay') or {}).get('baselineRunId') or baseline_id
+        overlay={'version':'category_weekly_overlap_v1','baselineRunId':root_id,
+                 'previousHeadRunId':baseline_id,'refreshRunId':refresh_id,
+                 'baselineProducts':baseline_count,'refreshProducts':refresh_count,
+                 'overlapProducts':overlap,'refreshOutsideCoverage':refresh_count-overlap}
+        stamp=max(self.clock(),refresh['created']+0.000001);scope=baseline['scope']|{'coverageOverlay':overlay}
+        self.db.execute('''INSERT INTO global_source_run(id,scope,scope_hash,state,next_page,reported_total,created,updated,terminal_reason,identity_unchanged)
+          VALUES(?,?,?,?,?,?,?,?,?,1)''',(overlay_id,encoded(scope),baseline['scope_hash'],baseline['state'],baseline['next_page'],
+          baseline['reported_total'],stamp,stamp,'weekly_overlap_overlay'))
+        self.db.execute('''INSERT INTO global_source_product(run_id,pid,payload,fingerprint,first_page,last_page,observed)
+          SELECT ?,b.pid,coalesce(w.payload,b.payload),coalesce(w.fingerprint,b.fingerprint),
+           b.first_page,b.last_page,coalesce(w.observed,b.observed)
+          FROM global_source_product b LEFT JOIN global_source_product w ON w.run_id=? AND w.pid=b.pid
+          WHERE b.run_id=?''',(overlay_id,refresh_id,baseline_id))
+        self.db.execute('''INSERT INTO global_source_partition
+          SELECT ?,category_id,category_name,position,state,next_page,reported_total,page_count,unique_count,
+           created,updated,terminal_reason FROM global_source_partition WHERE run_id=?''',(overlay_id,baseline_id))
+        self.db.execute('''INSERT INTO global_source_product_category
+          SELECT ?,pid,category_id,category_name,first_page,last_page,observed
+          FROM global_source_product_category WHERE run_id=?''',(overlay_id,baseline_id))
+        if baseline['state']=='accepted_partial':
+            acceptance=self.db.execute('SELECT * FROM global_source_operator_acceptance WHERE run_id=?',(baseline_id,)).fetchone()
+            if not acceptance:raise GlobalSourceError('coverage_overlay_acceptance_missing')
+            self.db.execute('''INSERT INTO global_source_operator_acceptance VALUES(?,?,?,?,?,?,?,?)''',
+              (overlay_id,'carry_accepted_partial_overlay',acceptance['accepted_at'],baseline_count,
+               acceptance['pages'],acceptance['categories_completed'],acceptance['category_count'],
+               'weekly_overlap_on_accepted_coverage'))
+        self.db.execute('UPDATE global_source_head SET run_id=? WHERE scope_hash=?',(overlay_id,baseline['scope_hash']))
+        return {'runId':overlay_id,'duplicate':False,'products':baseline_count,'overlapProducts':overlap,
+                'refreshOutsideCoverage':refresh_count-overlap}
+
+    def reconcile_category_coverage(self,market,*,apply=False):
+        """One-time recovery when a bounded plain run already replaced an accepted category head."""
+        if not isinstance(market,str) or not re.fullmatch(r'[a-z]{2}',market):raise GlobalSourceError('coverage_market_invalid')
+        head=self.db.execute('''SELECT r.id,r.scope,r.created FROM global_source_head h
+          JOIN global_source_run r ON r.id=h.run_id WHERE json_extract(r.scope,'$.market')=?''',(market,)).fetchone()
+        if not head:raise GlobalSourceError('coverage_head_missing')
+        current=json.loads(head['scope'])
+        if current.get('coverageOverlay'):
+            overlay=current['coverageOverlay']
+            return {'runId':head['id'],'duplicate':True,'products':overlay['baselineProducts'],
+                    'overlapProducts':overlay['overlapProducts'],'refreshOutsideCoverage':overlay['refreshOutsideCoverage']}
+        if current.get('partitionMode')=='category_l1_v1':raise GlobalSourceError('coverage_head_already_category')
+        baseline=self.db.execute('''SELECT id FROM global_source_run WHERE scope_hash=?
+          AND json_extract(scope,'$.partitionMode')='category_l1_v1'
+          AND json_extract(scope,'$.coverageOverlay') IS NULL
+          AND state IN ('completed','accepted_partial') AND identity_unchanged=1 AND created<?
+          ORDER BY created DESC LIMIT 1''',(self.get(head['id'])['scope_hash'],head['created'])).fetchone()
+        if not baseline:raise GlobalSourceError('coverage_baseline_missing')
+        if apply:
+            with self.tx():return self._publish_coverage_overlay_locked(baseline[0],head['id'],allow_refresh_head=True)
+        old=self.get(baseline[0]);new=self.get(head['id'])
+        overlap=self.db.execute('''SELECT count(*) FROM global_source_product b JOIN global_source_product w
+          ON w.run_id=? AND w.pid=b.pid WHERE b.run_id=?''',(new['id'],old['id'])).fetchone()[0]
+        base_count=self.db.execute('SELECT count(*) FROM global_source_product WHERE run_id=?',(old['id'],)).fetchone()[0]
+        fresh_count=self.db.execute('SELECT count(*) FROM global_source_product WHERE run_id=?',(new['id'],)).fetchone()[0]
+        return {'baselineRunId':old['id'],'refreshRunId':new['id'],'products':base_count,
+                'overlapProducts':overlap,'refreshOutsideCoverage':fresh_count-overlap,'apply':False}
     def blocked(self,id,code):
         if not re.fullmatch(r'[A-Za-z0-9_]{1,100}',code):code='source_read_failed'
         with self.tx():
@@ -489,4 +571,5 @@ class GlobalSources:
             'nextCategory':({'categoryId':next_partition['category_id'],'name':next_partition['category_name'],'state':next_partition['state'],'nextPage':next_partition['next_page']} if next_partition else None),
             'updatedAt':r['updated'],'elapsedSeconds':max(0,r['updated']-r['created']),
             'operatorAcceptance':dict(acceptance) if acceptance else None,
+            'coverageOverlay':r['scope'].get('coverageOverlay'),
             'listingOnly':True,'stockVerified':False,'stockRequired':False,'executionAllowed':False,'sample':[{'pid':x['pid'],'title':json.loads(x['payload']).get('title'),'listedSelected':json.loads(x['payload']).get('fs_is_selected')} for x in self.db.execute('SELECT pid,payload FROM global_source_product WHERE run_id=? ORDER BY first_page,pid LIMIT 6',(id,))]}
