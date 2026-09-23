@@ -35,7 +35,7 @@ def _trim(payload, sample):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('action', choices=['status', 'record'])
-    parser.add_argument('--market', default='it')
+    parser.add_argument('--market', required=True)
     parser.add_argument('--source', choices=SOURCES, default='campaign')
     # 页面只要摘要 + 少量样例：3000+ 条 offer 明细不进浏览器。
     parser.add_argument('--sample', type=int, default=0, help='附带前 N 个入池条目（0=不带明细）')

@@ -110,19 +110,19 @@ test('a run record whose config no longer validates still renders',()=>{
 });
 
 test('a stop request carries nothing but its intent',()=>{
- assert.deepEqual(validateIdentityQueueRequest({action:'stop'}),{action:'stop'});
+ assert.deepEqual(validateIdentityQueueRequest({action:'stop',market:'it'}),{action:'stop',market:'it'});
  const stopped=validateIdentityQueue(payload_paused());
  assert.equal(stopped.run.running,true);
  assert.equal(stopped.run.stopping,true);
 });
 
 test('saving the ceiling, starting and stopping are the only three requests',()=>{
- assert.deepEqual(validateIdentityQueueRequest({action:'save',config:{batchSize:100,cohortSize:10}}),
-  {action:'save',config:{batchSize:100,cohortSize:10}});
- assert.deepEqual(validateIdentityQueueRequest({action:'start',config:{batchSize:2000,cohortSize:20}}),
-  {action:'start',config:{batchSize:2000,cohortSize:20}});
- for(const bad of [{action:'start'},{action:'stop',config:{batchSize:1,cohortSize:1}},
-                   {action:'start',config:{batchSize:1,cohortSize:7}},null]){
+ assert.deepEqual(validateIdentityQueueRequest({action:'save',market:'it',config:{batchSize:100,cohortSize:10}}),
+  {action:'save',market:'it',config:{batchSize:100,cohortSize:10}});
+ assert.deepEqual(validateIdentityQueueRequest({action:'start',market:'it',config:{batchSize:2000,cohortSize:20}}),
+  {action:'start',market:'it',config:{batchSize:2000,cohortSize:20}});
+ for(const bad of [{action:'start'},{action:'stop',market:'it',config:{batchSize:1,cohortSize:1}},
+                   {action:'start',market:'it',config:{batchSize:1,cohortSize:7}},null]){
   assert.throws(()=>validateIdentityQueueRequest(bad),/invalid_identity_queue_request/);
  }
 });

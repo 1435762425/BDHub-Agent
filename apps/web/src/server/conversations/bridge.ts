@@ -14,14 +14,14 @@ export type CollaborationStatus="normal"|"collaborated"|"paid"|"rejected";
 export type ConversationDetail={available:true;conversationId:string;creator:{creatorId:string;oec:string;handle:string|null;mode:string;rejected:boolean;unlocked:boolean;revision:number;collaboration:{status:CollaborationStatus;source:"manual"|"auto";revision:number;updatedAt:number}};timeline:TimelineItem[];episodes:Array<{episodeId:string;pid:string;listId:string;sentAt:number}>;case:{id:string;reason:string;reasonLabel:string;createdAt:number;revision:number;virtual:boolean;turnId:string|null;pendingRevision:number}|null;metrics:CreatorMetrics;manualReply:{id:string;kind:"manual"|"manual_card";confirmedAt:number}|null;draft:{text:string;revision:number;updatedAt:number};manualTemplates:ManualTemplate[];platformWrites:0;realSends:0};
 
 export type ConversationCommand=
- | {action:"save_draft";cid:string;text:string;expectedRevision:number}
- | {action:"send_text";cid:string;text:string;expectedControlRevision:number;requestId:string}
- | {action:"send_card";cid:string;episodeId:string;expectedControlRevision:number;requestId:string}
- | {action:"complete_human";cid:string;turnId:string;expectedControlRevision:number;expectedPendingRevision:number;note:string}
- | {action:"confirm_manual_reply";cid:string;caseId:string;turnId:string|null;virtual:boolean;expectedControlRevision:number;expectedPendingRevision:number}
- | {action:"reject_creator";cid:string;expectedControlRevision:number;requestId:string}
- | {action:"set_collaboration";cid:string;status:CollaborationStatus;expectedStatusRevision:number;expectedControlRevision:number;requestId:string}
- | {action:"translate";text:string;target:"it"|"zh"};
+ | {action:"save_draft";market:string;cid:string;text:string;expectedRevision:number}
+ | {action:"send_text";market:string;cid:string;text:string;expectedControlRevision:number;requestId:string}
+ | {action:"send_card";market:string;cid:string;episodeId:string;expectedControlRevision:number;requestId:string}
+ | {action:"complete_human";market:string;cid:string;turnId:string;expectedControlRevision:number;expectedPendingRevision:number;note:string}
+ | {action:"confirm_manual_reply";market:string;cid:string;caseId:string;turnId:string|null;virtual:boolean;expectedControlRevision:number;expectedPendingRevision:number}
+ | {action:"reject_creator";market:string;cid:string;expectedControlRevision:number;requestId:string}
+ | {action:"set_collaboration";market:string;cid:string;status:CollaborationStatus;expectedStatusRevision:number;expectedControlRevision:number;requestId:string}
+ | {action:"translate";market:string;text:string;target:string};
 
 function run(args:string[],stdin?:unknown,market="it"):Promise<unknown>{
  const root=projectRoot();
@@ -91,29 +91,30 @@ export function validateConversationDetail(raw:unknown):ConversationDetail{
 export function validateConversationCommand(raw:unknown):ConversationCommand{
  if(!raw||typeof raw!=="object"||Array.isArray(raw))throw Error("invalid_conversation_request");
  const value=raw as Record<string,unknown>,action=value.action;
+ const market=()=>{const result=identifier(value.market,2),record=enabledMarket(result);if(!record)throw Error("invalid_conversation_request");return result;};
  const cid=()=>{const result=identifier(value.cid,40);if(!/^\d{1,40}$/.test(result))throw Error("invalid_conversation_request");return result;};
  const requestId=()=>{const result=identifier(value.requestId,120);if(!/^[A-Za-z0-9][A-Za-z0-9._:-]{7,119}$/.test(result))throw Error("invalid_conversation_request");return result;};
- if(action==="translate"){exact(value,["action","target","text"]);const body=text(value.text,4000);if(!body?.trim()||(value.target!=="it"&&value.target!=="zh"))throw Error("invalid_conversation_request");return {action,text:body,target:value.target};}
- if(action==="save_draft"){exact(value,["action","cid","expectedRevision","text"]);return {action,cid:cid(),text:text(value.text,4000)??"",expectedRevision:number(value.expectedRevision,1_000_000)};}
- if(action==="send_text"){exact(value,["action","cid","expectedControlRevision","requestId","text"]);const body=text(value.text,4000);const revision=number(value.expectedControlRevision,1_000_000);if(!body?.trim()||revision<1)throw Error("invalid_conversation_request");return {action,cid:cid(),text:body,expectedControlRevision:revision,requestId:requestId()};}
- if(action==="send_card"){exact(value,["action","cid","episodeId","expectedControlRevision","requestId"]);const episodeId=identifier(value.episodeId,40),revision=number(value.expectedControlRevision,1_000_000);if(!/^episode-[a-f0-9]{24}$/.test(episodeId)||revision<1)throw Error("invalid_conversation_request");return {action,cid:cid(),episodeId,expectedControlRevision:revision,requestId:requestId()};}
- if(action==="complete_human"){exact(value,["action","cid","expectedControlRevision","expectedPendingRevision","note","turnId"]);const turnId=identifier(value.turnId,40),control=number(value.expectedControlRevision,1_000_000),pending=number(value.expectedPendingRevision,1_000_000),note=text(value.note,4000);if(!/^turn-[a-f0-9]{24}$/.test(turnId)||control<1||pending<1||!note?.trim())throw Error("invalid_conversation_request");return {action,cid:cid(),turnId,expectedControlRevision:control,expectedPendingRevision:pending,note};}
- if(action==="confirm_manual_reply"){exact(value,["action","caseId","cid","expectedControlRevision","expectedPendingRevision","turnId","virtual"]);const caseId=identifier(value.caseId,80),control=number(value.expectedControlRevision,1_000_000),pending=number(value.expectedPendingRevision,1_000_000),turnId=text(value.turnId,40,true);if(typeof value.virtual!=="boolean"||control<1||pending<1||!/^case-[a-f0-9]{24}$|^review-[a-f0-9]{24}$/.test(caseId)||(value.virtual?!turnId?.match(/^turn-[a-f0-9]{24}$/):turnId!==null))throw Error("invalid_conversation_request");return {action,cid:cid(),caseId,turnId,virtual:value.virtual,expectedControlRevision:control,expectedPendingRevision:pending};}
- if(action==="reject_creator"){exact(value,["action","cid","expectedControlRevision","requestId"]);const control=number(value.expectedControlRevision,1_000_000);if(control<1)throw Error("invalid_conversation_request");return {action,cid:cid(),expectedControlRevision:control,requestId:requestId()};}
- if(action==="set_collaboration"){exact(value,["action","cid","expectedControlRevision","expectedStatusRevision","requestId","status"]);const control=number(value.expectedControlRevision,1_000_000),statusRevision=number(value.expectedStatusRevision,1_000_000);if(control<1||!["normal","collaborated","paid","rejected"].includes(String(value.status)))throw Error("invalid_conversation_request");return {action,cid:cid(),status:value.status as CollaborationStatus,expectedStatusRevision:statusRevision,expectedControlRevision:control,requestId:requestId()};}
+ if(action==="translate"){exact(value,["action","market","target","text"]);const body=text(value.text,4000),selected=market(),target=identifier(value.target,2),targetRecord=target==="zh"?null:enabledMarket(target);if(!body?.trim()||target!=="zh"&&(!targetRecord||!targetRecord.contentReady))throw Error("invalid_conversation_request");return {action,market:selected,text:body,target};}
+ if(action==="save_draft"){exact(value,["action","market","cid","expectedRevision","text"]);return {action,market:market(),cid:cid(),text:text(value.text,4000)??"",expectedRevision:number(value.expectedRevision,1_000_000)};}
+ if(action==="send_text"){exact(value,["action","market","cid","expectedControlRevision","requestId","text"]);const body=text(value.text,4000);const revision=number(value.expectedControlRevision,1_000_000);if(!body?.trim()||revision<1)throw Error("invalid_conversation_request");return {action,market:market(),cid:cid(),text:body,expectedControlRevision:revision,requestId:requestId()};}
+ if(action==="send_card"){exact(value,["action","market","cid","episodeId","expectedControlRevision","requestId"]);const episodeId=identifier(value.episodeId,40),revision=number(value.expectedControlRevision,1_000_000);if(!/^episode-[a-f0-9]{24}$/.test(episodeId)||revision<1)throw Error("invalid_conversation_request");return {action,market:market(),cid:cid(),episodeId,expectedControlRevision:revision,requestId:requestId()};}
+ if(action==="complete_human"){exact(value,["action","market","cid","expectedControlRevision","expectedPendingRevision","note","turnId"]);const turnId=identifier(value.turnId,40),control=number(value.expectedControlRevision,1_000_000),pending=number(value.expectedPendingRevision,1_000_000),note=text(value.note,4000);if(!/^turn-[a-f0-9]{24}$/.test(turnId)||control<1||pending<1||!note?.trim())throw Error("invalid_conversation_request");return {action,market:market(),cid:cid(),turnId,expectedControlRevision:control,expectedPendingRevision:pending,note};}
+ if(action==="confirm_manual_reply"){exact(value,["action","market","caseId","cid","expectedControlRevision","expectedPendingRevision","turnId","virtual"]);const caseId=identifier(value.caseId,80),control=number(value.expectedControlRevision,1_000_000),pending=number(value.expectedPendingRevision,1_000_000),turnId=text(value.turnId,40,true);if(typeof value.virtual!=="boolean"||control<1||pending<1||!/^case-[a-f0-9]{24}$|^review-[a-f0-9]{24}$/.test(caseId)||(value.virtual?!turnId?.match(/^turn-[a-f0-9]{24}$/):turnId!==null))throw Error("invalid_conversation_request");return {action,market:market(),cid:cid(),caseId,turnId,virtual:value.virtual,expectedControlRevision:control,expectedPendingRevision:pending};}
+ if(action==="reject_creator"){exact(value,["action","market","cid","expectedControlRevision","requestId"]);const control=number(value.expectedControlRevision,1_000_000);if(control<1)throw Error("invalid_conversation_request");return {action,market:market(),cid:cid(),expectedControlRevision:control,requestId:requestId()};}
+ if(action==="set_collaboration"){exact(value,["action","market","cid","expectedControlRevision","expectedStatusRevision","requestId","status"]);const control=number(value.expectedControlRevision,1_000_000),statusRevision=number(value.expectedStatusRevision,1_000_000);if(control<1||!["normal","collaborated","paid","rejected"].includes(String(value.status)))throw Error("invalid_conversation_request");return {action,market:market(),cid:cid(),status:value.status as CollaborationStatus,expectedStatusRevision:statusRevision,expectedControlRevision:control,requestId:requestId()};}
  throw Error("invalid_conversation_request");
 }
 
-export async function listConversations(view:ConversationView,query:string,limit:number,offset:number,market="it"){return validateConversationList(await run(["list","--view",view,"--query",query,"--limit",String(limit),"--offset",String(offset)],undefined,market));}
-export async function readConversation(cid:string,market="it"){return validateConversationDetail(await run(["detail","--cid",cid],undefined,market));}
-export function saveConversationDraft(cid:string,textValue:string,expectedRevision:number){return run(["save-draft","--cid",cid],{text:textValue,expectedRevision});}
-export function sendConversationText(cid:string,textValue:string,expectedControlRevision:number,requestId:string){return run(["send-text","--cid",cid],{text:textValue,expectedControlRevision,requestId});}
-export function translateConversationText(textValue:string,target:"it"|"zh"){return run(["translate"],{text:textValue,target});}
-export function sendConversationCard(cid:string,episodeId:string,expectedControlRevision:number,requestId:string){return run(["send-card","--cid",cid],{episodeId,expectedControlRevision,requestId});}
-export function completeReviewedHuman(cid:string,turnId:string,expectedControlRevision:number,expectedPendingRevision:number,note:string){return run(["complete-human","--cid",cid],{turnId,expectedControlRevision,expectedPendingRevision,note});}
-export function confirmManualReply(cid:string,caseId:string,turnId:string|null,virtual:boolean,expectedControlRevision:number,expectedPendingRevision:number){return run(["confirm-manual","--cid",cid],{caseId,turnId,virtual,expectedControlRevision,expectedPendingRevision});}
-export function rejectConversationCreator(cid:string,expectedControlRevision:number,requestId:string){return run(["reject-creator","--cid",cid],{expectedControlRevision,requestId});}
-export function setConversationCollaboration(cid:string,status:CollaborationStatus,expectedStatusRevision:number,expectedControlRevision:number,requestId:string){return run(["set-collaboration","--cid",cid],{status,expectedStatusRevision,expectedControlRevision,requestId});}
+export async function listConversations(view:ConversationView,query:string,limit:number,offset:number,market:string){return validateConversationList(await run(["list","--view",view,"--query",query,"--limit",String(limit),"--offset",String(offset)],undefined,market));}
+export async function readConversation(cid:string,market:string){return validateConversationDetail(await run(["detail","--cid",cid],undefined,market));}
+export function saveConversationDraft(market:string,cid:string,textValue:string,expectedRevision:number){return run(["save-draft","--cid",cid],{text:textValue,expectedRevision},market);}
+export function sendConversationText(market:string,cid:string,textValue:string,expectedControlRevision:number,requestId:string){return run(["send-text","--cid",cid],{text:textValue,expectedControlRevision,requestId},market);}
+export function translateConversationText(market:string,textValue:string,target:string){return run(["translate"],{text:textValue,target},market);}
+export function sendConversationCard(market:string,cid:string,episodeId:string,expectedControlRevision:number,requestId:string){return run(["send-card","--cid",cid],{episodeId,expectedControlRevision,requestId},market);}
+export function completeReviewedHuman(market:string,cid:string,turnId:string,expectedControlRevision:number,expectedPendingRevision:number,note:string){return run(["complete-human","--cid",cid],{turnId,expectedControlRevision,expectedPendingRevision,note},market);}
+export function confirmManualReply(market:string,cid:string,caseId:string,turnId:string|null,virtual:boolean,expectedControlRevision:number,expectedPendingRevision:number){return run(["confirm-manual","--cid",cid],{caseId,turnId,virtual,expectedControlRevision,expectedPendingRevision},market);}
+export function rejectConversationCreator(market:string,cid:string,expectedControlRevision:number,requestId:string){return run(["reject-creator","--cid",cid],{expectedControlRevision,requestId},market);}
+export function setConversationCollaboration(market:string,cid:string,status:CollaborationStatus,expectedStatusRevision:number,expectedControlRevision:number,requestId:string){return run(["set-collaboration","--cid",cid],{status,expectedStatusRevision,expectedControlRevision,requestId},market);}
 
 async function jsonBody(request:Request,maxBytes=20_000):Promise<unknown>{
  if(request.headers.get("content-type")?.split(";")[0].trim()!=="application/json")throw Error("json_required");
@@ -135,26 +136,28 @@ export function createConversationHandlers(operations:ConversationOperations=def
  GET:async(request:Request)=>{
   if(!isLocalRequest(request,false))return Response.json({error:"local_origin_required"},{status:403,headers});
   let query:{cid?:string;view?:ConversationView;text?:string;limit?:number;offset?:number;market:string};
-  try{const params=new URL(request.url).searchParams;const allowed=new Set(["view","query","limit","offset","cid","market"]);if([...params.keys()].some(key=>!allowed.has(key)||params.getAll(key).length!==1))throw Error();const selected=params.get("market")??"it";if(!enabledMarket(selected))throw Error();const cid=params.get("cid");if(cid!=null){if([...params.keys()].some(key=>!['cid','market'].includes(key))||!/^\d{1,40}$/.test(cid))throw Error();query={cid,market:selected};}else{const view=(params.get("view")??"human") as ConversationView;if(!["human","agent","completed","all"].includes(view))throw Error();const textValue=params.get("query")??"";if(textValue.length>100)throw Error();const bounded=(key:string,fallback:number,low:number,max:number)=>{const raw=params.get(key);if(raw==null)return fallback;if(!/^\d+$/.test(raw))throw Error();const value=Number(raw);if(!Number.isSafeInteger(value)||value<low||value>max)throw Error();return value;};query={view,text:textValue,limit:bounded("limit",30,1,100),offset:bounded("offset",0,0,5000),market:selected};}}
+  try{const params=new URL(request.url).searchParams;const allowed=new Set(["view","query","limit","offset","cid","market"]);if([...params.keys()].some(key=>!allowed.has(key)||params.getAll(key).length!==1)||params.getAll("market").length!==1)throw Error();const selected=params.get("market")!;if(!enabledMarket(selected))throw Error();const cid=params.get("cid");if(cid!=null){if([...params.keys()].some(key=>!['cid','market'].includes(key))||!/^\d{1,40}$/.test(cid))throw Error();query={cid,market:selected};}else{const view=(params.get("view")??"human") as ConversationView;if(!["human","agent","completed","all"].includes(view))throw Error();const textValue=params.get("query")??"";if(textValue.length>100)throw Error();const bounded=(key:string,fallback:number,low:number,max:number)=>{const raw=params.get(key);if(raw==null)return fallback;if(!/^\d+$/.test(raw))throw Error();const value=Number(raw);if(!Number.isSafeInteger(value)||value<low||value>max)throw Error();return value;};query={view,text:textValue,limit:bounded("limit",30,1,100),offset:bounded("offset",0,0,5000),market:selected};}}
   catch{return Response.json({error:"invalid_conversation_query"},{status:400,headers});}
   try{return Response.json(query.cid?await operations.detail(query.cid,query.market):await operations.list(query.view!,query.text!,query.limit!,query.offset!,query.market),{headers});}
   catch{return Response.json({error:"conversation_workbench_unavailable"},{status:503,headers});}
  },
  POST:async(request:Request)=>{
   if(!isLocalRequest(request,true))return Response.json({error:"local_origin_required"},{status:403,headers});
-  let command:ConversationCommand;let selected="it";
-  try{const url=new URL(request.url);if([...url.searchParams.keys()].some(key=>key!=="market")||url.searchParams.getAll("market").length>1)throw Error();selected=url.searchParams.get("market")??"it";if(!enabledMarket(selected))throw Error();command=validateConversationCommand(await jsonBody(request));}
+  let command:ConversationCommand;let selected="";
+  try{const url=new URL(request.url);if([...url.searchParams.keys()].some(key=>key!=="market")||url.searchParams.getAll("market").length!==1)throw Error();selected=url.searchParams.get("market")!;if(!enabledMarket(selected))throw Error();command=validateConversationCommand(await jsonBody(request));}
   catch(error){const status=error instanceof Error&&error.message==="json_required"?415:400;return Response.json({error:status===415?"json_required":"invalid_conversation_request"},{status,headers});}
   try{
-   if(selected!=="it"&&command.action!=="translate")return Response.json({error:"market_conversation_write_pending"},{status:409,headers});
-   const result=command.action==="translate"?await operations.translate(command.text,command.target):
-    command.action==="save_draft"?await operations.saveDraft(command.cid,command.text,command.expectedRevision):
-    command.action==="send_text"?await operations.sendText(command.cid,command.text,command.expectedControlRevision,command.requestId):
-    command.action==="complete_human"?await operations.completeHuman(command.cid,command.turnId,command.expectedControlRevision,command.expectedPendingRevision,command.note):
-    command.action==="confirm_manual_reply"?await operations.confirmManual(command.cid,command.caseId,command.turnId,command.virtual,command.expectedControlRevision,command.expectedPendingRevision):
-    command.action==="set_collaboration"?await operations.setCollaboration(command.cid,command.status,command.expectedStatusRevision,command.expectedControlRevision,command.requestId):
-    command.action==="reject_creator"?await operations.rejectCreator(command.cid,command.expectedControlRevision,command.requestId):
-    await operations.sendCard(command.cid,command.episodeId,command.expectedControlRevision,command.requestId);
+   if(command.market!==selected)return Response.json({error:"market_mismatch"},{status:409,headers});
+   const record=enabledMarket(selected)!;if(record.runtimeState==="planned")return Response.json({error:"market_runtime_unavailable"},{status:409,headers});
+   if(selected!=="it"&&(command.action==="send_text"||command.action==="send_card"))return Response.json({error:"market_conversation_send_pending"},{status:409,headers});
+   const result=command.action==="translate"?await operations.translate(selected,command.text,command.target):
+    command.action==="save_draft"?await operations.saveDraft(selected,command.cid,command.text,command.expectedRevision):
+    command.action==="send_text"?await operations.sendText(selected,command.cid,command.text,command.expectedControlRevision,command.requestId):
+    command.action==="complete_human"?await operations.completeHuman(selected,command.cid,command.turnId,command.expectedControlRevision,command.expectedPendingRevision,command.note):
+    command.action==="confirm_manual_reply"?await operations.confirmManual(selected,command.cid,command.caseId,command.turnId,command.virtual,command.expectedControlRevision,command.expectedPendingRevision):
+    command.action==="set_collaboration"?await operations.setCollaboration(selected,command.cid,command.status,command.expectedStatusRevision,command.expectedControlRevision,command.requestId):
+    command.action==="reject_creator"?await operations.rejectCreator(selected,command.cid,command.expectedControlRevision,command.requestId):
+    await operations.sendCard(selected,command.cid,command.episodeId,command.expectedControlRevision,command.requestId);
    return Response.json(result,{headers});
   }catch{return Response.json({error:"conversation_workbench_unavailable"},{status:503,headers});}
  }

@@ -879,6 +879,121 @@ BEGIN SELECT RAISE(ABORT,'send template review event is append only'); END;
 """)
 
 
+SECOND_CYCLE_MARKET_TEMPLATE_SCOPE = Migration(15, "market_template_scope_v1", """
+CREATE TABLE IF NOT EXISTS market_manual_reply_template(
+  plan_id TEXT NOT NULL,
+  template_id TEXT NOT NULL,
+  name TEXT NOT NULL,
+  category TEXT NOT NULL,
+  state TEXT NOT NULL,
+  current_revision INTEGER NOT NULL,
+  created_at REAL NOT NULL,
+  updated_at REAL NOT NULL,
+  PRIMARY KEY(plan_id,template_id)
+);
+CREATE TABLE IF NOT EXISTS market_manual_reply_template_revision(
+  plan_id TEXT NOT NULL,
+  template_id TEXT NOT NULL,
+  revision INTEGER NOT NULL,
+  body TEXT NOT NULL,
+  created_at REAL NOT NULL,
+  PRIMARY KEY(plan_id,template_id,revision)
+);
+CREATE TABLE IF NOT EXISTS market_agent_reply_template(
+  plan_id TEXT NOT NULL,
+  template_key TEXT NOT NULL,
+  action TEXT NOT NULL,
+  current_revision INTEGER NOT NULL,
+  updated_at REAL NOT NULL,
+  PRIMARY KEY(plan_id,template_key),
+  UNIQUE(plan_id,action)
+);
+CREATE TABLE IF NOT EXISTS market_agent_reply_template_revision(
+  plan_id TEXT NOT NULL,
+  template_key TEXT NOT NULL,
+  revision INTEGER NOT NULL,
+  body TEXT NOT NULL,
+  created_at REAL NOT NULL,
+  PRIMARY KEY(plan_id,template_key,revision)
+);
+CREATE TRIGGER IF NOT EXISTS market_manual_reply_template_revision_no_update
+BEFORE UPDATE ON market_manual_reply_template_revision
+BEGIN SELECT RAISE(ABORT,'market manual template revision is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS market_manual_reply_template_revision_no_delete
+BEFORE DELETE ON market_manual_reply_template_revision
+BEGIN SELECT RAISE(ABORT,'market manual template revision is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS market_agent_reply_template_revision_no_update
+BEFORE UPDATE ON market_agent_reply_template_revision
+BEGIN SELECT RAISE(ABORT,'market agent template revision is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS market_agent_reply_template_revision_no_delete
+BEFORE DELETE ON market_agent_reply_template_revision
+BEGIN SELECT RAISE(ABORT,'market agent template revision is immutable'); END;
+""")
+
+
+SECOND_CYCLE_MARKET_READ_MODEL = Migration(16, "market_read_model_v1", """
+CREATE TABLE IF NOT EXISTS market_read_generation(
+  generation_id TEXT PRIMARY KEY,
+  market TEXT NOT NULL,
+  view TEXT NOT NULL,
+  revision INTEGER NOT NULL,
+  source_fingerprint TEXT NOT NULL,
+  payload_json TEXT NOT NULL,
+  observed_at REAL NOT NULL,
+  created_at REAL NOT NULL,
+  UNIQUE(market,view,revision)
+);
+CREATE TABLE IF NOT EXISTS market_read_head(
+  market TEXT NOT NULL,
+  view TEXT NOT NULL,
+  generation_id TEXT NOT NULL,
+  revision INTEGER NOT NULL,
+  observed_at REAL NOT NULL,
+  updated_at REAL NOT NULL,
+  PRIMARY KEY(market,view)
+);
+CREATE INDEX IF NOT EXISTS market_read_generation_lookup
+  ON market_read_generation(market,view,revision DESC);
+CREATE TRIGGER IF NOT EXISTS market_read_generation_no_update
+BEFORE UPDATE ON market_read_generation
+BEGIN SELECT RAISE(ABORT,'market read generation is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS market_read_generation_no_delete
+BEFORE DELETE ON market_read_generation
+BEGIN SELECT RAISE(ABORT,'market read generation is append only'); END;
+""")
+
+
+SECOND_CYCLE_WORKFLOW_RESOURCES = Migration(17, "workflow_resource_lease_v1", """
+CREATE TABLE IF NOT EXISTS workflow_claim_sequence(
+  sequence_id INTEGER PRIMARY KEY AUTOINCREMENT,
+  created_at REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS workflow_stage_claim(
+  stage_run_id TEXT PRIMARY KEY,
+  owner_id TEXT NOT NULL,
+  fence INTEGER NOT NULL,
+  lease_until REAL NOT NULL,
+  heartbeat_at REAL NOT NULL,
+  worker_pid INTEGER,
+  created_at REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS workflow_resource_slot(
+  resource_key TEXT NOT NULL,
+  slot_no INTEGER NOT NULL,
+  owner_stage_run_id TEXT NOT NULL,
+  fence INTEGER NOT NULL,
+  lease_until REAL NOT NULL,
+  heartbeat_at REAL NOT NULL,
+  PRIMARY KEY(resource_key,slot_no),
+  UNIQUE(owner_stage_run_id,resource_key)
+);
+CREATE INDEX IF NOT EXISTS workflow_stage_claim_lease
+  ON workflow_stage_claim(lease_until,stage_run_id);
+CREATE INDEX IF NOT EXISTS workflow_resource_owner
+  ON workflow_resource_slot(owner_stage_run_id,fence);
+""")
+
+
 DATABASES = {
     "catalog-links": ("catalog-links.sqlite", (CATALOG_LINKS,)),
     "second-cycle": ("second-cycle.sqlite", (SECOND_CYCLE, SECOND_CYCLE_INDEXES,
@@ -893,7 +1008,10 @@ DATABASES = {
                                                 SECOND_CYCLE_AUTOMATED_WORKFLOW,
                                                 SECOND_CYCLE_ACCOUNT_IDENTITY,
                                                 SECOND_CYCLE_CONTINUOUS_OPERATIONS,
-                                                SECOND_CYCLE_TEMPLATE_REVIEW)),
+                                                SECOND_CYCLE_TEMPLATE_REVIEW,
+                                                SECOND_CYCLE_MARKET_TEMPLATE_SCOPE,
+                                                SECOND_CYCLE_MARKET_READ_MODEL,
+                                                SECOND_CYCLE_WORKFLOW_RESOURCES)),
 }
 
 REGISTRY_SQL = """
@@ -904,6 +1022,24 @@ CREATE TABLE IF NOT EXISTS agent_schema_migration(
   applied_at REAL NOT NULL
 )
 """
+
+def _backfill_market_templates(db):
+    tables={row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    required={"plan","manual_reply_template","manual_reply_template_revision",
+              "agent_reply_template","agent_reply_template_revision"}
+    if not required<=tables:return
+    db.execute("""INSERT OR IGNORE INTO market_manual_reply_template
+      SELECT p.id,t.template_id,t.name,t.category,t.state,t.current_revision,t.created_at,t.updated_at
+      FROM manual_reply_template t JOIN plan p ON p.market='it' AND p.institution='bjn-local-research'""")
+    db.execute("""INSERT OR IGNORE INTO market_manual_reply_template_revision
+      SELECT p.id,r.template_id,r.revision,r.body,r.created_at
+      FROM manual_reply_template_revision r JOIN plan p ON p.market='it' AND p.institution='bjn-local-research'""")
+    db.execute("""INSERT OR IGNORE INTO market_agent_reply_template
+      SELECT p.id,t.template_key,t.action,t.current_revision,t.updated_at
+      FROM agent_reply_template t JOIN plan p ON p.market='it' AND p.institution='bjn-local-research'""")
+    db.execute("""INSERT OR IGNORE INTO market_agent_reply_template_revision
+      SELECT p.id,r.template_key,r.revision,r.body,r.created_at
+      FROM agent_reply_template_revision r JOIN plan p ON p.market='it' AND p.institution='bjn-local-research'""")
 
 
 def _path(root, key):
@@ -973,6 +1109,8 @@ def apply_database(root, key, *, clock=time.time):
                 db.execute(REGISTRY_SQL)
                 for statement in _statements(migration.sql):
                     db.execute(statement)
+                if key=="second-cycle" and migration.version==15:
+                    _backfill_market_templates(db)
                 db.execute("INSERT INTO agent_schema_migration(version,name,checksum,applied_at) VALUES(?,?,?,?)",
                            (migration.version, migration.name, migration.checksum, clock()))
                 db.execute("COMMIT")

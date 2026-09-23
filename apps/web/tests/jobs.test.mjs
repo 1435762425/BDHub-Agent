@@ -5,10 +5,10 @@ import {validateJobs,validateJobsRequest,validateJobsSave} from '../src/server/j
 const job={id:'taplink_prepare',name:'TapLink 准备',group:'材料',description:'货盘发布后准备链接。',manual:'workflow',manualEndpoint:'/api/workflow',lastRunAt:1789318884,enabled:false,at:'07:20',schedulable:true,cadence:'daily',weekday:null};
 const agent={...job,id:'agent_reply',name:'Agent 回复',group:'会话',manual:'job-control',manualEndpoint:'/api/jobs',lastRunAt:null,at:'15:00'};
 const scheduler={running:false,stopping:false,pid:null,startedAt:null,phase:null,cycle:null,checkedAt:null,lastSuccess:{},lastAttempt:{},nextDue:{},error:null};
-const payload={version:'jobs-v3',jobs:[job,agent],schedulerReady:true,scheduler};
+const payload={market:'it',version:'jobs-v3',jobs:[job,agent],schedulerReady:true,scheduler};
 
 test('a jobs state is accepted and keeps the manual endpoint and schedule intent',()=>{
- const v=validateJobs(payload);
+ const v=validateJobs(payload,'it');
  assert.equal(v.jobs[0].manualEndpoint,'/api/workflow');
  assert.equal(v.jobs[0].enabled,false);
  assert.equal(v.jobs[0].at,'07:20');
@@ -18,7 +18,7 @@ test('a jobs state is accepted and keeps the manual endpoint and schedule intent
 });
 
 test('every displayed job points to a real bounded control endpoint',()=>{
- const v=validateJobs(payload);
+ const v=validateJobs(payload,'it');
  assert.equal(v.jobs[1].manual,'job-control');
  assert.equal(v.jobs[1].manualEndpoint,'/api/jobs');
  assert.equal(v.jobs[1].lastRunAt,null);
@@ -36,7 +36,7 @@ test('bad times, bad ids and duplicate jobs are rejected',()=>{
                    {...payload,jobs:[]},
                    {...payload,jobs:[job,job]},
                    {...payload,version:''}]){
-  assert.throws(()=>validateJobs(bad),/invalid_jobs/);
+  assert.throws(()=>validateJobs(bad,'it'),/invalid_jobs/);
  }
 });
 
@@ -49,8 +49,8 @@ test('a save request carries only the fields it means to change',()=>{
   {jobs:{taplink_prepare:{at:null}}});
  assert.deepEqual(validateJobsSave({action:'save',jobs:{taplink_clean:{weekday:0}}}),
   {jobs:{taplink_clean:{weekday:0}}});
- assert.deepEqual(validateJobsRequest({action:'start_scheduler'}),{action:'start_scheduler'});
- assert.deepEqual(validateJobsRequest({action:'stop_scheduler'}),{action:'stop_scheduler'});
+ assert.deepEqual(validateJobsRequest({action:'start_scheduler',market:'it'}),{action:'start_scheduler',market:'it'});
+ assert.deepEqual(validateJobsRequest({action:'stop_scheduler',market:'it'}),{action:'stop_scheduler',market:'it'});
  for(const bad of [{action:'save'},{action:'run',jobs:{catalog_collect:{enabled:true}}},
                    {action:'save',jobs:{catalog_collect:{}}},
                    {action:'save',jobs:{catalog_collect:{at:'99:99'}}},

@@ -399,7 +399,7 @@ def status(root=None, *, market='it', config=None, now=None, batch_size=None):
     queue = queue_items(built)
     size = built['config']['batchSize'] if batch_size is None else batch_size
     taken = queue[:size]
-    return {'config': built['config'], 'refreshDays': built['refreshDays'],
+    return {'market':market,'config': built['config'], 'refreshDays': built['refreshDays'],
             'eligible': built['eligible'], 'linked': built['linked'], 'scope': built['scope'],
             # 渠道拆分与"有多少商品没有销量数据"必须转发：页面靠它们说清"两条渠道都在队列里"，
             # 漏转发时页面拿不到字段（症状就是渠道那格永远是空的）。

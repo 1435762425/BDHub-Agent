@@ -28,10 +28,10 @@ from lib.cycle_stats import daily, day_detail  # noqa: E402
 from lib.job_run import load_config, save_config, status as job_status  # noqa: E402
 
 
-def status(root, days=14):
-    job = job_status(root, 'inbox')['inbox']
-    stats = daily(root, count=days)
-    return {'available': True,
+def status(root, market, days=14):
+    job = job_status(root, 'inbox')['inbox'] if market=='it' else {'config':{'limit':6,'interval':60},'configInvalid':False,'run':None}
+    stats = daily(root, market=market,count=days)
+    return {'available': stats['available'],'market':market,
             'config': job['config'],
             'configInvalid': job['configInvalid'],
             'run': job['run'],
@@ -45,6 +45,7 @@ def status(root, days=14):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('action', choices=['status', 'detail', 'save'])
+    parser.add_argument('--market',required=True)
     parser.add_argument('--json', help='config JSON, inline or @path')
     parser.add_argument('--days', type=int, default=14)
     parser.add_argument('--date')
@@ -52,19 +53,22 @@ def main():
     parser.add_argument('--limit', type=int, default=50)
     args = parser.parse_args()
     try:
+        from lib.market_registry import market as market_record
+        market_record(ROOT,args.market)
         if args.action == 'status':
-            print(json.dumps(status(ROOT, args.days), ensure_ascii=False))
+            print(json.dumps(status(ROOT,args.market,args.days), ensure_ascii=False))
             return 0
         if args.action == 'detail':
-            print(json.dumps(day_detail(ROOT, args.date, offset=args.offset, limit=args.limit),
+            print(json.dumps(day_detail(ROOT, args.date,market=args.market, offset=args.offset, limit=args.limit),
                              ensure_ascii=False))
             return 0
+        if args.market!='it':raise ValueError('market_inbox_control_unavailable')
         raw = {}
         if args.json:
             raw = (json.loads(Path(args.json[1:]).read_text(encoding='utf-8'))
                    if args.json.startswith('@') else json.loads(args.json))
         saved = save_config(ROOT, 'inbox', {**load_config(ROOT, 'inbox'), **raw})
-        print(json.dumps(status(ROOT) | {'config': saved, 'saved': True}, ensure_ascii=False))
+        print(json.dumps(status(ROOT,args.market) | {'config': saved, 'saved': True}, ensure_ascii=False))
         return 0
     except ValueError as error:
         print(json.dumps({'error': str(error)}, ensure_ascii=False))

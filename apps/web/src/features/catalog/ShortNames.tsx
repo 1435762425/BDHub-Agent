@@ -9,11 +9,11 @@ import type {CatalogNamesState} from "../../server/catalog-names/bridge";
  * The model, its endpoint and the exact prompt are real facts an operator occasionally needs, so
  * they are shown — but folded away, because on a normal day none of it needs looking at.
  */
-export default function ShortNames(){
+export default function ShortNames({market}:{market:string}){
  const [names,setNames]=useState<CatalogNamesState|null>(null);
  // "not read yet" is not "could not read".
  const [namesLoaded,setNamesLoaded]=useState(false);
- const reload=useCallback(async()=>{const r=await fetch("/api/catalog-names",{cache:"no-store"});if(!r.ok)throw Error();setNames(await r.json());setNamesLoaded(true);},[]);
+ const reload=useCallback(async()=>{const r=await fetch(`/api/catalog-names?market=${encodeURIComponent(market)}`,{cache:"no-store"});if(!r.ok)throw Error();setNames(await r.json());setNamesLoaded(true);},[market]);
  useEffect(()=>{void reload().catch(()=>setNames(null));},[reload]);
  const [busy,setBusy]=useState(false);
  const [message,setMessage]=useState<string|null>(null);
@@ -24,12 +24,12 @@ export default function ShortNames(){
  const fill=useCallback(async()=>{
   setBusy(true);setMessage(null);
   try{
-   const r=await fetch("/api/catalog-names",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"prepare",all:true})});
+   const r=await fetch(`/api/catalog-names?market=${encodeURIComponent(market)}`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"prepare",market,all:true})});
    if(!r.ok){setMessage(r.status===409?"已经在生成中。":"暂时无法生成。");return;}
    setStartedAt(Date.now());
   }catch{setMessage("暂时无法生成。");}
   finally{setBusy(false);}
- },[reload]);
+ },[market,reload]);
  if(!names)return <p className="text-sm text-gray-500">{namesLoaded?"暂时无法读取短名状态。":"读取中…"}</p>;
  return <div className="rounded-xl border border-gray-200 p-4 dark:border-gray-700">
   <div className="flex flex-wrap items-center justify-between gap-3">

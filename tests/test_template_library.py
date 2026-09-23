@@ -63,6 +63,20 @@ class TemplateLibraryTests(unittest.TestCase):
    update_agent_template(self.store,policy,current['id'],1,'Versione vecchia')
   with self.assertRaisesRegex(CycleError,'request_invalid'):
    update_agent_template(self.store,policy,'human',1,'No')
+
+ def test_manual_and_agent_templates_are_isolated_by_market_plan(self):
+  self.store.plan('bjn-local-research','br')
+  it=upsert_manual_template(self.store,'manual-shared-request',None,None,'IT','常用','Grazie!',market='it')
+  br=upsert_manual_template(self.store,'manual-shared-request',None,None,'BR','常用','Obrigado!',market='br')
+  self.assertEqual(it['id'],br['id'])
+  self.assertEqual(manual_templates(self.store,market='it')[0]['body'],'Grazie!')
+  self.assertEqual(manual_templates(self.store,market='br')[0]['body'],'Obrigado!')
+  policy=load_policy();before=next(row for row in agent_templates(self.store,policy,'it') if row['action']=='collaboration_ack')
+  br_current=next(row for row in agent_templates(self.store,policy,'br') if row['action']=='collaboration_ack')
+  changed=update_agent_template(self.store,policy,br_current['id'],1,'Perfeito, obrigado!',market='br')
+  self.assertEqual(changed['text'],'Perfeito, obrigado!')
+  after=next(row for row in agent_templates(self.store,policy,'it') if row['action']=='collaboration_ack')
+  self.assertEqual(after['text'],before['text'])
  def test_continuous_control_is_the_current_template_delete_gate(self):
   self.store.db.execute("INSERT INTO continuous_send_control VALUES(?,0,0,0,'16:30','24:00','reconnect',1,?)",(self.plan,NOW))
   self.assertEqual(selected_send_template(self.store,self.root),'reconnect')

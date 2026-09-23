@@ -23,7 +23,7 @@ def _fields(value):return set(re.findall(r"\{([A-Za-z][A-Za-z0-9_]*)\}",value))
 def validate_content(value,registry):
  if not isinstance(value,dict) or value.get("schemaVersion")!=1 or not isinstance(value.get("markets"),dict):
   raise ValueError("market_content_invalid")
- enabled={key for key,row in registry["markets"].items() if row["enabled"]}
+ enabled={key for key,row in registry["markets"].items() if row["enabled"] and row["contentReady"]}
  if set(value["markets"])!=enabled:raise ValueError("market_content_registry_mismatch")
  fingerprints={template_id:set() for template_id in SEND_IDS}
  for market,row in value["markets"].items():

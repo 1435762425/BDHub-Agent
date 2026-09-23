@@ -214,15 +214,17 @@ export async function stopIdentityRun():Promise<IdentityQueueState>{
 }
 
 export function validateIdentityQueueRequest(value:unknown):
- {action:"save";config:IdentityConfig}|{action:"start";config:IdentityConfig}|{action:"stop"}{
+ {action:"save";market:"it";config:IdentityConfig}|{action:"start";market:"it";config:IdentityConfig}|{action:"stop";market:"it"}{
  if(!value||typeof value!=="object"||Array.isArray(value))throw Error('invalid_identity_queue_request');
  const v=value as Record<string,unknown>;
+ if(v.market!=="it")throw Error('invalid_identity_queue_request');
  if(v.action==="stop"){
   // Stopping needs no parameters; anything riding along is a malformed request, not a stop.
-  if(Object.keys(v).some(key=>key!=="action"))throw Error('invalid_identity_queue_request');
-  return {action:"stop"};
+  if(Object.keys(v).some(key=>key!=="action"&&key!=="market"))throw Error('invalid_identity_queue_request');
+  return {action:"stop",market:"it"};
  }
  if(v.action!=="save"&&v.action!=="start")throw Error('invalid_identity_queue_request');
- try{return {action:v.action,config:validateIdentityConfig(v.config)};}
+ if(Object.keys(v).some(key=>!['action','market','config'].includes(key)))throw Error('invalid_identity_queue_request');
+ try{return {action:v.action,market:"it",config:validateIdentityConfig(v.config)};}
  catch{throw Error('invalid_identity_queue_request');}
 }

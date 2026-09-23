@@ -25,6 +25,7 @@ def fixture(folder):
     var.mkdir(parents=True, exist_ok=True)
     with closing(sqlite3.connect(var / 'second-cycle.sqlite')) as conn, conn:
         conn.executescript('''
+            CREATE TABLE plan(id TEXT,institution TEXT,market TEXT);
             CREATE TABLE cycle_delivery(id TEXT,plan_id TEXT,creator_id TEXT,oec TEXT,pid TEXT,
                                         snapshot TEXT,state TEXT);
             CREATE TABLE cycle_delivery_part(delivery_id TEXT,kind TEXT,state TEXT,started REAL);
@@ -38,6 +39,7 @@ def fixture(folder):
                                        state TEXT,started REAL);
             CREATE TABLE service_case(id TEXT,plan_id TEXT,creator_id TEXT,reason TEXT,state TEXT,
                                       created REAL);''')
+        conn.execute("INSERT INTO plan VALUES('p','bjn-local-research','it')")
         # 09-14 23:59:59 与 09-15 00:00:00 各一条：左闭右开，谁也不能跨日。
         for index, (creator, started) in enumerate([('c1', at(14, 23, 59, 59)), ('c2', at(15, 0, 0, 0)),
                                                     ('c3', at(15, 23, 59, 59))]):
@@ -182,6 +184,23 @@ class Daily(unittest.TestCase):
             self.assertEqual(second['nextOffset'], 6)
             self.assertFalse({item['ref'] for item in first['items']} &
                              {item['ref'] for item in second['items']})
+
+    def test_market_plan_scope_keeps_same_day_rows_separate(self):
+        with tempfile.TemporaryDirectory() as folder:
+            fixture(folder);path=Path(folder)/'var/second-cycle.sqlite'
+            with closing(sqlite3.connect(path)) as conn,conn:
+                conn.execute("INSERT INTO plan VALUES('p-br','bjn-local-research','br')")
+                conn.execute("INSERT INTO cycle_delivery VALUES('br-d','p-br','br-c','br-o','1729480000000000099',?,'confirmed')",(json.dumps({'handle':'br_creator'}),))
+                conn.execute("INSERT INTO cycle_delivery_part VALUES('br-d','card','confirmed',?)",(at(15,14),))
+                conn.execute("INSERT INTO relationship VALUES('p-br','br-c','br-o')")
+                conn.execute("INSERT INTO inbox_event VALUES('p-br','br-cid','br-m','br-o','creatorReplies',?,?,0,?)",(int(at(15,15)*1000),json.dumps({'messageId':'br-m'}),NOON))
+                conn.execute("INSERT INTO service_case VALUES('br-case','p-br','br-c','human','open',?)",(at(15,16),))
+            it=daily(folder,market='it',count=1,now=NOON);br=daily(folder,market='br',count=1,now=NOON)
+            self.assertEqual((it['days'][0]['cards'],br['days'][0]['cards']),(2,1))
+            self.assertEqual((it['days'][0]['replies'],br['days'][0]['replies']),(1,1))
+            self.assertEqual((it['openCases'],br['openCases']),(1,1))
+            br_detail=day_detail(folder,'2026-09-15',market='br',limit=100)
+            self.assertEqual({item['ref'] for item in br_detail['items']},{'br-d','br-m','br-case'})
 
     def test_day_detail_rejects_unbounded_or_non_calendar_queries(self):
         with tempfile.TemporaryDirectory() as folder:

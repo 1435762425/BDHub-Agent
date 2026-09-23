@@ -38,7 +38,7 @@ export default function AppShell({children,currentMarket,markets}:{children:Reac
     <select id="market-switch" value={currentMarket.key} onChange={event=>{const target=event.target.value;window.location.assign(pathname.replace(new RegExp(`^/${currentMarket.key}(?=/|$)`),`/${target}`));}} className="mt-1 w-full rounded-lg border border-gray-200 bg-white px-2 py-1.5 text-xs font-medium text-gray-700 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200">
      {markets.map(row=><option key={row.key} value={row.key}>{row.label} · {row.shortLabel}</option>)}
     </select>
-    <p className="mt-1 text-[11px] leading-4 text-gray-400">{currentMarket.capabilities.fullManagedCatalog?"Campaign + 全托货盘":"仅 Campaign 货盘"}</p>
+    <p className="mt-1 text-[11px] leading-4 text-gray-400">{currentMarket.runtimeState==="planned"?"统一页面已就绪 · 真实动作未启用":currentMarket.capabilities.fullManagedCatalog===true?"Campaign + 全托货盘":"仅 Campaign 货盘"}</p>
    </div>
    <nav aria-label="主导航" className="mt-5 flex-1 space-y-2 overflow-y-auto">
     {navigation.map(item=>{const active=item.href===base?pathname===base:pathname.startsWith(item.match);return <Link key={item.href} href={item.href} title={item.label} aria-current={active?"page":undefined} className={`menu-item ${active?"menu-item-active":"menu-item-inactive"} ${collapsed?"lg:justify-center lg:px-2":""}`}><Icon name={item.icon} className="size-6 shrink-0"/><span className={collapsed?"lg:hidden":""}>{item.label}</span></Link>;})}

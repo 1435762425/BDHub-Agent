@@ -11,7 +11,8 @@ export async function GET(request:Request){
   let store:ReturnType<typeof getCreatorIdentityStore>|undefined;
   try{
     const query=parseCreatorIdentityQuery(request.url);store=getCreatorIdentityStore();
-    const result=query.view==="overview"?store.overview(query.market):query.view==="list"?store.list(query):query.view==="detail"?store.detail(query.creatorId):store.source(query);
+    const result=query.view==="overview"?store.overview(query.market):query.view==="list"?store.list(query):query.view==="detail"?store.detail(query.market,query.creatorId):store.source(query);
+    if(query.view==="detail"&&"creator" in result&&result.creator===null)throw new CreatorIdentityError(404,"creator_not_found","当前市场没有这位达人。");
     return Response.json(result,{headers});
   }catch(error){
     if(error instanceof InputError||error instanceof CreatorIdentityError)return Response.json({error:{code:error.code,message:error.message}},{status:error.status,headers});

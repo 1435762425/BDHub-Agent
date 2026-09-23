@@ -27,7 +27,7 @@ from lib.campaign_join import apply, default_email, join_all, preview, status, v
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('action', choices=['preview', 'status', 'apply', 'join-all', 'verify'])
-    parser.add_argument('--market', default='it')
+    parser.add_argument('--market', required=True)
     parser.add_argument('--campaigns', help='逗号分隔的活动 id（apply 必填）')
     parser.add_argument('--email', help='平台要求的联系邮箱（apply 必填）')
     parser.add_argument('--confirm', action='store_true', help='显式确认这次是平台写入')
@@ -57,7 +57,7 @@ def main():
         detail = f'{type(error).__name__}:{str(error)[:160]}'
         print(json.dumps({'error': f'campaign_join_internal:{detail}'}, ensure_ascii=False))
         return 2
-    print(json.dumps(result, ensure_ascii=False))
+    print(json.dumps({'market':args.market,**result}, ensure_ascii=False))
     return 0
 
 

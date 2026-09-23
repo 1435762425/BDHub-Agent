@@ -7,17 +7,18 @@ ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT/'scripts'))
 
 from lib.market_accounts import load_config  # noqa:E402
-from lib.market_registry import enabled_market_keys,load_registry,supports  # noqa:E402
+from lib.market_registry import capability_state,enabled_market_keys,load_registry,operational_market_keys,supports  # noqa:E402
 from lib.operations_workflow import save_setting  # noqa:E402
 from lib.schema_migrations import apply_database  # noqa:E402
 from lib.second_cycle import CycleError,CycleStore  # noqa:E402
 
 
 class MarketRegistryTests(unittest.TestCase):
- def test_enabled_markets_have_distinct_fixed_account_pairs(self):
+ def test_visible_markets_share_one_registry_and_runtime_pairs_stay_bounded(self):
   registry=load_registry(ROOT);accounts=load_config(ROOT)
-  self.assertEqual(enabled_market_keys(ROOT),('it','br','my','uk'))
-  self.assertEqual(set(accounts['markets']),set(registry['markets']))
+  self.assertEqual(enabled_market_keys(ROOT),('be','br','de','it','jp','my','mx','nl','ph','sg','th','uk','us','vn'))
+  self.assertEqual(set(operational_market_keys(ROOT)),{'it','br','my','uk'})
+  self.assertEqual(set(accounts['markets']),set(operational_market_keys(ROOT)))
   assigned=[]
   for key,pair in accounts['markets'].items():
    self.assertEqual(set(pair['roles'].values()),set(pair['accounts']))
@@ -29,6 +30,7 @@ class MarketRegistryTests(unittest.TestCase):
   self.assertTrue(supports(ROOT,'uk','fullManagedCatalog'))
   self.assertFalse(supports(ROOT,'br','fullManagedCatalog'))
   self.assertFalse(supports(ROOT,'my','fullManagedCatalog'))
+  self.assertEqual(capability_state(ROOT,'be','fullManagedCatalog'),'unavailable')
 
  def test_unsupported_full_catalog_switch_fails_without_changing_revision(self):
   with tempfile.TemporaryDirectory() as folder:

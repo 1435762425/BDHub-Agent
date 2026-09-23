@@ -5,4 +5,4 @@ export interface ProfileRefreshJob {
   errorCode:string|null; identityUpdated:boolean; requestCount:number|null;
 }
 export interface ProfileRefreshJobs {jobs:ProfileRefreshJob[];workerOnline:boolean;}
-export interface ProfileRefreshRequest {creatorId:string;requestId:string;}
+export interface ProfileRefreshRequest {market:string;creatorId:string;requestId:string;}

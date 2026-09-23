@@ -47,34 +47,34 @@ def _one(conn, sql, args):
     return int(row[0] or 0) if row else 0
 
 
-def _day_row(conn, day):
+def _day_row(conn, day, plan):
     start, end = day_bounds(day)
     # 毫秒边界：inbox_event 的 occurred_ms 是平台给的毫秒时间戳。
     start_ms, end_ms = int(start * 1000), int(end * 1000)
     return {
         'date': day,
-        'cards': _one(conn, "SELECT count(*) FROM cycle_delivery_part WHERE kind='card' "
-                            'AND state=\'confirmed\' AND started>=? AND started<?', (start, end)),
-        'texts': _one(conn, "SELECT count(*) FROM cycle_delivery_part WHERE kind='text' "
-                            'AND state=\'confirmed\' AND started>=? AND started<?', (start, end)),
+        'cards': _one(conn, "SELECT count(*) FROM cycle_delivery_part p JOIN cycle_delivery d ON d.id=p.delivery_id WHERE d.plan_id=? AND p.kind='card' "
+                            'AND p.state=\'confirmed\' AND p.started>=? AND p.started<?', (plan,start, end)),
+        'texts': _one(conn, "SELECT count(*) FROM cycle_delivery_part p JOIN cycle_delivery d ON d.id=p.delivery_id WHERE d.plan_id=? AND p.kind='text' "
+                            'AND p.state=\'confirmed\' AND p.started>=? AND p.started<?', (plan,start, end)),
         # 触达按**达人**去重：一个达人一个商品发成一次，跟"发了多少条组件"是两件事。
         'creators': _one(conn, 'SELECT count(DISTINCT d.creator_id) FROM cycle_delivery d '
                                'JOIN cycle_delivery_part p ON p.delivery_id=d.id '
-                               "WHERE p.kind='card' AND p.state='confirmed' AND p.started>=? AND p.started<?",
-                         (start, end)),
+                               "WHERE d.plan_id=? AND p.kind='card' AND p.state='confirmed' AND p.started>=? AND p.started<?",
+                         (plan,start, end)),
         # 发出去了但没确认：不是成功，也不是失败，单独一列。
-        'unconfirmed': _one(conn, "SELECT count(*) FROM cycle_delivery_part WHERE kind='card' "
-                                  "AND state<>'confirmed' AND started>=? AND started<?", (start, end)),
-        'replies': _one(conn, "SELECT count(*) FROM inbox_event WHERE kind='creatorReplies' "
-                              'AND historical=0 AND occurred_ms>=? AND occurred_ms<?', (start_ms, end_ms)),
-        'showcase': _one(conn, "SELECT count(*) FROM inbox_event WHERE kind='showcaseNotifications' "
-                               'AND historical=0 AND occurred_ms>=? AND occurred_ms<?', (start_ms, end_ms)),
-        'ourMessages': _one(conn, "SELECT count(*) FROM inbox_event WHERE kind='ourMessages' "
-                                  'AND historical=0 AND occurred_ms>=? AND occurred_ms<?', (start_ms, end_ms)),
-        'autoReplies': _one(conn, "SELECT count(*) FROM service_reply WHERE state='confirmed' "
-                                  'AND started>=? AND started<?', (start, end)),
-        'casesOpened': _one(conn, "SELECT count(*) FROM service_case WHERE created>=? AND created<?",
-                            (start, end)),
+        'unconfirmed': _one(conn, "SELECT count(*) FROM cycle_delivery_part p JOIN cycle_delivery d ON d.id=p.delivery_id WHERE d.plan_id=? AND p.kind='card' "
+                                  "AND p.state<>'confirmed' AND p.started>=? AND p.started<?", (plan,start, end)),
+        'replies': _one(conn, "SELECT count(*) FROM inbox_event WHERE plan_id=? AND kind='creatorReplies' "
+                              'AND historical=0 AND occurred_ms>=? AND occurred_ms<?', (plan,start_ms, end_ms)),
+        'showcase': _one(conn, "SELECT count(*) FROM inbox_event WHERE plan_id=? AND kind='showcaseNotifications' "
+                               'AND historical=0 AND occurred_ms>=? AND occurred_ms<?', (plan,start_ms, end_ms)),
+        'ourMessages': _one(conn, "SELECT count(*) FROM inbox_event WHERE plan_id=? AND kind='ourMessages' "
+                                  'AND historical=0 AND occurred_ms>=? AND occurred_ms<?', (plan,start_ms, end_ms)),
+        'autoReplies': _one(conn, "SELECT count(*) FROM service_reply WHERE plan_id=? AND state='confirmed' "
+                                  'AND started>=? AND started<?', (plan,start, end)),
+        'casesOpened': _one(conn, "SELECT count(*) FROM service_case WHERE plan_id=? AND created>=? AND created<?",
+                            (plan,start, end)),
     }
 
 
@@ -112,7 +112,7 @@ def _detail_item(row, handles):
         name = payload.get('name') if isinstance(payload.get('name'), dict) else {}
         offer = payload.get('offer') if isinstance(payload.get('offer'), dict) else {}
         message = payload.get('message') if isinstance(payload.get('message'), dict) else {}
-        item['product'] = _clean_text(name.get('shortNameIt') or name.get('mentionIt') or offer.get('title'), 300)
+        item['product'] = _clean_text(name.get('shortName') or name.get('mention') or name.get('shortNameIt') or name.get('mentionIt') or offer.get('title'), 300)
         item['creatorPercent'] = _clean_text(offer.get('creatorPercent'), 32)
         item['catalogSource'] = _clean_text(offer.get('catalogSource'), 40)
         item['text'] = _clean_text(message.get('textIt'), 4000)
@@ -125,7 +125,7 @@ def _detail_item(row, handles):
     return item
 
 
-def _current_handles(root, rows):
+def _current_handles(root, rows, market):
     path = Path(root) / 'var/creator-identities.sqlite'
     pairs = {(row['creator_id'], row['oec']) for row in rows if row['creator_id'] and row['oec']}
     if not path.exists() or not pairs:
@@ -134,12 +134,12 @@ def _current_handles(root, rows):
     placeholders = ','.join('?' for _ in creators)
     with closing(sqlite3.connect(path.resolve().as_uri() + '?mode=ro', uri=True)) as conn:
         found = conn.execute('SELECT creator_id,oec_id,current_handle FROM creator_identity '
-                             f"WHERE market='it' AND creator_id IN ({placeholders})", creators).fetchall()
+                             f"WHERE market=? AND creator_id IN ({placeholders})", (market,*creators)).fetchall()
     return {(creator, oec): handle for creator, oec, handle in found
             if (creator, oec) in pairs and isinstance(handle, str) and handle}
 
 
-def day_detail(root, day, *, offset=0, limit=50):
+def day_detail(root, day, *, market='it', offset=0, limit=50):
     """一个北京自然日的有界核对明细。只读；不返回原始 snapshot、回执或平台 payload。"""
     root = Path(root)
     try:
@@ -154,17 +154,23 @@ def day_detail(root, day, *, offset=0, limit=50):
         raise ValueError('invalid_inbox_limit')
     path = root / 'var/second-cycle.sqlite'
     if not path.exists():
-        return {'available': False, 'date': day, 'timezone': 'Asia/Shanghai', 'summary': None,
+        return {'available': False, 'market':market,'date': day, 'timezone': 'Asia/Shanghai', 'summary': None,
                 'total': 0, 'offset': offset, 'limit': limit, 'nextOffset': None,
                 'items': [], 'platformWrites': False}
     start, end = day_bounds(day)
     start_ms, end_ms = int(start * 1000), int(end * 1000)
+    with closing(sqlite3.connect(path.resolve().as_uri() + '?mode=ro', uri=True)) as lookup:
+        plan=lookup.execute("SELECT id FROM plan WHERE institution='bjn-local-research' AND market=?",(market,)).fetchone()
+    if not plan:
+        return {'available':False,'market':market,'date':day,'timezone':'Asia/Shanghai','summary':None,
+                'total':0,'offset':offset,'limit':limit,'nextOffset':None,'items':[],'platformWrites':False}
+    plan=plan[0]
     sql = '''WITH detail AS (
       SELECT 'delivery' item_kind,CAST(p.started*1000 AS INTEGER) occurred_ms,d.id ref,
              d.creator_id,d.oec,d.pid,p.state status,d.snapshot data_json,
              (SELECT t.state FROM cycle_delivery_part t WHERE t.delivery_id=d.id AND t.kind='text') aux_status
         FROM cycle_delivery_part p JOIN cycle_delivery d ON d.id=p.delivery_id
-       WHERE p.kind='card' AND p.started>=? AND p.started<?
+       WHERE d.plan_id=? AND p.kind='card' AND p.started>=? AND p.started<?
       UNION ALL
       SELECT CASE e.kind WHEN 'creatorReplies' THEN 'reply' ELSE 'showcase' END,
              e.occurred_ms,e.message_id,r.creator_id,e.oec,NULL,e.kind,
@@ -173,50 +179,53 @@ def day_detail(root, day, *, offset=0, limit=50):
         LEFT JOIN relationship r ON r.plan_id=e.plan_id AND r.oec=e.oec
         LEFT JOIN inbox_content_head h ON h.plan_id=e.plan_id AND h.cid=e.cid AND h.message_id=e.message_id
         LEFT JOIN inbox_content_version v ON v.plan_id=h.plan_id AND v.cid=h.cid AND v.message_id=h.message_id AND v.hash=h.hash
-       WHERE e.historical=0 AND e.kind IN ('creatorReplies','showcaseNotifications')
+       WHERE e.plan_id=? AND e.historical=0 AND e.kind IN ('creatorReplies','showcaseNotifications')
          AND e.occurred_ms>=? AND e.occurred_ms<?
       UNION ALL
       SELECT 'auto_reply',CAST(started*1000 AS INTEGER),id,creator_id,oec,NULL,state,
              json_object('format','text','text',text),NULL
-        FROM service_reply WHERE state='confirmed' AND started>=? AND started<?
+        FROM service_reply WHERE plan_id=? AND state='confirmed' AND started>=? AND started<?
       UNION ALL
       SELECT 'case',CAST(c.created*1000 AS INTEGER),c.id,c.creator_id,r.oec,NULL,c.state,
              json_object('reason',c.reason),NULL
         FROM service_case c LEFT JOIN relationship r ON r.plan_id=c.plan_id AND r.creator_id=c.creator_id
-       WHERE c.created>=? AND c.created<?
+       WHERE c.plan_id=? AND c.created>=? AND c.created<?
     ) SELECT * FROM detail ORDER BY occurred_ms DESC,ref LIMIT ? OFFSET ?'''
-    args = (start, end, start_ms, end_ms, start, end, start, end, limit, offset)
+    args = (plan,start, end, plan,start_ms, end_ms, plan,start, end, plan,start, end, limit, offset)
     with closing(sqlite3.connect(path.resolve().as_uri() + '?mode=ro', uri=True)) as conn:
         conn.row_factory = sqlite3.Row
-        summary = _day_row(conn, day)
+        summary = _day_row(conn, day, plan)
         rows = conn.execute(sql, args).fetchall()
-    handles = _current_handles(root, rows)
+    handles = _current_handles(root, rows, market)
     total = sum(summary[key] for key in ('cards', 'unconfirmed', 'replies', 'showcase',
                                          'autoReplies', 'casesOpened'))
     items = [_detail_item(row, handles) for row in rows]
     next_offset = offset + len(items) if offset + len(items) < total else None
-    return {'available': True, 'date': day, 'timezone': 'Asia/Shanghai', 'summary': summary,
+    return {'available': True, 'market':market,'date': day, 'timezone': 'Asia/Shanghai', 'summary': summary,
             'total': total, 'offset': offset, 'limit': limit, 'nextOffset': next_offset,
             'items': items, 'platformWrites': False}
 
 
-def daily(root, *, count=14, now=None):
+def daily(root, *, market='it', count=14, now=None):
     """最近 ``count`` 天的按天统计 + 当前未结人工事项。只读；库不存在就说不可用。"""
     root = Path(root)
     path = root / 'var/second-cycle.sqlite'
     if not path.exists():
-        return {'available': False, 'timezone': 'Asia/Shanghai', 'days': [], 'totals': {}, 'openCases': 0}
+        return {'available': False, 'market':market,'timezone': 'Asia/Shanghai', 'days': [], 'totals': {}, 'openCases': 0}
     now = time.time() if now is None else now
     count = max(1, min(int(count), 92))
     with closing(sqlite3.connect(path.resolve().as_uri() + '?mode=ro', uri=True)) as conn:
         conn.row_factory = sqlite3.Row
-        rows = [_day_row(conn, day) for day in _partition(now, count)]
+        plan=conn.execute("SELECT id FROM plan WHERE institution='bjn-local-research' AND market=?",(market,)).fetchone()
+        if not plan:return {'available':False,'market':market,'timezone':'Asia/Shanghai','days':[],'totals':{},'openCases':0}
+        plan=plan[0]
+        rows = [_day_row(conn, day, plan) for day in _partition(now, count)]
         tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-        open_cases = (_one(conn, "SELECT count(*) FROM service_case WHERE state='open'", ())
+        open_cases = (_one(conn, "SELECT count(*) FROM service_case WHERE plan_id=? AND state='open'", (plan,))
                       if 'service_case' in tables else 0)
     totals = {}
     for key in ('cards', 'texts', 'creators', 'unconfirmed', 'replies', 'showcase', 'ourMessages',
                 'autoReplies', 'casesOpened'):
         totals[key] = sum(row[key] for row in rows)
-    return {'available': True, 'timezone': 'Asia/Shanghai', 'now': now, 'days': rows,
+    return {'available': True, 'market':market,'timezone': 'Asia/Shanghai', 'now': now, 'days': rows,
             'totals': totals, 'openCases': open_cases}

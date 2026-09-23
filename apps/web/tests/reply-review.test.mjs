@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {createReplyReviewHandlers,validateReplyReviewStatus} from '../src/server/reply-review/bridge.ts';
 import {initialReviewAction} from '../src/features/second-outreach/reply-review-contracts.ts';
 
-const url='http://127.0.0.1:5198/api/reply-review';
+const url='http://127.0.0.1:5198/api/reply-review?market=it';
 const headers={host:'127.0.0.1:5198',origin:'http://127.0.0.1:5198','content-type':'application/json'};
 const turn='turn-'+'a'.repeat(24),classification='classification-'+'b'.repeat(24);
 const decision={action:'collaboration_ack',intentCode:'collaboration_confirmed',evidenceMessageIds:['1001'],
@@ -37,11 +37,11 @@ test('GET is local read-only and POST accepts only classify or versioned review'
  const calls=[];const handlers=createReplyReviewHandlers(async command=>{calls.push(command);return command.action==='status'?payload:{ok:true};});
  assert.equal((await handlers.GET(new Request(url,{headers:{host:'127.0.0.1:5198'}}))).status,200);
  assert.deepEqual(calls[0],{action:'status',limit:12});
- const classify={action:'classify',turnId:turn,requestId:'web-request-0001',provider:'deepseek'};
+ const classify={action:'classify',market:'it',turnId:turn,requestId:'web-request-0001',provider:'deepseek'};
  assert.equal((await handlers.POST(new Request(url,{method:'POST',headers,body:JSON.stringify(classify)}))).status,200);
- const review={action:'review_turn',turnId:turn,expectedRevision:0,correctAction:'human',note:'应转人工'};
+ const review={action:'review_turn',market:'it',turnId:turn,expectedRevision:0,correctAction:'human',note:'应转人工'};
  assert.equal((await handlers.POST(new Request(url,{method:'POST',headers,body:JSON.stringify(review)}))).status,200);
- const apply={action:'apply_review',turnId:turn,expectedReviewRevision:1,expectedControlRevision:2,expectedPendingRevision:1,requestId:'web-apply-0001'};
+ const apply={action:'apply_review',market:'it',turnId:turn,expectedReviewRevision:1,expectedControlRevision:2,expectedPendingRevision:1,requestId:'web-apply-0001'};
  assert.equal((await handlers.POST(new Request(url,{method:'POST',headers,body:JSON.stringify(apply)}))).status,200);
  assert.equal((await handlers.POST(new Request(url,{method:'POST',headers,body:JSON.stringify({...classify,send:true})}))).status,400);
  assert.equal((await handlers.POST(new Request(url,{method:'POST',headers,body:JSON.stringify({...review,action:'send'})}))).status,400);
@@ -49,7 +49,7 @@ test('GET is local read-only and POST accepts only classify or versioned review'
 
 test('foreign origin and malformed review do not invoke the backend',async()=>{
  let calls=0;const handlers=createReplyReviewHandlers(async()=>{calls++;return {};});
- const review={action:'review_turn',turnId:turn,expectedRevision:0,correctAction:null,note:''};
+ const review={action:'review_turn',market:'it',turnId:turn,expectedRevision:0,correctAction:null,note:''};
  assert.equal((await handlers.POST(new Request(url,{method:'POST',headers:{...headers,origin:'https://other.test'},body:JSON.stringify(review)}))).status,403);
  assert.equal((await handlers.POST(new Request(url,{method:'POST',headers,body:JSON.stringify(review)}))).status,400);
  assert.equal(calls,0);

@@ -53,20 +53,24 @@ class Reporting(unittest.TestCase):
 
     def test_missing_ledgers_are_unknown_not_zero(self):
         with tempfile.TemporaryDirectory() as folder:
-            self.assertTrue(all(value is None for value in last_run(folder).values()))
+            self.assertTrue(all(value is None for value in last_run(folder,'it').values()))
 
     def test_workflow_and_monitor_timestamps_are_read_back(self):
         with tempfile.TemporaryDirectory() as folder:
             root=Path(folder);var=root/'var';var.mkdir()
             with closing(sqlite3.connect(var/'second-cycle.sqlite')) as db,db:
-                db.execute('CREATE TABLE workflow_stage_run(stage TEXT,state TEXT,finished_at REAL)')
-                db.execute("INSERT INTO workflow_stage_run VALUES('catalog','completed',1789318884)")
-                db.execute('CREATE TABLE agent_reply_run(finished_at REAL)')
-                db.execute('INSERT INTO agent_reply_run VALUES(1789319999)')
-                db.execute('CREATE TABLE continuous_send_runtime(last_success_at REAL)')
-                db.execute('INSERT INTO continuous_send_runtime VALUES(1789320000)')
+                db.execute('CREATE TABLE plan(id TEXT,market TEXT)')
+                db.execute("INSERT INTO plan VALUES('p','it')")
+                db.execute('CREATE TABLE workflow_run(run_id TEXT,market TEXT)')
+                db.execute("INSERT INTO workflow_run VALUES('r','it')")
+                db.execute('CREATE TABLE workflow_stage_run(run_id TEXT,stage TEXT,state TEXT,finished_at REAL)')
+                db.execute("INSERT INTO workflow_stage_run VALUES('r','catalog','completed',1789318884)")
+                db.execute('CREATE TABLE agent_reply_run(plan_id TEXT,finished_at REAL)')
+                db.execute("INSERT INTO agent_reply_run VALUES('p',1789319999)")
+                db.execute('CREATE TABLE continuous_send_runtime(plan_id TEXT,last_success_at REAL)')
+                db.execute("INSERT INTO continuous_send_runtime VALUES('p',1789320000)")
             (var/'cycle-inbox-status.json').write_text(json.dumps({'checkedAt':1789472255.5}))
-            values=last_run(root)
+            values=last_run(root,'it')
             self.assertEqual(values['full_catalog_update'],1789318884)
             self.assertEqual(values['campaign_catalog_update'],1789318884)
             self.assertEqual(values['inbox_monitor'],1789472255.5)

@@ -208,7 +208,7 @@ def run(root, *, market='it', limit=None, max_pages=2, provider_factory=None, cl
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--market',default='it')
+    parser.add_argument('--market',required=True)
     parser.add_argument('--limit', type=int, help='override the configured batch ceiling')
     parser.add_argument('--max-pages', type=int, default=2)
     args = parser.parse_args()

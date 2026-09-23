@@ -3,6 +3,7 @@ import {existsSync} from "node:fs";
 import {dirname,join,resolve} from "node:path";
 import {InputError} from "../runtime/validation.ts";
 import type {ProfileRefreshRequest} from "../../features/creator-identities/refresh-contracts.ts";
+import {enabledMarket} from "../markets/registry.ts";
 
 export class ProfileRefreshError extends Error {readonly code:string;readonly status:number;constructor(code:string,status:number,message:string){super(message);this.code=code;this.status=status;}}
 export type RefreshCommand="enqueue"|"status"|"list";
@@ -19,15 +20,16 @@ const messages:Record<string,[number,string]>={
 export function parseRefreshRequest(value:unknown):ProfileRefreshRequest {
   if(!value||typeof value!=="object"||Array.isArray(value))throw new InputError("刷新请求必须为对象。");
   const row=value as Record<string,unknown>;
-  if(Object.keys(row).some(k=>!["creatorId","requestId"].includes(k))||typeof row.creatorId!=="string"||!/^creator_[a-f0-9]{32}$/.test(row.creatorId)||typeof row.requestId!=="string"||!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,119}$/.test(row.requestId))throw new InputError("缺少有效的达人或请求编号。");
-  return {creatorId:row.creatorId,requestId:row.requestId};
+  if(Object.keys(row).some(k=>!["market","creatorId","requestId"].includes(k))||typeof row.market!=="string"||!enabledMarket(row.market)||typeof row.creatorId!=="string"||!/^creator_[a-f0-9]{32}$/.test(row.creatorId)||typeof row.requestId!=="string"||!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,119}$/.test(row.requestId))throw new InputError("缺少有效的市场、达人或请求编号。");
+  return {market:row.market,creatorId:row.creatorId,requestId:row.requestId};
 }
 export function parseRefreshQuery(url:string):{command:"list"|"status";input:Record<string,string>} {
   const q=new URL(url).searchParams;
-  if([...q.keys()].some(k=>!["creatorId","jobId"].includes(k))||[...q.keys()].length!==1)throw new InputError("请指定一位达人或一个刷新任务。");
-  const creator=q.get("creatorId"),job=q.get("jobId");
-  if(creator&&/^creator_[a-f0-9]{32}$/.test(creator))return {command:"list",input:{creatorId:creator}};
-  if(job&&/^[A-Za-z0-9][A-Za-z0-9_-]{0,119}$/.test(job))return {command:"status",input:{jobId:job}};
+  if([...q.keys()].some(k=>!["market","creatorId","jobId"].includes(k))||q.getAll("market").length!==1||[...q.keys()].length!==2)throw new InputError("请指定市场和一位达人或一个刷新任务。");
+  const market=q.get("market"),creator=q.get("creatorId"),job=q.get("jobId");
+  if(!market||!enabledMarket(market))throw new InputError("市场无效。");
+  if(creator&&/^creator_[a-f0-9]{32}$/.test(creator))return {command:"list",input:{market,creatorId:creator}};
+  if(job&&/^[A-Za-z0-9][A-Za-z0-9_-]{0,119}$/.test(job))return {command:"status",input:{market,jobId:job}};
   throw new InputError("达人或刷新任务编号无效。");
 }
 export function projectRoot(start=process.cwd()):string {
@@ -44,12 +46,13 @@ export function decodeRefreshOutput(output:string):unknown {
   return parsed;
 }
 export function callRefreshCommand(command:RefreshCommand,input:Record<string,string>|ProfileRefreshRequest):Promise<unknown> {
+  if(input.market!=="it")throw new ProfileRefreshError("unsupported_market",409,"此市场尚未接通页面画像刷新。");
   const root=projectRoot();
   return new Promise((resolveResult,reject)=>{
     const child=execFile(join(root,".venv/bin/python"),[join(root,"scripts/creator-profile-refresh.py"),command],
       {cwd:root,timeout:10000,maxBuffer:128*1024,env:{...process.env,PYTHONDONTWRITEBYTECODE:"1"}},(error,stdout)=>{
         try{if(error&&!stdout.trim())throw new ProfileRefreshError("refresh_unavailable",503,"暂未确认刷新请求，请保留原编号后重试。");resolveResult(decodeRefreshOutput(stdout));}catch(failure){reject(failure);}
       });
-    child.stdin?.on("error",()=>{});child.stdin?.end(JSON.stringify(input));
+    const {market:_,...payload}=input;child.stdin?.on("error",()=>{});child.stdin?.end(JSON.stringify(payload));
   });
 }

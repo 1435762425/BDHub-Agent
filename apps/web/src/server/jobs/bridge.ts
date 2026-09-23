@@ -5,7 +5,7 @@ import {projectRoot} from "../creator-identities/refresh.ts";
 /** One schedulable job: what it does, whether it can be started by hand, and the operator's intent. */
 export type WorkbenchJob={id:string;name:string;group:string;description:string;manual:string;manualEndpoint:string|null;lastRunAt:number|null;enabled:boolean;at:string|null;schedulable:boolean;cadence:"daily"|"weekly";weekday:number|null};
 export type SchedulerState={running:boolean;stopping:boolean;pid:number|null;startedAt:number|null;phase:string|null;cycle:string|null;checkedAt:number|null;lastSuccess:Record<string,number>;lastAttempt:Record<string,number>;nextDue:Record<string,number>;error:string|null};
-export type JobsState={version:string;jobs:WorkbenchJob[];schedulerReady:boolean;scheduler:SchedulerState;saved?:boolean};
+export type JobsState={version:string;market:string;jobs:WorkbenchJob[];schedulerReady:boolean;scheduler:SchedulerState;saved?:boolean};
 export type JobsSave={jobs:Record<string,{enabled?:boolean;at?:string|null;weekday?:number}>};
 
 const ID=/^[a-z_]{1,40}$/,TIME=/^([01]\d|2[0-3]):[0-5]\d$/;
@@ -38,14 +38,15 @@ function validateScheduler(raw:unknown):SchedulerState{
   lastSuccess:map(v.lastSuccess),lastAttempt:map(v.lastAttempt),nextDue:map(v.nextDue),error:v.error==null?null:String(v.error)};
 }
 
-export function validateJobs(value:unknown):JobsState{
+export function validateJobs(value:unknown,expectedMarket:string):JobsState{
  if(!value||typeof value!=="object")throw Error('invalid_jobs');
  const v=value as Record<string,unknown>;
+ if(v.market!==expectedMarket)throw Error('invalid_jobs');
  if(typeof v.version!=="string"||!v.version)throw Error('invalid_jobs');
  if(!Array.isArray(v.jobs)||v.jobs.length===0||v.jobs.length>40)throw Error('invalid_jobs');
  const jobs=(v.jobs as unknown[]).map(validateJob);
  if(new Set(jobs.map(job=>job.id)).size!==jobs.length)throw Error('invalid_jobs');
- return {version:v.version,jobs,schedulerReady:v.schedulerReady===true,scheduler:validateScheduler(v.scheduler),
+ return {version:v.version,market:expectedMarket,jobs,schedulerReady:v.schedulerReady===true,scheduler:validateScheduler(v.scheduler),
   ...(typeof v.saved==="boolean"?{saved:v.saved}:{})};
 }
 
@@ -75,27 +76,28 @@ export function validateJobsSave(value:unknown):JobsSave{
  return out;
 }
 
-function runJobs(args:string[]):Promise<JobsState>{
+function runJobs(args:string[],market:string):Promise<JobsState>{
  const root=projectRoot();
  return new Promise((resolve,reject)=>{
   execFile(join(root,".venv/bin/python"),[join(root,"scripts/jobs.py"),...args],
    {cwd:root,timeout:30000,maxBuffer:1024*1024,env:{...process.env,PYTHONDONTWRITEBYTECODE:"1"}},(error,out)=>{
-    try{const parsed=JSON.parse(out);if(parsed&&typeof parsed==="object"&&typeof parsed.error==="string"){reject(Error(parsed.error));return;}resolve(validateJobs(parsed));}
+    try{const parsed=JSON.parse(out);if(parsed&&typeof parsed==="object"&&typeof parsed.error==="string"){reject(Error(parsed.error));return;}resolve(validateJobs(parsed,market));}
     catch{reject(Error('jobs_unavailable'));}
    });
  });
 }
 
-export function readJobs():Promise<JobsState>{return runJobs(["status"]);}
-export function saveJobs(payload:JobsSave):Promise<JobsState>{return runJobs(["save","--json",JSON.stringify(payload)]);}
-export function startJobsScheduler():Promise<JobsState>{return runJobs(["start-scheduler"]);}
-export function stopJobsScheduler():Promise<JobsState>{return runJobs(["stop-scheduler"]);}
+export function readJobs(market:string):Promise<JobsState>{return runJobs(["status","--market",market],market);}
+export function saveJobs(market:string,payload:JobsSave):Promise<JobsState>{return runJobs(["save","--market",market,"--json",JSON.stringify(payload)],market);}
+export function startJobsScheduler(market:string):Promise<JobsState>{return runJobs(["start-scheduler","--market",market],market);}
+export function stopJobsScheduler(market:string):Promise<JobsState>{return runJobs(["stop-scheduler","--market",market],market);}
 
-export type JobsRequest={action:"save";payload:JobsSave}|{action:"start_scheduler"}|{action:"stop_scheduler"};
+export type JobsRequest={action:"save";market:string;payload:JobsSave}|{action:"start_scheduler";market:string}|{action:"stop_scheduler";market:string};
 export function validateJobsRequest(value:unknown):JobsRequest{
  if(!value||typeof value!=="object"||Array.isArray(value))throw Error('invalid_jobs_request');const v=value as Record<string,unknown>;
+ if(typeof v.market!=="string"||!/^[a-z]{2}$/.test(v.market))throw Error('invalid_jobs_request');
  if(v.action==="start_scheduler"||v.action==="stop_scheduler"){
-  if(Object.keys(v).length!==1)throw Error('invalid_jobs_request');return {action:v.action};
+  if(Object.keys(v).sort().join(",")!=="action,market")throw Error('invalid_jobs_request');return {action:v.action,market:v.market};
  }
- return {action:"save",payload:validateJobsSave(value)};
+ return {action:"save",market:v.market,payload:validateJobsSave(value)};
 }

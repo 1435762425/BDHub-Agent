@@ -1,4 +1,4 @@
-export type IdentityMarket = "it" | "br" | "my" | "uk" | "mx";
+export type IdentityMarket = string;
 export type IdentityDatasetStatus = "ready" | "not_imported";
 export type IdentityListStatus = "verified" | "pending";
 export type ProfileFieldStatus = "absent" | "no_value" | "unauthorized" | "error" | "zero" | "value";
@@ -47,5 +47,5 @@ export interface IdentitySourceResolution {
 export type CreatorIdentityQuery =
   | {view:"overview";market:IdentityMarket}
   | {view:"list";market:IdentityMarket;status:IdentityListStatus;q:string;offset:number;limit:number}
-  | {view:"detail";creatorId:string}
+  | {view:"detail";market:IdentityMarket;creatorId:string}
   | {view:"source";market:IdentityMarket;oecId?:string;externalId?:string};

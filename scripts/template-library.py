@@ -32,40 +32,46 @@ def main():
  try:
   raw=sys.stdin.read(20001)
   if len(raw.encode())>20000:raise CycleError('input_too_large')
-  req=json.loads(raw or '{}');action=req.get('action');market=req.get('market','it');readonly=action=='status'
+  req=json.loads(raw or '{}');action=req.get('action');market=req.get('market');readonly=action=='status'
   if action not in ('status','create_send','update_send','archive_send','upsert_manual','update_agent','save_agent','review_send'):
    raise CycleError('invalid_action')
-  from lib.market_registry import enabled_market_keys
-  if market not in enabled_market_keys(ROOT):raise CycleError('invalid_market')
-  if market!='it' and action not in ('status','review_send'):raise CycleError('market_template_edit_pending')
+  from lib.market_registry import market as market_record
+  try:definition=market_record(ROOT,market)
+  except (TypeError,ValueError):raise CycleError('invalid_market') from None
+  if not definition['contentReady']:raise CycleError('market_content_unavailable')
+  if market!='it' and action in ('create_send','update_send','archive_send'):raise CycleError('market_send_template_fixed')
   with CycleStore(ROOT/'var/second-cycle.sqlite',readonly=readonly) as store:
-   plan=store.db.execute("SELECT id FROM plan WHERE market=? AND institution='bjn-local-research'",(market,)).fetchone()[0]
+   plan_row=store.db.execute("SELECT id FROM plan WHERE market=? AND institution='bjn-local-research'",(market,)).fetchone()
+   if not plan_row:raise CycleError('plan_missing')
+   plan=plan_row[0]
    if action=='status':
-    if set(req) not in ({'action'},{'action','market'}):raise CycleError('invalid_input')
+    if set(req)!={'action','market'}:raise CycleError('invalid_input')
    elif action=='review_send':
     if set(req)!={'action','market','requestId','templateId','state','expectedRevision'}:raise CycleError('invalid_input')
     review_send_template(store,ROOT,req['requestId'],req['templateId'],req['state'],req['expectedRevision'])
    elif action=='create_send':
-    if set(req)!={'action','requestId','name','bodyIt'}:raise CycleError('invalid_input')
+    if set(req)!={'action','market','requestId','name','bodyIt'}:raise CycleError('invalid_input')
     create_send_template(store,req['requestId'],req['name'],req['bodyIt'])
    elif action=='update_send':
-    if set(req)!={'action','templateId','expectedRevision','name','bodyIt'}:raise CycleError('invalid_input')
+    if set(req)!={'action','market','templateId','expectedRevision','name','bodyIt'}:raise CycleError('invalid_input')
     update_send_template(store,req['templateId'],req['expectedRevision'],req['name'],req['bodyIt'])
    elif action=='archive_send':
-    if set(req)!={'action','templateId','expectedRevision'}:raise CycleError('invalid_input')
+    if set(req)!={'action','market','templateId','expectedRevision'}:raise CycleError('invalid_input')
     if selected_send_template(store,ROOT)==req['templateId']:raise CycleError('template_in_use')
     archive_send_template(store,req['templateId'],req['expectedRevision'])
    elif action=='upsert_manual':
-    if set(req)!={'action','requestId','templateId','expectedRevision','name','category','body'}:raise CycleError('invalid_input')
-    upsert_manual_template(store,req['requestId'],req['templateId'],req['expectedRevision'],req['name'],req['category'],req['body'])
+    if set(req)!={'action','market','requestId','templateId','expectedRevision','name','category','body'}:raise CycleError('invalid_input')
+    upsert_manual_template(store,req['requestId'],req['templateId'],req['expectedRevision'],req['name'],req['category'],req['body'],market)
    elif action=='update_agent':
-    if set(req)!={'action','templateKey','expectedRevision','body'}:raise CycleError('invalid_input')
-    update_agent_template(store,load_policy(),req['templateKey'],req['expectedRevision'],req['body'])
+    if set(req)!={'action','market','templateKey','expectedRevision','body'}:raise CycleError('invalid_input')
+    update_agent_template(store,load_policy(),req['templateKey'],req['expectedRevision'],req['body'],market)
    else:
-    if set(req)!={'action','expectedRevision','setting'}:raise CycleError('invalid_input')
+    if set(req)!={'action','market','expectedRevision','setting'}:raise CycleError('invalid_input')
+    if market!='it' and req['setting'].get('enabled') is True:raise CycleError('market_agent_runtime_unavailable')
     saved=save_agent_setting(store,plan,req['expectedRevision'],req['setting'])
-    from lib.send_batch import save_config
-    save_config(ROOT,{'windowEnabled':True,'window':[saved['sendStart'],saved['sendEnd']]})
+    if market=='it':
+     from lib.send_batch import save_config
+     save_config(ROOT,{'windowEnabled':True,'window':[saved['sendStart'],saved['sendEnd']]})
    result=snapshot(store,market)
   print(json.dumps(result,ensure_ascii=False));return 0
  except Exception as error:

@@ -40,11 +40,11 @@ const tone=(state:string)=>state==="eligible"||state==="completed"?"success"
  *   ③ 达人线索：查询队列 / 达人身份 / 发送池——**这两步跨渠道共用**，不是非全托独有
  *      （位置＝达人×商品，渠道只挂在商品与链接上，绝不按渠道拆达人）。
  */
-export default function CampaignPanel({onOpenLeads}:{onOpenLeads?:()=>void}={}){
- const panel=useCampaignPanel();
- const join=useCampaignJoin();
- const links=useCampaignLinks();
- const jobs=useCatalogJobs();
+export default function CampaignPanel({market,onOpenLeads}:{market:string;onOpenLeads?:()=>void}){
+ const panel=useCampaignPanel(market);
+ const join=useCampaignJoin(market);
+ const links=useCampaignLinks(market);
+ const jobs=useCatalogJobs(market);
  const pool=panel.data, ledger=join.data;
  const joinable=(ledger?.items??[]).filter(item=>item.state==="eligible");
  const unresolved=ledger?.unresolved??[];
@@ -216,7 +216,7 @@ export default function CampaignPanel({onOpenLeads}:{onOpenLeads?:()=>void}={}){
     </p>
     {/* 卡名来源：缺短名就会退化成截断标题，所以这一步必须和"新建链接"放在一起，
         否则链接是建出来了，名字却不是我们要的那个。 */}
-    <ShortNames/>
+    <ShortNames market={market}/>
     </div></Card></div>
   </Section>
 

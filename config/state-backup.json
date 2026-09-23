@@ -21,6 +21,7 @@
     "it-conversations.sqlite",
     "kalodata-leads.sqlite",
     "kalodata-leads-br.sqlite",
+    "kalodata-leads-my.sqlite",
     "kalodata-leads-uk.sqlite",
     "kalodata-source-cache.sqlite",
     "matching-italy-profiles.sqlite",

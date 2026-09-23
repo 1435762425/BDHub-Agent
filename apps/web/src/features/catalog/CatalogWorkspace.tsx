@@ -1,140 +1,61 @@
 "use client";
-import Link from "next/link";
-import {useCallback,useEffect,useRef,useState} from "react";
-import {Button,Card,Collapsible,Field,Input,MetricTable,Notice,PageHeading,Pill,Progress,Section,Tabs} from "../bdhub/ui";
-import type {CatalogLinkStatus,GlobalStatus} from "../../server/global-source/bridge";
-import type {CatalogScreenConfig,CatalogScreenState} from "../../server/catalog-screen/bridge";
-import LeadsQueuePanel from "./LeadsQueuePanel";
-import IdentityPanel from "./IdentityPanel";
-import CampaignPanel from "./CampaignPanel";
-import FunnelBar from "./FunnelBar";
-import ShortNames from "./ShortNames";
-import {buildFunnel,type FunnelStage} from "./funnel";
-import {useLeadsQueue} from "./useLeadsQueue";
-import {useIdentityQueue} from "./useIdentityQueue";
-import {useCatalogJobs} from "./useCatalogJobs";
-import LeadsPanel from "./LeadsPanel";
-import LinkNamingPanel from "./LinkNamingPanel";
-import {useLeadPool} from "./useLeadPool";
-const states:Record<string,string>={collecting:"采集中",completed:"查询范围已采完",partial:"覆盖尚不完整",blocked:"等待处理"};
-const linkReasons:Record<string,string>={card_search_incomplete:"商品卡查询不完整，暂不判断标准链接",card_read_unresolved:"商品卡读取未完成",card_members_incomplete:"成员回查不完整",existing_links_require_review:"旧卡只保留历史，等待标准链接",existing_links_other_campaign:"旧卡属于其他活动，不作为当前材料",product_no_longer_eligible:"商品当前不再符合初筛",selected_campaign_changed:"活动绑定已变化，需按当前活动重查",catalog_link_creation_pending:"等待标准链接",catalog_link_creation_unresolved:"建链结果未知，按原意图回查",catalog_link_requires_review:"旧口径记录待重新检查",catalog_link_terms_changed:"标准链接与当前商品方案不一致",catalog_link_not_prepared:"尚未进入标准链接准备",link_creator_not_above_public:"历史卡达人佣金未高于公开佣金",link_agency_below_minimum:"历史卡机构收益不足1个百分点",link_not_platform_valid:"历史卡当前平台无效",link_product_not_eligible:"历史卡商品当前不满足资格"};
-// The step names a running link batch publishes, in the operator's terms rather than the driver's.
-const linkPhases:Record<string,string>={seed:"整理商品清单",read:"只读检查已有链接",create:"平台新建缺链",done:"已结束"};
-const pct=(value:unknown)=>(typeof value==="string"&&value!==""||typeof value==="number")&&Number.isFinite(Number(value))?`${Number(value)/100}%`:"未返回";
-const duration=(seconds?:number)=>typeof seconds==="number"&&Number.isFinite(seconds)?`${Math.floor(seconds/60)} 分 ${Math.round(seconds%60)} 秒`:"—";
-const screenReason=(code:string,config?:CatalogScreenConfig)=>{switch(code){case"sales_missing":return "销量字段缺失";case"sales_below_min":return `累计销量不足 ${config?.minSales??"—"}`;case"rating_unrated":return "暂无评分（当前不允许）";case"rating_below_min":return `评分低于 ${config?.minRating??"—"}`;case"commission_missing":return "佣金字段缺失";case"commission_gap_below_min":return `两档佣金差不足 ${config?.minCommissionGapPoints??"—"} 个点`;default:return code;}};
 
-export default function CatalogWorkspace(){
- const [tab,setTab]=useState<"full"|"campaign"|"leads"|"naming">("full");
- const queue=useLeadsQueue();
- const identity=useIdentityQueue();
- const jobs=useCatalogJobs();
- const leadPool=useLeadPool();
- const [syncing,setSyncing]=useState(false);const syncId=useRef<string|null>(null);const [revision,setRevision]=useState(0);
- async function sync(){setSyncing(true);try{syncId.current??=crypto.randomUUID();const r=await fetch("/api/global-source",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"sync",requestId:syncId.current})});if(!r.ok)throw Error();syncId.current=null;setRevision(v=>v+1);}catch{setError(true);}finally{setSyncing(false);}}
- const [data,setData]=useState<GlobalStatus|null>(null),[query,setQuery]=useState(""),[text,setText]=useState(""),[offset,setOffset]=useState(0),[error,setError]=useState(false);
- const [links,setLinks]=useState<CatalogLinkStatus|null>(null),[linksError,setLinksError]=useState(false);
- useEffect(()=>{const controller=new AbortController();let timer:ReturnType<typeof setTimeout>;const poll=async()=>{try{const r=await fetch(`/api/global-source?offset=${offset}&q=${encodeURIComponent(query)}`,{signal:controller.signal,cache:"no-store"});if(!r.ok)throw Error();const v=await r.json();if(!controller.signal.aborted){setData(v);setError(false);}}catch{if(!controller.signal.aborted)setError(true);}finally{if(!controller.signal.aborted)timer=setTimeout(poll,10000);}};void poll();return()=>{controller.abort();clearTimeout(timer);};},[offset,query,revision]);
- useEffect(()=>{const controller=new AbortController();let timer:ReturnType<typeof setTimeout>;const poll=async()=>{try{const r=await fetch("/api/global-source?links=1",{signal:controller.signal,cache:"no-store"});if(!r.ok)throw Error();const v=await r.json();if(!controller.signal.aborted){setLinks(v);setLinksError(false);}}catch{if(!controller.signal.aborted)setLinksError(true);}finally{if(!controller.signal.aborted)timer=setTimeout(poll,30000);}};void poll();return()=>{controller.abort();clearTimeout(timer);};},[]);
- const [screen,setScreen]=useState<CatalogScreenState|null>(null),[screenDraft,setScreenDraft]=useState<CatalogScreenConfig|null>(null);
- const [screenBusy,setScreenBusy]=useState(false),[screenMessage,setScreenMessage]=useState<string|null>(null);
- // A first read that has not landed yet is loading, not unavailable: the page mounts eight
- // Python-backed reads at once and the slowest can take a few seconds.
- const [screenLoaded,setScreenLoaded]=useState(false);
- useEffect(()=>{const controller=new AbortController();void(async()=>{try{const r=await fetch("/api/catalog-screen",{signal:controller.signal,cache:"no-store"});if(!r.ok)throw Error();const v:CatalogScreenState=await r.json();if(!controller.signal.aborted){setScreen(v);setScreenDraft(v.config);setScreenLoaded(true);}}catch{if(!controller.signal.aborted)setScreen(null);}})();return()=>controller.abort();},[]);
- async function screenAction(action:"preview"|"save"){if(!screenDraft)return;setScreenBusy(true);setScreenMessage(null);try{const r=await fetch("/api/catalog-screen",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action,config:screenDraft})});const v=await r.json();if(!r.ok){setScreenMessage("保存被拒绝：门槛超出允许范围，请检查三个数值。");return;}setScreen(v);setScreenDraft(v.config);setScreenMessage(action==="save"?"门槛已保存，并已按新门槛重新筛分本批采集结果。":"试算已按当前输入更新，未写入任何记录。");}catch{setScreenMessage("暂时无法读取或保存筛选门槛。");}finally{setScreenBusy(false);}}
- const linkedCount=links?.summary?links.summary.verifiedPidCount:null;
- const jump=(id:string)=>document.getElementById(id)?.scrollIntoView({behavior:"smooth",block:"start"});
- const stages:FunnelStage[]=buildFunnel({collected:data?.products??null,screened:screen?.funnel?.eligible??null,
-  screenedOf:screen?.funnel?.collected??null,linked:linkedCount,leadsPending:queue.data?.firstTime??null});
- const selection=data?.selectionBatch;
- // Link preparation reports the step it is on, so a long batch does not look hung. A read pass
- // counts products it has judged; once it starts writing, the bar counts links it has built.
- const linkProgress=jobs.data?.links.run?.progress??null;
- const linksRunning=Boolean(jobs.data?.links.run?.running);
- const judgedLinks=linkProgress?Math.max(0,linkProgress.total-(linkProgress.states.pending??0)-(linkProgress.states.reading??0)):0;
- const buildingLinks=linkProgress!==null&&linkProgress.phase==="create";
- // A step with no total yet means the batch has started but not judged anything: there is no bar
- // to draw, and the only honest thing to say is that it is still reading.
- const showLinkBar=linkProgress!==null&&linkProgress.total>0;
- const linkBar=buildingLinks&&linkProgress
-  ?{done:linkProgress.created,total:linkProgress.created+(linkProgress.states.missing??0),label:"建链进展（本批已建 / 待建起点）"}
-  :{done:judgedLinks,total:linkProgress?.total??0,label:"准备进展（已判定 / 本批已选商品）"};
- return <div className="space-y-5"><PageHeading title="货盘" description="高机会商品 · 仅全球销售商品。一条链：采集 → 筛选入池 → 准备链接 → 查达人线索。"/>
- {error&&<Notice tone="warning">暂时无法读取最新货盘状态，已有记录保留。</Notice>}
- <Tabs items={[{value:"full",label:"全托商品"},{value:"campaign",label:"非全托商品"},{value:"leads",label:"达人线索"},{value:"naming",label:"新建链接命名"}]} value={tab} onChange={setTab}/>
- {tab==="naming"?<LinkNamingPanel/>:tab==="leads"?<LeadsPanel/>:tab==="campaign"?<CampaignPanel onOpenLeads={()=>setTab("leads")}/>:<>
- <FunnelBar stages={stages} onJump={id=>id==="card-leads"?setTab("leads"):jump(id)}/>
- {tab==="full"&&leadPool.data?.available&&<MetricTable rows={(()=>{const c=leadPool.data.counts,b=leadPool.data.business;return [
-  {label:"可发送",value:b.sendable.toLocaleString(),detail:`${c.readyCreators.toLocaleString()} 个达人，各取一个最优 PID`,accent:true},
-  {label:"等待中",value:b.waiting.toLocaleString(),detail:"等轮次、冷却或达人问题处理"},
-  {label:"暂不参与",value:b.inactive.toLocaleString(),detail:"商品当前不合格或明确排除"},
-  {label:"已发送历史",value:leadPool.data.history.sent.toLocaleString(),detail:`累计位置 ${c.positions.toLocaleString()} 个`},
- ];})()}/>}
- <Section id="stage-collect" index="①" title="采集与筛选" summary={<>采集 {data?.products?.toLocaleString()??"—"} · 筛出 {screen?.funnel?.eligible.toLocaleString()??"—"} · 已备链 {linkedCount?.toLocaleString()??"—"}</>}>
- <div id="card-collect" className="scroll-mt-6"><Card title="意大利 · 全托主力来源" action={<div className="flex flex-wrap items-center gap-2"><Pill tone={data?.published?"success":data?.state==="blocked"?"warning":"brand"}>{data?.state?states[data.state]:"读取中"}</Pill><Button size="sm" onClick={()=>void sync()} disabled={syncing}>{syncing?"提交中…":data?.state==="collecting"?"继续采集":"主动采集"}</Button></div>}><div className="space-y-4 p-5"><MetricTable rows={[
-  {label:"已采集去重商品",value:data?.products?.toLocaleString()??"—",detail:"当前完整商品范围",accent:true},
-  {label:"一级类目",value:data?.categoryCount!=null?`${data.categoriesCompleted??0} / ${data.categoryCount}`:"—",detail:data?.partitionMode==="category_l1_v1"?"按官方一级类目完整分片":"旧单查询口径"},
-  {label:"类目成员总数",value:data?.reportedTotal?.toLocaleString()??"—",detail:`跨类目重复 ${(data?.categoryOverlap??0).toLocaleString()} 个`},
-  {label:"完整采集耗时",value:duration(data?.elapsedSeconds),detail:`共 ${(data?.pages??0).toLocaleString()} 页`},
-  {label:"采集时未选",value:data?.listedUnselectedProducts?.toLocaleString()??"—",detail:"尚未进入已选商品池"},
-  {label:"已核对活动详情",value:data?.detailProducts?.toLocaleString()??"—",detail:"已取得活动与佣金详情"},
- ]}/>
- {data?.reason&&data.state!=="completed"&&<Notice tone="warning">{{source_remote_rejected:"平台暂未接受查询，已保留采集进度。",repeated_page:"平台返回重复分页，需要核对后续采。",endpoint_end_total_mismatch:"已到接口末页，但数量尚未核对一致。",source_maintenance_due:"账号正在维护，等待恢复后续采。"}[data.reason]||"采集需进一步核对，已保存原始进度。"}</Notice>}
- {data?.updatedAt&&<p className="text-xs text-gray-400">最近写入 {new Date(data.updatedAt*1000).toLocaleString("zh-CN",{timeZone:"Asia/Shanghai",hour12:false})} · 北京时间</p>}
- <Collapsible label="商品明细（可搜索）" count={data?.totalMatches}><form className="mb-4 flex gap-2" onSubmit={e=>{e.preventDefault();setOffset(0);setQuery(text.trim());}}><Input aria-label="搜索货盘商品" placeholder="搜索 PID 或商品标题" value={text} onChange={e=>setText(e.target.value)} maxLength={100}/><Button type="submit" variant="outline" className="shrink-0 whitespace-nowrap">搜索</Button></form>
- {data?.displayRunId&&data.displayRunId!==data.id&&<p className="mb-4 text-xs text-gray-500">当前新一轮仍在采集，商品列表继续展示上次完整快照；新快照完整核对后再切换。</p>}<div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead className="border-b border-gray-200 text-xs text-gray-500 dark:border-gray-700"><tr>{["商品","公开佣金","平台展示总佣金","选入观察","进一步核验"].map(label=><th key={label} className="whitespace-nowrap px-3 py-3 font-medium">{label}</th>)}</tr></thead><tbody>{data?.items.map(p=><tr key={p.pid} className="border-b border-gray-100 dark:border-gray-800"><td className="min-w-64 max-w-md px-3 py-4"><p className="line-clamp-2" title={p.title}>{p.title}</p><p className="mt-1 font-mono text-xs text-gray-400">{p.pid}</p></td><td className="px-3 py-4">{pct(p.publicCommissionRaw)}</td><td className="px-3 py-4">{pct(p.totalCommissionRaw)}</td><td className="whitespace-nowrap px-3 py-4">{p.selectionObservation&&["confirmed","already_selected"].includes(p.selectionObservation.state)?"已选入（已回查）":p.listedSelected===true?"采集时已选":p.listedSelected===false?"采集时未选":"待确认"}</td><td className="min-w-48 px-3 py-4">{p.stockChecked&&p.selectedOffers.length?p.selectedOffers.map((o,i)=><p key={i} className="text-xs leading-6">拟给达人 {o.creatorPercent??"未确定"}% · {o.assessment.eligible?"符合本地准备条件":"条件不满足"}</p>):<Pill tone="neutral">{p.detailsChecked?"待选入／方案核验":"待核验活动与佣金"}</Pill>}</td></tr>)}</tbody></table></div>
- {!data?.items.length&&<p className="py-8 text-center text-sm text-gray-500">{data?.available?"当前没有匹配的商品":"等待采集记录"}</p>}
- <div className="mt-4 flex items-center justify-between text-xs text-gray-500"><span>{data?.totalMatches?`${offset+1}–${Math.min(offset+30,data.totalMatches)} / ${data.totalMatches.toLocaleString()}`:"0 条"}</span><div className="flex gap-2"><Button size="sm" variant="outline" disabled={offset===0} onClick={()=>setOffset(v=>Math.max(0,v-30))}>上一页</Button><Button size="sm" variant="outline" disabled={!data||offset+30>=data.totalMatches} onClick={()=>setOffset(v=>v+30)}>下一页</Button></div></div>
- </Collapsible>
- </div></Card></div>
- <div id="card-screen" className="scroll-mt-6"><Card title="采集即筛：全托商品入池门槛"><div className="space-y-4 p-5">
- {!screenDraft&&<p className="text-sm text-gray-500">{screenLoaded?"暂时无法读取筛选门槛。":"读取中…"}</p>}
- {screenDraft&&<>
- {screen?.funnel?<>
- <MetricTable rows={[
-  {label:"本批采集去重商品",value:screen.funnel.collected.toLocaleString(),detail:"进入本次筛分的商品"},
-  {label:"筛出（合格）",value:screen.funnel.eligible.toLocaleString(),detail:`合格率 ${screen.funnel.collected?((screen.funnel.eligible/screen.funnel.collected)*100).toFixed(1):"0.0"}%`,accent:true},
-  {label:"其中已在池中",value:screen.funnel.selectedEligible.toLocaleString(),detail:"已经完成商品选入"},
-  {label:"待入池",value:screen.funnel.unselectedEligible.toLocaleString(),detail:"当前符合规则但尚未选入",action:<Button size="sm" disabled={jobs.busy!==null||Boolean(jobs.data?.selection.run?.running)||screen.funnel.unselectedEligible===0} onClick={()=>void jobs.start("selection")}>{jobs.data?.selection.run?.running?"选入中…":"一键选入"}</Button>},
- ]}/>
- <p className="text-xs italic leading-5 text-gray-500">合格率 {screen.funnel.collected?((screen.funnel.eligible/screen.funnel.collected)*100).toFixed(1):"0.0"}%；筛除 {screen.funnel.rejected.toLocaleString()} 个（{Object.entries(screen.funnel.reasons).sort((a,b)=>b[1]-a[1]).map(([code,count])=>`${screenReason(code,screen.funnel?.config)}，${count.toLocaleString()} 个`).join("；")||"—"}）；另有暂无评分的 {screen.funnel.unrated.toLocaleString()} 个（评分为 0 的语义未核实）。</p>
- </>:<p className="text-sm text-gray-500">还没有可筛分的采集批次。</p>}
- {selection&&<><Progress done={(selection.states.confirmed??0)+(selection.states.already_selected??0)} total={selection.total} label="选入进度"/>{((selection.states.needs_review??0)+(selection.states.result_unknown??0))>0&&<p className="text-xs text-gray-500">需人工核对 {selection.states.needs_review??0} · 结果待核验 {selection.states.result_unknown??0}</p>}</>}
- {jobs.message&&jobs.busy===null&&<Notice tone="info">{jobs.message}</Notice>}
- <div className="grid gap-4 lg:grid-cols-4">
- <Field label="累计销量下限（件）"><Input type="number" min={0} max={1000000} value={screenDraft.minSales} onChange={e=>setScreenDraft({...screenDraft,minSales:Number(e.target.value)})}/></Field>
- <Field label="评分下限"><Input type="number" min={0} max={5} step={0.1} value={screenDraft.minRating} onChange={e=>setScreenDraft({...screenDraft,minRating:Number(e.target.value)})}/></Field>
- <Field label="佣金差下限（百分点）"><Input type="number" min={0} max={100} step={0.5} value={screenDraft.minCommissionGapPoints} onChange={e=>setScreenDraft({...screenDraft,minCommissionGapPoints:Number(e.target.value)})}/></Field>
- <Field label="暂无评分允许入池" hint="关闭后评分为 0 的商品一律筛除。"><label className="flex items-center gap-2 text-sm"><input type="checkbox" className="h-4 w-4" checked={screenDraft.allowUnrated} onChange={e=>setScreenDraft({...screenDraft,allowUnrated:e.target.checked})}/><span>{screenDraft.allowUnrated?"允许":"不允许"}</span></label></Field>
- </div>
- <div className="flex gap-2"><Button size="sm" variant="outline" disabled={screenBusy} onClick={()=>void screenAction("preview")}>试算改动</Button><Button size="sm" disabled={screenBusy} onClick={()=>void screenAction("save")}>{screenBusy?"处理中…":"保存门槛并重新筛分"}</Button></div>
- {screenMessage&&<Notice tone="info">{screenMessage}</Notice>}
- {screen?.preview&&<div className="rounded-xl border border-gray-200 p-4 text-sm dark:border-gray-700"><p>按新门槛（销量 ≥{screen.preview.config.minSales}、评分 ≥{screen.preview.config.minRating}、佣金差 ≥{screen.preview.config.minCommissionGapPoints} 个点{screen.preview.config.allowUnrated?"、暂无评分允许":""}）：筛出 {screen.preview.eligible.toLocaleString()} 个，现在 {screen.funnel?.eligible.toLocaleString()??"—"} 个。比现在新增 {screen.preview.addedVersusActive.toLocaleString()}、移出 {screen.preview.removedVersusActive.toLocaleString()}。</p></div>}
- </>}
- </div></Card></div>
- <div id="card-links" className="scroll-mt-6"><Card title="TapLink 准备"><div className="space-y-4 p-5">
- {linksError&&<Notice tone="warning">暂时无法读取链接准备台账，已保存的准备结果不受影响。</Notice>}
- {links&&!links.available&&!linksRunning&&<p className="text-sm text-gray-500">尚未开始链接准备。</p>}
- {(showLinkBar||linksRunning)&&<div className="rounded-xl border border-gray-200 p-4 dark:border-gray-700">
- {showLinkBar&&linkProgress?<><Progress done={linkBar.done} total={linkBar.total} label={linkBar.label}/>
- <p className="mt-2 text-xs leading-5 text-gray-500">{linksRunning?"进行中":"上一批"}：第 {linkProgress.step} 步 · {linkPhases[linkProgress.phase]??(linkProgress.phase||"—")}{linkProgress.phase==="read"&&linkProgress.pass?`（第 ${linkProgress.pass} / ${linkProgress.passes} 遍）`:""} · 已判定 {judgedLinks.toLocaleString()} · 待建链 {(linkProgress.states.missing??0).toLocaleString()} · 本批已建 {linkProgress.created.toLocaleString()}{linkProgress.updatedAt?` · 更新 ${new Date(linkProgress.updatedAt*1000).toLocaleString("zh-CN",{timeZone:"Asia/Shanghai",hour12:false})}`:""}</p></>
- :<p className="text-sm text-gray-500">已启动，正在整理商品清单…</p>}
- </div>}
- {links?.available&&links.summary&&<>
- <MetricTable rows={[
-  {label:"本批已选商品",value:links.summary.total.toLocaleString(),detail:"本轮链接准备范围"},
-  {label:"当前标准链接",value:links.summary.verifiedPidCount.toLocaleString(),detail:"统一分佣、命名并已回读",accent:true},
-  {label:"等待标准链接",value:links.summary.pendingCount.toLocaleString(),detail:"尚未形成当前可发材料"},
- ]}/>
- <ShortNames/>
- {links.summary.errors.length>0&&<Notice tone="warning">读取不完整，需核对：{links.summary.errors.map(e=>linkReasons[e]??e).join("；")}</Notice>}
- {links.summary.retryableErrors&&links.summary.retryableErrors.length>0&&<Notice tone="info">上次建链有 {links.summary.retryableErrors.length} 类未完成{links.summary.errorsUpdatedAt?`（${new Date(links.summary.errorsUpdatedAt*1000).toLocaleString("zh-CN",{timeZone:"Asia/Shanghai",hour12:false})}）`:""}：{links.summary.retryableErrors.map(e=>{const base=e.split(":")[0];const detail=e.slice(base.length+1);return (linkReasons[base]??base)+(detail?`（${detail}）`:"");}).join("；")}。这些商品仍在待建链里，再点一次「准备链接并新建」会重试。</Notice>}
- <div className="grid gap-3 border-t border-gray-100 pt-4 dark:border-gray-800 sm:grid-cols-2 lg:grid-cols-4 lg:items-end"><Field label="每次读取条数"><Input type="number" min={1} max={200} value={jobs.draft.links?.readLimit??15} onChange={e=>jobs.setDraft("links",{...jobs.draft.links,readLimit:Number(e.target.value)})}/></Field><Field label="每次新建上限"><Input type="number" min={0} max={200} value={jobs.draft.links?.creates??0} onChange={e=>jobs.setDraft("links",{...jobs.draft.links,creates:Number(e.target.value)})}/></Field><Button size="sm" disabled={jobs.busy!==null||Boolean(jobs.data?.links.run?.running)} onClick={()=>void jobs.start("links")}>{jobs.data?.links.run?.running?"准备中…":(jobs.draft.links?.creates??0)>0?"准备链接并新建":"准备链接（只查不建）"}</Button>{jobs.data?.links.run?.running&&<Pill tone={(jobs.draft.links?.creates??0)>0?"warning":"brand"}>{(jobs.draft.links?.creates??0)>0?"平台写入进行中":"只读检查中"}</Pill>}</div>
- </>}
- </div></Card></div>
- </Section>
- </>}
- <Link href="/it/workspace/send" className="inline-block text-sm text-brand-500">进入发送工作台 →</Link>
- </div>;
+import dynamic from "next/dynamic";
+import {useCallback,useEffect,useState} from "react";
+import {Button,Card,EmptyState,Input,MetricTable,Notice,PageHeading,Pill,Tabs} from "../bdhub/ui";
+import type {MarketSummary} from "../shell/market-types";
+import type {MarketCatalogState,MarketProductsState} from "../../server/market-catalog/bridge";
+
+const CampaignPanel=dynamic(()=>import("./CampaignPanel"),{ssr:false});
+const LeadsPanel=dynamic(()=>import("./LeadsPanel"),{ssr:false});
+const LinkNamingPanel=dynamic(()=>import("./LinkNamingPanel"),{ssr:false});
+type Tab="full"|"campaign"|"leads"|"naming";
+const number=(value:unknown)=>typeof value==="number"&&Number.isFinite(value)?value.toLocaleString("zh-CN"):"—";
+const object=(value:unknown)=>value&&typeof value==="object"&&!Array.isArray(value)?value as Record<string,unknown>:{};
+const percent=(value:string|null)=>value!==null&&value!==""&&Number.isFinite(Number(value))?`${Number(value)/100}%`:"未返回";
+
+function FullManagedProducts({market}:{market:string}){
+ const [expanded,setExpanded]=useState(false),[offset,setOffset]=useState(0),[query,setQuery]=useState(""),[draft,setDraft]=useState("");
+ const [data,setData]=useState<MarketProductsState|null>(null),[error,setError]=useState(false);
+ const currentData=data?.market===market?data:null;
+ useEffect(()=>{
+  if(!expanded)return;
+  const controller=new AbortController();
+  const params=new URLSearchParams({market,view:"products",offset:String(offset),q:query});
+  void fetch(`/api/market-catalog?${params}`,{cache:"no-store",signal:controller.signal})
+   .then(async response=>{if(!response.ok)throw Error("products_unavailable");return response.json() as Promise<MarketProductsState>;})
+   .then(value=>{if(value.market!==market||value.availability!=="ready")throw Error("products_invalid");setData(value);setError(false);})
+   .catch(()=>{if(!controller.signal.aborted)setError(true);});
+  return ()=>controller.abort();
+ },[expanded,market,offset,query]);
+ return <Card title="商品明细（可搜索）" action={<Button size="sm" variant="outline" onClick={()=>setExpanded(value=>!value)}>{expanded?"收起":"查看商品"}</Button>}>
+  {expanded&&<div className="space-y-4 p-5">
+   <form className="flex gap-2" onSubmit={event=>{event.preventDefault();setOffset(0);setQuery(draft.trim());}}><Input aria-label="搜索货盘商品" placeholder="搜索 PID 或商品标题" value={draft} maxLength={100} onChange={event=>setDraft(event.target.value)}/><Button type="submit" variant="outline">搜索</Button></form>
+   {error&&<Notice tone="warning">商品明细暂不可用，请稍后重试。</Notice>}
+   {currentData&&<>{currentData.displayRunId!==currentData.latestRunId&&<Notice tone="info">新一轮仍在采集；下方商品明细来自上次已发布的快照，待新批次完整核对后才会切换。</Notice>}<div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead className="border-b border-gray-200 text-xs text-gray-500 dark:border-gray-700"><tr>{["商品","公开佣金","平台展示总佣金","选入观察","进一步核验"].map(label=><th key={label} className="whitespace-nowrap px-3 py-3 font-medium">{label}</th>)}</tr></thead><tbody>{currentData.items.map(product=><tr key={product.pid} className="border-b border-gray-100 dark:border-gray-800"><td className="min-w-64 max-w-md px-3 py-4"><p className="line-clamp-2" title={product.title}>{product.title}</p><p className="mt-1 font-mono text-xs text-gray-400">{product.pid}</p></td><td className="px-3 py-4">{percent(product.publicCommissionRaw)}</td><td className="px-3 py-4">{percent(product.totalCommissionRaw)}</td><td className="whitespace-nowrap px-3 py-4">{product.selectionObservation&&["confirmed","already_selected"].includes(product.selectionObservation.state)?"已选入（已回查）":product.listedSelected===true?"采集时已选":product.listedSelected===false?"采集时未选":"待确认"}</td><td className="min-w-48 px-3 py-4">{product.stockChecked&&product.selectedOffers.length?product.selectedOffers.map((offer,index)=><p key={index} className="text-xs leading-6">拟给达人 {offer.creatorPercent??"未确定"}% · {offer.eligible?"符合本地准备条件":"条件不满足"}</p>):<Pill tone="neutral">{product.detailsChecked?"待选入／方案核验":"待核验活动与佣金"}</Pill>}</td></tr>)}</tbody></table></div>
+    {!currentData.items.length&&<p className="py-6 text-center text-sm text-gray-500">当前没有匹配的商品</p>}
+    <div className="flex items-center justify-between text-xs text-gray-500"><span>{currentData.total?`${currentData.offset+1}–${Math.min(currentData.offset+30,currentData.total)} / ${number(currentData.total)}`:"0 条"}</span><div className="flex gap-2"><Button size="sm" variant="outline" disabled={offset===0} onClick={()=>setOffset(value=>Math.max(0,value-30))}>上一页</Button><Button size="sm" variant="outline" disabled={offset+30>=currentData.total} onClick={()=>setOffset(value=>value+30)}>下一页</Button></div></div></>}
+   {!currentData&&!error&&<p className="text-sm text-gray-500">正在读取商品明细…</p>}
+  </div>}
+ </Card>;
+}
+
+function FullManagedPanel({definition}:{definition:MarketSummary}){
+ const supported=definition.capabilities.fullManagedCatalog===true,runtimeAvailable=definition.runtimeState!=="planned";
+ const [data,setData]=useState<MarketCatalogState|null>(null),[error,setError]=useState(false),[refreshing,setRefreshing]=useState(false);
+ const load=useCallback(async()=>{if(!supported||!runtimeAvailable)return;const response=await fetch(`/api/market-catalog?market=${encodeURIComponent(definition.key)}`,{cache:"no-store"});if(!response.ok)throw Error();const value=await response.json() as MarketCatalogState;if(value.market!==definition.key)throw Error();setData(value);setError(false);},[definition.key,runtimeAvailable,supported]);
+ useEffect(()=>{void load().catch(()=>setError(true));},[load]);
+ if(definition.capabilities.fullManagedCatalog===false)return <Card title="全托商品"><EmptyState title="该市场暂无全托商品" description="Campaign、TapLink、达人线索和发送池仍按同一页面结构运行；本页不会请求或启动全托 API、worker 或调度。"/></Card>;
+ if(!supported||!runtimeAvailable)return <Card title="全托商品"><EmptyState title="全托能力尚未验收" description="页面位置已经保留；账号、平台能力和类目口径确认前不会读取意大利数据，也不会创建全托任务。"/></Card>;
+ if(!data||data.market!==definition.key)return <Card title="全托商品"><div className="p-6"><EmptyState title={error?"全托状态暂不可用":"正在读取全托状态…"} description="没有可靠快照时不会显示成业务 0。"/></div></Card>;
+ const full=data.fullManaged,screen=object(full.screen),selection=object(full.selection),partial=full.coverage==="operator_accepted_partial";
+ return <div className="space-y-5"><Card title="全托商品" subtitle="首次及每 30 天按一级类目完整读取，其余周更使用普通读取。" action={<Button size="sm" variant="outline" disabled={refreshing} onClick={()=>{setRefreshing(true);void load().finally(()=>setRefreshing(false));}}>{refreshing?"读取中…":"刷新状态"}</Button>}><div className="space-y-4 p-5"><MetricTable rows={[{label:"本轮已读取商品",value:number(full.products),detail:"当前采集批次按 PID 去重"},{label:"本轮已读页数",value:number(full.pages),detail:"平台只读分页"},{label:"筛选合格",value:number(screen.eligible),detail:"当前确定性门槛",accent:true},{label:"已选入商品",value:number(selection.selected),detail:"平台回读确认"},{label:"待选入",value:number(selection.pending),detail:"冻结意图，不重复提交"}]}/>{partial&&<Notice tone="warning">用户接受的部分快照：已完整读取 {number(full.categoriesCompleted)}/{number(full.categoryCount)} 个一级类目；页面不会把它称为完整覆盖。</Notice>}<p className="text-xs leading-5 text-gray-500">状态：{String(full.state??full.reason??"尚未运行")} · 平台写入由自动运营 workflow 的持久意图执行，页面读取本市场快照。</p></div></Card><FullManagedProducts market={definition.key}/><Card title="材料与下游"><div className="grid gap-4 p-5 sm:grid-cols-4"><div><p className="text-xs text-gray-400">当前标准 TapLink</p><p className="mt-2 text-2xl font-semibold">{number(data.downstream.activeTapLinks)}</p></div><div><p className="text-xs text-gray-400">线索证据</p><p className="mt-2 text-2xl font-semibold">{number(data.downstream.leadEdges)}</p></div><div><p className="text-xs text-gray-400">已解析身份</p><p className="mt-2 text-2xl font-semibold">{number(data.downstream.identityResolved)}</p></div><div><p className="text-xs text-gray-400">确认触达</p><p className="mt-2 text-2xl font-semibold">{number(data.downstream.deliveriesConfirmed)}</p></div></div></Card></div>;
+}
+
+function Unavailable({title}:{title:string}){return <Card title={title}><EmptyState title="当前市场运行能力尚未验收" description="页面结构已统一；真实账号、locale 或写能力确认前保持关闭，并且不读取其它市场数据。"/></Card>;}
+
+export default function CatalogWorkspace({definition}:{definition:MarketSummary}){
+ const [tab,setTab]=useState<Tab>("full"),runtimeAvailable=definition.runtimeState!=="planned";
+ const tabs=[{value:"full",label:"全托商品"},{value:"campaign",label:"非全托商品"},{value:"leads",label:"达人线索"},{value:"naming",label:"新建链接命名"}];
+ return <div className="space-y-5"><PageHeading title="货盘" description="全托、Campaign、TapLink、Kalodata/OECID 与发送池使用同一市场隔离合同。" action={<Pill tone={runtimeAvailable?"brand":"warning"}>{definition.label} · {definition.shortLabel}</Pill>}/><Tabs items={tabs} value={tab} onChange={value=>setTab(value as Tab)}/>{tab==="full"?<FullManagedPanel definition={definition}/>:tab==="campaign"?(runtimeAvailable?<CampaignPanel market={definition.key} onOpenLeads={()=>setTab("leads")}/>:<Unavailable title="非全托商品"/>):tab==="leads"?(runtimeAvailable?<LeadsPanel market={definition.key}/>:<Unavailable title="达人线索"/>):(runtimeAvailable&&definition.contentReady?<LinkNamingPanel market={definition.key}/>:<Unavailable title="新建链接命名"/>)}</div>;
 }

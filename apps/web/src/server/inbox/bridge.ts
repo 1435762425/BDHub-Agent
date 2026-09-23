@@ -1,6 +1,7 @@
 import {execFile} from "node:child_process";
 import {join} from "node:path";
 import {projectRoot} from "../creator-identities/refresh.ts";
+import {enabledMarket} from "../markets/registry.ts";
 
 /** 收信监控与按天统计。监控本身是既有的只读脚本，这里只读它的状态、并启停它。 */
 export type InboxConfig={limit:number;interval:number};
@@ -15,16 +16,16 @@ export type InboxRun={name:string;label:string;pid:number;startedAt:number;log:s
 export type InboxDay={date:string;cards:number;texts:number;creators:number;unconfirmed:number;
  replies:number;showcase:number;ourMessages:number;autoReplies:number;casesOpened:number};
 export type InboxTotals=Omit<InboxDay,"date">;
-export type InboxState={available:boolean;config:InboxConfig;configInvalid:boolean;run:InboxRun|null;
+export type InboxState={available:boolean;market:string;config:InboxConfig;configInvalid:boolean;run:InboxRun|null;
  today:InboxDay|null;openCases:number;timezone:string;totals:InboxTotals;days:InboxDay[];saved?:boolean};
 export type InboxDetailKind="delivery"|"reply"|"showcase"|"auto_reply"|"case";
 export type InboxDetailItem={kind:InboxDetailKind;occurredAt:number;ref:string;creatorId:string|null;
  oec:string|null;handle:string|null;handleAtEvent:string|null;pid:string|null;status:string|null;
  product:string|null;creatorPercent:string|null;catalogSource:string|null;text:string|null;
  format:"text"|"attachment_or_unsupported"|"not_fetched"|null;textState:string|null};
-export type InboxDayDetail={available:boolean;date:string;timezone:string;summary:InboxDay|null;
+export type InboxDayDetail={available:boolean;market:string;date:string;timezone:string;summary:InboxDay|null;
  total:number;offset:number;limit:number;nextOffset:number|null;items:InboxDetailItem[];platformWrites:false};
-export type InboxQuery={view:"status";days:7|14|30}|{view:"detail";date:string;offset:number;limit:number};
+export type InboxQuery={view:"status";market:string;days:7|14|30}|{view:"detail";market:string;date:string;offset:number;limit:number};
 
 const STAT_KEYS=(['cards','texts','creators','unconfirmed','replies','showcase','ourMessages','autoReplies','casesOpened'] as const);
 
@@ -89,15 +90,16 @@ function validateRun(value:unknown,fallback:InboxConfig):InboxRun|null{
   progress:validateStep(v.progress)};
 }
 
-export function validateInbox(value:unknown):InboxState{
+export function validateInbox(value:unknown,expectedMarket?:string):InboxState{
  if(!value||typeof value!=="object"||Array.isArray(value))throw Error('invalid_inbox');
  const v=value as Record<string,unknown>;
+ const market=typeof v.market==="string"&&enabledMarket(v.market)&&(!expectedMarket||v.market===expectedMarket)?v.market:(()=>{throw Error('invalid_inbox')})();
  const config=validateInboxConfig(v.config);
  const run=validateRun(v.run,config);
  const saved=typeof v.saved==="boolean"?{saved:v.saved}:{};
  const configInvalid=v.configInvalid===true;
  const zero:InboxTotals={cards:0,texts:0,creators:0,unconfirmed:0,replies:0,showcase:0,ourMessages:0,autoReplies:0,casesOpened:0};
- if(v.available!==true)return {available:false,config,configInvalid,run,today:null,openCases:0,timezone:"Asia/Shanghai",totals:zero,days:[],...saved};
+ if(v.available!==true)return {available:false,market,config,configInvalid,run,today:null,openCases:0,timezone:"Asia/Shanghai",totals:zero,days:[],...saved};
  if(typeof v.timezone!=="string"||!v.timezone)throw Error('invalid_inbox');
  const rawDays=v.days;
  if(!Array.isArray(rawDays)||rawDays.length>DAYS_MAX)throw Error('invalid_inbox');
@@ -111,7 +113,7 @@ export function validateInbox(value:unknown):InboxState{
   const row=days.find(item=>item.date===today.date);
   if(!row||STAT_KEYS.some(key=>row[key]!==today[key]))throw Error('invalid_inbox');
  }
- return {available:true,config,configInvalid,run,
+ return {available:true,market,config,configInvalid,run,
   today,openCases:count(v.openCases),timezone:v.timezone,
   totals:totals?(({date,...rest})=>rest)(totals):zero,
   days,...saved};
@@ -123,9 +125,10 @@ function optionalText(raw:unknown,max:number):string|null{
  return raw;
 }
 
-export function validateInboxDayDetail(value:unknown):InboxDayDetail{
+export function validateInboxDayDetail(value:unknown,expectedMarket?:string):InboxDayDetail{
  if(!value||typeof value!=="object"||Array.isArray(value))throw Error('invalid_inbox_detail');
  const v=value as Record<string,unknown>;
+ const market=typeof v.market==="string"&&enabledMarket(v.market)&&(!expectedMarket||v.market===expectedMarket)?v.market:(()=>{throw Error('invalid_inbox_detail')})();
  if(typeof v.date!=="string"||!validDate(v.date)||typeof v.timezone!=="string"||!v.timezone)
   throw Error('invalid_inbox_detail');
  const offset=count(v.offset),limit=count(v.limit),total=count(v.total);
@@ -133,7 +136,7 @@ export function validateInboxDayDetail(value:unknown):InboxDayDetail{
   throw Error('invalid_inbox_detail');
  if(v.available!==true){
   if(total!==0||v.summary!=null||v.nextOffset!=null||!Array.isArray(v.items)||v.items.length)throw Error('invalid_inbox_detail');
-  return {available:false,date:v.date,timezone:v.timezone,summary:null,total:0,
+  return {available:false,market,date:v.date,timezone:v.timezone,summary:null,total:0,
    offset,limit,nextOffset:null,items:[],platformWrites:false};
  }
  if(!Array.isArray(v.items)||v.items.length>limit)throw Error('invalid_inbox_detail');
@@ -158,14 +161,14 @@ export function validateInboxDayDetail(value:unknown):InboxDayDetail{
  const nextOffset=v.nextOffset==null?null:count(v.nextOffset);
  const expected=offset+items.length<total?offset+items.length:null;
  if(nextOffset!==expected)throw Error('invalid_inbox_detail');
- return {available:true,date:v.date,timezone:v.timezone,summary,total,offset,limit,nextOffset,items,platformWrites:false};
+ return {available:true,market,date:v.date,timezone:v.timezone,summary,total,offset,limit,nextOffset,items,platformWrites:false};
 }
 
 export function parseInboxQuery(url:string):InboxQuery{
  const params=new URL(url).searchParams;
- if(!params.size)return {view:"status",days:14};
- if(params.size===1&&params.has('days')){const raw=params.get('days');if(raw!=='7'&&raw!=='14'&&raw!=='30')throw Error('invalid_inbox_query');return {view:'status',days:Number(raw) as 7|14|30};}
- if([...params.keys()].some(key=>!['date','offset','limit'].includes(key))||
+ const market=params.get('market');if(params.getAll('market').length!==1||!market||!enabledMarket(market))throw Error('invalid_inbox_query');
+ if([...params.keys()].every(key=>key==='market'||key==='days')){if(params.getAll('days').length>1)throw Error('invalid_inbox_query');const raw=params.get('days')??'14';if(raw!=='7'&&raw!=='14'&&raw!=='30')throw Error('invalid_inbox_query');return {view:'status',market,days:Number(raw) as 7|14|30};}
+ if([...params.keys()].some(key=>!['market','date','offset','limit'].includes(key))||
   ['date','offset','limit'].some(key=>params.getAll(key).length>1))throw Error('invalid_inbox_query');
  const date=params.get('date');
  if(!date||!validDate(date))
@@ -175,7 +178,7 @@ export function parseInboxQuery(url:string):InboxQuery{
   if(!Number.isSafeInteger(value)||value>max)throw Error('invalid_inbox_query');return value;};
  const offset=integer('offset',0,5000),limit=integer('limit',50,100);
  if(limit<1)throw Error('invalid_inbox_query');
- return {view:"detail",date,offset,limit};
+ return {view:"detail",market,date,offset,limit};
 }
 
 function runMonitor(args:string[]):Promise<unknown>{
@@ -194,12 +197,12 @@ function runMonitor(args:string[]):Promise<unknown>{
  });
 }
 
-export async function readInbox(days:7|14|30=14):Promise<InboxState>{return validateInbox(await runMonitor(["status","--days",String(days)]));}
-export async function readInboxDay(date:string,offset:number,limit:number):Promise<InboxDayDetail>{
- return validateInboxDayDetail(await runMonitor(["detail","--date",date,"--offset",String(offset),"--limit",String(limit)]));
+export async function readInbox(market:string,days:7|14|30=14):Promise<InboxState>{return validateInbox(await runMonitor(["status","--market",market,"--days",String(days)]),market);}
+export async function readInboxDay(market:string,date:string,offset:number,limit:number):Promise<InboxDayDetail>{
+ return validateInboxDayDetail(await runMonitor(["detail","--market",market,"--date",date,"--offset",String(offset),"--limit",String(limit)]),market);
 }
-export function saveInboxConfig(config:InboxConfig):Promise<InboxState>{
- return runMonitor(["save","--json",JSON.stringify(config)]).then(validateInbox);
+export function saveInboxConfig(market:string,config:InboxConfig):Promise<InboxState>{
+ return runMonitor(["save","--market",market,"--json",JSON.stringify(config)]).then(value=>validateInbox(value,market));
 }
 
 /** job-run.py 的拒绝要原样带出来；它的成功回答是全部作业，不是这一个。 */
@@ -219,27 +222,31 @@ function runJob(args:string[]):Promise<void>{
 }
 
 /** 拉起只读监控，然后回读一次，让页面只看到一种形状。 */
-export async function startInboxRun(config:InboxConfig):Promise<InboxState>{
+export async function startInboxRun(market:string,config:InboxConfig):Promise<InboxState>{
+ if(market!=="it")throw Error("market_inbox_control_unavailable");
  await runJob(["start","--name","inbox","--json",JSON.stringify(config)]);
- return readInbox();
+ return readInbox(market);
 }
 
 /** 让监控在**这一轮跑完之后**停下，不打断正在读的会话。 */
-export async function stopInboxRun():Promise<InboxState>{
+export async function stopInboxRun(market:string):Promise<InboxState>{
+ if(market!=="it")throw Error("market_inbox_control_unavailable");
  await runJob(["stop","--name","inbox"]);
- return readInbox();
+ return readInbox(market);
 }
 
 export function validateInboxRequest(value:unknown):
- {action:"save";config:InboxConfig}|{action:"start";config:InboxConfig}|{action:"stop"}{
+ {action:"save";market:string;config:InboxConfig}|{action:"start";market:string;config:InboxConfig}|{action:"stop";market:string}{
  if(!value||typeof value!=="object"||Array.isArray(value))throw Error('invalid_inbox_request');
  const v=value as Record<string,unknown>;
+ const market=typeof v.market==="string"&&enabledMarket(v.market)?v.market:(()=>{throw Error('invalid_inbox_request')})();
  if(v.action==="stop"){
   // 停止不需要参数；夹带其它字段的是坏请求，不是停止。
-  if(Object.keys(v).some(key=>key!=="action"))throw Error('invalid_inbox_request');
-  return {action:"stop"};
+  if(Object.keys(v).some(key=>key!=="action"&&key!=="market"))throw Error('invalid_inbox_request');
+  return {action:"stop",market};
  }
  if(v.action!=="save"&&v.action!=="start")throw Error('invalid_inbox_request');
- try{return {action:v.action,config:validateInboxConfig(v.config)};}
+ if(Object.keys(v).some(key=>!['action','market','config'].includes(key)))throw Error('invalid_inbox_request');
+ try{return {action:v.action,market,config:validateInboxConfig(v.config)};}
  catch{throw Error('invalid_inbox_request');}
 }

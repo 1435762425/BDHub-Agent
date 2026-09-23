@@ -56,6 +56,8 @@ def run(root,market,request_id,*,canary=True):
   plan=store.db.execute("SELECT id FROM plan WHERE institution='bjn-local-research' AND market=? AND state='active'",(market,)).fetchone()
   if not plan:raise CycleError('plan_missing')
   plan=plan[0]
+  if store.db.execute("SELECT 1 FROM cycle_delivery WHERE plan_id=? AND state='unknown' LIMIT 1",(plan,)).fetchone():
+   raise CycleError('market_send_result_unknown')
   with authenticated(root,market,report,canary=canary) as runtime:
    session=runtime['session'];adapter=runtime['adapter'];initial=session.initialize(0);candidate=_candidate(root,market,store,plan,initial,canary)
    if not candidate:raise CycleError('market_send_candidate_missing')

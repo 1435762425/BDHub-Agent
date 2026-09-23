@@ -18,21 +18,46 @@ from lib.market_accounts import load_config  # noqa:E402
 from lib.market_registry import market as market_record  # noqa:E402
 from lib.second_cycle import CycleStore  # noqa:E402
 
-
-def full_status(market):
- if not market_record(ROOT,market)['capabilities']['fullManagedCatalog']:
-  return {'applicable':False,'available':False,'reason':'not_supported'}
+def source_path(market):
  path=ROOT/('var/global-source.sqlite' if market=='it' else f'var/global-source-{market}.sqlite')
  if not path.exists():
   audit=ROOT/f'var/{market}-global-onboarding-canary.sqlite'
   path=audit if audit.exists() else path
+ return path
+
+def full_products(market,offset=0,query=''):
+ meta=market_record(ROOT,market)
+ if meta['capabilities']['fullManagedCatalog'] is not True:
+  return {'market':market,'availability':'unsupported' if meta['capabilities']['fullManagedCatalog'] is False else 'unavailable','items':[],'total':0,'offset':offset,'limit':30,'observedAt':None,'readOnly':True,'platformWrites':0}
+ path=source_path(market)
+ if not path.exists():return {'market':market,'availability':'unavailable','items':[],'total':0,'offset':offset,'limit':30,'observedAt':None,'readOnly':True,'platformWrites':0}
+ store=GlobalSources(path,readonly=True)
+ try:
+  result=store.products(offset=offset,limit=30,query=query)
+  if result.get('market')!=market:raise ValueError('market_catalog_scope_mismatch')
+  items=[]
+  for row in result.get('items',[]):
+   items.append({key:row.get(key) for key in ('pid','title','listedSelected','publicCommissionRaw','totalCommissionRaw','detailsChecked','stockChecked','selectionObservation')}
+    |{'selectedOffers':[{'creatorPercent':offer.get('creatorPercent'),'eligible':(offer.get('assessment') or {}).get('eligible')} for offer in row.get('selectedOffers',[])[:4]]})
+  return {'market':market,'availability':'ready' if result.get('available') else 'unavailable','items':items,'total':int(result.get('totalMatches') or 0),'offset':offset,'limit':30,
+          'displayRunId':result.get('displayRunId'),'latestRunId':result.get('id'),
+          'observedAt':(result.get('activePublished') or {}).get('updated') or result.get('updatedAt'),
+          'readOnly':True,'platformWrites':0}
+ finally:store.close()
+
+
+def full_status(market):
+ if not market_record(ROOT,market)['capabilities']['fullManagedCatalog']:
+  return {'applicable':False,'available':False,'reason':'not_supported'}
+ path=source_path(market)
  if not path.exists():return {'applicable':True,'available':False,'reason':'not_collected'}
  store=GlobalSources(path,readonly=True)
  try:
   value=store.status()
   result={'applicable':True,**{key:value.get(key) for key in (
    'available','state','products','pages','reportedTotal','reason','published','coverage',
-   'categoryCount','categoriesCompleted','operatorAcceptance','updatedAt','elapsedSeconds') if key in value}}
+   'categoryCount','categoriesCompleted','categoryMemberships','categoryOverlap','stableDuplicateRows',
+   'listedSelectedProducts','listedUnselectedProducts','detailProducts','operatorAcceptance','updatedAt','elapsedSeconds') if key in value}}
   with sqlite3.connect(path.resolve().as_uri()+'?mode=ro',uri=True) as db:
    screen=db.execute('SELECT counts FROM global_source_screen_run ORDER BY updated DESC LIMIT 1').fetchone() if db.execute("SELECT 1 FROM sqlite_master WHERE name='global_source_screen_run'").fetchone() else None
   if screen:
@@ -91,10 +116,15 @@ def status(market):
 
 def main():
  parser=argparse.ArgumentParser(description=__doc__)
- parser.add_argument('action',choices=('status','preview-campaign'))
+ parser.add_argument('action',choices=('status','preview-campaign','products'))
  parser.add_argument('--market',required=True)
+ parser.add_argument('--offset',type=int,default=0)
+ parser.add_argument('--query',default='')
  args=parser.parse_args()
  try:
+  if args.action=='products':
+   if not 0<=args.offset<=1000000 or len(args.query)>100:raise ValueError('market_catalog_products_query_invalid')
+   print(json.dumps(full_products(args.market,args.offset,args.query),ensure_ascii=False));return 0
   if args.action=='preview-campaign':campaign_preview(ROOT,market=args.market)
   print(json.dumps(status(args.market),ensure_ascii=False));return 0
  except (OSError,ValueError,sqlite3.Error) as error:

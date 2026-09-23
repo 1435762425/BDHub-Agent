@@ -13,6 +13,15 @@ from lib.operations_workflow import create_run, request_stop, save_setting, stat
 from lib.second_cycle import CycleError, CycleStore  # noqa:E402
 
 
+def request_stop_for_market(store, market, run_id, expected_state="running"):
+    if not isinstance(market, str) or not isinstance(run_id, str):
+        raise CycleError("workflow_market_invalid")
+    row = store.db.execute("SELECT market FROM workflow_run WHERE run_id=?", (run_id,)).fetchone()
+    if row and row["market"] != market:
+        raise CycleError("workflow_market_mismatch")
+    return request_stop(store, run_id, expected_state)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("action", choices=("status", "save", "run", "stop"))
@@ -20,8 +29,10 @@ def main():
     args = parser.parse_args()
     try:
         body = json.loads(args.json or "{}")
-        market = body.get("market", "it")
-        with CycleStore(ROOT / "var/second-cycle.sqlite") as store:
+        market = body.get("market")
+        if not isinstance(market, str):
+            raise CycleError("workflow_market_invalid")
+        with CycleStore(ROOT / "var/second-cycle.sqlite", readonly=args.action == "status") as store:
             if args.action == "status":
                 result = status(store, market)
             elif args.action == "save":
@@ -40,7 +51,7 @@ def main():
                 created=result
                 result = status(store, market) | {"created": created}
             else:
-                result = request_stop(store, body.get("runId"), body.get("expectedState", "running"))
+                result = request_stop_for_market(store, market, body.get("runId"), body.get("expectedState", "running"))
                 result = status(store, market) | {"stopped": result}
         if args.action == "run":
             from lib.operations_scheduler import scheduler_state,start_scheduler

@@ -1,20 +1,21 @@
 import type {CreatorIdentityQuery,IdentityMarket} from "../../features/creator-identities/contracts.ts";
 import {InputError} from "../runtime/validation.ts";
+import {enabledMarket} from "../markets/registry.ts";
 
 export function parseCreatorIdentityQuery(url:string):CreatorIdentityQuery {
   if(url.length>4096)throw new InputError("请求地址过长。");
   const params=new URL(url).searchParams,view=params.get("view")||"overview";
   const allowed=view==="overview"?["view","market"]:view==="list"?["view","market","status","q","offset","limit"]:
-    view==="detail"?["view","creatorId"]:view==="source"?["view","market","oecId","externalId"]:null;
+    view==="detail"?["view","market","creatorId"]:view==="source"?["view","market","oecId","externalId"]:null;
   if(!allowed)throw new InputError("不支持此身份查询。");
   for(const key of params.keys())if(!allowed.includes(key)||params.getAll(key).length!==1)throw new InputError("查询包含不支持或重复的字段。");
+  const market=params.get("market");
+  if(!market||!enabledMarket(market))throw new InputError("此市场尚未启用。");
   if(view==="detail"){
     const creatorId=params.get("creatorId")||"";
     if(!/^creator_[a-f0-9]{32}$/.test(creatorId))throw new InputError("达人身份标识格式不正确。");
-    return {view,creatorId};
+    return {view,market,creatorId};
   }
-  const market=(params.get("market")||"it") as IdentityMarket;
-  if(!["it","br","my","uk"].includes(market))throw new InputError("此市场尚未启用。");
   if(view==="overview")return {view,market};
   if(view==="list"){
     const status=params.get("status")||"verified",q=(params.get("q")||"").trim().replace(/^@/,"");

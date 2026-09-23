@@ -63,11 +63,11 @@ export default function MarketAccountsPage({market,embedded=false}:{market:strin
   const [data,setData]=useState<AccountStatus|null>(null),[message,setMessage]=useState(""),[busy,setBusy]=useState<string|null>(null);
   const ids=useRef(new Map<string,string>());
   const load=useCallback(async()=>{const response=await fetch(`/api/market-accounts?market=${encodeURIComponent(market)}`,{cache:"no-store"});if(!response.ok)throw Error();setData(await response.json());},[market]);
-  useEffect(()=>{void load().catch(()=>setMessage("暂时无法读取账号状态。"));const timer=setInterval(()=>void load().catch(()=>{}),5000);return()=>clearInterval(timer);},[load]);
+  useEffect(()=>{let timer:ReturnType<typeof setTimeout>|undefined,inFlight=false,stopped=false;const poll=async()=>{if(stopped)return;if(document.visibilityState!=="visible"){timer=setTimeout(poll,60000);return;}if(inFlight){timer=setTimeout(poll,5000);return;}inFlight=true;try{await load();}catch{setMessage("暂时无法读取账号状态。");}finally{inFlight=false;if(!stopped)timer=setTimeout(poll,5000);}};const visible=()=>{if(document.visibilityState==="visible"&&!inFlight){if(timer)clearTimeout(timer);void poll();}};document.addEventListener("visibilitychange",visible);void poll();return()=>{stopped=true;if(timer)clearTimeout(timer);document.removeEventListener("visibilitychange",visible);};},[load]);
   const mutate=async(row:AccountRow,action:"set_enabled"|"refresh"|"relogin",enabled?:boolean)=>{
     const key=`${row.account}:${action}`,requestId=ids.current.get(key)??`account-${crypto.randomUUID()}`;ids.current.set(key,requestId);setBusy(key);
     try{
-      const response=await fetch("/api/market-accounts",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action,market,account:row.account,requestId,...(action==="set_enabled"?{enabled,expectedRevision:row.localRevision??0}:{})})});
+      const response=await fetch(`/api/market-accounts?market=${encodeURIComponent(market)}`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action,market,account:row.account,requestId,...(action==="set_enabled"?{enabled,expectedRevision:row.localRevision??0}:{})})});
       if(!response.ok)throw Error();setData(await response.json());ids.current.delete(key);
       setMessage(action==="set_enabled"?"账号启用状态已保存。":action==="relogin"?"重登已启动；浏览器会自动打开并填写已保存的账号密码。":"身份刷新已启动；如静默刷新失败，会自动打开登录浏览器。");
     }catch{setMessage("账号操作未完成；最后一套已发布身份没有被覆盖。");}finally{setBusy(null);}
@@ -77,7 +77,7 @@ export default function MarketAccountsPage({market,embedded=false}:{market:strin
       <PageHeading title="机构账号设置" description="两个账号固定分工；职责与身份实测分开显示，重登只发布到本项目身份目录。" action={<Link href={`/${market}/ops/jobs`} className="text-sm font-medium text-brand-500">作业与定时 →</Link>}/>
     )}
     {message&&<Notice tone={message.includes("已")||message.includes("启动")?"success":"warning"}>{message}</Notice>}
-    {!data?<p className="text-sm text-gray-500">正在读取账号代次…</p>:data.markets.map(market=><div key={market.market} className="grid gap-5 xl:grid-cols-2">
+    {!data?<p className="text-sm text-gray-500">正在读取账号代次…</p>:data.markets.length===0?<Notice tone="warning">当前市场尚未登记通信/货盘账号；页面位置保留，刷新、重登和平台动作均不可用。</Notice>:data.markets.map(market=><div key={market.market} className="grid gap-5 xl:grid-cols-2">
       {market.accounts.map(row=>{const presentation=maintenancePresentation(row);const capabilities=row.identityGeneration?.capabilities??row.evidence?.capabilities??{};return <Card key={row.account} title={`${row.account.toUpperCase()} · ${row.role==="communications"?"通信账号":"货盘账号"}`} action={<Pill tone={presentation.tone}>{presentation.label}</Pill>}>
         <div className="space-y-4 p-5">
           <Toggle label="启用账号" description="控制新系统是否给该账号领取固定职责内的任务。" checked={row.localEnabled??true} disabled={busy!==null} onChange={value=>void mutate(row,"set_enabled",value)}/>

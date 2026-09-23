@@ -18,6 +18,11 @@ INTENT_REASONS={'paid_collaboration':'paid_or_budget','commission_anomaly':'comm
  'other':'multiple_requests'}
 SHOWCASE_TEXT='达人已将商品添加到橱窗'
 
+def _plan_id(store,market):
+ row=store.db.execute("SELECT id FROM plan WHERE market=? AND institution='bjn-local-research'",(market,)).fetchone()
+ if not row:raise CycleError('plan_missing')
+ return row[0]
+
 def _handles(root,market='it'):
  path=Path(root)/'var/creator-identities.sqlite'
  if not path.exists():return {}
@@ -37,15 +42,15 @@ def _metric_value(fields,name):
   if isinstance(decimal,str) and re.fullmatch(r'\d+(?:\.\d+)?',decimal):return f"{symbol if isinstance(symbol,str) else ''}{decimal}"[:128]
  return None
 
-def _creator_metrics(root,db,plan,creator,oec):
+def _creator_metrics(root,db,plan,creator,oec,market):
  result={'gmv':None,'videoGmv':None,'liveGmv':None,'followers':None,'unitsSold':None,
   'avgVideoViews':None,'observedAt':None,'replyCount':0,'showcaseCount':0}
  path=Path(root)/'var/creator-identities.sqlite'
  if path.exists():
   with closing(sqlite3.connect(path.resolve().as_uri()+'?mode=ro',uri=True)) as identities:
    row=identities.execute("""SELECT payload_json,observed_at FROM identity_observation
-    WHERE creator_id=? AND kind='profile' AND json_type(payload_json,'$.fields')='object'
-    ORDER BY observed_us DESC,length(payload_json) DESC,event_id LIMIT 1""",(creator,)).fetchone() if identities.execute("SELECT 1 FROM sqlite_master WHERE name='identity_observation'").fetchone() else None
+    WHERE market=? AND creator_id=? AND kind='profile' AND json_type(payload_json,'$.fields')='object'
+    ORDER BY observed_us DESC,length(payload_json) DESC,event_id LIMIT 1""",(market,creator)).fetchone() if identities.execute("SELECT 1 FROM sqlite_master WHERE name='identity_observation'").fetchone() else None
    if row:
     try:fields=json.loads(row[0]).get('fields') or {}
     except (TypeError,ValueError):fields={}
@@ -163,14 +168,14 @@ def conversation_detail(root,store,cid,market='it'):
  collaboration=collaboration_current(store,creator,plan)
  return {'available':True,'conversationId':cid,'creator':{'creatorId':creator,'oec':rel['oec'],'handle':handles.get(creator),'mode':rel['mode'],'rejected':bool(rel['rejected']),'unlocked':bool(rel['unlocked']),'revision':rel['revision'],'collaboration':collaboration},
   'timeline':timeline,'episodes':episodes,'case':case_payload,
-  'metrics':_creator_metrics(root,db,plan,creator,rel['oec']),
+  'metrics':_creator_metrics(root,db,plan,creator,rel['oec'],market),
   'manualReply':({'id':manual['id'],'kind':manual['kind'],'confirmedAt':manual['confirmed_at']} if manual else None),
   'draft':{'text':draft['text'],'revision':draft['revision'],'updatedAt':draft['updated_at']} if draft else {'text':'','revision':0,'updatedAt':0},
   'manualTemplates':manual_templates(store,market=market),'platformWrites':0,'realSends':0}
 
-def save_draft(store,cid,text,expected_revision):
+def save_draft(store,cid,text,expected_revision,market='it'):
  if not isinstance(cid,str) or not cid.isdigit() or not isinstance(text,str) or len(text)>4000 or type(expected_revision) is not int or expected_revision<0:raise CycleError('conversation_draft_invalid')
- plan=store.db.execute("SELECT id FROM plan WHERE market='it' AND institution='bjn-local-research'").fetchone()[0]
+ plan=_plan_id(store,market)
  with store.tx():
   row=store.db.execute('SELECT revision FROM conversation_draft WHERE plan_id=? AND cid=?',(plan,cid)).fetchone();current=row[0] if row else 0
   if current!=expected_revision:raise CycleError('conversation_draft_conflict')
@@ -178,13 +183,13 @@ def save_draft(store,cid,text,expected_revision):
   store.db.execute('INSERT INTO conversation_draft VALUES(?,?,?,?,?) ON CONFLICT(plan_id,cid) DO UPDATE SET text=excluded.text,revision=excluded.revision,updated_at=excluded.updated_at',(plan,cid,text,revision,store.clock()))
  return {'conversationId':cid,'text':text,'revision':revision,'updatedAt':store.clock(),'platformWrites':0,'realSends':0}
 
-def complete_reviewed_human(store,cid,turn_id,expected_control_revision,expected_pending_revision,note):
+def complete_reviewed_human(store,cid,turn_id,expected_control_revision,expected_pending_revision,note,market='it'):
  if not isinstance(cid,str) or not cid.isdigit() or not isinstance(turn_id,str) or not turn_id.startswith('turn-') or \
     type(expected_control_revision) is not int or expected_control_revision<1 or \
     type(expected_pending_revision) is not int or expected_pending_revision<1 or \
     not isinstance(note,str) or not note.strip() or len(note)>4000:
   raise CycleError('conversation_resolution_invalid')
- plan=store.db.execute("SELECT id FROM plan WHERE market='it' AND institution='bjn-local-research'").fetchone()[0]
+ plan=_plan_id(store,market)
  with store.tx():
   turn=store.db.execute('SELECT * FROM inbound_turn WHERE plan_id=? AND cid=? ORDER BY coalesce(occurred_ms,observed_at*1000) DESC LIMIT 1',(plan,cid)).fetchone()
   if not turn or turn['turn_id']!=turn_id or (_latest_decision(store.db,turn_id) or {}).get('action')!='human':
@@ -212,12 +217,12 @@ def complete_reviewed_human(store,cid,turn_id,expected_control_revision,expected
  store.db.execute("UPDATE relationship SET mode='auto',inbox_until=0,revision=revision+1 WHERE plan_id=? AND creator_id=? AND revision=?",(plan,turn['creator_id'],rel['revision']))
  return {'state':'resolved','caseId':case_id,'duplicate':False,'platformWrites':0,'realSends':0}
 
-def confirm_manual_reply(store,cid,case_id,turn_id,virtual,expected_control_revision,expected_pending_revision):
+def confirm_manual_reply(store,cid,case_id,turn_id,virtual,expected_control_revision,expected_pending_revision,market='it'):
  if not isinstance(cid,str) or not cid.isdigit() or type(virtual) is not bool or \
     type(expected_control_revision) is not int or expected_control_revision<1 or \
     type(expected_pending_revision) is not int or expected_pending_revision<1:
   raise CycleError('manual_confirmation_invalid')
- plan=store.db.execute("SELECT id FROM plan WHERE market='it' AND institution='bjn-local-research'").fetchone()[0]
+ plan=_plan_id(store,market)
  turn=store.db.execute('SELECT * FROM inbound_turn WHERE plan_id=? AND cid=? ORDER BY coalesce(occurred_ms,observed_at*1000) DESC LIMIT 1',(plan,cid)).fetchone()
  if not turn:raise CycleError('conversation_missing')
  occurred=turn['occurred_ms']/1000 if turn['occurred_ms'] else turn['observed_at']
@@ -225,26 +230,26 @@ def confirm_manual_reply(store,cid,case_id,turn_id,virtual,expected_control_revi
  note='manual_reply_confirmed:'+manual['id'] if manual else 'human_case_confirmed_without_send'
  if virtual:
   if turn_id!=turn['turn_id']:raise CycleError('conversation_resolution_changed')
-  result=complete_reviewed_human(store,cid,turn_id,expected_control_revision,expected_pending_revision,note)
+  result=complete_reviewed_human(store,cid,turn_id,expected_control_revision,expected_pending_revision,note,market)
  else:
   if not isinstance(case_id,str) or not re.fullmatch(r'case-[a-f0-9]{24}',case_id):raise CycleError('manual_confirmation_invalid')
   result=Service(store).resolve_case(plan,case_id,expected_pending_revision,expected_control_revision,note)
  return {**result,'manualReplyId':manual['id'] if manual else None,'platformWrites':0,'realSends':0}
 
-def set_collaboration(store,cid,status,expected_status_revision,expected_control_revision,request_id):
+def set_collaboration(store,cid,status,expected_status_revision,expected_control_revision,request_id,market='it'):
  if not isinstance(cid,str) or not cid.isdigit():raise CycleError('collaboration_request_invalid')
- plan=store.db.execute("SELECT id FROM plan WHERE market='it' AND institution='bjn-local-research'").fetchone()[0]
+ plan=_plan_id(store,market)
  turn=store.db.execute('SELECT creator_id FROM inbound_turn WHERE plan_id=? AND cid=? ORDER BY coalesce(occurred_ms,observed_at*1000) DESC LIMIT 1',(plan,cid)).fetchone()
  if not turn:raise CycleError('conversation_missing')
  from lib.collaboration_status import set_manual
- return set_manual(store,turn['creator_id'],status,request_id,expected_status_revision,expected_control_revision)
+ return set_manual(store,turn['creator_id'],status,request_id,expected_status_revision,expected_control_revision,plan_id=plan)
 
-def reject_creator(store,cid,expected_control_revision,request_id):
+def reject_creator(store,cid,expected_control_revision,request_id,market='it'):
  if not isinstance(cid,str) or not cid.isdigit() or type(expected_control_revision) is not int or expected_control_revision<1 or \
     not isinstance(request_id,str) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._:-]{7,119}',request_id):
   raise CycleError('creator_rejection_invalid')
  Service(store)
- plan=store.db.execute("SELECT id FROM plan WHERE market='it' AND institution='bjn-local-research'").fetchone()[0]
+ plan=_plan_id(store,market)
  with store.tx():
   turn=store.db.execute('SELECT * FROM inbound_turn WHERE plan_id=? AND cid=? ORDER BY coalesce(occurred_ms,observed_at*1000) DESC LIMIT 1',(plan,cid)).fetchone()
   if not turn:raise CycleError('conversation_missing')

@@ -131,22 +131,23 @@ export function startCatalogJob(name:JobName,config?:JobConfig):Promise<CatalogJ
 }
 
 export function validateCatalogJobsRequest(value:unknown):
- {action:"save";name:JobName;config:JobConfig}|{action:"start";name:JobName;config?:JobConfig}|{action:"stop";name:JobName}{
+ {action:"save";market:"it";name:JobName;config:JobConfig}|{action:"start";market:"it";name:JobName;config?:JobConfig}|{action:"stop";market:"it";name:JobName}{
  if(!value||typeof value!=="object")throw Error('invalid_catalog_jobs_request');
  const v=value as Record<string,unknown>;
+ if(v.market!=="it")throw Error('invalid_catalog_jobs_request');
  const name=v.name;
  if(typeof name!=="string"||!JOB_NAMES.includes(name as JobName))throw Error('invalid_catalog_jobs_request');
  const job=name as JobName;
  if(v.action!=="start"&&v.action!=="save"&&v.action!=="stop")throw Error('invalid_catalog_jobs_request');
  // A bad config inside a request is a bad request, not an unavailable service.
  try{
-  if(v.action==="start")return {action:"start",name:job,...(v.config===undefined?{}:{config:validateJobConfig(job,v.config)})};
+  if(v.action==="start")return {action:"start",market:"it",name:job,...(v.config===undefined?{}:{config:validateJobConfig(job,v.config)})};
   // 停止只写一个停止请求文件，驱动器在两次推进之间安全退出。它**不接受**任何其它字段：
   // 多带一个（比如顺手带上的配置）就是坏请求，静默忽略正是这个代码库一直在防的事。
   if(v.action==="stop"){
-   if(Object.keys(v).some(key=>key!=="action"&&key!=="name"))throw Error('invalid_catalog_jobs_request');
-   return {action:"stop",name:job};
+   if(Object.keys(v).some(key=>key!=="action"&&key!=="market"&&key!=="name"))throw Error('invalid_catalog_jobs_request');
+   return {action:"stop",market:"it",name:job};
   }
-  return {action:"save",name:job,config:validateJobConfig(job,v.config)};
+  return {action:"save",market:"it",name:job,config:validateJobConfig(job,v.config)};
  }catch{throw Error('invalid_catalog_jobs_request');}
 }

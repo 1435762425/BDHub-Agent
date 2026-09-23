@@ -26,7 +26,9 @@ def main():
  while not STOP:
   with CycleStore(ROOT/'var/second-cycle.sqlite') as store:
    control=setting(store,a.market)
-  if not control['continuousSendEnabled']:
+   from lib.market_send_control import control as send_control
+   send=send_control(store,a.market)
+  if send['stopRequested'] or not (control['continuousSendEnabled'] or send['automaticEnabled'] or send['runRequested']):
    write(a.market,{'running':False,'state':'off','pid':os.getpid(),'checkedAt':time.time()});break
   window=window_state(['16:30','24:00'],time.time())
   if not window['open']:

@@ -12,20 +12,20 @@ const verdicts:Record<string,{label:string;tone:"success"|"warning"|"brand"|"neu
 };
 const stamp=(value:number|null|undefined)=>value?new Date(value*1000).toLocaleString("zh-CN",{timeZone:"Asia/Shanghai",hour12:false}):"—";
 
-export default function KalodataIdentityPanel(){
+export default function KalodataIdentityPanel({market}:{market:string}){
  const [data,setData]=useState<KalodataIdentityState|null>(null);
  const [draft,setDraft]=useState<KalodataIdentityConfig|null>(null);
  const [busy,setBusy]=useState<string|null>(null);
  const [message,setMessage]=useState<string|null>(null);
- async function refresh(signal?:AbortSignal){const r=await fetch("/api/kalodata-identity",{signal,cache:"no-store"});if(!r.ok)throw Error();const v:KalodataIdentityState=await r.json();setData(v);setDraft(v.config);}
- useEffect(()=>{const controller=new AbortController();void(async()=>{try{await refresh(controller.signal);}catch{if(!controller.signal.aborted)setData(null);}})();return()=>controller.abort();},[]);
+ async function refresh(signal?:AbortSignal){if(market!=="it")return;const r=await fetch(`/api/kalodata-identity?market=${encodeURIComponent(market)}`,{signal,cache:"no-store"});if(!r.ok)throw Error();const v:KalodataIdentityState=await r.json();setData(v);setDraft(v.config);}
+ useEffect(()=>{if(market!=="it")return;const controller=new AbortController();void(async()=>{try{await refresh(controller.signal);}catch{if(!controller.signal.aborted)setData(null);}})();return()=>controller.abort();},[market]);
  // Poll while the grabber's Chrome is open, so the page shows when the operator closes it.
  useEffect(()=>{if(!data?.login?.running)return;const timer=setInterval(()=>void refresh().catch(()=>{}),5000);return()=>clearInterval(timer);},[data?.login?.running]);
  async function act(action:"save"|"probe"|"activate"|"refresh"){
   setBusy(action);setMessage(null);
   try{
-   const body=action==="save"||action==="activate"?{action,config:draft}:{action};
-   const r=await fetch("/api/kalodata-identity",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+   const body=action==="save"||action==="activate"?{action,market,config:draft}:{action,market};
+   const r=await fetch(`/api/kalodata-identity?market=${encodeURIComponent(market)}`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
    const v=await r.json();
    if(!r.ok){setMessage(typeof v?.error==="string"?`请求被拒绝：${v.error}`:"请求被拒绝。");return;}
    setData(v);setDraft(v.config);
@@ -37,6 +37,7 @@ export default function KalodataIdentityPanel(){
   }catch{setMessage("暂时无法读取或提交身份操作。");}
   finally{setBusy(null);}
  }
+ if(market!=="it")return <Card title="Kalodata 抓取身份"><div className="p-5"><Notice tone="warning">当前市场的 Kalodata region/currency 身份探针尚未接入此设置页；入口保留但不会读取或测试意大利身份。</Notice></div></Card>;
  const probe=data?.lastProbe,verdict=probe?verdicts[probe.verdict]:null;
  return <Card title="Kalodata 抓取身份" subtitle="达人线索按 PID 走 Kalodata 抓取。身份是否可用以真实抓取路径为准，不以抓取器自带的另一套检查器为准。"><div className="space-y-4 p-5">
   {!draft&&<p className="text-sm text-gray-500">暂时无法读取身份设置。</p>}

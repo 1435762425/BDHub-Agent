@@ -22,7 +22,7 @@ function validateConfig(value:unknown,expectedMarket?:string):LinkNamingConfig{
  const rawMarket=v.market===undefined?"it":v.market;
  if(typeof rawMarket!=="string")throw Error('invalid_link_naming');
  const market=expectedMarket??rawMarket,registered=enabledMarket(market);
- if(!registered||rawMarket!==market)throw Error('invalid_link_naming');
+ if(!registered||!registered.contentReady||!registered.templateLanguage||!registered.locale||rawMarket!==market)throw Error('invalid_link_naming');
  const hasMetadata=v.market!==undefined||v.language!==undefined||v.locale!==undefined;
  if((market!=="it"||hasMetadata)&&(v.market!==market||v.language!==registered.templateLanguage||v.locale!==registered.locale))throw Error('invalid_link_naming');
  const config:LinkNamingConfig={version:v.version,template:v.template,
@@ -66,8 +66,8 @@ export function validateNamingRequest(value:unknown):{action:"preview"|"save";ma
  const v=value as Record<string,unknown>;
  if(v.action!=="preview"&&v.action!=="save")throw Error('invalid_link_naming_request');
  const keys=Object.keys(v).sort().join(",");
- if(keys!=="action,config"&&keys!=="action,config,market")throw Error('invalid_link_naming_request');
- const market=v.market===undefined?"it":v.market;
+ if(keys!=="action,config,market")throw Error('invalid_link_naming_request');
+ const market=v.market;
  if(typeof market!=="string"||!enabledMarket(market))throw Error('invalid_link_naming_request');
  // A bad template is a bad request, not an unavailable service.
  try{return {action:v.action,market,config:validateConfig(v.config,market)};}

@@ -7,27 +7,27 @@ export type CampaignJoinController={data:CampaignJoinState|null;loaded:boolean;b
  message:string|null;email:string;setEmail:(value:string)=>void;
  reload:()=>Promise<void>;preview:()=>Promise<void>;recheck:()=>Promise<void>;joinAll:()=>Promise<void>};
 
-export function useCampaignJoin():CampaignJoinController{
+export function useCampaignJoin(market:string):CampaignJoinController{
  const [data,setData]=useState<CampaignJoinState|null>(null);
  const [loaded,setLoaded]=useState(false);
  const [busy,setBusy]=useState(false);
  const [message,setMessage]=useState<string|null>(null);
  const [email,setEmail]=useState("");
  const reload=useCallback(async()=>{
-  const r=await fetch("/api/campaign-join",{cache:"no-store"}).catch(()=>null);
+  const r=await fetch(`/api/campaign-join?market=${encodeURIComponent(market)}`,{cache:"no-store"}).catch(()=>null);
   if(r?.ok){
    const value:CampaignJoinState=await r.json();
    setData(value);setLoaded(true);
    // 记住上次用过的邮箱："一键加入"第二次起才真的只需要一次点击。
    if(value.email)setEmail(current=>current||value.email!);
   }
- },[]);
+ },[market]);
  useEffect(()=>{void reload();},[reload]);
  const post=useCallback(async(body:unknown,fail:string)=>{
   setBusy(true);setMessage(null);
   try{
-   const r=await fetch("/api/campaign-join",{method:"POST",headers:{"Content-Type":"application/json"},
-    body:JSON.stringify(body)});
+   const r=await fetch(`/api/campaign-join?market=${encodeURIComponent(market)}`,{method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({...body as Record<string,unknown>,market})});
    const value=await r.json();
    if(!r.ok){setMessage(value?.error==="campaign_write_requires_verification"
     ?"有活动提过但没结算：先点「回查未结算」，不会重复提交。":`${fail}（${value?.error??r.status}）`);return;}
@@ -35,7 +35,7 @@ export function useCampaignJoin():CampaignJoinController{
    return value as CampaignJoinState;
   }catch{setMessage(fail);return undefined;}
   finally{setBusy(false);}
- },[]);
+ },[market]);
  const preview=useCallback(async()=>{
   const value=await post({action:"preview"},"暂时无法预览可加入活动。");
   if(value?.available){

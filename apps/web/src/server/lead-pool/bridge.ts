@@ -10,7 +10,7 @@ export type LeadPoolCounts={leads:number;merged:number;unresolved:number;queued:
 export type LeadPosition={creatorId:string;handle:string;pid:string;rank:number|null;units:number|null;
  sourceClass:"A"|"B";gmv:string|null;videoViews:number|null;videoId:string|null;videoReleasedAt:string|null;
  unlocked:boolean;sentAt:number|null;readyAt:number|null;layer:string;caseUpdatedAt?:number|null};
-export type LeadPoolState={schema:"bdhub.lead-pool.v3";available:boolean;now?:number;counts:LeadPoolCounts;
+export type LeadPoolState={schema:"bdhub.lead-pool.v3";market:string;available:boolean;now?:number;counts:LeadPoolCounts;
  cooldown:{unlocked:number;locked:number};layers:Record<string,number>;pools:Record<string,LeadPosition[]>;
  business:{sendable:number;waiting:number;inactive:number;total:number};reasons:Record<string,number>;
  history:{sent:number;currentPositions:number}};
@@ -39,10 +39,12 @@ function validatePositions(value:unknown):LeadPosition[]{
  });
 }
 
-export function validateLeadPool(value:unknown):LeadPoolState{
+export function validateLeadPool(value:unknown,expectedMarket?:string):LeadPoolState{
  if(!value||typeof value!=="object")throw Error('invalid_lead_pool');
  const v=value as Record<string,unknown>;
- if(v.available!==true)return {schema:"bdhub.lead-pool.v3",available:false,counts:{} as LeadPoolCounts,cooldown:{unlocked:0,locked:0},layers:{},pools:{},business:{sendable:0,waiting:0,inactive:0,total:0},reasons:{},history:{sent:0,currentPositions:0}};
+ if(expectedMarket!==undefined&&v.market!==expectedMarket)throw Error('invalid_lead_pool');
+ const market=typeof v.market==='string'?v.market:expectedMarket??'';
+ if(v.available!==true)return {schema:"bdhub.lead-pool.v3",market,available:false,counts:{} as LeadPoolCounts,cooldown:{unlocked:0,locked:0},layers:{},pools:{},business:{sendable:0,waiting:0,inactive:0,total:0},reasons:{},history:{sent:0,currentPositions:0}};
  if(v.schema!=="bdhub.lead-pool.v3")throw Error('invalid_lead_pool');
  const raw=v.counts as Record<string,unknown>;
  const names=["leads","merged","unresolved","queued","positions","creators","handles","sent","unsent",
@@ -66,7 +68,7 @@ export function validateLeadPool(value:unknown):LeadPoolState{
  const sent=count(history?.sent,"sent"),currentPositions=count(history?.currentPositions,"currentPositions");
  if(projected.sendable+projected.waiting+projected.inactive!==projected.total||projected.total+currentPositions!==counts.positions||sent!==counts.sent||currentPositions!==(v.layers as Record<string,number>).sent)throw Error('invalid_lead_pool');
  if(counts.aPositions+counts.bPositions!==counts.positions)throw Error('invalid_lead_pool');
- return {schema:"bdhub.lead-pool.v3",available:true,now:typeof v.now==="number"?v.now:undefined,counts:counts as unknown as LeadPoolCounts,
+ return {schema:"bdhub.lead-pool.v3",market,available:true,now:typeof v.now==="number"?v.now:undefined,counts:counts as unknown as LeadPoolCounts,
   cooldown:{unlocked:count(cooldown?.unlocked,"unlocked"),locked:count(cooldown?.locked,"locked")},
   layers:(v.layers as Record<string,number>)??{},pools,business:projected,
   reasons:countsRecord(v.reasons),history:{sent,currentPositions}};
@@ -82,15 +84,15 @@ function countsRecord(raw:unknown):Record<string,number>{
  return result;
 }
 
-function run(market="it"):Promise<LeadPoolState>{
+function run(market:string):Promise<LeadPoolState>{
  const root=projectRoot();
  return new Promise((resolve,reject)=>{
   execFile(join(root,".venv/bin/python"),[join(root,"scripts/lead-pool.py"),"status","--market",market],
    {cwd:root,timeout:60000,maxBuffer:4*1024*1024,env:{...process.env,PYTHONDONTWRITEBYTECODE:"1"}},(error,out)=>{
-    try{resolve(validateLeadPool(JSON.parse(out)));}
+    try{resolve(validateLeadPool(JSON.parse(out),market));}
     catch{reject(Error('lead_pool_unavailable'));}
    });
  });
 }
 
-export function readLeadPool(market="it"):Promise<LeadPoolState>{return run(market);}
+export function readLeadPool(market:string):Promise<LeadPoolState>{return run(market);}

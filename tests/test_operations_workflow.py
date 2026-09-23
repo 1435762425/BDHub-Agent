@@ -1,6 +1,7 @@
 import tempfile
 import unittest
 import sys
+import importlib.util
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -13,6 +14,10 @@ from lib.operations_workflow import (create_run, finish_stage, save_setting, set
 from lib.schema_migrations import apply_database  # noqa:E402
 from lib.second_cycle import CycleError, CycleStore  # noqa:E402
 from lib.template_library import review_send_template,send_template_reviews  # noqa:E402
+
+_cli_spec=importlib.util.spec_from_file_location("operations_workflow_cli",ROOT/"scripts/operations-workflow.py")
+_cli=importlib.util.module_from_spec(_cli_spec)
+_cli_spec.loader.exec_module(_cli)
 
 
 NOW = datetime(2026, 9, 21, 7, 0, tzinfo=ZoneInfo("Asia/Shanghai")).timestamp()  # Monday
@@ -94,6 +99,15 @@ class OperationsWorkflowTests(unittest.TestCase):
                               payload={"checkpoint": {"pid": "5", "page": 2}})
         self.assertIsNotNone(result["outputGenerationId"])
         self.assertEqual(status(self.store)["current"]["stages"][4]["state"], "queued")
+
+    def test_stop_rejects_foreign_market_before_changing_run(self):
+        run=create_run(self.store,market="it",trigger_source="manual",scheduled_at=NOW,
+                       request_id="workflow-stop-scope-0001")
+        with self.assertRaisesRegex(CycleError,"workflow_market_mismatch"):
+            _cli.request_stop_for_market(self.store,"br",run["runId"],"queued")
+        self.assertEqual(self.store.db.execute("SELECT state FROM workflow_run WHERE run_id=?",(run["runId"],)).fetchone()[0],"queued")
+        stopped=_cli.request_stop_for_market(self.store,"it",run["runId"],"queued")
+        self.assertEqual(stopped["market"],"it")
 
 
 if __name__ == "__main__":

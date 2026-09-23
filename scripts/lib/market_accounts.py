@@ -30,10 +30,12 @@ def load_config(root):
     value=validate_config(json.loads((Path(root)/'config/market-accounts.json').read_text()))
     registry_path=Path(root)/'config/markets.json'
     if registry_path.exists():
-        from lib.market_registry import load_registry
-        registry=load_registry(root);enabled={key for key,row in registry['markets'].items() if row['enabled']}
+        from lib.market_registry import load_registry,operational_market_keys
+        registry=load_registry(root);enabled=set(operational_market_keys(root))
         if set(value['markets'])!=enabled:raise ValueError('market_account_registry_mismatch')
         for key,pair in value['markets'].items():
+            if pair.get('roles')!=registry['markets'][key]['accounts']:
+                raise ValueError('market_account_role_registry_mismatch')
             expected={'campaign':registry['markets'][key]['capabilities']['campaignCatalog'],
                       'fullManaged':registry['markets'][key]['capabilities']['fullManagedCatalog']}
             if pair.get('catalogCapabilities')!=expected:raise ValueError('market_catalog_capability_mismatch')

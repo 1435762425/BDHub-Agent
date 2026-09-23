@@ -52,20 +52,20 @@ test('a run record whose config no longer validates still renders',()=>{
 });
 
 test('a start request names one of the jobs and may carry its config',()=>{
- assert.deepEqual(validateCatalogJobsRequest({action:'start',name:'selection'}),{action:'start',name:'selection'});
+ assert.deepEqual(validateCatalogJobsRequest({action:'start',market:'it',name:'selection'}),{action:'start',market:'it',name:'selection'});
  // 非全托链接作业必须能启动，且它没有 route 字段可传（渠道由作业名决定）。
- assert.deepEqual(validateCatalogJobsRequest({action:'start',name:'linksCampaign',config:{creates:0}}),
-  {action:'start',name:'linksCampaign',config:{creates:0}});
- assert.throws(()=>validateCatalogJobsRequest({action:'start',name:'linksCampaign',config:{route:'campaign'}}),
+ assert.deepEqual(validateCatalogJobsRequest({action:'start',market:'it',name:'linksCampaign',config:{creates:0}}),
+  {action:'start',market:'it',name:'linksCampaign',config:{creates:0}});
+ assert.throws(()=>validateCatalogJobsRequest({action:'start',market:'it',name:'linksCampaign',config:{route:'campaign'}}),
   /invalid_catalog_jobs_request/);
- assert.deepEqual(validateCatalogJobsRequest({action:'start',name:'links',config:{creates:5}}),
-  {action:'start',name:'links',config:{creates:5}});
- assert.deepEqual(validateCatalogJobsRequest({action:'save',name:'links',config:{readLimit:20,creates:0}}),
-  {action:'save',name:'links',config:{readLimit:20,creates:0}});
+ assert.deepEqual(validateCatalogJobsRequest({action:'start',market:'it',name:'links',config:{creates:5}}),
+  {action:'start',market:'it',name:'links',config:{creates:5}});
+ assert.deepEqual(validateCatalogJobsRequest({action:'save',market:'it',name:'links',config:{readLimit:20,creates:0}}),
+  {action:'save',market:'it',name:'links',config:{readLimit:20,creates:0}});
  // stop 现在是一条正式动作（作业在下一个安全点退出）。
- assert.deepEqual(validateCatalogJobsRequest({action:'stop',name:'linksCampaign'}),{action:'stop',name:'linksCampaign'});
- for(const bad of [{action:'stop',name:'nope'},{action:'stop',name:'links',config:{creates:1}},{action:'start',name:'nope'},{action:'start'},
-                   {action:'start',name:'links',config:{creates:999}},null]){
+ assert.deepEqual(validateCatalogJobsRequest({action:'stop',market:'it',name:'linksCampaign'}),{action:'stop',market:'it',name:'linksCampaign'});
+ for(const bad of [{action:'stop',market:'it',name:'nope'},{action:'stop',market:'it',name:'links',config:{creates:1}},{action:'start',market:'it',name:'nope'},{action:'start'},
+                   {action:'start',market:'it',name:'links',config:{creates:999}},null]){
   assert.throws(()=>validateCatalogJobsRequest(bad),/invalid_catalog_jobs_request/);
  }
 });

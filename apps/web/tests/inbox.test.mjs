@@ -11,7 +11,7 @@ const day={date:'2026-09-15',cards:0,texts:0,creators:0,unconfirmed:0,replies:0,
  ourMessages:0,autoReplies:0,casesOpened:0};
 const totals=(({date,...rest})=>rest)(day);
 
-const payload={available:true,config:{limit:6,interval:60},configInvalid:false,
+const payload={available:true,market:'it',config:{limit:6,interval:60},configInvalid:false,
  run:{name:'inbox',label:'收信监控',pid:65051,startedAt:1789472348.9,log:'x',
   config:{limit:6,interval:60},platformWrites:false,running:true,stopping:false,progress:step},
  today:day,openCases:1,timezone:'Asia/Shanghai',totals,days:[day]};
@@ -33,7 +33,7 @@ test('the monitor card reads the job, today and the day list from one payload',(
 });
 
 test('an unavailable workspace is reported as unavailable, not as zeroes that look real',()=>{
- const v=validateInbox({available:false,config:{limit:6,interval:60},run:null});
+ const v=validateInbox({available:false,market:'it',config:{limit:6,interval:60},run:null});
  assert.equal(v.available,false);
  assert.equal(v.today,null);
  assert.equal(v.days.length,0);
@@ -88,14 +88,14 @@ test('a run record whose config no longer validates still renders',()=>{
 });
 
 test('the three actions carry nothing more than they need',()=>{
- assert.deepEqual(validateInboxRequest({action:'save',config:{limit:6,interval:60}}),
-  {action:'save',config:{limit:6,interval:60}});
- assert.deepEqual(validateInboxRequest({action:'start',config:{limit:6,interval:60}}),
-  {action:'start',config:{limit:6,interval:60}});
- assert.deepEqual(validateInboxRequest({action:'stop'}),{action:'stop'});
+ assert.deepEqual(validateInboxRequest({action:'save',market:'it',config:{limit:6,interval:60}}),
+  {action:'save',market:'it',config:{limit:6,interval:60}});
+ assert.deepEqual(validateInboxRequest({action:'start',market:'it',config:{limit:6,interval:60}}),
+  {action:'start',market:'it',config:{limit:6,interval:60}});
+ assert.deepEqual(validateInboxRequest({action:'stop',market:'it'}),{action:'stop',market:'it'});
  // 停止不需要参数；夹带配置的是坏请求，不是停止。
- for(const bad of [{action:'stop',config:{limit:6,interval:60}},{action:'start'},
-                   {action:'start',config:{limit:6,interval:5}},{action:'run'},null]){
+ for(const bad of [{action:'stop',market:'it',config:{limit:6,interval:60}},{action:'start',market:'it'},
+                   {action:'start',market:'it',config:{limit:6,interval:5}},{action:'run'},null]){
   assert.throws(()=>validateInboxRequest(bad),/invalid_inbox_request/);
  }
 });
@@ -111,12 +111,12 @@ test('a run record for a different job cannot wear this shape',()=>{
 });
 
 test('day-detail queries are exact, bounded and cannot smuggle another command',()=>{
- assert.deepEqual(parseInboxQuery(url),{view:'status',days:14});
- assert.deepEqual(parseInboxQuery(url+'?days=30'),{view:'status',days:30});
- assert.deepEqual(parseInboxQuery(url+'?date=2026-09-15'),
-  {view:'detail',date:'2026-09-15',offset:0,limit:50});
- assert.deepEqual(parseInboxQuery(url+'?date=2026-09-15&offset=50&limit=100'),
-  {view:'detail',date:'2026-09-15',offset:50,limit:100});
+ assert.deepEqual(parseInboxQuery(url+'?market=it'),{view:'status',market:'it',days:14});
+ assert.deepEqual(parseInboxQuery(url+'?market=it&days=30'),{view:'status',market:'it',days:30});
+ assert.deepEqual(parseInboxQuery(url+'?market=it&date=2026-09-15'),
+  {view:'detail',market:'it',date:'2026-09-15',offset:0,limit:50});
+ assert.deepEqual(parseInboxQuery(url+'?market=it&date=2026-09-15&offset=50&limit=100'),
+  {view:'detail',market:'it',date:'2026-09-15',offset:50,limit:100});
  for(const query of ['?date=2026-02-30','?date=2026-09-15&limit=0','?date=2026-09-15&limit=101',
   '?date=2026-09-15&offset=5001','?date=2026-09-15&date=2026-09-16','?date=2026-09-15&action=start'])
   assert.throws(()=>parseInboxQuery(url+query),/invalid_inbox_query/);
@@ -128,7 +128,7 @@ test('day-detail decoder keeps only bounded read-only rows and reconciles its to
   {kind:'delivery',occurredAt:1789472601000,ref:'delivery-1',creatorId:'creator-1',oec:'123',handle:'new_name',handleAtEvent:'old_name',pid:'1729480019490150432',status:'confirmed',product:'prodotto',creatorPercent:'13',catalogSource:'selected',text:'Ciao!',format:'text',textState:'confirmed'},
   {kind:'reply',occurredAt:1789472602000,ref:'message-1',creatorId:'creator-1',oec:'123',handle:'new_name',handleAtEvent:null,pid:null,status:'creatorReplies',product:null,creatorPercent:null,catalogSource:null,text:'Grazie!',format:'text',textState:null},
  ];
- const result=validateInboxDayDetail({available:true,date:day.date,timezone:'Asia/Shanghai',summary,
+ const result=validateInboxDayDetail({available:true,market:'it',date:day.date,timezone:'Asia/Shanghai',summary,
   total:2,offset:0,limit:50,nextOffset:null,items,platformWrites:false});
  assert.equal(result.items[0].handleAtEvent,'old_name');
  assert.equal(result.items[1].text,'Grazie!');
@@ -139,6 +139,6 @@ test('day-detail decoder keeps only bounded read-only rows and reconciles its to
   {nextOffset:1},
   {items:[{...items[0],kind:'raw_payload'}]},
   {items:[{...items[0],text:'x'.repeat(4001)}]},
- ])assert.throws(()=>validateInboxDayDetail({available:true,date:day.date,timezone:'Asia/Shanghai',summary,
+ ])assert.throws(()=>validateInboxDayDetail({available:true,market:'it',date:day.date,timezone:'Asia/Shanghai',summary,
   total:2,offset:0,limit:50,nextOffset:null,items,platformWrites:false,...bad}),/invalid_inbox_detail/);
 });

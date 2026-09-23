@@ -53,12 +53,13 @@ test("old handle search returns both canonical candidates after name reuse witho
   assert.equal(store.list({market:"it",q:"%"}).total,0);assert.equal(store.list({market:"it",q:"' OR 1=1--"}).total,0);
 });
 test("detail preserves canonical id, deduplicated alias dates, current no_value and separately dated historical metric",t=>{
-  const store=fixture(t).open(),detail=store.detail(IDS[0]);
+  const store=fixture(t).open(),detail=store.detail("it",IDS[0]);
   assert.equal(detail.creator.creatorId,IDS[0]);assert.equal(detail.creator.oecId,"111");assert.equal(detail.creator.currentHandle,"new_name");assert.equal(detail.creator.verifiedAt,TIMES[1]);
   assert.deepEqual(detail.aliases.map(row=>row.handle),["new_name","old_name"]);assert.equal(detail.aliases[1].isCurrent,false);assert.equal(detail.aliases[0].firstObservedAt,TIMES[1]);
   const money=detail.fields.find(field=>field.name==="med_gmv_revenue");assert.equal(money.status,"no_value");assert.equal(money.observedAt,TIMES[1]);assert.equal(money.value,undefined);assert.equal(money.lastAvailable.value.decimal,"1000.00");assert.equal(money.lastAvailable.observedAt,TIMES[0]);
   assert.equal(detail.fields.find(field=>field.name==="follower_cnt").value,0);assert.equal(detail.latestObservation.outcome,"blocked");assert.equal(detail.latestObservation.observedAt,TIMES[3]);assert.equal(detail.latestProfileObservedAt,TIMES[1]);
   assert.equal(detail.fields.length,22);for(const word of ["DO_NOT_EXPOSE","cookie","PRIVATE_","https://","rawMessage"]){assert(!JSON.stringify(detail).includes(word),word);}
+  assert.equal(store.detail("br",IDS[0]).creator,null);
 });
 test("source prefers OEC, uses only explicit provider resolutions and never guesses a source from its handle",t=>{
   const store=fixture(t).open();
@@ -74,7 +75,7 @@ test("a reused source reference with two canonical resolutions returns ambiguous
 });
 test("missing DB stays not_imported without creating a demo or filesystem entry",t=>{
   const f=fixture(t),path=join(f.dir,"missing.sqlite"),store=new CreatorIdentityReadStore(path);t.after(()=>store.close());
-  assert.equal(store.overview().datasetStatus,"not_imported");assert.equal(store.list().total,0);assert.equal(store.detail(IDS[0]).creator,null);assert.equal(store.source({market:"it",oecId:"111"}).status,"not_imported");assert.equal(existsSync(path),false);
+  assert.equal(store.overview("it").datasetStatus,"not_imported");assert.equal(store.list().total,0);assert.equal(store.detail("it",IDS[0]).creator,null);assert.equal(store.source({market:"it",oecId:"111"}).status,"not_imported");assert.equal(existsSync(path),false);
 });
 test("incompatible schema is refused with a fixed non-sensitive error",t=>{
   const f=fixture(t),path=join(f.dir,"bad.sqlite"),db=new DatabaseSync(path);db.exec("CREATE TABLE raw_secret(cookie TEXT)");db.close();
@@ -91,12 +92,12 @@ test("OEC-only identity without a returned handle remains usable without inventi
   const f=fixture(t),id="creator_"+"4".repeat(32);
   f.db.prepare("INSERT INTO creator_identity VALUES(?,?,?,?,?,?,?,?,?,?)").run(id,"it","444",null,null,null,0,TIMES[2],2,TIMES[2]);
   f.observe(id,"it","444",null,TIMES[2],{fields:{handle:{status:"no_value"},creator_oecuid:{status:"value",value:"444"},selection_region:{status:"value",value:"IT"}}});
-  const store=f.open(),detail=store.detail(id);assert.equal(detail.creator.currentHandle,null);assert.equal(detail.creator.currentHandleVerifiedAt,null);assert.equal(detail.creator.status,"verified");assert.deepEqual(detail.aliases,[]);assert.equal(store.source({market:"it",oecId:"444"}).creator.creatorId,id);
+  const store=f.open(),detail=store.detail("it",id);assert.equal(detail.creator.currentHandle,null);assert.equal(detail.creator.currentHandleVerifiedAt,null);assert.equal(detail.creator.status,"verified");assert.deepEqual(detail.aliases,[]);assert.equal(store.source({market:"it",oecId:"444"}).creator.creatorId,id);
 });
 test("repeated name observations update alias dates without duplicating it or changing canonical ID",t=>{
   const f=fixture(t);f.observe(IDS[0],"it","111","new_name",TIMES[2],{fields:{follower_cnt:{status:"value",value:11}}});
   f.db.prepare("UPDATE creator_identity SET handle_observed_at=?,handle_observed_us=2,last_observed_at=?,last_observed_us=2 WHERE creator_id=?").run(TIMES[2],TIMES[2],IDS[0]);
-  const detail=f.open().detail(IDS[0]);assert.equal(detail.creator.creatorId,IDS[0]);assert.equal(detail.aliases.length,2);assert.equal(detail.aliases[0].firstObservedAt,TIMES[1]);assert.equal(detail.aliases[0].lastObservedAt,TIMES[2]);assert.equal(detail.creator.currentHandleVerifiedAt,TIMES[2]);
+  const detail=f.open().detail("it",IDS[0]);assert.equal(detail.creator.creatorId,IDS[0]);assert.equal(detail.aliases.length,2);assert.equal(detail.aliases[0].firstObservedAt,TIMES[1]);assert.equal(detail.aliases[0].lastObservedAt,TIMES[2]);assert.equal(detail.creator.currentHandleVerifiedAt,TIMES[2]);
 });
 test("field projection keeps only allowed typed values and discards unauthorized and external URLs",()=>{
   assert.equal(PROFILE_FIELDS.length,22);
@@ -111,12 +112,12 @@ test("same-time full Profile beats later Find for current fields and historical 
   const add=(event,ref,fields)=>insert.run(event,IDS[0],"it","111","profile","new_name","observed",TIMES[2],2,ref,"fingerprint",JSON.stringify({fields}));
   add("a-full-profile","probe:profile",{follower_cnt:{status:"value",value:55},med_gmv_revenue:{status:"value",value:{decimal:"100.00"}}});
   add("z-later-find","probe:find-profile",{follower_cnt:{status:"value",value:5},med_gmv_revenue:{status:"value",value:{decimal:"2.00"}}});
-  const current=f.open().detail(IDS[0]);assert.equal(current.fields.find(field=>field.name==="follower_cnt").value,55);
+  const current=f.open().detail("it",IDS[0]);assert.equal(current.fields.find(field=>field.name==="follower_cnt").value,55);
 });
 test("historical field fallback follows full Profile quality before rowid or random event id",t=>{
   const f=fixture(t),insert=f.db.prepare("INSERT INTO identity_observation VALUES(?,?,?,?,?,?,?,?,?,?,?,?)");
   for(const [event,ref,amount] of [["a-full","probe:profile","100.00"],["z-find","probe:find-profile","2.00"]])
     insert.run(event,IDS[0],"it","111","profile","new_name","observed",TIMES[2],2,ref,"fingerprint",JSON.stringify({fields:{med_gmv_revenue:{status:"value",value:{decimal:amount}}}}));
   insert.run("latest-missing-money",IDS[0],"it","111","profile","new_name","observed",TIMES[3],3,"latest:profile","fingerprint",JSON.stringify({fields:{med_gmv_revenue:{status:"no_value"}}}));
-  const detail=f.open().detail(IDS[0]),field=detail.fields.find(field=>field.name==="med_gmv_revenue");assert.equal(field.status,"no_value");assert.equal(field.lastAvailable.value.decimal,"100.00");
+  const detail=f.open().detail("it",IDS[0]),field=detail.fields.find(field=>field.name==="med_gmv_revenue");assert.equal(field.status,"no_value");assert.equal(field.lastAvailable.value.decimal,"100.00");
 });

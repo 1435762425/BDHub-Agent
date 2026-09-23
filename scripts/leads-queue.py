@@ -26,6 +26,7 @@ from lib.leads_queue import (DEFAULTS, Ledger, config_path, load, plan, run_stat
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('action', choices=['status', 'plan', 'sync', 'save', 'run'])
+    parser.add_argument('--market',required=True)
     parser.add_argument('--json', help='config JSON, inline or @path')
     parser.add_argument('--at', type=float, help='unix time to record; defaults to now')
     parser.add_argument('--batch-size', type=int, help='override the configured batch ceiling')
@@ -33,10 +34,10 @@ def main():
 
     try:
         if args.action == 'status':
-            print(json.dumps(status(ROOT), ensure_ascii=False))
+            print(json.dumps(status(ROOT,market=args.market), ensure_ascii=False))
             return 0
         if args.action == 'plan':
-            planned = plan(ROOT, batch_size=args.batch_size)
+            planned = plan(ROOT,market=args.market, batch_size=args.batch_size)
             print(json.dumps({'batchSize': planned['batchSize'], 'dueQueue': planned['dueQueue'],
                               'taken': planned['taken'], 'first': planned['first'],
                               'refresh': planned['refresh'], 'shortfall': planned['shortfall'],
@@ -46,7 +47,7 @@ def main():
         if args.action == 'run':
             # Foreground for CLI use; the workbench starts the same script detached.
             import runpy
-            sys.argv = ['leads-run.py'] + (['--limit', str(args.batch_size)] if args.batch_size else [])
+            sys.argv = ['leads-run.py','--market',args.market] + (['--limit', str(args.batch_size)] if args.batch_size else [])
             runpy.run_path(str(ROOT / 'scripts/leads-run.py'), run_name='__main__')
             return 0
         if args.action == 'save':
@@ -55,11 +56,11 @@ def main():
                 raw = (json.loads(Path(args.json[1:]).read_text(encoding='utf-8'))
                        if args.json.startswith('@') else json.loads(args.json))
             saved = save_config(ROOT, {**load(ROOT), **raw})
-            print(json.dumps(status(ROOT, config=saved) | {'saved': True}, ensure_ascii=False))
+            print(json.dumps(status(ROOT,market=args.market, config=saved) | {'saved': True}, ensure_ascii=False))
             return 0
         stamp = args.at if args.at else time.time()
-        result = sync(ROOT, at=stamp)
-        print(json.dumps(status(ROOT) | {'sync': result}, ensure_ascii=False))
+        result = sync(ROOT,market=args.market, at=stamp)
+        print(json.dumps(status(ROOT,market=args.market) | {'sync': result}, ensure_ascii=False))
         return 0
     except ValueError as error:
         print(json.dumps({'error': str(error)}, ensure_ascii=False))

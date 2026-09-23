@@ -10,25 +10,27 @@ export async function GET(request:Request){
  if(!isLocalRequest(request,false))return Response.json({error:'local_origin_required'},{status:403,headers});
  let query;try{query=parseInboxQuery(request.url);}
  catch{return Response.json({error:'invalid_inbox_query'},{status:400,headers});}
- try{return Response.json(query.view==="status"?await readInbox(query.days):await readInboxDay(query.date,query.offset,query.limit),{headers});}
+ try{return Response.json(query.view==="status"?await readInbox(query.market,query.days):await readInboxDay(query.market,query.date,query.offset,query.limit),{headers});}
  catch{return Response.json({error:'inbox_unavailable'},{status:503,headers});}
 }
 
 export async function POST(request:Request){
  if(!isLocalRequest(request,true))return Response.json({error:'local_origin_required'},{status:403,headers});
- let body:unknown;
+ let body:unknown,market="";
  try{body=await request.json();}
  catch{return Response.json({error:'invalid_inbox_request'},{status:400,headers});}
- let call:{action:"save";config:InboxConfig}|{action:"start";config:InboxConfig}|{action:"stop"};
- try{call=validateInboxRequest(body);}
+ let call:{action:"save";market:string;config:InboxConfig}|{action:"start";market:string;config:InboxConfig}|{action:"stop";market:string};
+ try{const url=new URL(request.url);if([...url.searchParams.keys()].some(key=>key!=="market")||url.searchParams.getAll("market").length!==1)throw Error();market=url.searchParams.get("market")!;call=validateInboxRequest(body);}
  catch{return Response.json({error:'invalid_inbox_request'},{status:400,headers});}
+ if(call.market!==market)return Response.json({error:'market_mismatch'},{status:409,headers});
+ if(market!=="it")return Response.json({error:'market_inbox_control_unavailable'},{status:409,headers});
  try{
-  if(call.action==="save")return Response.json(await saveInboxConfig(call.config),{headers});
-  if(call.action==="stop")return Response.json(await stopInboxRun(),{headers});
+  if(call.action==="save")return Response.json(await saveInboxConfig(market,call.config),{headers});
+  if(call.action==="stop")return Response.json(await stopInboxRun(market),{headers});
   // 只跑一个监控：已经在跑的那个有自己的记录，不会被重启。
-  const current=await readInbox();
+  const current=await readInbox(market);
   if(current.run?.running)return Response.json({error:'inbox_run_already_running'},{status:409,headers});
-  return Response.json(await startInboxRun(call.config),{headers});
+  return Response.json(await startInboxRun(market,call.config),{headers});
  }
  catch(error){
   const code=error instanceof Error?error.message:"";

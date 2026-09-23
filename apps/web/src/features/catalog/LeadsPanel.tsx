@@ -16,10 +16,10 @@ import {useLeadsQueue} from "./useLeadsQueue";
  *
  * 顺序就是这一步自己的顺序：查线索 → 补身份（无 OECID 不进池）→ 发送池。
  */
-export default function LeadsPanel(){
- const queue=useLeadsQueue();
- const identity=useIdentityQueue();
- const leadPool=useLeadPool();
+export default function LeadsPanel({market}:{market:string}){
+ const queue=useLeadsQueue(market);
+ const identity=useIdentityQueue(market);
+ const leadPool=useLeadPool(market);
  const byChannel=queue.data?.byChannel;
  const scopeValue=queue.data?.scope??null;
  return <div className="space-y-5">

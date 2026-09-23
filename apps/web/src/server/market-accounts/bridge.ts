@@ -16,8 +16,8 @@ export function createAccountsGet(read=readAccounts){return async(request:Reques
  if(!isLocalRequest(request,false))return Response.json({error:'local_origin_required'},{status:403,headers});
  if(request.method!=='GET')return Response.json({error:'method_not_allowed'},{status:405,headers});
  const url=new URL(request.url),market=url.searchParams.get('market');
- if([...url.searchParams.keys()].some(key=>key!=='market')||url.searchParams.getAll('market').length>1||(market!==null&&!enabledMarket(market)))return Response.json({error:'invalid_query'},{status:400,headers});
- try{const value=await read();return Response.json(market?{...value,markets:value.markets.filter(row=>row.market===market)}:value,{headers});}catch{return Response.json({error:'account_status_unavailable'},{status:503,headers});}
+ if([...url.searchParams.keys()].some(key=>key!=='market')||url.searchParams.getAll('market').length!==1||!market||!enabledMarket(market))return Response.json({error:'invalid_query'},{status:400,headers});
+ try{const value=await read();return Response.json({...value,market,availability:enabledMarket(market)?.accounts.communications?"ready":"unavailable",markets:value.markets.filter(row=>row.market===market)},{headers});}catch{return Response.json({error:'account_status_unavailable'},{status:503,headers});}
 };}
 export type AccountMutation={action:"set_enabled"|"refresh"|"relogin";market:string;account:string;requestId:string;expectedRevision?:number;enabled?:boolean};
 function assigned(market:string,account:string){try{const value=JSON.parse(readFileSync(join(projectRoot(),'config/market-accounts.json'),'utf8'));return Array.isArray(value?.markets?.[market]?.accounts)&&value.markets[market].accounts.includes(account);}catch{return false;}}

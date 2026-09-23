@@ -18,18 +18,18 @@ def _required(store):
         raise CycleError("collaboration_schema_migration_required")
 
 
-def _plan(store):
+def _plan(store, market="it"):
     row = store.db.execute(
-        "SELECT id FROM plan WHERE institution='bjn-local-research' AND market='it' AND state='active'"
+        "SELECT id FROM plan WHERE institution='bjn-local-research' AND market=? AND state='active'", (market,)
     ).fetchone()
     if not row:
         raise CycleError("plan_paused")
     return row[0]
 
 
-def current(store, creator_id, plan_id=None):
+def current(store, creator_id, plan_id=None, market="it"):
     _required(store)
-    plan_id = plan_id or _plan(store)
+    plan_id = plan_id or _plan(store, market)
     row = store.db.execute(
         "SELECT * FROM creator_collaboration_current WHERE plan_id=? AND creator_id=?",
         (plan_id, creator_id),
@@ -98,30 +98,33 @@ def apply_backfill(store):
 
 def _insert(store, plan_id, creator_id, source, old_status, new_status, evidence, *, request_id, revision):
     now = store.clock()
+    plan=store.db.execute("SELECT market FROM plan WHERE id=?",(plan_id,)).fetchone()
+    if not plan:raise CycleError("plan_missing")
+    market=plan[0]
     event_id = "collaboration-" + digest([plan_id, creator_id, revision, source, new_status, evidence])[:28]
     store.db.execute(
         "INSERT INTO creator_collaboration_event VALUES(?,?,?,?,?,?,?,?,?,?,?)",
-        (event_id, request_id, plan_id, "it", creator_id, source, old_status, new_status,
+        (event_id, request_id, plan_id, market, creator_id, source, old_status, new_status,
          encoded(evidence), revision, now),
     )
     store.db.execute(
         """INSERT INTO creator_collaboration_current VALUES(?,?,?,?,?,?,?)
         ON CONFLICT(plan_id,creator_id) DO UPDATE SET status=excluded.status,source=excluded.source,
           revision=excluded.revision,updated_at=excluded.updated_at""",
-        (plan_id, "it", creator_id, new_status, source, revision, now),
+        (plan_id, market, creator_id, new_status, source, revision, now),
     )
     return event_id
 
 
 def set_manual(store, creator_id, new_status, request_id, expected_status_revision,
-               expected_control_revision):
+               expected_control_revision, *, plan_id=None, market="it"):
     _required(store)
     if new_status not in STATUSES or not isinstance(request_id, str) or not REQUEST_ID.fullmatch(request_id):
         raise CycleError("collaboration_request_invalid")
     if type(expected_status_revision) is not int or expected_status_revision < 0 or \
        type(expected_control_revision) is not int or expected_control_revision < 1:
         raise CycleError("collaboration_request_invalid")
-    plan_id = _plan(store)
+    plan_id = plan_id or _plan(store, market)
     with store.tx():
         prior = store.db.execute(
             "SELECT * FROM creator_collaboration_event WHERE request_id=?", (request_id,),

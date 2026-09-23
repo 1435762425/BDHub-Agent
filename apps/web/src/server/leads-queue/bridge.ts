@@ -10,7 +10,7 @@ export type LeadsQueueNext={pid:string;units:number;title:string};
 export type LeadsQueueDue={pid:string;queriedAt:number;dueAt:number;leads:number|null;title:string};
 // ``taken`` is the batch: the top ``batchSize`` of the due queue. ``shortfall`` is how far the
 // queue fell short of the ceiling -- it is reported, never filled from products that are not due.
-export type LeadsQueueState={config:LeadsQueueConfig;refreshDays:number;eligible:number;linked:number;scope:number;firstTime:number;due:number;waiting:number;unknownScope:number;nextFirstTime:LeadsQueueNext[];nextDue:LeadsQueueDue[];batchSize:number;dueQueue:number;taken:number;batchFirst:number;batchRefresh:number;shortfall:number;padded:boolean;stuck:number;run:LeadsRunState|null;saved?:boolean;
+export type LeadsQueueState={market:string;config:LeadsQueueConfig;refreshDays:number;eligible:number;linked:number;scope:number;firstTime:number;due:number;waiting:number;unknownScope:number;nextFirstTime:LeadsQueueNext[];nextDue:LeadsQueueDue[];batchSize:number;dueQueue:number;taken:number;batchFirst:number;batchRefresh:number;shortfall:number;padded:boolean;stuck:number;run:LeadsRunState|null;saved?:boolean;
  // 队列是跨渠道的：这两个字段让页面能说清两条渠道各占多少、以及有多少商品没有销量数据。
  byChannel?:{selected:number;campaign:number};unitsUnknown?:number};
 
@@ -53,9 +53,10 @@ function validateRun(value:unknown):LeadsRunState|null{
   platformWrites:(()=>{if(v.platformWrites!==undefined&&v.platformWrites!==0)throw Error('invalid_leads_queue');return 0;})()};
 }
 
-export function validateLeadsQueue(value:unknown):LeadsQueueState{
+export function validateLeadsQueue(value:unknown,expectedMarket:string):LeadsQueueState{
  if(!value||typeof value!=="object")throw Error('invalid_leads_queue');
  const v=value as Record<string,unknown>;
+ if(v.market!==expectedMarket)throw Error('invalid_leads_queue');
  if(!Array.isArray(v.nextFirstTime)||!Array.isArray(v.nextDue))throw Error('invalid_leads_queue');
  if(v.nextFirstTime.length>20||v.nextDue.length>20)throw Error('invalid_leads_queue');
  const nextFirstTime=(v.nextFirstTime as Record<string,unknown>[]).map(row=>{
@@ -68,7 +69,7 @@ export function validateLeadsQueue(value:unknown):LeadsQueueState{
   return {pid:row.pid,queriedAt:row.queriedAt,dueAt:row.dueAt,
    leads:row.leads==null?null:count(row.leads),title:typeof row.title==="string"?row.title:""};
  });
- return {config:validateQueueConfig(v.config),refreshDays:count(v.refreshDays),
+ return {market:expectedMarket,config:validateQueueConfig(v.config),refreshDays:count(v.refreshDays),
   eligible:count(v.eligible),linked:count(v.linked),scope:count(v.scope),
   ...(v.byChannel&&typeof v.byChannel==="object"?{byChannel:{selected:count((v.byChannel as Record<string,unknown>).selected??0),campaign:count((v.byChannel as Record<string,unknown>).campaign??0)}}:{}),
   ...(typeof v.unitsUnknown==="number"?{unitsUnknown:count(v.unitsUnknown)}:{}),
@@ -81,35 +82,37 @@ export function validateLeadsQueue(value:unknown):LeadsQueueState{
   ...(typeof v.saved==="boolean"?{saved:v.saved}:{})};
 }
 
-function runQueue(args:string[]):Promise<LeadsQueueState>{
+function runQueue(args:string[],market:string):Promise<LeadsQueueState>{
  const root=projectRoot();
  return new Promise((resolve,reject)=>{
   execFile(join(root,".venv/bin/python"),[join(root,"scripts/leads-queue.py"),...args],
    {cwd:root,timeout:60000,maxBuffer:2*1024*1024,env:{...process.env,PYTHONDONTWRITEBYTECODE:"1"}},(error,out)=>{
-    try{resolve(validateLeadsQueue(JSON.parse(out)));}
+    try{resolve(validateLeadsQueue(JSON.parse(out),market));}
     catch{reject(Error('leads_queue_unavailable'));}
    });
  });
 }
 
-export function readLeadsQueue():Promise<LeadsQueueState>{return runQueue(["status"]);}
-export function saveLeadsQueue(config:LeadsQueueConfig):Promise<LeadsQueueState>{return runQueue(["save","--json",JSON.stringify(config)]);}
+export function readLeadsQueue(market:string):Promise<LeadsQueueState>{return runQueue(["status","--market",market],market);}
+export function saveLeadsQueue(market:string,config:LeadsQueueConfig):Promise<LeadsQueueState>{return runQueue(["save","--market",market,"--json",JSON.stringify(config)],market);}
 
-export function validateLeadsQueueRequest(value:unknown):{action:"save";config:LeadsQueueConfig}|{action:"run"}{
+export function validateLeadsQueueRequest(value:unknown):{action:"save";market:string;config:LeadsQueueConfig}|{action:"run";market:string}{
  if(!value||typeof value!=="object")throw Error('invalid_leads_queue_request');
  const v=value as Record<string,unknown>;
- if(v.action==="run")return {action:"run"};
+ if(typeof v.market!=="string"||!/^[a-z]{2}$/.test(v.market))throw Error('invalid_leads_queue_request');
+ if(v.action==="run"){if(Object.keys(v).some(key=>key!=="action"&&key!=="market"))throw Error('invalid_leads_queue_request');return {action:"run",market:v.market};}
  if(v.action!=="save")throw Error('invalid_leads_queue_request');
  // Out-of-range ages are a bad request, not an unavailable service.
- try{return {action:"save",config:validateQueueConfig(v.config)};}
+ if(Object.keys(v).some(key=>!['action','market','config'].includes(key)))throw Error('invalid_leads_queue_request');
+ try{return {action:"save",market:v.market,config:validateQueueConfig(v.config)};}
  catch{throw Error('invalid_leads_queue_request');}
 }
 
 /** Start one batch detached; the page follows ``run`` in the status payload. */
-export function startLeadsRun():{started:boolean}{
+export function startLeadsRun(market:string):{started:boolean}{
  const root=projectRoot();
  const log=openSync(join(root,"var/leads-run.log"),"a");
- const child=spawn(join(root,".venv/bin/python"),[join(root,"scripts/leads-run.py")],
+ const child=spawn(join(root,".venv/bin/python"),[join(root,"scripts/leads-run.py"),"--market",market],
   {cwd:root,detached:true,stdio:["ignore",log,log],env:{...process.env,PYTHONDONTWRITEBYTECODE:"1"}});
  child.unref();
  return {started:true};

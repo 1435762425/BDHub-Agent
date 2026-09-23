@@ -30,11 +30,13 @@ def _idle_continuous(store,market,account):
 
 def home(store,market='it'):
  workflow=workflow_status(store,market);current=workflow['current']
- accounts=account_status(store,ROOT)
+ all_accounts=account_status(store,ROOT);accounts={**all_accounts,
+  'accounts':[row for row in all_accounts['accounts'] if row['market']==market],
+  'queue':[row for row in all_accounts['queue'] if row['market']==market]}
  continuous=continuous_status(ROOT,store) if market=='it' else _idle_continuous(store,
   market,next(row['account'] for row in accounts['accounts']
               if row['market']==market and row['role']=='communications'))
- jobs=jobs_status(ROOT);plan=store.db.execute("SELECT id FROM plan WHERE institution='bjn-local-research' AND market=?",(market,)).fetchone()[0]
+ jobs=jobs_status(ROOT,market);plan=store.db.execute("SELECT id FROM plan WHERE institution='bjn-local-research' AND market=?",(market,)).fetchone()[0]
  agent=agent_setting(store,plan);latest_agent=store.db.execute('SELECT * FROM agent_reply_run WHERE plan_id=? ORDER BY started_at DESC LIMIT 1',(plan,)).fetchone()
  by_stage={row['stage']:row for row in (current or {}).get('stages',[])}
  stages=[]

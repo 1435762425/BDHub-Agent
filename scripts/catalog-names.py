@@ -25,7 +25,7 @@ from lib.draft_provider import provider_status  # noqa: E402
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('action', choices=['status', 'prepare', 'discard-invalid'])
-    parser.add_argument('--market', default='it')
+    parser.add_argument('--market', required=True)
     parser.add_argument('--limit', type=int, default=25)
     parser.add_argument('--with-progress', action='store_true')
     parser.add_argument('--all', action='store_true', help='prepare every remaining product')

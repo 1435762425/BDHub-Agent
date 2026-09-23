@@ -11,7 +11,7 @@ function ReviewItem({item,templates,onChanged}:{item:ReplyReviewItem;templates:R
  const [busy,setBusy]=useState(false),[message,setMessage]=useState("");
  const [correctAction,setCorrectAction]=useState<ReplyAction|"">(initialReviewAction(item.review));
  const [note,setNote]=useState(item.review?.note??""),[editing,setEditing]=useState(false);
- const post=async(body:Record<string,unknown>)=>{setBusy(true);setMessage("");try{const response=await fetch("/api/reply-review",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});if(!response.ok){const problem=await response.json().catch(()=>({})) as {error?:string};throw Error(problem.error);}onChanged();}catch(error){setMessage(error instanceof Error&&error.message==="jev_not_configured"?"Jev 尚未配置；当前只能用 DeepSeek 做影子分类。":"操作没有落账，请刷新后重试。");}finally{setBusy(false);}};
+ const post=async(body:Record<string,unknown>)=>{setBusy(true);setMessage("");try{const response=await fetch("/api/reply-review?market=it",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({...body,market:"it"})});if(!response.ok){const problem=await response.json().catch(()=>({})) as {error?:string};throw Error(problem.error);}onChanged();}catch(error){setMessage(error instanceof Error&&error.message==="jev_not_configured"?"Jev 尚未配置；当前只能用 DeepSeek 做影子分类。":"操作没有落账，请刷新后重试。");}finally{setBusy(false);}};
  const classify=(provider:"deepseek"|"jev")=>post({action:"classify",turnId:item.turnId,requestId:`web-${crypto.randomUUID()}`,provider});
  const submit=()=>correctAction&&post({action:"review_turn",turnId:item.turnId,expectedRevision:item.review?.revision??0,
   correctAction,note});
@@ -50,7 +50,7 @@ function ReviewItem({item,templates,onChanged}:{item:ReplyReviewItem;templates:R
 
 export default function ReplyReviewPanel(){
  const [data,setData]=useState<ReplyReviewStatus|null>(null),[error,setError]=useState(false),[revision,setRevision]=useState(0);
- const load=useCallback(async()=>{try{const response=await fetch("/api/reply-review",{cache:"no-store"});if(!response.ok)throw Error();setData(await response.json());setError(false);}catch{setError(true);}},[]);
+ const load=useCallback(async()=>{try{const response=await fetch("/api/reply-review?market=it",{cache:"no-store"});if(!response.ok)throw Error();setData(await response.json());setError(false);}catch{setError(true);}},[]);
  useEffect(()=>{void load();},[load,revision]);
  return <Card title="回复预演与训练" subtitle="真实入站 turn → 关联外发 episode → 五动作影子分类 → 你判正确/不正确。这里不会发送回复。">
   <div className="space-y-4 p-5">

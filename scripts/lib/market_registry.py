@@ -12,9 +12,10 @@ from pathlib import Path
 
 MARKET_KEY = re.compile(r"^[a-z]{2}$")
 CAPABILITIES = frozenset({"campaignCatalog", "fullManagedCatalog"})
+RUNTIME_STATES = frozenset({"ready", "paused", "planned"})
 REQUIRED = frozenset({
-    "enabled", "label", "shortLabel", "locale", "currency", "timeZone",
-    "platformRegion", "templateLanguage", "capabilities",
+    "enabled", "runtimeState", "contentReady", "label", "shortLabel", "locale",
+    "currency", "timeZone", "platformRegion", "templateLanguage", "accounts", "capabilities",
 })
 
 
@@ -23,7 +24,7 @@ def _root(root=None):
 
 
 def validate_registry(value):
-    if not isinstance(value, dict) or value.get("schemaVersion") != 1:
+    if not isinstance(value, dict) or value.get("schemaVersion") != 2:
         raise ValueError("market_registry_invalid")
     markets = value.get("markets")
     default = value.get("defaultMarket")
@@ -32,20 +33,34 @@ def validate_registry(value):
     for key, row in markets.items():
         if not isinstance(key, str) or not MARKET_KEY.fullmatch(key) or not isinstance(row, dict):
             raise ValueError("market_registry_invalid")
-        if set(row) != REQUIRED or type(row["enabled"]) is not bool:
+        if set(row) != REQUIRED or type(row["enabled"]) is not bool or \
+           row["runtimeState"] not in RUNTIME_STATES or type(row["contentReady"]) is not bool:
             raise ValueError("market_registry_invalid")
-        for field in ("label", "shortLabel", "locale", "currency", "timeZone",
-                      "platformRegion", "templateLanguage"):
+        for field in ("label", "shortLabel", "platformRegion"):
             if not isinstance(row[field], str) or not row[field].strip() or len(row[field]) > 80:
+                raise ValueError("market_registry_invalid")
+        for field in ("locale", "currency", "timeZone", "templateLanguage"):
+            if row[field] is not None and (not isinstance(row[field], str) or not row[field].strip() or len(row[field]) > 80):
                 raise ValueError("market_registry_invalid")
         if not row["platformRegion"].isascii() or not row["platformRegion"].isdigit():
             raise ValueError("market_registry_invalid")
         capabilities = row["capabilities"]
         if not isinstance(capabilities, dict) or set(capabilities) != CAPABILITIES or \
-           any(type(enabled) is not bool for enabled in capabilities.values()):
+           capabilities["campaignCatalog"] is not True or \
+           not (type(capabilities["fullManagedCatalog"]) is bool or capabilities["fullManagedCatalog"] is None):
             raise ValueError("market_registry_invalid")
-        if not capabilities["campaignCatalog"]:
-            raise ValueError("campaign_catalog_required")
+        accounts=row["accounts"]
+        if not isinstance(accounts,dict) or set(accounts)!={"communications","supply"}:
+            raise ValueError("market_registry_invalid")
+        values=tuple(accounts.values())
+        if row["runtimeState"]=="planned":
+            if values!=(None,None):raise ValueError("planned_market_accounts_must_be_empty")
+        elif any(not isinstance(account,str) or not re.fullmatch(r"acc[1-9][0-9]*",account) for account in values) or len(set(values))!=2:
+            raise ValueError("operational_market_accounts_invalid")
+        if row["runtimeState"]!="planned" and (capabilities["fullManagedCatalog"] is None or not row["contentReady"]):
+            raise ValueError("operational_market_contract_incomplete")
+        if row["contentReady"] and (row["locale"] is None or row["templateLanguage"] is None):
+            raise ValueError("market_content_metadata_missing")
     return value
 
 
@@ -55,9 +70,14 @@ def load_registry(root=None):
 
 
 def enabled_market_keys(root=None):
-    try:registry=load_registry(root)
-    except FileNotFoundError:return ("it",)
+    registry=load_registry(root)
     return tuple(key for key, row in registry["markets"].items() if row["enabled"])
+
+
+def operational_market_keys(root=None):
+    registry=load_registry(root)
+    return tuple(key for key,row in registry["markets"].items()
+                 if row["enabled"] and row["runtimeState"]!="planned")
 
 
 def market(root, key):
@@ -70,4 +90,17 @@ def market(root, key):
 def supports(root, key, capability):
     if capability not in CAPABILITIES:
         raise ValueError("market_capability_invalid")
-    return market(root, key)["capabilities"][capability]
+    return market(root, key)["capabilities"][capability] is True
+
+
+def capability_state(root,key,capability):
+    if capability not in CAPABILITIES:raise ValueError("market_capability_invalid")
+    value=market(root,key)["capabilities"][capability]
+    return "supported" if value is True else "unsupported" if value is False else "unavailable"
+
+
+def require_operational(root,key):
+    row=market(root,key)
+    if row["runtimeState"]=="planned" or any(not row["accounts"][role] for role in ("communications","supply")):
+        raise ValueError("market_runtime_unavailable")
+    return row

@@ -232,83 +232,90 @@ def selected_send_template(store,root):
   if current:selected=current[0]
  return selected
 
-def manual_templates(store,include_archived=False,market='it'):
- if market!='it':return []
- if not store.db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='manual_reply_template'").fetchone():return []
- where='' if include_archived else "WHERE t.state='active'"
- return [{'id':r['template_id'],'name':r['name'],'category':r['category'],'body':r['body'],
-          'revision':r['current_revision'],'state':r['state']} for r in store.db.execute(f'''SELECT t.*,v.body FROM manual_reply_template t
-   JOIN manual_reply_template_revision v ON v.template_id=t.template_id AND v.revision=t.current_revision
-   {where} ORDER BY t.category,t.name''')]
+def _template_plan(store,market):
+ if not store.db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='market_manual_reply_template'").fetchone():
+  raise CycleError('market_template_schema_required')
+ row=store.db.execute("SELECT id FROM plan WHERE market=? AND institution='bjn-local-research'",(market,)).fetchone()
+ if not row:raise CycleError('plan_missing')
+ return row[0]
 
-def upsert_manual_template(store,request_id,template_id,expected_revision,name,category,body):
+def manual_templates(store,include_archived=False,market='it'):
+ plan=_template_plan(store,market);where='' if include_archived else "AND t.state='active'"
+ return [{'id':r['template_id'],'name':r['name'],'category':r['category'],'body':r['body'],
+          'revision':r['current_revision'],'state':r['state']} for r in store.db.execute(f'''SELECT t.*,v.body FROM market_manual_reply_template t
+   JOIN market_manual_reply_template_revision v ON v.plan_id=t.plan_id AND v.template_id=t.template_id AND v.revision=t.current_revision
+   WHERE t.plan_id=? {where} ORDER BY t.category,t.name''',(plan,))]
+
+def upsert_manual_template(store,request_id,template_id,expected_revision,name,category,body,market='it'):
  name=_name(name);category=_name(category)
  if not isinstance(body,str) or not body.strip() or len(body)>2000:raise CycleError('template_body_invalid')
- now=store.clock()
+ plan=_template_plan(store,market);now=store.clock()
  if template_id is None:
   if not isinstance(request_id,str) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._:-]{7,119}',request_id):raise CycleError('template_request_invalid')
   template_id='manual-'+digest(['manual-template',request_id])[:24];revision=1
   with store.tx():
-   prior=store.db.execute('''SELECT t.name,t.category,v.body FROM manual_reply_template t
-    JOIN manual_reply_template_revision v ON v.template_id=t.template_id AND v.revision=1
-    WHERE t.template_id=?''',(template_id,)).fetchone()
+   prior=store.db.execute('''SELECT t.name,t.category,v.body FROM market_manual_reply_template t
+    JOIN market_manual_reply_template_revision v ON v.plan_id=t.plan_id AND v.template_id=t.template_id AND v.revision=1
+    WHERE t.plan_id=? AND t.template_id=?''',(plan,template_id)).fetchone()
    if prior:
     if prior['name']!=name or prior['category']!=category or prior['body']!=body.strip():
      raise CycleError('template_request_conflict')
    else:
-    store.db.execute('INSERT INTO manual_reply_template VALUES(?,?,?,\'active\',1,?,?)',(template_id,name,category,now,now))
-    store.db.execute('INSERT INTO manual_reply_template_revision VALUES(?,?,?,?)',(template_id,1,body.strip(),now))
+    store.db.execute('INSERT INTO market_manual_reply_template VALUES(?,?,?,?,\'active\',1,?,?)',(plan,template_id,name,category,now,now))
+    store.db.execute('INSERT INTO market_manual_reply_template_revision VALUES(?,?,?,?,?)',(plan,template_id,1,body.strip(),now))
  elif not isinstance(template_id,str) or not MANUAL_ID.fullmatch(template_id) or type(expected_revision) is not int:
   raise CycleError('template_request_invalid')
  else:
   with store.tx():
-   row=store.db.execute('SELECT current_revision FROM manual_reply_template WHERE template_id=?',(template_id,)).fetchone()
+   row=store.db.execute('SELECT current_revision FROM market_manual_reply_template WHERE plan_id=? AND template_id=?',(plan,template_id)).fetchone()
    if not row or row[0]!=expected_revision:raise CycleError('template_revision_conflict')
    revision=expected_revision+1
-   store.db.execute('INSERT INTO manual_reply_template_revision VALUES(?,?,?,?)',(template_id,revision,body.strip(),now))
-   store.db.execute("UPDATE manual_reply_template SET name=?,category=?,state='active',current_revision=?,updated_at=? WHERE template_id=?",(name,category,revision,now,template_id))
- return next(value for value in manual_templates(store,True) if value['id']==template_id)
+   store.db.execute('INSERT INTO market_manual_reply_template_revision VALUES(?,?,?,?,?)',(plan,template_id,revision,body.strip(),now))
+   store.db.execute("UPDATE market_manual_reply_template SET name=?,category=?,state='active',current_revision=?,updated_at=? WHERE plan_id=? AND template_id=?",(name,category,revision,now,plan,template_id))
+ return next(value for value in manual_templates(store,True,market) if value['id']==template_id)
 
 def agent_templates(store,policy,market='it'):
- if market!='it':
-  from lib.market_content import agent_template_map,market_content
-  content=market_content(Path(__file__).resolve().parents[2],market)
-  return [{'id':f'{market}-{key}_v1','action':key,'language':content['language'],'text':text,'revision':1}
-          for key,text in agent_template_map(Path(__file__).resolve().parents[2],market).items()]
- defaults=policy.get('templates') or {};rows=[]
+ plan=_template_plan(store,market)
+ if market=='it':
+  defaults=policy.get('templates') or {};language='it'
+ else:
+  from lib.market_content import agent_template_map as content_templates,market_content
+  content=market_content(Path(__file__).resolve().parents[2],market);language=content['language']
+  texts=content_templates(Path(__file__).resolve().parents[2],market)
+  defaults={key:{'action':action,'text':texts[action]} for key,action in AGENT_TEMPLATE_KEYS.items()}
+ rows=[]
  for key,action in AGENT_TEMPLATE_KEYS.items():
   original=defaults.get(key) or {}
   if original.get('action')!=action or not isinstance(original.get('text'),str):raise CycleError('agent_template_policy_invalid')
-  saved=store.db.execute('''SELECT t.current_revision,r.body FROM agent_reply_template t
-   JOIN agent_reply_template_revision r ON r.template_key=t.template_key AND r.revision=t.current_revision
-   WHERE t.template_key=? AND t.action=?''',(key,action)).fetchone() if store.db.execute(
-    "SELECT 1 FROM sqlite_master WHERE name='agent_reply_template'").fetchone() else None
-  rows.append({'id':key,'action':action,'language':'it','text':saved['body'] if saved else original['text'],
+  saved=store.db.execute('''SELECT t.current_revision,r.body FROM market_agent_reply_template t
+   JOIN market_agent_reply_template_revision r ON r.plan_id=t.plan_id AND r.template_key=t.template_key AND r.revision=t.current_revision
+   WHERE t.plan_id=? AND t.template_key=? AND t.action=?''',(plan,key,action)).fetchone()
+  rows.append({'id':key,'action':action,'language':language,'text':saved['body'] if saved else original['text'],
    'revision':saved['current_revision'] if saved else 1})
  return rows
 
-def update_agent_template(store,policy,template_key,expected_revision,body):
+def update_agent_template(store,policy,template_key,expected_revision,body,market='it'):
  if template_key not in AGENT_TEMPLATE_KEYS or type(expected_revision) is not int or expected_revision<1 or \
     not isinstance(body,str) or not body.strip() or len(body)>4000 or any(ord(c)<9 for c in body):
   raise CycleError('agent_template_request_invalid')
- defaults={row['id']:row for row in agent_templates(store,policy)};default=defaults[template_key];now=store.clock()
+ plan=_template_plan(store,market);defaults={row['id']:row for row in agent_templates(store,policy,market)};default=defaults[template_key];now=store.clock()
  with store.tx():
-  row=store.db.execute('SELECT current_revision,action FROM agent_reply_template WHERE template_key=?',(template_key,)).fetchone()
+  row=store.db.execute('SELECT current_revision,action FROM market_agent_reply_template WHERE plan_id=? AND template_key=?',(plan,template_key)).fetchone()
   if not row:
    if expected_revision!=1:raise CycleError('agent_template_revision_conflict')
    revision=2
-   store.db.execute('INSERT INTO agent_reply_template VALUES(?,?,?,?)',(template_key,AGENT_TEMPLATE_KEYS[template_key],revision,now))
-   store.db.execute('INSERT INTO agent_reply_template_revision VALUES(?,?,?,?)',(template_key,1,default['text'],now))
+   store.db.execute('INSERT INTO market_agent_reply_template VALUES(?,?,?,?,?)',(plan,template_key,AGENT_TEMPLATE_KEYS[template_key],revision,now))
+   store.db.execute('INSERT INTO market_agent_reply_template_revision VALUES(?,?,?,?,?)',(plan,template_key,1,default['text'],now))
   else:
    if row['action']!=AGENT_TEMPLATE_KEYS[template_key] or row['current_revision']!=expected_revision:
     raise CycleError('agent_template_revision_conflict')
    revision=expected_revision+1
-   store.db.execute('UPDATE agent_reply_template SET current_revision=?,updated_at=? WHERE template_key=?',(revision,now,template_key))
-  store.db.execute('INSERT INTO agent_reply_template_revision VALUES(?,?,?,?)',(template_key,revision,body.strip(),now))
- return next(row for row in agent_templates(store,policy) if row['id']==template_key)
+   store.db.execute('UPDATE market_agent_reply_template SET current_revision=?,updated_at=? WHERE plan_id=? AND template_key=?',(revision,now,plan,template_key))
+  store.db.execute('INSERT INTO market_agent_reply_template_revision VALUES(?,?,?,?,?)',(plan,template_key,revision,body.strip(),now))
+ return next(row for row in agent_templates(store,policy,market) if row['id']==template_key)
 
-def agent_template_map(store,policy):
- return {row['action']:(row['id'],row['text'],row['revision']) for row in agent_templates(store,policy)}
+def agent_template_map(store,policy,market='it'):
+ return {row['action']:(row['id'],row['text'],row['revision']) for row in agent_templates(store,policy,market)}
 
 def _minutes(value,allow_24=False):
  if not isinstance(value,str) or not TIME.fullmatch(value) or (value=='24:00' and not allow_24):raise CycleError('reply_schedule_invalid')

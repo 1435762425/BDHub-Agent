@@ -27,8 +27,8 @@ test('unknown placeholders, bad ranges and missing short name are rejected',()=>
 });
 
 test('save and preview requests are validated before reaching the platform bridge',()=>{
- assert.deepEqual(validateNamingRequest({action:'save',config}),{action:'save',market:'it',config});
- assert.equal(validateNamingRequest({action:'preview',config}).action,'preview');
+ assert.deepEqual(validateNamingRequest({action:'save',market:'it',config}),{action:'save',market:'it',config});
+ assert.equal(validateNamingRequest({action:'preview',market:'it',config}).action,'preview');
  const brConfig={...config,version:'link-naming-br-v1',market:'br',language:'pt',locale:'pt-BR'};
  assert.deepEqual(validateNamingRequest({action:'save',market:'br',config:brConfig}),
   {action:'save',market:'br',config:brConfig});

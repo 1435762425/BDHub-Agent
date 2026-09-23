@@ -1,11 +1,12 @@
 import {execFile} from "node:child_process";
 import {join} from "node:path";
 import {projectRoot} from "../creator-identities/refresh.ts";
+import {operationalMarket} from "../markets/registry.ts";
 
 /** 非全托（Campaign）商品的筛分/入池摘要。数字来自本地账本，单位是 offer 与 PID。 */
 export type CampaignPoolSample={pid:string;campaignId:string;creatorPercent:string|null;
  endAt:string|null;alternatives:{campaignId:string;creatorPercent:string|null;endAt:string|null}[]};
-export type CampaignPanelState={available:boolean;reason?:string;snapshot?:string;offers?:number;distinctPids?:number;
+export type CampaignPanelState={available:boolean;market:string;reason?:string;snapshot?:string;offers?:number;distinctPids?:number;
  counts?:{eligible:number;ineligible:number};reasons?:Record<string,number>;eligiblePids?:number;
  multiCampaignPids?:number;poolReconciled?:boolean;
  poolCounts?:{chosen:number;held:number};withAlternatives?:number;sample?:CampaignPoolSample[];
@@ -14,7 +15,7 @@ export type CampaignPanelState={available:boolean;reason?:string;snapshot?:strin
 /** 加入活动的账本状态。`platformWrites` 必须是 0 或真实次数，绝不假报。 */
 export type CampaignJoinItem={campaignId:string;name:string;state:string;reason:string;
  writeAttempted:boolean;joinedCampaignId:string|null};
-export type CampaignJoinState={available:boolean;reason?:string;jobId?:string;state?:string;error?:string;
+export type CampaignJoinState={available:boolean;market:string;reason?:string;jobId?:string;state?:string;error?:string;
  account?:string;email?:string;joinedCount?:number;counts?:Record<string,number>;unresolved?:string[];
  items?:CampaignJoinItem[];platformWrites?:number;campaigns?:number;joined?:number;eligible?:number;
  // 「一键加入」才带的三个字段
@@ -40,15 +41,16 @@ function countMap(value:unknown):Record<string,number>{
  return out;
 }
 
-export function validateCampaignPanel(value:unknown):CampaignPanelState{
+export function validateCampaignPanel(value:unknown,expectedMarket:string):CampaignPanelState{
  if(!value||typeof value!=="object"||Array.isArray(value))throw Error('invalid_campaign_panel');
  const v=value as Record<string,unknown>;
- if(v.available!==true)return {available:false,reason:typeof v.reason==="string"?v.reason:"unavailable"};
+ if(v.market!==expectedMarket)throw Error('invalid_campaign_panel');
+ if(v.available!==true)return {available:false,market:expectedMarket,reason:typeof v.reason==="string"?v.reason:"unavailable"};
  const pool=v.pool as Record<string,unknown>|undefined;
  const sample=Array.isArray(pool?.sample)?pool!.sample as Record<string,unknown>[]:[];
  if(sample.length>200)throw Error('invalid_campaign_panel');
  const recorded=v.recorded as Record<string,unknown>|null|undefined;
- return {available:true,snapshot:typeof v.snapshot==="string"?v.snapshot:undefined,
+ return {available:true,market:expectedMarket,snapshot:typeof v.snapshot==="string"?v.snapshot:undefined,
   offers:count(v.offers,'offers'),distinctPids:count(v.distinctPids??0,'distinctPids'),
   counts:{eligible:count((v.counts as Record<string,unknown>)?.eligible,'eligible'),
    ineligible:count((v.counts as Record<string,unknown>)?.ineligible,'ineligible')},
@@ -83,14 +85,15 @@ function otherCategoryState(other:Record<string,unknown>|undefined):Partial<Camp
    eligible:row.eligible===true,reason:String(row.reason??"")}))}:{})}};
 }
 
-export function validateCampaignJoin(value:unknown):CampaignJoinState{
+export function validateCampaignJoin(value:unknown,expectedMarket:string):CampaignJoinState{
  if(!value||typeof value!=="object"||Array.isArray(value))throw Error('invalid_campaign_join');
  const v=value as Record<string,unknown>;
- if(v.available!==true)return {available:false,reason:typeof v.reason==="string"?v.reason:"campaign_join_not_started"};
+ if(v.market!==expectedMarket)throw Error('invalid_campaign_join');
+ if(v.available!==true)return {available:false,market:expectedMarket,reason:typeof v.reason==="string"?v.reason:"campaign_join_not_started"};
  const other=v.otherCategories as Record<string,unknown>|undefined;
  const items=Array.isArray(v.items)?v.items as Record<string,unknown>[]:[];
  if(items.length>400)throw Error('invalid_campaign_join');
- return {available:true,jobId:String(v.jobId??""),state:String(v.state??""),
+ return {available:true,market:expectedMarket,jobId:String(v.jobId??""),state:String(v.state??""),
   error:typeof v.error==="string"?v.error:"",account:String(v.account??""),
   email:typeof v.email==="string"?v.email:"",
   joinedCount:count(v.joinedCount??0,'joinedCount'),counts:countMap(v.counts??{}),
@@ -137,27 +140,27 @@ function run(script:string,args:string[],limit=4*1024*1024,timeout=60000):Promis
  });
 }
 
-export async function readCampaignPanel(source="campaign"):Promise<CampaignPanelState>{
- return validateCampaignPanel(await run("campaign-screen.py",["status","--source",source,"--sample","20"]));
+export async function readCampaignPanel(market:string,source="campaign"):Promise<CampaignPanelState>{
+ return validateCampaignPanel(await run("campaign-screen.py",["status","--market",market,"--source",source,"--sample","20"]),market);
 }
 
 /** 非全托的链接准备覆盖情况。只读本地账本与池子，不访问平台。 */
-export type CampaignLinkState={available:boolean;reason?:string;runId?:string;poolRun?:string;snapshot?:string;
+export type CampaignLinkState={available:boolean;market:string;reason?:string;runId?:string;poolRun?:string;snapshot?:string;
  targets?:number;excluded?:number;planMissing?:number;commissionInvalid?:number;
  states?:Record<string,number>;verifiedPids?:number;reusePids?:number;outstanding?:number;
  platformWrites?:number;executionAllowed?:false};
 
-export function validateCampaignLinks(value:unknown):CampaignLinkState{
+export function validateCampaignLinks(value:unknown,expectedMarket:string):CampaignLinkState{
  if(!value||typeof value!=="object"||Array.isArray(value))throw Error('invalid_campaign_links');
  const v=value as Record<string,unknown>;
  // 没开始过不是错误：页面上要显示"还没有准备过"，而不是一个红叉。
- if(v.available!==true)return {available:false,reason:typeof v.reason==="string"?v.reason:"catalog_prepare_not_started"};
+ if(v.available!==true)return {available:false,market:expectedMarket,reason:typeof v.reason==="string"?v.reason:"catalog_prepare_not_started"};
  if(v.route!=="campaign")throw Error('invalid_campaign_links');
- const scope=(v.scope??{}) as Record<string,unknown>;
+ const scope=(v.scope??{}) as Record<string,unknown>;if(scope.market!==expectedMarket)throw Error('invalid_campaign_links');
  const selection=(v.selection??{}) as Record<string,unknown>;
  const skipped=(selection.skipped??{}) as Record<string,unknown>;
  const summary=(v.summary??{}) as Record<string,unknown>;
- return {available:true,runId:String(v.runId??""),
+ return {available:true,market:expectedMarket,runId:String(v.runId??""),
   poolRun:selection.poolRun==null?undefined:String(selection.poolRun),
   snapshot:selection.snapshot==null?undefined:String(selection.snapshot),
   targets:count(selection.targets??0,'targets'),
@@ -171,28 +174,29 @@ export function validateCampaignLinks(value:unknown):CampaignLinkState{
   platformWrites:0,executionAllowed:false};
 }
 
-export function readCampaignLinks():Promise<CampaignLinkState>{
- return run("catalog-link-prepare.py",["--status-links","--route","campaign"]).then(validateCampaignLinks);
+export function readCampaignLinks(market:string):Promise<CampaignLinkState>{
+ return run("catalog-link-prepare.py",["--status-links","--route","campaign","--market",market]).then(value=>validateCampaignLinks(value,market));
 }
 
-export async function readCampaignJoin():Promise<CampaignJoinState>{
- return validateCampaignJoin(await run("campaign-join.py",["status"]));
+export async function readCampaignJoin(market:string):Promise<CampaignJoinState>{
+ return validateCampaignJoin(await run("campaign-join.py",["status","--market",market]),market);
 }
 
 /** 只读平台：列出可加入的活动与已加入对照。仍然要人点，因为它会访问平台。 */
-export async function previewCampaignJoin():Promise<CampaignJoinState>{
- return validateCampaignJoin(await run("campaign-join.py",["preview"]));
+export async function previewCampaignJoin(market:string):Promise<CampaignJoinState>{
+ return validateCampaignJoin(await run("campaign-join.py",["preview","--market",market]),market);
 }
 
 export function validateCampaignJoinRequest(value:unknown):
- {action:"preview"}|{action:"verify"}|{action:"apply";campaignIds:string[];email:string;confirm:boolean}
- |{action:"joinAll";email:string;confirm:true}{
+ {action:"preview";market:string}|{action:"verify";market:string}|{action:"apply";market:string;campaignIds:string[];email:string;confirm:boolean}
+ |{action:"joinAll";market:string;email:string;confirm:true}{
  if(!value||typeof value!=="object"||Array.isArray(value))throw Error('invalid_campaign_join_request');
  const v=value as Record<string,unknown>;
  if(!JOIN_ACTIONS.has(String(v.action)))throw Error('invalid_campaign_join_request');
+ const market=typeof v.market==="string"?v.market:"";if(!operationalMarket(market))throw Error('invalid_campaign_join_request');
  if(v.action==="preview"||v.action==="verify"){
-  if(Object.keys(v).some(key=>key!=="action"))throw Error('invalid_campaign_join_request');
-  return {action:v.action};
+  if(Object.keys(v).some(key=>key!=="action"&&key!=="market"))throw Error('invalid_campaign_join_request');
+  return {action:v.action,market};
  }
  const email=typeof v.email==="string"?v.email:"";
  if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)||email.length>254)throw Error('invalid_campaign_join_request');
@@ -201,29 +205,29 @@ export function validateCampaignJoinRequest(value:unknown):
  if(v.action==="joinAll"){
   // 一键加入**不接受**活动列表：目标集合必须由服务端重新预览得出，
   // 否则页面可以拿一份过期名单去写平台。多带一个字段就是坏请求。
-  if(Object.keys(v).some(key=>!["action","email","confirm"].includes(key)))throw Error('invalid_campaign_join_request');
-  return {action:"joinAll",email,confirm:true};
+  if(Object.keys(v).some(key=>!["action","market","email","confirm"].includes(key)))throw Error('invalid_campaign_join_request');
+  return {action:"joinAll",market,email,confirm:true};
  }
  const ids=Array.isArray(v.campaignIds)?v.campaignIds:[];
  if(!ids.length||ids.length>100||new Set(ids).size!==ids.length||
     !ids.every(id=>typeof id==="string"&&/^\d{10,32}$/.test(id)))throw Error('invalid_campaign_join_request');
- return {action:"apply",campaignIds:ids,email,confirm:true};
+ return {action:"apply",market,campaignIds:ids,email,confirm:true};
 }
 
 /** 只读结算：重新读已加入列表，把"提过但没结算"的条目落定。绝不重新提交。 */
-export async function recheckCampaignJoin():Promise<CampaignJoinState>{
- return validateCampaignJoin(await run("campaign-join.py",["verify"]));
+export async function recheckCampaignJoin(market:string):Promise<CampaignJoinState>{
+ return validateCampaignJoin(await run("campaign-join.py",["verify","--market",market]),market);
 }
 
-export async function applyCampaignJoin(campaignIds:string[],email:string):Promise<CampaignJoinState>{
+export async function applyCampaignJoin(market:string,campaignIds:string[],email:string):Promise<CampaignJoinState>{
  return validateCampaignJoin(await run("campaign-join.py",
-  ["apply","--confirm","--email",email,"--campaigns",campaignIds.join(",")],8*1024*1024,WRITE_TIMEOUT_MS));
+  ["apply","--market",market,"--confirm","--email",email,"--campaigns",campaignIds.join(",")],8*1024*1024,WRITE_TIMEOUT_MS),market);
 }
 
 /** 一键加入：服务端**先重新预览一遍**，再把当前全部合格的活动一次提交。平台写入。 */
-export async function joinAllCampaigns(email:string):Promise<CampaignJoinState>{
- return validateCampaignJoin(await run("campaign-join.py",["join-all","--confirm","--email",email],
-  8*1024*1024,WRITE_TIMEOUT_MS));
+export async function joinAllCampaigns(market:string,email:string):Promise<CampaignJoinState>{
+ return validateCampaignJoin(await run("campaign-join.py",["join-all","--market",market,"--confirm","--email",email],
+  8*1024*1024,WRITE_TIMEOUT_MS),market);
 }
 
 export const CAMPAIGN_SOURCES=[...SOURCES];

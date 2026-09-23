@@ -20,13 +20,13 @@ from lib.lead_pool import pool  # noqa: E402
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('action', choices=['status'])
-    parser.add_argument('--market',default='it')
+    parser.add_argument('--market',required=True)
     parser.add_argument('--limit', type=int, default=20)
     args = parser.parse_args()
     if not 1 <= args.limit <= 200:
         print(json.dumps({'error': 'lead_pool_limit_invalid'}, ensure_ascii=False))
         return 2
-    print(json.dumps(pool(ROOT,market=args.market, limit=args.limit), ensure_ascii=False))
+    print(json.dumps({'market':args.market,**pool(ROOT,market=args.market, limit=args.limit)}, ensure_ascii=False))
     return 0
 
 

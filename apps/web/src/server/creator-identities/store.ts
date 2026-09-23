@@ -109,7 +109,7 @@ export class CreatorIdentityReadStore {
       JOIN plan p ON p.id=e.plan_id WHERE p.market=? AND e.historical=0`).get(market)!;
     return {repliedCreators:Number(row.replied||0),showcaseCreators:Number(row.showcase||0)};
   }
-  overview(market:IdentityMarket="it"):CreatorIdentityOverview{return {datasetStatus:this.datasetStatus,market,...this.counts(market),...this.interactionCounts(market),markets:(["it","mx","br","my","uk"] as const).map(key=>({market:key,...this.counts(key)}))};}
+  overview(market:IdentityMarket):CreatorIdentityOverview{const counts=this.counts(market);return {datasetStatus:this.datasetStatus,market,...counts,...this.interactionCounts(market),markets:[{market,...counts}]};}
   list({market="it",status="verified",q="",offset=0,limit=20}:{market?:IdentityMarket;status?:"verified"|"pending";q?:string;offset?:number;limit?:number}={}):CreatorIdentityList{
     const base={datasetStatus:this.datasetStatus,market,status,offset,limit};if(!this.db)return {...base,items:[],total:0};
     const search=like(q);
@@ -126,9 +126,9 @@ export class CreatorIdentityReadStore {
     const rows=this.db.prepare(`SELECT ${ID_COLUMNS} FROM creator_identity i WHERE ${where} ORDER BY i.last_observed_us DESC,i.creator_id LIMIT ? OFFSET ?`).all(...args,limit,offset);
     return {...base,total,items:rows.map(identity)};
   }
-  detail(creatorId:string):CreatorIdentityDetail{
+  detail(market:IdentityMarket,creatorId:string):CreatorIdentityDetail{
     const empty:CreatorIdentityDetail={datasetStatus:this.datasetStatus,creator:null,aliases:[],latestProfileObservedAt:null,fields:[],latestObservation:null};if(!this.db)return empty;
-    const row=this.db.prepare(`SELECT ${ID_COLUMNS} FROM creator_identity i WHERE i.creator_id=? AND i.market IN ('it','mx','br')`).get(creatorId);
+    const row=this.db.prepare(`SELECT ${ID_COLUMNS} FROM creator_identity i WHERE i.market=? AND i.creator_id=?`).get(market,creatorId);
     if(!row)return empty;
     const scope=[String(row.market),String(row.oec_id)];
     const aliases=this.db.prepare("SELECT handle,min(observed_at) first_at,max(observed_at) last_at FROM identity_observation WHERE market=? AND oec_id=? AND kind='profile' AND handle IS NOT NULL GROUP BY handle ORDER BY max(observed_us) DESC,handle").all(...scope).map(alias=>({handle:String(alias.handle),firstObservedAt:String(alias.first_at),lastObservedAt:String(alias.last_at),isCurrent:alias.handle===row.current_handle}));

@@ -1,23 +1,31 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "defaultMarket": "it",
   "markets": {
-    "it": {
+    "be": {
       "enabled": true,
-      "label": "意大利",
-      "shortLabel": "IT",
-      "locale": "it-IT",
-      "currency": "EUR",
-      "timeZone": "Europe/Rome",
-      "platformRegion": "8",
-      "templateLanguage": "it",
+      "runtimeState": "planned",
+      "contentReady": false,
+      "label": "比利时",
+      "shortLabel": "BE",
+      "locale": null,
+      "currency": null,
+      "timeZone": null,
+      "platformRegion": "22",
+      "templateLanguage": null,
+      "accounts": {
+        "communications": null,
+        "supply": null
+      },
       "capabilities": {
         "campaignCatalog": true,
-        "fullManagedCatalog": true
+        "fullManagedCatalog": null
       }
     },
     "br": {
       "enabled": true,
+      "runtimeState": "ready",
+      "contentReady": true,
       "label": "巴西",
       "shortLabel": "BR",
       "locale": "pt-BR",
@@ -25,13 +33,79 @@
       "timeZone": "America/Sao_Paulo",
       "platformRegion": "16",
       "templateLanguage": "pt",
+      "accounts": {
+        "communications": "acc1",
+        "supply": "acc2"
+      },
       "capabilities": {
         "campaignCatalog": true,
         "fullManagedCatalog": false
       }
     },
+    "de": {
+      "enabled": true,
+      "runtimeState": "planned",
+      "contentReady": false,
+      "label": "德国",
+      "shortLabel": "DE",
+      "locale": "de-DE",
+      "currency": "EUR",
+      "timeZone": "Europe/Berlin",
+      "platformRegion": "18",
+      "templateLanguage": "de",
+      "accounts": {
+        "communications": null,
+        "supply": null
+      },
+      "capabilities": {
+        "campaignCatalog": true,
+        "fullManagedCatalog": null
+      }
+    },
+    "it": {
+      "enabled": true,
+      "runtimeState": "ready",
+      "contentReady": true,
+      "label": "意大利",
+      "shortLabel": "IT",
+      "locale": "it-IT",
+      "currency": "EUR",
+      "timeZone": "Europe/Rome",
+      "platformRegion": "8",
+      "templateLanguage": "it",
+      "accounts": {
+        "communications": "acc6",
+        "supply": "acc9"
+      },
+      "capabilities": {
+        "campaignCatalog": true,
+        "fullManagedCatalog": true
+      }
+    },
+    "jp": {
+      "enabled": true,
+      "runtimeState": "planned",
+      "contentReady": false,
+      "label": "日本",
+      "shortLabel": "JP",
+      "locale": "ja-JP",
+      "currency": "JPY",
+      "timeZone": "Asia/Tokyo",
+      "platformRegion": "20",
+      "templateLanguage": "ja",
+      "accounts": {
+        "communications": null,
+        "supply": null
+      },
+      "capabilities": {
+        "campaignCatalog": true,
+        "fullManagedCatalog": null
+      }
+    },
     "my": {
       "enabled": true,
+      "runtimeState": "paused",
+      "contentReady": true,
       "label": "马来西亚",
       "shortLabel": "MY",
       "locale": "ms-MY",
@@ -39,13 +113,119 @@
       "timeZone": "Asia/Kuala_Lumpur",
       "platformRegion": "6",
       "templateLanguage": "ms",
+      "accounts": {
+        "communications": "acc8",
+        "supply": "acc5"
+      },
       "capabilities": {
         "campaignCatalog": true,
         "fullManagedCatalog": false
       }
     },
+    "mx": {
+      "enabled": true,
+      "runtimeState": "planned",
+      "contentReady": false,
+      "label": "墨西哥",
+      "shortLabel": "MX",
+      "locale": "es-MX",
+      "currency": "MXN",
+      "timeZone": "America/Mexico_City",
+      "platformRegion": "19",
+      "templateLanguage": "es",
+      "accounts": {
+        "communications": null,
+        "supply": null
+      },
+      "capabilities": {
+        "campaignCatalog": true,
+        "fullManagedCatalog": null
+      }
+    },
+    "nl": {
+      "enabled": true,
+      "runtimeState": "planned",
+      "contentReady": false,
+      "label": "荷兰",
+      "shortLabel": "NL",
+      "locale": null,
+      "currency": null,
+      "timeZone": null,
+      "platformRegion": "23",
+      "templateLanguage": null,
+      "accounts": {
+        "communications": null,
+        "supply": null
+      },
+      "capabilities": {
+        "campaignCatalog": true,
+        "fullManagedCatalog": null
+      }
+    },
+    "ph": {
+      "enabled": true,
+      "runtimeState": "planned",
+      "contentReady": false,
+      "label": "菲律宾",
+      "shortLabel": "PH",
+      "locale": null,
+      "currency": null,
+      "timeZone": null,
+      "platformRegion": "10",
+      "templateLanguage": null,
+      "accounts": {
+        "communications": null,
+        "supply": null
+      },
+      "capabilities": {
+        "campaignCatalog": true,
+        "fullManagedCatalog": null
+      }
+    },
+    "sg": {
+      "enabled": true,
+      "runtimeState": "planned",
+      "contentReady": false,
+      "label": "新加坡",
+      "shortLabel": "SG",
+      "locale": null,
+      "currency": null,
+      "timeZone": null,
+      "platformRegion": "13",
+      "templateLanguage": null,
+      "accounts": {
+        "communications": null,
+        "supply": null
+      },
+      "capabilities": {
+        "campaignCatalog": true,
+        "fullManagedCatalog": null
+      }
+    },
+    "th": {
+      "enabled": true,
+      "runtimeState": "planned",
+      "contentReady": false,
+      "label": "泰国",
+      "shortLabel": "TH",
+      "locale": null,
+      "currency": null,
+      "timeZone": null,
+      "platformRegion": "5",
+      "templateLanguage": null,
+      "accounts": {
+        "communications": null,
+        "supply": null
+      },
+      "capabilities": {
+        "campaignCatalog": true,
+        "fullManagedCatalog": null
+      }
+    },
     "uk": {
       "enabled": true,
+      "runtimeState": "ready",
+      "contentReady": true,
       "label": "英国",
       "shortLabel": "UK",
       "locale": "en-GB",
@@ -53,9 +233,53 @@
       "timeZone": "Europe/London",
       "platformRegion": "3",
       "templateLanguage": "en",
+      "accounts": {
+        "communications": "acc11",
+        "supply": "acc4"
+      },
       "capabilities": {
         "campaignCatalog": true,
         "fullManagedCatalog": true
+      }
+    },
+    "us": {
+      "enabled": true,
+      "runtimeState": "planned",
+      "contentReady": false,
+      "label": "美国",
+      "shortLabel": "US",
+      "locale": "en-US",
+      "currency": "USD",
+      "timeZone": null,
+      "platformRegion": "100",
+      "templateLanguage": "en",
+      "accounts": {
+        "communications": null,
+        "supply": null
+      },
+      "capabilities": {
+        "campaignCatalog": true,
+        "fullManagedCatalog": null
+      }
+    },
+    "vn": {
+      "enabled": true,
+      "runtimeState": "planned",
+      "contentReady": false,
+      "label": "越南",
+      "shortLabel": "VN",
+      "locale": null,
+      "currency": null,
+      "timeZone": null,
+      "platformRegion": "7",
+      "templateLanguage": null,
+      "accounts": {
+        "communications": null,
+        "supply": null
+      },
+      "capabilities": {
+        "campaignCatalog": true,
+        "fullManagedCatalog": null
       }
     }
   }

@@ -22,17 +22,18 @@ from lib.operations_scheduler import start_scheduler, stop_scheduler  # noqa: E4
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('action', choices=['status', 'save', 'start-scheduler', 'stop-scheduler'])
+    parser.add_argument('--market',required=True)
     parser.add_argument('--json', help='config JSON, inline or @path')
     args = parser.parse_args()
 
     try:
         if args.action == 'status':
-            print(json.dumps(status(ROOT), ensure_ascii=False))
+            print(json.dumps(status(ROOT,args.market), ensure_ascii=False))
             return 0
         if args.action == 'start-scheduler':
-            start_scheduler(ROOT);print(json.dumps(status(ROOT), ensure_ascii=False));return 0
+            start_scheduler(ROOT);print(json.dumps(status(ROOT,args.market), ensure_ascii=False));return 0
         if args.action == 'stop-scheduler':
-            stop_scheduler(ROOT);print(json.dumps(status(ROOT), ensure_ascii=False));return 0
+            stop_scheduler(ROOT);print(json.dumps(status(ROOT,args.market), ensure_ascii=False));return 0
         raw = {}
         if args.json:
             raw = (json.loads(Path(args.json[1:]).read_text(encoding='utf-8'))
@@ -42,7 +43,7 @@ def main():
         merged = {'version': current['version'],
                   'jobs': {key:{**value,**(updates.get(key) or {})} for key,value in current['jobs'].items()}}
         saved = save(ROOT, merged)
-        print(json.dumps(status(ROOT) | {'saved': True, 'config': saved}, ensure_ascii=False))
+        print(json.dumps(status(ROOT,args.market) | {'saved': True, 'config': saved}, ensure_ascii=False))
         return 0
     except ValueError as error:
         print(json.dumps({'saved': False, 'error': str(error)}, ensure_ascii=False))

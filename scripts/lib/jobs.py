@@ -74,9 +74,9 @@ def _scalar(path,sql,args=()):
     except sqlite3.Error:return None
 
 
-def _workflow_stage(root,stage):
+def _workflow_stage(root,stage,market):
     return _scalar(Path(root)/'var/second-cycle.sqlite',
-      "SELECT max(finished_at) FROM workflow_stage_run WHERE stage=? AND state IN ('completed','quota_exhausted')",(stage,))
+      "SELECT max(s.finished_at) FROM workflow_stage_run s JOIN workflow_run r ON r.run_id=s.run_id WHERE r.market=? AND s.stage=? AND s.state IN ('completed','quota_exhausted')",(market,stage))
 
 
 def _status_stamp(path):
@@ -86,21 +86,21 @@ def _status_stamp(path):
     return float(stamp) if isinstance(stamp,(int,float)) and stamp>0 else None
 
 
-def last_run(root):
+def last_run(root,market):
     root=Path(root);cycle=root/'var/second-cycle.sqlite'
-    return {'taplink_clean':_workflow_stage(root,'taplink_clean'),
-      'full_catalog_update':_workflow_stage(root,'catalog'),
-      'campaign_catalog_update':_workflow_stage(root,'catalog'),
-      'taplink_prepare':_workflow_stage(root,'taplink_prepare'),
-      'kalodata_leads':_workflow_stage(root,'kalodata'),'oecid':_workflow_stage(root,'oecid'),
-      'send_pool_publish':_workflow_stage(root,'send_pool'),
-      'inbox_monitor':_status_stamp(root/'var/cycle-inbox-status.json'),
-      'agent_reply':_scalar(cycle,'SELECT max(finished_at) FROM agent_reply_run'),
-      'continuous_send':_scalar(cycle,'SELECT max(last_success_at) FROM continuous_send_runtime')}
+    return {'taplink_clean':_workflow_stage(root,'taplink_clean',market),
+      'full_catalog_update':_workflow_stage(root,'catalog',market),
+      'campaign_catalog_update':_workflow_stage(root,'catalog',market),
+      'taplink_prepare':_workflow_stage(root,'taplink_prepare',market),
+      'kalodata_leads':_workflow_stage(root,'kalodata',market),'oecid':_workflow_stage(root,'oecid',market),
+      'send_pool_publish':_workflow_stage(root,'send_pool',market),
+      'inbox_monitor':_status_stamp(root/'var/cycle-inbox-status.json') if market=='it' else None,
+      'agent_reply':_scalar(cycle,"SELECT max(a.finished_at) FROM agent_reply_run a JOIN plan p ON p.id=a.plan_id WHERE p.market=?",(market,)),
+      'continuous_send':_scalar(cycle,"SELECT max(c.last_success_at) FROM continuous_send_runtime c JOIN plan p ON p.id=c.plan_id WHERE p.market=?",(market,))}
 
 
-def status(root=None):
-    root=Path(root or Path(__file__).resolve().parents[2]);config=load(root);last=last_run(root);jobs=[]
+def status(root=None,market='it'):
+    root=Path(root or Path(__file__).resolve().parents[2]);config=load(root);last=last_run(root,market);jobs=[]
     for job in JOBS:
         setting=config['jobs'][job['id']]
         jobs.append({'id':job['id'],'name':job['name'],'group':job['group'],'description':job['description'],
@@ -108,4 +108,4 @@ def status(root=None):
           'lastRunAt':last.get(job['id']),'enabled':setting['enabled'],'schedulable':True,
           'at':setting['at'],'cadence':job.get('cadence','daily'),'weekday':setting.get('weekday')})
     from lib.operations_scheduler import scheduler_state
-    return {'version':config['version'],'jobs':jobs,'schedulerReady':True,'scheduler':scheduler_state(root)}
+    return {'version':config['version'],'market':market,'jobs':jobs,'schedulerReady':True,'scheduler':scheduler_state(root)}

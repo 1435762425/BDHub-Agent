@@ -411,13 +411,13 @@ class CliErrorPath(unittest.TestCase):
             raise RuntimeError('作用域里的未定义名字')
 
         with mock.patch.dict(sys.modules):
-            code, payload = self.run_cli(['preview'], lambda cli: setattr(cli, 'preview', boom))
+            code, payload = self.run_cli(['preview','--market','it'], lambda cli: setattr(cli, 'preview', boom))
         self.assertEqual(code, 2)
         self.assertIn('campaign_join_internal:RuntimeError', payload['error'])
         self.assertIn('未定义名字', payload['error'])
 
     def test_a_known_refusal_keeps_its_own_code(self):
-        code, payload = self.run_cli(['join-all', '--email', 'a@b.com'])
+        code, payload = self.run_cli(['join-all','--market','it', '--email', 'a@b.com'])
         self.assertEqual((code, payload['error']), (2, 'campaign_join_confirmation_required'))
 
 
