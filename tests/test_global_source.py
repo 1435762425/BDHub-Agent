@@ -43,6 +43,24 @@ class SourceTests(unittest.TestCase):
   self.s.page('two',1,page([2],False,10000));self.s.finish_session('two',True)
   self.assertEqual(self.s.status('two')['state'],'partial');self.assertTrue(self.s.status('one')['published'])
   display=self.s.products();self.assertEqual(display['displayRunId'],'one');self.assertEqual(display['items'][0]['pid'],product(1)['product_id'])
+ def test_plain_query_repairs_missing_unique_pid_without_replacing_pages(self):
+  self.s.page('one',1,page([1,2],True,3));self.s.page('one',2,page([2],False,3))
+  scope=self.s.partial_query_repair_scope('one');self.assertIn(2,scope['pages'])
+  result=self.s.repair_query_page('one',2,page([3],False,3),list_request(2,3),scope['attempt'])
+  self.assertEqual((result['added'],result['complete']),(1,True))
+  self.s.finish_session('one',True);status=self.s.status('one')
+  self.assertEqual((status['products'],status['state'],status['published']),(3,'completed',True))
+  self.assertEqual(self.s.db.execute('SELECT count(*) FROM global_source_page WHERE run_id=?',('one',)).fetchone()[0],2)
+ def test_plain_query_stable_duplicate_requires_exact_replay(self):
+  self.s.page('one',1,page([1,2],True,3));duplicate=page([2],False,3);self.s.page('one',2,duplicate)
+  with self.assertRaisesRegex(GlobalSourceError,'stable_duplicate_evidence_missing'):
+   self.s.accept_stable_query_duplicates('one')
+  scope=self.s.partial_query_repair_scope('one')
+  self.s.repair_query_page('one',2,duplicate,list_request(2,3),scope['attempt'])
+  accepted=self.s.accept_stable_query_duplicates('one');self.assertEqual(accepted['duplicateRows'],1)
+  self.s.finish_session('one',True);status=self.s.status('one')
+  self.assertEqual((status['products'],status['reportedTotal'],status['stableDuplicateRows']), (2,3,1))
+  self.assertEqual(status['coverage'],'current_query_endpoint_stable_duplicates')
  def test_scope_changes_and_foreign_market_rejected(self):
   with self.assertRaises(GlobalSourceError):self.s.start('one',self.scope|{'institutionFingerprint':'b'*64})
   with self.assertRaises(GlobalSourceError):self.s.start('two',self.scope|{'market':'mx'})

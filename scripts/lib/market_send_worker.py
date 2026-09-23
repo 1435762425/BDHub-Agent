@@ -6,10 +6,8 @@ def state_path(root,market):return Path(root)/f'var/market-send-worker-{market}.
 def state(root,market):
  try:value=json.loads(state_path(root,market).read_text(encoding='utf-8'))
  except (OSError,ValueError):return {'running':False,'state':'off','pid':None}
- pid=value.get('pid');alive=False
- if type(pid) is int and pid>0:
-  try:os.kill(pid,0);alive=True
-  except OSError:pass
+ from lib.process_liveness import pid_alive
+ pid=value.get('pid');alive=pid_alive(pid)
  return value|{'running':alive and value.get('running') is True}
 def launch(root,market):
  root=Path(root);current=state(root,market)

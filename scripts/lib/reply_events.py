@@ -74,16 +74,22 @@ def backfill(store):
                            'pid': row['pid'], 'sourceId': row['source_id'],
                            'offerKey': str(offer.get('offerKey') or ''),
                            'listId': str(card.get('listId') or ''),
-                           'message': candidate.get('message'), 'state': row['state']}
+                           'message': candidate.get('message')}
                 fingerprint = digest(payload)
                 episode_id = 'episode-' + digest([row['plan_id'], row['id']])[:24]
-                report['episodesAdded'] += int(_insert_immutable(
-                    store, 'outbound_episode', 'episode_id', episode_id,
-                    ('episode_id','plan_id','creator_id','oec','delivery_id','pid','offer_key','list_id',
-                     'sent_at','payload_json','snapshot_hash'),
-                    (episode_id,row['plan_id'],row['creator_id'],row['oec'],row['id'],row['pid'],
-                     payload['offerKey'],payload['listId'],row['sent_at'] or row['created'],encoded(payload),fingerprint),
-                    'snapshot_hash', fingerprint))
+                prior=store.db.execute('SELECT payload_json FROM outbound_episode WHERE episode_id=?',(episode_id,)).fetchone()
+                if prior:
+                    original=json.loads(prior['payload_json'])
+                    if any(original.get(key)!=payload.get(key) for key in payload):
+                        raise CycleError('reply_event_conflict')
+                else:
+                    report['episodesAdded'] += int(_insert_immutable(
+                        store, 'outbound_episode', 'episode_id', episode_id,
+                        ('episode_id','plan_id','creator_id','oec','delivery_id','pid','offer_key','list_id',
+                         'sent_at','payload_json','snapshot_hash'),
+                        (episode_id,row['plan_id'],row['creator_id'],row['oec'],row['id'],row['pid'],
+                         payload['offerKey'],payload['listId'],row['sent_at'] or row['created'],encoded(payload),fingerprint),
+                        'snapshot_hash', fingerprint))
         if store.db.execute("SELECT 1 FROM sqlite_master WHERE name='inbox_content_head'").fetchone():
             rows = store.db.execute("""SELECT e.plan_id,e.cid,e.message_id,e.oec,e.occurred_ms,e.historical,
               e.observed_at,h.hash,v.payload,r.creator_id

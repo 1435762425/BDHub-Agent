@@ -115,6 +115,16 @@ class Daily(unittest.TestCase):
             self.assertEqual(days['2026-09-15']['unconfirmed'], 1)
             self.assertEqual(days['2026-09-15']['creators'], 2)
 
+    def test_confirmed_card_with_cancelled_text_is_a_card_not_a_complete_reach(self):
+        with tempfile.TemporaryDirectory() as folder:
+            fixture(folder)
+            with closing(sqlite3.connect(Path(folder)/'var/second-cycle.sqlite')) as conn,conn:
+                conn.execute("INSERT INTO cycle_delivery VALUES('partial','p','c4','oec4','1729480000000000011','{}','partial_delivery')")
+                conn.execute("INSERT INTO cycle_delivery_part VALUES('partial','card','confirmed',?)",(at(15,14),))
+                conn.execute("INSERT INTO cycle_delivery_part VALUES('partial','text','cancelled',NULL)")
+            row=next(value for value in daily(folder,count=3,now=NOON)['days'] if value['date']=='2026-09-15')
+            self.assertEqual((row['cards'],row['creators']),(3,2))
+
     def test_historical_imports_are_never_counted_as_today(self):
         with tempfile.TemporaryDirectory() as folder:
             fixture(folder)

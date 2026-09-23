@@ -12,7 +12,7 @@ def stop(*_):
  global STOP;STOP=True
 
 def main():
- p=argparse.ArgumentParser();p.add_argument('--market',default='it');p.add_argument('--run-id');p.add_argument('--pages',type=int,default=15);p.add_argument('--worker',action='store_true');p.add_argument('--by-category',action='store_true');p.add_argument('--retry-boundary-tail',action='store_true');p.add_argument('--retry-partial-category',action='store_true');p.add_argument('--repair-partial-category',action='store_true');p.add_argument('--accept-stable-duplicates',action='store_true');p.add_argument('--accept-partial-snapshot',action='store_true');p.add_argument('--resume-after-relogin',action='store_true');p.add_argument('--status',action='store_true');p.add_argument('--offset',type=int,default=0);p.add_argument('--query',default='');p.add_argument('--audit-store',type=Path);a=p.parse_args()
+ p=argparse.ArgumentParser();p.add_argument('--market',default='it');p.add_argument('--run-id');p.add_argument('--pages',type=int,default=15);p.add_argument('--worker',action='store_true');p.add_argument('--by-category',action='store_true');p.add_argument('--retry-boundary-tail',action='store_true');p.add_argument('--retry-partial-category',action='store_true');p.add_argument('--repair-partial-category',action='store_true');p.add_argument('--repair-partial-query',action='store_true');p.add_argument('--accept-stable-duplicates',action='store_true');p.add_argument('--accept-stable-query-duplicates',action='store_true');p.add_argument('--accept-partial-snapshot',action='store_true');p.add_argument('--resume-after-relogin',action='store_true');p.add_argument('--status',action='store_true');p.add_argument('--offset',type=int,default=0);p.add_argument('--query',default='');p.add_argument('--audit-store',type=Path);a=p.parse_args()
  from lib.market_registry import supports
  if not supports(ROOT,a.market,'fullManagedCatalog'):p.error('market has no full-managed catalog')
  a.run_id=a.run_id or f'{a.market}-global-{time.strftime("%Y%m%d")}'
@@ -79,9 +79,32 @@ def main():
       result=s.repair_partition_page(a.run_id,repair['categoryId'],page,transport.require_read(response)['data'],request,repair['attempt'])
       if result['complete']:break
     if s.get(a.run_id)['state']=='partial':raise GlobalSourceError('partial_partition_repair_incomplete')
+    if s.get(a.run_id)['state']=='completed':s.finish_session(a.run_id,identity_safe(repair_report))
+   if a.repair_partial_query:
+    if a.by_category or a.worker:raise GlobalSourceError('partial_query_repair_invalid')
+    repair=s.partial_query_repair_scope(a.run_id);repair_report={}
+    with opportunity_reader(repair_report,market=a.market,stopped=lambda:STOP,account_name=scope['account'],wait_seconds=60) as transport:
+     for page in repair['pages']:
+      request=list_request(page,repair['reportedTotal'])
+      for request_attempt in range(3):
+       response=transport._xhr(method='POST',path=LIST,params=transport._params(),payload=request,write=False)
+       if response.http_status==200 and response.code==0 and not response.has_turing and not response.system_error_3:break
+       if response.code!=98001004 or request_attempt==2:break
+       time.sleep(2*(request_attempt+1))
+      if response.http_status!=200 or response.code!=0 or response.has_turing or response.system_error_3:
+       raise GlobalSourceError('partial_query_repair_remote_rejected')
+      result=s.repair_query_page(a.run_id,page,transport.require_read(response)['data'],request,repair['attempt'])
+      if result['complete']:break
+    if s.get(a.run_id)['state']=='partial':raise GlobalSourceError('partial_query_repair_incomplete')
+    s.finish_session(a.run_id,identity_safe(repair_report))
    if a.accept_stable_duplicates:
     if not a.by_category:raise GlobalSourceError('stable_duplicate_evidence_missing')
     s.accept_stable_duplicate_rows(a.run_id)
+    if s.get(a.run_id)['state']=='completed':s.finish_session(a.run_id,bool(s.get(a.run_id)['identity_unchanged']))
+   if a.accept_stable_query_duplicates:
+    if a.by_category or a.worker:raise GlobalSourceError('stable_duplicate_evidence_missing')
+    s.accept_stable_query_duplicates(a.run_id)
+    s.finish_session(a.run_id,bool(s.get(a.run_id)['identity_unchanged']))
    operator_acceptance=None
    if a.accept_partial_snapshot:
     if not a.by_category or a.worker:raise GlobalSourceError('partial_snapshot_acceptance_invalid')

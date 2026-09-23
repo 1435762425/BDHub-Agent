@@ -63,6 +63,19 @@ class Deliveries:
    pending=self.s.db.execute('SELECT 1 FROM inbox_pending WHERE plan_id=? AND creator_id=?',(d['plan_id'],d['creator_id'])).fetchone()
    if not pending or d['parts'][0]['state']!='confirmed' or d['parts'][1]['started'] is not None:return False
    self.s.db.execute("UPDATE cycle_delivery_part SET state='cancelled' WHERE delivery_id=? AND kind='text' AND started IS NULL",(id,));self.s.db.execute("UPDATE cycle_delivery SET state='partial_delivery' WHERE id=?",(id,));return True
+ def cancel_pending_text(self,id,reason):
+  """Keep the confirmed card, but settle text that never reached the platform."""
+  if not isinstance(reason,str) or not re.fullmatch(r'[A-Za-z0-9_]{1,100}',reason):raise CycleError('delivery_cancel_reason_invalid')
+  with self.s.tx():
+   d=self.get(id);card,text=d['parts']
+   if card['kind']!='card' or card['state']!='confirmed' or text['kind']!='text' or \
+      text['state']!='ready' or text['started'] is not None or text['receipt'] or text['confirmation']:
+    raise CycleError('delivery_partial_cancel_not_safe')
+   self.s.db.execute("UPDATE cycle_delivery_part SET state='cancelled' WHERE delivery_id=? AND kind='text'",(id,))
+   self.s.db.execute("UPDATE cycle_delivery SET state='partial_delivery' WHERE id=?",(id,))
+   self.s.db.execute('INSERT INTO cycle_delivery_check VALUES(?,?,?,?)',
+     (id,'text',self.s.clock(),encoded({'status':'failed_known','reason':reason,'platformWrites':0})))
+  return self.get(id)
  def cancel_unsubmitted(self,id,reason):
   """Settle a known preflight exclusion only when no component could have reached the platform."""
   if not isinstance(reason,str) or not re.fullmatch(r'[A-Za-z0-9_]{1,100}',reason):raise CycleError('delivery_cancel_reason_invalid')

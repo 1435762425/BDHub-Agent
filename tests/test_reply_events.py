@@ -56,6 +56,19 @@ class ReplyEvents(unittest.TestCase):
    self.assertEqual((first['platformWrites'],first['modelCalls']),(0,0))
    with self.assertRaises(sqlite3.DatabaseError):s.db.execute("UPDATE inbound_turn SET text='changed'")
 
+ def test_card_then_text_completion_keeps_one_immutable_episode(self):
+  with CycleStore(self.db,clock=lambda:self.now) as s:
+   delivery=s.db.execute('SELECT id FROM cycle_delivery LIMIT 1').fetchone()[0]
+   s.db.execute("UPDATE cycle_delivery_part SET state='ready',started=NULL WHERE delivery_id=? AND kind='text'",(delivery,))
+   s.db.execute("UPDATE cycle_delivery SET state='running' WHERE id=?",(delivery,))
+   first=backfill(s)
+   self.assertEqual(first['episodesAdded'],1)
+   s.db.execute("UPDATE cycle_delivery_part SET state='confirmed',started=? WHERE delivery_id=? AND kind='text'",(self.now,delivery))
+   s.db.execute("UPDATE cycle_delivery SET state='confirmed' WHERE id=?",(delivery,))
+   second=backfill(s)
+   self.assertEqual(second['episodesAdded'],0)
+   self.assertEqual(s.db.execute('SELECT count(*) FROM outbound_episode').fetchone()[0],1)
+
  def test_five_action_shadow_is_evidence_bound_reviewed_and_never_executable(self):
   with CycleStore(self.db,clock=lambda:self.now) as s:
    backfill(s);turn=s.db.execute('SELECT turn_id FROM inbound_turn').fetchone()[0]

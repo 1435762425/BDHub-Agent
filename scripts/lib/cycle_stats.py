@@ -60,7 +60,7 @@ def _day_row(conn, day, plan):
         # 触达按**达人**去重：一个达人一个商品发成一次，跟"发了多少条组件"是两件事。
         'creators': _one(conn, 'SELECT count(DISTINCT d.creator_id) FROM cycle_delivery d '
                                'JOIN cycle_delivery_part p ON p.delivery_id=d.id '
-                               "WHERE d.plan_id=? AND p.kind='card' AND p.state='confirmed' AND p.started>=? AND p.started<?",
+                               "WHERE d.plan_id=? AND d.state='confirmed' AND p.kind='card' AND p.state='confirmed' AND p.started>=? AND p.started<?",
                          (plan,start, end)),
         # 发出去了但没确认：不是成功，也不是失败，单独一列。
         'unconfirmed': _one(conn, "SELECT count(*) FROM cycle_delivery_part p JOIN cycle_delivery d ON d.id=p.delivery_id WHERE d.plan_id=? AND p.kind='card' "

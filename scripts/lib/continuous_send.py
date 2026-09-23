@@ -42,7 +42,7 @@ ACTIVE_PENDING_STATES = frozenset({
 })
 
 
-def _continuous_history_eligible(history,now,unlocked,own_current_refs=0):
+def _continuous_history_eligible(history,now,unlocked,own_current_refs=0,required_messages=1):
     """Live preflight aligned with the current 24/48-hour relationship policy."""
     if history.get('identityVerified') is not True or history.get('hasMore') is True:
         raise CycleError('history_incomplete')
@@ -57,7 +57,7 @@ def _continuous_history_eligible(history,now,unlocked,own_current_refs=0):
     cooldown=86400 if unlocked else 172800
     recent=[stamp for stamp in times if stamp>=int((now-cooldown)*1000)]
     if len(recent)>own_current_refs:raise CycleError('recent_contact_needs_allowance_review')
-    if not unlocked and own>=5:raise CycleError('recipient_message_limit')
+    if not unlocked and own+required_messages>5:raise CycleError('recipient_message_limit')
 
 
 def _required(store):
@@ -281,7 +281,8 @@ def execute_once(root,store,*,authenticated=None,authorized_now=None):
                 if prior and prior[0]!=c['oecId']:raise CycleError('conversation_index_conflict')
                 index.execute("INSERT OR IGNORE INTO conversation VALUES('it:acc6',?,?,2,?)",(conversation.conversation_id,c['oecId'],store.clock()))
             confirmed=sum(part['state']=='confirmed' for part in deliveries.get(delivery['id'])['parts'])
-            _continuous_history_eligible(history,store.clock(),bool(c.get('relationshipUnlocked')),confirmed)
+            _continuous_history_eligible(history,store.clock(),bool(c.get('relationshipUnlocked')),confirmed,
+                                         required_messages=1 if confirmed else 2)
             relation=store.db.execute('SELECT mode,rejected,inbox_until FROM relationship WHERE plan_id=? AND creator_id=?',
               (plan,c['creatorId'])).fetchone()
             pending=store.db.execute('SELECT state FROM inbox_pending WHERE plan_id=? AND creator_id=?',
@@ -299,6 +300,10 @@ def execute_once(root,store,*,authenticated=None,authorized_now=None):
                 store.db.execute('INSERT INTO cycle_platform_signal(delivery_id,at,outcome,code,native_status,check_code,check_message,response_ref) VALUES(?,?,?,?,?,?,?,?)',
                   (delivery['id'],store.clock(),*[getattr(error,key,None) for key in ('outcome','code','native_status','check_code','check_message','response_ref')]))
             if latest['state']=='unknown':return publish_runtime(store,plan,'waiting_reconciliation',delivery=active,stop_reason=code,unknown=1)
+            if code=='recipient_message_limit' and latest['parts'][0]['state']=='confirmed' and \
+               latest['parts'][1]['state']=='ready':
+                deliveries.cancel_pending_text(delivery['id'],code)
+                return publish_runtime(store,plan,'sending',delivery=None,stop_reason=code,failed_delta=1)
             if getattr(error,'check_code',None) is not None and error.check_code<0:
                 return publish_runtime(store,plan,'sending',delivery=None,stop_reason='recipient_limit',failed_delta=1)
             if code in PREFLIGHT_TERMINAL:
@@ -361,8 +366,6 @@ def launch_worker(root):
 def worker_state(root):
     try:value=json.loads((Path(root)/'var/continuous-send-worker.json').read_text(encoding='utf-8'))
     except (OSError,ValueError):value={}
-    pid=value.get('pid');running=False
-    if type(pid) is int and pid>0:
-        try:os.kill(pid,0);running=True
-        except OSError:pass
+    from lib.process_liveness import pid_alive
+    pid=value.get('pid');running=pid_alive(pid)
     return {'pid':pid if type(pid) is int else None,'running':running,'startedAt':value.get('startedAt')}

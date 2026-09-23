@@ -78,5 +78,5 @@ def recover_expired(store,*,pid_alive=None):
  return recovered
 
 def _pid_alive(pid):
- try:os.kill(int(pid),0);return True
- except (OSError,TypeError,ValueError):return False
+ from lib.process_liveness import pid_alive
+ return pid_alive(pid)

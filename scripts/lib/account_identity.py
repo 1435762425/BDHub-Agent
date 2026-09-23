@@ -36,13 +36,8 @@ START_REQUIRED_CAPABILITIES = frozenset({
 
 
 def _worker_alive(pid):
-    if type(pid) is not int or pid <= 0:
-        return False
-    try:
-        os.kill(pid, 0)
-        return True
-    except (OSError, ValueError):
-        return False
+    from lib.process_liveness import pid_alive
+    return pid_alive(pid)
 
 
 def _required(store):

@@ -16,6 +16,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from lib.operations_workflow import create_run,finish_stage,status as workflow_status
+from lib.process_liveness import pid_alive
 from lib.second_cycle import CycleError, CycleStore, digest
 from lib.workflow_dispatch import claim_ready
 from lib.workflow_resources import assert_current,heartbeat,release
@@ -140,15 +141,14 @@ def selection_auth_unknown(root,market):
 
 
 def scheduler_state(root):
-    run=_read(run_path(root),{});pid=run.get('pid');alive=False
-    if type(pid) is int and pid>0:
-        try:os.kill(pid,0);alive=True
-        except OSError:pass
+    run=_read(run_path(root),{});pid=run.get('pid');alive=pid_alive(pid)
     progress=_read(status_path(root),{})
     return {'running':alive,'stopping':alive and stop_path(root).exists(),'pid':pid if type(pid) is int else None,
       'startedAt':run.get('startedAt'),'phase':progress.get('stage'),'cycle':progress.get('runId'),
       'checkedAt':progress.get('checkedAt'),'lastSuccess':progress.get('lastSuccess') or {},
-      'lastAttempt':progress.get('lastAttempt') or {},'nextDue':progress.get('nextDue') or {},
+      'lastAttempt':progress.get('lastAttempt') or {},
+      'nextDue':{key:value for key,value in (progress.get('nextDue') or {}).items()
+                 if type(value) in (int,float) and value>=0},
       'error':progress.get('error')}
 
 
@@ -673,7 +673,8 @@ def _background(root,store,jobs,automation,stamp,maintenance_enabled=None):
     if {'continuous_send_control','cycle_delivery','cycle_delivery_part'}<=tables:
         from lib.continuous_send import control as send_control,launch_worker,worker_state
         control=send_control(store,root)
-        if (enabled['continuous_send']['enabled'] or control['automaticEnabled']) and control['automaticEnabled'] and \
+        if (enabled['continuous_send']['enabled'] or control['automaticEnabled'] or control['runRequested']) and \
+           (control['automaticEnabled'] or control['runRequested']) and \
            not control['stopRequested'] and not worker_state(root)['running']:
             launch_worker(root)
     from lib.operations_workflow import setting as market_setting
@@ -681,12 +682,13 @@ def _background(root,store,jobs,automation,stamp,maintenance_enabled=None):
     from lib.market_send_worker import launch as launch_market_sender,state as market_sender_state
     for market in enabled_market_keys(root):
         if market=='it':continue
+        plan_row=store.db.execute("SELECT id FROM plan WHERE market=? AND institution='bjn-local-research' AND state='active'",(market,)).fetchone()
+        if not plan_row:continue
         current=market_setting(store,market)
         if current['automaticOperationsEnabled']:
             inbox_state=_read(Path(root)/f'var/market-inbox-{market}.json',{})
             inbox_pid=inbox_state.get('pid')
-            try:inbox_alive=type(inbox_pid) is int and inbox_pid>0 and os.kill(inbox_pid,0) is None
-            except OSError:inbox_alive=False
+            inbox_alive=pid_alive(inbox_pid)
             if not inbox_alive:
                 log=Path(root)/f'var/market-inbox-{market}.log'
                 try:
@@ -698,12 +700,10 @@ def _background(root,store,jobs,automation,stamp,maintenance_enabled=None):
                     _write(Path(root)/f'var/market-inbox-{market}.json',
                            {'pid':child.pid,'running':True,'state':'starting','startedAt':time.time()})
                 except OSError:pass
-        plan_row=store.db.execute("SELECT id FROM plan WHERE market=? AND institution='bjn-local-research'",(market,)).fetchone()
         if plan_row and agent_setting(store,plan_row[0])['enabled']:
             reply_state=_read(Path(root)/f'var/agent-reply-status-{market}.json',{})
             reply_pid=reply_state.get('pid')
-            try:reply_alive=type(reply_pid) is int and reply_pid>0 and os.kill(reply_pid,0) is None
-            except OSError:reply_alive=False
+            reply_alive=pid_alive(reply_pid)
             if not reply_alive:
                 log=Path(root)/f'var/agent-reply-{market}.log'
                 try:
@@ -715,7 +715,9 @@ def _background(root,store,jobs,automation,stamp,maintenance_enabled=None):
                     _write(Path(root)/f'var/agent-reply-status-{market}.json',
                            {'pid':child.pid,'state':'starting','checkedAt':time.time()})
                 except OSError:pass
-        if current['continuousSendEnabled'] and not market_sender_state(root,market)['running']:
+        sender_control=__import__('lib.market_send_control',fromlist=['control']).control(store,market)
+        if (current['continuousSendEnabled'] or sender_control['automaticEnabled'] or sender_control['runRequested']) and \
+           not sender_control['stopRequested'] and not market_sender_state(root,market)['running']:
             sender=market_sender_state(root,market)
             error=sender.get('error') or ''
             uncertain=error in ('market_send_result_unknown','market_send_conversation_result_unknown')

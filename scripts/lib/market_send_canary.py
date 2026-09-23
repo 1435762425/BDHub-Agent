@@ -60,7 +60,8 @@ def _preflight_conversation(store,session,plan,candidate,conversation,delivery_i
     relation=store.db.execute('SELECT mode,rejected,inbox_until,unlocked FROM relationship WHERE plan_id=? AND creator_id=?',
                               (plan,candidate['creatorId'])).fetchone()
     own=sum(part['state']=='confirmed' for part in Deliveries(store).get(delivery_id)['parts'] if part['kind']=='card')
-    _continuous_history_eligible(history,store.clock(),bool(relation['unlocked']) if relation else False,own)
+    _continuous_history_eligible(history,store.clock(),bool(relation['unlocked']) if relation else False,own,
+                                 required_messages=1 if own else 2)
     pending=store.db.execute('SELECT state FROM inbox_pending WHERE plan_id=? AND creator_id=?',
                              (plan,candidate['creatorId'])).fetchone()
     case=store.db.execute("SELECT 1 FROM service_case WHERE plan_id=? AND creator_id=? AND state='open'",

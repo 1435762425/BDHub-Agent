@@ -107,6 +107,11 @@ CREATE TABLE IF NOT EXISTS global_source_partition_repair_page(
  count INTEGER NOT NULL,new_count INTEGER NOT NULL,reported_total INTEGER NOT NULL,response_hash TEXT NOT NULL,
  pids_hash TEXT NOT NULL,observed REAL NOT NULL,request_payload TEXT NOT NULL,
  PRIMARY KEY(run_id,category_id,attempt,page));
+CREATE TABLE IF NOT EXISTS global_source_query_repair_page(
+ run_id TEXT NOT NULL,attempt INTEGER NOT NULL,page INTEGER NOT NULL,count INTEGER NOT NULL,
+ new_count INTEGER NOT NULL,reported_total INTEGER NOT NULL,response_hash TEXT NOT NULL,
+ pids_hash TEXT NOT NULL,observed REAL NOT NULL,request_payload TEXT NOT NULL,
+ PRIMARY KEY(run_id,attempt,page));
 CREATE TABLE IF NOT EXISTS global_source_operator_acceptance(
  run_id TEXT PRIMARY KEY,action TEXT NOT NULL,accepted_at REAL NOT NULL,products INTEGER NOT NULL,
  pages INTEGER NOT NULL,categories_completed INTEGER NOT NULL,category_count INTEGER NOT NULL,
@@ -271,6 +276,71 @@ class GlobalSources:
             if proof.get('http')!=200 or proof.get('code')!=98001004 or proof.get('page')!=667 or proof.get('verification') is not False:raise GlobalSourceError('boundary_evidence_missing')
             self.db.execute("INSERT INTO global_source_attempt(run_id,page,at,code) VALUES(?,667,?,'aligned_tail_retry')",(id,self.clock()))
             self.db.execute("UPDATE global_source_run SET state='collecting',terminal_reason=NULL WHERE id=?",(id,))
+    def partial_query_repair_scope(self,id):
+        run=self.get(id)
+        if run['state']!='partial' or run['terminal_reason']!='endpoint_end_total_mismatch' or \
+           run['scope'].get('partitionMode')=='category_l1_v1':
+            raise GlobalSourceError('partial_query_repair_invalid')
+        total=run['reported_total']
+        rows=self.db.execute('SELECT coalesce(sum(count),0),coalesce(sum(new_count),0) FROM global_source_page WHERE run_id=?',(id,)).fetchone()
+        if type(total) is not int or rows[0]!=total or rows[1]>=total:
+            raise GlobalSourceError('partial_query_repair_invalid')
+        duplicates=[row[0] for row in self.db.execute('SELECT page FROM global_source_page WHERE run_id=? AND new_count<count ORDER BY page',(id,))]
+        attempt=self.db.execute('SELECT coalesce(max(attempt),0)+1 FROM global_source_query_repair_page WHERE run_id=?',(id,)).fetchone()[0]
+        radius=10 if attempt<=2 else 25
+        pages=(list(range(1,run['next_page'])) if attempt>=4 else
+               sorted({page+delta for page in duplicates for delta in range(-radius,radius+1)
+                       if 1<=page+delta<run['next_page']}))
+        if not pages:raise GlobalSourceError('partial_query_repair_invalid')
+        return {'reportedTotal':total,'uniqueCount':rows[1],'pages':pages,'attempt':attempt}
+    def repair_query_page(self,id,page,data,request_payload,attempt):
+        data=normalize_page(data)
+        if not isinstance(data,dict) or type(data.get('total')) is not int or not isinstance(data.get('products'),list):
+            raise GlobalSourceError('page_shape_invalid')
+        cleaned=[clean_product(row) for row in data['products']];pids=[row['product_id'] for row in cleaned]
+        if len(set(pids))!=len(pids):raise GlobalSourceError('duplicate_pid_in_page')
+        with self.tx():
+            run=self.get(id)
+            if run['state']!='partial' or run['scope'].get('partitionMode')=='category_l1_v1' or \
+               data['total']!=run['reported_total'] or request_payload!=list_request(page,run['reported_total']) or \
+               not self.db.execute('SELECT 1 FROM global_source_page WHERE run_id=? AND page=?',(id,page)).fetchone():
+                raise GlobalSourceError('partial_query_repair_invalid')
+            added=0;now=self.clock()
+            for product in cleaned:
+                pid=product['product_id']
+                if self.db.execute('SELECT 1 FROM global_source_product WHERE run_id=? AND pid=?',(id,pid)).fetchone():continue
+                added+=1
+                self.db.execute('INSERT INTO global_source_product VALUES(?,?,?,?,?,?,?)',
+                                (id,pid,encoded(product),digest(product),page,page,now))
+            self.db.execute('INSERT INTO global_source_query_repair_page VALUES(?,?,?,?,?,?,?,?,?,?)',
+                            (id,int(attempt),int(page),len(cleaned),added,data['total'],digest(data),digest(pids),now,encoded(request_payload)))
+            unique=self.db.execute('SELECT count(*) FROM global_source_product WHERE run_id=?',(id,)).fetchone()[0]
+            if unique>run['reported_total']:raise GlobalSourceError('query_repair_union_exceeds_total')
+            if unique==run['reported_total']:
+                self.db.execute("UPDATE global_source_run SET state='completed',terminal_reason='endpoint_end_reconciled',updated=? WHERE id=?",(now,id))
+        return {'added':added,'uniqueCount':unique,'complete':unique==run['reported_total']}
+    def accept_stable_query_duplicates(self,id,max_duplicates=5):
+        """Only accept a bounded row/unique gap after exact repeat reads of its duplicate pages."""
+        with self.tx():
+            run=self.get(id)
+            if run['state']!='partial' or run['terminal_reason']!='endpoint_end_total_mismatch' or \
+               run['scope'].get('partitionMode')=='category_l1_v1':
+                raise GlobalSourceError('stable_duplicate_evidence_missing')
+            rows=self.db.execute('SELECT coalesce(sum(count),0) FROM global_source_page WHERE run_id=?',(id,)).fetchone()[0]
+            unique=self.db.execute('SELECT count(*) FROM global_source_product WHERE run_id=?',(id,)).fetchone()[0]
+            duplicates=rows-unique
+            if rows!=run['reported_total'] or not 1<=duplicates<=max(max_duplicates,rows//1000):
+                raise GlobalSourceError('stable_duplicate_evidence_missing')
+            duplicate_pages=self.db.execute('SELECT page,pids_hash,count-new_count FROM global_source_page WHERE run_id=? AND new_count<count',(id,)).fetchall()
+            if not duplicate_pages:raise GlobalSourceError('stable_duplicate_evidence_missing')
+            stable=0
+            for page,pids_hash,gap in duplicate_pages:
+                replay=self.db.execute('SELECT pids_hash,new_count FROM global_source_query_repair_page WHERE run_id=? AND page=? ORDER BY attempt DESC LIMIT 1',(id,page)).fetchone()
+                if replay and replay[0]==pids_hash and replay[1]==0:stable+=gap
+            if stable!=duplicates:raise GlobalSourceError('stable_duplicate_evidence_missing')
+            reason=f'endpoint_end_stable_duplicate_rows_{duplicates}';now=self.clock()
+            self.db.execute("UPDATE global_source_run SET state='completed',terminal_reason=?,updated=? WHERE id=?",(reason,now,id))
+        return {'duplicateRows':duplicates,'reason':reason}
     def retry_blocked_partition(self,id,proof,max_attempts=3):
         """Retry the same category page in a fresh signed session after code 98001004."""
         with self.tx():
@@ -558,9 +628,13 @@ class GlobalSources:
         reported=sum((row['reported_total'] or 0) for row in partitions) if partitioned else r['reported_total']
         memberships=self.db.execute('SELECT count(*) FROM global_source_product_category WHERE run_id=?',(id,)).fetchone()[0] if partitioned else count
         next_partition=next((row for row in partitions if row['state'] in ('collecting','queued','blocked')),None)
-        stable_duplicates=sum(max(0,(row['reported_total'] or 0)-row['unique_count']) for row in partitions if row['state']=='completed') if partitioned else 0
+        stable_duplicates=(sum(max(0,(row['reported_total'] or 0)-row['unique_count']) for row in partitions if row['state']=='completed')
+                           if partitioned else int((r['terminal_reason'] or '').rsplit('_',1)[-1])
+                           if (r['terminal_reason'] or '').startswith('endpoint_end_stable_duplicate_rows_') else 0)
         coverage=('operator_accepted_partial' if r['state']=='accepted_partial' else
-                  ('category_l1_endpoint_and_totals' if partitioned else 'current_query_endpoint_and_total') if r['state']=='completed' else 'partial_query')
+                  ('category_l1_endpoint_and_totals' if partitioned else
+                   'current_query_endpoint_stable_duplicates' if stable_duplicates else 'current_query_endpoint_and_total')
+                  if r['state']=='completed' else 'partial_query')
         acceptance=(self.db.execute('SELECT action,accepted_at,products,pages,categories_completed,category_count,note FROM global_source_operator_acceptance WHERE run_id=?',(id,)).fetchone()
                     if self.db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='global_source_operator_acceptance'").fetchone() else None)
         return {'activePublished':dict(active) if active else None,'listedSelectedProducts':selected,'listedUnselectedProducts':unselected,'platformWrites':0,'modelCalls':0,'available':True,'id':id,'market':r['scope']['market'],'account':r['scope']['account'],'source':SOURCE,'state':r['state'],'products':count,'pages':pages,'reportedTotal':reported,'stableDuplicateRows':stable_duplicates,'nextPage':next_partition['next_page'] if next_partition else r['next_page'],'detailProducts':detail_count,'reason':r['terminal_reason'],

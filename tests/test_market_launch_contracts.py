@@ -23,6 +23,8 @@ from lib.operations_workflow import create_run
 from lib.workflow_resources import claim
 from lib.template_library import DEFAULT_AGENT_SETTING,save_agent_setting
 from lib.agent_reply_v2 import authorize_rollout,rollout_stage
+from lib.continuous_send import _continuous_history_eligible
+from lib.cycle_delivery import Deliveries
 from unittest.mock import patch
 
 spec=importlib.util.spec_from_file_location('poll_market_inbox_cli',ROOT/'scripts/poll-market-inbox.py')
@@ -141,5 +143,26 @@ class MarketLaunchContracts(unittest.TestCase):
   started=authorize_rollout(self.store,self.plan,'my','pilot','my-agent-first-page-001')
   self.assertEqual(started['stage'],'pilot_running')
   self.assertEqual(rollout_stage(self.store,self.plan,'my'),'pilot_running')
+
+ def test_card_and_text_need_two_remaining_unanswered_message_slots(self):
+  stamps=[int((NOW-3*86400-i)*1000) for i in range(4)]
+  history={'identityVerified':True,'hasMore':False,'senderCounts':{'ourMessages':4,'otherOrUnknown':0},
+           'outboundCreateTimeRaw':stamps,'outboundTimeMissingCount':0}
+  with self.assertRaisesRegex(CycleError,'recipient_message_limit'):
+   _continuous_history_eligible(history,NOW,False,required_messages=2)
+  _continuous_history_eligible(history,NOW,False,required_messages=1)
+
+ def test_already_confirmed_card_settles_only_unsent_text_at_message_limit(self):
+  deliveries=Deliveries(self.store);did='delivery-fixture-partial'
+  self.store.db.execute("INSERT INTO cycle_delivery VALUES(?,?,?,?,?,?,?,?,?,'running')",
+    (did,self.plan,'creator-x','101','123','source-1','{}',NOW-30,NOW+1800))
+  self.store.db.execute("INSERT INTO cycle_delivery_part(delivery_id,kind,request_ref,state,started) VALUES(?,?,'card-ref','confirmed',?)",
+                        (did,'card',NOW-10))
+  self.store.db.execute("INSERT INTO cycle_delivery_part(delivery_id,kind,request_ref,state) VALUES(?,?,'text-ref','ready')",
+                        (did,'text'))
+  settled=deliveries.cancel_pending_text(did,'recipient_message_limit')
+  self.assertEqual((settled['state'],[(p['kind'],p['state']) for p in settled['parts']]),
+                   ('partial_delivery',[('card','confirmed'),('text','cancelled')]))
+  self.assertEqual(self.store.db.execute('SELECT count(*) FROM cycle_delivery_check WHERE delivery_id=?',(did,)).fetchone()[0],1)
 
 if __name__=='__main__':unittest.main()

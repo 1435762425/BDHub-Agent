@@ -17,13 +17,16 @@ def write(market,value):
  path=state_path(market);tmp=path.with_suffix('.tmp');tmp.write_text(json.dumps(value,ensure_ascii=False,indent=2)+'\n');tmp.replace(path)
 
 def expected_wait_state(code):
- return 'waiting_pool' if code=='market_send_candidate_missing' else None
+ if code=='market_send_candidate_missing':return 'waiting_pool'
+ if code in ('ProfileBusyError','live_guard_busy'):return 'waiting_account'
+ return None
 
 def main():
  p=argparse.ArgumentParser(description=__doc__);p.add_argument('--market',required=True,choices=('br','my','uk'));p.add_argument('--once',action='store_true');p.add_argument('--interval',type=int,default=30);a=p.parse_args()
  if not 5<=a.interval<=300:p.error('interval 5..300')
  signal.signal(signal.SIGTERM,stop);signal.signal(signal.SIGINT,stop)
  while not STOP:
+  waiting=None
   with CycleStore(ROOT/'var/second-cycle.sqlite') as store:
    control=setting(store,a.market)
    from lib.market_send_control import control as send_control
@@ -49,7 +52,8 @@ def main():
     if waiting:write(a.market,{'running':True,'state':waiting,'pid':os.getpid(),'checkedAt':time.time(),'reason':code})
     else:write(a.market,{'running':False,'state':'attention','pid':os.getpid(),'checkedAt':time.time(),'error':code});return 2
   if a.once:break
-  for _ in range(a.interval):
+  delay=3 if waiting=='waiting_account' else a.interval
+  for _ in range(delay):
    if STOP:break
    time.sleep(1)
  return 0

@@ -18,7 +18,6 @@
 """
 import argparse
 import json
-import os
 import sys
 from pathlib import Path
 
@@ -27,6 +26,7 @@ sys.dont_write_bytecode = True
 sys.path.insert(0, str(ROOT / 'scripts'))
 from lib.cycle_stats import daily, day_detail  # noqa: E402
 from lib.job_run import load_config, save_config, status as job_status  # noqa: E402
+from lib.process_liveness import pid_alive  # noqa: E402
 
 
 def status(root, market, days=14):
@@ -35,11 +35,9 @@ def status(root, market, days=14):
         config={'limit':12,'interval':30};run=None
         try:
             state=json.loads((Path(root)/f'var/market-inbox-{market}.json').read_text(encoding='utf-8'))
-            pid=state.get('pid');alive=False
-            if type(pid) is int and pid>0:
-                try:os.kill(pid,0);alive=True
-                except OSError:pass
-            else:raise ValueError('market_inbox_pid_invalid')
+            pid=state.get('pid')
+            if type(pid) is not int or pid<=0:raise ValueError('market_inbox_pid_invalid')
+            alive=pid_alive(pid)
             summary=state.get('status') or {}
             progress={key:state.get(key,0) for key in ('processed','added','historical','liveReplies','indexedTargets')}
             progress.update(serviceDecisions=0,errorCode=state.get('errorCode'),state=state.get('state',''),

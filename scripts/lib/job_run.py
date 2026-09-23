@@ -301,13 +301,8 @@ def state(root, name, *, clock=time.time):
     if not isinstance(payload, dict):
         return None
     pid = payload.get('pid')
-    alive = False
-    if isinstance(pid, int) and pid > 0:
-        try:
-            os.kill(pid, 0)
-            alive = True
-        except OSError:
-            alive = False
+    from lib.process_liveness import pid_alive
+    alive = pid_alive(pid)
     return payload | {'running': alive, 'stopping': stop_path(root, name).exists(),
                       'progress': read_progress(root, name)}
 
