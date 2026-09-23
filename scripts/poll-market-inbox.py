@@ -46,8 +46,12 @@ def _merge_targets(store,plan,recent,older,limit):
   if cid in known and known[cid][0]!=oec:continue
   if oec not in valid_oecs:continue
   seen.add(cid);head.append((cid,oec))
+ from lib.observed_messages import missing_body_targets
+ repair=[(cid,oec) for cid,oec in missing_body_targets(store.db,plan,limit)
+         if oec in valid_oecs and (cid not in known or known[cid][0]==oec)]
+ head=[item for item in head if item not in repair]
  hot_count=max(1,limit//2)
- hot=head[:hot_count]
+ hot=(repair+head[:hot_count])[:limit]
  cold=sorted(((stamp,cid,oec) for cid,(oec,stamp) in known.items()
               if oec in valid_oecs and cid not in {item[0] for item in hot}),key=lambda row:(row[0],row[1]))
  selected=hot+[(cid,oec) for _,cid,oec in cold[:limit-len(hot)]]

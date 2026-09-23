@@ -105,6 +105,18 @@ class AgentReplyV2Tests(unittest.TestCase):
   self.assertEqual(self.store.db.execute('SELECT state FROM inbox_pending').fetchone()[0],'awaiting_content')
   self.confirm_local(reply_id)
   self.assertEqual(self.store.db.execute('SELECT state FROM inbox_pending').fetchone()[0],'answered')
+ def test_operator_backend_reply_invalidates_an_unsubmitted_ai_reply(self):
+  context=self.live_context();generated=self.generated(context)
+  reply_id=apply_production(self.store,self.plan,context,generated)['replyId']
+  replies=AutoReplies(self.store);replies.enable(self.plan,'test-only')
+  now=self.store.clock()+1
+  event={'messageId':'2','kind':'ourMessages','createTimeRaw':int(now*1000),
+         'messageType':1000,'conversationId':'999','oecId':'123'}
+  Inbox(self.store).ingest(self.plan,'999','123',{'identityVerified':True,'hasMore':False,'events':[event]})
+  replies.service.capture(self.plan,'999','123',[{'messageId':'2','format':'text',
+   'text':'I have already answered this question.','nativeType':'text','rawSha256':'b'*64}])
+  with self.assertRaisesRegex(CycleError,'reply_context_changed'):replies.begin(reply_id)
+  self.assertEqual(replies.get(reply_id)['state'],'ready')
  def test_contact_request_keeps_creator_out_of_outreach_after_receipt(self):
   context=self.live_context();generated=self.generated(context,'request_detail','Mi mandi il contatto WhatsApp?')
   reply_id=apply_production(self.store,self.plan,context,generated)['replyId']

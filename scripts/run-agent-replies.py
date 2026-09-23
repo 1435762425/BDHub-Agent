@@ -57,12 +57,28 @@ def run_existing(store,replies,reply,market,stage,authorized_now=None):
  return market_run_reply(ROOT,store,replies,reply,market,pilot=stage=='pilot_running',
                          authorized_now=authorized_now is not None,stopped=lambda:STOP)
 def pending_rows(store,plan,now):
- return store.db.execute("""SELECT p.* FROM inbox_pending p JOIN relationship r
+ rows=store.db.execute("""SELECT p.* FROM inbox_pending p JOIN relationship r
    ON r.plan_id=p.plan_id AND r.creator_id=p.creator_id
    WHERE p.plan_id=? AND p.state IN ('awaiting_content','awaiting_classification','review_partial','template_ready','policy_review','facts_ready_for_review','needs_facts')
    AND p.due_at<=? AND r.mode='auto' AND r.rejected=0
    AND NOT EXISTS(SELECT 1 FROM service_case c WHERE c.plan_id=p.plan_id AND c.creator_id=p.creator_id AND c.state='open')
-   ORDER BY p.due_at LIMIT 20""",(plan,now)).fetchall()
+   ORDER BY p.due_at""",(plan,now))
+ tables={row[0] for row in store.db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+ result=[]
+ for pending in rows:
+  if 'inbound_turn' in tables:
+   turn=store.db.execute('SELECT turn_id,cid,oec,occurred_ms,observed_at FROM inbound_turn '
+                         'WHERE plan_id=? AND creator_id=? AND historical=0 '
+                         'ORDER BY coalesce(occurred_ms,observed_at*1000) DESC,message_id DESC LIMIT 1',
+                         (plan,pending['creator_id'])).fetchone()
+   if turn:
+    from lib.observed_messages import replied_after
+    stamp=turn['occurred_ms']/1000 if turn['occurred_ms'] else turn['observed_at']
+    if replied_after(store.db,plan,turn['cid'],turn['oec'],stamp):continue
+    if 'agent_reply_decision_v2' in tables and not decision_retry_ready(store,plan,turn['turn_id'],now):continue
+  result.append(pending)
+  if len(result)>=20:break
+ return result
 def tick(authorized_now=None,market="it"):
  authorized_now=authorized_request(authorized_now)
  with CycleStore(ROOT/'var/second-cycle.sqlite') as store:

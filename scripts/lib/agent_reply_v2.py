@@ -162,6 +162,10 @@ def production_context(root, store, plan, market, turn_id):
         if row['kind'] != 'manual_card':
             messages.append({'id': row['id'], 'direction': 'outbound', 'text': row['text'],
                              'at': row['started'] or row['created']})
+    from lib.observed_messages import outbound_messages
+    for row in outbound_messages(store.db,plan,turn['cid'],turn['oec'],before=stamp,limit=MAX_HISTORY):
+        messages.append({'id':row['id'],'direction':'outbound','text':row['text'],
+                         'format':row['kind'],'at':row['occurredAt'],'source':'institution_backend'})
     messages.sort(key=lambda value: (value['at'], value['id']))
     messages = messages[-MAX_HISTORY:]
     if not any(row['id'] == turn['message_id'] for row in messages):
@@ -182,6 +186,13 @@ def production_context(root, store, plan, market, turn_id):
                                "AND state='ready' LIMIT 1",(last_reply['id'],)).fetchone()
         if prior:
             previous_wait_for=json.loads(prior['output_json']).get('waitFor')
+    showcase=[]
+    if store.db.execute("SELECT 1 FROM sqlite_master WHERE name='inbox_event'").fetchone():
+        showcase=[{'messageId':row['message_id'],'at':row['occurred_ms']/1000,
+                   'productScope':'not_provided'} for row in store.db.execute(
+            "SELECT message_id,occurred_ms FROM inbox_event WHERE plan_id=? AND oec=? "
+            "AND kind='showcaseNotifications' AND occurred_ms<=? ORDER BY occurred_ms DESC LIMIT 10",
+            (plan,turn['oec'],stamp*1000))]
     return {'market': market, 'locale': market_content(root, market)['locale'],
             'creatorId': creator, 'turnId': turn_id, 'conversationId': turn['cid'],
             'pendingRevision': pending['revision'] if pending else None,
@@ -189,7 +200,7 @@ def production_context(root, store, plan, market, turn_id):
             'creatorControl': {'mode': rel['mode'], 'rejected': bool(rel['rejected']),
                                'collaboration': collab['status']} if rel else None,
             'messages': messages, 'historyTruncated': len(messages) >= MAX_HISTORY,
-            'previousWaitFor': previous_wait_for}
+            'previousWaitFor': previous_wait_for,'showcaseEvidence':showcase}
 
 
 def prompt(root, store, plan, market):

@@ -49,14 +49,15 @@ class Service:
     if set(c)!={'messageId','format','text','nativeType','rawSha256'} or c['format'] not in ('text','attachment_or_unsupported'):raise CycleError('content_invalid')
     event=self.s.db.execute('SELECT rowid AS event_rowid,* FROM inbox_event WHERE plan_id=? AND cid=? AND message_id=?',(plan,cid,c['messageId'])).fetchone()
     if not event or event['oec']!=oec:raise CycleError('content_identity_unverified')
-    # Outbound text/cards are already held by delivery state; service stores incoming only.
-    if event['kind']!='creatorReplies':continue
+    # The operator can also write in TikTok's institution backend. Preserve those verified
+    # bodies alongside inbound content; only an inbound edit may reopen a reply task.
+    if event['kind'] not in ('creatorReplies','ourMessages'):continue
     key=digest(c);prior=self.s.db.execute('SELECT hash FROM inbox_content_head WHERE plan_id=? AND cid=? AND message_id=?',(plan,cid,c['messageId'])).fetchone()
     if prior and prior[0]==key:continue
     self.s.db.execute('INSERT OR IGNORE INTO inbox_content_version VALUES(?,?,?,?,?,?)',(plan,cid,c['messageId'],key,encoded(c),self.s.clock()))
     self.s.db.execute('INSERT INTO inbox_content_head VALUES(?,?,?,?) ON CONFLICT(plan_id,cid,message_id) DO UPDATE SET hash=excluded.hash',(plan,cid,c['messageId'],key));changed+=1
     # An edit to a live message invalidates the current service version; history never activates service.
-    if prior and not event['historical']:
+    if prior and event['kind']=='creatorReplies' and not event['historical']:
      self.s.db.execute('UPDATE service_cursor SET event_rowid=min(event_rowid,?) WHERE plan_id=? AND creator_id=(SELECT creator_id FROM relationship WHERE plan_id=? AND oec=?)',(event['event_rowid']-1,plan,plan,oec))
      rel=self.s.db.execute('SELECT * FROM relationship WHERE plan_id=? AND oec=?',(plan,oec)).fetchone()
      self.s.db.execute("UPDATE inbox_pending SET revision=revision+1,due_at=?,state='awaiting_classification' WHERE plan_id=? AND creator_id=?",(self.s.clock()+REPLY_BATCH_SECONDS,plan,rel['creator_id']))

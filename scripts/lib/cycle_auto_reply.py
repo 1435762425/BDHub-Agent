@@ -148,6 +148,14 @@ class AutoReplies:
       not r or r['revision']!=q['control_revision'] or r['mode']=='paused' or digest(self.service.context(q['plan_id'],q['creator_id']))!=q['context_hash']:raise CycleError('reply_context_changed')
    if not manual and (r['mode']!='human' if q['case_id'] else r['mode']!='auto'):
     raise CycleError('reply_human_control')
+   if q['kind'] in ('agent_generated_v2','agent_request_detail_v2','agent_handoff_v2'):
+    turn=self.s.db.execute('SELECT occurred_ms,observed_at FROM inbound_turn WHERE plan_id=? AND cid=? '
+                           'ORDER BY coalesce(occurred_ms,observed_at*1000) DESC,message_id DESC LIMIT 1',
+                           (q['plan_id'],q['cid'])).fetchone()
+    if turn:
+     from lib.observed_messages import replied_after
+     stamp=turn['occurred_ms']/1000 if turn['occurred_ms'] else turn['observed_at']
+     if replied_after(self.s.db,q['plan_id'],q['cid'],q['oec'],stamp):raise CycleError('reply_context_changed')
    if q['case_id']:
     case=self.s.db.execute('SELECT * FROM service_case WHERE id=?',(q['case_id'],)).fetchone()
     if not case or case['state']!='open' or case['ack_state']=='confirmed':raise CycleError('handoff_changed')

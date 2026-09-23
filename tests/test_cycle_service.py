@@ -21,6 +21,14 @@ class ServiceTests(unittest.TestCase):
  def test_historical_body_capture_never_creates_case(self):
   self.add('1','Non mi contattare più');self.service.process_due(self.p)
   self.assertEqual(self.s.db.execute('SELECT count(*) FROM service_case').fetchone()[0],0);self.assertFalse(self.rel()['rejected'])
+ def test_platform_outbound_body_and_edits_do_not_create_reply_tasks(self):
+  self.baseline();self.ingest([self.event('20',kind='ourMessages')])
+  body=self.content('20','Already answered in the institution backend')
+  self.assertEqual(self.service.capture(self.p,'10',self.oec,[body]),1)
+  self.assertEqual(self.service.capture(self.p,'10',self.oec,[body]),0)
+  self.assertEqual(self.service.capture(self.p,'10',self.oec,[self.content('20','Updated operator reply')]),1)
+  self.assertEqual(self.s.db.execute('SELECT count(*) FROM inbox_pending').fetchone()[0],0)
+  self.assertEqual(self.service.context(self.p,self.creator),[])
  def test_refusal_suppresses_marketing_without_reply(self):
   self.baseline();self.add('1','Non mi contattare più');d=self.process();self.assertEqual(d['action'],'suppress_marketing');self.assertTrue(self.rel()['rejected']);self.assertFalse(d['automaticReply'])
  def test_attachment_routes_human_and_duplicate_does_not_reopen(self):
