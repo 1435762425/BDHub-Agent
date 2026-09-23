@@ -523,10 +523,11 @@ def finish_stage(store, run_id, stage, *, state, item_count=0, scope=None, paylo
                 (generation_id, run_id, stage, run["market"], digest(scope or {}), item_count,
                  encoded(facts), now, now),
             )
+        total_writes = row["platform_writes"] + platform_writes
         store.db.execute(
             "UPDATE workflow_stage_run SET state=?,output_generation_id=?,platform_writes=?,counts_json=?,finished_at=?,"
             "error_code=? WHERE run_id=? AND stage=?",
-            (state, generation_id, platform_writes,
+            (state, generation_id, total_writes,
              encoded({**json.loads(row['counts_json'] or '{}'),'items':item_count}),now,error_code,run_id,stage),
         )
         if state in STAGE_SUCCESS:
@@ -611,7 +612,9 @@ def status(store, market="it", limit=10):
     rows = list(store.db.execute(
         "SELECT run_id FROM workflow_run WHERE market=? ORDER BY started_at DESC LIMIT ?", (market, limit),
     ))
-    current = run_payload(store, rows[0]["run_id"]) if rows else None
+    active=store.db.execute("SELECT run_id FROM workflow_run WHERE market=? AND state IN ('queued','running','stop_requested') "
+                            "ORDER BY started_at DESC LIMIT 1",(market,)).fetchone()
+    current = run_payload(store, active['run_id'] if active else rows[0]["run_id"]) if active or rows else None
     history = [run_payload(store, row["run_id"]) for row in rows]
     return {
         "schemaVersion": "bdhub.operations-workflow.v1", "market": market,

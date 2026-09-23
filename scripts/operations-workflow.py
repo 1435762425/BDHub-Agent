@@ -26,7 +26,7 @@ def request_stop_for_market(store, market, run_id, expected_state="running"):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("action", choices=("status", "save", "run", "stop", "resume-short-names",
-                                           "resume-kalodata-preflight"))
+                                           "resume-kalodata-preflight", "check-selected-recovery", "resume-selected-recovery"))
     parser.add_argument("--json")
     args = parser.parse_args()
     try:
@@ -34,9 +34,16 @@ def main():
         market = body.get("market")
         if not isinstance(market, str):
             raise CycleError("workflow_market_invalid")
-        with CycleStore(ROOT / "var/second-cycle.sqlite", readonly=args.action == "status") as store:
+        with CycleStore(ROOT / "var/second-cycle.sqlite", readonly=args.action in ("status","check-selected-recovery")) as store:
             if args.action == "status":
                 result = status(store, market)
+            elif args.action in ('check-selected-recovery','resume-selected-recovery'):
+                from lib.workflow_recovery import selected_catalog_evidence,resume_selected_catalog
+                expected={'market','runId','duplicateRunId'}|({'requestId'} if args.action=='resume-selected-recovery' else set())
+                if set(body)!=expected:raise CycleError('workflow_recovery_scope_invalid')
+                result=(selected_catalog_evidence(store,ROOT,market,body['runId'],body['duplicateRunId'])
+                        if args.action=='check-selected-recovery' else
+                        resume_selected_catalog(store,ROOT,market,body['runId'],body['duplicateRunId'],body['requestId']))
             elif args.action == "save":
                 result = save_setting(store, market, body.get("requestId"), body.get("expectedRevision"),
                                       body.get("changes"))
