@@ -468,7 +468,7 @@ class SubprocessStageExecutor:
                       '--creates','0','--lanes','9','--qps','12','--seed'],'taplink-read-'+route)
                     outputs.append(prepared)
                     if prepared['state']!='completed':return prepared|{'platformWrites':writes}
-                names=self._call(['scripts/catalog-names.py','prepare','--all',*market_flag],'taplink-short-names-'+route)
+                names=self._call(['scripts/catalog-names.py','prepare','--all','--market',market],'taplink-short-names-'+route)
                 outputs.append(names);name_payload=names.get('payload') or {}
                 if names['state']!='completed' or int(name_payload.get('missing') or 0)>0:
                     return {**names,'state':'needs_human','complete':False,

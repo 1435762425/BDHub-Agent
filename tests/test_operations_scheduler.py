@@ -191,6 +191,7 @@ class StageWiring(unittest.TestCase):
         self.assertEqual(result['platformWrites'],267)
         self.assertEqual([args[0] for args,_ in calls],
                          ['scripts/catalog-link-batch.py','scripts/catalog-names.py','scripts/catalog-link-batch.py'])
+        self.assertEqual(calls[1][0][3:5],['--market','it'])
         self.assertEqual(calls[0][0][calls[0][0].index('--creates')+1],'0')
         self.assertEqual(calls[2][0][calls[2][0].index('--creates')+1],'200')
 
