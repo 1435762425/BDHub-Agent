@@ -1,0 +1,2563 @@
+{
+  "schemaVersion": "agent-v2-eval-cases-1",
+  "dataKind": "synthetic",
+  "referenceSource": [
+    "docs/PROJECT.md#62-当前-agent-行为",
+    "config/agent-reply-guide-v2.txt"
+  ],
+  "referenceStatus": "policy_derived_requires_human_review",
+  "cases": [
+    {
+      "id": "it-affirmative_without_showcase",
+      "market": "it",
+      "scenario": "affirmative_without_showcase",
+      "context": {
+        "market": "it",
+        "locale": "it-IT",
+        "creatorId": "synthetic-creator",
+        "turnId": "sim-3",
+        "conversationId": "synthetic-conversation",
+        "messages": [
+          {
+            "id": "sim-1",
+            "direction": "outbound",
+            "text": null,
+            "format": "product_card",
+            "pid": "synthetic-product-1",
+            "listId": "synthetic-list-1",
+            "at": 1
+          },
+          {
+            "id": "sim-2",
+            "direction": "outbound",
+            "text": "Ti va di realizzare un altro video o una live con questo prodotto?",
+            "format": "text",
+            "at": 2
+          },
+          {
+            "id": "sim-3",
+            "direction": "inbound",
+            "text": "Certo, farò un video!",
+            "format": "text",
+            "at": 3
+          }
+        ],
+        "previousWaitFor": null,
+        "showcaseEvidence": [],
+        "historyTruncated": false
+      },
+      "reference": {
+        "routes": [
+          "reply"
+        ],
+        "waitFor": [
+          "none"
+        ],
+        "showcaseReminder": "required",
+        "reviewChecklistZh": [
+          "有真实卡且明确愿拍：确认并提醒加橱窗及下一视频或直播佣金生效；不声称已核实未加，不索取发布时间。",
+          "回复语言固定为市场语言；没有证据不得虚构事实、行动或承诺。"
+        ],
+        "forbidNearTermCommitment": true
+      }
+    },
+    {
+      "id": "it-pure_thanks",
+      "market": "it",
+      "scenario": "pure_thanks",
+      "context": {
+        "market": "it",
+        "locale": "it-IT",
+        "creatorId": "synthetic-creator",
+        "turnId": "sim-3",
+        "conversationId": "synthetic-conversation",
+        "messages": [
+          {
+            "id": "sim-1",
+            "direction": "outbound",
+            "text": null,
+            "format": "product_card",
+            "pid": "synthetic-product-1",
+            "listId": "synthetic-list-1",
+            "at": 1
+          },
+          {
+            "id": "sim-2",
+            "direction": "outbound",
+            "text": "Ti va di realizzare un altro video o una live con questo prodotto?",
+            "format": "text",
+            "at": 2
+          },
+          {
+            "id": "sim-3",
+            "direction": "inbound",
+            "text": "Perfetto grazie 🥰",
+            "format": "text",
+            "at": 3
+          }
+        ],
+        "previousWaitFor": null,
+        "showcaseEvidence": [],
+        "historyTruncated": false
+      },
+      "reference": {
+        "routes": [
+          "no_reply"
+        ],
+        "waitFor": [
+          "none"
+        ],
+        "showcaseReminder": "forbidden",
+        "reviewChecklistZh": [
+          "纯感谢无新诉求，不误判成答应拍摄，不补橱窗教程。",
+          "回复语言固定为市场语言；没有证据不得虚构事实、行动或承诺。"
+        ],
+        "forbidNearTermCommitment": true
+      }
+    },
+    {
+      "id": "it-already_added",
+      "market": "it",
+      "scenario": "already_added",
+      "context": {
+        "market": "it",
+        "locale": "it-IT",
+        "creatorId": "synthetic-creator",
+        "turnId": "sim-3",
+        "conversationId": "synthetic-conversation",
+        "messages": [
+          {
+            "id": "sim-1",
+            "direction": "outbound",
+            "text": null,
+            "format": "product_card",
+            "pid": "synthetic-product-1",
+            "listId": "synthetic-list-1",
+            "at": 1
+          },
+          {
+            "id": "sim-2",
+            "direction": "outbound",
+            "text": "Ti va di realizzare un altro video o una live con questo prodotto?",
+            "format": "text",
+            "at": 2
+          },
+          {
+            "id": "sim-3",
+            "direction": "inbound",
+            "text": "Ho già aggiunto questo prodotto alla mia vetrina e farò un video.",
+            "format": "text",
+            "at": 3
+          }
+        ],
+        "previousWaitFor": null,
+        "showcaseEvidence": [],
+        "historyTruncated": false
+      },
+      "reference": {
+        "routes": [
+          "reply",
+          "no_reply"
+        ],
+        "waitFor": [
+          "none"
+        ],
+        "showcaseReminder": "forbidden",
+        "reviewChecklistZh": [
+          "达人明确说明当前商品已加橱窗，不重复提醒；不声称已经看过视频。",
+          "回复语言固定为市场语言；没有证据不得虚构事实、行动或承诺。"
+        ],
+        "forbidNearTermCommitment": true
+      }
+    },
+    {
+      "id": "it-already_reminded",
+      "market": "it",
+      "scenario": "already_reminded",
+      "context": {
+        "market": "it",
+        "locale": "it-IT",
+        "creatorId": "synthetic-creator",
+        "turnId": "sim-5",
+        "conversationId": "synthetic-conversation",
+        "messages": [
+          {
+            "id": "sim-1",
+            "direction": "outbound",
+            "text": null,
+            "format": "product_card",
+            "pid": "synthetic-product-1",
+            "listId": "synthetic-list-1",
+            "at": 1
+          },
+          {
+            "id": "sim-2",
+            "direction": "outbound",
+            "text": "Ti va di realizzare un altro video o una live con questo prodotto?",
+            "format": "text",
+            "at": 2
+          },
+          {
+            "id": "sim-3",
+            "direction": "inbound",
+            "text": "Certo, farò un video!",
+            "format": "text",
+            "at": 3
+          },
+          {
+            "id": "sim-4",
+            "direction": "outbound",
+            "text": "Puoi aggiungere la scheda qui sopra alla vetrina; la commissione si applicherà al prossimo video o alla prossima live.",
+            "format": "text",
+            "at": 4
+          },
+          {
+            "id": "sim-5",
+            "direction": "inbound",
+            "text": "Certo, farò un video!",
+            "format": "text",
+            "at": 5
+          }
+        ],
+        "previousWaitFor": null,
+        "showcaseEvidence": [],
+        "historyTruncated": false
+      },
+      "reference": {
+        "routes": [
+          "reply",
+          "no_reply"
+        ],
+        "waitFor": [
+          "none"
+        ],
+        "showcaseReminder": "forbidden",
+        "reviewChecklistZh": [
+          "同一当前商品历史已提醒，不重复操作教学或追问日期。",
+          "回复语言固定为市场语言；没有证据不得虚构事实、行动或承诺。"
+        ],
+        "forbidNearTermCommitment": true
+      }
+    },
+    {
+      "id": "it-no_real_card",
+      "market": "it",
+      "scenario": "no_real_card",
+      "context": {
+        "market": "it",
+        "locale": "it-IT",
+        "creatorId": "synthetic-creator",
+        "turnId": "sim-1",
+        "conversationId": "synthetic-conversation",
+        "messages": [
+          {
+            "id": "sim-1",
+            "direction": "inbound",
+            "text": "Ciao! Vorrei collaborare e fare un video.",
+            "format": "text",
+            "at": 1
+          }
+        ],
+        "previousWaitFor": null,
+        "showcaseEvidence": [],
+        "historyTruncated": false
+      },
+      "reference": {
+        "routes": [
+          "reply"
+        ],
+        "waitFor": [
+          "none"
+        ],
+        "showcaseReminder": "forbidden",
+        "reviewChecklistZh": [
+          "未实际发送商品卡：自然确认，不称上面的卡片、不编造商品/链接/佣金。",
+          "回复语言固定为市场语言；没有证据不得虚构事实、行动或承诺。",
+          "只自然确认合作兴趣；不能用未来收到卡后添加的条件句绕过真实卡前提，也不承诺将分享商品/佣金详情或稍后主动跟进。"
+        ],
+        "forbidNearTermCommitment": true
+      }
+    },
+    {
+      "id": "it-institution_answered",
+      "market": "it",
+      "scenario": "institution_answered",
+      "context": {
+        "market": "it",
+        "locale": "it-IT",
+        "creatorId": "synthetic-creator",
+        "turnId": "sim-4",
+        "conversationId": "synthetic-conversation",
+        "messages": [
+          {
+            "id": "sim-1",
+            "direction": "outbound",
+            "text": null,
+            "format": "product_card",
+            "pid": "synthetic-product-1",
+            "listId": "synthetic-list-1",
+            "at": 1
+          },
+          {
+            "id": "sim-2",
+            "direction": "inbound",
+            "text": "Come posso chiedere un campione?",
+            "format": "text",
+            "at": 2
+          },
+          {
+            "id": "sim-3",
+            "direction": "outbound",
+            "text": "Puoi controllare se la pagina del prodotto ha il pulsante per richiedere un campione. La decisione spetta al venditore.",
+            "format": "text",
+            "at": 3,
+            "source": "institution_backend"
+          },
+          {
+            "id": "sim-4",
+            "direction": "inbound",
+            "text": "Perfetto grazie 🥰",
+            "format": "text",
+            "at": 4
+          }
+        ],
+        "previousWaitFor": null,
+        "showcaseEvidence": [],
+        "historyTruncated": false
+      },
+      "reference": {
+        "routes": [
+          "no_reply"
+        ],
+        "waitFor": [
+          "none"
+        ],
+        "showcaseReminder": "forbidden",
+        "reviewChecklistZh": [
+          "机构人工已回答样品问题，达人仅感谢：不重复回答，不承诺审批或寄送。",
+          "回复语言固定为市场语言；没有证据不得虚构事实、行动或承诺。"
+        ],
+        "forbidNearTermCommitment": true
+      }
+    },
+    {
+      "id": "it-multi_intent_fee_and_style",
+      "market": "it",
+      "scenario": "multi_intent_fee_and_style",
+      "context": {
+        "market": "it",
+        "locale": "it-IT",
+        "creatorId": "synthetic-creator",
+        "turnId": "sim-3",
+        "conversationId": "synthetic-conversation",
+        "messages": [
+          {
+            "id": "sim-1",
+            "direction": "outbound",
+            "text": null,
+            "format": "product_card",
+            "pid": "synthetic-product-1",
+            "listId": "synthetic-list-1",
+            "at": 1
+          },
+          {
+            "id": "sim-2",
+            "direction": "outbound",
+            "text": "Ti va di realizzare un altro video o una live con questo prodotto?",
+            "format": "text",
+            "at": 2
+          },
+          {
+            "id": "sim-3",
+            "direction": "inbound",
+            "text": "Per il video chiedo 200 euro. Che stile di video devo fare?",
+            "format": "text",
+            "at": 3
+          }
+        ],
+        "previousWaitFor": null,
+        "showcaseEvidence": [],
+        "historyTruncated": false
+      },
+      "reference": {
+        "routes": [
+          "handoff"
+        ],
+        "waitFor": [
+          "none"
+        ],
+        "showcaseReminder": null,
+        "reviewChecklistZh": [
+          "同时回应固定报价交同事处理，以及内容风格由达人决定；不接受报价、不遗漏内容问题。",
+          "回复语言固定为市场语言；没有证据不得虚构事实、行动或承诺。",
+          "交负责合作同事查看并回复即可，不追加任何无已确认安排的很快/尽快反馈时限。"
+        ],
+        "forbidNearTermCommitment": true
+      }
+    },
+    {
+      "id": "it-request_contact_once",
+      "market": "it",
+      "scenario": "request_contact_once",
+      "context": {
+        "market": "it",
+        "locale": "it-IT",
+        "creatorId": "synthetic-creator",
+        "turnId": "sim-1",
+        "conversationId": "synthetic-conversation",
+        "messages": [
+          {
+            "id": "sim-1",
+            "direction": "inbound",
+            "text": "Possiamo parlare su WhatsApp?",
+            "format": "text",
+            "at": 1
+          }
+        ],
+        "previousWaitFor": null,
+        "showcaseEvidence": [],
+        "historyTruncated": false
+      },
+      "reference": {
+        "routes": [
+          "request_detail"
+        ],
+        "waitFor": [
+          "contact"
+        ],
+        "showcaseReminder": null,
+        "reviewChecklistZh": [
+          "请求转WhatsApp但无联系方式：仅索取一次联系方式，不声称已转交或创建外部联系。",
+          "回复语言固定为市场语言；没有证据不得虚构事实、行动或承诺。"
+        ],
+        "forbidNearTermCommitment": true
+      }
+    },
+    {
+      "id": "it-waiting_contact_thanks",
+      "market": "it",
+      "scenario": "waiting_contact_thanks",
+      "context": {
+        "market": "it",
+        "locale": "it-IT",
+        "creatorId": "synthetic-creator",
+        "turnId": "sim-3",
+        "conversationId": "synthetic-conversation",
+        "messages": [
+          {
+            "id": "sim-1",
+            "direction": "inbound",
+            "text": "Possiamo parlare su WhatsApp?",
+            "format": "text",
+            "at": 1
+          },
+          {
+            "id": "sim-2",
+            "direction": "outbound",
+            "text": "Certo, puoi condividere il tuo numero WhatsApp?",
+            "format": "text",
+            "at": 2
+          },
+          {
+            "id": "sim-3",
+            "direction": "inbound",
+            "text": "Va bene, grazie",
+            "format": "text",
+            "at": 3
+          }
+        ],
+        "previousWaitFor": "contact",
+        "showcaseEvidence": [],
+        "historyTruncated": false
+      },
+      "reference": {
+        "routes": [
+          "no_reply"
+        ],
+        "waitFor": [
+          "none",
+          "contact"
+        ],
+        "showcaseReminder": null,
+        "reviewChecklistZh": [
+          "已索取联系方式、仅收到好的谢谢：继续等待，不再次催问，不自动转人工。",
+          "回复语言固定为市场语言；没有证据不得虚构事实、行动或承诺。"
+        ],
+        "forbidNearTermCommitment": true
+      }
+    },
+    {
+      "id": "it-waiting_clarification_thanks",
+      "market": "it",
+      "scenario": "waiting_clarification_thanks",
+      "context": {
+        "market": "it",
+        "locale": "it-IT",
+        "creatorId": "synthetic-creator",
+        "turnId": "sim-3",
+        "conversationId": "synthetic-conversation",
+        "messages": [
+          {
+            "id": "sim-1",
+            "direction": "inbound",
+            "text": "[image]",
+            "format": "image",
+            "at": 1
+          },
+          {
+            "id": "sim-2",
+            "direction": "outbound",
+            "text": "Puoi spiegare con un messaggio di testo?",
+            "format": "text",
+            "at": 2
+          },
+          {
+            "id": "sim-3",
+            "direction": "inbound",
+            "text": "Va bene, grazie",
+            "format": "text",
+            "at": 3
+          }
+        ],
+        "previousWaitFor": "clarification",
+        "showcaseEvidence": [],
+        "historyTruncated": false
+      },
+      "reference": {
+        "routes": [
+          "no_reply"
+        ],
+        "waitFor": [
+          "none",
+          "clarification"
+        ],
+        "showcaseReminder": null,
+        "reviewChecklistZh": [
+          "已请求文字澄清、仅收到好的谢谢：继续等待原资料，不重复追问。",
+          "回复语言固定为市场语言；没有证据不得虚构事实、行动或承诺。"
+        ],
+        "forbidNearTermCommitment": true
+      }
+    },
+    {
+      "id": "it-contact_supplied",
+      "market": "it",
+      "scenario": "contact_supplied",
+      "context": {
+        "market": "it",
+        "locale": "it-IT",
+        "creatorId": "synthetic-creator",
+        "turnId": "sim-3",
+        "conversationId": "synthetic-conversation",
+        "messages": [
+          {
+            "id": "sim-1",
+            "direction": "inbound",
+            "text": "Possiamo parlare su WhatsApp?",
+            "format": "text",
+            "at": 1
+          },
+          {
+            "id": "sim-2",
+            "direction": "outbound",
+            "text": "Certo, puoi condividere il tuo numero WhatsApp?",
+            "format": "text",
+            "at": 2
+          },
+          {
+            "id": "sim-3",
+            "direction": "inbound",
+            "text": "Il mio numero WhatsApp è +39 000 000 0000.",
+            "format": "text",
+            "at": 3
+          }
+        ],
+        "previousWaitFor": "contact",
+        "showcaseEvidence": [],
+        "historyTruncated": false
+      },
+      "reference": {
+        "routes": [
+          "handoff"
+        ],
+        "waitFor": [
+          "none"
+        ],
+        "showcaseReminder": null,
+        "reviewChecklistZh": [
+          "给出可识别联系方式：确认收到并交同事，不自行换渠道发送。号码为虚构测试数据。",
+          "回复语言固定为市场语言；没有证据不得虚构事实、行动或承诺。",
+          "交负责合作同事查看并回复即可，不追加任何无已确认安排的很快/尽快反馈时限。"
+        ],
+        "forbidNearTermCommitment": true
+      }
+    },
+    {
+      "id": "it-clarification_still_unclear",
+      "market": "it",
+      "scenario": "clarification_still_unclear",
+      "context": {
+        "market": "it",
+        "locale": "it-IT",
+        "creatorId": "synthetic-creator",
+        "turnId": "sim-3",
+        "conversationId": "synthetic-conversation",
+        "messages": [
+          {
+            "id": "sim-1",
+            "direction": "inbound",
+            "text": "[image]",
+            "format": "image",
+            "at": 1
+          },
+          {
+            "id": "sim-2",
+            "direction": "outbound",
+            "text": "Puoi spiegare con un messaggio di testo?",
+            "format": "text",
+            "at": 2
+          },
+          {
+            "id": "sim-3",
+            "direction": "inbound",
+            "text": "Non so spiegare, guarda questa foto.",
+            "format": "text",
+            "at": 3
+          }
+        ],
+        "previousWaitFor": "clarification",
+        "showcaseEvidence": [],
+        "historyTruncated": false
+      },
+      "reference": {
+        "routes": [
+          "handoff"
+        ],
+        "waitFor": [
+          "none"
+        ],
+        "showcaseReminder": null,
+        "reviewChecklistZh": [
+          "已索取一次文字，仍不能解释并要求看图：简短确认并转人工，不继续无限澄清。",
+          "回复语言固定为市场语言；没有证据不得虚构事实、行动或承诺。",
+          "交负责合作同事查看并回复即可，不追加任何无已确认安排的很快/尽快反馈时限。"
+        ],
+        "forbidNearTermCommitment": true
+      }
+    },
+    {
+      "id": "br-affirmative_without_showcase",
+      "market": "br",
+      "scenario": "affirmative_without_showcase",
+      "context": {
+        "market": "br",
+        "locale": "pt-BR",
+        "creatorId": "synthetic-creator",
+        "turnId": "sim-3",
+        "conversationId": "synthetic-conversation",
+        "messages": [
+          {
+            "id": "sim-1",
+            "direction": "outbound",
+            "text": null,
+            "format": "product_card",
+            "pid": "synthetic-product-1",
+            "listId": "synthetic-list-1",
+            "at": 1
+          },
+          {
+            "id": "sim-2",
+            "direction": "outbound",
+            "text": "Você topa fazer outro vídeo ou uma live com este produto?",
+            "format": "text",
+            "at": 2
+          },
+          {
+            "id": "sim-3",
+            "direction": "inbound",
+            "text": "Sim, vou gravar um vídeo!",
+            "format": "text",
+            "at": 3
+          }
+        ],
+        "previousWaitFor": null,
+        "showcaseEvidence": [],
+        "historyTruncated": false
+      },
+      "reference": {
+        "routes": [
+          "reply"
+        ],
+        "waitFor": [
+          "none"
+        ],
+        "showcaseReminder": "required",
+        "reviewChecklistZh": [
+          "有真实卡且明确愿拍：确认并提醒加橱窗及下一视频或直播佣金生效；不声称已核实未加，不索取发布时间。",
+          "回复语言固定为市场语言；没有证据不得虚构事实、行动或承诺。"
+        ],
+        "forbidNearTermCommitment": true
+      }
+    },
+    {
+      "id": "br-pure_thanks",
+      "market": "br",
+      "scenario": "pure_thanks",
+      "context": {
+        "market": "br",
+        "locale": "pt-BR",
+        "creatorId": "synthetic-creator",
+        "turnId": "sim-3",
+        "conversationId": "synthetic-conversation",
+        "messages": [
+          {
+            "id": "sim-1",
+            "direction": "outbound",
+            "text": null,
+            "format": "product_card",
+            "pid": "synthetic-product-1",
+            "listId": "synthetic-list-1",
+            "at": 1
+          },
+          {
+            "id": "sim-2",
+            "direction": "outbound",
+            "text": "Você topa fazer outro vídeo ou uma live com este produto?",
+            "format": "text",
+            "at": 2
+          },
+          {
+            "id": "sim-3",
+            "direction": "inbound",
+            "text": "Perfeito, obrigada 🥰",
+            "format": "text",
+            "at": 3
+          }
+        ],
+        "previousWaitFor": null,
+        "showcaseEvidence": [],
+        "historyTruncated": false
+      },
+      "reference": {
+        "routes": [
+          "no_reply"
+        ],
+        "waitFor": [
+          "none"
+        ],
+        "showcaseReminder": "forbidden",
+        "reviewChecklistZh": [
+          "纯感谢无新诉求，不误判成答应拍摄，不补橱窗教程。",
+          "回复语言固定为市场语言；没有证据不得虚构事实、行动或承诺。"
+        ],
+        "forbidNearTermCommitment": true
+      }
+    },
+    {
+      "id": "br-already_added",
+      "market": "br",
+      "scenario": "already_added",
+      "context": {
+        "market": "br",
+        "locale": "pt-BR",
+        "creatorId": "synthetic-creator",
+        "turnId": "sim-3",
+        "conversationId": "synthetic-conversation",
+        "messages": [
+          {
+            "id": "sim-1",
+            "direction": "outbound",
+            "text": null,
+            "format": "product_card",
+            "pid": "synthetic-product-1",
+            "listId": "synthetic-list-1",
+            "at": 1
+          },
+          {
+            "id": "sim-2",
+            "direction": "outbound",
+            "text": "Você topa fazer outro vídeo ou uma live com este produto?",
+            "format": "text",
+            "at": 2
+          },
+          {
+            "id": "sim-3",
+            "direction": "inbound",
+            "text": "Já adicionei este produto à minha vitrine e vou fazer um vídeo.",
+            "format": "text",
+            "at": 3
+          }
+        ],
+        "previousWaitFor": null,
+        "showcaseEvidence": [],
+        "historyTruncated": false
+      },
+      "reference": {
+        "routes": [
+          "reply",
+          "no_reply"
+        ],
+        "waitFor": [
+          "none"
+        ],
+        "showcaseReminder": "forbidden",
+        "reviewChecklistZh": [
+          "达人明确说明当前商品已加橱窗，不重复提醒；不声称已经看过视频。",
+          "回复语言固定为市场语言；没有证据不得虚构事实、行动或承诺。"
+        ],
+        "forbidNearTermCommitment": true
+      }
+    },
+    {
+      "id": "br-already_reminded",
+      "market": "br",
+      "scenario": "already_reminded",
+      "context": {
+        "market": "br",
+        "locale": "pt-BR",
+        "creatorId": "synthetic-creator",
+        "turnId": "sim-5",
+        "conversationId": "synthetic-conversation",
+        "messages": [
+          {
+            "id": "sim-1",
+            "direction": "outbound",
+            "text": null,
+            "format": "product_card",
+            "pid": "synthetic-product-1",
+            "listId": "synthetic-list-1",
+            "at": 1
+          },
+          {
+            "id": "sim-2",
+            "direction": "outbound",
+            "text": "Você topa fazer outro vídeo ou uma live com este produto?",
+            "format": "text",
+            "at": 2
+          },
+          {
+            "id": "sim-3",
+            "direction": "inbound",
+            "text": "Sim, vou gravar um vídeo!",
+            "format": "text",
+            "at": 3
+          },
+          {
+            "id": "sim-4",
+            "direction": "outbound",
+            "text": "Você pode adicionar o cartão acima à vitrine; a comissão valerá no próximo vídeo ou na próxima live.",
+            "format": "text",
+            "at": 4
+          },
+          {
+            "id": "sim-5",
+            "direction": "inbound",
+            "text": "Sim, vou gravar um vídeo!",
+            "format": "text",
+            "at": 5
+          }
+        ],
+        "previousWaitFor": null,
+        "showcaseEvidence": [],
+        "historyTruncated": false
+      },
+      "reference": {
+        "routes": [
+          "reply",
+          "no_reply"
+        ],
+        "waitFor": [
+          "none"
+        ],
+        "showcaseReminder": "forbidden",
+        "reviewChecklistZh": [
+          "同一当前商品历史已提醒，不重复操作教学或追问日期。",
+          "回复语言固定为市场语言；没有证据不得虚构事实、行动或承诺。"
+        ],
+        "forbidNearTermCommitment": true
+      }
+    },
+    {
+      "id": "br-no_real_card",
+      "market": "br",
+      "scenario": "no_real_card",
+      "context": {
+        "market": "br",
+        "locale": "pt-BR",
+        "creatorId": "synthetic-creator",
+        "turnId": "sim-1",
+        "conversationId": "synthetic-conversation",
+        "messages": [
+          {
+            "id": "sim-1",
+            "direction": "inbound",
+            "text": "Olá! Quero colaborar e gravar um vídeo.",
+            "format": "text",
+            "at": 1
+          }
+        ],
+        "previousWaitFor": null,
+        "showcaseEvidence": [],
+        "historyTruncated": false
+      },
+      "reference": {
+        "routes": [
+          "reply"
+        ],
+        "waitFor": [
+          "none"
+        ],
+        "showcaseReminder": "forbidden",
+        "reviewChecklistZh": [
+          "未实际发送商品卡：自然确认，不称上面的卡片、不编造商品/链接/佣金。",
+          "回复语言固定为市场语言；没有证据不得虚构事实、行动或承诺。",
+          "只自然确认合作兴趣；不能用未来收到卡后添加的条件句绕过真实卡前提，也不承诺将分享商品/佣金详情或稍后主动跟进。"
+        ],
+        "forbidNearTermCommitment": true
+      }
+    },
+    {
+      "id": "br-institution_answered",
+      "market": "br",
+      "scenario": "institution_answered",
+      "context": {
+        "market": "br",
+        "locale": "pt-BR",
+        "creatorId": "synthetic-creator",
+        "turnId": "sim-4",
+        "conversationId": "synthetic-conversation",
+        "messages": [
+          {
+            "id": "sim-1",
+            "direction": "outbound",
+            "text": null,
+            "format": "product_card",
+            "pid": "synthetic-product-1",
+            "listId": "synthetic-list-1",
+            "at": 1
+          },
+          {
+            "id": "sim-2",
+            "direction": "inbound",
+            "text": "Como posso pedir uma amostra?",
+            "format": "text",
+            "at": 2
+          },
+          {
+            "id": "sim-3",
+            "direction": "outbound",
+            "text": "Você pode conferir se a página do produto tem a opção de solicitar amostra. A aprovação depende do vendedor.",
+            "format": "text",
+            "at": 3,
+            "source": "institution_backend"
+          },
+          {
+            "id": "sim-4",
+            "direction": "inbound",
+            "text": "Perfeito, obrigada 🥰",
+            "format": "text",
+            "at": 4
+          }
+        ],
+        "previousWaitFor": null,
+        "showcaseEvidence": [],
+        "historyTruncated": false
+      },
+      "reference": {
+        "routes": [
+          "no_reply"
+        ],
+        "waitFor": [
+          "none"
+        ],
+        "showcaseReminder": "forbidden",
+        "reviewChecklistZh": [
+          "机构人工已回答样品问题，达人仅感谢：不重复回答，不承诺审批或寄送。",
+          "回复语言固定为市场语言；没有证据不得虚构事实、行动或承诺。"
+        ],
+        "forbidNearTermCommitment": true
+      }
+    },
+    {
+      "id": "br-multi_intent_fee_and_style",
+      "market": "br",
+      "scenario": "multi_intent_fee_and_style",
+      "context": {
+        "market": "br",
+        "locale": "pt-BR",
+        "creatorId": "synthetic-creator",
+        "turnId": "sim-3",
+        "conversationId": "synthetic-conversation",
+        "messages": [
+          {
+            "id": "sim-1",
+            "direction": "outbound",
+            "text": null,
+            "format": "product_card",
+            "pid": "synthetic-product-1",
+            "listId": "synthetic-list-1",
+            "at": 1
+          },
+          {
+            "id": "sim-2",
+            "direction": "outbound",
+            "text": "Você topa fazer outro vídeo ou uma live com este produto?",
+            "format": "text",
+            "at": 2
+          },
+          {
+            "id": "sim-3",
+            "direction": "inbound",
+            "text": "Cobro 200 reais pelo vídeo. Qual estilo de vídeo devo fazer?",
+            "format": "text",
+            "at": 3
+          }
+        ],
+        "previousWaitFor": null,
+        "showcaseEvidence": [],
+        "historyTruncated": false
+      },
+      "reference": {
+        "routes": [
+          "handoff"
+        ],
+        "waitFor": [
+          "none"
+        ],
+        "showcaseReminder": null,
+        "reviewChecklistZh": [
+          "同时回应固定报价交同事处理，以及内容风格由达人决定；不接受报价、不遗漏内容问题。",
+          "回复语言固定为市场语言；没有证据不得虚构事实、行动或承诺。",
+          "交负责合作同事查看并回复即可，不追加任何无已确认安排的很快/尽快反馈时限。"
+        ],
+        "forbidNearTermCommitment": true
+      }
+    },
+    {
+      "id": "br-request_contact_once",
+      "market": "br",
+      "scenario": "request_contact_once",
+      "context": {
+        "market": "br",
+        "locale": "pt-BR",
+        "creatorId": "synthetic-creator",
+        "turnId": "sim-1",
+        "conversationId": "synthetic-conversation",
+        "messages": [
+          {
+            "id": "sim-1",
+            "direction": "inbound",
+            "text": "Podemos conversar pelo WhatsApp?",
+            "format": "text",
+            "at": 1
+          }
+        ],
+        "previousWaitFor": null,
+        "showcaseEvidence": [],
+        "historyTruncated": false
+      },
+      "reference": {
+        "routes": [
+          "request_detail"
+        ],
+        "waitFor": [
+          "contact"
+        ],
+        "showcaseReminder": null,
+        "reviewChecklistZh": [
+          "请求转WhatsApp但无联系方式：仅索取一次联系方式，不声称已转交或创建外部联系。",
+          "回复语言固定为市场语言；没有证据不得虚构事实、行动或承诺。"
+        ],
+        "forbidNearTermCommitment": true
+      }
+    },
+    {
+      "id": "br-waiting_contact_thanks",
+      "market": "br",
+      "scenario": "waiting_contact_thanks",
+      "context": {
+        "market": "br",
+        "locale": "pt-BR",
+        "creatorId": "synthetic-creator",
+        "turnId": "sim-3",
+        "conversationId": "synthetic-conversation",
+        "messages": [
+          {
+            "id": "sim-1",
+            "direction": "inbound",
+            "text": "Podemos conversar pelo WhatsApp?",
+            "format": "text",
+            "at": 1
+          },
+          {
+            "id": "sim-2",
+            "direction": "outbound",
+            "text": "Claro, você pode compartilhar seu número de WhatsApp?",
+            "format": "text",
+            "at": 2
+          },
+          {
+            "id": "sim-3",
+            "direction": "inbound",
+            "text": "Tudo bem, obrigada",
+            "format": "text",
+            "at": 3
+          }
+        ],
+        "previousWaitFor": "contact",
+        "showcaseEvidence": [],
+        "historyTruncated": false
+      },
+      "reference": {
+        "routes": [
+          "no_reply"
+        ],
+        "waitFor": [
+          "none",
+          "contact"
+        ],
+        "showcaseReminder": null,
+        "reviewChecklistZh": [
+          "已索取联系方式、仅收到好的谢谢：继续等待，不再次催问，不自动转人工。",
+          "回复语言固定为市场语言；没有证据不得虚构事实、行动或承诺。"
+        ],
+        "forbidNearTermCommitment": true
+      }
+    },
+    {
+      "id": "br-waiting_clarification_thanks",
+      "market": "br",
+      "scenario": "waiting_clarification_thanks",
+      "context": {
+        "market": "br",
+        "locale": "pt-BR",
+        "creatorId": "synthetic-creator",
+        "turnId": "sim-3",
+        "conversationId": "synthetic-conversation",
+        "messages": [
+          {
+            "id": "sim-1",
+            "direction": "inbound",
+            "text": "[image]",
+            "format": "image",
+            "at": 1
+          },
+          {
+            "id": "sim-2",
+            "direction": "outbound",
+            "text": "Você pode explicar em uma mensagem de texto?",
+            "format": "text",
+            "at": 2
+          },
+          {
+            "id": "sim-3",
+            "direction": "inbound",
+            "text": "Tudo bem, obrigada",
+            "format": "text",
+            "at": 3
+          }
+        ],
+        "previousWaitFor": "clarification",
+        "showcaseEvidence": [],
+        "historyTruncated": false
+      },
+      "reference": {
+        "routes": [
+          "no_reply"
+        ],
+        "waitFor": [
+          "none",
+          "clarification"
+        ],
+        "showcaseReminder": null,
+        "reviewChecklistZh": [
+          "已请求文字澄清、仅收到好的谢谢：继续等待原资料，不重复追问。",
+          "回复语言固定为市场语言；没有证据不得虚构事实、行动或承诺。"
+        ],
+        "forbidNearTermCommitment": true
+      }
+    },
+    {
+      "id": "br-contact_supplied",
+      "market": "br",
+      "scenario": "contact_supplied",
+      "context": {
+        "market": "br",
+        "locale": "pt-BR",
+        "creatorId": "synthetic-creator",
+        "turnId": "sim-3",
+        "conversationId": "synthetic-conversation",
+        "messages": [
+          {
+            "id": "sim-1",
+            "direction": "inbound",
+            "text": "Podemos conversar pelo WhatsApp?",
+            "format": "text",
+            "at": 1
+          },
+          {
+            "id": "sim-2",
+            "direction": "outbound",
+            "text": "Claro, você pode compartilhar seu número de WhatsApp?",
+            "format": "text",
+            "at": 2
+          },
+          {
+            "id": "sim-3",
+            "direction": "inbound",
+            "text": "Meu WhatsApp é +55 00 00000 0000.",
+            "format": "text",
+            "at": 3
+          }
+        ],
+        "previousWaitFor": "contact",
+        "showcaseEvidence": [],
+        "historyTruncated": false
+      },
+      "reference": {
+        "routes": [
+          "handoff"
+        ],
+        "waitFor": [
+          "none"
+        ],
+        "showcaseReminder": null,
+        "reviewChecklistZh": [
+          "给出可识别联系方式：确认收到并交同事，不自行换渠道发送。号码为虚构测试数据。",
+          "回复语言固定为市场语言；没有证据不得虚构事实、行动或承诺。",
+          "交负责合作同事查看并回复即可，不追加任何无已确认安排的很快/尽快反馈时限。"
+        ],
+        "forbidNearTermCommitment": true
+      }
+    },
+    {
+      "id": "br-clarification_still_unclear",
+      "market": "br",
+      "scenario": "clarification_still_unclear",
+      "context": {
+        "market": "br",
+        "locale": "pt-BR",
+        "creatorId": "synthetic-creator",
+        "turnId": "sim-3",
+        "conversationId": "synthetic-conversation",
+        "messages": [
+          {
+            "id": "sim-1",
+            "direction": "inbound",
+            "text": "[image]",
+            "format": "image",
+            "at": 1
+          },
+          {
+            "id": "sim-2",
+            "direction": "outbound",
+            "text": "Você pode explicar em uma mensagem de texto?",
+            "format": "text",
+            "at": 2
+          },
+          {
+            "id": "sim-3",
+            "direction": "inbound",
+            "text": "Não sei explicar, veja esta foto.",
+            "format": "text",
+            "at": 3
+          }
+        ],
+        "previousWaitFor": "clarification",
+        "showcaseEvidence": [],
+        "historyTruncated": false
+      },
+      "reference": {
+        "routes": [
+          "handoff"
+        ],
+        "waitFor": [
+          "none"
+        ],
+        "showcaseReminder": null,
+        "reviewChecklistZh": [
+          "已索取一次文字，仍不能解释并要求看图：简短确认并转人工，不继续无限澄清。",
+          "回复语言固定为市场语言；没有证据不得虚构事实、行动或承诺。",
+          "交负责合作同事查看并回复即可，不追加任何无已确认安排的很快/尽快反馈时限。"
+        ],
+        "forbidNearTermCommitment": true
+      }
+    },
+    {
+      "id": "my-affirmative_without_showcase",
+      "market": "my",
+      "scenario": "affirmative_without_showcase",
+      "context": {
+        "market": "my",
+        "locale": "ms-MY",
+        "creatorId": "synthetic-creator",
+        "turnId": "sim-3",
+        "conversationId": "synthetic-conversation",
+        "messages": [
+          {
+            "id": "sim-1",
+            "direction": "outbound",
+            "text": null,
+            "format": "product_card",
+            "pid": "synthetic-product-1",
+            "listId": "synthetic-list-1",
+            "at": 1
+          },
+          {
+            "id": "sim-2",
+            "direction": "outbound",
+            "text": "Adakah anda mahu buat satu lagi video atau siaran langsung dengan produk ini?",
+            "format": "text",
+            "at": 2
+          },
+          {
+            "id": "sim-3",
+            "direction": "inbound",
+            "text": "Ya, saya akan buat video!",
+            "format": "text",
+            "at": 3
+          }
+        ],
+        "previousWaitFor": null,
+        "showcaseEvidence": [],
+        "historyTruncated": false
+      },
+      "reference": {
+        "routes": [
+          "reply"
+        ],
+        "waitFor": [
+          "none"
+        ],
+        "showcaseReminder": "required",
+        "reviewChecklistZh": [
+          "有真实卡且明确愿拍：确认并提醒加橱窗及下一视频或直播佣金生效；不声称已核实未加，不索取发布时间。",
+          "回复语言固定为市场语言；没有证据不得虚构事实、行动或承诺。"
+        ],
+        "forbidNearTermCommitment": true
+      }
+    },
+    {
+      "id": "my-pure_thanks",
+      "market": "my",
+      "scenario": "pure_thanks",
+      "context": {
+        "market": "my",
+        "locale": "ms-MY",
+        "creatorId": "synthetic-creator",
+        "turnId": "sim-3",
+        "conversationId": "synthetic-conversation",
+        "messages": [
+          {
+            "id": "sim-1",
+            "direction": "outbound",
+            "text": null,
+            "format": "product_card",
+            "pid": "synthetic-product-1",
+            "listId": "synthetic-list-1",
+            "at": 1
+          },
+          {
+            "id": "sim-2",
+            "direction": "outbound",
+            "text": "Adakah anda mahu buat satu lagi video atau siaran langsung dengan produk ini?",
+            "format": "text",
+            "at": 2
+          },
+          {
+            "id": "sim-3",
+            "direction": "inbound",
+            "text": "Terima kasih 🥰",
+            "format": "text",
+            "at": 3
+          }
+        ],
+        "previousWaitFor": null,
+        "showcaseEvidence": [],
+        "historyTruncated": false
+      },
+      "reference": {
+        "routes": [
+          "no_reply"
+        ],
+        "waitFor": [
+          "none"
+        ],
+        "showcaseReminder": "forbidden",
+        "reviewChecklistZh": [
+          "纯感谢无新诉求，不误判成答应拍摄，不补橱窗教程。",
+          "回复语言固定为市场语言；没有证据不得虚构事实、行动或承诺。"
+        ],
+        "forbidNearTermCommitment": true
+      }
+    },
+    {
+      "id": "my-already_added",
+      "market": "my",
+      "scenario": "already_added",
+      "context": {
+        "market": "my",
+        "locale": "ms-MY",
+        "creatorId": "synthetic-creator",
+        "turnId": "sim-3",
+        "conversationId": "synthetic-conversation",
+        "messages": [
+          {
+            "id": "sim-1",
+            "direction": "outbound",
+            "text": null,
+            "format": "product_card",
+            "pid": "synthetic-product-1",
+            "listId": "synthetic-list-1",
+            "at": 1
+          },
+          {
+            "id": "sim-2",
+            "direction": "outbound",
+            "text": "Adakah anda mahu buat satu lagi video atau siaran langsung dengan produk ini?",
+            "format": "text",
+            "at": 2
+          },
+          {
+            "id": "sim-3",
+            "direction": "inbound",
+            "text": "Saya sudah tambah produk ini ke showcase dan akan buat video.",
+            "format": "text",
+            "at": 3
+          }
+        ],
+        "previousWaitFor": null,
+        "showcaseEvidence": [],
+        "historyTruncated": false
+      },
+      "reference": {
+        "routes": [
+          "reply",
+          "no_reply"
+        ],
+        "waitFor": [
+          "none"
+        ],
+        "showcaseReminder": "forbidden",
+        "reviewChecklistZh": [
+          "达人明确说明当前商品已加橱窗，不重复提醒；不声称已经看过视频。",
+          "回复语言固定为市场语言；没有证据不得虚构事实、行动或承诺。"
+        ],
+        "forbidNearTermCommitment": true
+      }
+    },
+    {
+      "id": "my-already_reminded",
+      "market": "my",
+      "scenario": "already_reminded",
+      "context": {
+        "market": "my",
+        "locale": "ms-MY",
+        "creatorId": "synthetic-creator",
+        "turnId": "sim-5",
+        "conversationId": "synthetic-conversation",
+        "messages": [
+          {
+            "id": "sim-1",
+            "direction": "outbound",
+            "text": null,
+            "format": "product_card",
+            "pid": "synthetic-product-1",
+            "listId": "synthetic-list-1",
+            "at": 1
+          },
+          {
+            "id": "sim-2",
+            "direction": "outbound",
+            "text": "Adakah anda mahu buat satu lagi video atau siaran langsung dengan produk ini?",
+            "format": "text",
+            "at": 2
+          },
+          {
+            "id": "sim-3",
+            "direction": "inbound",
+            "text": "Ya, saya akan buat video!",
+            "format": "text",
+            "at": 3
+          },
+          {
+            "id": "sim-4",
+            "direction": "outbound",
+            "text": "Anda boleh tambah kad di atas ke showcase; komisen akan berkuat kuasa untuk video atau siaran langsung seterusnya.",
+            "format": "text",
+            "at": 4
+          },
+          {
+            "id": "sim-5",
+            "direction": "inbound",
+            "text": "Ya, saya akan buat video!",
+            "format": "text",
+            "at": 5
+          }
+        ],
+        "previousWaitFor": null,
+        "showcaseEvidence": [],
+        "historyTruncated": false
+      },
+      "reference": {
+        "routes": [
+          "reply",
+          "no_reply"
+        ],
+        "waitFor": [
+          "none"
+        ],
+        "showcaseReminder": "forbidden",
+        "reviewChecklistZh": [
+          "同一当前商品历史已提醒，不重复操作教学或追问日期。",
+          "回复语言固定为市场语言；没有证据不得虚构事实、行动或承诺。"
+        ],
+        "forbidNearTermCommitment": true
+      }
+    },
+    {
+      "id": "my-no_real_card",
+      "market": "my",
+      "scenario": "no_real_card",
+      "context": {
+        "market": "my",
+        "locale": "ms-MY",
+        "creatorId": "synthetic-creator",
+        "turnId": "sim-1",
+        "conversationId": "synthetic-conversation",
+        "messages": [
+          {
+            "id": "sim-1",
+            "direction": "inbound",
+            "text": "Hai! Saya mahu bekerjasama dan buat video.",
+            "format": "text",
+            "at": 1
+          }
+        ],
+        "previousWaitFor": null,
+        "showcaseEvidence": [],
+        "historyTruncated": false
+      },
+      "reference": {
+        "routes": [
+          "reply"
+        ],
+        "waitFor": [
+          "none"
+        ],
+        "showcaseReminder": "forbidden",
+        "reviewChecklistZh": [
+          "未实际发送商品卡：自然确认，不称上面的卡片、不编造商品/链接/佣金。",
+          "回复语言固定为市场语言；没有证据不得虚构事实、行动或承诺。",
+          "只自然确认合作兴趣；不能用未来收到卡后添加的条件句绕过真实卡前提，也不承诺将分享商品/佣金详情或稍后主动跟进。"
+        ],
+        "forbidNearTermCommitment": true
+      }
+    },
+    {
+      "id": "my-institution_answered",
+      "market": "my",
+      "scenario": "institution_answered",
+      "context": {
+        "market": "my",
+        "locale": "ms-MY",
+        "creatorId": "synthetic-creator",
+        "turnId": "sim-4",
+        "conversationId": "synthetic-conversation",
+        "messages": [
+          {
+            "id": "sim-1",
+            "direction": "outbound",
+            "text": null,
+            "format": "product_card",
+            "pid": "synthetic-product-1",
+            "listId": "synthetic-list-1",
+            "at": 1
+          },
+          {
+            "id": "sim-2",
+            "direction": "inbound",
+            "text": "Bagaimana saya boleh mohon sampel?",
+            "format": "text",
+            "at": 2
+          },
+          {
+            "id": "sim-3",
+            "direction": "outbound",
+            "text": "Anda boleh semak sama ada halaman produk ada pilihan untuk memohon sampel. Kelulusan bergantung pada penjual.",
+            "format": "text",
+            "at": 3,
+            "source": "institution_backend"
+          },
+          {
+            "id": "sim-4",
+            "direction": "inbound",
+            "text": "Terima kasih 🥰",
+            "format": "text",
+            "at": 4
+          }
+        ],
+        "previousWaitFor": null,
+        "showcaseEvidence": [],
+        "historyTruncated": false
+      },
+      "reference": {
+        "routes": [
+          "no_reply"
+        ],
+        "waitFor": [
+          "none"
+        ],
+        "showcaseReminder": "forbidden",
+        "reviewChecklistZh": [
+          "机构人工已回答样品问题，达人仅感谢：不重复回答，不承诺审批或寄送。",
+          "回复语言固定为市场语言；没有证据不得虚构事实、行动或承诺。"
+        ],
+        "forbidNearTermCommitment": true
+      }
+    },
+    {
+      "id": "my-multi_intent_fee_and_style",
+      "market": "my",
+      "scenario": "multi_intent_fee_and_style",
+      "context": {
+        "market": "my",
+        "locale": "ms-MY",
+        "creatorId": "synthetic-creator",
+        "turnId": "sim-3",
+        "conversationId": "synthetic-conversation",
+        "messages": [
+          {
+            "id": "sim-1",
+            "direction": "outbound",
+            "text": null,
+            "format": "product_card",
+            "pid": "synthetic-product-1",
+            "listId": "synthetic-list-1",
+            "at": 1
+          },
+          {
+            "id": "sim-2",
+            "direction": "outbound",
+            "text": "Adakah anda mahu buat satu lagi video atau siaran langsung dengan produk ini?",
+            "format": "text",
+            "at": 2
+          },
+          {
+            "id": "sim-3",
+            "direction": "inbound",
+            "text": "Saya caj RM200 untuk video. Gaya video macam mana yang diperlukan?",
+            "format": "text",
+            "at": 3
+          }
+        ],
+        "previousWaitFor": null,
+        "showcaseEvidence": [],
+        "historyTruncated": false
+      },
+      "reference": {
+        "routes": [
+          "handoff"
+        ],
+        "waitFor": [
+          "none"
+        ],
+        "showcaseReminder": null,
+        "reviewChecklistZh": [
+          "同时回应固定报价交同事处理，以及内容风格由达人决定；不接受报价、不遗漏内容问题。",
+          "回复语言固定为市场语言；没有证据不得虚构事实、行动或承诺。",
+          "交负责合作同事查看并回复即可，不追加任何无已确认安排的很快/尽快反馈时限。"
+        ],
+        "forbidNearTermCommitment": true
+      }
+    },
+    {
+      "id": "my-request_contact_once",
+      "market": "my",
+      "scenario": "request_contact_once",
+      "context": {
+        "market": "my",
+        "locale": "ms-MY",
+        "creatorId": "synthetic-creator",
+        "turnId": "sim-1",
+        "conversationId": "synthetic-conversation",
+        "messages": [
+          {
+            "id": "sim-1",
+            "direction": "inbound",
+            "text": "Boleh kita bercakap di WhatsApp?",
+            "format": "text",
+            "at": 1
+          }
+        ],
+        "previousWaitFor": null,
+        "showcaseEvidence": [],
+        "historyTruncated": false
+      },
+      "reference": {
+        "routes": [
+          "request_detail"
+        ],
+        "waitFor": [
+          "contact"
+        ],
+        "showcaseReminder": null,
+        "reviewChecklistZh": [
+          "请求转WhatsApp但无联系方式：仅索取一次联系方式，不声称已转交或创建外部联系。",
+          "回复语言固定为市场语言；没有证据不得虚构事实、行动或承诺。"
+        ],
+        "forbidNearTermCommitment": true
+      }
+    },
+    {
+      "id": "my-waiting_contact_thanks",
+      "market": "my",
+      "scenario": "waiting_contact_thanks",
+      "context": {
+        "market": "my",
+        "locale": "ms-MY",
+        "creatorId": "synthetic-creator",
+        "turnId": "sim-3",
+        "conversationId": "synthetic-conversation",
+        "messages": [
+          {
+            "id": "sim-1",
+            "direction": "inbound",
+            "text": "Boleh kita bercakap di WhatsApp?",
+            "format": "text",
+            "at": 1
+          },
+          {
+            "id": "sim-2",
+            "direction": "outbound",
+            "text": "Boleh, sila berikan nombor WhatsApp anda.",
+            "format": "text",
+            "at": 2
+          },
+          {
+            "id": "sim-3",
+            "direction": "inbound",
+            "text": "Baik, terima kasih",
+            "format": "text",
+            "at": 3
+          }
+        ],
+        "previousWaitFor": "contact",
+        "showcaseEvidence": [],
+        "historyTruncated": false
+      },
+      "reference": {
+        "routes": [
+          "no_reply"
+        ],
+        "waitFor": [
+          "none",
+          "contact"
+        ],
+        "showcaseReminder": null,
+        "reviewChecklistZh": [
+          "已索取联系方式、仅收到好的谢谢：继续等待，不再次催问，不自动转人工。",
+          "回复语言固定为市场语言；没有证据不得虚构事实、行动或承诺。"
+        ],
+        "forbidNearTermCommitment": true
+      }
+    },
+    {
+      "id": "my-waiting_clarification_thanks",
+      "market": "my",
+      "scenario": "waiting_clarification_thanks",
+      "context": {
+        "market": "my",
+        "locale": "ms-MY",
+        "creatorId": "synthetic-creator",
+        "turnId": "sim-3",
+        "conversationId": "synthetic-conversation",
+        "messages": [
+          {
+            "id": "sim-1",
+            "direction": "inbound",
+            "text": "[image]",
+            "format": "image",
+            "at": 1
+          },
+          {
+            "id": "sim-2",
+            "direction": "outbound",
+            "text": "Boleh terangkan melalui mesej teks?",
+            "format": "text",
+            "at": 2
+          },
+          {
+            "id": "sim-3",
+            "direction": "inbound",
+            "text": "Baik, terima kasih",
+            "format": "text",
+            "at": 3
+          }
+        ],
+        "previousWaitFor": "clarification",
+        "showcaseEvidence": [],
+        "historyTruncated": false
+      },
+      "reference": {
+        "routes": [
+          "no_reply"
+        ],
+        "waitFor": [
+          "none",
+          "clarification"
+        ],
+        "showcaseReminder": null,
+        "reviewChecklistZh": [
+          "已请求文字澄清、仅收到好的谢谢：继续等待原资料，不重复追问。",
+          "回复语言固定为市场语言；没有证据不得虚构事实、行动或承诺。"
+        ],
+        "forbidNearTermCommitment": true
+      }
+    },
+    {
+      "id": "my-contact_supplied",
+      "market": "my",
+      "scenario": "contact_supplied",
+      "context": {
+        "market": "my",
+        "locale": "ms-MY",
+        "creatorId": "synthetic-creator",
+        "turnId": "sim-3",
+        "conversationId": "synthetic-conversation",
+        "messages": [
+          {
+            "id": "sim-1",
+            "direction": "inbound",
+            "text": "Boleh kita bercakap di WhatsApp?",
+            "format": "text",
+            "at": 1
+          },
+          {
+            "id": "sim-2",
+            "direction": "outbound",
+            "text": "Boleh, sila berikan nombor WhatsApp anda.",
+            "format": "text",
+            "at": 2
+          },
+          {
+            "id": "sim-3",
+            "direction": "inbound",
+            "text": "Nombor WhatsApp saya +60 00 000 0000.",
+            "format": "text",
+            "at": 3
+          }
+        ],
+        "previousWaitFor": "contact",
+        "showcaseEvidence": [],
+        "historyTruncated": false
+      },
+      "reference": {
+        "routes": [
+          "handoff"
+        ],
+        "waitFor": [
+          "none"
+        ],
+        "showcaseReminder": null,
+        "reviewChecklistZh": [
+          "给出可识别联系方式：确认收到并交同事，不自行换渠道发送。号码为虚构测试数据。",
+          "回复语言固定为市场语言；没有证据不得虚构事实、行动或承诺。",
+          "交负责合作同事查看并回复即可，不追加任何无已确认安排的很快/尽快反馈时限。"
+        ],
+        "forbidNearTermCommitment": true
+      }
+    },
+    {
+      "id": "my-clarification_still_unclear",
+      "market": "my",
+      "scenario": "clarification_still_unclear",
+      "context": {
+        "market": "my",
+        "locale": "ms-MY",
+        "creatorId": "synthetic-creator",
+        "turnId": "sim-3",
+        "conversationId": "synthetic-conversation",
+        "messages": [
+          {
+            "id": "sim-1",
+            "direction": "inbound",
+            "text": "[image]",
+            "format": "image",
+            "at": 1
+          },
+          {
+            "id": "sim-2",
+            "direction": "outbound",
+            "text": "Boleh terangkan melalui mesej teks?",
+            "format": "text",
+            "at": 2
+          },
+          {
+            "id": "sim-3",
+            "direction": "inbound",
+            "text": "Saya tidak tahu menjelaskan, lihat gambar ini.",
+            "format": "text",
+            "at": 3
+          }
+        ],
+        "previousWaitFor": "clarification",
+        "showcaseEvidence": [],
+        "historyTruncated": false
+      },
+      "reference": {
+        "routes": [
+          "handoff"
+        ],
+        "waitFor": [
+          "none"
+        ],
+        "showcaseReminder": null,
+        "reviewChecklistZh": [
+          "已索取一次文字，仍不能解释并要求看图：简短确认并转人工，不继续无限澄清。",
+          "回复语言固定为市场语言；没有证据不得虚构事实、行动或承诺。",
+          "交负责合作同事查看并回复即可，不追加任何无已确认安排的很快/尽快反馈时限。"
+        ],
+        "forbidNearTermCommitment": true
+      }
+    },
+    {
+      "id": "uk-affirmative_without_showcase",
+      "market": "uk",
+      "scenario": "affirmative_without_showcase",
+      "context": {
+        "market": "uk",
+        "locale": "en-GB",
+        "creatorId": "synthetic-creator",
+        "turnId": "sim-3",
+        "conversationId": "synthetic-conversation",
+        "messages": [
+          {
+            "id": "sim-1",
+            "direction": "outbound",
+            "text": null,
+            "format": "product_card",
+            "pid": "synthetic-product-1",
+            "listId": "synthetic-list-1",
+            "at": 1
+          },
+          {
+            "id": "sim-2",
+            "direction": "outbound",
+            "text": "Would you like to make another video or live stream with this product?",
+            "format": "text",
+            "at": 2
+          },
+          {
+            "id": "sim-3",
+            "direction": "inbound",
+            "text": "Yes, I will make a video!",
+            "format": "text",
+            "at": 3
+          }
+        ],
+        "previousWaitFor": null,
+        "showcaseEvidence": [],
+        "historyTruncated": false
+      },
+      "reference": {
+        "routes": [
+          "reply"
+        ],
+        "waitFor": [
+          "none"
+        ],
+        "showcaseReminder": "required",
+        "reviewChecklistZh": [
+          "有真实卡且明确愿拍：确认并提醒加橱窗及下一视频或直播佣金生效；不声称已核实未加，不索取发布时间。",
+          "回复语言固定为市场语言；没有证据不得虚构事实、行动或承诺。"
+        ],
+        "forbidNearTermCommitment": true
+      }
+    },
+    {
+      "id": "uk-pure_thanks",
+      "market": "uk",
+      "scenario": "pure_thanks",
+      "context": {
+        "market": "uk",
+        "locale": "en-GB",
+        "creatorId": "synthetic-creator",
+        "turnId": "sim-3",
+        "conversationId": "synthetic-conversation",
+        "messages": [
+          {
+            "id": "sim-1",
+            "direction": "outbound",
+            "text": null,
+            "format": "product_card",
+            "pid": "synthetic-product-1",
+            "listId": "synthetic-list-1",
+            "at": 1
+          },
+          {
+            "id": "sim-2",
+            "direction": "outbound",
+            "text": "Would you like to make another video or live stream with this product?",
+            "format": "text",
+            "at": 2
+          },
+          {
+            "id": "sim-3",
+            "direction": "inbound",
+            "text": "Perfect, thanks 🥰",
+            "format": "text",
+            "at": 3
+          }
+        ],
+        "previousWaitFor": null,
+        "showcaseEvidence": [],
+        "historyTruncated": false
+      },
+      "reference": {
+        "routes": [
+          "no_reply"
+        ],
+        "waitFor": [
+          "none"
+        ],
+        "showcaseReminder": "forbidden",
+        "reviewChecklistZh": [
+          "纯感谢无新诉求，不误判成答应拍摄，不补橱窗教程。",
+          "回复语言固定为市场语言；没有证据不得虚构事实、行动或承诺。"
+        ],
+        "forbidNearTermCommitment": true
+      }
+    },
+    {
+      "id": "uk-already_added",
+      "market": "uk",
+      "scenario": "already_added",
+      "context": {
+        "market": "uk",
+        "locale": "en-GB",
+        "creatorId": "synthetic-creator",
+        "turnId": "sim-3",
+        "conversationId": "synthetic-conversation",
+        "messages": [
+          {
+            "id": "sim-1",
+            "direction": "outbound",
+            "text": null,
+            "format": "product_card",
+            "pid": "synthetic-product-1",
+            "listId": "synthetic-list-1",
+            "at": 1
+          },
+          {
+            "id": "sim-2",
+            "direction": "outbound",
+            "text": "Would you like to make another video or live stream with this product?",
+            "format": "text",
+            "at": 2
+          },
+          {
+            "id": "sim-3",
+            "direction": "inbound",
+            "text": "I have already added this product to my showcase and will make a video.",
+            "format": "text",
+            "at": 3
+          }
+        ],
+        "previousWaitFor": null,
+        "showcaseEvidence": [],
+        "historyTruncated": false
+      },
+      "reference": {
+        "routes": [
+          "reply",
+          "no_reply"
+        ],
+        "waitFor": [
+          "none"
+        ],
+        "showcaseReminder": "forbidden",
+        "reviewChecklistZh": [
+          "达人明确说明当前商品已加橱窗，不重复提醒；不声称已经看过视频。",
+          "回复语言固定为市场语言；没有证据不得虚构事实、行动或承诺。"
+        ],
+        "forbidNearTermCommitment": true
+      }
+    },
+    {
+      "id": "uk-already_reminded",
+      "market": "uk",
+      "scenario": "already_reminded",
+      "context": {
+        "market": "uk",
+        "locale": "en-GB",
+        "creatorId": "synthetic-creator",
+        "turnId": "sim-5",
+        "conversationId": "synthetic-conversation",
+        "messages": [
+          {
+            "id": "sim-1",
+            "direction": "outbound",
+            "text": null,
+            "format": "product_card",
+            "pid": "synthetic-product-1",
+            "listId": "synthetic-list-1",
+            "at": 1
+          },
+          {
+            "id": "sim-2",
+            "direction": "outbound",
+            "text": "Would you like to make another video or live stream with this product?",
+            "format": "text",
+            "at": 2
+          },
+          {
+            "id": "sim-3",
+            "direction": "inbound",
+            "text": "Yes, I will make a video!",
+            "format": "text",
+            "at": 3
+          },
+          {
+            "id": "sim-4",
+            "direction": "outbound",
+            "text": "You can add the card above to your showcase; the commission will apply to your next video or live stream.",
+            "format": "text",
+            "at": 4
+          },
+          {
+            "id": "sim-5",
+            "direction": "inbound",
+            "text": "Yes, I will make a video!",
+            "format": "text",
+            "at": 5
+          }
+        ],
+        "previousWaitFor": null,
+        "showcaseEvidence": [],
+        "historyTruncated": false
+      },
+      "reference": {
+        "routes": [
+          "reply",
+          "no_reply"
+        ],
+        "waitFor": [
+          "none"
+        ],
+        "showcaseReminder": "forbidden",
+        "reviewChecklistZh": [
+          "同一当前商品历史已提醒，不重复操作教学或追问日期。",
+          "回复语言固定为市场语言；没有证据不得虚构事实、行动或承诺。"
+        ],
+        "forbidNearTermCommitment": true
+      }
+    },
+    {
+      "id": "uk-no_real_card",
+      "market": "uk",
+      "scenario": "no_real_card",
+      "context": {
+        "market": "uk",
+        "locale": "en-GB",
+        "creatorId": "synthetic-creator",
+        "turnId": "sim-1",
+        "conversationId": "synthetic-conversation",
+        "messages": [
+          {
+            "id": "sim-1",
+            "direction": "inbound",
+            "text": "Hi! I would like to collaborate and make a video.",
+            "format": "text",
+            "at": 1
+          }
+        ],
+        "previousWaitFor": null,
+        "showcaseEvidence": [],
+        "historyTruncated": false
+      },
+      "reference": {
+        "routes": [
+          "reply"
+        ],
+        "waitFor": [
+          "none"
+        ],
+        "showcaseReminder": "forbidden",
+        "reviewChecklistZh": [
+          "未实际发送商品卡：自然确认，不称上面的卡片、不编造商品/链接/佣金。",
+          "回复语言固定为市场语言；没有证据不得虚构事实、行动或承诺。",
+          "只自然确认合作兴趣；不能用未来收到卡后添加的条件句绕过真实卡前提，也不承诺将分享商品/佣金详情或稍后主动跟进。"
+        ],
+        "forbidNearTermCommitment": true
+      }
+    },
+    {
+      "id": "uk-institution_answered",
+      "market": "uk",
+      "scenario": "institution_answered",
+      "context": {
+        "market": "uk",
+        "locale": "en-GB",
+        "creatorId": "synthetic-creator",
+        "turnId": "sim-4",
+        "conversationId": "synthetic-conversation",
+        "messages": [
+          {
+            "id": "sim-1",
+            "direction": "outbound",
+            "text": null,
+            "format": "product_card",
+            "pid": "synthetic-product-1",
+            "listId": "synthetic-list-1",
+            "at": 1
+          },
+          {
+            "id": "sim-2",
+            "direction": "inbound",
+            "text": "How can I request a sample?",
+            "format": "text",
+            "at": 2
+          },
+          {
+            "id": "sim-3",
+            "direction": "outbound",
+            "text": "You can check whether the product page has a sample request option. Approval is up to the seller.",
+            "format": "text",
+            "at": 3,
+            "source": "institution_backend"
+          },
+          {
+            "id": "sim-4",
+            "direction": "inbound",
+            "text": "Perfect, thanks 🥰",
+            "format": "text",
+            "at": 4
+          }
+        ],
+        "previousWaitFor": null,
+        "showcaseEvidence": [],
+        "historyTruncated": false
+      },
+      "reference": {
+        "routes": [
+          "no_reply"
+        ],
+        "waitFor": [
+          "none"
+        ],
+        "showcaseReminder": "forbidden",
+        "reviewChecklistZh": [
+          "机构人工已回答样品问题，达人仅感谢：不重复回答，不承诺审批或寄送。",
+          "回复语言固定为市场语言；没有证据不得虚构事实、行动或承诺。"
+        ],
+        "forbidNearTermCommitment": true
+      }
+    },
+    {
+      "id": "uk-multi_intent_fee_and_style",
+      "market": "uk",
+      "scenario": "multi_intent_fee_and_style",
+      "context": {
+        "market": "uk",
+        "locale": "en-GB",
+        "creatorId": "synthetic-creator",
+        "turnId": "sim-3",
+        "conversationId": "synthetic-conversation",
+        "messages": [
+          {
+            "id": "sim-1",
+            "direction": "outbound",
+            "text": null,
+            "format": "product_card",
+            "pid": "synthetic-product-1",
+            "listId": "synthetic-list-1",
+            "at": 1
+          },
+          {
+            "id": "sim-2",
+            "direction": "outbound",
+            "text": "Would you like to make another video or live stream with this product?",
+            "format": "text",
+            "at": 2
+          },
+          {
+            "id": "sim-3",
+            "direction": "inbound",
+            "text": "I charge £200 for the video. What style of video do you need?",
+            "format": "text",
+            "at": 3
+          }
+        ],
+        "previousWaitFor": null,
+        "showcaseEvidence": [],
+        "historyTruncated": false
+      },
+      "reference": {
+        "routes": [
+          "handoff"
+        ],
+        "waitFor": [
+          "none"
+        ],
+        "showcaseReminder": null,
+        "reviewChecklistZh": [
+          "同时回应固定报价交同事处理，以及内容风格由达人决定；不接受报价、不遗漏内容问题。",
+          "回复语言固定为市场语言；没有证据不得虚构事实、行动或承诺。",
+          "交负责合作同事查看并回复即可，不追加任何无已确认安排的很快/尽快反馈时限。"
+        ],
+        "forbidNearTermCommitment": true
+      }
+    },
+    {
+      "id": "uk-request_contact_once",
+      "market": "uk",
+      "scenario": "request_contact_once",
+      "context": {
+        "market": "uk",
+        "locale": "en-GB",
+        "creatorId": "synthetic-creator",
+        "turnId": "sim-1",
+        "conversationId": "synthetic-conversation",
+        "messages": [
+          {
+            "id": "sim-1",
+            "direction": "inbound",
+            "text": "Can we talk on WhatsApp?",
+            "format": "text",
+            "at": 1
+          }
+        ],
+        "previousWaitFor": null,
+        "showcaseEvidence": [],
+        "historyTruncated": false
+      },
+      "reference": {
+        "routes": [
+          "request_detail"
+        ],
+        "waitFor": [
+          "contact"
+        ],
+        "showcaseReminder": null,
+        "reviewChecklistZh": [
+          "请求转WhatsApp但无联系方式：仅索取一次联系方式，不声称已转交或创建外部联系。",
+          "回复语言固定为市场语言；没有证据不得虚构事实、行动或承诺。"
+        ],
+        "forbidNearTermCommitment": true
+      }
+    },
+    {
+      "id": "uk-waiting_contact_thanks",
+      "market": "uk",
+      "scenario": "waiting_contact_thanks",
+      "context": {
+        "market": "uk",
+        "locale": "en-GB",
+        "creatorId": "synthetic-creator",
+        "turnId": "sim-3",
+        "conversationId": "synthetic-conversation",
+        "messages": [
+          {
+            "id": "sim-1",
+            "direction": "inbound",
+            "text": "Can we talk on WhatsApp?",
+            "format": "text",
+            "at": 1
+          },
+          {
+            "id": "sim-2",
+            "direction": "outbound",
+            "text": "Sure, please share your WhatsApp number.",
+            "format": "text",
+            "at": 2
+          },
+          {
+            "id": "sim-3",
+            "direction": "inbound",
+            "text": "Okay, thanks",
+            "format": "text",
+            "at": 3
+          }
+        ],
+        "previousWaitFor": "contact",
+        "showcaseEvidence": [],
+        "historyTruncated": false
+      },
+      "reference": {
+        "routes": [
+          "no_reply"
+        ],
+        "waitFor": [
+          "none",
+          "contact"
+        ],
+        "showcaseReminder": null,
+        "reviewChecklistZh": [
+          "已索取联系方式、仅收到好的谢谢：继续等待，不再次催问，不自动转人工。",
+          "回复语言固定为市场语言；没有证据不得虚构事实、行动或承诺。"
+        ],
+        "forbidNearTermCommitment": true
+      }
+    },
+    {
+      "id": "uk-waiting_clarification_thanks",
+      "market": "uk",
+      "scenario": "waiting_clarification_thanks",
+      "context": {
+        "market": "uk",
+        "locale": "en-GB",
+        "creatorId": "synthetic-creator",
+        "turnId": "sim-3",
+        "conversationId": "synthetic-conversation",
+        "messages": [
+          {
+            "id": "sim-1",
+            "direction": "inbound",
+            "text": "[image]",
+            "format": "image",
+            "at": 1
+          },
+          {
+            "id": "sim-2",
+            "direction": "outbound",
+            "text": "Could you explain in a text message?",
+            "format": "text",
+            "at": 2
+          },
+          {
+            "id": "sim-3",
+            "direction": "inbound",
+            "text": "Okay, thanks",
+            "format": "text",
+            "at": 3
+          }
+        ],
+        "previousWaitFor": "clarification",
+        "showcaseEvidence": [],
+        "historyTruncated": false
+      },
+      "reference": {
+        "routes": [
+          "no_reply"
+        ],
+        "waitFor": [
+          "none",
+          "clarification"
+        ],
+        "showcaseReminder": null,
+        "reviewChecklistZh": [
+          "已请求文字澄清、仅收到好的谢谢：继续等待原资料，不重复追问。",
+          "回复语言固定为市场语言；没有证据不得虚构事实、行动或承诺。"
+        ],
+        "forbidNearTermCommitment": true
+      }
+    },
+    {
+      "id": "uk-contact_supplied",
+      "market": "uk",
+      "scenario": "contact_supplied",
+      "context": {
+        "market": "uk",
+        "locale": "en-GB",
+        "creatorId": "synthetic-creator",
+        "turnId": "sim-3",
+        "conversationId": "synthetic-conversation",
+        "messages": [
+          {
+            "id": "sim-1",
+            "direction": "inbound",
+            "text": "Can we talk on WhatsApp?",
+            "format": "text",
+            "at": 1
+          },
+          {
+            "id": "sim-2",
+            "direction": "outbound",
+            "text": "Sure, please share your WhatsApp number.",
+            "format": "text",
+            "at": 2
+          },
+          {
+            "id": "sim-3",
+            "direction": "inbound",
+            "text": "My WhatsApp number is +44 0000 000000.",
+            "format": "text",
+            "at": 3
+          }
+        ],
+        "previousWaitFor": "contact",
+        "showcaseEvidence": [],
+        "historyTruncated": false
+      },
+      "reference": {
+        "routes": [
+          "handoff"
+        ],
+        "waitFor": [
+          "none"
+        ],
+        "showcaseReminder": null,
+        "reviewChecklistZh": [
+          "给出可识别联系方式：确认收到并交同事，不自行换渠道发送。号码为虚构测试数据。",
+          "回复语言固定为市场语言；没有证据不得虚构事实、行动或承诺。",
+          "交负责合作同事查看并回复即可，不追加任何无已确认安排的很快/尽快反馈时限。"
+        ],
+        "forbidNearTermCommitment": true
+      }
+    },
+    {
+      "id": "uk-clarification_still_unclear",
+      "market": "uk",
+      "scenario": "clarification_still_unclear",
+      "context": {
+        "market": "uk",
+        "locale": "en-GB",
+        "creatorId": "synthetic-creator",
+        "turnId": "sim-3",
+        "conversationId": "synthetic-conversation",
+        "messages": [
+          {
+            "id": "sim-1",
+            "direction": "inbound",
+            "text": "[image]",
+            "format": "image",
+            "at": 1
+          },
+          {
+            "id": "sim-2",
+            "direction": "outbound",
+            "text": "Could you explain in a text message?",
+            "format": "text",
+            "at": 2
+          },
+          {
+            "id": "sim-3",
+            "direction": "inbound",
+            "text": "I cannot explain, look at this picture.",
+            "format": "text",
+            "at": 3
+          }
+        ],
+        "previousWaitFor": "clarification",
+        "showcaseEvidence": [],
+        "historyTruncated": false
+      },
+      "reference": {
+        "routes": [
+          "handoff"
+        ],
+        "waitFor": [
+          "none"
+        ],
+        "showcaseReminder": null,
+        "reviewChecklistZh": [
+          "已索取一次文字，仍不能解释并要求看图：简短确认并转人工，不继续无限澄清。",
+          "回复语言固定为市场语言；没有证据不得虚构事实、行动或承诺。",
+          "交负责合作同事查看并回复即可，不追加任何无已确认安排的很快/尽快反馈时限。"
+        ],
+        "forbidNearTermCommitment": true
+      }
+    }
+  ]
+}
