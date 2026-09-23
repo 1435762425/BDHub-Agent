@@ -10,6 +10,7 @@ import contextlib
 import sys
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'scripts'))
@@ -44,7 +45,10 @@ def patched():
 
     transport._opportunity_transport = fake
     try:
-        yield stub, calls
+        # Scope construction is under test here; account publication belongs to its own
+        # contract and must not depend on this checkout's untracked production var/.
+        with patch('lib.market_accounts.catalog_read_account',return_value='acc9'):
+            yield stub, calls
     finally:
         transport._opportunity_transport = real
 
