@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from fnmatch import fnmatch
 import hashlib
 import json
+import math
 from pathlib import Path
 import re
 import shutil
@@ -25,6 +26,8 @@ MANIFEST_SCHEMA = "bdhub.state-backup.v1"
 RESTORE_SCHEMA = "bdhub.state-restore.v1"
 DATABASE_NAME = re.compile(r"[a-z0-9][a-z0-9._-]{0,119}\.sqlite")
 LABEL = re.compile(r"[a-z0-9][a-z0-9-]{0,31}")
+RETENTION_SCHEMA = "bdhub.state-backup-retention-plan.v1"
+PROTECTED_LABELS = ("*baseline*", "*migration*", "*before-*", "*pre-*", "*accepted-partial*", "*release*")
 
 
 def _encoded(value):
@@ -307,3 +310,91 @@ def restore_backup(backup, target_var, *, confirmed=False, clock=time.time):
     return {"schema": RESTORE_SCHEMA, "targetVar": str(target), "restored": True,
             "databases": verification["databases"], "totalBytes": verification["totalBytes"],
             "credentialsIncluded": False}
+
+
+def retention_plan(backup_root, *, recent_days=7, daily_days=30, weekly_days=84,
+                   minimum_verified=3, protect=(), clock=time.time):
+    """Read-only plan; every managed snapshot is freshly hash/integrity verified.
+
+    Unknown, invalid and labelled migration/baseline artifacts always remain. Keep
+    daily/weekly representatives separately for each database inventory and policy,
+    so newer partial inventories cannot retire older recovery coverage.
+    No deletion operation is provided, and local verification is not an offsite copy.
+    """
+    durations = (recent_days, daily_days, weekly_days, minimum_verified)
+    if any(type(value) is not int or value < 0 for value in durations) \
+            or not 1 <= minimum_verified or not recent_days <= daily_days <= weekly_days:
+        raise ValueError("state_backup_retention_policy_invalid")
+    if any(not isinstance(value, str) or not value or "/" in value or "\\" in value
+           for value in protect):
+        raise ValueError("state_backup_retention_protection_invalid")
+    now = float(clock())
+    if not math.isfinite(now):
+        raise ValueError("state_backup_retention_time_invalid")
+    directory = Path(backup_root)
+    if directory.is_symlink() or not directory.is_dir():
+        raise ValueError("state_backup_path_invalid")
+    entries, groups = [], {}
+    patterns = (*PROTECTED_LABELS, *protect)
+    for path in sorted(directory.iterdir()):
+        entry = {"name": path.name, "path": str(path.absolute()), "totalBytes": 0,
+                 "verification": "unmanaged", "decision": "keep", "reasons": []}
+        entries.append(entry)
+        # Do not follow links or enumerate unknown directories as managed backups.
+        if path.is_symlink() or not path.is_dir():
+            entry["reasons"].append("unmanaged_or_symlink")
+            if path.is_file() and not path.is_symlink():
+                entry["totalBytes"] = path.stat().st_size
+            continue
+        entry["totalBytes"] = sum(item.stat().st_size for item in path.iterdir()
+                                  if item.is_file() and not item.is_symlink())
+        try:
+            result = verify_backup(path)
+            manifest = _load_manifest(path)
+            created = float(result["createdAt"])
+            if not math.isfinite(created):
+                raise ValueError("state_backup_manifest_invalid")
+            datetime.fromtimestamp(created, timezone.utc)
+            entry.update(verification="verified", createdAt=created, databases=result["databases"])
+        except (OSError, ValueError, TypeError, OverflowError, sqlite3.Error) as error:
+            entry.update(verification="failed", verificationError=type(error).__name__)
+            entry["reasons"].append("verification_failed_or_unmanaged")
+            continue
+        if any(fnmatch(path.name.lower(), pattern.lower()) for pattern in patterns):
+            entry["reasons"].append("protected_label")
+        age_days = (now - created) / 86400
+        if age_days < 0:
+            entry["reasons"].append("future_timestamp")
+        elif age_days <= recent_days:
+            entry["reasons"].append("recent_recovery_point")
+        group = (manifest["policySha256"], tuple(sorted(x["name"] for x in manifest["databases"])))
+        groups.setdefault(group, []).append(entry)
+    for members in groups.values():
+        ordered = sorted(members, key=lambda row: (row["createdAt"], row["name"]), reverse=True)
+        daily, weekly = set(), set()
+        for index, entry in enumerate(ordered):
+            if index < minimum_verified:
+                entry["reasons"].append("minimum_verified_inventory_snapshots")
+            if index == 0:
+                entry["reasons"].append("latest_verified_inventory_snapshot")
+            age = (now - entry["createdAt"]) / 86400
+            stamp = datetime.fromtimestamp(entry["createdAt"], timezone.utc)
+            day, week = stamp.date().isoformat(), stamp.isocalendar()[:2]
+            if 0 <= age <= daily_days and day not in daily:
+                daily.add(day)
+                entry["reasons"].append("daily_recovery_point")
+            if 0 <= age <= weekly_days and week not in weekly:
+                weekly.add(week)
+                entry["reasons"].append("weekly_recovery_point")
+            if not entry["reasons"]:
+                entry.update(decision="candidate", reasons=["outside_retention_slots"])
+    candidates = [entry for entry in entries if entry["decision"] == "candidate"]
+    return {"schema": RETENTION_SCHEMA, "generatedAt": now, "readOnly": True,
+            "offsiteCopyVerified": False, "deletionPerformed": False,
+            "byteAccounting": "direct regular files only; unmanaged subdirectories and symlinks are not traversed",
+            "policy": {"recentDays": recent_days, "dailyDays": daily_days,
+                       "weeklyDays": weekly_days, "minimumVerifiedPerInventory": minimum_verified,
+                       "protectedNamePatterns": list(patterns)},
+            "entries": entries, "candidateCount": len(candidates),
+            "candidateBytes": sum(entry["totalBytes"] for entry in candidates),
+            "totalBytes": sum(entry["totalBytes"] for entry in entries)}

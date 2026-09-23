@@ -9,7 +9,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
-from lib.state_backup import create_backup, inventory, restore_backup, verify_backup  # noqa: E402
+from lib.state_backup import create_backup, inventory, restore_backup, retention_plan, verify_backup  # noqa: E402
 
 
 class StateBackupTests(unittest.TestCase):
@@ -94,6 +94,83 @@ class StateBackupTests(unittest.TestCase):
         manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
         with self.assertRaisesRegex(ValueError, "state_backup_database_name_invalid"):
             verify_backup(self.root / "portable")
+
+    def test_retention_preserves_verified_recent_baseline_and_unknown_without_writes(self):
+        backups = self.root / "backups"
+        now = 1800000000.0
+        for label, age in [("recent", 1), ("newest", 0), ("old-one", 100),
+                           ("old-two", 101), ("old-drop", 102), ("v1-baseline", 103),
+                           ("before-migration", 104), ("damaged", 105)]:
+            create_backup(self.root, output=backups / label, clock=lambda age=age: now - age * 86400)
+        (backups / "damaged/a.sqlite").write_bytes(b"invalid")
+        (backups / "unknown").mkdir()
+        (backups / "unknown/keep.txt").write_text("keep")
+        (backups / "link").symlink_to(backups / "old-drop", target_is_directory=True)
+        before = {str(p): (p.stat().st_size, p.stat().st_mtime_ns)
+                  for p in backups.rglob("*") if p.is_file()}
+        result = retention_plan(backups, clock=lambda: now)
+        entries = {x["name"]: x for x in result["entries"]}
+        self.assertEqual(entries["newest"]["decision"], "keep")
+        self.assertIn("recent_recovery_point", entries["recent"]["reasons"])
+        self.assertEqual(entries["old-one"]["decision"], "keep")
+        self.assertEqual(entries["old-drop"]["decision"], "candidate")
+        self.assertEqual(entries["old-drop"]["verification"], "verified")
+        for name in ("v1-baseline", "before-migration", "damaged", "unknown", "link"):
+            self.assertEqual(entries[name]["decision"], "keep")
+        self.assertFalse(result["deletionPerformed"])
+        self.assertFalse(result["offsiteCopyVerified"])
+        self.assertEqual(before, {str(p): (p.stat().st_size, p.stat().st_mtime_ns)
+                                 for p in backups.rglob("*") if p.is_file()})
+
+    def test_retention_keeps_daily_weekly_points_and_custom_protection(self):
+        backups = self.root / "backups"
+        now = 1800000000.0
+        for label, age in [("daily", 10), ("daily-duplicate", 10.001),
+                           ("weekly", 45), ("custom", 150), ("latest", 1)]:
+            create_backup(self.root, output=backups / label, clock=lambda age=age: now - age * 86400)
+        result = retention_plan(backups, minimum_verified=1, protect=["custom"], clock=lambda: now)
+        entries = {x["name"]: x for x in result["entries"]}
+        self.assertIn("daily_recovery_point", entries["daily"]["reasons"])
+        self.assertEqual(entries["daily-duplicate"]["decision"], "candidate")
+        self.assertIn("weekly_recovery_point", entries["weekly"]["reasons"])
+        self.assertIn("protected_label", entries["custom"]["reasons"])
+
+    def test_retention_keeps_latest_for_each_database_inventory(self):
+        backups = self.root / "backups"
+        create_backup(self.root, output=backups / "old-inventory", clock=lambda: 1)
+        policy_path = self.root / "config/state-backup.json"
+        policy = json.loads(policy_path.read_text())
+        policy["databases"].append("c.sqlite")
+        policy_path.write_text(json.dumps(policy))
+        with closing(sqlite3.connect(self.root / "var/c.sqlite")) as db, db:
+            db.execute("CREATE TABLE fact(id)")
+        create_backup(self.root, output=backups / "new-inventory", clock=lambda: 2)
+        result = retention_plan(backups, minimum_verified=1, clock=lambda: 1800000000)
+        self.assertEqual(result["candidateCount"], 0)
+        for entry in result["entries"]:
+            self.assertIn("latest_verified_inventory_snapshot", entry["reasons"])
+
+    def test_retention_rejects_invalid_policy_and_symlink_root(self):
+        backups = self.root / "backups"
+        backups.mkdir()
+        link = self.root / "link"
+        link.symlink_to(backups, target_is_directory=True)
+        for kwargs in ({"recent_days": -1}, {"daily_days": 3}, {"minimum_verified": 0}):
+            with self.assertRaises(ValueError):
+                retention_plan(backups, **kwargs)
+        with self.assertRaises(ValueError):
+            retention_plan(link)
+
+    def test_retention_invalid_newest_cannot_displace_latest_verified_snapshot(self):
+        backups = self.root / "backups"
+        for name, stamp in [("old-valid", 1), ("new-broken", 2)]:
+            create_backup(self.root, output=backups / name, clock=lambda stamp=stamp: stamp)
+        (backups / "new-broken/a.sqlite").write_bytes(b"invalid")
+        result = retention_plan(backups, minimum_verified=1, clock=lambda: 1800000000)
+        entries = {x['name']: x for x in result['entries']}
+        self.assertIn('latest_verified_inventory_snapshot', entries['old-valid']['reasons'])
+        self.assertEqual(entries['new-broken']['verification'], 'failed')
+        self.assertEqual(result['candidateCount'], 0)
 
 
 if __name__ == "__main__":
