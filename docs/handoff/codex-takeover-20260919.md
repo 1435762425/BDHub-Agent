@@ -6,6 +6,7 @@
 
 - 原 IT Campaign-only run `workflow-038da43ec820264f5b155e183fdd` 的 `taplink_prepare` 已完成，准备 run 587/587 条全部 `ready`，阶段记录377次平台写入；没有把此前 `needs_human` 的零写入改写成既成事实。下游 `kalodata` 首试在0.1秒内 `kalodata-sales_failed`、处理0、阶段写入0；根因为 scheduler 对要求必填 `--market` 的 `leads-run.py` 漏传 IT 市场。原 `var/leads-run.json` 最后修改时间早于此次阶段启动，证明该 CLI 未进入其首个运行状态写入或平台读取。另提前修复同样必填参数的 `lead-pool.py`，避免末阶段再次停住。
 - 已补精确的 Kalodata CLI 预检失败恢复入口：须匹配原 run、原上游 generation、错误码、5秒内失败、零处理/零写入、旧状态文件未更新和无占用 claim；旧错误及时间持久保存，重复请求幂等。第二周期库在线备份 `var/backups/state/second-cycle-before-it-kalodata-preflight-recovery-20260923T1313Z.sqlite` integrity ok 后，使用请求 `it-kalodata-preflight-recovery-20260923-001` 仅恢复原 Kalodata 阶段。新 scheduler PID97927 已以显式 `--market it` 启动 `leads-run.py` PID97941，首个只读快照为111目标、已完成2、网络请求5、错误0。Kalodata 仍在运行，OECID和发送池等待上游；IT全托采集继续关闭。Python全量1,151项通过。
+- 21:16 后续只读回查：Kalodata 销售查询 111/111 完成、162 条入选线索、122 次网络读取、错误0；同阶段已进入 B 类视频 generation `video-generation-a1c581fed0c58c2611e1c0f9`，2,241 个 PID 中 13 完成、1 在读、2,227 排队。原 workflow 的 Kalodata stage 仍 `running`，OECID 与发送池仍等待阶段屏障。四市场发送与 Agent worker 存活，IT 类目采集未重启；30分钟心跳继续盯真实额度、视频终态和下游。
 
 ## 0X. 2026-09-23 20:56 IT 原 Campaign 工作流恢复
 
