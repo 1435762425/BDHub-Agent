@@ -1,6 +1,6 @@
 # BDHub-Agent 技术文档
 
-状态：当前技术真相源。最后整理：2026-09-20。
+状态：当前技术真相源。最后整理：2026-09-23。
 
 本文回答“系统如何实现、模块如何协作、状态存在哪里、怎样运行和验证”。产品目标与业务规则见 [项目文档](PROJECT.md)，当前 Git/进程/数量和未解风险见 [Codex 接管状态](handoff/codex-takeover-20260919.md)。
 
@@ -59,6 +59,10 @@ React feature
 ```
 
 React 组件不能直接读写 SQLite、启动任意命令或实现资格规则。Route 只接受白名单字段；bridge 同时校验请求和 CLI 返回结构，不把 stderr、凭据或原始私密数据返回浏览器。
+
+市场注册表由 `config/markets.json` 提供 14 个固定 key。IT/BR/MY/UK 已有已核实的运行元数据；其余市场为 `planned`，未知 locale、账号和全托能力保持 `null`。页面复用同一组件；planned 市场仅显示未验收状态，服务端动作在 registry 门禁处拒绝。所有市场级 Route 必须显式接收单个 `market`，写请求还要核对 URL 与 body 的 market；CLI 和返回结构再次校验市场。BR/MY 的全托 Tab 是明确空态，不启动全托读取。
+
+首页和货盘可读取 `market_read_head` 指向的不可变 `market_read_generation`，过期或缺失时才回退到当前本机台账聚合。同市场的并发 GET 由 Web `singleflight` 合并为一次 Python 读取；商品明细在展开后按 30 条服务端分页读取。`workflow_stage_claim` 与 `workflow_resource_slot` 记录待接入调度器的资源 lease/fence，表存在不表示并行调度已经上线。
 
 ## 4. 仓库结构
 
@@ -248,7 +252,7 @@ Agent 与二发没有优先级关系，只有互斥窗口：默认北京时间 `
 ### 6.2 状态原则
 
 - SQLite 是业务事实；JSON progress 只用于显示正在运行的步骤，不替代最终台账。
-- `var/` 不入 Git，也不能由源码完整恢复。`state-backup.py` 按 `config/state-backup.json` 的显式清单使用 SQLite online backup API 复制当前 32 个数据库，捕获已提交 WAL 而不复制 `-wal/-shm`，并为每库保存 SHA-256、大小、`quick_check` 与 schema 元数据。清单之外的新数据库会让备份失败，避免静默漏备；`*-before-*.sqlite` 历史快照明确排除。
+- `var/` 不入 Git，也不能由源码完整恢复。`state-backup.py` 按 `config/state-backup.json` 的显式清单使用 SQLite online backup API 复制当前 33 个数据库，捕获已提交 WAL 而不复制 `-wal/-shm`，并为每库保存 SHA-256、大小、`quick_check` 与 schema 元数据。清单之外的新数据库会让备份失败，避免静默漏备；`*-before-*.sqlite` 历史快照明确排除。
 - 备份目录和文件分别为 0700/0600。备份包含达人、消息和业务台账，仍属于敏感业务数据；TypeSafe、Kalodata、Campaign 凭据和运行日志固定不纳入。恢复只能写入不存在或空的目标 `var`，绝不覆盖当前状态，并生成恢复回执。跨机器切换需先停止所有写 worker、创建最终备份、复制整个备份目录、在新机器空目录恢复，再单独配置凭据并运行 migration check；多数据库快照不是跨库单事务。
 - 所有 ID、PID、OECID、Campaign ID 和 listId 按字符串处理。
 - 外部响应保存必要摘要、哈希和引用；凭据、Cookie、完整私密正文不进入普通日志。
@@ -330,11 +334,11 @@ pending → started/submitted → confirmed
 | `/api/inbox` | 收信 worker、今日/最近 14 日统计、可分页日明细和待人工 |
 | `/api/jobs` | 手动作业与定时意向 |
 | `/api/market-accounts` | 按市场读取固定双账号职责、能力证据、启停与刷新/重登维护意图 |
-| `/api/market-catalog` | BR/MY/UK 的独立 Campaign/全托接入状态与只读 Campaign 刷新 |
+| `/api/market-catalog` | 逐市场 Campaign/全托状态；支持全托市场的商品明细只读搜索与分页；无全托市场返回 `unsupported` 空态 |
 
 Web 不再构建 `/flow-demo`、浏览器演示页、旧 local runtime、second-pilot、second-live trial、second-outreach history、matching 或 outreach-drafts 路由。对应 SQLite 作为历史数据保留，未从备份清单移除。
 
-运营首页 canonical route 为 `/it`；合作工作台为 `/it/workspace/send` 和 `/it/workspace/history`；旧 `/it/workspace/inbox` 只做重定向。会话为 `/it/conversations`、`/it/conversations/templates` 和 `/it/conversations/agent`，默认 view=`human`；旧 `/ops/reply-evaluation` 重定向到 Agent 高级评测区。运行设置为 `/ops/kalodata`、`/ops/jobs`、`/ops/accounts`。
+运营首页 canonical route 为 `/{market}`；合作工作台为 `/{market}/workspace/send` 和 `/{market}/workspace/history`。会话为 `/{market}/conversations`、`/{market}/conversations/templates` 和 `/{market}/conversations/agent`，默认 view=`human`；旧 `/ops/reply-evaluation` 重定向到 Agent 高级评测区。运行设置为 `/{market}/ops/kalodata`、`/{market}/ops/jobs`、`/{market}/ops/accounts`。
 
 会话页在 AppShell 中使用无最大宽度布局，并在桌面按 `队列 / 时间线与编辑器 / 达人与事项` 占满剩余视口。详情只投影白名单经营字段；人工事项确认直接结算当前 case/pending 且不发送消息。`creator_collaboration_event/current` 保存 `normal/collaborated/paid/rejected`，状态 mutation 同时校验 collaboration 与 relationship revision；showcase 只升级系统默认，人工选择优先。达人库顶部的“已查询/查得到/搜索不到”复用 `/api/identity-queue` 的互斥 handle 口径；“有回复/已加橱窗”从 live `inbox_event` 按 `creator_id` 去重，历史补录不计入。
 
@@ -381,7 +385,7 @@ Web 不再构建 `/flow-demo`、浏览器演示页、旧 local runtime、second-
 | `config/jobs.json` | 十个真实运营作业的北京时间；Agent 独立开关保留在作业页 |
 | `config/operations-policy.json` | Campaign 2 天 cadence、全托 30 天类目刷新、Kalodata 双市场上限和二发模板审核下限 |
 | `config/market-accounts.json` | 市场账号固定角色、项目身份权威和维护目标 |
-| `config/markets.json` | 产品启用市场、locale/currency/timezone 与 Campaign/全托能力差异 |
+| `config/markets.json` | 14 市场 key、运行状态、已核实 locale/currency/timezone/账号与 Campaign/全托能力；未知值保持 `null` |
 | `config/market-content.json` | 各市场二发、Agent 固定回复、TapLink 短名 prompt 与 language/locale 绑定 |
 | `config/link-naming.json`、`config/link-naming-{br,my,uk}.json` | 市场独立卡名模板、版本、长度和 locale；禁止跨市场回退 |
 | `config/*.example.json` | 敏感本机配置样例 |

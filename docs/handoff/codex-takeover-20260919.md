@@ -1,6 +1,15 @@
 # BDHub-Agent Codex 接管状态
 
-更新时间：2026-09-21（Asia/Shanghai）。本文件是当前开发交接入口；产品规则以 [项目文档](../PROJECT.md) 为准，技术结构以 [技术文档](../TECHNICAL.md) 为准。动态数量是本次只读快照，后续以 `var/` 台账和页面 API 回读为准。
+更新时间：2026-09-23（Asia/Shanghai）。本文件是当前开发交接入口；产品规则以 [项目文档](../PROJECT.md) 为准，技术结构以 [技术文档](../TECHNICAL.md) 为准。动态数量是本次只读快照，后续以 `var/` 台账和页面 API 回读为准。下方旧日期章节均为历史快照，不代表当前开关与数量。
+
+## 0H. 2026-09-23 全市场统一页面实施进度
+
+- 分支 `codex/v1-runtime-alignment`，统一实现提交 `58e1121`；MY 并行任务的文件继续保留在工作树。14 市场 registry 与共享页面已接通，10 个 planned 市场只显示未验收状态；BR/MY 保留全托 Tab 并显示空态。全托商品只读明细已恢复搜索、公开/总佣金、选入观察、方案与 30 条分页。IT 当前正在采集批次显示 495 个商品，明细明确提示使用上次完整发布的 31,809 个商品快照，避免混淆。
+- 多市场 API 的 market 显式门禁、模板本地化 v15、读模型 v16、资源 lease/fence v17 已增量应用；`migrate-agent.py check` 为 ready。跨市场 workflow stop 现于 CLI 读取 run 所属 market 后拒绝错市场操作。资源表已存在，**调度器尚未接入并行资源 claim**，不能把 migration 当成 P3 验收。
+- 前置备份 `var/backups/state/20260923T015703Z-before-multimarket-v15-v17`：33 库、1,201,410,048 字节、独立验证 `valid=true`；另在临时空目录完整恢复 33 库并自动清理。统一页面任务未触发平台写入、真实发送、自动回复、账号重登或 TapLink 创建/删除；MY 并行任务自己的业务执行单独记账。
+- 本轮验证：Python 1079 项、Web 158 项、TypeScript、Next build、123 份 Markdown 检查通过。5198 Web 已替换为 PID 28238，原 operations scheduler PID 64799、inbox PID 46147 未重启。14×11=154 个页面 HTTP/HTML 检查全部通过；IT/BR/MY/UK 各五个关键只读 API 回读均匹配请求 market。BR URL 携带已完成 IT runId 的 stop 请求被 409 `workflow_market_mismatch` 拒绝，原 run 状态未改变。
+- BR/MY 货盘浏览器网络 trace 各 1 次，全托 API 请求严格 0。六页 Chrome/CDP 各 3 次 trace 保存在 `var/multimarket-perf-after-20260923.json`：IT 首页 LCP p95 1.764 秒，合作页 1.448 秒，UK 货盘资源稳定 p95 1.259 秒。旧基线文件采到 HTTP 500，不能用作改前比较；IT 首页状态 GET 约 1.1 秒、UK 货盘约 0.8 秒，仍需状态变化投影和同口径复测。
+- 2026-09-23 10:31 只读设置：IT/BR/UK 自动运营开、MY 关；四市场持续发送均关。IT Agent 设置为开，但本轮读到的 `service_reply`、`cycle_delivery` 和 `agent_reply_run` 新增均为 0，不能把设置开等同于真实回复。MY OECID 由另一任务的单实例 scheduler 管理；其发送池、设置与备份完成并明确释放前，不改 `operations_scheduler.py`、`operations_workflow.py`、`catalog_prepare.py`、`catalog-link-prepare.py` 及关联测试。
 
 ## 0G. 2026-09-21 多市场 cadence、Campaign 失效、话术审核与统一页面
 

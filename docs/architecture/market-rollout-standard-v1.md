@@ -21,7 +21,7 @@
 | USA | `us` | planned |
 | Vietnam | `vn` | planned |
 
-`planned` 不生成业务页面、数据库、任务或执行权限。旧 BDHub/vendored 协议中的市场登记和 canary 只作证据，不自动升级新项目状态。
+`planned` 仍使用与已接入市场相同的页面结构，明确显示能力未验收；不创建市场业务数据库、任务或执行权限。未知 locale、账号与全托能力保持未知，不读取 IT 或相邻市场数据作为占位。旧 BDHub/vendored 协议中的市场登记和 canary 只作证据，不自动升级新项目状态。
 
 ## 2. 意大利参考标准
 
@@ -41,7 +41,8 @@
 
 ## 3. 页面与 API
 
-- canonical 页面使用 `/{market}/catalog`、`/{market}/creators`、`/{market}/workspace/{send|inbox|history}`；
+- canonical 页面使用 `/{market}/catalog`、`/{market}/creators`、`/{market}/workspace/{send|history}`、`/{market}/conversations{,/templates,/agent}` 和 `/{market}/ops/{kalodata|jobs|accounts}`；
+- 所有市场共用货盘四个 Tab；`fullManagedCatalog=false` 时全托 Tab 显示“该市场暂无全托商品”，全托 API 与采集 worker 调用为 0；未知能力显示未验收；
 - 服务器先校验 market 是否产品启用，再选择固定配置、数据库范围和账号；market 不参与任意路径或 shell 拼接；
 - 只有一个市场启用时显示固定市场标签；两个以上启用后才显示切换器；切换器不提供“全部市场”；
 - 跨市场汇总若以后需要，是独立只读报表，不与发送、建链、账号或批次动作共用页面。
