@@ -4,7 +4,7 @@
 
 ## 0T. 2026-09-23 19:26 UK 会话回执恢复
 
-- UK一个发送意图的建会话请求其实已保存原回执和CID，只是进程未确认就中断；market sender现先核对原 requestRef、CID和同达人会话身份，再沿该原 delivery 完成卡文，不二次建会话。该条已真实双确认，UK发送unknown0，worker持续运行。BR/MY/IT仍分别按滚动24小时500位新联系上限等待额度释放；IT另有2条用户选择隔离的未决建会话原意图。本轮Python全量1,141项与文档检查通过，具体业务证据见[当日实施记录](../implementation/four-market-launch-implementation-20260923.md)。
+- UK一个发送意图的建会话请求其实已保存原回执和CID，只是进程未确认就中断；market sender现先核对原 requestRef、CID和同达人会话身份，再沿该原 delivery 完成卡文，不二次建会话。该条已真实双确认，UK发送unknown0，worker持续运行。页面也不再把存活 worker 的短暂 `inflight` 算作结果未知。BR/MY/IT仍分别按滚动24小时500位新联系上限等待额度释放；IT另有2条用户选择隔离的未决建会话原意图。本轮Python全量1,142项与文档检查通过，具体业务证据见[当日实施记录](../implementation/four-market-launch-implementation-20260923.md)。
 
 ## 0S. 2026-09-23 19:22 额度与收信
 

@@ -72,3 +72,4 @@
 ## 19:26 UK 原会话回执恢复
 
 - UK `delivery-e947b177740cfd1c40d0c5fd8f55fd6d` 在 `cycle_conversation_intent=received` 已持原请求的 CID/回执，但旧 market sender 把 `received` 与无回执的 `inflight` 一并判为未知并停下。现在仅在原 requestRef、回执CID和同达人平台会话身份同时匹配时，确认原会话意图并继续该 delivery，绝不二次创建会话；失配仍保持未知。该UK原 delivery 已真实完成卡和文字双回执，原会话意图变 `confirmed`，发送unknown0，worker再次持续运行。正反合同测试覆盖原回执及替代requestRef/CID/非候选回执拒绝。
+- UK 继续发送时页面曾把 worker 正在处理、文字 `inflight` 的几秒钟也显示为“结果未知1”，但该组件随即取得原回执并完整确认。状态投影现将存活发送进程的正常在途与失主/明确unknown分开；读回 `/api/send?market=uk` 为 `sending/unknown0`，不把瞬时在途伪装为事故。

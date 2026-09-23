@@ -13,6 +13,7 @@ from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT/'scripts'))
 from lib.market_send_canary import _binding_current,_dispatch_allowed,_received_conversation_id
+from lib.market_send_control import _unknown_deliveries
 from lib.schema_migrations import apply_database
 from lib.second_cycle import CycleError,CycleStore
 from lib.catalog_binding import offer_fingerprint
@@ -32,6 +33,17 @@ poll=importlib.util.module_from_spec(spec);spec.loader.exec_module(poll)
 NOW=datetime(2026,9,23,17,0,tzinfo=timezone(timedelta(hours=8))).timestamp()
 
 class MarketLaunchContracts(unittest.TestCase):
+ def test_live_component_inflight_is_not_reported_as_unknown_until_worker_is_lost(self):
+  Deliveries(self.store)
+  self.store.db.execute("INSERT INTO cycle_delivery VALUES(?,?,?,?,?,?,?,?,?,?)",
+    ('delivery-live',self.plan,'creator-live','101','123','source','{}',NOW,NOW+1800,'running'))
+  self.store.db.execute("INSERT INTO cycle_delivery_part(delivery_id,kind,request_ref,state) VALUES('delivery-live','card','card-ref','confirmed')")
+  self.store.db.execute("INSERT INTO cycle_delivery_part(delivery_id,kind,request_ref,state,started) VALUES('delivery-live','text','text-ref','inflight',?)",(NOW,))
+  self.assertEqual(_unknown_deliveries(self.store,self.plan,{'running':True,'state':'confirmed'}),[])
+  self.assertEqual(len(_unknown_deliveries(self.store,self.plan,{'running':False,'state':'attention'})),1)
+  self.store.db.execute("UPDATE cycle_delivery SET state='unknown' WHERE id='delivery-live'")
+  self.assertEqual(len(_unknown_deliveries(self.store,self.plan,{'running':True,'state':'confirmed'})),1)
+
  def test_received_conversation_resumes_only_the_original_exact_receipt(self):
   intent={'request_ref':'original-ref','cid':'123','receipt':json.dumps({
    'requestRef':'original-ref','conversationId':'123','candidate':True})}

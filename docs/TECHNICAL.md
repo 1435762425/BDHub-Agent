@@ -199,6 +199,7 @@ Pure HTTP 验证依赖 `Pillow==12.3.0`、`opencv-python-headless==4.14.0.94` �
 `/api/send` 的 GET 只读当前控制、窗口、24 小时额度、池余量、真实话术例子和进程；POST 只接受 revision 化的保存、发送、停止与原 unknown 核验。多一个字段即拒绝。保存、GET、构建和重启都不启动 worker；只有用户“发送”、显式自动发送开关或已启用调度器在窗口内启动相应市场发送 worker。
 
 BR/MY/UK 正式外发逐次读取保存的北京时间窗口、当前停止/启动状态、账号维护状态和 `catalog_current_binding` 的 active、Offer 指纹、`listId` 与卡片 payload。卡与文字各有独立 requestRef，先恢复 `ready/running/unknown` 原 delivery；发起过的平台组件只读精确回查，回查未确认不改用新话术/新账号重发。`/api/send` 的 reconcile 在关闭窗口时也可核验原意图且不新写。会话创建意图若仍 `inflight` 且无精确回执，则停在需核验状态；若已 `received` 且原 requestRef、回执中的 CID 和同达人会话身份均匹配，可只确认原会话意图，再沿同一 delivery 继续未开始的卡文，不再次调用创建接口。MY 的首次真实 sender 在页面“发送”请求后走一条 canary，卡和文字均确认后才把同账号 `message_send` 能力发布为 verified；未完成前自动调度不能代替这次页面启动。
+发送页把存活 worker 当前仍在处理的 `inflight/accepted/received` 作为在途，不误标为结果未知；worker 已失主、attention 或 delivery/组件明确 `unknown` 才列入未决并显示核验状态。卡文短暂在途时页面不应闪现“结果未知”。
 
 持续发送按 `lead_pool.v3` 当前顺序领取一位达人，复检后把 creator/OECID、PID、Offer、`currentListId`、模板 revision、最终正文、关系控制 revision 和确定性 claim key 写入不可变 `cycle_delivery.snapshot`。执行只用本地 `catalog_current_binding` 核对材料，不远程刷新卡；`cycle_delivery` 唯一键、24 小时预留和同达人 active delivery 共同防重复。unknown 使进程进入 `waiting_reconciliation`，恢复只运行原 delivery 的 `verify_only`，不会领取下一位或重发。用户对 IT “建会话结果未知、卡和文字均未开始”选择隔离后，逐条原意图仍须只读核验并满足零匹配证据，才能将该达人隔离：原会话请求与零回执保留，delivery 标记 `quarantined_unknown`，该达人进入人工案件，其余达人可继续；页面仍把它计作未决，不改成失败或成功，也不对该达人重发。建会话若返回无法确认的业务码，仅保存脱敏码与响应哈希；不把非零码自动推断为明确失败。
 

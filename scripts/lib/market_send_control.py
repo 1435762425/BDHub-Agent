@@ -28,6 +28,16 @@ def _time(value):
  if not isinstance(value,str) or not re.fullmatch(r'(?:[01]\d|2[0-3]):[0-5]\d|24:00',value):raise CycleError('continuous_send_setting_invalid')
  return value
 
+def _unknown_deliveries(store,plan,worker):
+ active=bool(worker.get('running')) and worker.get('state') in ('starting','confirmed','sending')
+ return [{'deliveryId':row['id'],'creatorId':row['creator_id'],'pid':row['pid']} for row in store.db.execute("""SELECT DISTINCT d.id,d.creator_id,d.pid FROM cycle_delivery d
+ LEFT JOIN cycle_conversation_intent c ON c.delivery_id=d.id
+ WHERE d.plan_id=? AND (d.state='unknown' OR EXISTS(
+ SELECT 1 FROM cycle_delivery_part p WHERE p.delivery_id=d.id AND p.state='unknown') OR
+ (?=0 AND (c.state IN ('inflight','received') OR EXISTS(
+ SELECT 1 FROM cycle_delivery_part p WHERE p.delivery_id=d.id AND p.state IN ('inflight','accepted')))))
+ ORDER BY d.created LIMIT 100""",(plan,int(active)))]
+
 def mutate(store,root,market,*,action,request_id,expected_revision,changes=None):
  definition=require_operational(root,market)
  if definition['runtimeState']!='ready':raise CycleError('market_runtime_unavailable')
@@ -69,11 +79,7 @@ def mutate(store,root,market,*,action,request_id,expected_revision,changes=None)
 def status(root,store,market):
  root=Path(root);definition=require_operational(root,market);plan=_plan(store,market);cfg=control(store,market);now=store.clock();worker=worker_state(root,market)
  confirmed=store.db.execute("SELECT count(*) FROM cycle_delivery WHERE plan_id=? AND state='confirmed'",(plan,)).fetchone()[0]
- unknown=[{'deliveryId':row['id'],'creatorId':row['creator_id'],'pid':row['pid']} for row in store.db.execute("""SELECT DISTINCT d.id,d.creator_id,d.pid FROM cycle_delivery d
- LEFT JOIN cycle_conversation_intent c ON c.delivery_id=d.id
- WHERE d.plan_id=? AND (d.state='unknown' OR c.state IN ('inflight','received') OR EXISTS(
- SELECT 1 FROM cycle_delivery_part p WHERE p.delivery_id=d.id AND p.state IN ('inflight','accepted','unknown')))
- ORDER BY d.created LIMIT 100""",(plan,))]
+ unknown=_unknown_deliveries(store,plan,worker)
  failed=store.db.execute("SELECT count(*) FROM cycle_delivery WHERE plan_id=? AND state IN ('rejected','failed_known')",(plan,)).fetchone()[0]
  from datetime import datetime,timedelta,timezone
  day_start=datetime.fromtimestamp(now,timezone(timedelta(hours=8))).replace(hour=0,minute=0,second=0,microsecond=0).timestamp()
