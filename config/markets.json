@@ -104,7 +104,7 @@
     },
     "my": {
       "enabled": true,
-      "runtimeState": "paused",
+      "runtimeState": "ready",
       "contentReady": true,
       "label": "马来西亚",
       "shortLabel": "MY",
