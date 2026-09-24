@@ -66,7 +66,8 @@ class Deliveries:
    if self.s.db.execute("SELECT 1 FROM sqlite_master WHERE name='service_reply'").fetchone() and self.s.db.execute("SELECT 1 FROM service_reply WHERE plan_id=? AND state IN ('inflight','accepted','unknown')",(d['plan_id'],)).fetchone():raise CycleError('reply_reconciliation_required')
    part=next((p for p in d['parts'] if p['kind']==kind),None)
    if not part or part['state']!='ready':raise CycleError('part_not_ready')
-   pending=self.s.db.execute("SELECT d.creator_id FROM cycle_delivery_part p JOIN cycle_delivery d ON d.id=p.delivery_id WHERE d.plan_id=? AND p.state IN ('inflight','accepted','unknown')",(d['plan_id'],)).fetchall()
+   # A quarantined delivery keeps its unknown part as evidence but no longer occupies the dispatch slot.
+   pending=self.s.db.execute("SELECT d.creator_id FROM cycle_delivery_part p JOIN cycle_delivery d ON d.id=p.delivery_id WHERE d.plan_id=? AND d.state<>'quarantined_unknown' AND p.state IN ('inflight','accepted','unknown')",(d['plan_id'],)).fetchall()
    if len(pending)>=self.concurrent_recipient_limit or any(r['creator_id']==d['creator_id'] for r in pending):raise CycleError('verify_before_dispatch')
    if kind=='text' and d['parts'][0]['state']!='confirmed':raise CycleError('card_not_confirmed')
    self.s.db.execute("UPDATE cycle_delivery_part SET state='inflight',started=? WHERE delivery_id=? AND kind=?",(self.s.clock(),id,kind));self.s.db.execute("UPDATE cycle_delivery SET state='running' WHERE id=?",(id,))
@@ -247,7 +248,7 @@ class Deliveries:
    self.s.db.execute('UPDATE cycle_delivery SET state=? WHERE id=?',('partial_delivery' if any_sent else 'rejected',id))
  def unknown(self,id,kind):
   with self.s.tx():
-   self.s.db.execute("UPDATE cycle_delivery_part SET state='unknown' WHERE delivery_id=? AND kind=? AND state IN ('inflight','accepted')",(id,kind));self.s.db.execute("UPDATE cycle_delivery SET state='unknown' WHERE id=? AND state<>'confirmed'",(id,))
+   self.s.db.execute("UPDATE cycle_delivery_part SET state='unknown' WHERE delivery_id=? AND kind=? AND state IN ('inflight','accepted')",(id,kind));self.s.db.execute("UPDATE cycle_delivery SET state='unknown' WHERE id=? AND state NOT IN ('confirmed','quarantined_unknown')",(id,))
  def record_check(self,id,kind,evidence):
   self.s.db.execute('INSERT INTO cycle_delivery_check VALUES(?,?,?,?)',(id,kind,self.s.clock(),encoded(evidence)))
  def confirm(self,id,kind,evidence):

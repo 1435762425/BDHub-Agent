@@ -76,6 +76,18 @@ class DeliveryTests(unittest.TestCase):
   self.assertEqual(self.s.db.execute('SELECT mode FROM relationship WHERE plan_id=? AND creator_id=?',(self.p,self.c['creatorId'])).fetchone()[0],'human')
   self.assertEqual(tuple(self.s.db.execute('SELECT reason,state FROM service_case WHERE plan_id=? AND creator_id=?',(self.p,self.c['creatorId'])).fetchone()),('card_result_unknown','open'))
   self.assertFalse(self.d.quarantine_absent_card(self.id))
+ def test_isolated_card_no_longer_blocks_the_next_creator(self):
+  self.begin('card');self.d.unknown(self.id,'card');self.absence();self.now+=400;self.absence()
+  self.s.import_edges(self.p,[edge(person='c2',source='e2')])
+  other=self.s.db.execute("SELECT * FROM relationship WHERE creator_id='c2'").fetchone()
+  second={**self.c,'creatorId':other['creator_id'],'oecId':other['oec'],'source':{'sourceId':'e2'},'controlRevision':other['revision']}
+  second_id=self.d.prepare(self.p,second)['id']
+  begin=lambda:self.d.begin(second_id,'card',authorized_snapshot_hash=digest(second),recipient_verified=True,allowance_verified=True)
+  with self.assertRaisesRegex(CycleError,'delivery_unknown'):begin()
+  self.assertTrue(self.d.quarantine_absent_card(self.id))
+  self.assertEqual(begin()['kind'],'card')
+  self.d.unknown(self.id,'card')
+  self.assertEqual(self.d.get(self.id)['state'],'quarantined_unknown')
  def test_absence_reads_close_together_do_not_isolate(self):
   self.begin('card');self.d.unknown(self.id,'card')
   for _ in range(3):self.absence()
