@@ -1,6 +1,22 @@
 # BDHub-Agent 当前交接
 
-更新时间：2026-09-24 11:00（Asia/Shanghai）。本页只记录运行快照；规则见 [PROJECT](../PROJECT.md)，实现见 [TECHNICAL](../TECHNICAL.md)，后续方向见[项目审计与清理](../implementation/project-audit-20260924.md)。更早流水见[历史交接](../archive/handoff/codex-takeover-history-20260923.md)。
+更新时间：2026-09-24 11:40（Asia/Shanghai）。本页只记录运行快照；规则见 [PROJECT](../PROJECT.md)，实现见 [TECHNICAL](../TECHNICAL.md)，后续方向见[项目审计与清理](../implementation/project-audit-20260924.md)。更早流水见[历史交接](../archive/handoff/codex-takeover-history-20260923.md)。
+
+## 2026-09-24 生产暂停（用户要求）
+
+- 11:18–11:19 按用户要求暂停，全部使用系统自带开关，未强杀进程：
+  - IT/BR/UK 自动运营总开关关闭（revision 5/3/3；MY 本来未开）。
+  - 四市场持续发送执行 stop（`runRequested=false`、`stopRequested=true`，revision IT 16、BR 4、MY 2、UK 4）。
+  - scheduler、IT 收信和 IT Agent 作业写入停止文件；BR/MY/UK 的收信与 Agent worker 收到 SIGTERM 后在安全点退出。
+  - 11:19:45 起项目 worker 为 0，只有 Web 在运行。
+- 暂停前没有在途平台写入（18 个 ready 组件未开始，另有 IT 2 个 quarantined_unknown、1 个 partial_delivery 保持原状）。Agent 开关、指南和发送模板未改。前后状态回执在本机 `outputs/pause-20260924/`。
+- 暂停时待回复的达人来信：BR 48、IT 57、MY 15、UK 8。MY 收信从 10:43 起在认证阶段连续失败（`taplink_remote_read_failed`），早于暂停。
+- 恢复需要明确操作：打开各市场自动运营、在页面对持续发送执行 start（首发授权规则不变）、启动 scheduler。恢复前先处理 MY 认证问题，并按讨论结论调整调度。
+
+## 2026-09-24 会话页修复
+
+- 自 2026-09-23 23:14 的 Web 构建起，会话页在浏览器里读不出任何队列（`fetch` 被当作对象方法调用，浏览器报 Illegal invocation），四个市场都显示 0 条和“暂时无法读取会话队列”。台账与接口数据完整。
+- 已修复并补回归测试，重新构建 Web：当前 build `jso911ocYYSg1oS4_HKVd`；上一版构建备份在 `var/web-releases/conversation-fetch-fix-20260924/previous`。
 
 ## 2026-09-24 项目审计与清理
 
