@@ -135,3 +135,20 @@ test('unmounted conversation ignores outstanding reads',async()=>{
  controller.select('1');controller.dispose();pending.resolve(response(detail('1')));await flush();
  assert.equal(controller.getSnapshot().detail,null);
 });
+
+test('default fetcher keeps the browser receiver so the queue loads without an injected fetcher',async()=>{
+ const original=globalThis.fetch,calls=[];
+ globalThis.fetch=function(url){
+  // Browsers throw "Illegal invocation" unless fetch runs on window or with no receiver at all.
+  if(this!==undefined&&this!==globalThis)throw new TypeError("Failed to execute 'fetch' on 'Window': Illegal invocation");
+  calls.push(String(url));
+  return Promise.resolve(response(queue([],0,{counts:{human:0,agent:48,waiting:0,completed:0,all:48}})));
+ };
+ try{
+  const controller=new ConversationController('br');
+  await controller.loadList();
+  assert.equal(controller.getSnapshot().error,'');
+  assert.equal(controller.getSnapshot().list.counts.all,48);
+  assert.equal(calls[0],'/api/conversations?market=br&view=human&query=');
+ }finally{globalThis.fetch=original;}
+});

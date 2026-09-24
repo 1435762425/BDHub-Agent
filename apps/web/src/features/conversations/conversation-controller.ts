@@ -34,7 +34,9 @@ export class ConversationController {
 
   constructor(
     market:string,
-    fetcher:Fetcher = fetch,
+    // Browsers reject window.fetch called as a method of another object ("Illegal invocation"),
+    // and every call below is this.fetcher(...), so the default must not be the bare function.
+    fetcher:Fetcher = (input, init) => fetch(input, init),
     newId = () => crypto.randomUUID(),
   ) {this.market=market;this.fetcher=fetcher;this.newId=newId;}
 
