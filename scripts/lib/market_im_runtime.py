@@ -20,6 +20,17 @@ _AUTH_CACHE={}
 _AUTH_CACHE_SECONDS=60
 
 
+def _read(reader,**request):
+ """One auth read.  A failed read keeps its error code and also carries the platform business code, so a caller
+ can tell a lapsed login (16201010) from any other refusal."""
+ result=reader._xhr(**request)
+ try:return reader.require_read(result)
+ except ValueError as error:
+  code=getattr(result,'code',None)
+  error.platform_code=code if type(code) is int else None
+  raise
+
+
 def _data(payload):
  value=payload.get('data') if isinstance(payload,dict) else None
  return value if isinstance(value,dict) else payload
@@ -73,15 +84,15 @@ def authenticated(root,market,report,*,canary=False,read_only=False,capability='
    else:
     reader=Reader(identity,account,allow_write=False);reader.session.trust_env=True
     params={'aid':identity.aid,'partner_id':str(identity.partner_id)}
-    partner=_data(reader.require_read(reader._xhr(method='GET',path=INFO,params=params|{'partner_type':1},payload=None,write=False)))
+    partner=_data(_read(reader,method='GET',path=INFO,params=params|{'partner_type':1},payload=None,write=False))
     rows=(partner.get('partner_biz_role_info') or {}).get('market_list',[])
     matches=[row for row in rows if str(row.get('market_region'))==str(identity.im_market) and
              any(str(item.get('partner_id')) in {str(identity.partner_id),str(identity.im_market_partner_id)} for item in (row.get('type_list') or []))]
     if len(matches)!=1:raise ValueError('market_institution_not_verified')
     market_row=matches[0];market_id=str(market_row.get('market_id') or '')
-    im=_data(reader.require_read(reader._xhr(method='GET',path=IM_ID,params=params|{'user_id':market_id,'type':0},payload=None,write=False)))
+    im=_data(_read(reader,method='GET',path=IM_ID,params=params|{'user_id':market_id,'type':0},payload=None,write=False))
     im_id=str(im.get('im_id') or '')
-    token=_data(reader.require_read(reader._xhr(method='GET',path=IM_TOKEN,params=params|{'im_id':im_id},payload=None,write=False)))
+    token=_data(_read(reader,method='GET',path=IM_TOKEN,params=params|{'im_id':im_id},payload=None,write=False))
     endpoint=urlsplit(str(token.get('api_url') or ''));portal=urlsplit(identity.home);partner_host=f'{portal.scheme}://{portal.netloc}'
     if not im_id.isdigit() or not token.get('token') or not endpoint.hostname:raise ValueError('market_im_auth_invalid')
     safe_headers={key:value for key,value in reader.headers.items() if key.lower() in {'user-agent','accept-language'}}

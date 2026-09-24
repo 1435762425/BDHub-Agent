@@ -8,6 +8,7 @@ sys.dont_write_bytecode=True
 sys.path.insert(0,str(ROOT/'scripts'))
 from lib.cycle_inbox import Inbox,inbox_status
 from lib.cycle_service import Service
+from lib.login_recovery import AUTH_REQUIRED,request_refresh
 from lib.market_im_runtime import authenticated
 from lib.reply_events import backfill
 from lib.second_cycle import CycleStore
@@ -98,6 +99,9 @@ def tick(market,limit=12):
    report['state']=failure_state(error)
    report['errorCode']=getattr(error,'code',None) or (str(error) if isinstance(error,ValueError) else type(error).__name__)
    report['failureStage']=stage
+   if stage=='auth' and getattr(error,'platform_code',None)==AUTH_REQUIRED:
+    # A lapsed communications login stops inbox, replies and sends alike: ask for one refresh of this generation.
+    report['accountRecovery']=request_refresh(store,ROOT,market)
    if target:
     report['failureTargetHash']=hashlib.sha256(f'{plan}:{target[0]}:{target[1]}'.encode()).hexdigest()[:16]
     report['failureTargetRelationPresent']=bool(store.db.execute(

@@ -10,6 +10,7 @@ from lib.cycle_inbox import Inbox,inbox_status
 from lib.cycle_service import Service
 from lib.second_live_runtime import _authenticated
 from lib.italy_im_session import ItalyImReadSession
+from lib.login_recovery import it_login_expired,request_refresh
 STOP=False
 
 def stop(*_):
@@ -57,7 +58,10 @@ def tick(limit):
       history=reader.history_summary(conv,include_events=True,include_contents=True)
       result=inbox.ingest(plan,cid,oec,history);service.capture(plan,cid,oec,history.get('contents',[]));report['processed']+=1
       for key in ('added','historical','liveReplies'):report[key]=report.get(key,0)+result[key]
-  except Exception as e:report['errorCode']=getattr(e,'code',type(e).__name__)
+  except Exception as e:
+   report['errorCode']=getattr(e,'code',type(e).__name__)
+   # A lapsed ACC6 login stops inbox, replies and sends alike: ask for one refresh of this generation.
+   if it_login_expired(report):report['accountRecovery']=request_refresh(store,ROOT,'it')
   finally:
    signal.setitimer(signal.ITIMER_REAL,0)
    if reader:reader.close()

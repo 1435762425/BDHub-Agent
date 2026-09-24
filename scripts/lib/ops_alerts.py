@@ -76,6 +76,7 @@ def _market_facts(root, store, market, accounts):
         "inbox": {"checkedAt": _stamp(inbox.get("checkedAt")),
                   "lastSuccessAt": _stamp((inbox.get("status") or {}).get("lastCheckedAt")),
                   "errorCode": inbox.get("errorCode") or None, "failureStage": inbox.get("failureStage") or None,
+                  "accountRecovery": inbox.get("accountRecovery") if isinstance(inbox.get("accountRecovery"), dict) else None,
                   "stopRequested": market == "it" and (root / "var/job-inbox.stop").exists()},
         "stages": stages,
         "unknown": deliveries.get("unknown", empty), "quarantined": deliveries.get("quarantined_unknown", empty),
@@ -128,6 +129,20 @@ def _hours(seconds):
     return f"{max(0.0, seconds) / 3600:.1f}"
 
 
+def _recovery_note(recovery):
+    """What the inbox did about a lapsed login, for the inbox alert."""
+    if not recovery:
+        return ""
+    state = recovery.get("state")
+    if state in ("queued", "draining", "running"):
+        return "；已自动发起账号刷新，等待结果"
+    if state == "completed":
+        return "；账号已自动刷新，等下一轮收信确认"
+    if state == "not_requested":
+        return "；账号维护进行中" if recovery.get("reason") == "account_maintenance_active" else "；未能自动发起账号刷新"
+    return f"；自动刷新未成功（{recovery.get('errorCode') or state}），需要人工处理"
+
+
 def evaluate(facts):
     now, alerts = facts["now"], []
 
@@ -165,6 +180,7 @@ def evaluate(facts):
             inbox["lastSuccessAt"] is None or now - inbox["lastSuccessAt"] > INBOX_ERROR_GRACE_SECONDS)
         if failing:
             stage = f"（{inbox['failureStage']} 阶段）" if inbox["failureStage"] else ""
+            stage += _recovery_note(inbox.get("accountRecovery"))
             # ``since`` is the last successful read, which the bar shows as the start of the failure.
             add(f"{key}-inbox-error", "critical" if running else "warning", f"{name} 收信失败",
                 f"{inbox['errorCode']}{stage}", market=key, since=inbox["lastSuccessAt"],

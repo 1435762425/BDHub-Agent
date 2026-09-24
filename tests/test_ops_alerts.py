@@ -75,6 +75,19 @@ class EvaluateTests(unittest.TestCase):
         self.assertEqual(levels(alerts), {"br-inbox-stale": "critical", "my-inbox-error": "critical",
                                           "it-acc6-identity-overdue": "warning"})
 
+    def test_inbox_login_alert_says_what_the_automatic_refresh_did(self):
+        failing = {"errorCode": "taplink_remote_read_failed", "failureStage": "auth", "lastSuccessAt": NOW - HOUR}
+        notes = {}
+        for state, extra in (("running", {}), ("completed", {}), ("needs_human", {"errorCode": "account_login_timeout"}),
+                             ("not_requested", {"reason": "account_maintenance_active"})):
+            alert = evaluate(facts(market("br", inbox=failing | {"accountRecovery": {"state": state} | extra})))[0]
+            notes[state] = alert["detail"]
+        self.assertEqual(notes, {
+            "running": "taplink_remote_read_failed（auth 阶段）；已自动发起账号刷新，等待结果",
+            "completed": "taplink_remote_read_failed（auth 阶段）；账号已自动刷新，等下一轮收信确认",
+            "needs_human": "taplink_remote_read_failed（auth 阶段）；自动刷新未成功（account_login_timeout），需要人工处理",
+            "not_requested": "taplink_remote_read_failed（auth 阶段）；账号维护进行中"})
+
     def test_scheduler_down_without_a_stop_request_is_critical(self):
         self.assertEqual(levels(evaluate(facts(market("br"), running=False))), {"scheduler-down": "critical"})
         self.assertEqual(evaluate(facts(market("br", active=False), running=False)), [])
