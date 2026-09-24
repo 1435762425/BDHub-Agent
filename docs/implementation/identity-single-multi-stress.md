@@ -35,6 +35,8 @@ ACC1、ACC8、ACC9、ACC11均用各自原身份完成一次意大利Find小样�
 
 ## 实现与复用
 
+> 下列两个压测脚本已于 2026-09-24 移出仓库，需要时用 `git show audit-base-20260924:scripts/<文件名>` 取回；`lib/identity_stress.py` 仍在。
+
 - `benchmark-identity-limits.py --mode both|single|multi`：读取固定清单、分账号并行/单号升档、失败停止、保留完整报告、最终恢复两个准备进程。运行前须核对并停止当前准备/身份Worker，脚本会拒绝与仍存活的Worker同时启动。压测脚本自身有独占锁。
 - `lib/identity_stress.py`：按新项目var内的冻结清单校验账号、目标、档位与原身份文件哈希，限制每档最多40目标/账号，QPS只允许3/5/8/12。高档位只在明确stress manifest中生效，普通cohort仍3 QPS。
 - `benchmark-identity-lanes.py`：此前的3/6/9通道阶梯，总QPS固定3；不是原生频率上限测试。

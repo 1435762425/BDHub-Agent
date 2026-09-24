@@ -116,7 +116,7 @@ IT 默认热点＋冷 checkpoint 每轮 12 个/30 秒；其他三市场 20 个/1
 
 `evaluate-agent-v2.py` 复用生产 prompt 和校验器，读取固定四市场多轮合成案例。默认零模型调用；显式 `--call-model` 保存全输入输出、指南 hash 与失败样本，`--guide-db` 只读生效指南。筛查和逐条复核分开，合成通过率不代表生产准确率。
 
-首次真实启动由 `agent-v2-first-send` 页面事件授权，首条确认后停在 pilot_complete_waiting_resume，再由 `agent-v2-full-run` 继续。simulate 与 trace 不调用平台 transport；`--authorized-now` 单次请求不能和常驻 worker 合用。旧 run-auto-replies 入口返回 legacy_auto_reply_retired，V1 turn_review/固定模板只用于历史评测。
+首次真实启动由 `agent-v2-first-send` 页面事件授权，首条确认后停在 pilot_complete_waiting_resume，再由 `agent-v2-full-run` 继续。simulate 与 trace 不调用平台 transport；`--authorized-now` 单次请求不能和常驻 worker 合用。旧 V1 自动回复入口已删除；V1 turn_review/固定模板只用于历史评测。
 
 ## 3. 数据、并发与备份
 

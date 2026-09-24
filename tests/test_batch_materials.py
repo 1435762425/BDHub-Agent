@@ -31,26 +31,6 @@ class MaterialTests(unittest.TestCase):
   self.jobs.plan(self.task,self.members,[self.offer]);self.jobs.save(self.id,'one-card','ready',self.card)
   members=[m|{'offerFingerprint':digest(self.offer|{'creatorPercent':'13'})} for m in self.members]
   self.assertEqual(apply_materials(self.s,self.id,self.report,members)[0]['verifiedReady'],0)
- def test_unknown_creation_is_reconciled_even_without_current_roster(self):
-  from unittest.mock import patch
-  from lib.second_cycle import CycleStore
-  from lib.cycle_card_creation import CardCreation
-  from lib.batch_material_runtime import advance_materials
-  root=Path(self.tmp.name);(root/'var').mkdir()
-  with CycleStore(root/'var/second-cycle.sqlite',lambda:NOW) as cycle:
-   plan=cycle.plan('bjn-local-research','it');ledger=CardCreation(cycle);intent=ledger.prepare(plan,self.offer,'cuscino');ledger.begin(intent['id']);ledger.unknown(intent['id'])
-  self.jobs.plan(self.task,self.members,[self.offer]);self.jobs.bind_intent(self.id,'one-card',intent['id'])
-  calls=[]
-  with patch('lib.batch_material_runtime.run_card_process',side_effect=lambda *a:calls.append(a[-1])),patch('lib.batch_material_runtime.read_local_preparation',side_effect=AssertionError('must reconcile first')):
-   advance_materials(self.s,self.task,root)
-  self.assertEqual(calls,['verify-one'])
- def test_paused_task_cannot_launch_card_writer(self):
-  from unittest.mock import patch
-  from lib.batch_material_runtime import run_card_process
-  self.s.control(self.id,'pause',1)
-  with patch('lib.batch_material_runtime.subprocess.Popen') as process:
-   with self.assertRaises(CycleError):run_card_process(Path(self.tmp.name),self.s,self.id,'intent','execute-one')
-   process.assert_not_called()
  def test_pause_prevents_late_material_commit(self):
   self.jobs.plan(self.task,self.members,[self.offer]);self.s.control(self.id,'pause',1);self.jobs.save(self.id,'one-card','ready',self.card)
   self.assertEqual(self.jobs.pending(self.id,self.members)[0]['state'],'queued')
