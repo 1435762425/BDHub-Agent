@@ -67,7 +67,7 @@
   - `/api/creator-identities` 直读 SQLite；`batch-tasks.sqlite` 仍在用。
   - DeepSeek provider 及其旧项目 key 回退；IT 写入前的旧库检查；BR/MY/UK 的身份链路。
   - `jobs.json` 各开关的实际语义；页面会改写 `config/*.json`。
-  - 补齐漏列的 7 个 API、6 个配置和 2 个库；注明 9 个已无代码读写的旧库仍在备份清单里。
+  - 补齐漏列的 7 个 API、5 个配置文件和市场接入 canary 库；注明 9 个已无代码读写的旧库仍在备份清单里。
   - 写明本目录即生产，开发走 worktree。
 - **PROJECT**：规则不变。
   - B 类线索、非 IT 的 TapLink 清理加“实现缺口”标注。
@@ -82,7 +82,7 @@
   - vendor README：MX 探针已删。
   - 第三方许可说明：ApexCharts 和示例图已移除。
   - TailAdmin 导入清单：去掉 50 个已不存在的文件。
-  - 3 份被链接的设计文档去掉过时横幅。
+  - 5 份被链接的设计文档修正了过时的横幅或规则。
   - 交接文档改名为 `docs/handoff/current.md`。
 
 ## 6. 缺陷与实现缺口（未改代码，需排期或决定）
