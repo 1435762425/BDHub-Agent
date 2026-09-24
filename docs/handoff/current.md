@@ -1,11 +1,11 @@
 # BDHub-Agent 当前交接
 
-更新时间：2026-09-24 21:40（Asia/Shanghai）。本页只记录运行快照；规则见 [PROJECT](../PROJECT.md)，实现见 [TECHNICAL](../TECHNICAL.md)，后续方向见[项目审计与清理](../implementation/project-audit-20260924.md)。更早流水见[历史交接](../archive/handoff/codex-takeover-history-20260923.md)。
+更新时间：2026-09-24 21:52（Asia/Shanghai）。本页只记录运行快照；规则见 [PROJECT](../PROJECT.md)，实现见 [TECHNICAL](../TECHNICAL.md)，后续方向见[项目审计与清理](../implementation/project-audit-20260924.md)。更早流水见[历史交接](../archive/handoff/codex-takeover-history-20260923.md)。
 
 ## 2026-09-24 晚间：主链恢复与平台额度（用户要求）
 
 - 17:42:52 按用户选择打开 BR、UK 自动运营总开关（revision 4）；MY 保持关闭，IT 等恢复方案。下一轮主链：BR 09-25 07:00，UK 09-26 07:00。
-- 调度器随即维护到期货盘账号：IT acc9 17:45 完成。BR acc2 刷新回退为重登，17:56 `account_login_timeout`（needs_human，登录窗口无人处理）。BR 主链 09-25 07:00 前需要用户在场重登 acc2。
+- 调度器随即维护到期货盘账号：IT acc9 17:45 完成。BR acc2 刷新回退为重登，17:56 `account_login_timeout`（needs_human，登录窗口无人处理）；21:49 按用户要求重登，39 秒完成，新代次 `identity-generation-b9496f8c74ef546e03e30631`，收信重连确认。
 - 平台额度实测：BR 当天确认 1000 张卡后，下一张卡没有回执、两次回查都查不到（unknown）；UK 确认 1001 张后，下一张卡 20:44:45 被平台明确拒收（`it_delivery_send_rejected`）。结论：约每市场每天 1000 个新联系。两次拒收都没落账，拿不到平台原话。
 - MY 18:32、IT 19:03 各 1 张卡发出后回查读不到历史（history_unavailable）而停发；20:43 原意图只读核验在历史里找到原消息，恢复发送。之后两条投递已过 30 分钟冻结期，补发文字时被许可拒绝（delivery_expired，被适配器改写成 dispatch_not_allowed）而再次停发。
 - `1c7f64f`：BR/MY/UK 发送结算明确拒收（rejected），其它记 unknown；带响应的平台回执全部落账；当天第一次拒收即暂停新联系到次日；worker 遇拒收进入 waiting_capacity。20:48 对 MY、IT 执行 stop/start 以载入新代码。
