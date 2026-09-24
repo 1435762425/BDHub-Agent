@@ -186,7 +186,7 @@ def evaluate(facts):
                 since=stage["at"], href=f"{base}/ops/kalodata" if code.startswith("kalodata_auth") else base)
         if market["unknown"]["count"]:
             add(f"{key}-send-unknown", "warning", f"{name} {market['unknown']['count']} 条发送结果未知",
-                "只按原账号和原意图核验，不会自动重发。", market=key, since=market["unknown"]["oldestAt"], href=base)
+                "只按原账号和原意图核验，不会自动重发；结清前本市场二发和 AI 回复都暂停。", market=key, since=market["unknown"]["oldestAt"], href=base)
         if market["quarantined"]["count"]:
             add(f"{key}-send-quarantined", "info", f"{name} {market['quarantined']['count']} 条未知发送已隔离",
                 "保留原意图和案件，不会重发。", market=key, since=market["quarantined"]["oldestAt"], href=base)

@@ -57,6 +57,19 @@ class AgentReplyWorkerTests(unittest.TestCase):
   db.execute("UPDATE cycle_bulk_runtime SET phase='waiting_window'")
   db.execute("INSERT INTO cycle_delivery_part VALUES('inflight')")
   self.assertTrue(WORKER.send_dispatch_active(self.store))
+ def test_unknown_delivery_or_reply_holds_the_agent_before_any_model_call(self):
+  from lib.cycle_auto_reply import reply_blocker
+  db=self.store.db
+  db.execute('CREATE TABLE cycle_delivery(plan_id TEXT,state TEXT)')
+  db.execute('CREATE TABLE service_reply(plan_id TEXT,state TEXT)')
+  db.execute("INSERT INTO cycle_delivery VALUES('p','quarantined_unknown')")
+  db.execute("INSERT INTO service_reply VALUES('p','confirmed')")
+  db.execute("INSERT INTO cycle_delivery VALUES('other','unknown')")
+  self.assertIsNone(reply_blocker(db,'p'))
+  db.execute("INSERT INTO service_reply VALUES('p','inflight')")
+  self.assertEqual(reply_blocker(db,'p'),'reply_unknown')
+  db.execute("INSERT INTO cycle_delivery VALUES('p','unknown')")
+  self.assertEqual(reply_blocker(db,'p'),'delivery_unknown')
  def test_dispatch_mutex_is_limited_to_the_same_market(self):
   db=self.store.db
   db.execute('CREATE TABLE plan(id TEXT,market TEXT)')

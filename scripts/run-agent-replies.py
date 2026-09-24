@@ -4,7 +4,7 @@ import argparse,fcntl,json,re,signal,sys,time
 from datetime import datetime,timezone,timedelta
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1];sys.dont_write_bytecode=True;sys.path.insert(0,str(ROOT/'scripts'))
-from lib.cycle_auto_reply import AutoReplies
+from lib.cycle_auto_reply import AutoReplies,reply_blocker
 from lib.reply_events import backfill
 from lib.agent_reply_v2 import apply_production,generate,production_context,rollout_stage
 from lib.second_cycle import CycleError,CycleStore,digest
@@ -118,6 +118,8 @@ def tick(authorized_now=None,market="it"):
   # Replies never share time with the second send: scheduled runs wait until the send window and its buffer pass.
   if authorized_now is None and near_send_window(send_window(store,market),setting['bufferMinutes'],now):
    return {'state':'waiting_send_window','platformWrites':0,'realSends':0}
+  blocker=reply_blocker(store.db,plan)
+  if blocker:return {'state':'waiting_dispatch','blockedBy':blocker,'platformWrites':0,'realSends':0}
   projection=backfill(store);replies=AutoReplies(store);run_id='agent-run-'+digest([plan,int(now),setting['revision'],authorized_now])[:24]
   report={'runId':run_id,'state':'running','triggerSource':'user_authorized_now' if authorized_now else 'reply_window',
    'authorizationRequestId':authorized_now,'claimed':0,'noReply':0,'prepared':0,'human':0,'confirmed':0,

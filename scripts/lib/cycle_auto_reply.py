@@ -11,6 +11,15 @@ ACK='Ricevuto, verifichiamo e ti aggiorniamo appena possibile.'
 SAMPLE='Per questa collaborazione ti proponiamo di promuovere di nuovo il prodotto: non inviamo un nuovo campione. Se lo hai ancora, puoi usarlo per un nuovo video o LIVE.'
 REPLACEMENT='Capito. Puoi contattare direttamente il negozio e chiedere se è possibile ricevere un altro campione o una sostituzione.'
 
+def reply_blocker(db,plan):
+ """Plan-wide reasons begin() refuses every automatic reply.  The Agent checks them before it calls the model, so a
+ held market does not spend model calls and creators' retry attempts on replies it cannot send."""
+ if db.execute("SELECT 1 FROM cycle_delivery WHERE state='unknown' AND plan_id=?",(plan,)).fetchone():return 'delivery_unknown'
+ if db.execute("SELECT 1 FROM service_reply WHERE plan_id=? AND state IN ('inflight','unknown','accepted')",(plan,)).fetchone():
+  return 'reply_unknown'
+ return None
+
+
 def _decision_wait_for(db,reply_id):
  row=db.execute("SELECT output_json FROM agent_reply_decision_v2 WHERE service_reply_id=? AND state='ready' ORDER BY created_at DESC LIMIT 1",(reply_id,)).fetchone()
  return (json.loads(row[0]).get('waitFor') if row else None)
@@ -159,8 +168,8 @@ class AutoReplies:
    if q['case_id']:
     case=self.s.db.execute('SELECT * FROM service_case WHERE id=?',(q['case_id'],)).fetchone()
     if not case or case['state']!='open' or case['ack_state']=='confirmed':raise CycleError('handoff_changed')
-   if self.s.db.execute("SELECT 1 FROM cycle_delivery WHERE state='unknown' AND plan_id=?",(q['plan_id'],)).fetchone():raise CycleError('delivery_unknown')
-   if self.s.db.execute("SELECT 1 FROM service_reply WHERE plan_id=? AND state IN ('inflight','unknown','accepted')",(q['plan_id'],)).fetchone():raise CycleError('reply_unknown')
+   blocker=reply_blocker(self.s.db,q['plan_id'])
+   if blocker:raise CycleError(blocker)
    self.s.db.execute("UPDATE service_reply SET state='inflight',started=? WHERE id=?",(self.s.clock(),id))
    return {'dispatchAllowed':True,'requestRef':q['request_ref'],'stage':'send_message',
            'componentKind':'card' if q['kind']=='manual_card' else 'text'}
