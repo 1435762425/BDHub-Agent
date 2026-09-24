@@ -3,7 +3,7 @@ from contextlib import closing
 from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'scripts'))
 from lib.conversation_workbench import (complete_reviewed_human,confirm_manual_reply,conversation_detail,
- list_conversations,reconcile_manual_reply,reject_creator,resolve_manual,save_draft,set_collaboration)
+ list_conversations,reconcile_manual_reply,reject_creator,resolve_manual,save_draft,set_collaboration,unread_backlog)
 from lib.cycle_auto_reply import AutoReplies
 from lib.cycle_inbox import Inbox
 from lib.cycle_service import Service
@@ -25,6 +25,15 @@ class ConversationWorkbenchTests(unittest.TestCase):
   self.store.db.execute("INSERT INTO service_case VALUES(?,?,?,'open',1,'link_issue',?,?, 'not_sent')",('case-'+('c'*24),self.plan,'creator-1',NOW,NOW))
   with closing(sqlite3.connect(self.root/'var/creator-identities.sqlite')) as db,db:db.execute("CREATE TABLE creator_identity(creator_id,oec_id,market,current_handle,handle_conflict)");db.execute("INSERT INTO creator_identity VALUES('creator-1','123','it','alice',0)")
  def tearDown(self):self.store.close();self.tmp.cleanup()
+ def test_unread_backlog_matches_the_list_unread_marks(self):
+  self.store.db.execute("INSERT INTO relationship VALUES(?,?,?,'auto',0,1,?,1)",(self.plan,'creator-2','456',NOW+100))
+  self.store.db.execute("INSERT INTO inbox_pending VALUES(?,?,1,?,'awaiting_classification')",(self.plan,'creator-2',NOW))
+  self.store.db.execute("INSERT INTO inbound_turn VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",('turn-'+('d'*24),self.plan,'creator-2','456','998','1001','e'*64,'text','Ciao',int((NOW-3600)*1000),0,NOW-3600))
+  self.store.db.execute("INSERT INTO relationship VALUES(?,?,?,'auto',0,1,?,1)",(self.plan,'creator-3','789',NOW+100))
+  self.store.db.execute("INSERT INTO inbox_pending VALUES(?,?,1,?,'answered')",(self.plan,'creator-3',NOW))
+  items=list_conversations(self.root,self.store,'all',limit=100)['items']
+  self.assertEqual(sum(row['unread'] for row in items),2)
+  self.assertEqual(unread_backlog(self.store,'it'),{'unread':2,'oldestAt':NOW-3600})
  def test_default_human_queue_explains_reason(self):
   result=list_conversations(self.root,self.store,'human')
   self.assertEqual(result['total'],1);self.assertEqual(result['items'][0]['humanReasonLabel'],'链接打不开')

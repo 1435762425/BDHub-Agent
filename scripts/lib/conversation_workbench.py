@@ -21,6 +21,9 @@ INTENT_REASONS={'paid_collaboration':'paid_or_budget','commission_anomaly':'comm
  'collaboration_product_request':'catalog_request','ambiguous_request':'unclassified',
  'other':'multiple_requests'}
 SHOWCASE_TEXT='达人已将商品添加到橱窗'
+# Pending states that still wait for us.  The list's unread flag and the ops alert backlog share this rule.
+UNREAD_PENDING=('awaiting_content','awaiting_classification','review_partial','template_ready','policy_review',
+ 'facts_ready_for_review','needs_facts','human')
 
 def _human_label(db,plan,creator,reason):
  if db.execute("SELECT 1 FROM sqlite_master WHERE name='agent_reply_decision_v2'").fetchone():
@@ -35,6 +38,35 @@ def _plan_id(store,market):
  row=store.db.execute("SELECT id FROM plan WHERE market=? AND institution='bjn-local-research'",(market,)).fetchone()
  if not row:raise CycleError('plan_missing')
  return row[0]
+
+def _latest_turn(db,plan,creator):
+ return db.execute('SELECT * FROM inbound_turn WHERE plan_id=? AND creator_id=? ORDER BY coalesce(occurred_ms,observed_at*1000) DESC,message_id DESC LIMIT 1',(plan,creator)).fetchone()
+
+def _latest_external(db,plan,rel,latest):
+ """Conversation id and the newest agency-backend outbound message for this creator."""
+ from lib.observed_messages import outbound_messages
+ cid=latest['cid'] if latest else None
+ if cid is None:
+  observed=db.execute("SELECT cid FROM inbox_event WHERE plan_id=? AND oec=? AND kind='ourMessages' "
+                       "ORDER BY coalesce(occurred_ms,observed_at*1000) DESC LIMIT 1",(plan,rel['oec'])).fetchone()
+  cid=observed[0] if observed else None
+ external=outbound_messages(db,plan,cid,rel['oec'],limit=1) if cid else []
+ return cid,(external[-1] if external else None)
+
+def _turn_at(latest):
+ return latest['occurred_ms']/1000 if latest and latest['occurred_ms'] else latest['observed_at'] if latest else 0
+
+def unread_backlog(store,market='it'):
+ """Count and oldest creator-message time of the conversations the list marks unread, without building the list."""
+ db=store.db;plan=_plan_id(store,market);count,oldest=0,None
+ marks=','.join('?'*len(UNREAD_PENDING))
+ for rel in db.execute("SELECT r.* FROM relationship r JOIN inbox_pending p ON p.plan_id=r.plan_id AND p.creator_id=r.creator_id "
+                       f"WHERE r.plan_id=? AND p.state IN ({marks})",(plan,*UNREAD_PENDING)):
+  latest=_latest_turn(db,plan,rel['creator_id']);_,external=_latest_external(db,plan,rel,latest);inbound_at=_turn_at(latest)
+  if external and external['occurredAt']>inbound_at:continue
+  count+=1
+  if inbound_at and (oldest is None or inbound_at<oldest):oldest=inbound_at
+ return {'unread':count,'oldestAt':oldest}
 
 def _handles(root,market='it'):
  path=Path(root)/'var/creator-identities.sqlite'
@@ -112,16 +144,7 @@ def list_conversations(root,store,view='human',query='',limit=30,offset=0,market
  except (OSError,ValueError,TypeError):agent_failed=False
  rows=[]
  for rel in db.execute('SELECT * FROM relationship WHERE plan_id=?',(plan,)):
-  latest=db.execute('SELECT * FROM inbound_turn WHERE plan_id=? AND creator_id=? ORDER BY coalesce(occurred_ms,observed_at*1000) DESC,message_id DESC LIMIT 1',(plan,rel['creator_id'])).fetchone()
-  from lib.observed_messages import outbound_messages
-  cid=latest['cid'] if latest else None
-  if cid is None:
-   observed=db.execute("SELECT cid FROM inbox_event WHERE plan_id=? AND oec=? AND kind='ourMessages' "
-                        "ORDER BY coalesce(occurred_ms,observed_at*1000) DESC LIMIT 1",(plan,rel['oec'])).fetchone()
-   cid=observed[0] if observed else None
-  external=outbound_messages(db,plan,cid,rel['oec'],limit=1) if cid else []
-  external=external[-1] if external else None
-  inbound_at=latest['occurred_ms']/1000 if latest and latest['occurred_ms'] else latest['observed_at'] if latest else 0
+  latest=_latest_turn(db,plan,rel['creator_id']);cid,external=_latest_external(db,plan,rel,latest);inbound_at=_turn_at(latest)
   externally_answered=bool(external and external['occurredAt']>inbound_at)
   case=db.execute("SELECT * FROM service_case WHERE plan_id=? AND creator_id=? AND state='open' ORDER BY updated DESC LIMIT 1",(plan,rel['creator_id'])).fetchone()
   pending=db.execute('SELECT * FROM inbox_pending WHERE plan_id=? AND creator_id=?',(plan,rel['creator_id'])).fetchone()
@@ -162,7 +185,7 @@ def list_conversations(root,store,view='human',query='',limit=30,offset=0,market
    'humanReasonLabel':_human_label(db,plan,rel['creator_id'],reason),
    'latestText':display_text,'latestMeaningZh':meaning if latest and display_text==latest['text'] else None,
    'latestAt':display_at,'waitingSeconds':max(0,int(store.clock()-display_at)) if display_at and state in ('human','agent') else 0,
-   'unread':bool(not externally_answered and pending and pending['state'] in ('awaiting_content','awaiting_classification','review_partial','template_ready','policy_review','facts_ready_for_review','needs_facts','human')),
+   'unread':bool(not externally_answered and pending and pending['state'] in UNREAD_PENDING),
    'action':action,'caseId':case['id'] if case else None})
  order={'human':0,'agent':1,'waiting':2,'completed':3}
  rows.sort(key=lambda r:(order[r['state']],-r['waitingSeconds'],r['creatorId']))

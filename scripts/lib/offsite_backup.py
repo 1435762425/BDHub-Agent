@@ -53,6 +53,20 @@ def key_path(root):
     return backups_home(root) / "offsite" / "offsite.key"
 
 
+def latest_path(root):
+    return backups_home(root) / "offsite" / "latest.json"
+
+
+def latest(root):
+    """The newest copy this machine wrote and verified, or None."""
+    try:
+        value = json.loads(latest_path(root).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    created = value.get("createdAt") if isinstance(value, dict) else None
+    return value if isinstance(created, (int, float)) and not isinstance(created, bool) else None
+
+
 def ensure_key(root):
     """Create the random key file once (0600).  Returns (path, created)."""
     path = key_path(root)
@@ -282,6 +296,13 @@ def run(root, target, *, now=None, keep=KEEP_COPIES):
             shutil.rmtree(destination, ignore_errors=True)
             raise
         removed = _prune(current["target"], keep)
+        # A local note of the newest verified copy, so the alert bar can tell its age while the disk is unplugged.
+        record = latest_path(root)
+        pending = record.with_name(record.name + ".tmp")
+        pending.write_text(json.dumps({"copy": stamp, "target": current["target"], "createdAt": now,
+                                       "encryptedBytes": manifest["encryptedBytes"],
+                                       "keyFingerprint": manifest["keyFingerprint"]}) + "\n", encoding="utf-8")
+        pending.replace(record)
     return {"destination": str(destination), "keyPath": str(key), "keyCreated": created, "removedCopies": removed,
             **{name: manifest[name] for name in ("keyFingerprint", "stateSnapshot", "databases", "members",
                                                  "plainBytes", "encryptedBytes")}}

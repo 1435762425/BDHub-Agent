@@ -57,6 +57,8 @@ class OffsiteBackupTests(unittest.TestCase):
                          ["README.txt", "backup.tar.gz.enc", "manifest.json"])
         self.assertNotIn(b'"secret"', (destination / "backup.tar.gz.enc").read_bytes())
         self.assertEqual(offsite_backup.verify(self.root, self.target)["copy"], destination.name)
+        self.assertEqual({key: offsite_backup.latest(self.root)[key] for key in ("copy", "createdAt")},
+                         {"copy": destination.name, "createdAt": 1_790_000_000})
 
         restore = self.base / "restore"
         restore.mkdir()
@@ -98,6 +100,7 @@ class OffsiteBackupTests(unittest.TestCase):
         finally:
             blocked.chmod(0o600)
         self.assertEqual(list((self.target / offsite_backup.FOLDER).iterdir()), [])
+        self.assertIsNone(offsite_backup.latest(self.root))
 
     def test_damaged_copy_fails_the_check(self):
         receipt = offsite_backup.run(self.root, self.target)
