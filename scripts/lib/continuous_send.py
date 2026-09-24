@@ -346,6 +346,7 @@ def execute_once(root,store,*,authenticated=None,authorized_now=None,reconcile_o
         return {'state':result['state'],'deliveryId':active['id'],'platformWrites':0,'realSends':0}
     if result['state']=='confirmed':return publish_runtime(store,plan,'sending',delivery=None,confirmed_delta=1,unknown=0)
     if result['state']=='unknown':return publish_runtime(store,plan,'waiting_reconciliation',delivery=active,stop_reason='result_unknown',unknown=1)
+    if result['state']=='quarantined_unknown':return publish_runtime(store,plan,'sending',delivery=None,stop_reason='card_result_unknown')
     return publish_runtime(store,plan,'paused',delivery=active,stop_reason=result['state'])
 
 

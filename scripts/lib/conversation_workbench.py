@@ -8,7 +8,8 @@ from lib.second_cycle import CycleError,digest,encoded
 from lib.template_library import agent_setting,manual_templates
 from lib.cycle_service import Service
 
-HUMAN_REASONS={'human':'需要人工判断','paid_or_budget':'付费或预算','fixed_fee_negotiation_requires_human':'付费合作条件',
+HUMAN_REASONS={'human':'需要人工判断','card_result_unknown':'卡片结果未知，已隔离，不再自动发送',
+ 'conversation_create_unknown':'建会话结果未知，已隔离，不再自动发送','paid_or_budget':'付费或预算','fixed_fee_negotiation_requires_human':'付费合作条件',
  'product_card_broken':'商品卡打不开','card_commission_mismatch':'商品卡佣金不一致','stop_contact':'要求停止联系',
  'catalog_request':'更多商品目录','whatsapp':'WhatsApp',
  'boost':'Boost','complaint':'投诉','do_not_contact':'明确停联','commission_issue':'佣金异常',

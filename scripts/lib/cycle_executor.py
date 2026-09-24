@@ -67,6 +67,9 @@ def execute(deliveries,id,runtime_factory,authorize,preflight,*,verify_only=Fals
     receipt=json.loads(latest['receipt']) if latest['receipt'] else {}
     proof=adapter.readback_card(conv,card,part['request_ref'],message_id=receipt.get('messageId')) if kind=='card' else adapter.readback(conv,c['message']['textIt'],part['request_ref'],message_id=receipt.get('messageId'))
     deliveries.record_check(id,kind,proof)
-    if proof.get('status')!='confirmed':deliveries.unknown(id,kind);return deliveries.get(id)
+    if proof.get('status')!='confirmed':
+     deliveries.unknown(id,kind)
+     if kind=='card':deliveries.quarantine_absent_card(id)
+     return deliveries.get(id)
     deliveries.confirm(id,kind,{'status':'confirmed','requestRef':part['request_ref'],'oecId':c['oecId'],'kind':kind,'messageId':proof['messageId'],'evidenceRef':proof['evidenceRef']})
  return deliveries.get(id)

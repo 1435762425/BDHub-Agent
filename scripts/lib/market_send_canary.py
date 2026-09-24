@@ -231,7 +231,10 @@ def run(root,market,request_id,*,canary=True,page_control=False,reconcile_only=F
      proof=adapter.readback_card(conversation,card,part['request_ref'],message_id=receipt.get('messageId')) if kind=='card' else adapter.readback(conversation,candidate['message']['textIt'],part['request_ref'],message_id=receipt.get('messageId'))
      Deliveries(store).record_check(did,kind,proof)
      if proof.get('status')!='confirmed':
-      Deliveries(store).unknown(did,kind);raise CycleError('market_send_result_unknown')
+      Deliveries(store).unknown(did,kind)
+      if kind=='card' and Deliveries(store).quarantine_absent_card(did):
+       return report|{'state':'quarantined_unknown','deliveryId':did,'stopReason':'card_result_unknown'}
+      raise CycleError('market_send_result_unknown')
      Deliveries(store).confirm(did,kind,{'status':'confirmed','requestRef':part['request_ref'],'oecId':candidate['oecId'],'kind':kind,'messageId':proof['messageId'],'evidenceRef':proof['evidenceRef']})
      continue
     if part['state']!='ready':raise CycleError('market_send_part_unavailable')

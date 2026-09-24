@@ -9,6 +9,8 @@ from lib.second_cycle import CycleError,digest,encoded,assess_offer
 # no other refusal has ever been recorded, so a refusal means the day's agency quota is used up.
 NEW_CONTACT_LIMIT=None
 PLATFORM_REJECTION_HOLD=1
+CARD_ABSENCE_READS=2
+CARD_ABSENCE_SPAN_SECONDS=300
 BEIJING=timezone(timedelta(hours=8))
 def platform_rejections_today(store,plan):
  day=datetime.fromtimestamp(store.clock(),BEIJING).replace(hour=0,minute=0,second=0,microsecond=0).timestamp()
@@ -119,6 +121,37 @@ class Deliveries:
    self.s.db.execute("DELETE FROM cycle_contact_reservation WHERE plan_id=? AND oec=? AND reserved>=?",
      (d['plan_id'],d['oec'],d['created']))
   return self.get(id)
+ def quarantine_absent_card(self,id):
+  """Isolate a card whose result stayed unknown although at least two history reads, five minutes or more apart,
+  found no such message (user decision 2026-09-24): the delivery is quarantined, the creator moves to human handling
+  and is never sent to automatically again, and the market stops waiting on it.  A read that could not see the
+  history is not evidence of absence, and nothing is resent."""
+  from lib.cycle_service import Service
+  Service(self.s)
+  with self.s.tx():
+   d=self.get(id)
+   if d['state']!='unknown' or len(d['parts'])!=2:return False
+   card,text=d['parts']
+   if card['kind']!='card' or card['state']!='unknown' or text['kind']!='text' or text['state']!='ready' or \
+      text['started'] is not None or text['receipt'] or text['confirmation']:return False
+   reads=[row[0] for row in self.s.db.execute("""SELECT checked FROM cycle_delivery_check WHERE delivery_id=? AND kind='card'
+     AND json_extract(payload,'$.reason')='it_delivery_history_not_found' AND json_extract(payload,'$.messageId') IS NULL
+     ORDER BY checked""",(id,))]
+   if len(reads)<CARD_ABSENCE_READS or reads[-1]-reads[0]<CARD_ABSENCE_SPAN_SECONDS:return False
+   rel=self.s.db.execute('SELECT mode FROM relationship WHERE plan_id=? AND creator_id=? AND oec=?',
+                         (d['plan_id'],d['creator_id'],d['oec'])).fetchone()
+   if not rel:return False
+   self.s.db.execute("UPDATE cycle_delivery SET state='quarantined_unknown' WHERE id=?",(id,))
+   if rel['mode']=='auto':
+    self.s.db.execute("UPDATE relationship SET mode='human',revision=revision+1 WHERE plan_id=? AND creator_id=?",
+                      (d['plan_id'],d['creator_id']))
+   now=self.s.clock();case_id='case-'+digest([id,'card_quarantine'])[:24]
+   self.s.db.execute("INSERT OR IGNORE INTO service_case VALUES(?,?,?,'open',0,'card_result_unknown',?,?,'not_sent')",
+                     (case_id,d['plan_id'],d['creator_id'],now,now))
+   self.s.db.execute('INSERT INTO cycle_delivery_check VALUES(?,?,?,?)',(id,'card_quarantine',now,encoded(
+     {'status':'quarantined_unknown','reason':'card_result_unknown','absentReads':len(reads),
+      'firstAbsentAt':reads[0],'lastAbsentAt':reads[-1],'textStarted':False,'platformWrites':0})))
+  return True
  def quarantine_unknown_conversation(self,id,request_id,*,observed_conversations,matching_conversations):
   """Isolate one ambiguous create without altering its original request or parts."""
   if not isinstance(request_id,str) or not re.fullmatch(r'[A-Za-z0-9._:-]{8,120}',request_id):raise CycleError('quarantine_request_invalid')

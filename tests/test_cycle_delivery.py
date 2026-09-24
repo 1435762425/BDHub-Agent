@@ -62,6 +62,26 @@ class DeliveryTests(unittest.TestCase):
   self.assertEqual(self.d.cancel_expired_unsubmitted(self.p,(mode,)),[did])
   self.assertEqual((self.d.get(did)['state'],[p['state'] for p in self.d.get(did)['parts']]),('partial_delivery',['confirmed','cancelled']))
   self.assertEqual(self.d.cancel_expired_unsubmitted(self.p,(mode,)),[])
+ def absence(self,reason='it_delivery_history_not_found'):
+  self.d.record_check(self.id,'card',{'status':'result_unknown','reason':reason,'messageId':None,'evidenceRef':'history'})
+ def test_card_missing_from_two_history_reads_is_isolated_to_a_human(self):
+  self.begin('card');self.d.unknown(self.id,'card')
+  self.absence();self.absence('it_delivery_history_unavailable')
+  self.now+=400;self.absence('it_delivery_history_unavailable')
+  self.assertFalse(self.d.quarantine_absent_card(self.id))
+  self.absence()
+  self.assertTrue(self.d.quarantine_absent_card(self.id))
+  self.assertEqual(self.d.get(self.id)['state'],'quarantined_unknown')
+  self.assertEqual([p['state'] for p in self.d.get(self.id)['parts']],['unknown','ready'])
+  self.assertEqual(self.s.db.execute('SELECT mode FROM relationship WHERE plan_id=? AND creator_id=?',(self.p,self.c['creatorId'])).fetchone()[0],'human')
+  self.assertEqual(tuple(self.s.db.execute('SELECT reason,state FROM service_case WHERE plan_id=? AND creator_id=?',(self.p,self.c['creatorId'])).fetchone()),('card_result_unknown','open'))
+  self.assertFalse(self.d.quarantine_absent_card(self.id))
+ def test_absence_reads_close_together_do_not_isolate(self):
+  self.begin('card');self.d.unknown(self.id,'card')
+  for _ in range(3):self.absence()
+  self.now+=299;self.absence()
+  self.assertFalse(self.d.quarantine_absent_card(self.id))
+  self.assertEqual(self.d.get(self.id)['state'],'unknown')
  def test_market_send_failure_settles_refusals_and_keeps_the_platform_answer(self):
   refusal=SimpleNamespace(outcome='rejected',code='it_delivery_send_rejected',native_status=2,check_code=7,
                           check_message='daily limit',response_ref='im-response:refused')
