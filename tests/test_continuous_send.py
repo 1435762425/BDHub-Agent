@@ -244,6 +244,7 @@ class ContinuousSendTests(unittest.TestCase):
         class FakeDeliveries:
             snapshot=None
             def __init__(self,_store):pass
+            def cancel_expired_unsubmitted(self,_plan,_modes):return []
             def prepare(self,_plan,value):
                 FakeDeliveries.snapshot=value
                 return {'id':'delivery-test','creator_id':value['creatorId'],'pid':value['pid'],'state':'ready'}

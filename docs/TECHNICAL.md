@@ -90,7 +90,7 @@ Find lanes 共用账号 QPS 和一次串行滑块结果，同账号原请求重�
 
 同市场同达人主动推品冷却统一 **72 小时**；池投影、领取前复检和最终平台写门禁必须同值，回复/橱窗不缩短。人工客服与新来信回复不套用主动推品冷却。`outreach_policy.py` 将已确认/部分送达的末次组件时间与同 plan/OEC 的平台我方外发观测时间取较晚值；逐写仅排除当前 delivery 在原 cid 已确认的 messageId。未知意图仍独立阻断，不靠冷却结束放行。
 
-每位领取冻结全部发送事实，逐次发卡/文字前复检停止、时间窗、身份维护、关系和当前材料。容量预检在建会话/发卡前，最终滚动 24 小时预留在短事务复核；已解锁关系、或 24 小时内已为同一达人预留过的，不再占新联系名额（`cycle_delivery.contact_capacity_available`）。本地上限 `NEW_CONTACT_LIMIT` 现为 None，改由平台机构额度决定；`cycle_platform_signal` 里同一北京日 outcome=rejected 的平台回执达到 `PLATFORM_REJECTION_HOLD`（2 次）时，同一闸门拒绝新联系到次日，发送 worker 进入 waiting_capacity（每 5 分钟复查）。建会话返回非零码仍记为 unknown 并停发，待核验原意图；首次撞到平台额度后，按落账的原生码补明确分类。页面与状态接口的 capacity.limit/remaining 为 null 时显示“由平台机构额度决定”，告警条报当天平台拒绝次数。卡＋文字要求两个剩余消息槽；历史单卡确认而文字未尝试已触限，只结算未发送文字，保留 partial_delivery。
+每位领取冻结全部发送事实，逐次发卡/文字前复检停止、时间窗、身份维护、关系和当前材料。容量预检在建会话/发卡前，最终滚动 24 小时预留在短事务复核；已解锁关系、或 24 小时内已为同一达人预留过的，不再占新联系名额（`cycle_delivery.contact_capacity_available`）。本地上限 `NEW_CONTACT_LIMIT` 现为 None，改由平台机构额度决定；`cycle_platform_signal` 里同一北京日 outcome=rejected 的平台回执达到 `PLATFORM_REJECTION_HOLD`（2 次）时，同一闸门拒绝新联系到次日，发送 worker 进入 waiting_capacity（每 5 分钟复查）。建会话返回非零码仍记为 unknown 并停发，待核验原意图；首次撞到平台额度后，按落账的原生码补明确分类。页面与状态接口的 capacity.limit/remaining 为 null 时显示“由平台机构额度决定”，告警条报当天平台拒绝次数。卡＋文字要求两个剩余消息槽；历史单卡确认而文字未尝试已触限，只结算未发送文字，保留 partial_delivery。冻结后 30 分钟过期的 ready 投递，若建会话意图未开始、各组件未发出，发送 worker 每轮先用 `cancel_expired_unsubmitted` 结算为 cancelled（delivery_expired），不迟发；可能已到达平台的只留给核验。
 
 组件已提交只读精确回查。`/api/send` reconcile 即使停止/窗口外也只查原账号/requestRef，结束即返回，不能领取下一人或启动未提交组件。会话 received 只有原 requestRef/CID/达人身份全部匹配才可确认，缺回执 inflight 保持未知。IT 已授权的零卡文未知会话隔离保留原意图和案件，不改成失败/成功，不对该达人再发。
 

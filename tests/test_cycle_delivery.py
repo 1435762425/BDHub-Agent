@@ -38,6 +38,20 @@ class DeliveryTests(unittest.TestCase):
   with self.assertRaises(CycleError):self.d.prepare(self.p,self.c|{'message':{'textIt':'different'}})
   self.now+=1801
   with self.assertRaisesRegex(CycleError,'delivery_expired'):self.begin('card')
+ def test_expired_deliveries_are_settled_only_when_nothing_was_dispatched(self):
+  self.s.db.execute('DELETE FROM cycle_delivery_part');self.s.db.execute('DELETE FROM cycle_delivery')
+  mode='market-continuous-v1';did=self.d.prepare(self.p,{**self.c,'executionMode':mode})['id']
+  self.d.prepare_conversation(did)
+  self.assertEqual(self.d.cancel_expired_unsubmitted(self.p,(mode,)),[])
+  self.now+=1801
+  self.assertEqual(self.d.cancel_expired_unsubmitted(self.p,('continuous-v1',)),[])
+  self.s.db.execute("UPDATE cycle_conversation_intent SET state='inflight' WHERE delivery_id=?",(did,))
+  self.assertEqual(self.d.cancel_expired_unsubmitted(self.p,(mode,)),[])
+  self.assertEqual(self.d.get(did)['state'],'ready')
+  self.s.db.execute("UPDATE cycle_conversation_intent SET state='ready' WHERE delivery_id=?",(did,))
+  self.assertEqual(self.d.cancel_expired_unsubmitted(self.p,(mode,)),[did])
+  self.assertEqual({self.d.get(did)['state'],*(part['state'] for part in self.d.get(did)['parts'])},{'cancelled'})
+  self.assertEqual(self.d.cancel_expired_unsubmitted(self.p,(mode,)),[])
  def test_contact_reservation_is_shared_and_not_recounted(self):
   self.d.reserve_contact(self.id);self.d.reserve_contact(self.id);self.assertEqual(self.s.db.execute('SELECT count(*) FROM cycle_contact_reservation').fetchone()[0],1)
  def test_contact_capacity_blocks_before_any_message(self):

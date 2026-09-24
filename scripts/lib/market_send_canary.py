@@ -157,6 +157,7 @@ def run(root,market,request_id,*,canary=True,page_control=False,reconcile_only=F
   else:
    require_send_template_approval(store,root,market)
    _dispatch_allowed(store,market,canary=canary,page_control=page_control)
+   Deliveries(store).cancel_expired_unsubmitted(plan,('market-canary-v1','market-continuous-v1'))
    active=_unsettled(store,plan,canary=canary)
   if not recovering_only and store.db.execute("SELECT 1 FROM cycle_delivery WHERE plan_id=? AND state='unknown' AND id<>? LIMIT 1",(plan,active['id'] if active else '')).fetchone():
    raise CycleError('market_send_result_unknown')
