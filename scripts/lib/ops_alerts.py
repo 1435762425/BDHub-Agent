@@ -164,9 +164,9 @@ def evaluate(facts):
             inbox["lastSuccessAt"] is None or now - inbox["lastSuccessAt"] > INBOX_ERROR_GRACE_SECONDS)
         if failing:
             stage = f"（{inbox['failureStage']} 阶段）" if inbox["failureStage"] else ""
-            last = f"；最后成功 {_clock(inbox['lastSuccessAt'])}" if inbox["lastSuccessAt"] else ""
+            # ``since`` is the last successful read, which the bar shows as the start of the failure.
             add(f"{key}-inbox-error", "critical" if running else "warning", f"{name} 收信失败",
-                f"{inbox['errorCode']}{stage}{last}", market=key, since=inbox["lastSuccessAt"],
+                f"{inbox['errorCode']}{stage}", market=key, since=inbox["lastSuccessAt"],
                 href=f"{base}/ops/accounts" if inbox["failureStage"] == "auth" else f"{base}/ops/jobs")
         elif running and inbox["stopRequested"]:
             add(f"{key}-inbox-stopped", "info", f"{name} 收信已人工停止", "调度在运行，但收信作业有停止请求。",
