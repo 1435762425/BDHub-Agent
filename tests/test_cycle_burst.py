@@ -199,12 +199,14 @@ class FrozenCohortTests(unittest.TestCase):
    self.assertEqual(calls,[])
    self.assertTrue(all(item['state']=='material_stale' for item in result['items']))
 
- def test_one_explicit_card_rejection_does_not_stop_other_pid(self):
+ def test_an_explicit_card_rejection_holds_the_remaining_new_contacts_for_the_day(self):
+  # User decision 2026-09-24: a platform refusal means the day's quota is used, so later new contacts wait.
   with self.fixture(reject_first=True) as (root,db,plan,calls,auths):
-   result=M.run_cohort('frozen',lanes=2)
-   states={item['creatorId']:item['state'] for item in result['items']}
-   self.assertEqual(states,{'c1':'material_stale','c2':'confirmed'})
-   with CycleStore(db) as s:self.assertEqual(s.db.execute('SELECT state FROM cycle_bulk').fetchone()[0],'running')
+   result=M.run_cohort('frozen',lanes=1)
+   items={item['creatorId']:item for item in result['items']}
+   self.assertEqual({key:item['state'] for key,item in items.items()},{'c1':'material_stale','c2':'error'})
+   self.assertEqual(items['c2'].get('reason'),'new_contact_capacity_reached')
+   with CycleStore(db) as s:self.assertEqual(s.db.execute('SELECT state FROM cycle_bulk').fetchone()[0],'local_capacity_reached')
 
  def test_unknown_in_frozen_batch_halts_all_lanes(self):
   with self.fixture(unknown_first=True) as (root,db,plan,calls,auths):
