@@ -480,7 +480,7 @@ DeepSeek/Agent 已经把 9 月 14 日的“货盘批量备链”继续推进到�
 - 产品规则已确认 A 类最近 14 天正销量、B 类最近 30 天精确 PID 视频播放量 `>=1,000`；B 类同一达人×PID只取最高单条视频，不求和、不计算播放速度；
 - `lead_priority.py` 以纯函数实现 A/B 合并和排序模拟：A 类 `sourceRank → units → PID`，B 类 `最高单条 views → 发布时间 → PID`，同达人只占一个当前发送槽；
 - 12 条合成来源形成 9 个位置、6 个发送顺序、3 个等待、2 个过滤；100,000 播放无 OECID和50,000播放未结回复均未进入发送顺序，150,000播放的同达人B类没有挤掉其A类；
-- 排序合同随后已接入真实 `lead_pool.py`；本小节的12条仍只是合成验收，不替代下方全量重建数据。详细结果见 [排序模拟](../../implementation/lead-priority-simulation-20260920.md)。
+- 排序合同随后已接入真实 `lead_pool.py`；本小节的12条仍只是合成验收，不替代下方全量重建数据。详细结果见已移出的 `lead-priority-simulation-20260920.md`（`git show audit-base-20260924:docs/implementation/lead-priority-simulation-20260920.md`）。
 
 ### 进行中：当前标准链接范围的 A/B 全量重建
 

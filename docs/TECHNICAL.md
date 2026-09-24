@@ -78,7 +78,7 @@ Find lanes 共用账号 QPS 和一次串行滑块结果，同账号原请求重�
 
 | 模块 | 职责 |
 | --- | --- |
-| `lead_pool.py` / `lead_priority.py` | 当前资格、A/B 排序、单达人槽位 |
+| `lead_pool.py` | 当前资格、A/B 排序（`strength()`）、单达人槽位 |
 | `cycle_review.py` | 领取前身份、材料、关系、去重复检 |
 | `cycle_delivery.py` / `cycle_executor.py` | 不可变 delivery、组件意图、额度和回执 |
 | `continuous_send.py` / `continuous-send-worker.py` | IT 控制、窗口、断点与 worker |
