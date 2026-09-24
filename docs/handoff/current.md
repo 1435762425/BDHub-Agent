@@ -1,6 +1,6 @@
 # BDHub-Agent 当前交接
 
-更新时间：2026-09-24 16:20（Asia/Shanghai）。本页只记录运行快照；规则见 [PROJECT](../PROJECT.md)，实现见 [TECHNICAL](../TECHNICAL.md)，后续方向见[项目审计与清理](../implementation/project-audit-20260924.md)。更早流水见[历史交接](../archive/handoff/codex-takeover-history-20260923.md)。
+更新时间：2026-09-24 16:50（Asia/Shanghai）。本页只记录运行快照；规则见 [PROJECT](../PROJECT.md)，实现见 [TECHNICAL](../TECHNICAL.md)，后续方向见[项目审计与清理](../implementation/project-audit-20260924.md)。更早流水见[历史交接](../archive/handoff/codex-takeover-history-20260923.md)。
 
 ## 2026-09-24 生产暂停（用户要求）
 
@@ -35,11 +35,27 @@
 ## 2026-09-24 页面告警条（用户选定渠道）
 
 - 用户选定只用页面告警条提醒，不发飞书或系统通知。所有市场页面顶部新增告警条，由 `/api/ops-alerts` 调 `scripts/ops-alerts.py` 只读汇总四个市场的异常，页面打开时每分钟刷新。
-- 16:14 发布 Web：当前 build `uV-5eJUz4DZGcAhSjDbKp`，上一版备份在 `var/web-releases/ops-alerts-20260924/previous`。没有启动或重启任何 worker。
+- 16:14 发布 Web（build `uV-5eJUz4DZGcAhSjDbKp`），上一版备份在 `var/web-releases/ops-alerts-20260924/previous`。没有启动或重启任何 worker。
 - 16:20 告警条内容：
   - 生产已暂停（自 11:18）。
   - 需处理 4 项：IT 2 条人工会话；IT 货盘 `global_catalog_not_published`；UK Kalodata `kalodata_auth_required`；MY 收信 `taplink_remote_read_failed`（auth 阶段，自 10:42）。
   - 提示 5 项：IT 29、BR 48、UK 8、MY 13 位达人来信未回（最早约 22 小时）；IT 2 条未知发送已隔离。
+
+## 2026-09-24 AI 回复窗口（用户确认）
+
+- 用户要求：按各市场当地白天回复，且回复不能与二发冲突，只在二发之前或之后进行。二发窗口四市场都是北京时间 16:30–24:00，未改。
+- 16:45 把四个市场的回复窗口从北京时间 15:00–16:00 改为下表，缓冲 30 分钟不变。直接调用 `save_agent_setting` 写入，没有经过页面 CLI（它会在 BR/MY/UK 自动拉起调度器）。Agent 开关、首发阶段和二发设置都没动。
+
+| 市场 | 北京时间 | 当地时间 | revision |
+| --- | --- | --- | --- |
+| IT | 00:30–03:00 | 18:30–21:00 | 3 → 4 |
+| UK | 00:30–04:00 | 17:30–21:00 | 1 → 2 |
+| BR | 00:30–08:00 | 13:30–21:00 | 1 → 2 |
+| MY | 09:00–16:00 | 09:00–16:00 | 1 → 2 |
+
+- IT 当地早上只剩二发前的 09:00–10:00，与晚上无法合成一段，取较长的晚上一段。10 月 25 日欧洲结束夏令时后，IT/UK 对应的当地时间提前 1 小时。
+- 16:44 发布 Web（build `5an8ErZUd2hM53vwMT3er`），上一版备份在 `var/web-releases/reply-window-20260924/previous`。作业页说明和告警条已显示新窗口。
+- 恢复生产后，每个市场第一轮只回 1 条（pilot），确认后停在 pilot_complete，需要在页面开启全量；全量时每分钟最多 1 条。
 
 ## 2026-09-24 会话页修复
 
