@@ -1,6 +1,16 @@
 # BDHub-Agent 当前交接
 
-更新时间：2026-09-24 17:10（Asia/Shanghai）。本页只记录运行快照；规则见 [PROJECT](../PROJECT.md)，实现见 [TECHNICAL](../TECHNICAL.md)，后续方向见[项目审计与清理](../implementation/project-audit-20260924.md)。更早流水见[历史交接](../archive/handoff/codex-takeover-history-20260923.md)。
+更新时间：2026-09-24 17:45（Asia/Shanghai）。本页只记录运行快照；规则见 [PROJECT](../PROJECT.md)，实现见 [TECHNICAL](../TECHNICAL.md)，后续方向见[项目审计与清理](../implementation/project-audit-20260924.md)。更早流水见[历史交接](../archive/handoff/codex-takeover-history-20260923.md)。
+
+## 2026-09-24 恢复收信、AI 回复与二发（用户要求）
+
+- 用户要求：先恢复收信和 AI 回复（AI 回复要看效果），再开所有市场二发；取消 500 人/24 小时上限，跑到平台机构每日额度。各市场自动运营总开关（主链）仍关闭，IT 货盘恢复另议。
+- 17:16:35 用 job-run 启动 IT 收信与 IT Agent 作业，后者拉起调度器；调度器随即拉起 BR/MY/UK 的收信与 Agent worker。BR/MY/UK 收信 17:17 恢复。
+- IT 收信因 acc6 维护逾期报 `live_maintenance_due`。调度器只在有市场开自动运营时做到期维护，所以 17:17 手动请求 acc6 refresh；回退为重登，17:19 发布新代次，意图 completed。IT 收信 17:22 恢复。IT acc9、BR acc2（货盘账号）仍逾期，主链恢复前再处理。
+- `9d9846e` 取消本地新联系上限：同一北京日平台明确拒绝 2 次，就暂停该市场新联系到次日。系统此前从未收到过平台拒绝回执，额度用尽时平台给什么信号未知，首次触发后再按落账原生码补分类。Web build `JYe4euXh2RqoSf8XnWeGB`（上一版备份 `var/web-releases/platform-quota-20260924/previous`）。
+- 17:28 对四市场二发执行 start（与暂停前一致：runRequested=true），全部失败于 `it_delivery_dispatch_not_allowed`：09-23 晚触达上限时留下 7 条已冻结、从未发出的 ready 投递（BR 4、IT 1、MY 1、UK 1），30 分钟前就已过期，发送 worker 每次先拿它们，在发送许可里撞到 delivery_expired；IT 每个调度 tick 重启一次，约 10 秒一轮只读认证。17:33:57 四市场执行 stop 止损，全程平台写入 0。
+- `3d9ffbf` 让两类发送 worker 先把“过期且未发出”的投递结算为 cancelled（delivery_expired）。17:37 重新 start（revision IT 19、BR 7、MY 5、UK 7）：7 条过期投递被结算，约 2 分钟内确认卡＋文字 BR 12、MY 12、UK 9、IT 7，平台拒绝 0。
+- AI 回复：四市场首发阶段为 pilot_running。今晚 00:30 起 BR/UK/IT、明早 09:00 起 MY，各先回 1 条试运行；确认后停在 pilot_complete，需要在页面开启全量。
 
 ## 2026-09-24 生产暂停（用户要求）
 
@@ -12,7 +22,7 @@
 - 暂停前没有在途平台写入（18 个 ready 组件未开始，另有 IT 2 个 quarantined_unknown、1 个 partial_delivery 保持原状）。Agent 开关、指南和发送模板未改。前后状态回执在本机 `outputs/pause-20260924/`。
 - 暂停时未回的达人来信（与会话页未读同一口径）：BR 48、IT 29、MY 13、UK 8，另有 IT 人工会话 2 条。此前记的 IT 57、MY 15 取自收信状态的 `pendingContent`，其中包含已处理或机构后台已回复的会话。MY 收信从 10:42 起在认证阶段连续失败（`taplink_remote_read_failed`），早于暂停。
 - 四个市场的 Agent V2 首发已于 09-23 16:57–17:02 在页面授权（阶段 `pilot_running`）。授权晚于当天 15:00–16:00 回复窗口，09-24 的窗口前又已暂停，所以还没有 V2 真实回复。
-- 恢复需要明确操作：打开各市场自动运营、在页面对持续发送执行 start（首发授权规则不变）、启动 scheduler。恢复前先处理 MY 认证问题，并按讨论结论调整调度。
+- 17:16–17:37 已恢复收信、AI 回复和二发，见上；主链（自动运营总开关）仍关闭。
 
 ## 2026-09-24 本机清理（用户同意）
 
