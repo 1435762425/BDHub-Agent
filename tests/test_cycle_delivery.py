@@ -52,6 +52,16 @@ class DeliveryTests(unittest.TestCase):
   self.assertEqual(self.d.cancel_expired_unsubmitted(self.p,(mode,)),[did])
   self.assertEqual({self.d.get(did)['state'],*(part['state'] for part in self.d.get(did)['parts'])},{'cancelled'})
   self.assertEqual(self.d.cancel_expired_unsubmitted(self.p,(mode,)),[])
+ def test_expired_delivery_with_a_delivered_card_keeps_the_card_and_drops_the_late_text(self):
+  self.s.db.execute('DELETE FROM cycle_delivery_part');self.s.db.execute('DELETE FROM cycle_delivery')
+  mode='market-continuous-v1';self.c={**self.c,'executionMode':mode};did=self.d.prepare(self.p,self.c)['id'];self.id=did
+  self.begin('card')
+  self.now+=1801
+  self.assertEqual(self.d.cancel_expired_unsubmitted(self.p,(mode,)),[])
+  self.now-=1801;self.d.confirm(did,'card',self.proof('card'));self.now+=1801
+  self.assertEqual(self.d.cancel_expired_unsubmitted(self.p,(mode,)),[did])
+  self.assertEqual((self.d.get(did)['state'],[p['state'] for p in self.d.get(did)['parts']]),('partial_delivery',['confirmed','cancelled']))
+  self.assertEqual(self.d.cancel_expired_unsubmitted(self.p,(mode,)),[])
  def test_market_send_failure_settles_refusals_and_keeps_the_platform_answer(self):
   refusal=SimpleNamespace(outcome='rejected',code='it_delivery_send_rejected',native_status=2,check_code=7,
                           check_message='daily limit',response_ref='im-response:refused')

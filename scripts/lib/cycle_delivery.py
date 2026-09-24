@@ -90,17 +90,20 @@ class Deliveries:
      (id,'text',self.s.clock(),encoded({'status':'failed_known','reason':reason,'platformWrites':0})))
   return self.get(id)
  def cancel_expired_unsubmitted(self,plan,modes):
-  """Settle frozen deliveries that expired before anything was dispatched (across a pause, or after the day's quota
-  ran out) so a sender never picks them up again or sends them late.  Anything that may have reached the platform
-  -- a begun conversation create or any started component -- is left for verification."""
-  marks=','.join('?'*len(modes));cancelled=[]
-  for row in self.s.db.execute(f"""SELECT d.id FROM cycle_delivery d LEFT JOIN cycle_conversation_intent c ON c.delivery_id=d.id
-    WHERE d.plan_id=? AND d.state='ready' AND d.expires<=? AND (c.state IS NULL OR c.state='ready')
+  """Settle frozen deliveries that expired with nothing left in flight (across a pause, after the day's quota ran out,
+  or while an unknown card waited for readback) so a sender never picks them up again or sends them late.  A delivery
+  whose card is confirmed and whose text never started keeps the card as partial_delivery.  Anything that may have
+  reached the platform -- a begun conversation create, a started or unknown component -- is left for verification."""
+  marks=','.join('?'*len(modes));settled=[]
+  for row in self.s.db.execute(f"""SELECT d.id,d.state FROM cycle_delivery d LEFT JOIN cycle_conversation_intent c ON c.delivery_id=d.id
+    WHERE d.plan_id=? AND d.expires<=? AND (d.state='running' OR d.state='ready' AND (c.state IS NULL OR c.state='ready'))
       AND json_extract(d.snapshot,'$.executionMode') IN ({marks}) ORDER BY d.created""",(plan,self.s.clock(),*modes)).fetchall():
-   try:self.cancel_unsubmitted(row[0],'delivery_expired')
+   try:
+    if row[1]=='ready':self.cancel_unsubmitted(row[0],'delivery_expired')
+    else:self.cancel_pending_text(row[0],'delivery_expired')
    except CycleError:continue
-   cancelled.append(row[0])
-  return cancelled
+   settled.append(row[0])
+  return settled
  def cancel_unsubmitted(self,id,reason):
   """Settle a known preflight exclusion only when no component could have reached the platform."""
   if not isinstance(reason,str) or not re.fullmatch(r'[A-Za-z0-9_]{1,100}',reason):raise CycleError('delivery_cancel_reason_invalid')
