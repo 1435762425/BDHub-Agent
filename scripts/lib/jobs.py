@@ -106,10 +106,16 @@ def last_run(root,market):
 def status(root=None,market='it'):
     root=Path(root or Path(__file__).resolve().parents[2]);config=load(root);last=last_run(root,market);jobs=[]
     cycle=root/'var/second-cycle.sqlite'
-    agent_start=_scalar(cycle,"SELECT a.reply_start FROM agent_reply_setting a JOIN plan p ON p.id=a.plan_id "
+    agent_window=_scalar(cycle,"SELECT a.reply_start||'|'||a.reply_end||'|'||a.buffer_minutes FROM agent_reply_setting a "
+                         "JOIN plan p ON p.id=a.plan_id WHERE p.market=? AND p.institution='bjn-local-research'",(market,))
+    send_window=_scalar(cycle,"SELECT c.window_start||'|'||c.window_end FROM continuous_send_control c JOIN plan p ON p.id=c.plan_id "
                         "WHERE p.market=? AND p.institution='bjn-local-research'",(market,))
-    send_start=_scalar(cycle,"SELECT c.window_start FROM continuous_send_control c JOIN plan p ON p.id=c.plan_id "
-                       "WHERE p.market=? AND p.institution='bjn-local-research'",(market,))
+    agent_start,agent_end,buffer=agent_window.split('|') if agent_window else (None,None,None)
+    send_start,send_end=send_window.split('|') if send_window else (None,None)
+    # The two runtime windows are saved per market, so their descriptions show the saved times, not the defaults.
+    descriptions={'agent_reply':f'北京时间 {agent_start}–{agent_end} 处理达人来信，与二发窗口前后至少隔 {buffer} 分钟；开关与模板在会话页。'
+                  if agent_window else None,
+                  'continuous_send':f'北京时间 {send_start}–{send_end} 持续消费发送池，次日从台账继续。' if send_window else None}
     for job in JOBS:
         setting=config['jobs'][job['id']]
         enabled=(bool(_scalar(root/'var/second-cycle.sqlite',
@@ -120,7 +126,8 @@ def status(root=None,market='it'):
                          (market,))) if job['id']=='continuous_send' else setting['enabled'])
         at=(agent_start if agent_start is not None else job['defaultAt']) if job['id']=='agent_reply' else \
             (send_start if send_start is not None else job['defaultAt']) if job['id']=='continuous_send' else setting['at']
-        jobs.append({'id':job['id'],'name':job['name'],'group':job['group'],'description':job['description'],
+        jobs.append({'id':job['id'],'name':job['name'],'group':job['group'],
+          'description':descriptions.get(job['id']) or job['description'],
           'manual':job['manual'],'manualEndpoint':MANUAL_ENDPOINTS[job['manual']],
           'lastRunAt':last.get(job['id']),'enabled':enabled,'schedulable':True,
           'at':at,'cadence':job.get('cadence','daily'),'weekday':setting.get('weekday')})

@@ -343,7 +343,9 @@ def validate_agent_setting(value):
  if set(value)-allowed:raise CycleError('reply_setting_invalid')
  if type(merged['enabled']) is not bool or merged['timezone']!='Asia/Shanghai' or type(merged['bufferMinutes']) is not int or not 0<=merged['bufferMinutes']<=180:raise CycleError('reply_setting_invalid')
  rs,re=_minutes(merged['replyStart']),_minutes(merged['replyEnd'],True);ss,se=_minutes(merged['sendStart']),_minutes(merged['sendEnd'],True)
- if not rs<re<=ss<se or ss-re<merged['bufferMinutes']:raise CycleError('reply_schedule_overlap')
+ # The reply window sits before the send window of the same Beijing day, which also places it after the previous
+ # day's send (00:30-08:00 follows 16:30-24:00); the buffer applies on both sides.
+ if not rs<re<=ss<se or ss-re<merged['bufferMinutes'] or rs+1440-se<merged['bufferMinutes']:raise CycleError('reply_schedule_overlap')
  actions=merged['actions'];expected=set(DEFAULT_AGENT_SETTING['actions'])
  if not isinstance(actions,dict) or set(actions)!=expected or any(type(v) is not bool for v in actions.values()) or actions['human']:
   raise CycleError('reply_setting_invalid')

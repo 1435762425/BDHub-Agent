@@ -17,6 +17,20 @@ def inside(setting,stamp):
  now=datetime.fromtimestamp(stamp,BEIJING);minutes=now.hour*60+now.minute
  def m(v):h,n=map(int,v.split(':'));return h*60+n
  return m(setting['replyStart'])<=minutes<m(setting['replyEnd'])
+def near_send_window(window,buffer,stamp):
+ """True within ``buffer`` minutes of the second-send window; compared on a 24h circle so a guard running past
+ midnight (24:00 + 30 min) still covers 00:00-00:30."""
+ now=datetime.fromtimestamp(stamp,BEIJING);minutes=now.hour*60+now.minute
+ def m(v):h,n=map(int,v.split(':'));return h*60+n
+ start,end=m(window[0])-buffer,m(window[1])+buffer
+ return any(start<=minutes+shift<end for shift in (-1440,0,1440))
+def send_window(store,market):
+ """The window the second-send worker uses now, which may have moved after the Agent schedule was saved."""
+ if market=='it':
+  from lib.continuous_send import control
+  return control(store,ROOT)['window']
+ from lib.market_send_control import control
+ return control(store,market)['window']
 def authorized_request(value):
  if value is None:return None
  if not isinstance(value,str) or not REQUEST_ID.fullmatch(value):raise CycleError('agent_reply_authorization_invalid')
@@ -101,6 +115,9 @@ def tick(authorized_now=None,market="it"):
    return {'state':'first_send_requires_page_start' if stage=='pilot_required' else 'pilot_complete_waiting_resume',
            'platformWrites':0,'realSends':0}
   if not inside(setting,now) and authorized_now is None:return {'state':'outside_reply_window','platformWrites':0,'realSends':0}
+  # Replies never share time with the second send: scheduled runs wait until the send window and its buffer pass.
+  if authorized_now is None and near_send_window(send_window(store,market),setting['bufferMinutes'],now):
+   return {'state':'waiting_send_window','platformWrites':0,'realSends':0}
   projection=backfill(store);replies=AutoReplies(store);run_id='agent-run-'+digest([plan,int(now),setting['revision'],authorized_now])[:24]
   report={'runId':run_id,'state':'running','triggerSource':'user_authorized_now' if authorized_now else 'reply_window',
    'authorizationRequestId':authorized_now,'claimed':0,'noReply':0,'prepared':0,'human':0,'confirmed':0,

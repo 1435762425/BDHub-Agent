@@ -18,7 +18,10 @@ export async function saveJobTime(
   if(job.id==="agent_reply") {
     const library=await json(fetcher,`/api/template-library${query}`);
     const {revision,updatedAt:_,...setting}=library.agentSetting;
-    const [hour,minute]=at.split(":").map(Number),endMinutes=Math.min(1440,hour*60+minute+60);
+    // Moving the start keeps the saved window length; one hour applies only when the saved window is unusable.
+    const clock=(value:string)=>{const [h,m]=value.split(":").map(Number);return h*60+m;};
+    const length=clock(setting.replyEnd)-clock(setting.replyStart);
+    const [hour,minute]=at.split(":").map(Number),endMinutes=Math.min(1440,hour*60+minute+(length>0?length:60));
     setting.replyStart=at;
     setting.replyEnd=endMinutes===1440?"24:00":`${String(Math.floor(endMinutes/60)).padStart(2,"0")}:${String(endMinutes%60).padStart(2,"0")}`;
     await json(fetcher,`/api/template-library${query}`,{action:"save_agent",market,expectedRevision:revision,setting});

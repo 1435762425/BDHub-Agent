@@ -19,6 +19,17 @@ test('saving a BR Agent window writes only its canonical market setting',async()
  assert.ok(calls.every(row=>row.url.endsWith('market=br')));
 });
 
+test('moving the Agent start keeps the saved window length',async()=>{
+ const calls=[];
+ await saveJobTime('br',job('agent_reply'),'01:00',0,async(url,init)=>{
+  calls.push(init?.body?JSON.parse(init.body):null);
+  if(url.startsWith('/api/jobs'))return response({market:'br',jobs:[]});
+  return response({agentSetting:{revision:2,updatedAt:1,enabled:true,replyStart:'00:30',replyEnd:'08:00',bufferMinutes:30}});
+ });
+ const write=calls.find(Boolean);
+ assert.equal(write.setting.replyStart,'01:00');assert.equal(write.setting.replyEnd,'08:30');
+});
+
 test('saving a send window never writes a global schedule and reports readback failure separately',async()=>{
  const calls=[];
  const result=await saveJobTime('uk',job('continuous_send'),'17:00',0,async(url,init)=>{

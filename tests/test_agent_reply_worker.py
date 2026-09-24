@@ -23,6 +23,14 @@ class AgentReplyWorkerTests(unittest.TestCase):
   self.assertFalse(WORKER.inside(setting,stamp(14,59)))
   self.assertTrue(WORKER.inside(setting,stamp(15,0)))
   self.assertFalse(WORKER.inside(setting,stamp(16,0)))
+ def test_scheduled_replies_keep_clear_of_the_send_window_on_both_sides(self):
+  stamp=lambda h,m:datetime(2026,9,20,h,m,tzinfo=BEIJING).timestamp()
+  late=['16:30','24:00']
+  self.assertEqual([WORKER.near_send_window(late,30,stamp(h,m)) for h,m in ((15,59),(16,0),(23,59),(0,15),(0,30))],
+                   [False,True,True,True,False])
+  day=['10:00','12:00']
+  self.assertEqual([WORKER.near_send_window(day,30,stamp(h,m)) for h,m in ((9,29),(9,30),(12,29),(12,30))],
+                   [False,True,True,False])
  def test_one_time_authorization_requires_a_bounded_request_id(self):
   self.assertEqual(WORKER.authorized_request('agent-now-0001'),'agent-now-0001')
   with self.assertRaisesRegex(Exception,'agent_reply_authorization_invalid'):

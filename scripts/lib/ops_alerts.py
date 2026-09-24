@@ -189,7 +189,7 @@ def evaluate(facts):
         agent, unread = market["agent"], market["unread"]
         if unread["unread"]:
             waited = now - unread["oldestAt"] if unread["oldestAt"] else 0
-            reply = f"AI 回复窗口 {'–'.join(agent['replyWindow'])}" if agent["enabled"] else "AI 回复已关闭"
+            reply = f"AI 回复窗口北京时间 {'–'.join(agent['replyWindow'])}" if agent["enabled"] else "AI 回复已关闭"
             add(f"{key}-unread", "warning" if waited > BACKLOG_WARNING_SECONDS else "info",
                 f"{name} {unread['unread']} 位达人来信未回", f"最早一条已等 {_hours(waited)} 小时；{reply}。",
                 market=key, since=unread["oldestAt"], href=f"{base}/conversations")

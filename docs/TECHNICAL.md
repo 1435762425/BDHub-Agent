@@ -122,6 +122,8 @@ IT 默认热点＋冷 checkpoint 每轮 12 个/30 秒；其他三市场 20 个/1
 
 首次真实启动由 `agent-v2-first-send` 页面事件授权，首条确认后停在 pilot_complete_waiting_resume，再由 `agent-v2-full-run` 继续。simulate 与 trace 不调用平台 transport；`--authorized-now` 单次请求不能和常驻 worker 合用。旧 V1 自动回复入口已删除；V1 turn_review/固定模板只用于历史评测。
 
+回复窗口 `replyStart`–`replyEnd` 是北京时间的同一天区间（不跨午夜）。`validate_agent_setting` 与 template-library bridge 要求它位于同日二发窗口之前 `bufferMinutes` 以上，并且距前一天二发结束也有 `bufferMinutes` 以上，所以 00:30–08:00 可以跟在 16:30–24:00 之后。worker 每轮还用 `near_send_window` 核对二发此刻实际使用的窗口（IT 取 `continuous_send.control`，其他市场取 `market_send_control.control`）：窗口前后 buffer 内，计划内运行返回 `waiting_send_window`；页面单次 `--authorized-now` 不受此限，但仍受在途发送互斥约束。作业页修改 Agent 开始时间时保持已保存的窗口长度，作业说明显示实际保存的窗口。
+
 ## 3. 数据、并发与备份
 
 | SQLite/表族 | 事实归属 |

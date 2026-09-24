@@ -53,6 +53,10 @@ class TemplateLibraryTests(unittest.TestCase):
   bad={**value,'replyEnd':'17:00'}
   with self.assertRaisesRegex(CycleError,'overlap'):save_agent_setting(self.store,self.plan,1,bad)
   with self.assertRaises(CycleError):save_agent_setting(self.store,self.plan,1,{**value,'actions':{**value['actions'],'human':True}})
+  after=save_agent_setting(self.store,self.plan,1,{**value,'replyStart':'00:30','replyEnd':'08:00'})
+  self.assertEqual((after['replyStart'],after['replyEnd']),('00:30','08:00'))
+  with self.assertRaisesRegex(CycleError,'overlap'):
+   save_agent_setting(self.store,self.plan,2,{**value,'replyStart':'00:00','replyEnd':'08:00'})
  def test_agent_action_name_is_fixed_but_body_is_revisioned(self):
   policy=load_policy();rows=agent_templates(self.store,policy)
   current=next(row for row in rows if row['action']=='collaboration_ack')

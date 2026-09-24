@@ -54,18 +54,21 @@ class Reporting(unittest.TestCase):
             var=Path(folder,'var');var.mkdir()
             with closing(sqlite3.connect(var/'second-cycle.sqlite')) as db,db:
                 db.executescript('CREATE TABLE plan(id TEXT,market TEXT,institution TEXT);'
-                                 'CREATE TABLE agent_reply_setting(plan_id TEXT,enabled INTEGER,reply_start TEXT);'
+                                 'CREATE TABLE agent_reply_setting(plan_id TEXT,enabled INTEGER,reply_start TEXT,'
+                                 'reply_end TEXT,buffer_minutes INTEGER);'
                                  'CREATE TABLE continuous_send_control(plan_id TEXT,automatic_enabled INTEGER,'
-                                 'run_requested INTEGER,window_start TEXT);')
+                                 'run_requested INTEGER,window_start TEXT,window_end TEXT);')
                 for market,agent_at,send_at in (('it','15:00','16:30'),('br','14:00','17:00')):
                     db.execute("INSERT INTO plan VALUES(?,?,'bjn-local-research')",(market,market))
-                    db.execute('INSERT INTO agent_reply_setting VALUES(?,1,?)',(market,agent_at))
-                    db.execute('INSERT INTO continuous_send_control VALUES(?,1,0,?)',(market,send_at))
+                    db.execute("INSERT INTO agent_reply_setting VALUES(?,1,?,'16:00',30)",(market,agent_at))
+                    db.execute("INSERT INTO continuous_send_control VALUES(?,1,0,?,'24:00')",(market,send_at))
             italy={row['id']:row for row in status(folder,'it')['jobs']}
             brazil={row['id']:row for row in status(folder,'br')['jobs']}
             self.assertEqual((italy['agent_reply']['at'],italy['continuous_send']['at']),('15:00','16:30'))
             self.assertEqual((brazil['agent_reply']['at'],brazil['continuous_send']['at']),('14:00','17:00'))
             self.assertTrue(brazil['agent_reply']['enabled'])
+            self.assertIn('14:00–16:00',brazil['agent_reply']['description'])
+            self.assertIn('17:00–24:00',brazil['continuous_send']['description'])
     def test_all_rows_are_real_controls_and_scheduler_is_off(self):
         with tempfile.TemporaryDirectory() as folder:
             state=status(folder);self.assertEqual(state['version'],'jobs-v3')
