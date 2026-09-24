@@ -1,6 +1,16 @@
 # BDHub-Agent 当前交接
 
-更新时间：2026-09-24 22:58（Asia/Shanghai）。本页只记录运行快照；规则见 [PROJECT](../PROJECT.md)，实现见 [TECHNICAL](../TECHNICAL.md)，后续方向见[项目审计与清理](../implementation/project-audit-20260924.md)。更早流水见[历史交接](../archive/handoff/codex-takeover-history-20260923.md)。
+更新时间：2026-09-25 02:15（Asia/Shanghai）。本页只记录运行快照；规则见 [PROJECT](../PROJECT.md)，实现见 [TECHNICAL](../TECHNICAL.md)，后续方向见[项目审计与清理](../implementation/project-audit-20260924.md)。更早流水见[历史交接](../archive/handoff/codex-takeover-history-20260923.md)。
+
+## 2026-09-25 凌晨：IT AI 回复空转、收信自动刷新与 UK OECID
+
+- 00:31–01:50 IT Agent 每约 68 秒生成一条回复（模型调用＋acc6 会话读取），发送时被 `begin()` 以 `delivery_unknown` 拒绝，适配器报成 `ItalyImDeliveryError`；约 60 条来信各消耗 1 次重试（1 小时后可重试，最多 3 次），0 条发出。原因：09-24 23:14 投递 `delivery-57a00ac79feb92df465b125a991fa189` 的建会话请求没有回执，停在 unknown；IT 二发也从 23:13:56 起停发到窗口结束，只读核验路径无法结清无回执的建会话。
+- 01:45:43 用 job-run 停 IT Agent，5 秒后被 scheduler 重新拉起，停止无效。01:48–01:52 只读完整扫描 acc6 会话列表：101 页、1,000 个会话（平台列表上限，条目无时间），该达人 0 个；01:52:24 用现有 `quarantine_unknown_conversation`（`quarantine-it-20260925-create-unknown`）隔离：投递 quarantined_unknown，卡片和文字仍未开始，达人转人工，开 `conversation_create_unknown` case。01:52:30 下一轮回复发出并回读确认，IT 首轮试点完成。
+- `189ee2f`：Agent 在窗口内调用模型前先查 `reply_blocker`（与 `begin` 同条件），有 unknown 投递或在途回复时返回 `waiting_dispatch`；unknown 告警写明结清前二发和 AI 回复都暂停。
+- `635c300`（用户选择“自动刷新一次”）：收信认证遇 16201010 时为当前身份代次登记一次 refresh 并拉起维护 worker。生产库副本演练：四市场各登记一次，重复调用只读回同一意图，副本已删除。02:01:16 核对无在途回复、投递和维护后，SIGTERM 8 个收信/Agent worker；scheduler 02:01:23 以新代码拉起，四市场收信正常。
+- AI 首轮试点：IT、BR、UK 均为 `pilot_complete_waiting_resume`，等待用户在页面核对后开启全量；MY 09:00 开窗。
+- UK 09-24 07:00 轮次续跑后：Kalodata 以 UK 自己的额度读 A 类，23:33 `quota_exhausted`（1,947 项）。OECID 期间 acc11 00:34 遇 16201010，被 OECID 路径自动重登（00:35 新代次）。探针在 23:34、00:35、01:36 三次于初始化阶段 `RuntimeError`（约 40 毫秒、未发请求），都紧跟 2–3 次间隔 1–2 秒的成功 pass；报告 `identityFileUnchanged` 为空，被判 `market_identity_report_invalid`，run failed 并每小时自动重试（最多 3 次，之后转人工，会挡住 UK 09-26 的主链）。推测是上一轮签名/验证码运行时未释放；涉及的 `market_identity.py`、`probe-italy-profile.py`、`operations_scheduler.py` 都在未提交改动中，未修改。
+- 建会话无回执的自动核验未实现：会话列表只返回最近 1,000 个且条目无时间，自动隔离需约定证据标准（例如建会话后若干小时内完成的完整扫描），待用户决定。
 
 ## 2026-09-24 夜间：IT 原轮次续跑与账号掉线（用户选择）
 
