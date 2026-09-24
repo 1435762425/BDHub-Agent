@@ -1,6 +1,6 @@
 # BDHub-Agent 当前交接
 
-更新时间：2026-09-24 21:00（Asia/Shanghai）。本页只记录运行快照；规则见 [PROJECT](../PROJECT.md)，实现见 [TECHNICAL](../TECHNICAL.md)，后续方向见[项目审计与清理](../implementation/project-audit-20260924.md)。更早流水见[历史交接](../archive/handoff/codex-takeover-history-20260923.md)。
+更新时间：2026-09-24 21:40（Asia/Shanghai）。本页只记录运行快照；规则见 [PROJECT](../PROJECT.md)，实现见 [TECHNICAL](../TECHNICAL.md)，后续方向见[项目审计与清理](../implementation/project-audit-20260924.md)。更早流水见[历史交接](../archive/handoff/codex-takeover-history-20260923.md)。
 
 ## 2026-09-24 晚间：主链恢复与平台额度（用户要求）
 
@@ -10,7 +10,16 @@
 - MY 18:32、IT 19:03 各 1 张卡发出后回查读不到历史（history_unavailable）而停发；20:43 原意图只读核验在历史里找到原消息，恢复发送。之后两条投递已过 30 分钟冻结期，补发文字时被许可拒绝（delivery_expired，被适配器改写成 dispatch_not_allowed）而再次停发。
 - `1c7f64f`：BR/MY/UK 发送结算明确拒收（rejected），其它记 unknown；带响应的平台回执全部落账；当天第一次拒收即暂停新联系到次日；worker 遇拒收进入 waiting_capacity。20:48 对 MY、IT 执行 stop/start 以载入新代码。
 - `418971a`：过期清理对“卡已确认、文字未开始”的投递只取消文字，记 partial_delivery。20:53 后 MY、IT 恢复；20:57 当天确认卡片 BR 1000、UK 1001、IT 470、MY 376，平台拒收落账 0。
-- 待定：BR 20:02 的 unknown 卡、UK 20:44 被拒但修复前未结算的卡（下一轮回查后为 unknown），会挡住两市场 09-25 16:30 的二发，需要处置规则。适配器把许可阶段的本地拒绝都改写成 dispatch_not_allowed，调用方看不到原因码，待修。
+- 用户决定：卡片发出后两次回查（间隔 ≥5 分钟）都查不到的，隔离该达人（转人工、不再自动发送、开人工 case），市场继续；以后同类自动处理。实现与后续修复：
+  - `1045af9` 两类发送的回查接入 `quarantine_absent_card`。
+  - `3f330a3` 发送 worker 遇结果未知不再退出，每 5 分钟用原请求只读回查；调度器不会重拉停在 unknown 的发送，否则 BR/UK 09-25 不会发送。
+  - `7ffdd98` 并发发送名额不再计入已隔离投递：隔离后的 unknown 卡曾让 BR/UK 之后每张卡都被 `verify_before_dispatch` 拦下。
+  - `c0d02d0` 建会话返回业务码 201（旧系统记为 conversation_business_rejected，会话未建成）的达人同样隔离；IT 21:25 因此停发，21:34 后恢复。
+- 平台额度回执已落账：BR、UK 修复后各有一次 `it_delivery_send_rejected`，状态 3、check_code 100、`im_limit_reached`，随后停在 waiting_capacity 到次日。
+- 隔离结果：BR、UK 各 1 张 unknown 卡（case `card_result_unknown`）；IT 1 位达人被拒建会话（case `conversation_business_rejected`）。
+- 21:34 四市场发送进程全部换成 `c0d02d0` 代码（BR/UK/IT 旧进程用 SIGTERM 安全停止后 start）。21:36 当天确认卡片：BR 1000、UK 1001、MY 693、IT 684。
+- 过程失误：`3f330a3` 合入时全量测试有 1 个失败（命令链用了 `;`）。失败的是旧冻结批次测试，“首拒即停”后变成时序竞态；`9ead7db` 改为单通道并按新规则断言。之后的合入都在全量测试通过后执行。
+- 仍待修：适配器把发送许可阶段的本地拒绝都改写成 dispatch_not_allowed，调用方看不到原因码。
 
 ## 2026-09-24 恢复收信、AI 回复与二发（用户要求）
 
