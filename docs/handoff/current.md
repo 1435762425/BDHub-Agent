@@ -1,6 +1,6 @@
 # BDHub-Agent 当前交接
 
-更新时间：2026-09-24 11:40（Asia/Shanghai）。本页只记录运行快照；规则见 [PROJECT](../PROJECT.md)，实现见 [TECHNICAL](../TECHNICAL.md)，后续方向见[项目审计与清理](../implementation/project-audit-20260924.md)。更早流水见[历史交接](../archive/handoff/codex-takeover-history-20260923.md)。
+更新时间：2026-09-24 15:55（Asia/Shanghai）。本页只记录运行快照；规则见 [PROJECT](../PROJECT.md)，实现见 [TECHNICAL](../TECHNICAL.md)，后续方向见[项目审计与清理](../implementation/project-audit-20260924.md)。更早流水见[历史交接](../archive/handoff/codex-takeover-history-20260923.md)。
 
 ## 2026-09-24 生产暂停（用户要求）
 
@@ -22,6 +22,13 @@
   - 归档到 `../BDHub-Agent-backups/retention/20260924T035517Z`（24MB）的内容：IT 的 7 份旧货盘快照；IT 的 3 个旧全托轮次明细（127,989 行，轮次记录保留）；8 个旧采集 JSON；调度日志轮转。
   - 压缩后全托库从 172MB 降到 105MB，主库从 552MB 降到 517MB。所有库 quick_check 为 ok，各货盘 head 完整。
   - IT 两轮待恢复的来源轮次、UK 全部 3 轮都在保护名单里，未动。账号身份旧代次还在 72 小时安全窗口内，下次执行时再归档（acc4 约 1.1GB）。
+
+## 2026-09-24 异机备份（用户同意）
+
+- 15:51 首次写入外接 U 盘 KINGSTON：`/Volumes/KINGSTON/BDHub-Agent-offsite/20260924T075104Z/`，加密后 302MB，用时 48 秒。内容：33 库全量快照（1.47GB）、`c805ba7` 的代码离线包、16 个未提交改动的补丁、仓库外两个归档和 3 个敏感配置。盘上其它文件未动。
+- 校验：写后解密回读一致；卸载重挂后从盘上重读通过。恢复演练在临时目录解开后，33 库 hash 与 quick_check 通过；代码克隆并打补丁后，与生产逐字节一致；配置与归档也一致。演练目录已删除。
+- 密钥 `/Users/bjn00003/BDHub/BDHub-Agent-backups/offsite/offsite.key`（指纹 `d61ad40a9e351f63`）只在本机。用户需把内容另存到密码管理器，否则本机损坏后副本无法解开。
+- 插盘自动运行（launchd StartOnMount 调 `offsite-backup.py auto --notify`）未安装，待用户确认；在此之前插盘后手动执行 `run --target /Volumes/KINGSTON --confirm`。
 
 ## 2026-09-24 会话页修复
 
