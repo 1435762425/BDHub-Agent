@@ -243,7 +243,9 @@ def execute_once(root,store,*,authenticated=None,authorized_now=None,reconcile_o
     if not reconcile_only and not window['open'] and authorized_now is None:
         return publish_runtime(store,plan,'waiting_window',stop_reason='outside_send_window')
     if not reconcile_only and _legacy_batch_active(store):return publish_runtime(store,plan,'paused',stop_reason='legacy_batch_active')
-    if not reconcile_only:Deliveries(store).cancel_expired_unsubmitted(plan,('continuous-v1',))
+    if not reconcile_only:
+        Deliveries(store).cancel_expired_unsubmitted(plan,('continuous-v1',))
+        Deliveries(store).quarantine_refused_creates(plan,('continuous-v1',))
     active=_reconcile_delivery(store,plan) if reconcile_only else _active_delivery(store,plan)
     if reconcile_only and active is None:return {'state':'nothing_to_reconcile','platformWrites':0,'realSends':0}
     candidate=None

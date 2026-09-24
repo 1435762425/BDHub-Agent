@@ -10,6 +10,7 @@ from lib.second_cycle import CycleError,digest,encoded,assess_offer
 NEW_CONTACT_LIMIT=None
 PLATFORM_REJECTION_HOLD=1
 CARD_ABSENCE_READS=2
+CREATE_REFUSED_CODE=201
 CARD_ABSENCE_SPAN_SECONDS=300
 BEIJING=timezone(timedelta(hours=8))
 def platform_rejections_today(store,plan):
@@ -153,6 +154,35 @@ class Deliveries:
      {'status':'quarantined_unknown','reason':'card_result_unknown','absentReads':len(reads),
       'firstAbsentAt':reads[0],'lastAbsentAt':reads[-1],'textStarted':False,'platformWrites':0})))
   return True
+ def quarantine_refused_creates(self,plan,modes):
+  """Isolate creators whose conversation create the platform refused with business code 201 (the old system's
+  conversation_business_rejected: no conversation was resolved).  Nothing was sent to them; they move to human
+  handling with an open case and are never sent to automatically, and the market stops waiting on them."""
+  from lib.cycle_service import Service
+  Service(self.s)
+  marks=','.join('?'*len(modes));isolated=[]
+  for (did,) in self.s.db.execute(f"""SELECT DISTINCT d.id FROM cycle_delivery d JOIN cycle_platform_signal s ON s.delivery_id=d.id
+    WHERE d.plan_id=? AND d.state='unknown' AND s.code='it_delivery_create_unknown' AND s.native_status=?
+      AND json_extract(d.snapshot,'$.executionMode') IN ({marks})""",(plan,CREATE_REFUSED_CODE,*modes)).fetchall():
+   with self.s.tx():
+    d=self.get(did);intent=self.conversation_intent(did)
+    if d['state']!='unknown' or not intent or intent['state']!='inflight' or intent['cid'] or intent['receipt'] or \
+       any(p['state']!='ready' or p['started'] is not None or p['receipt'] or p['confirmation'] for p in d['parts']):continue
+    rel=self.s.db.execute('SELECT mode FROM relationship WHERE plan_id=? AND creator_id=? AND oec=?',
+                          (d['plan_id'],d['creator_id'],d['oec'])).fetchone()
+    if not rel:continue
+    self.s.db.execute("UPDATE cycle_delivery SET state='quarantined_unknown' WHERE id=?",(did,))
+    if rel['mode']=='auto':
+     self.s.db.execute("UPDATE relationship SET mode='human',revision=revision+1 WHERE plan_id=? AND creator_id=?",
+                       (d['plan_id'],d['creator_id']))
+    now=self.s.clock();case_id='case-'+digest([did,'create_refused'])[:24]
+    self.s.db.execute("INSERT OR IGNORE INTO service_case VALUES(?,?,?,'open',0,'conversation_business_rejected',?,?,'not_sent')",
+                      (case_id,d['plan_id'],d['creator_id'],now,now))
+    self.s.db.execute('INSERT INTO cycle_delivery_check VALUES(?,?,?,?)',(did,'conversation_quarantine',now,encoded(
+      {'status':'quarantined_unknown','reason':'conversation_business_rejected','nativeStatus':CREATE_REFUSED_CODE,
+       'originalRequestRef':intent['request_ref'],'cardStarted':False,'textStarted':False,'platformWrites':0})))
+   isolated.append(did)
+  return isolated
  def quarantine_unknown_conversation(self,id,request_id,*,observed_conversations,matching_conversations):
   """Isolate one ambiguous create without altering its original request or parts."""
   if not isinstance(request_id,str) or not re.fullmatch(r'[A-Za-z0-9._:-]{8,120}',request_id):raise CycleError('quarantine_request_invalid')

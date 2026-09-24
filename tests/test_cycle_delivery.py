@@ -88,6 +88,26 @@ class DeliveryTests(unittest.TestCase):
   self.assertEqual(begin()['kind'],'card')
   self.d.unknown(self.id,'card')
   self.assertEqual(self.d.get(self.id)['state'],'quarantined_unknown')
+ def refused_create(self,native_status):
+  self.s.db.execute('DELETE FROM cycle_delivery_part');self.s.db.execute('DELETE FROM cycle_delivery')
+  mode='market-continuous-v1';self.c={**self.c,'executionMode':mode};self.id=self.d.prepare(self.p,self.c)['id']
+  self.d.prepare_conversation(self.id);self.d.begin_conversation(self.id,digest(self.c));self.d.unknown(self.id,'card')
+  self.s.db.execute("INSERT INTO cycle_platform_signal(delivery_id,at,outcome,code,native_status) VALUES(?,?,?,?,?)",
+                    (self.id,self.now,'result_unknown','it_delivery_create_unknown',native_status))
+  return mode
+ def test_create_refused_with_201_isolates_the_creator_without_sending(self):
+  mode=self.refused_create(201)
+  self.assertEqual(self.d.quarantine_refused_creates(self.p,('continuous-v1',)),[])
+  self.assertEqual(self.d.quarantine_refused_creates(self.p,(mode,)),[self.id])
+  self.assertEqual(self.d.get(self.id)['state'],'quarantined_unknown')
+  self.assertEqual([p['state'] for p in self.d.get(self.id)['parts']],['ready','ready'])
+  self.assertEqual(self.s.db.execute('SELECT mode FROM relationship WHERE plan_id=? AND creator_id=?',(self.p,self.c['creatorId'])).fetchone()[0],'human')
+  self.assertEqual(tuple(self.s.db.execute('SELECT reason,state FROM service_case WHERE plan_id=? AND creator_id=?',(self.p,self.c['creatorId'])).fetchone()),('conversation_business_rejected','open'))
+  self.assertEqual(self.d.quarantine_refused_creates(self.p,(mode,)),[])
+ def test_other_create_codes_stay_unknown(self):
+  mode=self.refused_create(500)
+  self.assertEqual(self.d.quarantine_refused_creates(self.p,(mode,)),[])
+  self.assertEqual(self.d.get(self.id)['state'],'unknown')
  def test_absence_reads_close_together_do_not_isolate(self):
   self.begin('card');self.d.unknown(self.id,'card')
   for _ in range(3):self.absence()
