@@ -1,6 +1,6 @@
 # BDHub-Agent 当前交接
 
-更新时间：2026-09-24 15:55（Asia/Shanghai）。本页只记录运行快照；规则见 [PROJECT](../PROJECT.md)，实现见 [TECHNICAL](../TECHNICAL.md)，后续方向见[项目审计与清理](../implementation/project-audit-20260924.md)。更早流水见[历史交接](../archive/handoff/codex-takeover-history-20260923.md)。
+更新时间：2026-09-24 16:20（Asia/Shanghai）。本页只记录运行快照；规则见 [PROJECT](../PROJECT.md)，实现见 [TECHNICAL](../TECHNICAL.md)，后续方向见[项目审计与清理](../implementation/project-audit-20260924.md)。更早流水见[历史交接](../archive/handoff/codex-takeover-history-20260923.md)。
 
 ## 2026-09-24 生产暂停（用户要求）
 
@@ -10,7 +10,8 @@
   - scheduler、IT 收信和 IT Agent 作业写入停止文件；BR/MY/UK 的收信与 Agent worker 收到 SIGTERM 后在安全点退出。
   - 11:19:45 起项目 worker 为 0，只有 Web 在运行。
 - 暂停前没有在途平台写入（18 个 ready 组件未开始，另有 IT 2 个 quarantined_unknown、1 个 partial_delivery 保持原状）。Agent 开关、指南和发送模板未改。前后状态回执在本机 `outputs/pause-20260924/`。
-- 暂停时待回复的达人来信：BR 48、IT 57、MY 15、UK 8。MY 收信从 10:43 起在认证阶段连续失败（`taplink_remote_read_failed`），早于暂停。
+- 暂停时未回的达人来信（与会话页未读同一口径）：BR 48、IT 29、MY 13、UK 8，另有 IT 人工会话 2 条。此前记的 IT 57、MY 15 取自收信状态的 `pendingContent`，其中包含已处理或机构后台已回复的会话。MY 收信从 10:42 起在认证阶段连续失败（`taplink_remote_read_failed`），早于暂停。
+- 四个市场的 Agent V2 首发已于 09-23 16:57–17:02 在页面授权（阶段 `pilot_running`）。授权晚于当天 15:00–16:00 回复窗口，09-24 的窗口前又已暂停，所以还没有 V2 真实回复。
 - 恢复需要明确操作：打开各市场自动运营、在页面对持续发送执行 start（首发授权规则不变）、启动 scheduler。恢复前先处理 MY 认证问题，并按讨论结论调整调度。
 
 ## 2026-09-24 本机清理（用户同意）
@@ -29,6 +30,16 @@
 - 校验：写后解密回读一致；卸载重挂后从盘上重读通过。恢复演练在临时目录解开后，33 库 hash 与 quick_check 通过；代码克隆并打补丁后，与生产逐字节一致；配置与归档也一致。演练目录已删除。
 - 密钥 `/Users/bjn00003/BDHub/BDHub-Agent-backups/offsite/offsite.key`（指纹 `d61ad40a9e351f63`）只在本机。用户需把内容另存到密码管理器，否则本机损坏后副本无法解开。
 - 插盘自动运行（launchd StartOnMount 调 `offsite-backup.py auto --notify`）未安装，待用户确认；在此之前插盘后手动执行 `run --target /Volumes/KINGSTON --confirm`。
+- 16:16 写入第二份 `20260924T081641Z`（47 秒），并首次在本机记下最新副本（`offsite/latest.json`），告警条据此判断备份是否过期。
+
+## 2026-09-24 页面告警条（用户选定渠道）
+
+- 用户选定只用页面告警条提醒，不发飞书或系统通知。所有市场页面顶部新增告警条，由 `/api/ops-alerts` 调 `scripts/ops-alerts.py` 只读汇总四个市场的异常，页面打开时每分钟刷新。
+- 16:14 发布 Web：当前 build `uV-5eJUz4DZGcAhSjDbKp`，上一版备份在 `var/web-releases/ops-alerts-20260924/previous`。没有启动或重启任何 worker。
+- 16:20 告警条内容：
+  - 生产已暂停（自 11:18）。
+  - 需处理 4 项：IT 2 条人工会话；IT 货盘 `global_catalog_not_published`；UK Kalodata `kalodata_auth_required`；MY 收信 `taplink_remote_read_failed`（auth 阶段，自 10:42）。
+  - 提示 5 项：IT 29、BR 48、UK 8、MY 13 位达人来信未回（最早约 22 小时）；IT 2 条未知发送已隔离。
 
 ## 2026-09-24 会话页修复
 
