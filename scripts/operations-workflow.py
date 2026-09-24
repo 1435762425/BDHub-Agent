@@ -39,11 +39,12 @@ def main():
                 result = status(store, market)
             elif args.action in ('check-selected-recovery','resume-selected-recovery'):
                 from lib.workflow_recovery import selected_catalog_evidence,resume_selected_catalog
-                expected={'market','runId','duplicateRunId'}|({'requestId'} if args.action=='resume-selected-recovery' else set())
-                if set(body)!=expected:raise CycleError('workflow_recovery_scope_invalid')
-                result=(selected_catalog_evidence(store,ROOT,market,body['runId'],body['duplicateRunId'])
+                required={'market','runId','duplicateRunId'}|({'requestId'} if args.action=='resume-selected-recovery' else set())
+                if not required<=set(body)<=required|{'isolatePids'}:raise CycleError('workflow_recovery_scope_invalid')
+                isolate=body.get('isolatePids') or ()
+                result=(selected_catalog_evidence(store,ROOT,market,body['runId'],body['duplicateRunId'],isolate)
                         if args.action=='check-selected-recovery' else
-                        resume_selected_catalog(store,ROOT,market,body['runId'],body['duplicateRunId'],body['requestId']))
+                        resume_selected_catalog(store,ROOT,market,body['runId'],body['duplicateRunId'],body['requestId'],isolate))
             elif args.action == "save":
                 result = save_setting(store, market, body.get("requestId"), body.get("expectedRevision"),
                                       body.get("changes"))

@@ -44,13 +44,13 @@ class WorkflowRecoveryTests(unittest.TestCase):
         rules=screen_rules(self.root);self.intake='select-'+digest(['it',self.head,rules,fingerprint(rules),'user-300-inclusive'])[:24]
         self.selection_path=self.root/'var/global-selection.sqlite'
         with closing(sqlite3.connect(self.selection_path)) as db,db:
-            db.executescript('CREATE TABLE intake_run(id TEXT,rules TEXT,source_run TEXT);CREATE TABLE intake_item(run_id TEXT,pid TEXT,state TEXT,payload TEXT);')
+            db.executescript('CREATE TABLE intake_run(id TEXT,rules TEXT,source_run TEXT);CREATE TABLE intake_item(run_id TEXT,pid TEXT,state TEXT,payload TEXT,updated REAL);')
             db.execute('INSERT INTO intake_run VALUES(?,?,?)',(self.intake,encoded(rules),self.head))
             payload={'campaign':{'campaign':{'campaign_id':'123'}},'selectionEvidence':[{'campaignId':'123'}]}
-            db.execute('INSERT INTO intake_item VALUES(?,?,?,?)',(self.intake,'1','confirmed',encoded(payload)))
+            db.execute('INSERT INTO intake_item VALUES(?,?,?,?,?)',(self.intake,'1','confirmed',encoded(payload),NOW))
             skipped={'receipt':{'ambiguous':True},'reason':'unresolved_after_two_delayed_readbacks',
                      'readbackAbsences':[{'at':1,'selectedPoolAbsent':True},{'at':32,'selectedPoolAbsent':True}]}
-            db.execute('INSERT INTO intake_item VALUES(?,?,?,?)',(self.intake,'2','skipped_unknown',encoded(skipped)))
+            db.execute('INSERT INTO intake_item VALUES(?,?,?,?,?)',(self.intake,'2','skipped_unknown',encoded(skipped),NOW))
 
     def tearDown(self):self.store.close();self.temp.cleanup()
 
@@ -90,6 +90,38 @@ class WorkflowRecoveryTests(unittest.TestCase):
             with self.assertRaisesRegex(CycleError,error):
                 resume_selected_catalog(self.store,self.root,'it',self.original,self.duplicate,'recovery-request-001')
             self.assertEqual(self.store.db.execute('SELECT count(*) FROM workflow_checkpoint').fetchone()[0],0)
+
+    def test_isolated_unverified_selection_resumes_without_reaching_link_preparation(self):
+        mismatch={'campaign':{'campaign':{'campaign_id':'123'}},'selectionEvidence':[{'campaignId':'456'}]}
+        with closing(sqlite3.connect(self.selection_path)) as db,db:
+            db.execute("UPDATE intake_item SET payload=? WHERE pid='1'",(encoded(mismatch),))
+        with self.assertRaisesRegex(CycleError,'workflow_selection_receipt_unverified'):
+            selected_catalog_evidence(self.store,self.root,'it',self.original,self.duplicate)
+        for wrong in (['1','2'],['1','9'],['1','1'],['x']):
+            with self.subTest(isolate=wrong),self.assertRaisesRegex(CycleError,'workflow_isolation_scope_invalid'):
+                selected_catalog_evidence(self.store,self.root,'it',self.original,self.duplicate,wrong)
+        proof=selected_catalog_evidence(self.store,self.root,'it',self.original,self.duplicate,['1'])
+        self.assertEqual(proof['isolated'],[{'pid':'1','frozenCampaignId':'123','evidenceCampaignIds':['456']}])
+        self.assertEqual(proof['selectionStates'],{'isolated_unverified':1,'skipped_unknown':1})
+        result=resume_selected_catalog(self.store,self.root,'it',self.original,self.duplicate,'recovery-request-002',['1'])
+        self.assertEqual(result['run']['stages'][1]['state'],'queued')
+        with closing(sqlite3.connect(self.selection_path)) as db:
+            state,payload=db.execute("SELECT state,payload FROM intake_item WHERE pid='1'").fetchone()
+        payload=json.loads(payload)
+        self.assertEqual(state,'isolated_unverified')
+        self.assertEqual((payload['selectionEvidence'],payload['isolation']['requestId']),([{'campaignId':'456'}],'recovery-request-002'))
+        self.assertTrue(resume_selected_catalog(self.store,self.root,'it',self.original,self.duplicate,'recovery-request-002',['1'])['duplicate'])
+        with self.assertRaisesRegex(CycleError,'workflow_recovery_request_conflict'):
+            resume_selected_catalog(self.store,self.root,'it',self.original,self.duplicate,'recovery-request-002')
+
+    def test_setting_revision_may_move_on_while_the_switches_stay_on(self):
+        save_setting(self.store,'it','recovery-setting-002',1,{'automaticOperationsEnabled':False})
+        save_setting(self.store,'it','recovery-setting-003',2,{'automaticOperationsEnabled':True})
+        self.assertEqual(selected_catalog_evidence(self.store,self.root,'it',self.original,self.duplicate)['selectionStates'],
+                         {'confirmed':1,'skipped_unknown':1})
+        save_setting(self.store,'it','recovery-setting-004',3,{'automaticOperationsEnabled':False})
+        with self.assertRaisesRegex(CycleError,'workflow_recovery_setting_changed'):
+            selected_catalog_evidence(self.store,self.root,'it',self.original,self.duplicate)
 
     def test_changed_head_or_duplicate_with_writes_is_rejected(self):
         self.store.db.execute("UPDATE workflow_stage_run SET platform_writes=1 WHERE run_id=? AND stage='catalog'",(self.duplicate,))

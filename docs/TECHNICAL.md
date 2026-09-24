@@ -62,7 +62,7 @@ IT `full_catalog_collection_mode()` 固定普通周更，拒绝新的 `--by-cate
 - 恢复短名或 Kalodata 漏参预检需精确校验原错误、原阶段、零写入、当前证据和 claim，恢复事件写原 checkpoint；专用入口不得用于已实际执行的失败。
 - 长任务等待仍监督收信、发送、Agent 和账号维护。错误只向页面提供脱敏稳定码；普通失败退避与 unknown 核验分开。
 
-`workflow_recovery.py` 对原选入轮次和后起零写重复轮次核验 schedule/config、原 upstream generation、已发布 source/overlay 与精确选入回执；活动失配仍拒绝。恢复保留原请求与累计写计数，以幂等 checkpoint 重排原 catalog，不把其它 source 改算本轮成功。实际恢复前需核对运行进程并加载对应 scheduler，检查通过不产生新授权。
+`workflow_recovery.py` 对原选入轮次和后起零写重复轮次核验 schedule/config、原 upstream generation、已发布 source/overlay 与精确选入回执；活动失配仍拒绝，除非操作者用 `isolatePids` 明确隔离：该项改为 `isolated_unverified`、原证据保留，链接准备（只取 confirmed）本轮不再使用。设置检查要求自动运营与全托周更都开启、revision 不低于原轮（暂停后重开只改 revision）。恢复保留原请求与累计写计数，以幂等 checkpoint 重排原 catalog，不把其它 source 改算本轮成功。实际恢复前需核对运行进程并加载对应 scheduler，检查通过不产生新授权。
 
 ### 2.4 线索与身份
 
