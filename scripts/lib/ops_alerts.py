@@ -7,7 +7,6 @@ real errors keep their level so they are fixed before production resumes.
 """
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
 import json
 from pathlib import Path
 
@@ -21,7 +20,6 @@ BACKLOG_WARNING_SECONDS = 26 * 3600  # older than one daily reply window
 OFFSITE_STALE_SECONDS = 7 * 86400
 STAGE_LABELS = {"taplink_clean": "TapLink 清理", "catalog": "货盘", "taplink_prepare": "TapLink",
                 "kalodata": "Kalodata", "oecid": "OECID", "send_pool": "发送池"}
-BEIJING = timezone(timedelta(hours=8))
 
 
 def _read_json(path):
@@ -121,10 +119,6 @@ def gather(root, store):
 
 def _hours(seconds):
     return f"{max(0.0, seconds) / 3600:.1f}"
-
-
-def _clock(stamp):
-    return datetime.fromtimestamp(stamp, BEIJING).strftime("%m-%d %H:%M")
 
 
 def evaluate(facts):
