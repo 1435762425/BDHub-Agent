@@ -6,6 +6,7 @@ import {useEffect,useState,type ReactNode} from "react";
 import {ThemeToggleButton} from "@/components/common/ThemeToggleButton";
 import {Button,Icon,type IconName} from "@/features/bdhub/ui";
 import type {MarketSummary} from "./market-types";
+import OpsAlertBar from "./OpsAlertBar";
 
 export default function AppShell({children,currentMarket,markets}:{children:ReactNode;currentMarket:MarketSummary;markets:MarketSummary[]}){
  const pathname=usePathname();
@@ -57,6 +58,7 @@ export default function AppShell({children,currentMarket,markets}:{children:Reac
     <div className="flex items-center gap-3"><Button variant="outline" onClick={toggle} className="!size-10 !p-0" aria-label="切换导航"><Icon name="menu"/></Button><div><p className="text-sm font-medium text-gray-700 dark:text-gray-200">{currentMarket.label} · {currentMarket.shortLabel}</p><p className="text-[11px] text-gray-400">TikTok Agent 运营闭环</p></div></div>
     <ThemeToggleButton/>
    </header>
+   <OpsAlertBar/>
    <main className={conversationWide?"w-full p-3 sm:p-4 lg:p-5":"mx-auto max-w-[1680px] p-4 sm:p-6 xl:p-8"}>{children}</main>
   </div>
  </div>;
