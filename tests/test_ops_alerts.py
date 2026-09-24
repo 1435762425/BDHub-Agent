@@ -90,9 +90,7 @@ class EvaluateTests(unittest.TestCase):
     def test_platform_rejections_say_when_new_contacts_are_held(self):
         one = evaluate(facts(market("br", platformRejections={"count": 1, "oldestAt": NOW - 600})))
         self.assertEqual(levels(one), {"br-platform-rejected": "warning"})
-        self.assertIn("再被拒绝 1 次", one[0]["detail"])
-        two = evaluate(facts(market("br", platformRejections={"count": 2, "oldestAt": NOW - 600})))
-        self.assertIn("已暂停新联系到明天", two[0]["detail"])
+        self.assertIn("已暂停新联系到明天", one[0]["detail"])
 
     def test_offsite_copy_missing_or_stale_is_reported(self):
         self.assertEqual(levels(evaluate(facts(offsite=None))), {"offsite-missing": "warning"})

@@ -72,6 +72,19 @@ def _record_create_failure(store,delivery_id,error):
  return True
 
 
+def _record_send_failure(store,delivery_id,kind,error):
+ """Settle a component the platform may have seen, as the IT sender does: an explicit refusal is rejected, anything
+ else is unknown and left for readback.  Every answer that carries a response is kept, so the quota's exact signal
+ is on record the next time it appears."""
+ if getattr(error,'response_ref',None):
+  store.db.execute('INSERT INTO cycle_platform_signal(delivery_id,at,outcome,code,native_status,check_code,check_message,response_ref) VALUES(?,?,?,?,?,?,?,?)',
+    (delivery_id,store.clock(),*[getattr(error,key,None) for key in ('outcome','code','native_status','check_code','check_message','response_ref')]))
+ part=next(row for row in Deliveries(store).get(delivery_id)['parts'] if row['kind']==kind)
+ if part['state']!='inflight':return  # the permit refused before anything was dispatched
+ if getattr(error,'outcome',None)=='rejected':Deliveries(store).rejected(delivery_id,kind,error)
+ else:Deliveries(store).unknown(delivery_id,kind)
+
+
 def _received_conversation_id(intent):
  try:receipt=json.loads(intent['receipt'] or '')
  except (TypeError,ValueError):raise CycleError('market_send_conversation_result_unknown') from None
@@ -235,7 +248,11 @@ def run(root,market,request_id,*,canary=True,page_control=False,reconcile_only=F
       if scope.get('market')!=market or scope.get('account')!=communications or scope.get('componentKind')!=expected:raise CycleError('dispatch_scope_mismatch')
       _dispatch_allowed(store,market,canary=canary,page_control=page_control);_binding_current(root,market,candidate)
       Deliveries(store).reserve_contact(did);value=Deliveries(store).begin(did,expected,authorized_snapshot_hash=digest(candidate),recipient_verified=True,allowance_verified=True);mark();report['platformWrites']+=1;return {**value,'stage':scope['stage'],'componentKind':expected,**{key:scope[key] for key in ('productId','listId','campaignId','bindingSha256') if key in scope}}
-     receipt=adapter.send_card_once(conversation,card,part['request_ref'],before_dispatch=permit) if kind=='card' else adapter.send_once(conversation,candidate['message']['textIt'],part['request_ref'],before_dispatch=permit)
+     try:
+      receipt=adapter.send_card_once(conversation,card,part['request_ref'],before_dispatch=permit) if kind=='card' else adapter.send_once(conversation,candidate['message']['textIt'],part['request_ref'],before_dispatch=permit)
+     except BaseException as error:
+      _record_send_failure(store,did,kind,error)
+      raise
     Deliveries(store).receipt(did,kind,receipt)
     proof=adapter.readback_card(conversation,card,part['request_ref'],message_id=receipt.get('messageId')) if kind=='card' else adapter.readback(conversation,candidate['message']['textIt'],part['request_ref'],message_id=receipt.get('messageId'))
     Deliveries(store).record_check(did,kind,proof)

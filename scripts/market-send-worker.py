@@ -18,7 +18,8 @@ def write(market,value):
 
 def expected_wait_state(code):
  if code=='market_send_candidate_missing':return 'waiting_pool'
- if code=='new_contact_capacity_reached':return 'waiting_capacity'
+ # A platform refusal is settled and counted by the new-contact gate, which then holds until the next day.
+ if code in ('new_contact_capacity_reached','it_delivery_send_rejected'):return 'waiting_capacity'
  if code in ('ProfileBusyError','live_guard_busy'):return 'waiting_account'
  return None
 

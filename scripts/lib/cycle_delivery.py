@@ -4,10 +4,11 @@ from datetime import datetime,timedelta,timezone
 from lib.outreach_policy import MARKETING_COOLDOWN_SECONDS,last_contact_by_creator
 from lib.second_cycle import CycleError,digest,encoded,assess_offer
 # No local rolling cap on new contacts (user decision 2026-09-24): the platform's daily agency quota decides.
-# Set an integer to restore a local cap.  Two explicit platform rejections in one Beijing day stop new
-# contacts until the next day, so an exhausted quota cannot burn through the pool on refusals.
+# Set an integer to restore a local cap.  The first explicit platform rejection in a Beijing day stops new
+# contacts until the next day: on 2026-09-24 BR and UK were refused right after about 1000 new contacts, and
+# no other refusal has ever been recorded, so a refusal means the day's agency quota is used up.
 NEW_CONTACT_LIMIT=None
-PLATFORM_REJECTION_HOLD=2
+PLATFORM_REJECTION_HOLD=1
 BEIJING=timezone(timedelta(hours=8))
 def platform_rejections_today(store,plan):
  day=datetime.fromtimestamp(store.clock(),BEIJING).replace(hour=0,minute=0,second=0,microsecond=0).timestamp()

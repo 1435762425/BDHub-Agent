@@ -7,7 +7,7 @@ sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'scripts'))
 from lib.second_cycle import CycleStore,CycleError,digest
 from lib import cycle_delivery
 from lib.cycle_delivery import Deliveries
-from lib.market_send_canary import _record_create_failure,_received_conversation_id
+from lib.market_send_canary import _record_create_failure,_record_send_failure,_received_conversation_id
 from test_second_cycle import offer,edge,NOW
 class DeliveryTests(unittest.TestCase):
  def setUp(self):
@@ -52,6 +52,21 @@ class DeliveryTests(unittest.TestCase):
   self.assertEqual(self.d.cancel_expired_unsubmitted(self.p,(mode,)),[did])
   self.assertEqual({self.d.get(did)['state'],*(part['state'] for part in self.d.get(did)['parts'])},{'cancelled'})
   self.assertEqual(self.d.cancel_expired_unsubmitted(self.p,(mode,)),[])
+ def test_market_send_failure_settles_refusals_and_keeps_the_platform_answer(self):
+  refusal=SimpleNamespace(outcome='rejected',code='it_delivery_send_rejected',native_status=2,check_code=7,
+                          check_message='daily limit',response_ref='im-response:refused')
+  _record_send_failure(self.s,self.id,'card',refusal)
+  self.assertEqual(self.d.get(self.id)['state'],'ready')
+  self.begin('card')
+  _record_send_failure(self.s,self.id,'card',refusal)
+  self.assertEqual(self.d.get(self.id)['state'],'rejected')
+  self.assertEqual([p['state'] for p in self.d.get(self.id)['parts'] if p['kind']=='card'],['rejected'])
+  self.assertEqual(tuple(self.s.db.execute("SELECT count(*),max(native_status),max(check_message) FROM cycle_platform_signal WHERE delivery_id=? AND outcome='rejected'",(self.id,)).fetchone()),(2,2,'daily limit'))
+ def test_market_send_failure_without_a_clear_answer_waits_for_readback(self):
+  self.begin('card')
+  _record_send_failure(self.s,self.id,'card',RuntimeError('socket closed'))
+  self.assertEqual(self.d.get(self.id)['state'],'unknown')
+  self.assertEqual(self.s.db.execute('SELECT count(*) FROM cycle_platform_signal').fetchone()[0],0)
  def test_contact_reservation_is_shared_and_not_recounted(self):
   self.d.reserve_contact(self.id);self.d.reserve_contact(self.id);self.assertEqual(self.s.db.execute('SELECT count(*) FROM cycle_contact_reservation').fetchone()[0],1)
  def test_contact_capacity_blocks_before_any_message(self):
@@ -67,8 +82,6 @@ class DeliveryTests(unittest.TestCase):
   self.s.db.execute(signal,(self.id,self.now,'result_unknown','it_delivery_create_unknown',None))
   self.assertTrue(self.d.contact_capacity_available(self.id))
   self.s.db.execute(signal,(self.id,self.now,'rejected','it_delivery_send_rejected',1))
-  self.assertTrue(self.d.contact_capacity_available(self.id))
-  self.s.db.execute(signal,(self.id,self.now,'rejected','it_delivery_send_rejected',2))
   self.assertFalse(self.d.contact_capacity_available(self.id))
   with self.assertRaisesRegex(CycleError,'capacity_reached'):self.d.reserve_contact(self.id)
   self.assertTrue(all(p['started'] is None for p in self.d.get(self.id)['parts']))

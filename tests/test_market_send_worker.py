@@ -12,6 +12,7 @@ class MarketSendWorkerTests(unittest.TestCase):
         self.assertEqual(MODULE.expected_wait_state('market_send_candidate_missing'),'waiting_pool')
         self.assertEqual(MODULE.expected_wait_state('ProfileBusyError'),'waiting_account')
         self.assertEqual(MODULE.expected_wait_state('new_contact_capacity_reached'),'waiting_capacity')
+        self.assertEqual(MODULE.expected_wait_state('it_delivery_send_rejected'),'waiting_capacity')
         self.assertIsNone(MODULE.expected_wait_state('market_send_result_unknown'))
 
     def test_confirmed_send_has_no_fixed_thirty_second_gap(self):
