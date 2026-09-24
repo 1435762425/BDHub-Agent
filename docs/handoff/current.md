@@ -6,7 +6,7 @@
 
 - 回退锚点：基线标签 `audit-base-20260924`（`b4efe70`）；审计开始时生产目录未提交改动的快照 `audit-wip-20260924`；仓库外离线包 `/Users/bjn00003/BDHub/BDHub-Agent-backups/git/BDHub-Agent-20260924.bundle`。
 - 分支 `codex/claude-audit-20260924` 删除了 37 个无调用脚本、6 个 lib 模块、4 个页面已不调用的 API 和 109 个过时文档，并按代码修正了主文档。活代码路径、`config/*.json`、`var/`、服务和授权都未改。清单、缺陷与建议见[项目审计与清理](../implementation/project-audit-20260924.md)。
-- 被删文件都不在 scheduler、job_run 或 Web bridge 的调用路径上，合入不需要重启 worker。合入后第一次 `npm run typecheck` 会因旧的 `.next/types` 报 TS2307，重新构建后消失。
+- 被删文件都不在 scheduler、job_run 或 Web bridge 的调用路径上，合入不需要重启 worker。合入后第一次 `npm run typecheck` 会因旧的 `.next/types` 报 TS2307，重新构建后消失。下次重新构建 Web 之前，在用的 `.next` 里仍有 reply-review、cycle-service、catalog-screen、global-source 这 4 个旧路由；页面不调用它们，若被直接请求，会因后端脚本已删而返回错误。
 - 生产目录原有的 16 个未提交改动（与 IT workflow 恢复相关）保持原样，如何处置仍待用户决定。
 
 ## 本轮交付与验证
