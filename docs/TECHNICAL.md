@@ -144,6 +144,8 @@ IT 使用无后缀文件名，其他市场加 `-{market}` 后缀。`state-backup
 
 外部写入统一 pending → submitted → confirmed/failed_known/unknown；unknown 无自动重试资格。账号锁约束同身份操作，lease/fence 拒绝过期 worker 迟到提交，stop 在安全点退出。多 lane 共享预算，不各自累加。当前 schema registry 尚未覆盖全部库；新增迁移必须 additive、幂等并测试旧库升级，不能删库重建。
 
+`state-retention.py` 执行历史保留：Campaign/全托货盘快照保留当前加最近 2 个完整版本；Campaign 采集 JSON 每组只留最新一份用于重同步；每轮报告 JSON 与 `var/cycle-scheduler/` 阶段日志保留 14 天；账号身份目录保留当前与上一代（72 小时内的目录不动）；超过 20MB 的日志轮转。当前 head、head 覆盖引用的基线/刷新轮次、未结束 workflow 对应的来源轮次、未完成轮次和被未结束阶段记录引用的文件一律保留。`plan` 只读；`apply --confirm [--vacuum]` 先把候选写入仓库外 `../BDHub-Agent-backups/retention/<时间>/` 并校验，再删除原件；全托轮次只删明细行，保留轮次记录；`restore --archive <目录> --confirm` 补回缺失的行和文件。应在 worker 暂停或空闲时执行。
+
 `state-backup.py` 按 `config/state-backup.json` 显式清单执行 SQLite online backup，保存 hash、quick_check、schema；新业务库未入清单则失败。备份目录/文件为 0700/0600，敏感配置独立管理。restore 只接受空目标并生成回执；跨机器切换需排空写 worker 后最终备份，多库备份不声称跨库单事务。`retention-plan` 校验现存备份并只生成保留建议（默认 7 天全部、30 天每日、84 天每周，每种库清单至少 3 份）；迁移标签、损坏和不明文件保留，无删除操作。
 
 `delivery-diagnostics.py` 只读发送台账与已有 timing，按完整确认触达的首次组件开始时间汇总。组件开始到首次确认回查包含等待/恢复，不能当 HTTP 耗时；缺失认证样本时不能判定认证瓶颈。
