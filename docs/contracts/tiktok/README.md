@@ -140,10 +140,12 @@ sample/budget/review为审批写入，sample/price已从历史SDK补明GET方法
 
 ## 后续实施补验：限定创建（2026-09-13）
 
-此前只读调查之后，在用户继续准备4款匹配佣金商品卡的范围内，TK-005已完成4次单项创建与独立回查。能力仍为canary；未发送消息、未开放批量。见[实施证据](../../implementation/second-cycle-card-creation-v1.md)。该阶段与前文最初只读调查的0写入统计分开。
+> 本节引用的 second-cycle 实施文档已于 2026-09-24 移出仓库，可用 `git show audit-base-20260924:docs/implementation/<文件名>` 查看。
 
-2026-09-13补充：用户确认未解锁达人消息额度会按月刷新，刷新锚点尚未探明。IT会话203分页已采集104条元数据，301新增field10=create_time观察（field4是索引）；历史累计我方5条不作当前额度耗尽证明。详见[会话与额度核验](../../implementation/second-cycle-conversation-index-v1.md)。
+此前只读调查之后，在用户继续准备4款匹配佣金商品卡的范围内，TK-005已完成4次单项创建与独立回查。能力仍为canary；未发送消息、未开放批量。见历史实施证据 `second-cycle-card-creation-v1.md`。该阶段与前文最初只读调查的0写入统计分开。
 
-真实IT卡文回查补充：同一已验证IT会话内可能存在shop_region=TH的旧消息。目标回执需按精确请求ID/消息ID定位后核验其市场、身份、可见性和内容；整页仍需同CID。不可因无关旧消息市场字段异常而重复发送已接受的目标消息。实测与回归见[执行闭环](../../implementation/second-cycle-execution-and-scheduler-v1.md)。
+2026-09-13补充：用户确认未解锁达人消息额度会按月刷新，刷新锚点尚未探明。IT会话203分页已采集104条元数据，301新增field10=create_time观察（field4是索引）；历史累计我方5条不作当前额度耗尽证明。详见历史文档 `second-cycle-conversation-index-v1.md`。
 
-Campaign 商品卡实证补充：IT列表父层可提供campaign_id，而成员商品行省略该字段。只有父层精确匹配且按该listId/source=1取得成员时，才允许继承父活动；已选来源wire Campaign=0不得采用该推断。创建与回查证据及回归见[按需素材](../../implementation/second-cycle-material-supply-v2.md)。
+真实IT卡文回查补充：同一已验证IT会话内可能存在shop_region=TH的旧消息。目标回执需按精确请求ID/消息ID定位后核验其市场、身份、可见性和内容；整页仍需同CID。不可因无关旧消息市场字段异常而重复发送已接受的目标消息。实测与回归见历史文档 `second-cycle-execution-and-scheduler-v1.md`。
+
+Campaign 商品卡实证补充：IT列表父层可提供campaign_id，而成员商品行省略该字段。只有父层精确匹配且按该listId/source=1取得成员时，才允许继承父活动；已选来源wire Campaign=0不得采用该推断。创建与回查证据及回归见历史文档 `second-cycle-material-supply-v2.md`。

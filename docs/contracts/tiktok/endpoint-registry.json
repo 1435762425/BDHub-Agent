@@ -190,7 +190,7 @@
           "status": "verified",
           "capability": "canary",
           "executionBound": "one POST per invocation, serial readback",
-          "reference": "../../implementation/second-cycle-card-creation-v1.md"
+          "reference": "git show audit-base-20260924:docs/implementation/second-cycle-card-creation-v1.md"
         }
       ]
     },

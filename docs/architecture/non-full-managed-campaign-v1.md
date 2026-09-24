@@ -2,7 +2,7 @@
 
 > 历史 Campaign 设计。当前冷却为 72 小时、额度/消息上限及渠道范围以 PROJECT 为准；本文旧 24/48h、5 条/月及待定渠道设想不构成现行规则。 参见[项目文档](../PROJECT.md)和[技术文档](../TECHNICAL.md)。
 
-> 历史设计与实施证据：同一 PID 内选择 Campaign Offer 的规则仍可参考；跨 PID 的达人内部“佣金优先”已失效。当前发送选择在达人之间和达人内部均按 Kalodata `sourceRank → units DESC → PID`，见 [达人发送池与 AI 回复策略](creator-pool-and-reply-policy-v1.md)。
+> 历史设计与实施证据：同一 PID 内选择 Campaign Offer 的规则仍可参考；跨 PID 的达人内部“佣金优先”已失效。当前发送位置排序以 [PROJECT §4.3](../PROJECT.md#43-发送位置) 为准（A 类 `GMV DESC → 正销量 DESC → sourceRank ASC → PID ASC`，B 类按代表视频播放量），实现在 `lead_pool.py`。
 
 ## 一、已经确认的口径
 
