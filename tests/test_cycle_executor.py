@@ -2,7 +2,9 @@ import sys,unittest
 from pathlib import Path
 from contextlib import contextmanager
 from types import SimpleNamespace
+from unittest import mock
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'scripts'))
+from lib import cycle_delivery
 from lib.cycle_executor import execute
 from lib.second_cycle import CycleError
 from test_cycle_delivery import DeliveryTests
@@ -61,6 +63,7 @@ class ExecutorTests(unittest.TestCase):
   def denied(c):raise CycleError('denied')
   def forbidden(*a,**kw):raise AssertionError('runtime opened')
   with self.assertRaisesRegex(CycleError,'denied'):execute(self.d,self.id,forbidden,denied,lambda *a:None)
+ @mock.patch.object(cycle_delivery,'NEW_CONTACT_LIMIT',500)
  def test_local_capacity_blocks_before_conversation_create(self):
   rt=self.runtime(new=True)
   self.s.db.executemany('INSERT INTO cycle_contact_reservation VALUES(?,?,?)',
@@ -69,6 +72,7 @@ class ExecutorTests(unittest.TestCase):
    execute(self.d,self.id,rt,lambda c:None,lambda *a:None)
   self.assertEqual(self.calls,[])
   self.assertEqual(self.d.conversation_intent(self.id)['state'],'ready')
+ @mock.patch.object(cycle_delivery,'NEW_CONTACT_LIMIT',500)
  def test_local_capacity_blocks_before_card_in_existing_conversation(self):
   rt=self.runtime()
   self.s.db.executemany('INSERT INTO cycle_contact_reservation VALUES(?,?,?)',

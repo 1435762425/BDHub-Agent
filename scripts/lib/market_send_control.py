@@ -9,7 +9,8 @@ from lib.lead_pool import pool
 from lib.market_registry import require_operational
 from lib.market_send_worker import launch, state as worker_state
 from lib.second_cycle import CycleError, encoded
-from lib.send_batch import NEW_CONTACT_LIMIT, window_state
+from lib import cycle_delivery
+from lib.send_batch import window_state
 from lib.template_library import require_send_template_approval, resolve_send_template, send_templates
 
 REQUEST_ID=re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{7,119}")
@@ -95,7 +96,7 @@ def status(root,store,market):
  try:remaining=int((pool(root,market=market,now=now,limit=1).get('layers') or {}).get('ready') or 0)
  except Exception:remaining=None
  runtime={'state':'waiting_reconciliation' if unknown else 'sending' if worker.get('running') and worker.get('state')=='confirmed' else worker.get('state','off'),'currentDeliveryId':(worker.get('result') or {}).get('deliveryId'),'currentCreatorId':(worker.get('result') or {}).get('creatorId'),'currentPid':(worker.get('result') or {}).get('pid'),'confirmedToday':today,'confirmedTotal':confirmed,'failedKnown':failed,'unknown':len(unknown),'startedAt':worker.get('startedAt'),'seenAt':worker.get('checkedAt'),'lastSuccessAt':last_success,'stoppedAt':None,'stopReason':worker.get('error') or worker.get('reason'),'workerPid':worker.get('pid') if worker.get('running') else None,'speedPerMinute':round(recent_confirmed/5,2)}
- return {'schemaVersion':'bdhub.continuous-send.v1','market':market,'account':definition['accounts']['communications'],'control':cfg,'runtime':runtime,'window':window_state(cfg['window'],now),'capacity':{'windowSeconds':86400,'limit':NEW_CONTACT_LIMIT,'used':used,'remaining':max(0,NEW_CONTACT_LIMIT-used)},'poolRemaining':remaining,'sample':None,'unknownDeliveries':unknown,'templates':send_templates(store,market=market),'legacyBatchRetired':True,'platformWrites':0,'realSends':0}
+ return {'schemaVersion':'bdhub.continuous-send.v1','market':market,'account':definition['accounts']['communications'],'control':cfg,'runtime':runtime,'window':window_state(cfg['window'],now),'capacity':{'windowSeconds':86400,'limit':cycle_delivery.NEW_CONTACT_LIMIT,'used':used,'remaining':None if cycle_delivery.NEW_CONTACT_LIMIT is None else max(0,cycle_delivery.NEW_CONTACT_LIMIT-used)},'poolRemaining':remaining,'sample':None,'unknownDeliveries':unknown,'templates':send_templates(store,market=market),'legacyBatchRetired':True,'platformWrites':0,'realSends':0}
 
 def launch_worker(root,market):
  if market not in ('br','my','uk'):raise CycleError('market_send_runtime_unavailable')

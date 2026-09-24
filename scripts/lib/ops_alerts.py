@@ -7,6 +7,7 @@ real errors keep their level so they are fixed before production resumes.
 """
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 import json
 from pathlib import Path
 
@@ -18,6 +19,7 @@ NON_FAILURE_INBOX_CODES = frozenset({"live_guard_busy", "stopped"})
 IDENTITY_GRACE_SECONDS = 2 * 3600
 BACKLOG_WARNING_SECONDS = 26 * 3600  # older than one daily reply window
 OFFSITE_STALE_SECONDS = 7 * 86400
+BEIJING = timezone(timedelta(hours=8))
 STAGE_LABELS = {"taplink_clean": "TapLink 清理", "catalog": "货盘", "taplink_prepare": "TapLink",
                 "kalodata": "Kalodata", "oecid": "OECID", "send_pool": "发送池"}
 
@@ -63,6 +65,10 @@ def _market_facts(root, store, market, accounts):
         "AND state IN ('unknown','quarantined_unknown') GROUP BY state", (plan,))} if _has(db, "cycle_delivery") else {}
     cases = db.execute("SELECT count(*),min(created) FROM service_case WHERE plan_id=? AND state='open'", (plan,)).fetchone() \
         if _has(db, "service_case") else (0, None)
+    day = datetime.fromtimestamp(store.clock(), BEIJING).replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
+    rejected = db.execute("SELECT count(*),min(s.at) FROM cycle_platform_signal s JOIN cycle_delivery d ON d.id=s.delivery_id "
+                          "WHERE d.plan_id=? AND s.outcome='rejected' AND s.at>=?", (plan, day)).fetchone() \
+        if _has(db, "cycle_platform_signal") and _has(db, "cycle_delivery") else (0, None)
     empty = {"count": 0, "oldestAt": None}
     return {
         "market": market,
@@ -74,6 +80,7 @@ def _market_facts(root, store, market, accounts):
         "stages": stages,
         "unknown": deliveries.get("unknown", empty), "quarantined": deliveries.get("quarantined_unknown", empty),
         "humanCases": {"count": cases[0], "oldestAt": _stamp(cases[1])},
+        "platformRejections": {"count": rejected[0], "oldestAt": _stamp(rejected[1])},
         "unread": unread_backlog(store, market),
         "agent": {"enabled": bool(agent["enabled"]), "rolloutStage": rollout_stage(store, plan, market),
                   "runtimeState": runtime.get("state"), "replyWindow": [agent["replyStart"], agent["replyEnd"]]},
@@ -183,6 +190,13 @@ def evaluate(facts):
         if market["quarantined"]["count"]:
             add(f"{key}-send-quarantined", "info", f"{name} {market['quarantined']['count']} 条未知发送已隔离",
                 "保留原意图和案件，不会重发。", market=key, since=market["quarantined"]["oldestAt"], href=base)
+        rejections = market.get("platformRejections") or {"count": 0}
+        if rejections["count"]:
+            from lib.cycle_delivery import PLATFORM_REJECTION_HOLD
+            held = rejections["count"] >= PLATFORM_REJECTION_HOLD
+            add(f"{key}-platform-rejected", "warning", f"{name} 平台今天拒绝发送 {rejections['count']} 次",
+                "已暂停新联系到明天，按平台回执核对原因。" if held else "继续发送；再被拒绝 1 次将暂停新联系到明天。",
+                market=key, since=rejections["oldestAt"], href=f"{base}/workspace/send")
         if market["humanCases"]["count"]:
             add(f"{key}-human", "warning", f"{name} {market['humanCases']['count']} 条人工会话待处理",
                 "在会话页处理后关闭。", market=key, since=market["humanCases"]["oldestAt"], href=f"{base}/conversations")

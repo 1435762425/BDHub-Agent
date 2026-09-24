@@ -23,7 +23,7 @@ from lib.cycle_review import choose_candidates
 from lib.cycle_send_runtime import descriptor
 from lib.lead_pool import pool
 from lib.second_cycle import CycleError, digest, encoded
-from lib.send_batch import NEW_CONTACT_LIMIT, capacity, load_config, window_state, _window_arg
+from lib.send_batch import capacity, load_config, window_state, _window_arg
 from lib.template_library import (next_approved_send_template,render_send_template,
                                   require_send_template_approval,resolve_send_template,send_templates)
 

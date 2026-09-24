@@ -24,6 +24,7 @@ def market(key="br", **changes):
                        "stopRequested": False},
              "stages": [], "unknown": {"count": 0, "oldestAt": None}, "quarantined": {"count": 0, "oldestAt": None},
              "humanCases": {"count": 0, "oldestAt": None}, "unread": {"unread": 0, "oldestAt": None},
+             "platformRejections": {"count": 0, "oldestAt": None},
              "agent": {"enabled": True, "rolloutStage": "pilot_running", "runtimeState": "outside_reply_window",
                        "replyWindow": ["15:00", "16:00"]},
              "accounts": [], "needsHuman": []}
@@ -85,6 +86,13 @@ class EvaluateTests(unittest.TestCase):
                                       agent={"enabled": False})))
         self.assertEqual(levels(stale), {"br-unread": "warning"})
         self.assertIn("AI 回复已关闭", stale[0]["detail"])
+
+    def test_platform_rejections_say_when_new_contacts_are_held(self):
+        one = evaluate(facts(market("br", platformRejections={"count": 1, "oldestAt": NOW - 600})))
+        self.assertEqual(levels(one), {"br-platform-rejected": "warning"})
+        self.assertIn("再被拒绝 1 次", one[0]["detail"])
+        two = evaluate(facts(market("br", platformRejections={"count": 2, "oldestAt": NOW - 600})))
+        self.assertIn("已暂停新联系到明天", two[0]["detail"])
 
     def test_offsite_copy_missing_or_stale_is_reported(self):
         self.assertEqual(levels(evaluate(facts(offsite=None))), {"offsite-missing": "warning"})

@@ -6,8 +6,8 @@
 * **谁、发什么、什么顺序** ← `lib/lead_pool.py` 的 `ready` 层（位置＝达人×商品，每达人一个槽位）
 * **逐条复检** ← `cycle_review.choose_candidates(positions=...)`：offer 指纹、当前 handle、命名、
   卡片、控制版本、冷却、去重，一条都不少；不合格的带原因跳过，不回写池子
-* **额度闸门** ← 与 `cycle_delivery.reserve_contact()` 同一口径：滚动 24 小时 500 个**新联系**
-  （已解锁的达人另有额度、不占这 500）。`widen` 是**显式越界探测**：越过本地保守闸门，去拿平台
+* **额度闸门** ← 与 `cycle_delivery.reserve_contact()` 同一口径：滚动 24 小时的**新联系**数，本地上限
+  `cycle_delivery.NEW_CONTACT_LIMIT` 现为 None（由平台机构额度决定；已解锁的达人不占新联系）。`widen` 是**显式越界探测**：越过本地保守闸门，去拿平台
   自己的上限信号；越界时每条真实回执都要落账（`cycle_platform_signal` 已有字段），
   单达人 `flight<0` 只标该条、不停整批。
 * **执行** ← `send-batch-worker.py` / `cycle_burst.run_cohort`（车道、请求预算、本地冻结材料核验、回查、
@@ -24,6 +24,7 @@ from contextlib import closing
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from lib import cycle_delivery
 from lib.cycle_materials import TEMPLATES
 from lib.cycle_review import card_rate_gap, choose_candidates
 from lib.lead_pool import pool
@@ -33,7 +34,6 @@ from lib.template_library import CUSTOM_ID,render_send_template,resolve_send_tem
 BEIJING = timezone(timedelta(hours=8))
 # 与 `cycle_delivery.reserve_contact()` 同一个口径：滚动 24 小时、只算新联系。
 NEW_CONTACT_WINDOW_SECONDS = 86400
-NEW_CONTACT_LIMIT = 500
 DEFAULT_WINDOW = ('09:00', '24:00')
 SAMPLE_SIZE = 3
 RESERVE_RATE = 0.10
@@ -94,8 +94,9 @@ def capacity(root, *, now=None, clock=None):
         if not plan:
             return None
         used = _contact_count(conn, plan[0], stamp)
-    return {'windowSeconds': NEW_CONTACT_WINDOW_SECONDS, 'limit': NEW_CONTACT_LIMIT, 'used': used,
-            'remaining': max(0, NEW_CONTACT_LIMIT - used)}
+    limit = cycle_delivery.NEW_CONTACT_LIMIT
+    return {'windowSeconds': NEW_CONTACT_WINDOW_SECONDS, 'limit': limit, 'used': used,
+            'remaining': None if limit is None else max(0, limit - used)}
 
 
 def _connect(db):
@@ -357,7 +358,7 @@ def _authorization(requested, max_people, reserve_requested, reserve_ready, wide
             'reservePolicy': 'ceil-10-percent-v1',
             'widenLocalGate': bool(widen), 'sendWindow': list(window) if window else None,
             'messageTemplate': template,
-            'institutionNewContactRollingCap': NEW_CONTACT_LIMIT,
+            'institutionNewContactRollingCap': cycle_delivery.NEW_CONTACT_LIMIT,
             'materialPolicy': 'frozen-current-binding-v1',
             'note': '正式目标之外只消费本批冻结候补；unknown不释放名额；越界探测时平台原始回执必须落账'}
 

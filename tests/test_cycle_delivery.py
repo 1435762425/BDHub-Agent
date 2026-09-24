@@ -1,8 +1,11 @@
 import sys,unittest,tempfile
+from datetime import datetime,timedelta,timezone
 from pathlib import Path
 from types import SimpleNamespace
+from unittest import mock
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'scripts'))
 from lib.second_cycle import CycleStore,CycleError,digest
+from lib import cycle_delivery
 from lib.cycle_delivery import Deliveries
 from lib.market_send_canary import _record_create_failure,_received_conversation_id
 from test_second_cycle import offer,edge,NOW
@@ -39,6 +42,20 @@ class DeliveryTests(unittest.TestCase):
   self.d.reserve_contact(self.id);self.d.reserve_contact(self.id);self.assertEqual(self.s.db.execute('SELECT count(*) FROM cycle_contact_reservation').fetchone()[0],1)
  def test_contact_capacity_blocks_before_any_message(self):
   self.s.db.executemany('INSERT INTO cycle_contact_reservation VALUES(?,?,?)',[(self.p,'other'+str(i),self.now) for i in range(500)])
+  with mock.patch.object(cycle_delivery,'NEW_CONTACT_LIMIT',500):
+   with self.assertRaisesRegex(CycleError,'capacity_reached'):self.d.reserve_contact(self.id)
+ def test_without_a_local_cap_only_todays_platform_rejections_hold_new_contacts(self):
+  self.s.db.executemany('INSERT INTO cycle_contact_reservation VALUES(?,?,?)',[(self.p,'other'+str(i),self.now) for i in range(600)])
+  self.assertTrue(self.d.contact_capacity_available(self.id))
+  midnight=datetime.fromtimestamp(self.now,timezone(timedelta(hours=8))).replace(hour=0,minute=0,second=0,microsecond=0).timestamp()
+  signal="INSERT INTO cycle_platform_signal(delivery_id,at,outcome,code,native_status) VALUES(?,?,?,?,?)"
+  self.s.db.executemany(signal,[(self.id,midnight-60,'rejected','it_delivery_send_rejected',1)]*3)
+  self.s.db.execute(signal,(self.id,self.now,'result_unknown','it_delivery_create_unknown',None))
+  self.assertTrue(self.d.contact_capacity_available(self.id))
+  self.s.db.execute(signal,(self.id,self.now,'rejected','it_delivery_send_rejected',1))
+  self.assertTrue(self.d.contact_capacity_available(self.id))
+  self.s.db.execute(signal,(self.id,self.now,'rejected','it_delivery_send_rejected',2))
+  self.assertFalse(self.d.contact_capacity_available(self.id))
   with self.assertRaisesRegex(CycleError,'capacity_reached'):self.d.reserve_contact(self.id)
   self.assertTrue(all(p['started'] is None for p in self.d.get(self.id)['parts']))
  def test_known_preflight_exclusion_cancels_only_an_unsubmitted_delivery(self):

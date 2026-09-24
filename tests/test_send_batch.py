@@ -7,12 +7,14 @@ import time
 import unittest
 from contextlib import closing
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'scripts'))
+from lib import cycle_delivery  # noqa: E402
 from lib.second_cycle import CycleError,digest  # noqa: E402
 from lib.schema_migrations import apply_database  # noqa: E402
-from lib.send_batch import (CONFIG_DEFAULT, NEW_CONTACT_LIMIT, _window_arg,  # noqa: E402
+from lib.send_batch import (CONFIG_DEFAULT, _window_arg,  # noqa: E402
                             capacity, freeze_batch, load_config, preview, save_and_status,
                             promote_reserves, reconciliation_target, save_config, settle_reconciliation,
                             start_batch, status, stop_batch,
@@ -108,8 +110,10 @@ class Capacity(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             root = capacity_fixture(folder, reserved=3, delivered=4)
             state = capacity(root, now=NOON)
-            self.assertEqual((state['limit'], state['used'], state['remaining']),
-                             (NEW_CONTACT_LIMIT, 7, NEW_CONTACT_LIMIT - 7))
+            self.assertEqual((state['limit'], state['used'], state['remaining']), (None, 7, None))
+            with mock.patch.object(cycle_delivery, 'NEW_CONTACT_LIMIT', 500):
+                state = capacity(root, now=NOON)
+            self.assertEqual((state['limit'], state['used'], state['remaining']), (500, 7, 493))
 
     def test_an_old_delivery_falls_out_of_the_window(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -168,9 +172,10 @@ class Preview(unittest.TestCase):
         self.assertEqual(state['sendable'], 2)
         self.assertEqual([s['pid'] for s in state['samples']], ['p4', 'p5'])
 
+    @mock.patch.object(cycle_delivery, 'NEW_CONTACT_LIMIT', 500)
     def test_the_local_capacity_gate_stops_the_batch_unless_widened(self):
         with tempfile.TemporaryDirectory() as folder:
-            self.root = capacity_fixture(folder, reserved=NEW_CONTACT_LIMIT - 2)
+            self.root = capacity_fixture(folder, reserved=500 - 2)
             slots = [slot(f'c{i}', f'p{i}') for i in range(5)]
             state = self.run_preview(slots, [f'p{i}' for i in range(5)], count=5)
             self.assertEqual(state['sendable'], 2)

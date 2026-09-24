@@ -1,7 +1,18 @@
 """Plan-owned card/text outbox. External effects require explicit runtime permits."""
 import json,re,uuid
+from datetime import datetime,timedelta,timezone
 from lib.outreach_policy import MARKETING_COOLDOWN_SECONDS,last_contact_by_creator
 from lib.second_cycle import CycleError,digest,encoded,assess_offer
+# No local rolling cap on new contacts (user decision 2026-09-24): the platform's daily agency quota decides.
+# Set an integer to restore a local cap.  Two explicit platform rejections in one Beijing day stop new
+# contacts until the next day, so an exhausted quota cannot burn through the pool on refusals.
+NEW_CONTACT_LIMIT=None
+PLATFORM_REJECTION_HOLD=2
+BEIJING=timezone(timedelta(hours=8))
+def platform_rejections_today(store,plan):
+ day=datetime.fromtimestamp(store.clock(),BEIJING).replace(hour=0,minute=0,second=0,microsecond=0).timestamp()
+ return store.db.execute("SELECT count(*) FROM cycle_platform_signal s JOIN cycle_delivery d ON d.id=s.delivery_id "
+                         "WHERE d.plan_id=? AND s.outcome='rejected' AND s.at>=?",(plan,day)).fetchone()[0]
 SCHEMA='''CREATE TABLE IF NOT EXISTS cycle_platform_signal(id INTEGER PRIMARY KEY AUTOINCREMENT,delivery_id TEXT NOT NULL,at REAL NOT NULL,outcome TEXT,code TEXT,native_status INTEGER,check_code INTEGER,check_message TEXT,response_ref TEXT);
 CREATE TABLE IF NOT EXISTS cycle_conversation_intent(delivery_id TEXT PRIMARY KEY,request_ref TEXT NOT NULL UNIQUE,state TEXT NOT NULL,cid TEXT,receipt TEXT);
 CREATE TABLE IF NOT EXISTS cycle_contact_reservation(plan_id TEXT NOT NULL,oec TEXT NOT NULL,reserved REAL NOT NULL,PRIMARY KEY(plan_id,oec));
@@ -141,8 +152,10 @@ class Deliveries:
   if r[0]:return True
   old=self.s.db.execute('SELECT reserved FROM cycle_contact_reservation WHERE plan_id=? AND oec=?',(d['plan_id'],d['oec'])).fetchone()
   if old and old[0]>self.s.clock()-86400:return True
-  count=self.s.db.execute("SELECT count(*) FROM (SELECT oec FROM cycle_contact_reservation WHERE plan_id=? AND reserved>? UNION SELECT d.oec FROM cycle_delivery d JOIN cycle_delivery_part p ON p.delivery_id=d.id WHERE d.plan_id=? AND p.kind='card' AND p.started>?)",(d['plan_id'],self.s.clock()-86400,d['plan_id'],self.s.clock()-86400)).fetchone()[0]
-  return count<500
+  if NEW_CONTACT_LIMIT is not None:
+   count=self.s.db.execute("SELECT count(*) FROM (SELECT oec FROM cycle_contact_reservation WHERE plan_id=? AND reserved>? UNION SELECT d.oec FROM cycle_delivery d JOIN cycle_delivery_part p ON p.delivery_id=d.id WHERE d.plan_id=? AND p.kind='card' AND p.started>?)",(d['plan_id'],self.s.clock()-86400,d['plan_id'],self.s.clock()-86400)).fetchone()[0]
+   if count>=NEW_CONTACT_LIMIT:return False
+  return platform_rejections_today(self.s,d['plan_id'])<PLATFORM_REJECTION_HOLD
  def conversation_intent(self,id):
   row=self.s.db.execute('SELECT * FROM cycle_conversation_intent WHERE delivery_id=?',(id,)).fetchone()
   return dict(row) if row else None
