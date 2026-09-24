@@ -221,4 +221,4 @@ npm run dev   # 开发；生产使用 npm run start，不能同时占用 5198
 
 迁移/回填前先 `state-backup.py create --label <label>` 并 verify（单库变更可只做该库 online backup，保存 hash/quick_check 回执）；apply 仅按明确范围升级既有库。`migrate-lead-receipts.py` 缺 schema 拒绝运行，不在 worker 启动时隐式升级；backfill-current-bindings/leads 的 check 只读，apply 只本地投影，无平台调用。只读检查直接 SQLite 时使用 mode=ro。
 
-交付分别报告：合同测试、类型/构建、本机 API、只读真实数据、平台回执、业务结果。不把历史测试数、旧吞吐或存活进程当当前验收。结构改进与历史实测限制见[整改方向](implementation/audit-remediation-priorities-20260923.md)。
+交付分别报告：合同测试、类型/构建、本机 API、只读真实数据、平台回执、业务结果。不把历史测试数、旧吞吐或存活进程当当前验收。结构改进与历史实测限制见[项目审计与清理](implementation/project-audit-20260924.md)。

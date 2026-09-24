@@ -2,7 +2,7 @@
 
 本目录只保留 [历史交接流水](handoff/codex-takeover-history-20260923.md)，用于追溯当时的决定与证据。
 
-2026-09-24 审计已把被替代的批次时代 PRD/决策、意大利试点、matching、早期 TailAdmin 设计与旧状态日志移出仓库，清单见 2026-09-24 项目审计报告。需要原文时用 `git show audit-base-20260924:<路径>` 查看。
+2026-09-24 审计已把被替代的批次时代 PRD/决策、意大利试点、matching、早期 TailAdmin 设计与旧状态日志移出仓库，清单见[项目审计与清理](../implementation/project-audit-20260924.md)。需要原文时用 `git show audit-base-20260924:<路径>` 查看。
 
 当前开发依次以以下资料为准：
 
