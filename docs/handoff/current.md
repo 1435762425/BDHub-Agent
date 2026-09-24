@@ -1,6 +1,21 @@
 # BDHub-Agent 当前交接
 
-更新时间：2026-09-24 21:52（Asia/Shanghai）。本页只记录运行快照；规则见 [PROJECT](../PROJECT.md)，实现见 [TECHNICAL](../TECHNICAL.md)，后续方向见[项目审计与清理](../implementation/project-audit-20260924.md)。更早流水见[历史交接](../archive/handoff/codex-takeover-history-20260923.md)。
+更新时间：2026-09-24 22:58（Asia/Shanghai）。本页只记录运行快照；规则见 [PROJECT](../PROJECT.md)，实现见 [TECHNICAL](../TECHNICAL.md)，后续方向见[项目审计与清理](../implementation/project-audit-20260924.md)。更早流水见[历史交接](../archive/handoff/codex-takeover-history-20260923.md)。
+
+## 2026-09-24 夜间：IT 原轮次续跑与账号掉线（用户选择）
+
+- 用户选择续跑 IT 原轮次：两个活动对不上的 PID（尾号 77284、73153）保留全部证据但本轮不用；今晚跑完 TapLink、Kalodata、OECID、发送池。
+- `a2fa4c2` 恢复工具支持 `isolatePids`，设置检查改为两个开关都开且 revision 不低于原轮。22:05:23 打开 IT 自动运营（revision 6）；22:05:47 `resume-selected-recovery`（`resume-it-catalog-20260924`）：两项改 `isolated_unverified`，重复轮次以 `superseded_duplicate_run` 停止，原轮次 catalog 重排。
+- 货盘 22:05–22:09：复用已发布 source `it-global-20260923-0537c0e0577f`，同步已选池 3,411 个商品，平台写入仍为累计 3。TapLink 22:09–22:12 完成，无需新建链接。
+- Kalodata 22:12：A 类队列为空；B 类新一代 `video-generation-397fc2254cddfab450b33441`（窗口 08-24～09-22，2,879 个商品）。初始化按已知缺陷清空了上一代 343 条 B 类投影。22:13:52 在视频 `7684553680099478816`（商品 1729482676927110125）详情缺作者处整体停下，run needs_human，与 09-23 20:30 那轮同一条视频。
+- `e14eaeb`：缺作者的单条视频记 `author_missing`（保留响应 hash），该 PID 的 run 记 `completed_with_gaps`，其余视频照常进投影；同一代超过 20 条才停下。22:18:24 `resume-video-author-skip`（`resume-it-video-author-20260924`）后扫描在原代次断点继续，已跳过该视频。Kalodata 阶段在当日额度耗尽（`quota_exhausted` 算成功）或扫完时结束，随后 OECID、发送池。
+- UK 09-24 07:00 主链轮次 `workflow-0ca7578e9ab618dc401cb49302f7`：货盘（16 次写入）、TapLink（682 次写入，1,907 个商品）完成，08:08 Kalodata 因共用登录失效（`kalodata_auth_required`）转人工。当前轮次 needs_human 时调度器跳过该市场，UK 09-26 也不会开新轮。`ea464e4` 新增 `resume-kalodata-auth`：停下之后已有 Kalodata 页面读取成功才允许一次性重排。
+- BR 收信约 22:15 起报 `taplink_remote_read_failed`：只读诊断为 acc1 机构信息接口返回业务码 16201010（登录失效，非验证码/风控；UK acc11 同接口正常）。acc1 身份为 09-21 22:15 重登，UK acc11 已 84 小时仍正常，不是固定 72 小时过期。22:42:47 账号页接口 refresh，回退重登，22:45:17 发布 `identity-generation-3b804d336e46aaa0961002ae`，无需人工验证；22:45:41 BR 收信恢复（20 个会话、5 条新回复）。收信路径遇 16201010 不会自动重登（OECID 路径会），待用户决定。
+- 平台额度：MY 22:13:27 第 1,000 张卡后同样收到 `im_limit_reached`（状态 3、check_code 100）。22:46 当天确认卡片 BR 1000、MY 1000、UK 1001、IT 918；约每市场每天 1,000 个新联系已由三个市场实测。
+- 22:22 发送池（可发/待解析 OECID）：IT 291/1,358，BR 229/68，MY 2,888/541，UK 4,518/812。明天 BR、IT 受货源限制：BR 靠 09-25 07:00 主链，IT 靠本轮 OECID。
+- IT 原轮次 22:52:57 完成：视频扫描 77 个商品、2,101 次请求后 IT 当日额度耗尽（`paused_quota`），B 类 1,278 条（58 个商品，清空前 343 条）；OECID 本轮开始时队列只有 27 个待办（找到 18、找不到 9，`backlog_clear`）；发送池发布 5,360 个位置。22:53 IT 可发 266、B 类位置 538，B 类作者不在身份库的 504 条（`videoUnresolved`）。
+- B 类作者只按身份库已有 `current_handle` 匹配达人，OECID 提交只取 A 类 selection，工作流没有解析 B 类作者的步骤；是否补上待用户决定。
+- 22:52:24 `resume-kalodata-auth`（`resume-uk-kalodata-auth-20260924`）重排 UK 轮次。用户指出 Kalodata 额度按市场分别计算：IT 耗尽后 UK 1 分钟内正常读取 49 个商品、376 条线索。UK Kalodata 正在读 A 类（到期 7,958 个商品），完成或 UK 额度耗尽后接 OECID、发送池。
 
 ## 2026-09-24 晚间：主链恢复与平台额度（用户要求）
 
@@ -124,8 +139,8 @@
 
 ## 未完成业务与接续
 
-- IT 原轮次 `workflow-9285ce7cb0c7427f9e13c0a67389` 为 needs_human/parallel_selection_requires_review；后起重复轮次 `workflow-776f77d39bc2982e537f82670933` 为 needs_human/workflow_retry_requires_review。原 source 已发布进 coverage overlay，重复 source 已停且未发布；本轮没有恢复任一 workflow。
-- 两 PID 尾号 77284、73153 已在 ACC9 已选池，但当前子活动与冻结活动不同，原活动 name/start/end 等映射证据不全。恢复预检正确拒绝 `workflow_selection_receipt_unverified`。已询问用户是否保留全部原证据并隔离这两项后继续；未获答案，不能代为选择。
-- `workflow_recovery.py` 和 CLI 提供原阶段证据预检/幂等恢复准备；真实恢复尚未调用。实际恢复前需处理上述证据决策，并核对、加载同轮 source 复用的 scheduler 改动；在用 scheduler 未加载这些待交接改动。历史 platform_writes 累计保留，当前状态优先显示 active run。
+- IT 原轮次 `workflow-9285ce7cb0c7427f9e13c0a67389` 已按用户选择续跑（见上），重复轮次 `workflow-776f77d39bc2982e537f82670933` 已停止。09-23 20:30 的 campaign 轮次 `workflow-038da43ec820264f5b155e183fdd` 仍为 needs_human/kalodata_video_author_missing，其视频代次已被新一代取代，未续跑。
+- 两 PID 尾号 77284、73153 已在 ACC9 已选池，但当前子活动与冻结活动不同，映射证据不全；按用户选择改为 `isolated_unverified`，证据保留，本轮不建链接。活动映射核实后是否恢复另议。
+- 在用 scheduler（09-24 17:16 启动）已加载同轮 source 复用的未提交改动，本轮货盘阶段按该路径复用已发布 source。历史 platform_writes 累计保留，当前状态优先显示 active run。
 - 原有 catalog/global/identity/scheduler 改动保留；本轮仅接纳 workflow 的累计写计数与 active 显示修正，其余不夹带提交或借发布自动执行。
 - IT 两条建会话 quarantined_unknown 与商品选入映射是不同问题；均保留原意图，不能因 72h 到期重发。每市场 30 位/分钟仍未达成；继续先补分段耗时，再评估提速。批量历史补扫、真实多轮人工标注是下一阶段方向（异机备份已于 09-24 完成）。
