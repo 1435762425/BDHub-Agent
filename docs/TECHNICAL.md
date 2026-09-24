@@ -55,7 +55,7 @@ IT `full_catalog_collection_mode()` 固定普通周更，拒绝新的 `--by-cate
 
 `operations_workflow.py` 保存不可变 run/stage/generation/checkpoint，`operations_scheduler.py` 执行和监督。开关来自市场 durable setting，共享供给时间来自 `jobs.json`，市场发送/Agent 窗口来自各自持久控制。`jobs.json` 各阶段的 `enabled` 已无读取方；`inbox_monitor.enabled` 仍可单独拉起 IT 收信（与自动运营总开关任一为真即启动），`continuous_send.enabled` 被 `jobs.save` 拒绝修改。全托周更到期时间沿用 `taplink_clean` 的 `at`/`weekday`，`full_catalog_update.at` 只在页面展示。
 
-- 同市场按上游 generation 串行；不同市场用 workflow 及账号资源槽并行，Kalodata 全局最多两槽。
+- 同市场按上游 generation 串行。TikTok 平台上的重型阶段（catalog、taplink_clean、taplink_prepare、oecid）额外占用全局槽 `platform:global`，容量 1（`workflow_dispatch.PLATFORM_PARALLEL_MARKETS`），所以同一时间只有一个市场在做平台重型读取，其余市场排队；Kalodata 用自己的 `kalodata:global` 两槽，可与另一市场的平台阶段并行。
 - `workflow_stage_claim/workflow_resource_slot` 短事务领取 owner/fence/300 秒 lease，执行每 30 秒续租；确认 owner 已退出才回收。子进程先登记真实 PID 再执行，父死子活仍占槽。
 - 锁占用、无效 CLI 输出、部分范围失败、pending、stuck 不能报 completed。外层平台写入数汇总内部 pass，item count 取最终 summary，不能把重复 pass 累加。
 - 仅零平台写入、无 unknown/unresolved/ambiguous、claim 已释放的失败阶段，才在原 run/上游 generation 间隔 ≥1 小时重排，最多三次；不重跑完成的上游，不依赖来源下一次到期。其余转 needs_human。

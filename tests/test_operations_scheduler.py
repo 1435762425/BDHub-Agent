@@ -138,22 +138,25 @@ class SchedulerFlow(unittest.TestCase):
         self.assertEqual(progress['parallelMarkets'],['br','uk'])
         self.assertEqual(sorted(calls),[('br','kalodata'),('uk','kalodata')])
 
-    def test_different_supply_accounts_execute_catalog_at_the_same_time(self):
+    def test_catalog_on_different_supply_accounts_runs_one_market_per_tick(self):
         from lib.operations_workflow import create_run
         for market in ('br','uk'):
             self.store.plan('bjn-local-research',market)
             create_run(self.store,market=market,trigger_source='manual',scheduled_at=NOW,
                        request_id=f'supply-parallel-{market}',only_stage='catalog',sources=['campaign'])
-        barrier=threading.Barrier(2);calls=[]
-        class ConcurrentCatalog:
+        calls=[]
+        class RecordingCatalog:
             def execute(self,_store,run,stage,_jobs):
-                calls.append((run['market'],stage));barrier.wait(timeout=2)
+                calls.append((run['market'],stage))
                 return {'state':'completed','itemCount':1,'complete':True,'platformWrites':0}
-        progress=tick(self.root,now=NOW,executor=ConcurrentCatalog())
-        self.assertEqual(progress['parallelMarkets'],['br','uk'])
-        self.assertEqual(sorted(calls),[('br','catalog'),('uk','catalog')])
+        progress=tick(self.root,now=NOW,executor=RecordingCatalog())
+        self.assertEqual(progress['parallelMarkets'],['br'])
+        self.assertEqual(calls,[('br','catalog')])
+        progress=tick(self.root,now=NOW+1,executor=RecordingCatalog())
+        self.assertEqual(progress['parallelMarkets'],['uk'])
+        self.assertEqual(calls,[('br','catalog'),('uk','catalog')])
 
-    def test_manual_and_older_scheduled_market_advance_independently(self):
+    def test_manual_market_takes_the_platform_slot_and_the_scheduled_market_follows(self):
         from lib.operations_workflow import create_run
         self.store.plan('bjn-local-research','br')
         save_setting(self.store,'it','scheduler-priority-setting',0,{'automaticOperationsEnabled':True})
@@ -163,8 +166,10 @@ class SchedulerFlow(unittest.TestCase):
                           request_id='manual-priority-br',only_stage='oecid',sources=['campaign'])
         executor=FakeExecutor();progress=tick(self.root,now=NOW,executor=executor)
         self.assertEqual(progress['runId'],manual['runId'])
-        self.assertEqual(progress['parallelMarkets'],['br','it'])
-        self.assertEqual(set(executor.calls),{(manual['runId'],'oecid'),(scheduled['runId'],'taplink_clean')})
+        self.assertEqual(progress['parallelMarkets'],['br'])
+        self.assertEqual(executor.calls,[(manual['runId'],'oecid')])
+        tick(self.root,now=NOW+1,executor=executor)
+        self.assertEqual(executor.calls[-1],(scheduled['runId'],'taplink_clean'))
 
     def test_quota_and_unknown_market_do_not_block_another_kalodata_market(self):
         from lib.operations_workflow import create_run

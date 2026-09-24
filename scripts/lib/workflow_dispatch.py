@@ -7,6 +7,10 @@ from lib.workflow_resources import claim,recover_expired
 
 SUPPLY_STAGES=frozenset({'taplink_clean','catalog','taplink_prepare'})
 COMMUNICATION_STAGES=frozenset({'oecid'})
+# Every market reaches TikTok through the same local egress, so heavy platform reads (catalog,
+# TapLink, OECID) run one market at a time.  Kalodata is a different site and keeps its own slots.
+PLATFORM_STAGES=SUPPLY_STAGES|COMMUNICATION_STAGES
+PLATFORM_PARALLEL_MARKETS=1
 
 
 def resources(root,market,stage,policy,*,accounts=None):
@@ -19,6 +23,7 @@ def resources(root,market,stage,policy,*,accounts=None):
  elif stage in COMMUNICATION_STAGES:needed.append((f"communications:{pair['roles']['communications']}",1))
  elif stage=='kalodata':needed.append(('kalodata:global',policy['kalodataMaxParallelMarkets']))
  elif stage!='send_pool':raise CycleError('workflow_resource_stage_invalid')
+ if stage in PLATFORM_STAGES:needed.append(('platform:global',PLATFORM_PARALLEL_MARKETS))
  return needed
 
 
