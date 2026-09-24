@@ -26,7 +26,8 @@ def request_stop_for_market(store, market, run_id, expected_state="running"):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("action", choices=("status", "save", "run", "stop", "resume-short-names",
-                                           "resume-kalodata-preflight", "check-selected-recovery", "resume-selected-recovery"))
+                                           "resume-kalodata-preflight", "check-selected-recovery", "resume-selected-recovery",
+                                           "resume-video-author-skip"))
     parser.add_argument("--json")
     args = parser.parse_args()
     try:
@@ -45,6 +46,10 @@ def main():
                 result=(selected_catalog_evidence(store,ROOT,market,body['runId'],body['duplicateRunId'],isolate)
                         if args.action=='check-selected-recovery' else
                         resume_selected_catalog(store,ROOT,market,body['runId'],body['duplicateRunId'],body['requestId'],isolate))
+            elif args.action=='resume-video-author-skip':
+                from lib.workflow_recovery import resume_video_author_skip
+                if set(body)!={'market','runId','requestId'}:raise CycleError('workflow_recovery_scope_invalid')
+                result=resume_video_author_skip(store,market,body['runId'],body['requestId'])
             elif args.action == "save":
                 result = save_setting(store, market, body.get("requestId"), body.get("expectedRevision"),
                                       body.get("changes"))

@@ -11,6 +11,10 @@ from lib.kalodata_video_evidence import (VIDEO_DETAIL_PATH,VIDEO_LIST_PATH,parse
 from lib.second_cycle import CycleError,CycleStore,digest,encoded
 
 
+AUTHOR_MISSING='author_missing'
+AUTHOR_MISSING_LIMIT=20
+
+
 def initialize(root,scope,window_start,window_end,*,min_views=1000,clock=time.time):
     if not isinstance(scope,list) or not scope:raise CycleError('video_scan_scope_invalid')
     normalized=[]
@@ -104,6 +108,20 @@ def _save_detail(store,generation,pid,row,detail,stamp,*,network):
                              'WHERE generation_id=? AND pid=?',(stamp,generation,pid))
 
 
+def _skip_detail(store,generation,pid,row,body,stamp):
+    """A video whose detail names no author cannot yield a lead: keep the response hash as evidence and move on,
+    unless so many are missing in this generation that the source itself looks broken."""
+    with store.tx():
+        missing=store.db.execute('SELECT count(*) FROM kalodata_video_scan_item WHERE generation_id=? AND detail_state=?',
+                                 (generation,AUTHOR_MISSING)).fetchone()[0]
+        if missing>=AUTHOR_MISSING_LIMIT:raise CycleError('kalodata_video_author_missing')
+        store.db.execute('UPDATE kalodata_video_scan_item SET detail_state=?,detail_payload_hash=?,observed_at=? '
+                         'WHERE generation_id=? AND pid=? AND video_id=?',
+                         (AUTHOR_MISSING,digest(body),stamp,generation,pid,row['video_id']))
+        store.db.execute('UPDATE kalodata_video_scan_job SET detail_requests=detail_requests+1,updated_at=? '
+                         'WHERE generation_id=? AND pid=?',(stamp,generation,pid))
+
+
 def _report(store,generation_row,job,clock):
     generation=job['generation_id'];pid=job['pid'];stamp=clock()
     pages=list(store.db.execute('SELECT * FROM kalodata_video_scan_page WHERE generation_id=? AND pid=? '
@@ -111,8 +129,12 @@ def _report(store,generation_row,job,clock):
     items=list(store.db.execute("SELECT * FROM kalodata_video_scan_item WHERE generation_id=? AND pid=? "
                                 "AND detail_state='resolved' ORDER BY source_rank,video_id",(generation,pid)))
     pending=store.db.execute("SELECT count(*) FROM kalodata_video_scan_item WHERE generation_id=? AND pid=? "
-                             "AND detail_state<>'resolved'",(generation,pid)).fetchone()[0]
+                             "AND detail_state NOT IN ('resolved',?)",(generation,pid,AUTHOR_MISSING)).fetchone()[0]
     if pending:raise CycleError('video_scan_detail_incomplete')
+    # Like the single-PID collector, a video without an author is a gap, not full coverage.
+    errors=[{'videoId':row[0],'code':'kalodata_video_author_missing'} for row in store.db.execute(
+        'SELECT video_id FROM kalodata_video_scan_item WHERE generation_id=? AND pid=? AND detail_state=? '
+        'ORDER BY source_rank,video_id',(generation,pid,AUTHOR_MISSING))]
     evidence=[]
     for row in items:
         evidence.append({'videoId':row['video_id'],'pid':pid,'kalodataCreatorId':row['kalodata_creator_id'],
@@ -121,15 +143,16 @@ def _report(store,generation_row,job,clock):
             'videoUrl':row['video_url'],'contentType':row['content_type'],'isAd':bool(row['is_ad']),
             'isAi':bool(row['is_ai']),'payloadHash':row['detail_payload_hash'],'observedAt':row['observed_at']})
     fingerprints=[row['rows_fingerprint'] for row in pages]
-    run_id='video-run-'+digest([generation,pid,fingerprints,[row['payloadHash'] for row in evidence]])[:24]
+    run_id='video-run-'+digest([generation,pid,fingerprints,[row['payloadHash'] for row in evidence]]+
+                               ([errors] if errors else []))[:24]
     return {'schema':'bdhub.kalodata-video-evidence.v1','runId':run_id,'pid':pid,
         'windowStart':generation_row['window_start'],'windowEnd':generation_row['window_end'],
         'minViews':generation_row['min_views'],'maxVideos':0,'sortField':'create_time','maxPages':0,
         'pagesRead':len(pages),'rowsReceived':sum(row['rows_received'] for row in pages),
-        'qualifyingVideos':len(items),'selectedVideos':len(items),'resolvedVideos':len(items),
-        'coverage':'complete','listFingerprint':digest(fingerprints),'state':'completed',
+        'qualifyingVideos':len(items)+len(errors),'selectedVideos':len(items)+len(errors),'resolvedVideos':len(items),
+        'coverage':'complete','listFingerprint':digest(fingerprints),'state':'completed_with_gaps' if errors else 'completed',
         'networkRequests':job['list_requests']+job['detail_requests'],'observedAt':stamp,
-        'evidence':evidence,'errors':[],'platformWrites':0,'realSends':0}
+        'evidence':evidence,'errors':errors,'platformWrites':0,'realSends':0}
 
 
 def _publish_current(store,report,generation_id):
@@ -181,7 +204,10 @@ def scan_one(root,generation_id,requester,*,clock=time.time):
             payload={'id':row['video_id'],'startDate':generation['window_start'],
                      'endDate':generation['window_end'],'authority':True}
             body=requester(VIDEO_DETAIL_PATH,payload);network+=1
-            detail=parse_video_detail(body,_candidate(row),clock())
+            try:detail=parse_video_detail(body,_candidate(row),clock())
+            except CycleError as error:
+                if str(error)!='kalodata_video_author_missing':raise
+                _skip_detail(store,generation_id,pid,row,body,clock());continue
             _save_detail(store,generation_id,pid,row,detail,clock(),network=True)
         job=store.db.execute('SELECT * FROM kalodata_video_scan_job WHERE generation_id=? AND pid=?',
                              (generation_id,pid)).fetchone()
@@ -195,7 +221,8 @@ def scan_one(root,generation_id,requester,*,clock=time.time):
             store.db.execute("UPDATE kalodata_video_generation SET state=?,updated_at=?,error=NULL WHERE generation_id=?",
                              ('completed' if remaining==0 else 'running',clock(),generation_id))
         return {'status':'completed','generationId':generation_id,'pid':pid,'pages':report['pagesRead'],
-                'videos':report['resolvedVideos'],'leads':len({row['kalodataCreatorId'] for row in report['evidence']}),
+                'videos':report['resolvedVideos'],'authorMissing':len(report['errors']),
+                'leads':len({row['kalodataCreatorId'] for row in report['evidence']}),
                 'networkRequests':network,'platformWrites':0,'realSends':0}
 
 
@@ -216,6 +243,8 @@ def status(root,generation_id):
                                   'FROM kalodata_video_scan_job WHERE generation_id=?',(generation_id,)).fetchone()
         leads=store.db.execute('SELECT count(*),count(DISTINCT pid) FROM video_lead_current '
                                'WHERE generation_id=?',(generation_id,)).fetchone()
+        missing=store.db.execute('SELECT count(*) FROM kalodata_video_scan_item WHERE generation_id=? '
+                                 'AND detail_state=?',(generation_id,AUTHOR_MISSING)).fetchone()[0]
         current=store.db.execute("SELECT pid,state,next_page,list_requests,detail_requests,error FROM "
                                  "kalodata_video_scan_job WHERE generation_id=? AND state<>'completed' "
                                  "ORDER BY CASE state WHEN 'listing' THEN 0 WHEN 'detailing' THEN 0 ELSE 1 END,"
@@ -223,6 +252,6 @@ def status(root,generation_id):
         return {'schema':'bdhub.kalodata-video-crawl.v1','generationId':generation_id,
                 'state':generation['state'],'scope':generation['scope_count'],'counts':dict(counts),
                 'completed':counts['completed'],'remaining':generation['scope_count']-counts['completed'],
-                'listRequests':requests[0],'detailRequests':requests[1],'videoLeads':leads[0],
+                'listRequests':requests[0],'detailRequests':requests[1],'authorMissing':missing,'videoLeads':leads[0],
                 'leadPids':leads[1],'current':dict(current) if current else None,'error':generation['error'],
                 'platformWrites':0,'realSends':0}
