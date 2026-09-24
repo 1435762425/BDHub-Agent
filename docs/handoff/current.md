@@ -13,6 +13,11 @@
 - 暂停时待回复的达人来信：BR 48、IT 57、MY 15、UK 8。MY 收信从 10:43 起在认证阶段连续失败（`taplink_remote_read_failed`），早于暂停。
 - 恢复需要明确操作：打开各市场自动运营、在页面对持续发送执行 start（首发授权规则不变）、启动 scheduler。恢复前先处理 MY 认证问题，并按讨论结论调整调度。
 
+## 2026-09-24 本机清理（用户同意）
+
+- `var/` 中 4,458 个 `market-identity-*` 临时目录和 917 个超过 3 天的旧运行报告与日志已压缩归档到 `/Users/bjn00003/BDHub/BDHub-Agent-backups/var-archive-20260924/`，逐字节校验后从 `var/` 移除，释放 225MB；归档目录附有清单和恢复命令。仍被代码读写的 15 个旧状态或日志文件保留。
+- 删除了 4 个已完全合并的旧分支，以及 31 个空目录；它们仍在离线包 `BDHub-Agent-20260924.bundle` 中。
+
 ## 2026-09-24 会话页修复
 
 - 自 2026-09-23 23:14 的 Web 构建起，会话页在浏览器里读不出任何队列（`fetch` 被当作对象方法调用，浏览器报 Illegal invocation），四个市场都显示 0 条和“暂时无法读取会话队列”。台账与接口数据完整。
@@ -22,7 +27,7 @@
 
 - 回退锚点：基线标签 `audit-base-20260924`（`b4efe70`）；审计开始时生产目录未提交改动的快照 `audit-wip-20260924`；仓库外离线包 `/Users/bjn00003/BDHub/BDHub-Agent-backups/git/BDHub-Agent-20260924.bundle`。
 - 分支 `codex/claude-audit-20260924` 删除了 37 个无调用脚本、6 个 lib 模块、4 个页面已不调用的 API 和 109 个过时文档，并按代码修正了主文档。活代码路径、`config/*.json`、`var/`、服务和授权都未改。清单、缺陷与建议见[项目审计与清理](../implementation/project-audit-20260924.md)。
-- 被删文件都不在 scheduler、job_run 或 Web bridge 的调用路径上，合入不需要重启 worker。合入后第一次 `npm run typecheck` 会因旧的 `.next/types` 报 TS2307，重新构建后消失。下次重新构建 Web 之前，在用的 `.next` 里仍有 reply-review、cycle-service、catalog-screen、global-source 这 4 个旧路由；页面不调用它们，若被直接请求，会因后端脚本已删而返回错误。
+- 被删文件都不在 scheduler、job_run 或 Web bridge 的调用路径上，合入没有重启 worker。之后因会话页修复重新构建了 Web：已删的 4 个接口现返回 404，生产目录 typecheck 通过。
 - 生产目录原有的 16 个未提交改动（与 IT workflow 恢复相关）保持原样，如何处置仍待用户决定。
 
 ## 本轮交付与验证
