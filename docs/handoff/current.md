@@ -1,6 +1,6 @@
 # BDHub-Agent 当前交接
 
-更新时间：2026-09-24 16:50（Asia/Shanghai）。本页只记录运行快照；规则见 [PROJECT](../PROJECT.md)，实现见 [TECHNICAL](../TECHNICAL.md)，后续方向见[项目审计与清理](../implementation/project-audit-20260924.md)。更早流水见[历史交接](../archive/handoff/codex-takeover-history-20260923.md)。
+更新时间：2026-09-24 17:10（Asia/Shanghai）。本页只记录运行快照；规则见 [PROJECT](../PROJECT.md)，实现见 [TECHNICAL](../TECHNICAL.md)，后续方向见[项目审计与清理](../implementation/project-audit-20260924.md)。更早流水见[历史交接](../archive/handoff/codex-takeover-history-20260923.md)。
 
 ## 2026-09-24 生产暂停（用户要求）
 
@@ -40,6 +40,12 @@
   - 生产已暂停（自 11:18）。
   - 需处理 4 项：IT 2 条人工会话；IT 货盘 `global_catalog_not_published`；UK Kalodata `kalodata_auth_required`；MY 收信 `taplink_remote_read_failed`（auth 阶段，自 10:42）。
   - 提示 5 项：IT 29、BR 48、UK 8、MY 13 位达人来信未回（最早约 22 小时）；IT 2 条未知发送已隔离。
+
+## 2026-09-24 MY 重登与 Kalodata 激活（用户要求）
+
+- MY：17:05 通过账号页同一接口请求 acc8 重登，项目维护 worker 用保存的凭据自动登录，本次没有出现验证。新代次 `identity-generation-7900bbb2aa1e27a3b8dcce7f` 已发布（profile 目录完整）。随后收信重连这一步因 `project_account_identity.py` 缺 `import json` 报 `NameError`，意图被记成 failed_known（这条记录保留原样）。该缺陷自 09-23 16:22（`1648c60`）起影响所有走到这一步的重登或刷新，已在 `a8e6d94` 修复并补真实 adapter 测试。
+- 17:07 用新身份手动跑一轮 MY 收信（5 个会话，只读）：completed，错误清除，平台写入 0。
+- Kalodata：探测确认 `auth_required` 后，17:03 用保存的激活卡启动激活，扩展验证成功，代理与 Cookie 已保存；17:04 页面上另有一次“刷新身份”（非本会话发起）。17:09 探测为 ready（50 行）。UK 的 Kalodata 阶段仍记为 needs_human，需 UK 主链重跑该阶段后才会清除。
 
 ## 2026-09-24 AI 回复窗口（用户确认）
 
@@ -93,4 +99,4 @@
 - 两 PID 尾号 77284、73153 已在 ACC9 已选池，但当前子活动与冻结活动不同，原活动 name/start/end 等映射证据不全。恢复预检正确拒绝 `workflow_selection_receipt_unverified`。已询问用户是否保留全部原证据并隔离这两项后继续；未获答案，不能代为选择。
 - `workflow_recovery.py` 和 CLI 提供原阶段证据预检/幂等恢复准备；真实恢复尚未调用。实际恢复前需处理上述证据决策，并核对、加载同轮 source 复用的 scheduler 改动；在用 scheduler 未加载这些待交接改动。历史 platform_writes 累计保留，当前状态优先显示 active run。
 - 原有 catalog/global/identity/scheduler 改动保留；本轮仅接纳 workflow 的累计写计数与 active 显示修正，其余不夹带提交或借发布自动执行。
-- IT 两条建会话 quarantined_unknown 与商品选入映射是不同问题；均保留原意图，不能因 72h 到期重发。每市场 30 位/分钟仍未达成；继续先补分段耗时，再评估提速。批量历史补扫、真实多轮人工标注、异机备份是下一阶段方向。
+- IT 两条建会话 quarantined_unknown 与商品选入映射是不同问题；均保留原意图，不能因 72h 到期重发。每市场 30 位/分钟仍未达成；继续先补分段耗时，再评估提速。批量历史补扫、真实多轮人工标注是下一阶段方向（异机备份已于 09-24 完成）。
