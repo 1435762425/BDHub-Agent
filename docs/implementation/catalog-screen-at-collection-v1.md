@@ -46,6 +46,8 @@
 
 ## 命令
 
+> `scripts/global-screen.py` 与 `/api/catalog-screen` 已于 2026-09-24 移出（页面早已不调用）；阈值写在 `config/catalog-screen.json`，筛分逻辑仍在 `scripts/lib/global_screen.py`。原命令可用 `git show audit-base-20260924:scripts/global-screen.py` 查看。
+
 ```
 PYTHONDONTWRITEBYTECODE=1 ../01-BDSystem-V2/.venv/bin/python scripts/global-screen.py show
 PYTHONDONTWRITEBYTECODE=1 ../01-BDSystem-V2/.venv/bin/python scripts/global-screen.py preview --json '{"minSales":200}'

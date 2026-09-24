@@ -147,14 +147,13 @@ IT 默认热点＋冷 checkpoint 每轮 12 个/30 秒；其他三市场 20 个/1
 | API | 用途 |
 | --- | --- |
 | `/api/operations-home`、`/api/workflow` | 主链、开关、断点、运行/安全停止 |
-| `/api/global-source`、`/api/catalog-screen`、`/api/campaign-*`、`/api/catalog-jobs` | 来源、筛分、活动与材料作业 |
+| `/api/campaign-*`、`/api/catalog-jobs` | 活动与材料作业 |
 | `/api/leads-queue`、`/api/identity-queue`、`/api/lead-pool` | 线索、身份与发送池 |
 | `/api/send` | 保存、明确启动/停止、原意图只读核验 |
 | `/api/conversations` | 队列、时间线、翻译、草稿、人工回复/核验、接管解除 |
 | `/api/template-library`、`/api/agent-replies` | 模板、市场窗口、指南、试聊、调用记录 |
 | `/api/inbox` | worker、水位、按北京日统计与分页明细 |
 | `/api/jobs`、`/api/market-accounts`、`/api/market-catalog` | 共享供给时间、市场账号与货盘能力 |
-| `/api/reply-review` | 历史评测及受控本地应用，无发送动作 |
 
 会话详情请求绑定 market/cid/请求代次，迟到结果不能覆盖新选择；刷新替换当前队列页，追加才合并。unknown 人工回复保留原 requestId/正文供核验；只有确认终态才清理草稿。轮询不得覆盖未保存设置；市场 Agent 时间独立保存，不写共享 jobs。resolve_manual 校验最新 turn/case/pending/control/合作状态 revision，幂等且平台写入 0。
 

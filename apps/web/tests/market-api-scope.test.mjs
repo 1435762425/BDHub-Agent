@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-const routes=["campaign-join","campaign-links","campaign-panel","catalog-jobs","catalog-names","catalog-screen","conversations","creator-discovery","creator-identities","creator-profile-refresh","cycle-service","global-source","identity-queue","inbox","jobs","kalodata-identity","lead-pool","leads-queue","link-naming","market-accounts","market-catalog","operations-home","reply-review","send","template-library","workflow"];
+const routes=["campaign-join","campaign-links","campaign-panel","catalog-jobs","catalog-names","conversations","creator-discovery","creator-identities","creator-profile-refresh","identity-queue","inbox","jobs","kalodata-identity","lead-pool","leads-queue","link-naming","market-accounts","market-catalog","operations-home","send","template-library","workflow"];
 
 test("every active market GET rejects a missing market before invoking its backend",async()=>{
  for(const name of routes){
