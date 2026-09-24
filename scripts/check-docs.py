@@ -15,7 +15,7 @@ CANONICAL = (
     ROOT / "docs/PROJECT.md",
     ROOT / "docs/TECHNICAL.md",
     ROOT / "docs/README.md",
-    ROOT / "docs/handoff/codex-takeover-20260919.md",
+    ROOT / "docs/handoff/current.md",
 )
 LINK = re.compile(r"!?\[[^\]]*\]\((<[^>]+>|[^)]+)\)")
 HEADING = re.compile(r"^ {0,3}#{1,6}\s+(.+?)\s*#*\s*$", re.MULTILINE)

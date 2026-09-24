@@ -41,7 +41,7 @@ npm run typecheck   # tsc 会读取 .next/types，删改路由后先 build
 
 IT、BR、MY、UK 复用市场页面；当前回复执行使用多轮 V2，旧五动作与固定模板评测不作为 V2 执行真值。页面清单和业务规则以项目主文档为准。
 
-浏览器演示、`/flow-demo`、本地模拟器、旧二发预演/实测和 matching/outreach-drafts 页面已退出生产构建；2026-09-24 又删除了页面不再调用的 reply-review、global-source、catalog-screen、cycle-service API。对应 SQLite 仍作为历史数据保留并继续备份。产品规则见 [项目文档](../../docs/PROJECT.md)，实现结构见 [技术文档](../../docs/TECHNICAL.md)，动态运行状态见 [Codex 接管状态](../../docs/handoff/codex-takeover-20260919.md)。
+浏览器演示、`/flow-demo`、本地模拟器、旧二发预演/实测和 matching/outreach-drafts 页面已退出生产构建；2026-09-24 又删除了页面不再调用的 reply-review、global-source、catalog-screen、cycle-service API。对应 SQLite 仍作为历史数据保留并继续备份。产品规则见 [项目文档](../../docs/PROJECT.md)，实现结构见 [技术文档](../../docs/TECHNICAL.md)，动态运行状态见 [当前交接](../../docs/handoff/current.md)。
 
 ## 代码边界
 

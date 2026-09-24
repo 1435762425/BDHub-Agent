@@ -1,6 +1,6 @@
 # BDHub-Agent 项目文档
 
-当前产品规则，整理于 2026-09-23。实现见[技术文档](TECHNICAL.md)，运行状态见[当前交接](handoff/codex-takeover-20260919.md)。
+当前产品规则，整理于 2026-09-23。实现见[技术文档](TECHNICAL.md)，运行状态见[当前交接](handoff/current.md)。
 
 ## 1. 目标与范围
 

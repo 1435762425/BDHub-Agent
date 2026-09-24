@@ -5,7 +5,7 @@
 ## 阅读与维护
 
 - [PROJECT.md](docs/PROJECT.md) 定义产品规则，[TECHNICAL.md](docs/TECHNICAL.md) 定义当前实现；需求或实现变化更新对应文档。
-- [当前交接](docs/handoff/codex-takeover-20260919.md) 只保存带时间的运行快照；细节和历史证据按 [文档导航](docs/README.md) 查阅。历史报告不覆盖当前用户指令或主文档。
+- [当前交接](docs/handoff/current.md) 只保存带时间的运行快照；细节和历史证据按 [文档导航](docs/README.md) 查阅。历史报告不覆盖当前用户指令或主文档。
 
 ## 执行边界
 

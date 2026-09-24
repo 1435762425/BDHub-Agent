@@ -1,6 +1,6 @@
 # 文档导航
 
-当前规则只在 [PROJECT.md](PROJECT.md)（产品）与 [TECHNICAL.md](TECHNICAL.md)（实现）维护。[AGENTS.md](../AGENTS.md) 规定执行边界，[当前交接](handoff/codex-takeover-20260919.md) 记录带时间的运行快照。日期化报告只证明当时的范围和结果，不提供当前执行授权。
+当前规则只在 [PROJECT.md](PROJECT.md)（产品）与 [TECHNICAL.md](TECHNICAL.md)（实现）维护。[AGENTS.md](../AGENTS.md) 规定执行边界，[当前交接](handoff/current.md) 记录带时间的运行快照。日期化报告只证明当时的范围和结果，不提供当前执行授权。
 
 ## 按问题阅读
 
