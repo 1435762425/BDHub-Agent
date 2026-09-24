@@ -13,7 +13,9 @@ class MarketSendWorkerTests(unittest.TestCase):
         self.assertEqual(MODULE.expected_wait_state('ProfileBusyError'),'waiting_account')
         self.assertEqual(MODULE.expected_wait_state('new_contact_capacity_reached'),'waiting_capacity')
         self.assertEqual(MODULE.expected_wait_state('it_delivery_send_rejected'),'waiting_capacity')
-        self.assertIsNone(MODULE.expected_wait_state('market_send_result_unknown'))
+        self.assertEqual(MODULE.expected_wait_state('market_send_result_unknown'),'waiting_reconciliation')
+        self.assertEqual(MODULE.next_delay(sent=False,waiting='waiting_reconciliation',interval=30),300)
+        self.assertIsNone(MODULE.expected_wait_state('market_send_conversation_result_unknown'))
 
     def test_confirmed_send_has_no_fixed_thirty_second_gap(self):
         self.assertEqual(MODULE.next_delay(sent=True,waiting=None,interval=30),0.25)

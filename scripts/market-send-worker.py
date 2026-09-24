@@ -18,6 +18,9 @@ def write(market,value):
 
 def expected_wait_state(code):
  if code=='market_send_candidate_missing':return 'waiting_pool'
+ # Stay alive and re-read the original request every five minutes: the readback confirms the card or, after two
+ # reads that find it absent, isolates the creator.  The scheduler does not relaunch a sender stopped on unknown.
+ if code=='market_send_result_unknown':return 'waiting_reconciliation'
  # A platform refusal is settled and counted by the new-contact gate, which then holds until the next day.
  if code in ('new_contact_capacity_reached','it_delivery_send_rejected'):return 'waiting_capacity'
  if code in ('ProfileBusyError','live_guard_busy'):return 'waiting_account'
@@ -30,7 +33,8 @@ def inbox_waiting(market):
  except (OSError,ValueError,TypeError):return False
 
 def next_delay(*,sent,waiting,interval,inbox_waiting_now=False):
- return 3 if sent and inbox_waiting_now else 0.25 if sent else 3 if waiting=='waiting_account' else 300 if waiting=='waiting_capacity' else interval
+ return 3 if sent and inbox_waiting_now else 0.25 if sent else 3 if waiting=='waiting_account' else \
+  300 if waiting in ('waiting_capacity','waiting_reconciliation') else interval
 
 def main():
  p=argparse.ArgumentParser(description=__doc__);p.add_argument('--market',required=True,choices=('br','my','uk'));p.add_argument('--once',action='store_true');p.add_argument('--interval',type=int,default=30);a=p.parse_args()

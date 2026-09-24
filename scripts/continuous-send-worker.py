@@ -35,10 +35,13 @@ def main():
                 time.sleep(3)
                 continue
             print(json.dumps(state,ensure_ascii=False),flush=True)
-            if state['state'] in ('waiting_reconciliation','paused') and state.get('stopReason') not in ('send_pool_empty','recipient_limit'):break
+            # An unknown result keeps the worker alive: every five minutes the next round re-reads the original
+            # request, which confirms it or, after two reads that find the card absent, isolates the creator.
+            if state['state']=='paused' and state.get('stopReason') not in ('send_pool_empty','recipient_limit'):break
             if args.once:break
             confirmed_now=state['state']=='sending' and state.get('lastSuccessAt')==state.get('seenAt')
-            delay=0.25 if confirmed_now else 300 if state['state']=='waiting_capacity' else 5 if state['state']=='waiting_window' else 1
+            delay=0.25 if confirmed_now else 300 if state['state'] in ('waiting_capacity','waiting_reconciliation') else \
+                5 if state['state']=='waiting_window' else 1
             until=time.monotonic()+delay
             while not STOP and time.monotonic()<until:
                 time.sleep(max(0,min(1,until-time.monotonic())))
