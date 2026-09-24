@@ -1,13 +1,13 @@
 # 第三方来源与许可
 
-核对日期：2026-09-11。本文件分别记录模板、字体、示例资源和直接依赖；模板的 MIT 许可不自动覆盖其他来源。精确包版本由 `package-lock.json` 固定，依赖自身和所带第三方代码保留各自声明。
+核对日期：2026-09-11；2026-09-24 按实际依赖与文件更新。本文件分别记录模板、字体、示例资源和直接依赖；模板的 MIT 许可不自动覆盖其他来源。精确包版本由 `package-lock.json` 固定，依赖自身和所带第三方代码保留各自声明。
 
 ## TailAdmin Next.js Free
 
 - 来源：[TailAdmin/free-nextjs-admin-dashboard](https://github.com/TailAdmin/free-nextjs-admin-dashboard/tree/d3526b35fb7e579a4585129fe6eaa47f54ec9a0b)。
 - 版本：2.3.0；提交：`d3526b35fb7e579a4585129fe6eaa47f54ec9a0b`。
 - 许可：MIT；`Copyright (c) 2023 TailAdmin`。完整原文保存在 [LICENSE](LICENSE)，已与固定提交的归档逐字核对。
-- 采用范围：主题 CSS、部分基础 UI、主题管理与切换、SVG 图标、示例头像/产品图及部分配置。逐文件原始校验值与改动记录在 [TAILADMIN-SOURCE.json](TAILADMIN-SOURCE.json)。
+- 采用范围：主题 CSS、部分基础 UI、主题管理与切换、SVG 图标及部分配置；示例头像/产品图已移除。逐文件原始校验值与改动记录在 [TAILADMIN-SOURCE.json](TAILADMIN-SOURCE.json)。
 - BDHub 的经营目标、机会、关系会话、决定、历史接续、Agent 配置及共享弹层是本项目实现。未导入 TailAdmin Pro 源码；公开 Pro Demo 只曾用于选型研究。
 
 免费 MIT 授权允许使用、修改与商业使用，复制或分发实质部分时保留版权和许可声明。Pro 的购买档位、开发席位与项目数量限制不适用于这份免费仓库代码。
@@ -21,7 +21,7 @@
 
 ## 示例图片和图标
 
-`public/images/product/` 与 `public/images/user/` 的文件来自上述固定的免费仓库，用于占位演示。导入清单保留每个文件的上游校验值；上游未对每张图片单列原始作者或额外许可，本项目不将其描述为真实达人、商品或合作证据。接入真实业务后使用有明确来源的业务素材。
+早期从上述仓库导入的示例头像与产品图已从 `public/images/` 移除，不再随应用分发；导入清单不再列出它们。
 
 `src/icons/` 来自同一免费仓库。搜索图形提取自免费 `src/layout/AppHeader.tsx`；铃铛只修改颜色填充；`public/favicon.svg` 复制免费 `grid.svg`。这些改动均保留上游几何与 MIT 来源记录。
 
@@ -33,13 +33,12 @@
 | --- | --- | --- |
 | Next.js | 16.3.4 | MIT；`node_modules/next/license.md`；Copyright (c) 2025 Vercel, Inc. |
 | React、React DOM | 19.2.0 | MIT；各包 `LICENSE`；Copyright (c) Meta Platforms, Inc. and affiliates. |
-| ApexCharts | 4.7.0 | MIT；`node_modules/apexcharts/LICENSE`；Copyright (c) 2018 ApexCharts |
 | Tailwind CSS、Tailwind PostCSS | 4.1.17 | MIT；各包 `LICENSE`；Copyright (c) Tailwind Labs, Inc. |
 | PostCSS | 8.5.23 | MIT；`node_modules/postcss/LICENSE`；Copyright 2013 Andrey Sitnik |
 | SVGR webpack | 8.1.0 | MIT；`node_modules/@svgr/webpack/LICENSE`；Copyright 2017 Smooth Code |
 | TypeScript | 5.9.3 | Apache-2.0；`node_modules/typescript/LICENSE.txt` |
 
-图表直接使用固定的 ApexCharts 4.7.0。该版本包内 LICENSE 是 MIT；这不是对 ApexCharts 后续版本许可的推断。`react-apexcharts` 没有保留在本项目依赖中，因为所检查 1.8.0 包内 LICENSE 采用不同的 Community/Commercial/OEM 条款。升级图表依赖时按新版本原文核对。
+当前不含图表依赖，此前的 ApexCharts 已移除。重新引入图表库时按实际版本的许可原文核对；曾检查的 `react-apexcharts` 1.8.0 采用 Community/Commercial/OEM 条款，不是 MIT。
 
 开发用类型包及完整间接依赖由锁文件记录；它们随 npm 包携带的许可和通知不由本文件重新授权。后续对外分发构建时一并保留实际包含代码的版权和许可文件。
 

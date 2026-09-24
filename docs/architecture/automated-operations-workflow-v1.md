@@ -1,6 +1,6 @@
 # BDHub-Agent 自动运营首页与持续经营工作流开发计划 v1
 
-状态：自动运营主链的历史执行合同，基础能力已实施。日期：2026-09-20。首个实施市场：意大利。全市场共享页面、无全托空态、market 隔离、资源并发与性能目标以[多市场统一计划](multimarket-ui-runtime-hardening-plan-v1.md)及当前项目/技术文档为准。
+状态：自动运营主链的历史执行合同，基础能力已实施。日期：2026-09-20。注：Campaign 现为每 2 天刷新（`config/operations-policy.json` 的 `campaignRefreshDays`），文中“每天 07:00”是当时口径。首个实施市场：意大利。全市场共享页面、无全托空态、market 隔离、资源并发与性能目标以[多市场统一计划](multimarket-ui-runtime-hardening-plan-v1.md)及当前项目/技术文档为准。
 
 本文是本轮开发的执行合同，描述目标页面、业务顺序、状态机、数据迁移、API、测试和验收。它不是当前运行状态；当前事实仍以 `docs/PROJECT.md`、`docs/TECHNICAL.md`、代码和 `var/` 台账为准。
 

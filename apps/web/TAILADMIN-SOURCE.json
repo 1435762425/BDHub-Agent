@@ -13,178 +13,6 @@
       "upstream_sha256": "779051d4d4882272243b700e96d371fbba89d1c7bea657286531c94ae8ce7d08"
     },
     {
-      "path": "public/images/product/product-01.jpg",
-      "upstream_sha256": "46fefe0fe5f72132e50cb0449a3df7c56eeac7b305ecbeff205ebb0bb7245e4c"
-    },
-    {
-      "path": "public/images/product/product-02.jpg",
-      "upstream_sha256": "023e24b591caa64959c340dafec9998ccb67d84240049e4ebdbc80836cb2fbdf"
-    },
-    {
-      "path": "public/images/product/product-03.jpg",
-      "upstream_sha256": "bb2eaa531d1043fc064a54e6c022cbb57ce042a4a004e3e77801a546073894d7"
-    },
-    {
-      "path": "public/images/product/product-04.jpg",
-      "upstream_sha256": "db5d396517f646370e1f704de1675d49898eba777a45c9a9d698b4b78845af00"
-    },
-    {
-      "path": "public/images/product/product-05.jpg",
-      "upstream_sha256": "09807441474f34437f40676417ceeb2359a6f3fc225d05f0396416dad866aec2"
-    },
-    {
-      "path": "public/images/user/owner.jpg",
-      "upstream_sha256": "1919905d6234471e3f3ee4c1d3edf67d3bdd00170d260c46b7973e70b9f04b76"
-    },
-    {
-      "path": "public/images/user/user-01.jpg",
-      "upstream_sha256": "e049a511b10b051967008400092dd2dda8d40f19632cfa7b05616297fcfe40d5"
-    },
-    {
-      "path": "public/images/user/user-02.jpg",
-      "upstream_sha256": "6e2d5d6ed492d90d0c0a51356b9fad7d6bb44b2319d88890389af46a3a82a832"
-    },
-    {
-      "path": "public/images/user/user-03.jpg",
-      "upstream_sha256": "e017fdef2be62258f84bf8b043ca8419ebf50d314d2b9d43e43e9e4cc71cbfae"
-    },
-    {
-      "path": "public/images/user/user-04.jpg",
-      "upstream_sha256": "c7abfcaafd1c85866bd3c1689a08b7d92f17209d10b9fefe2e494adac417f600"
-    },
-    {
-      "path": "public/images/user/user-05.jpg",
-      "upstream_sha256": "260a2e69177bdde04d3bff135ff8ac6b49e623c4916eb76bef9cbf5d46053325"
-    },
-    {
-      "path": "public/images/user/user-06.jpg",
-      "upstream_sha256": "f7ed9f8134410cdb72769c93e9908b90cdcdeedc0d8b6dd33fcf9b39b36bc819"
-    },
-    {
-      "path": "public/images/user/user-07.jpg",
-      "upstream_sha256": "c7759786085c70bee4cfd7d114bbe5c37c0da0ed22b9e9c52d88857ce358f9b5"
-    },
-    {
-      "path": "public/images/user/user-08.jpg",
-      "upstream_sha256": "cfe540f2065a41e2fbacb9cde232235ba99974bc2faeb6daa804872f1c0522ed"
-    },
-    {
-      "path": "public/images/user/user-09.jpg",
-      "upstream_sha256": "d71f3534704b2ca847c5aaf7a6d7ee951b909b54eb44132af78942e9a7e7677c"
-    },
-    {
-      "path": "public/images/user/user-10.jpg",
-      "upstream_sha256": "0a6a0d35448d8c14fb29763c43376a882e5bb20c83741d91021ef417306b6061"
-    },
-    {
-      "path": "public/images/user/user-11.jpg",
-      "upstream_sha256": "ca3d7487fd03fd739ef5b685693fda5873bc63be01bc3954efff76f280497829"
-    },
-    {
-      "path": "public/images/user/user-12.jpg",
-      "upstream_sha256": "e74db47b4312446ad68a1948b11bffed6391c16e3e4200b2e69d32753cac8113"
-    },
-    {
-      "path": "public/images/user/user-13.jpg",
-      "upstream_sha256": "5d41581569f550c2dc8f7fccadb2a5f5df7e161483f2eefe695f7282b4c0938f"
-    },
-    {
-      "path": "public/images/user/user-14.jpg",
-      "upstream_sha256": "ac4e0c8acd98f1c7c9a5e119109fbbd758051fdd0596c5a1da84e9dd68abae86"
-    },
-    {
-      "path": "public/images/user/user-15.jpg",
-      "upstream_sha256": "c00795242873df57deb2f6fa7fd77e4cd7dc6a8058a3c9d13922772393d44fcc"
-    },
-    {
-      "path": "public/images/user/user-16.jpg",
-      "upstream_sha256": "cf3959e30bb77f53c17afde301e771d87b6aa10d6944745676a6fd18c001280a"
-    },
-    {
-      "path": "public/images/user/user-17.jpg",
-      "upstream_sha256": "08812121f5c6f6cb8fd840f1ec9410dc7fd69a8c9a69bafb6c40c895905084c2"
-    },
-    {
-      "path": "public/images/user/user-18.jpg",
-      "upstream_sha256": "12f28512f5f53d8153e38b34dc85e89b5cf0e4d0b4c23d563033e1e5f8474366"
-    },
-    {
-      "path": "public/images/user/user-19.jpg",
-      "upstream_sha256": "05323737a563481979458462e2c88744cc0a96cb7630ace2ee0a92be4ee79d9f"
-    },
-    {
-      "path": "public/images/user/user-20.jpg",
-      "upstream_sha256": "7c214067a273a97b2bf89159f1a5dac6fc26a6b0814f6879cd9f0ba9faea661f"
-    },
-    {
-      "path": "public/images/user/user-21.jpg",
-      "upstream_sha256": "16e205df17eb7c022d36a1b8a4247a77ed53cad763f5271744968b364effcd82"
-    },
-    {
-      "path": "public/images/user/user-22.jpg",
-      "upstream_sha256": "c3061423eb4365fd0f056ce8bdee38da7586cc3e03c8ea5dd3afc630a161a5fe"
-    },
-    {
-      "path": "public/images/user/user-23.jpg",
-      "upstream_sha256": "5b1fe53a4684860e2f1872a64abae4e80279375f9daaabbecc117ce20695aa16"
-    },
-    {
-      "path": "public/images/user/user-24.jpg",
-      "upstream_sha256": "5df08288188acf2bb12731d9ac0465a82adbcea25a02494ee5a4edc1ea25f6e7"
-    },
-    {
-      "path": "public/images/user/user-25.jpg",
-      "upstream_sha256": "0cde4d5ba127faff9e0e1b543650380958cbdf03f4a9d6497a6df3656d296b64"
-    },
-    {
-      "path": "public/images/user/user-26.jpg",
-      "upstream_sha256": "ffc7b4d683dd46de7fca26f7f34f5164603291fe0e7ca4acad5ee3f49166fa0b"
-    },
-    {
-      "path": "public/images/user/user-27.jpg",
-      "upstream_sha256": "4a8ea43db8987f84ae859801837e7f39a4a8c9c2586e036c06a3b927d0ee8464"
-    },
-    {
-      "path": "public/images/user/user-28.jpg",
-      "upstream_sha256": "a898ae5f991f979047730af961c21ca3b96c06b5fd341082cef027ea9834e0b5"
-    },
-    {
-      "path": "public/images/user/user-29.jpg",
-      "upstream_sha256": "d8df279843080779ec154f9da8d332c4885154fdf3328d86017790a08f2233a0"
-    },
-    {
-      "path": "public/images/user/user-30.jpg",
-      "upstream_sha256": "9883a2d894d7fc9004a81d51469214f223d34a1a74bf9ea32fbe15c13e754bc4"
-    },
-    {
-      "path": "public/images/user/user-31.jpg",
-      "upstream_sha256": "44135d1a73fbd0fede43f823013351718f69bf66136ab6c35e7964736152f7a6"
-    },
-    {
-      "path": "public/images/user/user-32.jpg",
-      "upstream_sha256": "7009930f5c2c4cfb33607d2c758a76abede86ce18ad60e6edc01a65782d40853"
-    },
-    {
-      "path": "public/images/user/user-33.jpg",
-      "upstream_sha256": "af3dab17697e0a6cef4f8100103ab064b590d5e115f67dee7df6f4f6067d09bc"
-    },
-    {
-      "path": "public/images/user/user-34.jpg",
-      "upstream_sha256": "683659eedde79c90200ac7e4da14a1a6bfb16fadadbeb8499ebf82a72c91efe6"
-    },
-    {
-      "path": "public/images/user/user-35.jpg",
-      "upstream_sha256": "97955b39d532c5c6c732cdce2952c019a382069bf46ecb37e4a03779998adaab"
-    },
-    {
-      "path": "public/images/user/user-36.jpg",
-      "upstream_sha256": "1f314c49584b1a9507a65b0a9fc463c3134f4150993916ce9e20c89321ee95c5"
-    },
-    {
-      "path": "public/images/user/user-37.jpg",
-      "upstream_sha256": "4037e3ae3dd6fb2fb56da73f6b6fcd72ea21e8556a8ea3732eb5ab0b141f9cd4"
-    },
-    {
       "path": "src/app/globals.css",
       "upstream_sha256": "7870d4f1132a8aba8ee5e05b500cb8c7b53cec3227a114841ee8d5bcf69c30fd"
     },
@@ -193,32 +21,12 @@
       "upstream_sha256": "a0ed4bc0c6771e792f18fd50cff624f52c870a7164c36d1dc3d6ea58795b7c99"
     },
     {
-      "path": "src/components/ui/button/Button.tsx",
-      "upstream_sha256": "5175ece13c75470e06c21db1cda4dbc3340aafc30773f6f89e8fa43c2c048cdd"
-    },
-    {
-      "path": "src/components/ui/modal/index.tsx",
-      "upstream_sha256": "c762cfd3538706b4aa0f93ffb2b5ed168d95d9330a02d131a76ad6a358ebe68a"
-    },
-    {
-      "path": "src/components/ui/table/index.tsx",
-      "upstream_sha256": "09a52b010268681d2a18b9aac64c23be98dd9f72d2e3e313d916fd0b51b6f4db"
-    },
-    {
       "path": "src/icons/alert.svg",
       "upstream_sha256": "ce10bb0c47c680bddc004c277e0b327e765ebc9e6c7694bedcb6eea6698d0c1e"
     },
     {
       "path": "src/icons/angle-down.svg",
       "upstream_sha256": "c70aff66449a65d3237f54fbb6ec54db2bae7bb7295ace4ea07aed325144f2b9"
-    },
-    {
-      "path": "src/icons/angle-left.svg",
-      "upstream_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-    },
-    {
-      "path": "src/icons/angle-right.svg",
-      "upstream_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
     },
     {
       "path": "src/icons/angle-up.svg",
@@ -259,10 +67,6 @@
     {
       "path": "src/icons/box.svg",
       "upstream_sha256": "f0a53a53ef7e0d7176f11d23ab71834f4cec52e9701c6f19a7abff5e10eef58b"
-    },
-    {
-      "path": "src/icons/calendar.svg",
-      "upstream_sha256": "de70fce1bef3d8f173ec5439bc932a6359bb304f3af387aa0b452e72a397c32c"
     },
     {
       "path": "src/icons/calender-line.svg",
@@ -413,10 +217,6 @@
       "upstream_sha256": "15a4885c5e1154da7b50d5e78d91d74591efc7dd942dc320052ba8a95b2aaca6"
     },
     {
-      "path": "src/icons/task.svg",
-      "upstream_sha256": "4793e74cd467ee61e738a5399ef5344c5ffae26c225905a596233aea9cb789de"
-    },
-    {
       "path": "src/icons/time.svg",
       "upstream_sha256": "51a7d593dec02339b9bb9be868cda17c908add9342ce465215679dcf0bf4c1c8"
     },
@@ -468,7 +268,8 @@
     "Imported free ThemeContext and ThemeToggleButton; added accessible theme label.",
     "Copied free grid.svg to public/favicon.svg for the prototype icon.",
     "Business screens, application navigation, chart integration and shared dialog/focus behavior are custom, not Pro source.",
-    "Normalized trailing whitespace in imported SVG/config text and OFL text; geometry and license wording unchanged."
+    "Normalized trailing whitespace in imported SVG/config text and OFL text; geometry and license wording unchanged.",
+    "2026-09-24: removed 50 imported files that the app no longer ships (demo user/product images, unused icons, and the button/modal/table components); their upstream hashes remain in git history at tag audit-base-20260924."
   ],
   "source_archive": {
     "url": "https://codeload.github.com/TailAdmin/free-nextjs-admin-dashboard/tar.gz/d3526b35fb7e579a4585129fe6eaa47f54ec9a0b",

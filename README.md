@@ -1,6 +1,6 @@
 # BDHub-Agent
 
-独立的 Agent 驱动达人经营系统。IT、BR、MY、UK 共用货盘、线索、身份、持续发送、收信和服务处理流程，各市场保留独立账号、语言、能力和台账边界。
+独立的 Agent 驱动达人经营系统。IT、BR、MY、UK 共用货盘、线索、身份、持续发送、收信和服务处理流程，各市场保留独立账号、语言、能力和台账边界；B 类视频线索、TapLink 清理和会话页人工发送等能力目前只在 IT 实现（见技术文档）。
 
 实际开关、进程和断点以[当前交接](docs/handoff/codex-takeover-20260919.md)及本机台账为准。打开页面、预检、构建与重启不产生发送授权，也不改变已有开关。
 
@@ -28,20 +28,15 @@ var/               本机真实状态与证据，不进入 Git
 
 ## 开发与验证
 
-Web 需要 Node.js `>=22.18.0`：
+本目录就是生产环境：scheduler 按路径拉起子脚本，Web 生产实例在 `apps/web` 占用 `127.0.0.1:5198`。代码改动在 `/Users/bjn00003/BDHub/` 下的独立 git worktree 中进行和验证（代码按 `ROOT.parent/'01-BDSystem-V2'` 定位旧项目，所以 worktree 要放在同一父目录），合入前再核对进程、锁和断点。
+
+Web 需要 Node.js `>=22.18.0`。在 worktree 的 `apps/web` 中验证：
 
 ```bash
-cd /Users/bjn00003/BDHub/BDHub-Agent/apps/web
 npm ci
-npm run dev
-```
-
-工作台监听 `http://127.0.0.1:5198`。源码验证：
-
-```bash
 npm test
-npm run typecheck
 npm run build
+npm run typecheck
 ```
 
 Python 使用本项目自己的 3.13 虚拟环境；固定依赖见 `requirements.lock`：

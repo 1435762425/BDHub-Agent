@@ -20,7 +20,7 @@ Web 使用 Next.js 16、React 19、TypeScript 5.9，Node ≥22.18.0；业务使�
 - `config/`：业务参数和敏感配置样例；`var/`：真实状态/证据；`vendor/`：本仓协议闭包。
 - `tests/` 与 `apps/web/tests/`：状态机、恢复、API 和显示合同。
 
-所有市场入口显式携带 market；URL/body/CLI/返回值一致。`markets.json` 是唯一市场注册表，未验收能力拒绝动作，空市场不回退 IT。首页使用 `market_read_head → market_read_generation` 只读快照，同市场 GET 由 singleflight 合并；缺失/过期才本地聚合。快照失败不修改 workflow 结果，筛分摘要必须匹配当前来源 head。
+Web 路由与 bridge 显式携带 market，URL/body/CLI/返回值一致；约 10 个 CLI 的 `--market` 仍缺省为 `it`，手工调用必须显式传参。`markets.json` 是唯一市场注册表，未验收能力拒绝动作，空市场不回退 IT。注册表只登记 `campaignCatalog`、`fullManagedCatalog` 两个能力位；TapLink 清理、B 类视频线索、会话页人工文本/卡片、身份队列/精确发现/画像刷新、Kalodata 身份和全托作业页目前只在 IT 实现，由代码直接拒绝其他市场。首页使用 `market_read_head → market_read_generation` 只读快照，同市场 GET 由 singleflight 合并；缺失/过期才本地聚合。快照失败不修改 workflow 结果，筛分摘要必须匹配当前来源 head。
 
 ## 2. 领域模块与合同
 
@@ -49,11 +49,11 @@ IT `full_catalog_collection_mode()` 固定普通周更，拒绝新的 `--by-cate
 
 短名按 `cycle_product_name.locale` 校验，非 IT 不读 IT 缓存或截断标题；缺失停止创建。IT 准备顺序 seed/read → names → create，其他市场 seed → localized names → read → create。新建回读未知隔离该 PID，整批写完公共回读，再按 30/120 秒轮询两次；仍缺失只保留 unknown，不重复 POST。
 
-清理只删除整卡平台 invalid，内部期限/佣金门槛仅本地停用；BR/UK 未验收 DELETE 时固定跳过。删除收口后完整回读，仍存在记 failed_known，不自动重复 DELETE。发送端本地核对 binding/Offer/currentListId，不调用 fresh_card。
+清理只删除整卡平台 invalid，内部期限/佣金门槛仅本地停用。`taplink_clean` 阶段目前只对 IT 执行，BR/MY/UK 整段跳过（`market_taplink_cleanup_not_enabled`），既不本地停用也不做只读扫描。删除收口后完整回读，仍存在记 failed_known，不自动重复 DELETE。发送端本地核对 binding/Offer/currentListId，不调用 fresh_card。
 
 ### 2.3 工作流与调度
 
-`operations_workflow.py` 保存不可变 run/stage/generation/checkpoint，`operations_scheduler.py` 执行和监督。开关来自市场 durable setting，共享供给时间来自 jobs，市场发送/Agent 窗口来自各自持久控制。
+`operations_workflow.py` 保存不可变 run/stage/generation/checkpoint，`operations_scheduler.py` 执行和监督。开关来自市场 durable setting，共享供给时间来自 `jobs.json`，市场发送/Agent 窗口来自各自持久控制。`jobs.json` 各阶段的 `enabled` 已无读取方；`inbox_monitor.enabled` 仍可单独拉起 IT 收信（与自动运营总开关任一为真即启动），`continuous_send.enabled` 被 `jobs.save` 拒绝修改。全托周更到期时间沿用 `taplink_clean` 的 `at`/`weekday`，`full_catalog_update.at` 只在页面展示。
 
 - 同市场按上游 generation 串行；不同市场用 workflow 及账号资源槽并行，Kalodata 全局最多两槽。
 - `workflow_stage_claim/workflow_resource_slot` 短事务领取 owner/fence/300 秒 lease，执行每 30 秒续租；确认 owner 已退出才回收。子进程先登记真实 PID 再执行，父死子活仍占槽。
@@ -70,7 +70,9 @@ IT `full_catalog_collection_mode()` 固定普通周更，拒绝新的 `--by-cate
 
 `lead_query_head/selection` 发布每 PID 当前 A 类范围，`video_lead_current` 发布当前最高单视频 B 类。两类保存来源时间、数值币种与原始证据；额度耗尽只发布已完整完成的 PID。B 类重复页、坏日期、缺作者或中断不能冒充完整覆盖。
 
-`creator_discovery.py/discovery_cohort.py` 执行精确 Find，`identity_queue.py/identity-batch.py` 聚合去重身份，`profile_refresh.py` 独立刷新画像。resolved/unresolved 复用证据，blocked 保留原断点。`IdentityBridge` 只交接当前 head 的 source edge，固定索引顺序避免历史全表 JSON 扫描；OECID 发布不能等待或伪装 Profile 成功。
+B 类目前只在 IT 的 Kalodata 阶段执行（`kalodata-video-crawl.py` 没有 `--market`，`video_lead_current` 没有 market 列），BR/MY/UK 发送池只有 A 类。每次 IT Kalodata 阶段新建一代 B 类，窗口截至两天前；没有单独的 7 天重读节奏（7 天是 A 类队列的 `refreshDays`）。**已知缺陷**：新一代初始化时立即清空 `video_lead_current` 与 `kalodata_video_head`（`kalodata_video_scan.py`），扫描完成前 B 类位置消失，与 PROJECT §3.1“未完成时继续消费上一完整版本”不符。
+
+`creator_discovery.py/discovery_cohort.py` 执行精确 Find，`identity_queue.py/identity-batch.py` 聚合去重身份，`profile_refresh.py` 独立刷新画像。resolved/unresolved 复用证据，blocked 保留原断点。`IdentityBridge` 只交接当前 head 的 source edge，固定索引顺序避免历史全表 JSON 扫描；OECID 发布不能等待或伪装 Profile 成功。BR/MY/UK 的 OECID 由 scheduler 调 `market-identity.py`（`lib/market_identity.py`）：每 3 个 handle 拉起一次 `probe-italy-profile.py`，证据写入 `var/market-identity-{market}-*` 目录（目前不清理）。页面的身份队列、精确发现与画像刷新接口只支持 IT。
 
 Find lanes 共用账号 QPS 和一次串行滑块结果，同账号原请求重放成功后才落身份；失败只存脱敏分类。OECID stage 排空当前 outbox 并复用已判定终态，任何 pending/queue_stalled/blocked 不发布完成 generation。稳定主键为 market×OECID，改名只追加 alias。
 
@@ -82,13 +84,13 @@ Find lanes 共用账号 QPS 和一次串行滑块结果，同账号原请求重�
 | `cycle_review.py` | 领取前身份、材料、关系、去重复检 |
 | `cycle_delivery.py` / `cycle_executor.py` | 不可变 delivery、组件意图、额度和回执 |
 | `continuous_send.py` / `continuous-send-worker.py` | IT 控制、窗口、断点与 worker |
-| `market_send_control.py` / `market_send_canary.py` | BR/MY/UK 同合同执行与首次能力验证 |
-| `request_budget.py` | 同账号共享请求预算 |
+| `market_send_control.py` / `market_send_canary.py` / `market-send-worker.py` | BR/MY/UK 控制与持续发送；`market_send_canary.run` 是三市场正式发送核心，名称沿用首测阶段 |
+| `request_budget.py` | 进程内请求节拍：每个 runtime 各持一份，不跨进程；跨进程只共享写门禁 |
 | `cycle_service.py` / `collaboration_status.py` | 案件、人工接管、合作状态 |
 
 同市场同达人主动推品冷却统一 **72 小时**；池投影、领取前复检和最终平台写门禁必须同值，回复/橱窗不缩短。人工客服与新来信回复不套用主动推品冷却。`outreach_policy.py` 将已确认/部分送达的末次组件时间与同 plan/OEC 的平台我方外发观测时间取较晚值；逐写仅排除当前 delivery 在原 cid 已确认的 messageId。未知意图仍独立阻断，不靠冷却结束放行。
 
-每位领取冻结全部发送事实，逐次发卡/文字前复检停止、时间窗、身份维护、关系和当前材料。容量预检在建会话/发卡前，最终滚动 24 小时预留在短事务复核。卡＋文字要求两个剩余消息槽；历史单卡确认而文字未尝试已触限，只结算未发送文字，保留 partial_delivery。
+每位领取冻结全部发送事实，逐次发卡/文字前复检停止、时间窗、身份维护、关系和当前材料。容量预检在建会话/发卡前，最终滚动 24 小时预留在短事务复核；已解锁关系、或 24 小时内已为同一达人预留过的，不再占新联系名额（`cycle_delivery.contact_capacity_available`）。卡＋文字要求两个剩余消息槽；历史单卡确认而文字未尝试已触限，只结算未发送文字，保留 partial_delivery。
 
 组件已提交只读精确回查。`/api/send` reconcile 即使停止/窗口外也只查原账号/requestRef，结束即返回，不能领取下一人或启动未提交组件。会话 received 只有原 requestRef/CID/达人身份全部匹配才可确认，缺回执 inflight 保持未知。IT 已授权的零卡文未知会话隔离保留原意图和案件，不改成失败/成功，不对该达人再发。
 
@@ -102,7 +104,7 @@ worker 在等待窗口、池或容量时常驻退避；同账号在途写串行�
 
 首次 checkpoint 有项目已确认外发时，以文字开始时间区分实时回复；否则首次导入为历史。已确认卡和文字按各自 `cycle_delivery_part` 状态/时间投影，不用 episode 冻结正文冒充已发文字。showcaseNotifications 单列系统事件，不输入文字分类器。消息完整性以覆盖/水位证明，worker 存活不足以证明新鲜。
 
-IT 默认热点＋冷 checkpoint 每轮 12 个/30 秒；其他三市场 20 个/10 秒，共享只读 2 QPS 预算。认证短持 profile 租约后释放，每次读取仍核验维护与身份指纹；账号忙显示 waiting_account。扫描规模增长后应按真实覆盖延迟调参，不能仅提高 tick。
+IT 默认热点＋冷 checkpoint 每轮 12 个/30 秒；其他三市场 20 个/10 秒，每个 poller 进程各自 2 QPS 读预算（进程内节拍，收信与发送不共用）。认证短持 profile 租约后释放，每次读取仍核验维护与身份指纹；账号忙显示 waiting_account。扫描规模增长后应按真实覆盖延迟调参，不能仅提高 tick。
 
 ### 2.7 Agent V2 与回复 transport
 
@@ -111,6 +113,8 @@ IT 默认热点＋冷 checkpoint 每轮 12 个/30 秒；其他三市场 20 个/1
 指南包含肯定合作但未观察到当前商品橱窗证据时的加橱窗提醒，要求已有真实卡、不重复已提醒内容，并按市场语言说明下一个视频/直播生效。上下文提供实际观察事实；“未观察到”不升级成“核实没有”。
 
 `run-agent-replies.py` 先回查 inflight/accepted/unknown，再处理新 turn；模型失败逐达人隔离，同输入最多三次。确定未提交而上下文过期的 ready 可审计终结，已提交只核验。IT 人工/Agent 共用 `reply_transport.py`，其他市场用 `market_agent_reply.py`，均冻结唯一 `service_reply` 正文/requestRef 再发送。
+
+模型调用统一经 `draft_provider.py`：DeepSeek `https://api.deepseek.com/chat/completions`、模型 `deepseek-flash`，JSON object 输出、关闭 thinking，单次请求不重试，上限约 24,000 输入字节、1,200 输出 token、60 秒。密钥先读 `DEEPSEEK_API_KEY`，缺失时只读旧项目 `01-BDSystem-V2/config.yaml` 的 `reply.api_key`（绝对路径写死）。用途：Agent V2、会话翻译、商品短名和离线评测。`typesafe_provider.py` 只服务 `reply_events.py` 里的 V1 历史分类代码，已无页面入口。
 
 运营在机构后台于目标入站之后已回复时，旧 turn 暂停自动回答；不擅自结案，下一条达人来信重新进入处理。prepare 与逐写前校验最新 turn、pending/control revision、人工案件及平台外发。澄清/联系方式确认送达进入 waiting_clarification/waiting_contact，礼貌回复未提供资料仍保持等待。handoff 先建 case 和锁，再准备唯一确认消息；人工接管后 AI 停止。
 
@@ -122,15 +126,19 @@ IT 默认热点＋冷 checkpoint 每轮 12 个/30 秒；其他三市场 20 个/1
 
 | SQLite/表族 | 事实归属 |
 | --- | --- |
-| `global-source.sqlite` | 全托来源、分页、覆盖、head |
-| `global-selection*.sqlite` / `campaign-join.sqlite` | 选入/加入意图与回执 |
-| `campaign-screen.sqlite` / `catalog-links.sqlite` | 筛分、标准卡、current binding |
-| `kalodata-leads*.sqlite` | 查询窗口、分页回执与尝试 |
+| `global-source[-{m}].sqlite` | 全托来源、分页、覆盖、head |
+| `global-selection[-{m}].sqlite` / `campaign-join[-{m}].sqlite` | 选入/加入意图与回执 |
+| `campaign-screen[-{m}].sqlite` / `catalog-links.sqlite` | 筛分、标准卡、current binding |
+| `kalodata-leads[-{m}].sqlite` | 查询窗口、分页回执与尝试 |
 | `creator-discovery.sqlite` / `creator-identities.sqlite` | 精确发现、OECID、别名、观测 |
 | `creator-profile-refresh.sqlite` | 画像 job/request/heartbeat |
-| `second-cycle.sqlite` | 关系、delivery、inbox、service_reply、Agent、workflow 与控制 |
-| `it-conversations.sqlite` | IT 会话索引 |
-| `batch-tasks.sqlite` / `cycle_bulk*` / `matching*.sqlite` | 历史追溯，保留备份，不启动旧执行链 |
+| `second-cycle.sqlite` | 四市场共用主库：关系、delivery、inbox、service_reply、Agent、workflow、控制，以及 A/B 线索 head、身份 outbox、首页只读快照 |
+| `it-conversations.sqlite` | IT 会话索引；建表定义只在 `cycle_conversations.py`，IT 发送直接读写 |
+| `batch-tasks.sqlite` | 仍被读取：身份运行策略 `identity_runtime_policy`（`identity_acceptance.production_policy`）与 A 类旧来源作业（`leads_queue.py`） |
+| `{m}-global-onboarding-canary.sqlite` | 市场接入 canary 证据，`market-catalog-status.py` 读取 |
+| `second-cycle` 中的 `cycle_bulk*` 表 | 历史追溯，不启动旧执行链 |
+
+IT 使用无后缀文件名，其他市场加 `-{market}` 后缀。`state-backup.json` 还列着 9 个已无代码读写的旧库：`matching*.sqlite`（3 个）、`outreach-drafts`、`runtime`、`second-italy`、`second-live-trials`、`second-outreach`、`kalodata-source-cache`。
 
 事件为事实源，当前投影可重建；JSON progress 不替代最终台账。ID/PID/OECID/Campaign/listId 一律字符串。凭据、Cookie、私密原文不进入普通日志或 API 错误。
 
@@ -142,22 +150,24 @@ IT 默认热点＋冷 checkpoint 每轮 12 个/30 秒；其他三市场 20 个/1
 
 ## 4. API 与 Web
 
-全部 `/api/*` 限本机；写请求校验 Origin/Host、JSON 大小、market、revision、字段白名单和范围。bridge 固定 argv/cwd，不拼 shell；返回 decoder 复核枚举、ID、数量恒等式，available=false 与 0 分开。
+全部 `/api/*` 限本机；写请求校验 Origin/Host、JSON 大小、market、revision、字段白名单和范围。bridge 固定 argv/cwd，不拼 shell；返回 decoder 复核枚举、ID、数量恒等式，available=false 与 0 分开。本机校验只接受 Host `127.0.0.1:5198`/`localhost:5198`，在其他端口起开发服务时全部 API 返回 403。已知例外：`/api/creator-identities` 由 Node 只读直连 `creator-identities.sqlite` 与 `second-cycle.sqlite`，并在 SQL 中计算投影，待迁回 CLI bridge。
 
 | API | 用途 |
 | --- | --- |
 | `/api/operations-home`、`/api/workflow` | 主链、开关、断点、运行/安全停止 |
-| `/api/campaign-*`、`/api/catalog-jobs` | 活动与材料作业 |
-| `/api/leads-queue`、`/api/identity-queue`、`/api/lead-pool` | 线索、身份与发送池 |
+| `/api/campaign-*`、`/api/catalog-jobs`（仅 IT） | 活动与材料作业 |
+| `/api/catalog-names`、`/api/link-naming` | 商品短名生成进度、卡名模板 |
+| `/api/leads-queue`、`/api/identity-queue`（仅 IT）、`/api/lead-pool` | 线索、身份与发送池 |
+| `/api/creator-identities`、`/api/creator-discovery`、`/api/creator-profile-refresh`、`/api/kalodata-identity` | 达人库、精确发现、画像刷新与 Kalodata 身份（后三者仅 IT） |
 | `/api/send` | 保存、明确启动/停止、原意图只读核验 |
-| `/api/conversations` | 队列、时间线、翻译、草稿、人工回复/核验、接管解除 |
+| `/api/conversations` | 队列、时间线、翻译、草稿、人工回复/核验（文本/卡片发送仅 IT）、接管解除 |
 | `/api/template-library`、`/api/agent-replies` | 模板、市场窗口、指南、试聊、调用记录 |
-| `/api/inbox` | worker、水位、按北京日统计与分页明细 |
+| `/api/inbox` | worker（启停仅 IT）、水位、按北京日统计与分页明细 |
 | `/api/jobs`、`/api/market-accounts`、`/api/market-catalog` | 共享供给时间、市场账号与货盘能力 |
 
 会话详情请求绑定 market/cid/请求代次，迟到结果不能覆盖新选择；刷新替换当前队列页，追加才合并。unknown 人工回复保留原 requestId/正文供核验；只有确认终态才清理草稿。轮询不得覆盖未保存设置；市场 Agent 时间独立保存，不写共享 jobs。resolve_manual 校验最新 turn/case/pending/control/合作状态 revision，幂等且平台写入 0。
 
-inbox 趋势和日明细使用同一账本，totals 等于每日求和，文字跟随卡不重复计达人；缺失或恒等式失败不显示业务 0。Profile 指标与 PID 线索 GMV 分开展示来源/时间。旧 demo、matching、frozen 批次路由不再构建。
+inbox 趋势和日明细使用同一账本，totals 等于每日求和，文字跟随卡不重复计达人；缺失或恒等式失败不显示业务 0。Profile 指标与 PID 线索 GMV 分开展示来源/时间。旧 demo、matching、frozen 批次路由不再构建；2026-09-24 删除了页面已不调用的 reply-review、global-source、catalog-screen、cycle-service 路由。
 
 ## 5. 账号、配置与 vendor
 
@@ -169,15 +179,19 @@ inbox 趋势和日明细使用同一账本，totals 等于每日求和，文字�
 | --- | --- |
 | `markets.json`、`market-content.json` | 市场能力、语言和固定内容 |
 | `catalog-screen.json`、`catalog-link-policy.json`、`link-naming*.json` | 筛分、分佣、命名 |
-| `leads-queue.json`、`identity-run.json`、`link-prepare*.json` | 查询/身份/准备参数 |
+| `leads-queue.json`、`identity-run.json`、`link-prepare*.json`、`selection-run.json`、`cycle-inbox.json`、`agent-reply-run.json` | 查询/身份/准备参数与 IT `job_run` 作业参数 |
 | `operations-policy.json`、`jobs.json` | 稳定调度策略、共享供给时间 |
 | `agent-reply-guide-v2.txt` / guide revision | 当前 Agent 指南 |
 | `agent_reply_setting`、`continuous_send_control` | 市场持久授权、窗口与发送设置 |
 | `state-backup.json` | 备份库清单与排除规则 |
-| `send-batch.json`、`reply-policy.json` | 旧合同兼容输入，不另建当前控制来源 |
+| `send-batch.json`、`reply-policy.json` | 名称沿用旧批次/V1，但仍在用：前者提供 IT 发送控制缺省值与窗口显示，后者提供 IT Agent 模板缺省与 V1 约束 |
+| `evals/agent-v2-multiturn.json` | V2 离线多轮评测用例 |
+| `typesafe.json` | 仅 V1 历史分类使用的本机忽略文件 |
 | `*.example.json` | 敏感配置样例；真实凭据仅本机忽略文件/环境 |
 
-`legacy_runtime.configure_vendored_bdhub()` 强制从本仓 vendor 加载协议，旧目录仅只读提供尚未迁移的账号事实；已加载其他源码则失败。`scripts/vendor-runtime/manifest.json` 固定源码、必要资源与本地补丁 hash；`--check` 漂移非零退出，`--write` 在临时目录重建验证后交换。pure_http_runtime_manifest.json 属于运行闭包，不能按“非 Python”删除。细节见 [vendor README](../vendor/README.md)。
+页面保存会改写受 git 跟踪的 `config/*.json`（`jobs.py`、`job_run.py`、`leads_queue.py`、`link_naming.py`、`send_batch.py`），提交前需区分运营设置变化与代码改动。
+
+`legacy_runtime.configure_vendored_bdhub()` 强制从本仓 vendor 加载协议，已加载其他源码则失败。旧目录在运行时只读提供尚未迁移的账号配置、保存凭据、签名 runtime 与 DeepSeek key 回退；IT 每次写入前还会只读检查旧系统写门禁目录和 PostgreSQL（`second_live_runtime.conflicts()`），旧库不可用时 IT 发送与回复报 `legacy_state_unavailable`。`scripts/vendor-runtime/manifest.json` 固定源码、必要资源与本地补丁 hash；`--check` 漂移非零退出，`--write` 在临时目录重建验证后交换。pure_http_runtime_manifest.json 属于运行闭包，不能按“非 Python”删除。细节见 [vendor README](../vendor/README.md)。
 
 ## 6. 运行与验证
 
@@ -201,7 +215,7 @@ npm run build
 npm run dev   # 开发；生产使用 npm run start，不能同时占用 5198
 ```
 
-生产在用 `.next` 不由验证构建覆盖：使用隔离输出/复制目录。部署前核对 PID/cwd/worker 依赖，替换后回读 API；源码变更不自动重启持久 worker 或改授权。状态查询使用 CLI status/check，不用 run-agent-replies 等执行入口探测状态。手动作业优先页面/job-run，不绕过同名作业锁另开底层 CLI。
+本工作目录就是生产：scheduler 按路径拉起子脚本，`io.bdhub.agent.web`（`launchctl submit`）在 `apps/web` 运行 `next start`。开发与验证在 `/Users/bjn00003/BDHub/` 下的独立 git worktree 进行（代码按 `ROOT.parent/'01-BDSystem-V2'` 定位旧项目；`.venv` 可软链生产 venv），不在生产目录 build 或 dev，也不要同时起第二个 5198。`tsc` 会读取 `.next/types`，删改路由后先 build 再 typecheck。部署前核对 PID/cwd/worker 依赖，替换后回读 API；源码变更不自动重启持久 worker 或改授权。状态查询使用 CLI status/check，不用 run-agent-replies 等执行入口探测状态。手动作业优先页面/job-run，不绕过同名作业锁另开底层 CLI。
 
 历史补扫：`inbox-history.py --market <market> --cid <cid> --oec <oec>` 默认只读本地状态，显式 `--read --max-pages 5 --page-size 20` 才做平台只读与历史写入；单会话锁和暂停文件约束执行，断点未完可重跑同一命令。
 

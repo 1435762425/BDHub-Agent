@@ -16,7 +16,9 @@
 | Kalodata 数据口径 | [GMV 实测](implementation/kalodata-gmv-live-probe-20260920.md)、[视频证据](implementation/kalodata-zero-sale-video-evidence-20260920.md) |
 | 回复模型历史局限 | [V1 人工评测](implementation/reply-model-evaluation-20260920.md)，不能外推当前 V2 |
 | 平台协议与资源 | [TikTok 合同](contracts/tiktok/README.md)、[vendor](../vendor/README.md) |
-| 旧需求/决策/状态 | [归档](archive/README.md)，仅按具体问题查阅 |
+| 历史实现与事故证据 | [货盘动作与事故](implementation/catalog-actions-and-incident-20260915.md)、[采集时筛分](implementation/catalog-screen-at-collection-v1.md)、[商品短名](implementation/catalog-short-names-20260915.md)、[全托无库存门槛](implementation/full-managed-no-stock-gate.md)、[线索查询队列](implementation/leads-query-queue-v1.md)、[精确发现](implementation/creator-discovery.md)、[OECID 阶段](implementation/creator-identity-oecid-stage-20260915.md)、[身份压测](implementation/identity-single-multi-stress.md)、[12 QPS 追加 1000](implementation/identity-12qps-extra1000.md)、[作业与 Kalodata 身份](implementation/workbench-jobs-and-kalodata-identity.md) |
+| Web 模板许可 | [TailAdmin 许可核对](research/tailadmin-license-review.md)、[第三方来源](../apps/web/THIRD_PARTY_NOTICES.md) |
+| 旧需求/决策/状态 | [归档](archive/README.md)；2026-09-24 移出的文档用 `git show audit-base-20260924:<路径>` 查看 |
 
 ## 维护规则
 

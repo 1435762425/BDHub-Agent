@@ -28,6 +28,6 @@ PYTHONDONTWRITEBYTECODE=1 .venv/bin/python scripts/vendor-legacy-bdhub.py --chec
 
 ## 保留的历史依赖
 
-`bdhub.send.worker` 仍作为旧 MX 调研探针的依赖保留，依赖旧 `scripts.migrate_resident_send_workers`，不是新项目生产发送器。精简它及相关 PostgreSQL/旧发送模块前，需要先隔离调研入口并核对动态导入；`bdhub.send.http_protocol` 仍被当前 IM 会话使用，不能随旧发送器删除。
+唯一引用 `bdhub.send.worker` 的旧 MX 调研探针已于 2026-09-24 删除，旧发送器（`send/worker`、`runner`、`component_sender` 等）目前没有仓库内入口，但仍在 manifest 中。精简前需核对动态导入并同步 manifest 与本地补丁；`bdhub.send.http_protocol`、`http_write_gate` 仍被当前 IM 会话使用，`bdhub.config` 仍为 IT 写入前的旧系统 PostgreSQL 只读检查提供连接串，不能随旧发送器删除。
 
 当前外发与恢复语义在新项目 `scripts/lib` 中实现；协议更新不恢复任何旧任务或改变发送、Agent 开关。

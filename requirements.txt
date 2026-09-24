@@ -1,5 +1,8 @@
 # BDHub-Agent Python runtime.  Keep direct dependencies pinned; transitive packages are resolved
 # inside this repository's own .venv and never installed into the legacy BDHub environment.
+# Some pins have no direct import in this repo but are runtime dependencies: opencv-python-headless and
+# Pillow for the slider-captcha solver loaded through the legacy runtime (identity Find fails without them),
+# and psycopg for the read-only legacy PostgreSQL check before every IT write (via SQLAlchemy).
 curl_cffi==0.7.4
 openpyxl==3.1.5
 opencv-python-headless==4.14.0.94

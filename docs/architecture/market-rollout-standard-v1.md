@@ -9,9 +9,9 @@
 | Belgium | `be` | planned |
 | Brazil | `br` | production enabled; Campaign only |
 | Germany | `de` | planned |
-| Italy | `it` | V1 enabled |
+| Italy | `it` | production enabled; Campaign + plain weekly full-managed |
 | Japan | `jp` | planned |
-| Malaysia | `my` | paused by operator |
+| Malaysia | `my` | production enabled; Campaign only |
 | Mexico | `mx` | planned |
 | Netherlands | `nl` | planned |
 | Philippines | `ph` | planned |
@@ -33,7 +33,7 @@
 4. **商品材料**：Offer 字段不跨活动拼接；TapLink 商品短名与卡名使用该市场 locale，标准分佣、命名、`currentListId` 和周期刷新都能回到证据；缺少本地化短名时停止，不得回退 IT 或截断原标题；
 5. **线索**：A 类销售窗口、B 类代表视频窗口、币种比较和额度断点按该市场验收；
 6. **身份与关系**：稳定键为 `market × OECID`；handle 只作别名；冷却、拒联、人工接管按达人统一；
-7. **冻结发送**：预览 hash、formal/reserve、freeze revision、账号、Offer、`currentListId`、话术和顺序不可变；
+7. **持续发送**：每位领取前冻结 creator/OECID、PID、Offer、`currentListId`、模板 revision、最终正文、关系 revision 与去重键，发送中不可变更（旧的预览 hash、formal/reserve、freeze revision 批次模型已退役）；
 8. **结果核验**：卡＋文字逐项确认；单达人限制、账号额度、平台拒绝、暂停和 unknown 分开；unknown 只核验原账号与原 requestRef；
 9. **回复政策**：二发和 Agent 固定正文使用该市场语言，中文只作运营辅助翻译；固定模板和人工真值通过评测，自动回复仍需单独用户启用，任何市场不得读取另一市场正文。
 

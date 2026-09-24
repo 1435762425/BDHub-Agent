@@ -6,55 +6,48 @@ Next.js 16 / React 19 本机工作台，基于 TailAdmin Next.js Free。当前�
 
 ## 运行
 
-需要 Node.js `>=22.18.0`，依赖固定在 `package-lock.json`：
+需要 Node.js `>=22.18.0`，依赖固定在 `package-lock.json`。在开发 worktree 中：
 
 ```bash
-cd /Users/bjn00003/BDHub/BDHub-Agent/apps/web
+cd <worktree>/apps/web
 npm ci
-npm run dev
+npm test
 ```
 
-开发服务只监听 `127.0.0.1:5198`。生产模式本机预览：
+服务只监听 `127.0.0.1:5198`，API 也只接受 Host `127.0.0.1:5198`/`localhost:5198`，所以换端口起开发服务时全部 API 返回 403。
 
-```bash
-npm run build
-npm run start
-```
-
-不要同时启动两个 5198 实例。启动、停止或替换现有实例前，先核对监听 PID 与 cwd。
+生产实例由 `io.bdhub.agent.web`（`launchctl submit`，KeepAlive）在本目录执行 `npm run start`，占用 5198 并读取这里的 `.next`。因此不要在本目录执行 `npm run dev` 或 `npm run build`；代码改动在 `/Users/bjn00003/BDHub/` 下的独立 git worktree 里测试与构建。启动、停止或替换生产实例前，先核对监听 PID 与 cwd。
 
 ## 验证
 
 ```bash
 npm test
-npm run typecheck
 npm run build
+npm run typecheck   # tsc 会读取 .next/types，删改路由后先 build
 ```
 
-这些测试验证页面/API 合同、本地状态机和故障恢复，不替代真实 TikTok/Kalodata 回执或业务验收。
+这些测试验证页面/API 合同、本地状态机和故障恢复，不替代真实 TikTok/Kalodata 回执或业务验收。两个测试依赖本机环境：`campaign.test.mjs` 的状态读取用例会真实调用 `campaign-join.py` 读取 `var/`，`creator-profile-refresh.test.mjs` 要求仓库目录名以 `BDHub-Agent` 结尾；在 worktree 中这两项失败属预期。
 
 ## 主要页面
 
 | 路由 | 当前用途 |
 | --- | --- |
-| `/it/workspace/send` | A/B 发送池、持续发送、明确启动、停止和原意图 unknown 核验 |
-| `/it/workspace/inbox` | 收信监控与人工事项 |
-| `/it/workspace/history` | 最近 14 日统计和只读日明细 |
-| `/it/catalog` | 全托/Campaign、筛分、标准 TapLink、A/B 线索和 OECID |
-| `/it/creators` | 稳定达人身份、别名与画像 |
-| `/ops/jobs` | 手动作业、材料周期、Kalodata 身份与命名设置 |
-| `/ops/accounts?market=it` | 当前市场账号分工、身份维护与能力证据 |
-| `/ops/reply-evaluation` | 历史 V1 DeepSeek/Jev 分类与人工真值追溯；不发送 |
+| `/{market}` | 运营首页：主链、异常、自动运营/全托周更/持续发送开关 |
+| `/{market}/workspace/send`、`/{market}/workspace/history` | A/B 发送池、模板审核、持续发送与原意图核验；最近统计与日明细（旧 `/workspace/inbox` 重定向到会话） |
+| `/{market}/conversations`、`…/conversations/templates`、`…/conversations/agent` | 三栏会话、人工/发送模板、Agent 指南与零写入试聊 |
+| `/{market}/catalog` | 全托/Campaign、筛分、标准 TapLink、A/B 线索与链接命名 |
+| `/{market}/creators` | 稳定达人身份、别名、画像与线索结果 |
+| `/{market}/ops/jobs`、`/{market}/ops/kalodata`、`/{market}/ops/accounts` | 作业时间、Kalodata 身份、账号分工与维护（旧 `/ops/*` 只重定向到 `/it/ops/*`） |
 
 IT、BR、MY、UK 复用市场页面；当前回复执行使用多轮 V2，旧五动作与固定模板评测不作为 V2 执行真值。页面清单和业务规则以项目主文档为准。
 
-浏览器演示、`/flow-demo`、本地模拟器、旧二发预演/实测和 matching/outreach-drafts 页面已退出生产构建；对应 SQLite 仍作为历史数据保留并继续备份。产品规则见 [项目文档](../../docs/PROJECT.md)，实现结构见 [技术文档](../../docs/TECHNICAL.md)，动态运行状态见 [Codex 接管状态](../../docs/handoff/codex-takeover-20260919.md)。
+浏览器演示、`/flow-demo`、本地模拟器、旧二发预演/实测和 matching/outreach-drafts 页面已退出生产构建；2026-09-24 又删除了页面不再调用的 reply-review、global-source、catalog-screen、cycle-service API。对应 SQLite 仍作为历史数据保留并继续备份。产品规则见 [项目文档](../../docs/PROJECT.md)，实现结构见 [技术文档](../../docs/TECHNICAL.md)，动态运行状态见 [Codex 接管状态](../../docs/handoff/codex-takeover-20260919.md)。
 
 ## 代码边界
 
 - `src/app/api/`：仅本机 API 路由；所有写请求必须限制字段并走服务端 bridge。
-- `src/server/`：CLI/SQLite 适配、输入输出校验和错误映射；不在 React 组件中直接操作运行台账。
+- `src/server/`：CLI 适配、输入输出校验和错误映射；不在 React 组件中直接操作运行台账。已知例外：`server/creator-identities/store.ts` 由 Node 只读直连 SQLite，待迁回 CLI bridge。
 - `src/features/`：页面、查询 hooks、交互和状态展示；业务资格与幂等不由前端保证。
 - `tests/`：Node 合同测试。数量恒等式、未知结果、暂停和输入拒绝需要同时覆盖正向与反向案例。
 
-本机敏感身份与运行数据在仓库根 `config/*.json`（被忽略的本机文件）及 `var/`；不得复制到前端 bundle、日志或 Git。
+本机敏感身份在仓库根被忽略的 `config/kalodata-identity.json`、`config/campaign-join.json`、`config/typesafe.json`，运行数据在 `var/`；不得复制到前端 bundle、日志或 Git。
