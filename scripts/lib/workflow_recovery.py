@@ -1,5 +1,5 @@
-"""Evidence-bound recovery of stopped IT workflow stages: a published selected catalog and its stopped duplicate,
-and a Kalodata stage stopped by a video without an author."""
+"""Evidence-bound recovery of stopped workflow stages: an IT published selected catalog and its stopped duplicate,
+and a Kalodata stage stopped by a video without an author or by the shared Kalodata login."""
 import json
 import sqlite3
 from contextlib import closing
@@ -16,6 +16,8 @@ TZ=ZoneInfo('Asia/Shanghai')
 ISOLATED='isolated_unverified'
 VIDEO_KEY='recovery:video_author_missing'
 VIDEO_AUTHOR_MISSING='kalodata_video_author_missing'
+AUTH_KEY='recovery:kalodata_auth_restored'
+AUTH_REQUIRED='kalodata_auth_required'
 
 
 def _isolation(isolate_pids):
@@ -180,25 +182,23 @@ def resume_selected_catalog(store,root,market,run_id,duplicate_run_id,request_id
     return {'duplicate':False,'run':run_payload(store,run_id),'evidence':evidence,'platformWrites':0}
 
 
-def resume_video_author_skip(store,market,run_id,request_id):
-    """Re-queue the IT Kalodata stage that stopped on one video whose detail names no author.  The scan now records
-    such a video and goes on, so the stage resumes the same generation from its checkpoint; a second stop of the
-    same run needs review."""
+def _resume_kalodata(store,market,run_id,request_id,key,code,evidence_of):
+    """Re-queue one Kalodata stage that went to needs_human with `code`, once, when `evidence_of(stage)` shows the
+    cause is gone.  Same request is a duplicate; another request for the same run needs review."""
     _request_id(request_id)
-    if market!='it':raise CycleError('workflow_recovery_scope_invalid')
     with store.tx():
         run=_run(store,run_id)
         prior=store.db.execute("SELECT value_json FROM workflow_checkpoint WHERE run_id=? AND stage='kalodata' "
-                               "AND checkpoint_key=?",(run_id,VIDEO_KEY)).fetchone()
+                               "AND checkpoint_key=?",(run_id,key)).fetchone()
         if prior:
             evidence=json.loads(prior[0])
             if evidence['requestId']!=request_id:raise CycleError('workflow_recovery_already_requested')
             return {'duplicate':True,'run':run_payload(store,run_id),'evidence':evidence}
         stages=list(store.db.execute('SELECT * FROM workflow_stage_run WHERE run_id=? ORDER BY position',(run_id,)))
         stage=next((row for row in stages if row['stage']=='kalodata'),None)
-        if run['market']!=market or run['state']!='needs_human' or run['error_code']!=VIDEO_AUTHOR_MISSING or \
+        if run['market']!=market or run['state']!='needs_human' or run['error_code']!=code or \
                 run['stop_requested_at'] is not None or not stage or stage['state']!='needs_human' or \
-                stage['error_code']!=VIDEO_AUTHOR_MISSING or stage['platform_writes'] or \
+                stage['error_code']!=code or stage['platform_writes'] or \
                 stage['output_generation_id'] is not None or stage['started_at'] is None or stage['finished_at'] is None or \
                 any(row['state'] not in STAGE_SUCCESS for row in stages[:stage['position']]) or \
                 any(row['state']!='waiting_upstream' for row in stages[stage['position']+1:]):
@@ -206,22 +206,42 @@ def resume_video_author_skip(store,market,run_id,request_id):
         upstream=next((row['output_generation_id'] for row in reversed(stages[:stage['position']])
                        if row['output_generation_id']),None)
         if stage['input_generation_id']!=upstream:raise CycleError('workflow_recovery_barrier_changed')
-        # The stop must be this stage's own: the newest video generation, blocked by the same error while it ran.
-        generation=store.db.execute('SELECT * FROM kalodata_video_generation ORDER BY created_at DESC LIMIT 1').fetchone()
-        if not generation or generation['state']!='blocked' or generation['error']!=VIDEO_AUTHOR_MISSING or \
-                not stage['started_at']<=generation['updated_at']<=stage['finished_at']:
-            raise CycleError('workflow_recovery_evidence_unverified')
+        facts=evidence_of(stage)
         active=store.db.execute("SELECT 1 FROM workflow_run WHERE market=? AND run_id<>? "
                                 "AND state IN ('queued','running','stop_requested')",(market,run_id)).fetchone()
         claimed=store.db.execute('SELECT 1 FROM workflow_stage_claim c JOIN workflow_stage_run s USING(stage_run_id) '
                                  'JOIN workflow_run r USING(run_id) WHERE r.market=?',(market,)).fetchone()
         if active or claimed:raise CycleError('workflow_recovery_claim_active')
         now=store.clock()
-        evidence={'requestId':request_id,'market':market,'runId':run_id,'previousError':VIDEO_AUTHOR_MISSING,
-                  'previousStartedAt':stage['started_at'],'previousFinishedAt':stage['finished_at'],
-                  'videoGenerationId':generation['generation_id'],'blockedAt':generation['updated_at'],'recoveredAt':now}
-        store.db.execute('INSERT INTO workflow_checkpoint VALUES(?,?,?,?,?)',(run_id,'kalodata',VIDEO_KEY,encoded(evidence),now))
+        evidence={'requestId':request_id,'market':market,'runId':run_id,'previousError':code,
+                  'previousStartedAt':stage['started_at'],'previousFinishedAt':stage['finished_at'],**facts,'recoveredAt':now}
+        store.db.execute('INSERT INTO workflow_checkpoint VALUES(?,?,?,?,?)',(run_id,'kalodata',key,encoded(evidence),now))
         store.db.execute("UPDATE workflow_stage_run SET state='queued',started_at=NULL,finished_at=NULL,error_code=NULL "
                          "WHERE stage_run_id=?",(stage['stage_run_id'],))
         store.db.execute("UPDATE workflow_run SET state='running',finished_at=NULL,error_code=NULL WHERE run_id=?",(run_id,))
     return {'duplicate':False,'run':run_payload(store,run_id),'evidence':evidence}
+
+
+def resume_video_author_skip(store,market,run_id,request_id):
+    """Re-queue the IT Kalodata stage that stopped on one video whose detail names no author.  The scan now records
+    such a video and goes on, so the stage resumes the same generation from its checkpoint."""
+    if market!='it':raise CycleError('workflow_recovery_scope_invalid')
+    def evidence_of(stage):
+        # The stop must be this stage's own: the newest video generation, blocked by the same error while it ran.
+        generation=store.db.execute('SELECT * FROM kalodata_video_generation ORDER BY created_at DESC LIMIT 1').fetchone()
+        if not generation or generation['state']!='blocked' or generation['error']!=VIDEO_AUTHOR_MISSING or \
+                not stage['started_at']<=generation['updated_at']<=stage['finished_at']:
+            raise CycleError('workflow_recovery_evidence_unverified')
+        return {'videoGenerationId':generation['generation_id'],'blockedAt':generation['updated_at']}
+    return _resume_kalodata(store,market,run_id,request_id,VIDEO_KEY,VIDEO_AUTHOR_MISSING,evidence_of)
+
+
+def resume_kalodata_auth(store,market,run_id,request_id):
+    """Re-queue a Kalodata stage stopped because the shared Kalodata login lapsed, once a Kalodata page has been read
+    after that stop.  The A-class queue is durable, so the stage continues with the PIDs still due."""
+    if not isinstance(market,str) or not market:raise CycleError('workflow_recovery_scope_invalid')
+    def evidence_of(stage):
+        read=store.db.execute('SELECT max(observed_at) FROM kalodata_video_scan_page').fetchone()[0]
+        if read is None or read<=stage['finished_at']:raise CycleError('workflow_recovery_evidence_unverified')
+        return {'kalodataReadAt':read}
+    return _resume_kalodata(store,market,run_id,request_id,AUTH_KEY,AUTH_REQUIRED,evidence_of)
