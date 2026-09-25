@@ -176,7 +176,7 @@ class CatalogBindings:
                 write()
         return self.get(market, row["catalog_source"], row["pid"], row["campaign_id"])
 
-    def reconcile_current_offers(self, market, source, offers, *, evidence_ref, now=None):
+    def reconcile_current_offers(self, market, source, offers, *, evidence_ref, now=None, preserve_missing_campaigns=()):
         """Align existing bindings with one complete, freshly screened offer projection.
 
         The card rows are historical evidence and are never deleted here.  A card leaves the
@@ -210,6 +210,9 @@ class CatalogBindings:
             for row in rows:
                 key = (row["pid"], row["campaign_id"])
                 expected = current.get(key)
+                if expected is None and row['campaign_id'] in preserve_missing_campaigns:
+                    counts['unchanged'] += 1
+                    continue
                 if expected is None:
                     state, reason = "inactive", "offer_no_longer_current"
                 elif expected != row["offer_fingerprint"]:

@@ -9,17 +9,21 @@
 * **一次一个活动一次写入**：冻结请求由传输层校验（`opportunity_campaign_joiner`），
   写不匹配的请求会被拒；同一活动一次会话最多写一次。
 * **明确拒绝 ≠ 结果未知**：平台返回明确的非 0 code（且不是验证/超时/鉴权类）才记 `skipped`；
-  其余一律 `result_unknown`，停下来等人回查。
+  其余保留 `result_unknown`；其他活动继续，原申请只做有限只读核验。
 * **没有合格活动的商品不硬挑**：加入同样只针对**预览里 eligible 的那批**。
 
 **账号**：加入活动是货盘侧的写入，走货盘账号（ACC9，与目录读取、建链同一个）；
 能力门禁沿用旧版定义（IT 的 `campaign_join` 在旧库里是 enabled）。
 """
 import json
+import fcntl
+import functools
+import signal
+import threading
 import re
 import sqlite3
 import time
-from contextlib import closing
+from contextlib import closing, contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -29,6 +33,15 @@ from lib.cycle_catalog import CAMPAIGNS
 DEFAULT_JOB_ID = 'campaign-join'
 # 已确认口径：Campaign 剩余有效期 > 45 天（旧版加入用的是"2 个月"，本次统一到 45 天）。
 REMAINING_DAYS = 45
+VERIFY_ROUNDS = 4
+VERIFY_SECONDS = 300
+EXTENSIONS = {
+    'request_json': "TEXT NOT NULL DEFAULT '{}'",
+    'verify_attempts': 'INTEGER NOT NULL DEFAULT 0',
+    'verify_deadline': 'REAL',
+    'followup_stopped': 'INTEGER NOT NULL DEFAULT 0',
+    'verify_error': "TEXT NOT NULL DEFAULT ''",
+}
 ITEM_STATES = ('eligible', 'joined', 'writing', 'result_unknown', 'skipped')
 
 def _job_id(market, value):
@@ -53,6 +66,77 @@ def root_of(module_file=__file__):
 
 def db_path(root, market='it'):
     return Path(root) / ('var/campaign-join.sqlite' if market == 'it' else f'var/campaign-join-{market}.sqlite')
+
+
+def migrate(root, *, market='it'):
+    """Explicit additive, repeatable upgrade. Caller backs up existing production state first."""
+    path = db_path(root, market)
+    if not path.exists():
+        return {'exists': False, 'added': []}
+    with closing(sqlite3.connect(path, timeout=15)) as db, db:
+        db.execute('BEGIN IMMEDIATE')
+        columns = {r[1] for r in db.execute('PRAGMA table_info(campaign_join_item)')}
+        if not columns:
+            raise ValueError('campaign_join_schema_invalid')
+        added = []
+        for name, definition in EXTENSIONS.items():
+            if name not in columns:
+                db.execute(f'ALTER TABLE campaign_join_item ADD COLUMN {name} {definition}')
+                added.append(name)
+    return {'exists': True, 'added': added}
+
+
+_local = threading.local()
+
+
+def serialized(function):
+    """Keep preview replacement, frozen writes and verification from racing across CLIs."""
+    @functools.wraps(function)
+    def run(root, *args, **kwargs):
+        path = db_path(root, kwargs.get('market', 'it')).with_suffix('.lock').resolve()
+        held = getattr(_local, 'held', set())
+        if path in held:
+            return function(root, *args, **kwargs)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open('a') as lock:
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                raise ValueError('campaign_join_busy') from None
+            _local.held = held | {path}
+            try:
+                return function(root, *args, **kwargs)
+            finally:
+                _local.held = held
+                fcntl.flock(lock, fcntl.LOCK_UN)
+    return run
+
+
+class VerificationDeadline(BaseException):
+    """Not swallowed by transport retry/verification handlers catching Exception."""
+
+
+@contextmanager
+def verification_timeout(seconds):
+    # The production entrypoint is a dedicated CLI on macOS. Arm before transport setup,
+    # so authentication, profile locks, pagination and challenge solving share one bound.
+    if threading.current_thread() is not threading.main_thread():
+        raise ValueError('campaign_verification_requires_main_thread')
+    if seconds <= 0:
+        raise VerificationDeadline()
+    previous = signal.getsignal(signal.SIGALRM)
+    previous_timer = signal.getitimer(signal.ITIMER_REAL)
+    if previous_timer[0]:
+        raise ValueError('campaign_verification_timer_in_use')
+    def expired(*_):
+        raise VerificationDeadline()
+    signal.signal(signal.SIGALRM, expired)
+    signal.setitimer(signal.ITIMER_REAL, seconds)
+    try:
+        yield
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, previous)
 
 
 def join_payload(campaign_id, email):
@@ -93,15 +177,27 @@ def eligibility(campaign, *, at=None):
 class Store:
     """Durable per-campaign join ledger. One job per request key; re-running it is idempotent."""
 
-    def __init__(self, root, *, market='it', clock=time.time):
+    def __init__(self, root, *, market='it', clock=time.time, readonly=False):
         self.root = Path(root)
         self.market = market
         self.path = db_path(root, market)
-        self.path.parent.mkdir(parents=True, exist_ok=True)
         self.clock = clock
-        self.db = sqlite3.connect(self.path, timeout=15)
+        if readonly:
+            self.db = sqlite3.connect(self.path.resolve().as_uri() + '?mode=ro', uri=True, timeout=5)
+        else:
+            fresh = not self.path.exists()
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            self.db = sqlite3.connect(self.path, timeout=15)
+            if fresh:
+                self.db.executescript(SCHEMA)
+                migrate(root, market=market)
+            columns = {r[1] for r in self.db.execute('PRAGMA table_info(campaign_join_item)')}
+            if not set(EXTENSIONS) <= columns:
+                self.db.close()
+                raise ValueError('campaign_join_migration_required')
         self.db.row_factory = sqlite3.Row
-        self.db.executescript(SCHEMA)
+        if readonly:
+            self.db.execute('BEGIN')
 
     def close(self):
         self.db.close()
@@ -145,6 +241,7 @@ class Store:
                 self.db.execute('SELECT * FROM campaign_join_item WHERE job_id=? ORDER BY campaign_id', (job_id,))]
 
     def replace_items(self, job_id, rows):
+        previous = {r['campaign_id']: r for r in self.items(job_id)}
         stamp = self.clock()
         with self.db:
             self.db.execute('DELETE FROM campaign_join_item WHERE job_id=?', (job_id,))
@@ -154,6 +251,13 @@ class Store:
                 [(job_id, str(row['campaign_id']), str(row.get('name') or ''), row['state'],
                   str(row.get('reason') or ''), int(row.get('write_attempted') or 0),
                   row.get('joined_campaign_id'), stamp) for row in rows])
+            for row in rows:
+                old = previous.get(str(row['campaign_id']))
+                if old:
+                    fields = {key: old[key] for key in EXTENSIONS}
+                    self.db.execute('UPDATE campaign_join_item SET ' + ','.join(f'{key}=?' for key in fields)
+                                    + ' WHERE job_id=? AND campaign_id=?',
+                                    (*fields.values(), job_id, str(row['campaign_id'])))
 
     def set_item(self, job_id, campaign_id, **fields):
         """Persist one item's new state. Called *before* a write and again after it settles."""
@@ -203,9 +307,16 @@ def _page(transport, params, page):
 
 def _all_pages(transport, params, *, limit=20):
     """Every page, or an error. **Incomplete pagination is never treated as "nothing there"**."""
-    rows, page = [], 1
+    rows, page, expected, seen = [], 1, None, set()
     while True:
         batch, total = _page(transport, params, page)
+        if total is None or (expected is not None and expected != total):
+            raise ValueError('campaign_list_incomplete')
+        expected = total
+        ids = [str(row.get('campaign_id') or '') for row in batch if isinstance(row, dict)]
+        if len(ids) != len(batch) or not all(ids) or len(set(ids)) != len(ids) or seen.intersection(ids):
+            raise ValueError('campaign_list_incomplete')
+        seen.update(ids)
         rows.extend(batch)
         if not batch:
             break
@@ -267,6 +378,7 @@ def read_campaigns(transport):
     return joinable, joined
 
 
+@serialized
 def preview(root, *, market='it', transport=None, clock=time.time, job_id=None):
     """Read-only: what could be joined, what is already joined, and why the rest is not eligible."""
     root = Path(root or root_of())
@@ -305,16 +417,19 @@ def preview(root, *, market='it', transport=None, clock=time.time, job_id=None):
         merged = []
         for row in rows:
             old = previous.get(row['campaign_id'])
-            if old and old['state'] in ('writing', 'result_unknown') and row['state'] != 'joined':
-                # **未结算**的提交必须原样保留：这才是"结果未知绝不重试"。
-                # 平台自己说"已加入"就结算；已经结算过的（joined/skipped）按平台这次的回答刷新——
-                # 否则一条结算成"平台说没加入"的记录会永远卡在那里，再点也进不去。
-                row = {**row, 'state': old['state'], 'reason': old['reason'],
-                       'write_attempted': 1, 'joined_campaign_id': old['joined_campaign_id']}
+            if old and old['state'] in ('writing', 'result_unknown', 'joined'):
+                # Preserve original evidence even when the platform now positively settles it.
+                observed = cid in joined or old['joined_campaign_id'] in joined
+                row = {**row, 'state': 'joined' if observed else old['state'],
+                       'reason': 'observed_joined_in_normal_refresh' if observed else old['reason'],
+                       'write_attempted': old['write_attempted'],
+                       'joined_campaign_id': old['joined_campaign_id']}
             merged.append(row)
         for cid, old in previous.items():
             if cid not in fresh and old['write_attempted']:
-                merged.append(old)   # 平台不再列它：记录留着（通常就是已经加入）
+                if cid in joined or old['joined_campaign_id'] in joined:
+                    old = {**old, 'state': 'joined', 'reason': 'observed_joined_in_normal_refresh'}
+                merged.append(old)
         store.replace_items(job['id'], merged)
         store.set_job(job['id'], state='previewed', error='', joined_count=len(joined))
         # 返回**与 status 同一个封装**，另加三个预览专属字段：页面两处读的是同一份状态，
@@ -322,7 +437,7 @@ def preview(root, *, market='it', transport=None, clock=time.time, job_id=None):
         summary = status(root, market=market, clock=clock, job_id=job['id'])
         return summary | {'campaigns': len(rows), 'joined': len(joined),
                           'otherCategories': other,
-                          'eligible': sum(1 for row in rows if row['state'] == 'eligible')}
+                          'eligible': sum(1 for row in merged if row['state'] == 'eligible')}
     finally:
         store.close()
 
@@ -340,12 +455,13 @@ def _account_name(root, market='it'):
         return ''
 
 
+@serialized
 def apply(root, *, market='it', campaign_ids, email, confirm=False, canary=False, transport=None,
           clock=time.time, job_id=None):
     """Join the named campaigns. **A platform write**: refuses without ``confirm=True``.
 
     Only campaigns that the current preview called ``eligible`` are accepted, each is written at most
-    once, and an unresolved result ends the run instead of being retried.
+    once; an unresolved item is skipped while other eligible items continue.
     """
     root = Path(root or root_of())
     job_id = _job_id(market, job_id)
@@ -358,6 +474,7 @@ def apply(root, *, market='it', campaign_ids, email, confirm=False, canary=False
     payloads = {cid: join_payload(cid, email) for cid in wanted}
     store = Store(root, market=market, clock=clock)
     report = {'platformWrites': 0}
+    account_blocked = False
     try:
         job = store.open_job(account=_account_name(root, market), action='apply', request_id=job_id,
                              email=email, campaign_ids=wanted)
@@ -385,25 +502,36 @@ def apply(root, *, market='it', campaign_ids, email, confirm=False, canary=False
             joinable = {str(c.get('campaign_id')) for c in campaigns}
             for cid in wanted:
                 row = rows[cid]
-                if row['state'] == 'joined':
+                if row['state'] == 'joined' or cid in joined or row['joined_campaign_id'] in joined:
+                    store.set_item(job['id'], cid, state='joined', reason='observed_joined_before_write')
                     continue
                 if cid not in joinable:
                     store.set_item(job['id'], cid, state='skipped', reason='campaign_not_joinable_now')
                     continue
+                campaign = next(c for c in campaigns if str(c.get('campaign_id')) == cid)
+                valid, reason = eligibility(campaign, at=datetime.fromtimestamp(clock(), timezone.utc))
+                if not valid:
+                    store.set_item(job['id'], cid, state='skipped', reason=reason)
+                    continue
                 if row['write_attempted']:
                     store.set_item(job['id'], cid, state='result_unknown',
                                    reason='campaign_write_requires_verification')
-                    break
+                    continue
                 # Persist the attempt BEFORE the write: a crash here must not look like "never tried".
-                store.set_item(job['id'], cid, state='writing', write_attempted=1, reason='')
+                store.set_item(job['id'], cid, state='writing', write_attempted=1, reason='',
+                               request_json=json.dumps(payloads[cid], sort_keys=True),
+                               verify_attempts=0, verify_deadline=None, followup_stopped=0, verify_error='')
                 try:
                     outcome = _submit_with_verification(live, cid, payloads[cid])
                 except Exception as error:                      # noqa: BLE001 - unknown, never a retry
                     # 记**消息**，不只记类型名：只留一个 "TapLinkError" 时根本查不出原因
                     # （实际遇到过：真正的原因是 taplink_endpoint_not_allowed，写根本没发出去）。
                     store.set_item(job['id'], cid, state='result_unknown',
-                                   reason=f'write_uncertain:{type(error).__name__}:{str(error)[:120]}')
-                    break
+                                   reason='write_uncertain:' + safe_error(error))
+                    if _account_failure(error):
+                        account_blocked = True
+                        break
+                    continue
                 settled, code = _settle(outcome)
                 returned = _returned_campaign(outcome)
                 if returned:
@@ -415,29 +543,31 @@ def apply(root, *, market='it', campaign_ids, email, confirm=False, canary=False
                     store.set_item(job['id'], cid, state='skipped', reason=code or 'rejected')
                 else:
                     store.set_item(job['id'], cid, state='result_unknown', reason=code or 'result_unknown')
-                    break
+                    if _account_failure(outcome):
+                        account_blocked = True
+                        break
+            if not store.unresolved(job['id']):
+                try:
+                    _, joined = read_campaigns(live)
+                except Exception:
+                    pass  # Optional count refresh cannot change write outcomes.
         counts = store.states(job['id'])
         state = 'needs_verification' if counts.get('writing') or counts.get('result_unknown') else 'completed'
-        # 写完再读一次"已加入"总数：拿写入**之前**那个数当结论，页面上就永远少算刚加入的这一批
-        # （实测：18 个都加入成功、平台 61，页面却还显示 43）。读不到就退回写入前那个数，不编一个。
         joined_total = len(joined)
-        try:
-            _, joined_after = read_campaigns(live)
-            joined_total = len(joined_after)
-        except Exception:                                   # noqa: BLE001 - 读数失败不改变写入结论
-            pass
         store.set_job(job['id'], state=state, joined_count=joined_total)
         return {'jobId': job['id'], 'state': state, 'counts': counts,
-                'items': store.items(job['id']), 'platformWrites': report.get('platformWrites', 0)}
+                'items': store.items(job['id']), 'platformWrites': report.get('platformWrites', 0),
+                'accountBlocked': account_blocked}
     except Exception as error:
         job = store.job(job_id)
         if job:
-            store.set_job(job['id'], state='blocked', error=str(error)[:120])
+            store.set_job(job['id'], state='blocked', error=safe_error(error))
         raise
     finally:
         store.close()
 
 
+@serialized
 def join_all(root, *, market='it', email, confirm=False, transport=None, clock=time.time, job_id=None):
     """一键加入：**先重新预览一遍**，再把当前全部合格的活动一次提交。
 
@@ -445,7 +575,7 @@ def join_all(root, *, market='it', email, confirm=False, transport=None, clock=t
     甚至拿过期的判断去写。预览是只读的，每次点击都重算一遍，代价很小。
 
     安全纪律与 ``apply`` 完全一致（只接受预览判定为合格的活动、每个活动一次会话只写一次、
-    结果未知立刻停并留给 ``verify`` 回查），因为这里只是把「预览」和「提交」串成一次调用，
+    结果未知跳过该项，正常准备后由 ``verify`` 有限回查），因为这里只是把「预览」和「提交」串成一次调用，
     两步共用同一个 job id——提交时才看得到预览判定过的条目。
     """
     root = Path(root or root_of())
@@ -456,14 +586,15 @@ def join_all(root, *, market='it', email, confirm=False, transport=None, clock=t
     eligible = [row['campaign_id'] for row in previewed['items'] if row['state'] == 'eligible']
     if not eligible:
         return previewed | {'eligible': 0, 'attempted': [], 'platformWrites': 0}
-    writes, attempted = 0, []
+    writes, attempted, account_blocked = 0, [], False
     for start in range(0, len(eligible), 100):
         batch = eligible[start:start + 100]
         applied = apply(root, market=market, campaign_ids=batch, email=email, confirm=True, transport=transport,
                         clock=clock, job_id=job_id)
         writes += int(applied.get('platformWrites') or 0)
         attempted.extend(batch)
-        if applied.get('state') == 'needs_verification':
+        if applied.get('accountBlocked'):
+            account_blocked = True
             break
     current = status(root, market=market, clock=clock, job_id=job_id)
     wanted = set(eligible)
@@ -475,51 +606,94 @@ def join_all(root, *, market='it', email, confirm=False, transport=None, clock=t
     # 不能沿用 status 里那个恒为 0 的展示值。
     return current | {
         'eligible': len(eligible), 'attempted': attempted, 'appliedCounts': counts,
-        'platformWrites': writes}
+        'platformWrites': writes, 'accountBlocked': account_blocked}
 
 
-def verify(root, *, market='it', transport=None, clock=time.time, job_id=None):
-    """Read-only settlement: re-read the joined list and settle what was written but unknown."""
+@serialized
+def verify(root, *, market='it', transport=None, clock=time.time, job_id=None, bounded=False):
+    """Original-account reads only; four shared rounds and one durable 300-second deadline.
+
+    `bounded` consumes the remaining rounds in this invocation. A one-round manual call uses
+    the same ledger and cannot reset the lifetime budget. Exhausted rows are never polled here.
+    """
+    entered = clock()
     root = Path(root or root_of())
     job_id = _job_id(market, job_id)
-    report = {'platformWrites': 0}
     store = Store(root, market=market, clock=clock)
+    settled = joined_settled = 0
     try:
         job = store.job(job_id)
         if not job:
             raise ValueError('campaign_join_job_missing')
-        pending = store.unresolved(job['id'])
-        # 没有待结算项时**也要**读一次平台：这个动作同时负责把"已加入总数"对齐到平台，
-        # 早退会让写完之后的页面永远停留在写入前那个数（实测 61 被显示成 43）。
-        # 返回统一的 status 封装：只回一个 {jobId,settled,counts} 的裸对象会让页面
-        # 因为缺 available 而当成"还没预览过"。
-        if transport is None:
-            from lib.global_source_transport import opportunity_reader
-            context = opportunity_reader(report, market=market, extra_read_endpoints={(CAMPAIGNS, 'GET')})
-        else:
-            context = transport
-        with context as live:
-            joinable, joined = read_campaigns(live)
-        joinable_ids = {str(row.get('campaign_id')) for row in joinable if row.get('campaign_id')}
-        settled = 0
-        for row in pending:
-            candidate = row['joined_campaign_id'] or row['campaign_id']
-            if candidate in joined or row['campaign_id'] in joined:
-                store.set_item(job['id'], row['campaign_id'], state='joined', reason='回查确认已加入')
-                settled += 1
-            elif row['campaign_id'] in joinable_ids:
-                # 平台把它列在"可加入"里、又不在"已加入"里——**这就是平台自己说"没加入"**。
-                # 两个列表是相互独立的回答，所以这个结算有据可依，不是猜的；原因码把依据写清楚，
-                # 让人一眼看出结论是"平台说没加入"，而不是"我们放弃确认了"。
-                store.set_item(job['id'], row['campaign_id'], state='skipped',
-                               reason='not_joined_platform_lists_it_joinable')
-                settled += 1
-        counts = store.states(job['id'])
-        state = 'needs_verification' if counts.get('writing') or counts.get('result_unknown') else 'completed'
-        # 已加入总数以**平台这次读回来的**为准。曾经写成"本 job 里 joined 的条目数"，
-        # 于是一次回查就把平台的 43 改成了 0——页面上是一个凭空的假数字。
-        store.set_job(job['id'], state=state, joined_count=len(joined))
-        return status(root, market=market, clock=clock, job_id=job['id']) | {'settled': settled}
+        account = _account_name(root, market)
+        if job['account'] != account:
+            raise ValueError('campaign_join_request_conflict')
+        for _ in range(VERIFY_ROUNDS if bounded else 1):
+            pending = store.unresolved(job_id)
+            active = []
+            for row in pending:
+                if row['followup_stopped']:
+                    continue
+                if row['verify_attempts'] >= VERIFY_ROUNDS or (row['verify_deadline'] is not None
+                                                               and row['verify_deadline'] <= clock()):
+                    store.set_item(job_id, row['campaign_id'], followup_stopped=1)
+                else:
+                    active.append(row)
+            if not active:
+                break
+            # One shared bound, never 300 seconds per item. Old survivors keep their earlier bound.
+            deadline = min([entered + VERIFY_SECONDS] + [row['verify_deadline'] for row in active
+                                                         if row['verify_deadline'] is not None])
+            with store.db:
+                for row in active:
+                    store.db.execute("UPDATE campaign_join_item SET verify_deadline=?,"
+                                     "verify_attempts=verify_attempts+1,updated=? WHERE job_id=? AND campaign_id=?",
+                                     (deadline, clock(), job_id, row['campaign_id']))
+            error = ''
+            joined = None
+            try:
+                with verification_timeout(deadline - clock()):
+                    if transport is None:
+                        from lib.global_source_transport import opportunity_reader
+                        context = opportunity_reader({'platformWrites': 0}, market=market,
+                            account_name=job['account'], extra_read_endpoints={(CAMPAIGNS, 'GET')})
+                    else:
+                        context = transport
+                    with context as live:
+                        joinable, joined = read_campaigns(live)
+                    if clock() >= deadline:
+                        raise VerificationDeadline()
+                    joinable_ids = {str(row['campaign_id']) for row in joinable}
+            except VerificationDeadline:
+                error = 'campaign_verification_budget_exhausted'
+            except Exception as failure:
+                # Record a read failure, not negative membership evidence or a fake empty list.
+                error = ('campaign_verification_account_failed' if _account_failure(failure)
+                         else 'campaign_verification_read_failed:' + type(failure).__name__)
+            if error:
+                for row in active:
+                    store.set_item(job_id, row['campaign_id'], verify_error=error)
+            else:
+                for row in active:
+                    cid = row['campaign_id']
+                    if cid in joined or row['joined_campaign_id'] in joined:
+                        store.set_item(job_id, cid, state='joined', reason='回查确认已加入', verify_error='')
+                        settled += 1
+                        joined_settled += 1
+                    elif cid in joinable_ids:
+                        store.set_item(job_id, cid, state='skipped',
+                                       reason='not_joined_platform_lists_it_joinable', verify_error='')
+                        settled += 1
+                store.set_job(job_id, joined_count=len(joined))
+            for row in store.unresolved(job_id):
+                if row['verify_attempts'] >= VERIFY_ROUNDS or (row['verify_deadline'] is not None and
+                    (clock() >= row['verify_deadline'] or error == 'campaign_verification_budget_exhausted')):
+                    store.set_item(job_id, row['campaign_id'], followup_stopped=1)
+            if error == 'campaign_verification_budget_exhausted':
+                break
+        store.set_job(job_id, state='needs_verification' if store.unresolved(job_id) else 'completed', error='')
+        return status(root, market=market, clock=clock, job_id=job_id) | {
+            'settled': settled, 'joinedSettled': joined_settled}
     finally:
         store.close()
 
@@ -527,6 +701,19 @@ def verify(root, *, market='it', transport=None, clock=time.time, job_id=None):
 def _join_path():
     from lib.global_source_transport import CAMPAIGN_JOIN
     return CAMPAIGN_JOIN
+
+
+def safe_error(error):
+    code = str(error)
+    return code if re.fullmatch(r'(?:campaign|taplink|account|live)_[a-z0-9_]{1,100}', code) else type(error).__name__
+
+
+def _account_failure(value):
+    # Known authentication codes and explicit local account gates stop further POSTs.
+    if getattr(value, 'code', None) in (16201010, 10000) or getattr(value, 'http_status', None) in (401, 403):
+        return True
+    return any(token in str(value).lower() for token in
+               ('auth', 'login', 'maintenance', 'account_', 'verification', 'captcha', 'endpoint_not_allowed'))
 
 
 def _settle(outcome):
@@ -537,7 +724,7 @@ def _settle(outcome):
     turing = getattr(outcome, 'has_turing', False)
     if http == 200 and isinstance(code, int) and code == 0 and not ambiguous and not turing:
         return 'joined', 'platform_accepted'
-    if http == 200 and isinstance(code, int) and code != 0 and not ambiguous and not turing:
+    if http == 200 and isinstance(code, int) and code != 0 and not ambiguous and not turing and not _account_failure(outcome):
         return 'skipped', f'platform_rejected:{code}'
     return 'result_unknown', 'result_unknown'
 
@@ -586,7 +773,9 @@ def default_email(root):
 def status(root=None, *, market='it', clock=time.time, job_id=None):
     """Read-only summary for the page: what is eligible, what was joined, what needs a recheck."""
     root = Path(root or root_of())
-    store = Store(root, market=market, clock=clock)
+    if not db_path(root, market).exists():
+        return {'available': False, 'reason': 'campaign_join_not_started'}
+    store = Store(root, market=market, clock=clock, readonly=True)
     try:
         job = store.job(job_id)
         if not job:
@@ -598,6 +787,12 @@ def status(root=None, *, market='it', clock=time.time, job_id=None):
                 'email': job['contact_email'] or default_email(root),
                 'counts': store.states(job['id']),
                 'unresolved': [row['campaign_id'] for row in store.unresolved(job['id'])],
+                'activeVerification': [row['campaign_id'] for row in store.unresolved(job['id'])
+                    if not row.get('followup_stopped') and int(row.get('verify_attempts') or 0) < VERIFY_ROUNDS
+                    and (row.get('verify_deadline') is None or row['verify_deadline'] > clock())],
+                'stoppedUnknown': [row['campaign_id'] for row in store.unresolved(job['id'])
+                    if row.get('followup_stopped') or int(row.get('verify_attempts') or 0) >= VERIFY_ROUNDS
+                    or (row.get('verify_deadline') is not None and row['verify_deadline'] <= clock())],
                 'items': store.items(job['id']), 'platformWrites': 0}
     finally:
         store.close()

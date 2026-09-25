@@ -30,7 +30,7 @@ export function useCampaignJoin(market:string):CampaignJoinController{
     body:JSON.stringify({...body as Record<string,unknown>,market})});
    const value=await r.json();
    if(!r.ok){setMessage(value?.error==="campaign_write_requires_verification"
-    ?"有活动提过但没结算：先点「回查未结算」，不会重复提交。":`${fail}（${value?.error??r.status}）`);return;}
+    ?"该活动已有未结算申请，不会重复提交；其他活动可继续。":`${fail}（${value?.error??r.status}）`);return;}
    setData(value);setLoaded(true);
    return value as CampaignJoinState;
   }catch{setMessage(fail);return undefined;}
@@ -44,7 +44,7 @@ export function useCampaignJoin(market:string):CampaignJoinController{
  },[post]);
  const recheck=useCallback(async()=>{
   const value=await post({action:"verify"},"暂时无法回查。");
-  if(value?.available)setMessage(`回查完成：结算了 ${value.settled??0} 条${value.unresolved?.length?`，仍有 ${value.unresolved.length} 个待核验`:"，没有待核验的。"}已加入 ${value.joinedCount??0} 个。`);
+  if(value?.available)setMessage(`回查完成：确认 ${value.settled??0} 条，仍可有限核验 ${value.activeVerification?.length??0} 条，已停止跟进 ${value.stoppedUnknown?.length??0} 条。无需人工逐项处理。`);
  },[post]);
  // 一键加入：服务端会**先重新预览一遍**再提交当前全部合格的活动，所以页面不传活动名单，
  // 也不依赖页面上这份可能已经过期的列表。
@@ -56,7 +56,7 @@ export function useCampaignJoin(market:string):CampaignJoinController{
    const skipped=value.appliedCounts?.skipped??0;
    const unknown=(value.appliedCounts?.result_unknown??0)+(value.appliedCounts?.writing??0);
    setMessage(value.state==="needs_verification"
-    ?`提交完成：已加入 ${joined} 个，跳过 ${skipped} 个，还有 ${unknown} 个结果未知——先点「回查未结算」确认，不会重新提交。`
+    ?`提交完成：已加入 ${joined} 个，跳过 ${skipped} 个，还有 ${unknown} 个结果未知，不影响其他活动。自动运营将在正常商品准备后有限核验，耗尽后停止跟进。`
     :`提交完成：这一批可加入 ${value.eligible??0} 个，已加入 ${joined} 个，跳过 ${skipped} 个。`);
   }
  },[post,email]);

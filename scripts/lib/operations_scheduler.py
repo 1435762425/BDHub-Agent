@@ -446,22 +446,10 @@ class SubprocessStageExecutor:
                             'errorCode':'selected_catalog_iteration_limit','scope':{'sources':sources},'payload':{}}
             if 'campaign' in sources:
                 join_market_flag=['--market',market]
-                join_status=self._call(['scripts/campaign-join.py','status',*join_market_flag],'campaign-join-status')
-                if join_status['state']!='completed':return join_status|{'platformWrites':writes}
-                join_payload=join_status.get('payload') or {}
-                if join_payload.get('available') and join_payload.get('unresolved'):
-                    verified=self._call(['scripts/campaign-join.py','verify',*join_market_flag],'campaign-join-verify')
-                    if verified['state']!='completed':return verified|{'platformWrites':writes}
-                    verified_payload=verified.get('payload') or {}
-                    if verified_payload.get('unresolved'):
-                        return {**verified,'state':'needs_human','complete':False,
-                                'errorCode':'campaign_join_result_unknown','platformWrites':writes}
+                # New applications and joined-goods refresh have independent outcomes.
+                # In particular, unknown membership never suppresses the already joined catalog.
                 joined=self._call(['scripts/campaign-join.py','join-all',*join_market_flag,'--confirm'],'campaign-join')
-                writes+=joined.get('platformWrites',0);joined_payload=joined.get('payload') or {}
-                if joined['state']!='completed':return joined|{'platformWrites':writes}
-                if joined_payload.get('state')=='needs_verification' or joined_payload.get('unresolved'):
-                    return {**joined,'state':'needs_human','complete':False,
-                            'errorCode':'campaign_join_result_unknown','platformWrites':writes}
+                writes+=joined.get('platformWrites',0)
                 outputs.append(joined)
                 result=self._call(['scripts/campaign-collect.py',*market_flag,'--max-requests','150','--passes','200','--screen'],
                                   'campaign-catalog')
@@ -470,9 +458,41 @@ class SubprocessStageExecutor:
                 if evidence.get('status')!='completed' or not (evidence.get('screening') or {}).get('recorded'):
                     return {**result,'state':'failed','complete':False,'errorCode':'campaign_catalog_not_published',
                             'platformWrites':writes}
-                outputs.append(result);count+=int((result.get('payload') or {}).get('offers') or 0)
+                outputs.append(result);campaign_count=int(evidence.get('offers') or 0);count+=campaign_count
+                verification_status=self._call(['scripts/campaign-join.py','status','--market',market],
+                                               'campaign-verification-status')
+                outputs.append(verification_status)
+                pending=(verification_status.get('payload') or {}).get('activeVerification')
+                if pending:
+                    # Prepare confirmed goods before spending any special verification budget.
+                    # This subpass stays in the current catalog generation and resource claim.
+                    # The later normal taplink stage reuses its already prepared bindings.
+                    prepared=self.execute(store,run|{'applicableSources':['campaign']},'taplink_prepare',jobs)
+                    writes+=prepared.get('platformWrites',0);outputs.append(prepared)
+                    if prepared['state']!='completed':return prepared|{'platformWrites':writes}
+                    verified=self._call(['scripts/campaign-join.py','verify','--market',market,'--bounded'],
+                                        'campaign-bounded-verification')
+                    outputs.append(verified)
+                    if (verified.get('payload') or {}).get('joinedSettled'):
+                        refreshed=self._call(['scripts/campaign-collect.py',*market_flag,
+                            '--max-requests','150','--passes','200','--screen'],'campaign-confirmed-catalog')
+                        outputs.append(refreshed)
+                        evidence=refreshed.get('payload') or {}
+                        if refreshed['state']!='completed' or evidence.get('status')!='completed' or not (
+                                evidence.get('screening') or {}).get('recorded'):
+                            return refreshed|{'state':'failed','complete':False,'platformWrites':writes,
+                                              'errorCode':'campaign_catalog_not_published'}
+                        count+=int(evidence.get('offers') or 0)-campaign_count
+                    verification_status=verified
+                membership=verification_status.get('payload') or {}
+                campaign_scope={'state':joined['state'], 'errorCode':joined.get('errorCode'),
+                    'joinedCatalogComplete':True,
+                    'membershipReadable':verification_status['state']=='completed',
+                    'unresolved':membership.get('unresolved',[]),
+                    'stoppedUnknown':membership.get('stoppedUnknown',[]),
+                    'accountBlocked':(joined.get('payload') or {}).get('accountBlocked',False)}
             return {'state':'completed','itemCount':count,'complete':True,'platformWrites':writes,
-                    'scope':{'sources':sources},'payload':{'sources':outputs}}
+                    'scope':{'sources':sources,'campaignApplications':campaign_scope if 'campaign' in sources else None},'payload':{'sources':outputs}}
         if stage=='taplink_prepare':
             writes=0;outputs=[];count=0
             for route in sources:

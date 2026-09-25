@@ -340,8 +340,8 @@ class StageWiring(unittest.TestCase):
         executor,calls=self.executor(answers)
         result=executor.execute(None,{'applicableSources':['campaign']},'catalog',{'jobs':{}})
         self.assertEqual(result['state'],'completed');self.assertEqual(result['platformWrites'],2)
-        self.assertEqual([args[:2] for args,_ in calls],[['scripts/campaign-join.py','status'],
-                         ['scripts/campaign-join.py','join-all'],['scripts/campaign-collect.py','--max-requests']])
+        self.assertEqual([args[:2] for args,_ in calls],[['scripts/campaign-join.py','join-all'],['scripts/campaign-collect.py','--max-requests'],
+                         ['scripts/campaign-join.py','status']])
         self.assertTrue(all(args[2:4]==['--market','it'] for args,_ in calls
                             if args[0]=='scripts/campaign-join.py'))
 
@@ -356,9 +356,59 @@ class StageWiring(unittest.TestCase):
         result=executor.execute(None,{'market':'it','applicableSources':['campaign']},'catalog',{'jobs':{}})
         self.assertEqual(result['state'],'completed')
         self.assertEqual([args[1] for args,_ in calls if args[0]=='scripts/campaign-join.py'],
-                         ['status','verify','join-all'])
+                         ['join-all','status'])
         self.assertTrue(all(args[2:4]==['--market','it'] for args,_ in calls
                             if args[0]=='scripts/campaign-join.py'))
+
+    def test_unknown_campaign_prepares_known_goods_before_bounded_verification(self):
+        def answers(args,label):
+            payload={};writes=0
+            if args[1]=='join-all':payload={'state':'needs_verification','unresolved':['123']};writes=10
+            elif args[1]=='status':payload={'activeVerification':['123'],'unresolved':['123']}
+            elif args[1]=='verify':payload={'state':'needs_verification','unresolved':['123'],'stoppedUnknown':['123']}
+            elif args[0]=='scripts/campaign-collect.py':payload={'status':'completed','screening':{'recorded':True},'offers':9}
+            elif label=='taplink-create-campaign':writes=9
+            return {'state':'completed','itemCount':9,'complete':True,'platformWrites':writes,'payload':payload}
+        executor,calls=self.executor(answers)
+        result=executor.execute(None,{'market':'it','applicableSources':['campaign']},'catalog',{'jobs':{}})
+        self.assertEqual(result['state'],'completed')
+        self.assertEqual(result['itemCount'],9)
+        self.assertEqual(result['platformWrites'],19)
+        labels=[label for _,label in calls]
+        self.assertLess(labels.index('campaign-catalog'),labels.index('taplink-create-campaign'))
+        self.assertLess(labels.index('taplink-create-campaign'),labels.index('campaign-bounded-verification'))
+        verify_args=next(args for args,label in calls if label=='campaign-bounded-verification')
+        self.assertIn('--bounded',verify_args)
+        self.assertEqual(verify_args[2:4],['--market','it'])
+        self.assertEqual(result['scope']['campaignApplications']['stoppedUnknown'],['123'])
+
+    def test_join_failure_does_not_block_existing_catalog_but_remains_explicit_gap(self):
+        def answers(args,label):
+            if args[1]=='join-all':return {'state':'failed','platformWrites':0,'errorCode':'campaign_list_incomplete','payload':{}}
+            payload={'available':False} if args[1]=='status' else {'status':'completed','screening':{'recorded':True},'offers':7}
+            return {'state':'completed','itemCount':7,'complete':True,'platformWrites':0,'payload':payload}
+        executor,calls=self.executor(answers)
+        result=executor.execute(None,{'market':'br','applicableSources':['campaign']},'catalog',{'jobs':{}})
+        self.assertEqual(result['state'],'completed')
+        self.assertEqual(result['itemCount'],7)
+        self.assertEqual(result['scope']['campaignApplications']['errorCode'],'campaign_list_incomplete')
+        self.assertEqual(result['scope']['campaignApplications']['state'],'failed')
+        self.assertTrue(any(args[0]=='scripts/campaign-collect.py' for args,_ in calls))
+
+    def test_late_confirmed_campaign_republishes_catalog_once_without_rejoining(self):
+        def answers(args,label):
+            payload={}
+            if args[1]=='join-all':payload={'state':'needs_verification','unresolved':['123']}
+            elif args[1]=='status':payload={'activeVerification':['123']}
+            elif args[1]=='verify':payload={'unresolved':[],'joinedSettled':1}
+            elif args[0]=='scripts/campaign-collect.py':payload={'status':'completed','screening':{'recorded':True},'offers':10 if label=='campaign-confirmed-catalog' else 9}
+            return {'state':'completed','itemCount':0,'complete':True,'platformWrites':0,'payload':payload}
+        executor,calls=self.executor(answers)
+        result=executor.execute(None,{'market':'br','applicableSources':['campaign']},'catalog',{'jobs':{}})
+        self.assertEqual(result['itemCount'],10)
+        self.assertEqual(sum(args[1]=='join-all' for args,_ in calls),1)
+        self.assertEqual(sum(args[0]=='scripts/campaign-collect.py' for args,_ in calls),2)
+        self.assertEqual(result['scope']['campaignApplications']['unresolved'],[])
 
     def test_campaign_only_market_never_calls_full_managed_worker(self):
         def answers(args,_label):
@@ -368,7 +418,7 @@ class StageWiring(unittest.TestCase):
         for market in ('br','my'):
             calls.clear();result=executor.execute(None,{'market':market,'applicableSources':['campaign']},'catalog',{'jobs':{}})
             self.assertEqual(result['state'],'completed')
-            self.assertEqual([args[0] for args,_ in calls],['scripts/campaign-join.py','scripts/campaign-join.py','scripts/campaign-collect.py'])
+            self.assertEqual([args[0] for args,_ in calls],['scripts/campaign-join.py','scripts/campaign-collect.py','scripts/campaign-join.py'])
             self.assertTrue(all('--market' in args and args[args.index('--market')+1]==market for args,_ in calls))
 
     def test_new_market_full_managed_catalog_uses_first_level_category_partitions(self):

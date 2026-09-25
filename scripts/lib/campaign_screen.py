@@ -283,9 +283,16 @@ def record(root, built, *, market=None, clock=time.time):
             bindings = None
             try:
                 bindings = CatalogBindings(root)
+                preserve_missing = set()
+                if built['source'] == 'campaign':
+                    from lib.campaign_join import status as join_status
+                    membership = join_status(root, market=market)
+                    preserve_missing = {str(row[key]) for row in membership.get('items', [])
+                        if row['state'] in ('writing', 'result_unknown')
+                        for key in ('campaign_id', 'joined_campaign_id') if row.get(key)}
                 reconciliation = {'available': True, **bindings.reconcile_current_offers(
                     market, built['source'], [row['offer'] for row in targets['targets']],
-                    evidence_ref=built['runId'], now=stamp,
+                    evidence_ref=built['runId'], now=stamp, preserve_missing_campaigns=preserve_missing,
                 )}
             except ValueError as error:
                 reconciliation = {'available': False, 'reason': str(error)}

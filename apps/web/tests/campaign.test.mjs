@@ -109,3 +109,16 @@ test('one-click join takes no campaign list and still demands confirmation',()=>
   assert.throws(()=>validateCampaignJoinRequest(bad),/invalid_campaign_join_request|campaign_join_confirmation_required/);
  }
 });
+
+
+test('stopped unknown membership is separate from remaining verification work',()=>{
+ const value=validateCampaignJoin({...join,activeVerification:[],stoppedUnknown:join.unresolved},'it');
+ assert.deepEqual(value.activeVerification,[]);
+ assert.deepEqual(value.stoppedUnknown,join.unresolved);
+ assert.deepEqual(value.unresolved,join.unresolved);
+});
+
+test('a cumulative market ledger over 400 activities remains readable',()=>{
+ const items=Array.from({length:842},(_,i)=>({...join.items[0],campaign_id:String(1000000000+i)}));
+ assert.equal(validateCampaignJoin({...join,items},'it').items.length,842);
+});

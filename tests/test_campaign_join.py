@@ -159,20 +159,20 @@ class Apply(unittest.TestCase):
             self.assertEqual(result['counts'], {'joined': 1})
             self.assertEqual(status(folder)['joinedCount'], 1)      # 不是写入前的 0
 
-    def test_an_ambiguous_answer_stops_and_is_never_resent(self):
+    def test_an_ambiguous_answer_continues_without_resending(self):
         with tempfile.TemporaryDirectory() as folder:
             fake = self._previewed(folder, Fake(joinable=[A, B], answer=lambda cid, p: outcome(http=200, code=None, ambiguous=True)))
             result = apply(folder, campaign_ids=[A, B], email='a@b.com', confirm=True,
                            transport=context(fake), clock=lambda: NOW, job_id='job-1')
             self.assertEqual(result['state'], 'needs_verification')
-            self.assertEqual(len(fake.writes), 1)                 # 第二个活动不再尝试
-            self.assertEqual(result['counts'].get('result_unknown'), 1)
+            self.assertEqual(len(fake.writes), 2)                 # 第二个活动照常申请
+            self.assertEqual(result['counts'].get('result_unknown'), 2)
             # 再点一次 apply：必须拒绝，而不是重新提交
             with self.assertRaises(ValueError) as caught:
                 apply(folder, campaign_ids=[A], email='a@b.com', confirm=True,
                       transport=context(fake), clock=lambda: NOW, job_id='job-1')
             self.assertEqual(str(caught.exception), 'campaign_write_requires_verification')
-            self.assertEqual(len(fake.writes), 1)
+            self.assertEqual(len(fake.writes), 2)
 
     def test_verify_settles_an_unknown_write_by_reading_back(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -414,7 +414,7 @@ class CliErrorPath(unittest.TestCase):
             code, payload = self.run_cli(['preview','--market','it'], lambda cli: setattr(cli, 'preview', boom))
         self.assertEqual(code, 2)
         self.assertIn('campaign_join_internal:RuntimeError', payload['error'])
-        self.assertIn('未定义名字', payload['error'])
+        self.assertNotIn('未定义名字', payload['error'])
 
     def test_a_known_refusal_keeps_its_own_code(self):
         code, payload = self.run_cli(['join-all','--market','it', '--email', 'a@b.com'])
@@ -499,8 +499,8 @@ class WriteProtection(unittest.TestCase):
             self.assertEqual(row['state'], 'skipped')
             self.assertIn('joinable', row['reason'])
 
-    def test_verify_refreshes_the_count_even_with_nothing_to_settle(self):
-        """没有待结算项时也要读平台：这个动作同时负责把"已加入总数"对齐到平台。"""
+    def test_verify_without_pending_does_not_read_platform(self):
+        """没有待结算项时不为历史计数单独追查；普通预览负责刷新计数。"""
         with tempfile.TemporaryDirectory() as folder:
             fake = Fake(joinable=[A], joined=[])
             preview(folder, transport=context(fake), clock=lambda: NOW)
@@ -508,7 +508,7 @@ class WriteProtection(unittest.TestCase):
             fake.joined_rows = [{'campaign_id': B}, {'campaign_id': C}]
             result = verify(folder, transport=context(fake), clock=lambda: NOW)
             self.assertEqual(result['settled'], 0)        # 没有待结算项
-            self.assertEqual(result['joinedCount'], 2)    # 但总数要对齐平台
+            self.assertEqual(result['joinedCount'], 0)    # 不额外读取
             self.assertTrue(result['available'])          # 而且必须是统一的封装
 
     def test_an_unknown_write_keeps_the_error_message(self):

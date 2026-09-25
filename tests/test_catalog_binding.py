@@ -87,6 +87,20 @@ class CatalogBindingTests(unittest.TestCase):
         self.assertEqual((applied['qualifying'],applied['promoted']),(1,1))
         self.assertEqual(self.bindings.get('it','selected','1','2')['list_id'],'99')
 
+    def test_unknown_membership_preserves_only_missing_binding_not_changed_terms(self):
+        spec={**self.spec,'route':'campaign','offer':{**self.spec['offer'],'catalogSource':'campaign'}}
+        self.bindings.promote(spec,self.card,'original',now=101)
+        result=self.bindings.reconcile_current_offers('it','campaign',[],evidence_ref='gap',now=102,
+                                                     preserve_missing_campaigns={'2'})
+        self.assertEqual(result['inactive'],0)
+        self.assertEqual(self.bindings.get('it','campaign','1','2')['state'],'active')
+        changed={**spec['offer'],'creatorPercent':'14','planFingerprint':'new'}
+        result=self.bindings.reconcile_current_offers('it','campaign',[changed],evidence_ref='changed',now=103,
+                                                     preserve_missing_campaigns={'2'})
+        self.assertEqual(result['waiting_refresh'],1)
+        result=self.bindings.reconcile_current_offers('it','campaign',[],evidence_ref='complete',now=104)
+        self.assertEqual(result['inactive'],1)
+
     def test_current_offer_reconciliation_deactivates_changes_and_can_restore_exact_binding(self):
         self.bindings.promote(self.spec, self.card, "intent-1", now=101.0)
         current = self.spec['offer']

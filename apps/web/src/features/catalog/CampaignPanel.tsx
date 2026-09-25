@@ -47,7 +47,8 @@ export default function CampaignPanel({market,onOpenLeads}:{market:string;onOpen
  const jobs=useCatalogJobs(market);
  const pool=panel.data, ledger=join.data;
  const joinable=(ledger?.items??[]).filter(item=>item.state==="eligible");
- const unresolved=ledger?.unresolved??[];
+ const activeVerification=ledger?.activeVerification??ledger?.unresolved??[];
+ const stoppedUnknown=ledger?.stoppedUnknown??[];
  // 链接准备：只有当前标准链接算完成；旧卡只保留历史。
  const linkStates=links.data?.states??{};
  const linkTargets=links.data?.targets??0;
@@ -77,17 +78,19 @@ export default function CampaignPanel({market,onOpenLeads}:{market:string;onOpen
    summary={<>可加入 {joinable.length} · 已加入 {ledger?.joinedCount??"—"} · 快照 {pool?.offers?.toLocaleString()??"—"}</>}>
 
    <div id="card-campaign-join" className="scroll-mt-6"><Card title="加入活动"
-    action={ledger?.state?<Pill tone={tone(ledger.state)}>{JOB_STATES[ledger.state]??ledger.state}</Pill>:null}>
+    action={ledger?.state?<Pill tone={tone(ledger.state)}>{stoppedUnknown.length>0&&activeVerification.length===0?"未知项已停止跟进":JOB_STATES[ledger.state]??ledger.state}</Pill>:null}>
     <div className="space-y-4 p-5">
     {!ledger?.available&&<p className="text-sm text-gray-500">{join.loaded?"还没有读过可加入的活动。":"读取中…"}</p>}
     {ledger?.available&&<>
      <MetricTable rows={[
       {label:"可加入",value:joinable.length.toLocaleString(),detail:"通过资格判定，可以直接加入",accent:true},
       {label:"已加入（平台）",value:(ledger.joinedCount??0).toLocaleString(),detail:"平台自己的回答，不靠本地推断"},
-      {label:"结果待核验",value:unresolved.length.toLocaleString(),detail:"提过但没结算：只回查，不重发"},
+      {label:"有限核验",value:activeVerification.length.toLocaleString(),detail:"不阻塞已加入活动的商品准备"},
+      {label:"已停止跟进",value:stoppedUnknown.length.toLocaleString(),detail:"结果仍未知；不重发，无需人工处理"},
       {label:"其它分类可加入",value:(other?.unjoinedEligible??0).toLocaleString(),detail:other?.available?`平台活动：${other.parents} 父 / ${other.subs} 子${ledger?.account?` · 账号 ${ledger.account}`:""}`:(ledger?.account?`账号 ${ledger.account}`:"其它分类未读到")},
      ]}/>
-     {unresolved.length>0&&<Notice tone="warning">有 {unresolved.length} 个活动提过但没结算（{unresolved.slice(0,3).join("、")}{unresolved.length>3?"…":""}）。先点「回查未结算」——**绝不重新提交**。</Notice>}
+     {activeVerification.length>0&&<Notice tone="info">有 {activeVerification.length} 个新申请结果未知，其他活动继续。自动运营先准备已确认商品，再做有限核验；耗尽后停止跟进，无需逐项处理。</Notice>}
+     {stoppedUnknown.length>0&&<p className="text-sm text-gray-500">{stoppedUnknown.length} 个申请已停止主动核验。正常刷新若发现已加入，会自动纳入；原申请不会重发。</p>}
      {ledger.error&&<Notice tone="warning">上次运行停在 {reason(ledger.error)}。</Notice>}
      {joinable.length===0&&<Notice tone="info">平台当前没有新的可加入活动。活动有更新时点「刷新活动列表」再看。</Notice>}
      {other?.available&&(other.unjoinedEligible??0)>0&&<Notice tone="warning">
@@ -109,7 +112,7 @@ export default function CampaignPanel({market,onOpenLeads}:{market:string;onOpen
        <Input value={join.email} onChange={e=>join.setEmail(e.target.value)} placeholder="you@example.com" maxLength={254}/></Field>
       <div className="flex flex-wrap items-end gap-2">
        <Button size="sm" variant="outline" disabled={join.busy} onClick={()=>void join.preview()}>{join.busy?"处理中…":"刷新活动列表"}</Button>
-       <Button size="sm" variant="outline" disabled={join.busy||unresolved.length===0} onClick={()=>void join.recheck()}>回查未结算</Button>
+       <Button size="sm" variant="outline" disabled={join.busy||activeVerification.length===0} onClick={()=>void join.recheck()}>回查一次</Button>
       </div>
       <div className="flex flex-wrap items-end gap-2">
        <Button size="sm" disabled={join.busy||joinable.length===0} onClick={()=>void join.joinAll()}>

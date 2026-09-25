@@ -16,7 +16,7 @@ export type CampaignPanelState={available:boolean;market:string;reason?:string;s
 export type CampaignJoinItem={campaignId:string;name:string;state:string;reason:string;
  writeAttempted:boolean;joinedCampaignId:string|null};
 export type CampaignJoinState={available:boolean;market:string;reason?:string;jobId?:string;state?:string;error?:string;
- account?:string;email?:string;joinedCount?:number;counts?:Record<string,number>;unresolved?:string[];
+ account?:string;email?:string;joinedCount?:number;counts?:Record<string,number>;unresolved?:string[];activeVerification?:string[];stoppedUnknown?:string[];
  items?:CampaignJoinItem[];platformWrites?:number;campaigns?:number;joined?:number;eligible?:number;
  // 「一键加入」才带的三个字段
  attempted?:string[];appliedCounts?:Record<string,number>;
@@ -92,12 +92,15 @@ export function validateCampaignJoin(value:unknown,expectedMarket:string):Campai
  if(v.available!==true)return {available:false,market:expectedMarket,reason:typeof v.reason==="string"?v.reason:"campaign_join_not_started"};
  const other=v.otherCategories as Record<string,unknown>|undefined;
  const items=Array.isArray(v.items)?v.items as Record<string,unknown>[]:[];
- if(items.length>400)throw Error('invalid_campaign_join');
+ // Membership is cumulative (MY already exceeds 400 rows); CLI maxBuffer bounds bytes.
  return {available:true,market:expectedMarket,jobId:String(v.jobId??""),state:String(v.state??""),
   error:typeof v.error==="string"?v.error:"",account:String(v.account??""),
   email:typeof v.email==="string"?v.email:"",
   joinedCount:count(v.joinedCount??0,'joinedCount'),counts:countMap(v.counts??{}),
   unresolved:Array.isArray(v.unresolved)?v.unresolved.map(String):[],
+  activeVerification:Array.isArray(v.activeVerification)?v.activeVerification.map(String):
+   Array.isArray(v.unresolved)?v.unresolved.map(String):[],
+  stoppedUnknown:Array.isArray(v.stoppedUnknown)?v.stoppedUnknown.map(String):[],
   items:items.map(row=>({campaignId:String(row.campaign_id),name:String(row.name??""),
    state:String(row.state),reason:String(row.reason??""),
    writeAttempted:Number(row.write_attempted)===1,
@@ -216,7 +219,7 @@ export function validateCampaignJoinRequest(value:unknown):
 
 /** 只读结算：重新读已加入列表，把"提过但没结算"的条目落定。绝不重新提交。 */
 export async function recheckCampaignJoin(market:string):Promise<CampaignJoinState>{
- return validateCampaignJoin(await run("campaign-join.py",["verify","--market",market]),market);
+ return validateCampaignJoin(await run("campaign-join.py",["verify","--market",market],4*1024*1024,330000),market);
 }
 
 export async function applyCampaignJoin(market:string,campaignIds:string[],email:string):Promise<CampaignJoinState>{
