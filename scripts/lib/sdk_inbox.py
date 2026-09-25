@@ -27,8 +27,7 @@ def arm_script(find_api):
           text:typeof m.content==='string'?m.content.slice(0,65536):null,at:Date.now()});
       }};
       let n=0;for(const name of ['onMessageReceive','onMessageUpsert'])if(typeof sdk[name]==='function'){sdk[name](onMessage);n++;}
-      // Browser has receive authority only. HTTP owns all platform writes.
-      if(sdk.messageService&&sdk.messageService.sendMessage)sdk.messageService.sendMessage=()=>{throw Error('http_sender_required');};
+      // Only subscribe here. Do not replace SDK internals used by its connection lifecycle.
       return {armed:n};}'''
 
 DRAIN='() => {const w=window.__BDHUB_RECEIVE;return w?{events:w.buffer.slice(0,2000),overflow:w.overflow}:{events:[],overflow:false};}'

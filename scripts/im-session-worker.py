@@ -75,7 +75,13 @@ def cycle(market):
                     armed=page.evaluate(arm_script(_FIND_API)) if ready else {'armed':0}
                     if not ready or armed.get('armed')!=2:
                         if unready_since is None:unready_since=time.monotonic()
-                        if time.monotonic()-unready_since>30:raise ValueError('sdk_disconnected')
+                        if time.monotonic()-unready_since>30:
+                            diagnostic=page.evaluate('() => {'+_FIND_API+'return {api:!!api,status:api&&api.sdkStatus,loading:api&&api.isSDKLoading,sdkKeys:api&&api.sdkInstance?Object.keys(api.sdkInstance):[]};}')
+                            print(json.dumps({'event':'sdk_state','market':market,'diagnostic':diagnostic,'at':time.time()}),flush=True)
+                            if market=='my':
+                                try:page.screenshot(path=str(ROOT/'var/im-session-my-diagnostic.png'))
+                                except Exception:pass
+                            raise ValueError('sdk_disconnected')
                         page.wait_for_timeout(250);continue
                     unready_since=None;sdk_heartbeat[0]=time.monotonic();data=page.evaluate(DRAIN)
                     if data.get('overflow'):raise ValueError('sdk_receive_buffer_overflow')
