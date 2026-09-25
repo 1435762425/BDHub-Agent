@@ -235,42 +235,9 @@ class DeepSeekClassifier:
         return json.loads(response['content']),response.get('usage')
 
 
-class JevClassifier:
-    """Official TypeSafe System One Choice adapter; still shadow-only."""
-    provider='jev';model='jev-1.13.0'
-    def __init__(self, root=None, call=None):
-        self.root=Path(root or Path(__file__).resolve().parents[2]);self.call=call
-    def classify(self, context):
-        if self.call is None:
-            from lib.typesafe_provider import status as provider_status,system_one
-            if not provider_status(self.root)['ready']:raise CycleError('jev_not_configured')
-            call=lambda state,questions:system_one(self.root,state,questions)
-        else:call=self.call
-        criteria={
-          'no_reply':'Pure thanks, emoji, or a closing message with no collaboration commitment and no unresolved request.',
-          'sample_self_service':'Sample application, approval, shipping, missing sample, used-up, damaged, or replacement sample.',
-          'collaboration_ack':'Clear agreement to collaborate, add the product to showcase, make a video or LIVE, or confirmation content was published.',
-          'link_usage':'The creator only asks how to use the one clearly related product card or link.',
-          'human':'Paid collaboration, budget, catalog request, WhatsApp, Boost, complaint, refusal or stop-contact, broken link, commission anomaly, multiple or ambiguous products, multiple intents, attachment, or uncertainty.'}
-        questions={'action':{'type':'choice','instructions':'Choose the single permitted action for this creator reply using the policy criteria. Prefer human whenever the evidence is ambiguous.',
-                             'criteria':criteria}}
-        response=call(context,questions);answer=(response.get('answers') or {}).get('action')
-        if not isinstance(answer,dict) or answer.get('type')!='choice' or answer.get('choice') not in ACTIONS:
-            raise CycleError('typesafe_response_invalid')
-        confidence=answer.get('confidence')
-        if isinstance(confidence,bool) or not isinstance(confidence,(int,float)) or not 0<=confidence<=1:
-            raise CycleError('typesafe_response_invalid')
-        action=answer['choice'];turn=context['turn'];text=str(turn.get('text') or '')
-        return ({'schemaVersion':SCHEMA_VERSION,'action':action,'intentCode':'jev_'+action,
-                 'evidenceMessageIds':[str(turn['messageId'])],
-                 'evidenceQuotes':[text] if text else [],'confidence':confidence,
-                 'humanReason':'Jev 判定需要人工接管；具体原因由人工结合上下文确认。' if action=='human' else None,
-                 'templateKey':TEMPLATE_FOR.get(action),
-                 'meaningZh':'Jev 只进行动作分类；中文语义请与 DeepSeek 结果和原文对照。'},
-                response.get('usage'))
-
 
 def classify(store, turn_id, request_id, classifier):
+    if getattr(classifier,'provider',None)!='deepseek':raise CycleError('reply_provider_not_supported')
     _tables(store)
     if not isinstance(request_id,str) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._:-]{7,119}',request_id):
         raise CycleError('reply_request_invalid')
@@ -301,10 +268,6 @@ def classify(store, turn_id, request_id, classifier):
             with store.tx():store.db.execute("UPDATE reply_classification SET state='response_saved',response_json=? "
                                              "WHERE classification_id=?",(encoded({'decision':raw,'usage':usage}),classification_id))
         except CycleError as error:
-            if str(error)=='jev_not_configured':
-                with store.tx():store.db.execute("UPDATE reply_classification SET state='failed_known' WHERE classification_id=?",
-                                                 (classification_id,))
-                raise
             with store.tx():store.db.execute("UPDATE reply_classification SET state='unknown' WHERE classification_id=?",
                                              (classification_id,))
             raise CycleError('reply_request_unresolved') from None
@@ -495,7 +458,7 @@ def apply_turn_review(store, turn_id, expected_review_revision, expected_control
 def batch_classify(store, providers, limit, *, root=None, classifier_factory=None):
     """Fill the same bounded turn set for each provider; never creates reply work."""
     _tables(store)
-    if not isinstance(providers,(list,tuple)) or not providers or set(providers)-{'deepseek','jev'} or \
+    if not isinstance(providers,(list,tuple)) or not providers or set(providers)-{'deepseek'} or \
             type(limit) is not int or not 1<=limit<=50:
         raise CycleError('reply_batch_invalid')
     root=Path(root or Path(store.db.execute('PRAGMA database_list').fetchone()[2]).parent.parent)
@@ -513,8 +476,7 @@ def batch_classify(store, providers, limit, *, root=None, classifier_factory=Non
         for provider in providers:
             if store.db.execute("SELECT 1 FROM reply_classification WHERE state='ready' AND provider=? "
                     "AND json_extract(input_json,'$.turn.turnId')=?",(provider,turn_id)).fetchone():continue
-            engine=(classifier_factory(provider) if classifier_factory else
-                    DeepSeekClassifier() if provider=='deepseek' else JevClassifier(root))
+            engine=classifier_factory(provider) if classifier_factory else DeepSeekClassifier()
             request_id=f'shadow-{provider}-{context_hash[:32]}'
             try:
                 value=classify(store,turn_id,request_id,engine)
@@ -542,7 +504,8 @@ def evaluation_summary(store):
     for row in store.db.execute('SELECT turn_id,correct_action FROM turn_review ORDER BY revision DESC'):
         labels.setdefault(row['turn_id'],row['correct_action'])
     provider_metrics={}
-    for provider in ('deepseek','jev'):
+    # Historical providers remain readable without importing or calling their adapters.
+    for provider in sorted({'deepseek'} | {provider for _,provider in latest}):
         evaluated=correct=false_auto=false_human=0
         for turn_id,truth in labels.items():
             row=latest.get((turn_id,provider))
@@ -600,13 +563,10 @@ def status(store, limit=12):
                                len({row['action'] for row in item['comparisons']})<=1,
                                -(item['occurredMs'] or 0),item['turnId']))
     items=items[:limit]
-    from lib.typesafe_provider import status as typesafe_status
-    jev=typesafe_status(Path(store.db.execute('PRAGMA database_list').fetchone()[2]).parent.parent)
     from lib.template_library import agent_templates
     templates={value['action']:{'key':value['id'],'text':value['text'],'revision':value['revision']}
                for value in agent_templates(store,policy)}
     return {'schema':'bdhub.reply-review.v1','policyVersion':policy['version'],
             'processingIntervalSeconds':policy['processingIntervalSeconds'],
-            'automaticReplies':False,'providers':{'deepseek':{'mode':'shadow'},
-                                                   'jev':{'mode':'shadow' if jev['ready'] else 'unconfigured'}},
+            'automaticReplies':False,'providers':{'deepseek':{'mode':'shadow'}},
             'templates':templates,'counts':counts,'evaluation':evaluation_summary(store),'items':items}

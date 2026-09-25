@@ -1,6 +1,0 @@
-{
-  "version": "typesafe-provider-v1",
-  "endpoint": "https://api.typesafe.ai/v1/systemone",
-  "model": "jev-1.13.0",
-  "apiKey": ""
-}

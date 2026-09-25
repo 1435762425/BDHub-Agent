@@ -12,7 +12,7 @@ from lib.cycle_delivery import Deliveries  # noqa:E402
 from lib.cycle_auto_reply import AutoReplies  # noqa:E402
 from lib.cycle_inbox import Inbox  # noqa:E402
 from lib.cycle_service import Service  # noqa:E402
-from lib.reply_events import DeepSeekClassifier,JevClassifier,apply_turn_review,backfill,batch_classify,classify,evaluation_summary,load_policy,review,review_turn,status  # noqa:E402
+from lib.reply_events import DeepSeekClassifier,apply_turn_review,backfill,batch_classify,classify,evaluation_summary,load_policy,review,review_turn,status  # noqa:E402
 from lib.agent_reply_v2 import production_context  # noqa:E402
 from lib.schema_migrations import apply_database  # noqa:E402
 from lib.second_cycle import CycleError,CycleStore,digest  # noqa:E402
@@ -105,7 +105,7 @@ class ReplyEvents(unittest.TestCase):
    checked=review(s,result['classificationId'],0,'correct',None,'符合参考答案')
    self.assertEqual(checked['revision'],1);self.assertFalse(checked['automaticReply'])
 
- def test_model_cannot_invent_evidence_or_free_text_and_jev_is_not_guessed(self):
+ def test_model_cannot_invent_evidence_or_free_text_and_retired_provider_is_rejected(self):
   with CycleStore(self.db,clock=lambda:self.now) as s:
    backfill(s);turn=s.db.execute('SELECT turn_id FROM inbound_turn').fetchone()[0]
    bad={'schemaVersion':'bdhub.reply-classification.v1','action':'collaboration_ack',
@@ -117,10 +117,17 @@ class ReplyEvents(unittest.TestCase):
              'humanReason':'x'*501,'templateKey':None}
    with self.assertRaisesRegex(CycleError,'human_reason'):
     classify(s,turn,'request-shadow-0003',DeepSeekClassifier(lambda *_a,**_k:{'content':json.dumps(too_long)}))
-   with self.assertRaisesRegex(CycleError,'jev_not_configured'):
-    classify(s,turn,'request-jev-0001',JevClassifier(self.root))
+   class Retired:
+    provider='jev'
+    def classify(self,*_):raise AssertionError('retired provider must not execute')
+   count=s.db.execute('SELECT count(*) FROM reply_classification').fetchone()[0]
+   with self.assertRaisesRegex(CycleError,'reply_provider_not_supported'):
+    classify(s,turn,'request-jev-0001',Retired())
+   self.assertEqual(s.db.execute('SELECT count(*) FROM reply_classification').fetchone()[0],count)
+   with self.assertRaisesRegex(CycleError,'reply_batch_invalid'):
+    batch_classify(s,['jev'],10,root=self.root)
    self.assertEqual(load_policy()['automaticRepliesEnabled'],False)
- def test_batch_runs_same_turn_for_both_providers_and_metrics_wait_for_review(self):
+ def test_single_provider_batch_preserves_read_only_historical_comparison(self):
   with CycleStore(self.db,clock=lambda:self.now) as s:
    backfill(s)
    class Fake:
@@ -132,8 +139,14 @@ class ReplyEvents(unittest.TestCase):
       'intentCode':'fixture_'+action,'evidenceMessageIds':['1001'],'evidenceQuotes':['farò un video'],
       'confidence':.8,'humanReason':'需人工' if action=='human' else None,
       'templateKey':None if action=='human' else 'collaboration_ack_v1','meaningZh':'确认会制作视频'},None)
-   report=batch_classify(s,['deepseek','jev'],10,root=self.root,classifier_factory=Fake)
-   self.assertEqual((report['turns'],report['ready'],report['modelCalls']),(1,2,2))
+   report=batch_classify(s,['deepseek'],10,root=self.root,classifier_factory=Fake)
+   self.assertEqual((report['turns'],report['ready'],report['modelCalls']),(1,1,1))
+   self.assertEqual(set(status(s)['providers']),{'deepseek'})
+   self.assertNotIn('jev',evaluation_summary(s)['providers'])
+   row=s.db.execute("SELECT * FROM reply_classification WHERE provider='deepseek'").fetchone()
+   historic=json.loads(row['decision_json']);historic.update(action='collaboration_ack',humanReason=None,templateKey='collaboration_ack_v1')
+   with s.tx():s.db.execute('INSERT INTO reply_classification VALUES(?,?,?,?,?,?,?,?,?,?,?)',
+    ('historical-jev','historical-request',row['input_hash'],row['policy_version'],'jev','jev-1.13.0','ready',row['input_json'],row['response_json'],json.dumps(historic),row['created_at']))
    before=evaluation_summary(s);self.assertEqual((before['paired'],before['disagreements'],before['reviewedTurns']),(1,1,0))
    turn=s.db.execute('SELECT turn_id FROM inbound_turn').fetchone()[0]
    review_turn(s,turn,0,'collaboration_ack','参考答案')
