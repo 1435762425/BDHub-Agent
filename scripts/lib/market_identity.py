@@ -46,7 +46,7 @@ def reuse_judgments(root,market):
  """Reuse exact market/handle terminal judgments for new A/B edges without a new Find."""
  with CycleStore(Path(root)/'var/second-cycle.sqlite') as store,store.tx():
   plan=_plan(store,market)
-  current=store.db.execute("SELECT source_id,source_handle FROM current_identity_source WHERE plan_id=?",(plan,)).fetchall()
+  current=store.db.execute("SELECT x.source_id,x.source_handle FROM current_identity_source x LEFT JOIN cycle_identity_outcome o ON o.plan_id=x.plan_id AND o.source_id=x.source_id WHERE x.plan_id=? AND (o.status IS NULL OR o.status NOT IN ('completed','unresolved'))",(plan,)).fetchall()
   judgments={}
   for row in store.db.execute("""SELECT x.source_handle,o.status,r.creator_id,r.oec,r.evidence_ref
     FROM source_edge_index x JOIN cycle_identity_outcome o ON o.plan_id=x.plan_id AND o.source_id=x.source_id
@@ -144,7 +144,7 @@ def _apply(root,market,report,requested):
     'httpStatus':receipt['httpStatus'],'code':0,'verificationRequired':False})
    resolved[handle]=(outcome['identity']['creatorId'],oec,evidence+':find')
  with CycleStore(Path(root)/'var/second-cycle.sqlite') as store:
-  plan=_plan(store,market);bound=0;missed=0
+  plan=_plan(store,market);bound=0;missed=0;bound_ids=[]
   with store.tx():
    for handle in unresolved:
     for row in store.db.execute("SELECT source_id FROM source_edge_index WHERE plan_id=? AND source_handle=?",(plan,handle)).fetchall():
@@ -158,7 +158,8 @@ def _apply(root,market,report,requested):
      if old and (old['creator_id']!=creator or old['oec']!=oec):raise CycleError('resolution_conflict')
      store.db.execute('INSERT OR IGNORE INTO cycle_identity_resolution VALUES(?,?,?,?,?)',(plan,row[0],creator,oec,evidence))
      store.db.execute("INSERT INTO cycle_identity_outcome VALUES(?,?,'completed') ON CONFLICT(plan_id,source_id) DO UPDATE SET status='completed'",(plan,row[0]));bound+=not bool(old)
-  store.project_current_offers(plan)
+     if not old:bound_ids.append(row[0])
+  if bound_ids:store.project_current_offers(plan,source_ids=bound_ids)
  return {'resolvedHandles':len(resolved),'unresolvedHandles':len(unresolved),'newBindings':bound,'unresolvedEdges':missed,
          'profileVerified':sum(target.get('status')=='completed' for target,_,_ in valid),
          'blockedHandles':len(blocked),'blockCode':block_code if blocked else None}

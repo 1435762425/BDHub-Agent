@@ -30,9 +30,9 @@ class IdentityBridge:
      AND json_extract(e.payload,'$.creatorId') IS NULL ORDER BY e.source_id LIMIT 500"""
    elif 'current_identity_source' in {r[0] for r in self.store.db.execute("SELECT name FROM sqlite_master WHERE type='view'")}:
     sql="""SELECT e.source_id,e.payload FROM current_identity_source x
-     JOIN source_edge e ON e.plan_id=x.plan_id AND e.source_id=x.source_id
+     CROSS JOIN source_edge e
      LEFT JOIN cycle_identity_handoff h ON h.plan_id=x.plan_id AND h.source_id=x.source_id
-     WHERE x.plan_id=? AND h.source_id IS NULL AND json_extract(e.payload,'$.creatorId') IS NULL
+     WHERE x.plan_id=? AND e.plan_id=x.plan_id AND e.source_id=x.source_id AND h.source_id IS NULL AND json_extract(e.payload,'$.creatorId') IS NULL
      AND (? IS NULL OR x.source_id IN (SELECT value FROM json_each(?)))
      ORDER BY x.source_rank,x.source_id LIMIT 500"""
    else:
@@ -87,7 +87,7 @@ class IdentityBridge:
  def reconcile(self,plan,*,outbox_ids=None):
   if self.store._plan(plan)['market']!='it':raise CycleError('identity_market_not_enabled')
   self._reopen_blocked(plan)
-  bound=0;states={};finished=[]
+  bound=0;states={};finished=[];bound_ids=[]
   with closing(sqlite3.connect(self.identity_path.resolve().as_uri()+'?mode=ro',uri=True)) as identities, identities:
    identities.row_factory=sqlite3.Row
    judgments={}
@@ -144,14 +144,15 @@ class IdentityBridge:
       old=self.store.db.execute('SELECT * FROM cycle_identity_resolution WHERE plan_id=? AND source_id=?',(plan,edge['sourceId'])).fetchone()
       if old:
        if old['creator_id']!=item['creatorId'] or old['oec']!=item['oecId']:raise CycleError('resolution_conflict')
+       bound_ids.append(edge['sourceId'])
        continue
       relationship=self.store.db.execute('SELECT * FROM relationship WHERE plan_id=? AND (creator_id=? OR oec=?)',(plan,item['creatorId'],item['oecId'])).fetchone()
       if relationship and (relationship['creator_id']!=item['creatorId'] or relationship['oec']!=item['oecId']):raise CycleError('identity_conflict')
       self.store.db.execute('INSERT OR IGNORE INTO relationship(plan_id,creator_id,oec) VALUES(?,?,?)',(plan,item['creatorId'],item['oecId']))
-      self.store.db.execute('INSERT INTO cycle_identity_resolution VALUES(?,?,?,?,?)',(plan,edge['sourceId'],item['creatorId'],item['oecId'],proof));bound+=1
+      self.store.db.execute('INSERT INTO cycle_identity_resolution VALUES(?,?,?,?,?)',(plan,edge['sourceId'],item['creatorId'],item['oecId'],proof));bound+=1;bound_ids.append(edge['sourceId'])
     if all_terminal or (not counts['queued'] and not counts['running'] and not counts.get('retryableBlocked')):finished.append(box['id'])
   if states:
-   self.store.project_current_offers(plan)
+   if bound_ids:self.store.project_current_offers(plan,source_ids=bound_ids)
    with self.store.tx():
     for oid in finished:self.store.db.execute('UPDATE cycle_identity_outbox SET settled=1 WHERE id=?',(oid,))
   return {'newBindings':bound,'batches':states}

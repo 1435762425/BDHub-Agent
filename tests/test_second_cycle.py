@@ -17,6 +17,18 @@ class CycleTests(unittest.TestCase):
  def tearDown(self):self.s.close();self.tmp.cleanup()
  def publish(self,offers=None,at=NOW,**kw):return self.s.publish(self.p,'source',at,offers or [offer()],**kw)
  def schedule(self,**kw):return self.s.replenish(self.p,new_remaining=kw.pop('new_remaining',10),established_capacity=0,window_end='2026-09-13',**kw)
+ def test_incremental_offer_projection_is_idempotent_and_limits_identity_scope(self):
+  self.publish([offer(),offer('2')]);self.s.import_edges(self.p,[edge(),edge('2',source='e2')])
+  self.publish([offer(offerKey='new-1'),offer('2',offerKey='new-2')],at=NOW+1)
+  self.s.project_current_offers(self.p,source_ids=['e1'])
+  self.assertIsNotNone(self.s.db.execute("SELECT 1 FROM opportunity WHERE offer_key='new-1'").fetchone())
+  self.assertIsNone(self.s.db.execute("SELECT 1 FROM opportunity WHERE offer_key='new-2'").fetchone())
+  before=self.s.db.total_changes
+  self.s.project_current_offers(self.p,source_ids=['e1'])
+  self.assertEqual(self.s.db.total_changes,before)
+  self.s.project_current_offers(self.p)
+  self.assertIsNotNone(self.s.db.execute("SELECT 1 FROM opportunity WHERE offer_key='new-2'").fetchone())
+
  def test_strict_eligibility(self):
   for fields,reason in [({'stock':'100'},'stock_not_over_100'),({'endAt':NOW+45*86400},'expiry_not_over_45_days'),({'creatorPercent':'10'},'no_creator_commission_advantage'),({'stock':None},'missing_stock'),({'available':False},'unavailable')]:
    self.assertIn(reason,assess_offer(offer(**fields),NOW)['reasons'])

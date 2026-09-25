@@ -104,7 +104,7 @@ CREATE INDEX lead_query_selection_source ON lead_query_selection(source_id,query
   self.assertEqual(self.s.db.execute('SELECT settled FROM cycle_identity_outbox WHERE id=?',(box,)).fetchone()[0],1)
  def test_resume_after_binding_before_projection(self):
   self.b.freeze(self.p);self.b.dispatch(self.p);self.resolve();original=self.s.project_current_offers
-  self.s.project_current_offers=lambda *a:(_ for _ in ()).throw(RuntimeError('interrupted'))
+  self.s.project_current_offers=lambda *a,**kw:(_ for _ in ()).throw(RuntimeError('interrupted'))
   with self.assertRaises(RuntimeError):self.b.reconcile(self.p)
   self.s.project_current_offers=original;self.assertEqual(self.b.reconcile(self.p)['newBindings'],0)
   self.assertEqual(self.s.status(self.p)['opportunities'],2)

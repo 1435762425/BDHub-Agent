@@ -178,24 +178,45 @@ class CycleStore:
             if complete and head and at==head['observed'] and sid!=head['id']:raise CycleError('catalog_time_conflict')
             if complete and (not head or at>head['observed']):self.db.execute('INSERT INTO catalog_head VALUES(?,?,?) ON CONFLICT(plan_id,source) DO UPDATE SET snapshot_id=excluded.snapshot_id',(p,source,sid))
         return sid
-    def project_current_offers(self,p):
-        """Derive candidate offers by PID without rewriting imported historical edges."""
-        with self.tx():
-            self._plan(p)
-            by_pid={}
-            for sid,o in self._offers(p):by_pid.setdefault(o['pid'],[]).append((sid,o))
-            for row in self.db.execute('SELECT payload FROM source_edge WHERE plan_id=?',(p,)).fetchall():
-                edge=json.loads(row[0])
-                if not edge.get('creatorId'):
-                    binding=self.db.execute('SELECT * FROM cycle_identity_resolution WHERE plan_id=? AND source_id=?',(p,edge['sourceId'])).fetchone()
-                    if not binding:continue
-                    edge={**edge,'creatorId':binding['creator_id'],'oec':binding['oec'],'identityEvidenceRef':binding['evidence_ref']}
-                for sid,o in by_pid.get(edge['pid'],[]):
-                    if o['offerKey']==edge['offerKey'] and not edge.get('identityEvidenceRef'):continue
-                    payload=encoded({**edge,'offerKey':o['offerKey'],'originalOfferKey':edge['offerKey'],'offerSnapshot':sid,'offerEvidenceRef':o['evidenceRef']})
-                    previous=self.db.execute('SELECT payload FROM opportunity WHERE plan_id=? AND creator_id=? AND pid=? AND offer_key=?',(p,edge['creatorId'],edge['pid'],o['offerKey'])).fetchone()
+    def project_current_offers(self,p,source_ids=None):
+        """Project changed identity edges in short transactions; historical raw evidence stays immutable."""
+        self._plan(p)
+        if source_ids is not None and not source_ids:return
+        heads=tuple(self.db.execute('SELECT source,snapshot_id FROM catalog_head WHERE plan_id=? ORDER BY source',(p,)).fetchall())
+        heads=tuple(tuple(row) for row in heads)
+        by_pid={}
+        for sid,offer in self._offers(p):by_pid.setdefault(offer['pid'],[]).append((sid,offer))
+        query='SELECT payload FROM source_edge WHERE plan_id=?'
+        args=(p,)
+        if source_ids is not None:
+            query+=' AND source_id IN (SELECT value FROM json_each(?))';args+=(encoded(list(source_ids)),)
+        changes={}
+        for row in self.db.execute(query,args).fetchall():
+            edge=json.loads(row[0])
+            # B uses its explicit video projection; do not replace legacy positive-sale opportunities with it.
+            if edge.get('sourceKind')=='kalodata_video':continue
+            if not edge.get('creatorId'):
+                binding=self.db.execute('SELECT * FROM cycle_identity_resolution WHERE plan_id=? AND source_id=?',(p,edge['sourceId'])).fetchone()
+                if not binding:continue
+                edge={**edge,'creatorId':binding['creator_id'],'oec':binding['oec'],'identityEvidenceRef':binding['evidence_ref']}
+            for sid,offer in by_pid.get(edge['pid'],[]):
+                if offer['offerKey']==edge['offerKey'] and not edge.get('identityEvidenceRef'):continue
+                payload=encoded({**edge,'offerKey':offer['offerKey'],'originalOfferKey':edge['offerKey'],'offerSnapshot':sid,'offerEvidenceRef':offer['evidenceRef']})
+                key=(edge['creatorId'],edge['pid'],offer['offerKey'])
+                prior=changes.get(key)
+                if prior is None or (epoch(edge['observedAt']),edge['sourceId'])>=(epoch(prior[0]['observedAt']),prior[0]['sourceId']):
+                    changes[key]=(edge,offer['offerKey'],payload)
+        changes=list(changes.values())
+        for offset in range(0,len(changes),100):
+            with self.tx():
+                current=tuple(tuple(row) for row in self.db.execute('SELECT source,snapshot_id FROM catalog_head WHERE plan_id=? ORDER BY source',(p,)))
+                if current!=heads:raise CycleError('catalog_projection_scope_changed')
+                for edge,offer_key,payload in changes[offset:offset+100]:
+                    previous=self.db.execute('SELECT payload FROM opportunity WHERE plan_id=? AND creator_id=? AND pid=? AND offer_key=?',(p,edge['creatorId'],edge['pid'],offer_key)).fetchone()
+                    if previous and previous[0]==payload:continue
                     if not previous or epoch(edge['observedAt'])>=epoch(json.loads(previous[0])['observedAt']):
-                        self.db.execute('INSERT INTO opportunity VALUES(?,?,?,?,?,?) ON CONFLICT(plan_id,creator_id,pid,offer_key) DO UPDATE SET units=excluded.units,payload=excluded.payload',(p,edge['creatorId'],edge['pid'],o['offerKey'],edge['units'],payload))
+                        self.db.execute('INSERT INTO opportunity VALUES(?,?,?,?,?,?) ON CONFLICT(plan_id,creator_id,pid,offer_key) DO UPDATE SET units=excluded.units,payload=excluded.payload',
+                                        (p,edge['creatorId'],edge['pid'],offer_key,edge['units'],payload))
 
     def _offers(self,p):
         rows=list(self.db.execute('SELECT c.* FROM catalog_head h JOIN catalog c ON c.id=h.snapshot_id WHERE h.plan_id=?',(p,)))
