@@ -42,6 +42,25 @@ def levels(alerts):
     return {alert["id"]: alert["level"] for alert in alerts}
 
 
+class SelectionIsolatedTests(unittest.TestCase):
+    def test_counts_only_recent_isolations_and_tolerates_a_missing_ledger(self):
+        import json
+        import sqlite3
+        from lib.ops_alerts import _selection_isolated
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            (root / "var").mkdir()
+            self.assertEqual(_selection_isolated(root, "it", NOW), 0)
+            with sqlite3.connect(root / "var/global-selection.sqlite") as db:
+                db.execute("CREATE TABLE intake_item(run_id TEXT,pid TEXT,state TEXT,payload TEXT,updated REAL)")
+                for pid, at in (("1", NOW - 3600), ("2", NOW - 8 * 86400)):
+                    db.execute("INSERT INTO intake_item VALUES('r',?,'isolated_unverified',?,0)",
+                               (pid, json.dumps({"isolation": {"at": at}})))
+                db.execute("INSERT INTO intake_item VALUES('r','3','confirmed','{}',0)")
+            self.assertEqual(_selection_isolated(root, "it", NOW), 1)
+            self.assertEqual(_selection_isolated(root, "uk", NOW), 0)
+
+
 class EvaluateTests(unittest.TestCase):
     def test_healthy_running_system_has_no_alerts(self):
         self.assertEqual(evaluate(facts(market("it"), market("br"))), [])
@@ -108,6 +127,13 @@ class EvaluateTests(unittest.TestCase):
     def test_offsite_copy_missing_or_stale_is_reported(self):
         self.assertEqual(levels(evaluate(facts(offsite=None))), {"offsite-missing": "warning"})
         self.assertEqual(levels(evaluate(facts(offsite=NOW - 8 * 86400))), {"offsite-stale": "warning"})
+
+    def test_isolated_selections_ask_a_person_to_check_the_campaign(self):
+        alerts = evaluate(facts(market("br", selectionIsolated=2)))
+        self.assertEqual(levels(alerts), {"br-selection-isolated": "warning"})
+        self.assertEqual(alerts[0]["title"], "BR 2 个选品因活动不符已隔离")
+        self.assertEqual(alerts[0]["href"], "/br/ops/jobs")
+        self.assertEqual(evaluate(facts(market("br", selectionIsolated=0))), [])
 
     def test_unreadable_market_is_reported_and_others_still_checked(self):
         alerts = evaluate(facts({"market": "uk", "error": "plan_missing"},

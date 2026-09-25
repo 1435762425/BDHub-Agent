@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 import json
+import sqlite3
+from contextlib import closing
 from pathlib import Path
 
 LEVELS = ("critical", "warning", "info")
@@ -38,6 +40,22 @@ def _stamp(value):
 
 def _has(db, table):
     return db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)).fetchone() is not None
+
+
+def _selection_isolated(root, market, now):
+    """Selections isolated for a campaign mismatch in the last 7 days; 0 when the ledger is absent."""
+    name = "global-selection.sqlite" if market == "it" else f"global-selection-{market}.sqlite"
+    path = Path(root) / "var" / name
+    if not path.exists():
+        return 0
+    try:
+        with closing(sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True)) as db:
+            if not _has(db, "intake_item"):
+                return 0
+            return db.execute("SELECT count(*) FROM intake_item WHERE state='isolated_unverified' "
+                              "AND json_extract(payload,'$.isolation.at')>=?", (now - 7 * 86400,)).fetchone()[0]
+    except sqlite3.Error:
+        return 0
 
 
 def _market_facts(root, store, market, accounts):
@@ -73,6 +91,7 @@ def _market_facts(root, store, market, accounts):
     return {
         "market": market,
         "active": bool(current["automaticOperationsEnabled"] or current["continuousSendEnabled"] or agent["enabled"]),
+        "selectionIsolated": _selection_isolated(root, market, store.clock()),
         "inbox": {"checkedAt": _stamp(inbox.get("checkedAt")),
                   "lastSuccessAt": _stamp((inbox.get("status") or {}).get("lastCheckedAt")),
                   "errorCode": inbox.get("errorCode") or None, "failureStage": inbox.get("failureStage") or None,
@@ -213,6 +232,10 @@ def evaluate(facts):
             add(f"{key}-platform-rejected", "warning", f"{name} 平台今天拒绝发送 {rejections['count']} 次",
                 "已暂停新联系到明天，按平台回执核对原因。" if held else "继续发送；再被拒绝 1 次将暂停新联系到明天。",
                 market=key, since=rejections["oldestAt"], href=f"{base}/workspace/send")
+        isolated = market.get("selectionIsolated") or 0
+        if isolated:
+            add(f"{key}-selection-isolated", "warning", f"{name} {isolated} 个选品因活动不符已隔离",
+                "证据已保留，本轮不建链接；核对实际活动后再决定是否恢复。", market=key, href=f"{base}/ops/jobs")
         if market["humanCases"]["count"]:
             add(f"{key}-human", "warning", f"{name} {market['humanCases']['count']} 条人工会话待处理",
                 "在会话页处理后关闭。", market=key, since=market["humanCases"]["oldestAt"], href=f"{base}/conversations")

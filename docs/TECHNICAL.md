@@ -39,7 +39,7 @@ Web 路由与 bridge 显式携带 market，URL/body/CLI/返回值一致；约 10
 
 IT `full_catalog_collection_mode()` 固定普通周更，拒绝新的 `--by-category`，不续已停止类目；UK 按首次/月度类目、其余普通查询。停止/修复原来源前先核对 worker、锁、原 run 和备份，不用新 run 掩盖断点。
 
-选入当前使用已验证单 PID `/pick_up/select`，不是未验收的 batch_select。先落意图，批后统一回读；验证码/登录明确拒绝，须同时有已选池缺失、当前 listing 未选入及同账号验证/新代次证据，才能重放同一冻结请求。网络歧义/code0 缺回读不重发，仍未知保留 `skipped_unknown`，后续 generation 不重新入队。提交的选入意图只由该冻结 campaign 的回读证据确认（`matching_selection_evidence`）；已在池中（任意 campaign）的 pending 商品记为 `already_selected`。若池中只在另一 campaign 下出现该商品，该项保持原状态并记录 `otherCampaignObserved`，不记缺失，因此不会变成 `skipped_unknown`；`prepare` 会把它带入后续 intake 轮次，catalog 阶段保持 `global_selection_unresolved`（needs_human）直到人工决定（恢复工具可将其隔离为 `isolated_unverified`）。这是已知缺口，等待产品决策。真实性能证据见[四市场报告](implementation/four-market-launch-implementation-20260923.md)。
+选入当前使用已验证单 PID `/pick_up/select`，不是未验收的 batch_select。先落意图，批后统一回读；验证码/登录明确拒绝，须同时有已选池缺失、当前 listing 未选入及同账号验证/新代次证据，才能重放同一冻结请求。网络歧义/code0 缺回读不重发，仍未知保留 `skipped_unknown`，后续 generation 不重新入队。提交的选入意图只由该冻结 campaign 的回读证据确认（`matching_selection_evidence`）；已在池中（任意 campaign）的 pending 商品记为 `already_selected`。若池中只在另一 campaign 下出现该商品，记录 `otherCampaignObserved` 与 `otherCampaignReads`、不记缺失；这样的回读相隔 5 分钟以上出现两次即改为 `isolated_unverified`（`isolation.reason='selection_campaign_mismatch'`，证据保留、不建链接，`prepare` 不再入队），catalog 阶段继续（用户 09-25 决定）。`verify` 首次遇到时最多等满 5 分钟再回读一次；告警条提示近 7 天内隔离的选品数。真实性能证据见[四市场报告](implementation/four-market-launch-implementation-20260923.md)。
 
 ### 2.2 TapLink 与当前材料
 

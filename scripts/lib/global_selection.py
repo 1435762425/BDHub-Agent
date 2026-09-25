@@ -13,6 +13,7 @@ from lib.global_screen import decimal, evaluate, fingerprint, load, sales
 from lib.second_cycle import encoded,digest
 
 READBACK_DELAYS=(0,1,3,30,120)
+OTHER_CAMPAIGN_MIN_DELAY=300
 
 def rules(root=None):
     """The thresholds currently in force, read from the operator-controlled config."""
@@ -71,7 +72,7 @@ class Selection:
         # threshold change created a fresh batch of products that were all already selected, which
         # then had to be read back one by one just to be told so.
         settled={row[0] for row in self.db.execute(
-            "SELECT DISTINCT pid FROM intake_item WHERE state IN ('confirmed','already_selected','skipped_unknown')")}
+            "SELECT DISTINCT pid FROM intake_item WHERE state IN ('confirmed','already_selected','skipped_unknown','isolated_unverified')")}
         unresolved={}
         for row in self.db.execute("SELECT run_id,pid,state,payload FROM intake_item WHERE state IN "
                                    "('submitting','awaiting_verification','result_unknown','needs_review') "
@@ -101,6 +102,17 @@ class Selection:
             changed=self.db.execute("UPDATE intake_item SET state='submitting',payload=?,updated=? WHERE run_id=? AND pid=? AND state='pending'",(encoded(facts),time.time(),item['run_id'],item['pid'])).rowcount
             if changed!=1:raise ValueError('selection_already_attempted')
         item.update(state='submitting',payload=facts)
+    def record_other_campaign(self,item,observed,*,at=None):
+        if item['state'] not in ('submitting','awaiting_verification','result_unknown'):return False
+        stamp=time.time() if at is None else float(at)
+        reads=list(item['payload'].get('otherCampaignReads') or [])+[{'at':stamp,'campaignIds':sorted({row['campaignId'] for row in observed})}]
+        reads=reads[-10:]
+        if len(reads)>=2 and reads[-1]['at']-reads[0]['at']>=OTHER_CAMPAIGN_MIN_DELAY:
+            self.update(item,'isolated_unverified',otherCampaignObserved=observed,otherCampaignReads=reads,
+                        isolation={'reason':'selection_campaign_mismatch','at':stamp})
+            return True
+        self.update(item,item['state'],otherCampaignObserved=observed,otherCampaignReads=reads)
+        return False
     def record_readback_absence(self,item,*,at=None):
         if item['state'] not in ('submitting','awaiting_verification','result_unknown'):return item
         stamp=time.time() if at is None else float(at);history=list(item['payload'].get('readbackAbsences') or [])
@@ -149,6 +161,17 @@ def matching_selection_evidence(item, observed):
     campaign=(frozen.get('campaign') or {}) if isinstance(frozen,dict) else {}
     cid=str(campaign.get('campaign_id') or '')
     return [row for row in observed if row['campaignId']==cid] if cid else []
+
+def settle_readback(ledger,item,observed,*,at=None):
+    """One readback outcome for a submitted intent: settled, isolated, other_campaign, absent or unchanged."""
+    exact=matching_selection_evidence(item,observed)
+    if exact:
+        ledger.update(item,'already_selected' if item['state']=='pending' else 'confirmed',selectionEvidence=exact,verifiedAt=time.time())
+        return 'settled'
+    if item['state'] in ('submitting','awaiting_verification','result_unknown'):
+        if observed:return 'isolated' if ledger.record_other_campaign(item,observed,at=at) else 'other_campaign'
+        ledger.record_readback_absence(item,at=at);return 'absent'
+    return 'unchanged'
 
 def settled_pids(root,market='it'):
     """Products any batch has proven to be in the selected pool.

@@ -3,7 +3,7 @@
 import argparse,fcntl,json,signal,sys,time
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1];sys.dont_write_bytecode=True;sys.path.insert(0,str(ROOT/'scripts'))
-from lib.global_selection import READBACK_DELAYS,Selection,assess,matching_selection_evidence,prioritized_selection_batch,selection_campaign,selected_rows
+from lib.global_selection import OTHER_CAMPAIGN_MIN_DELAY,READBACK_DELAYS,Selection,assess,prioritized_selection_batch,selection_campaign,selected_rows,settle_readback
 from lib.global_source import clean_product
 from lib.global_source_transport import opportunity_selector
 STOP=False
@@ -65,6 +65,7 @@ def main():
                     from lib.global_selection import reconcile_verification_rejections
                     retried=reconcile_verification_rejections(ledger,id,t,limit=a.limit)
                     pending=prioritized_selection_batch(ledger.items(id),retried,a.limit)
+                other_waiting=[]
                 def verify(items):
                     if not items:return
                     rows=selected_rows(t,[i['pid'] for i in items]);matched={}
@@ -72,14 +73,16 @@ def main():
                         if str((r.get('campaign_info') or {}).get('crs_campaign_type')) in ('8','9'):
                             pid=str(r['campaign_product']['product_id']);matched.setdefault(pid,[]).append({'pid':pid,'campaignId':str(r['campaign_info']['campaign_id']),'type':r['campaign_info']['crs_campaign_type']})
                     for i in items:
-                        observed=matched.get(i['pid'],[]);exact=matching_selection_evidence(i,observed)
-                        if exact:ledger.update(i,'already_selected' if i['state']=='pending' else 'confirmed',selectionEvidence=exact,verifiedAt=time.time())
-                        elif i['state'] in ('submitting','awaiting_verification','result_unknown'):
-                            if observed:ledger.update(i,i['state'],otherCampaignObserved=observed)
-                            else:ledger.record_readback_absence(i)
+                        if settle_readback(ledger,i,matched.get(i['pid'],[]))=='other_campaign':other_waiting.append(i)
                     return matched
                 if a.action=='verify':
                     for offset in range(0,len(pending),15):verify(pending[offset:offset+15]);save()
+                    if other_waiting:
+                        due=max(i['payload']['otherCampaignReads'][0]['at'] for i in other_waiting)+OTHER_CAMPAIGN_MIN_DELAY
+                        while time.time()<due and not STOP:time.sleep(min(1,due-time.time()))
+                        if not STOP:
+                            for offset in range(0,len(other_waiting),15):verify(other_waiting[offset:offset+15])
+                            save()
                     return
                 operation_pids={i['pid'] for i in pending};serial_queue=pending
                 for _serial_round in range(3 if a.reconcile_rejections else 1):

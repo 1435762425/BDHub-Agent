@@ -4,7 +4,7 @@ import sys
 import tempfile,unittest,tempfile,json,sqlite3
 from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'scripts'))
-from lib.global_selection import sales,assess,choose_campaign,matching_selection_evidence,prioritized_selection_batch,selection_campaign,Selection,observations,selected_rows,retryable_auth_rejection,retryable_verification_rejection
+from lib.global_selection import sales,assess,choose_campaign,matching_selection_evidence,prioritized_selection_batch,selection_campaign,Selection,observations,selected_rows,retryable_auth_rejection,retryable_verification_rejection,settle_readback
 class SelectionTests(unittest.TestCase):
  def test_inclusive_sales_and_percentage_point_boundary(self):
   p={'sales':'300 已售','product_rating':4,'commission_rate':'1200','open_collab_rate':'1000'}
@@ -88,6 +88,59 @@ class SelectionTests(unittest.TestCase):
     with ledger.db:ledger.db.execute('INSERT INTO intake_item VALUES(?,?,?,?,?)',('r','p','awaiting_verification',json.dumps(payload),1))
     item=ledger.items('r')[0];ledger.record_readback_absence(item,at=10);ledger.record_readback_absence(item,at=40)
     self.assertEqual(ledger.skip_unknown('r',at=41),['p'])
+   finally:ledger.db.close()
+ def test_other_campaign_reads_isolate_only_after_two_delayed_readbacks(self):
+  with tempfile.TemporaryDirectory() as d:
+   root=Path(d);(root/'var').mkdir();ledger=Selection(root)
+   try:
+    with ledger.db:ledger.db.execute('INSERT INTO intake_item VALUES(?,?,?,?,?)',('r','p','submitting',json.dumps({'campaign':{'campaign':{'campaign_id':'7'*19}}}),1))
+    item=ledger.items('r')[0];observed=[{'pid':'p','campaignId':'other','type':8}]
+    self.assertFalse(ledger.record_other_campaign(item,observed,at=100))
+    self.assertEqual(item['state'],'submitting');self.assertEqual(item['payload']['otherCampaignReads'][0]['campaignIds'],['other'])
+    self.assertFalse(ledger.record_other_campaign(item,observed,at=399))
+    self.assertEqual(item['state'],'submitting')
+    self.assertTrue(ledger.record_other_campaign(item,observed,at=400))
+    self.assertEqual(item['state'],'isolated_unverified')
+    self.assertEqual(item['payload']['isolation']['reason'],'selection_campaign_mismatch')
+    self.assertEqual(item['payload']['otherCampaignObserved'],observed)
+   finally:ledger.db.close()
+ def test_other_campaign_reads_ignore_items_that_were_never_submitted(self):
+  with tempfile.TemporaryDirectory() as d:
+   root=Path(d);(root/'var').mkdir();ledger=Selection(root)
+   try:
+    with ledger.db:ledger.db.execute('INSERT INTO intake_item VALUES(?,?,?,?,?)',('r','p','pending','{}',1))
+    item=ledger.items('r')[0]
+    self.assertFalse(ledger.record_other_campaign(item,[{'pid':'p','campaignId':'other','type':8}],at=100))
+    self.assertEqual(item['state'],'pending');self.assertNotIn('otherCampaignReads',item['payload'])
+   finally:ledger.db.close()
+ def test_settle_readback_confirms_only_the_frozen_campaign(self):
+  with tempfile.TemporaryDirectory() as d:
+   root=Path(d);(root/'var').mkdir();ledger=Selection(root)
+   try:
+    with ledger.db:ledger.db.execute('INSERT INTO intake_item VALUES(?,?,?,?,?)',('r','p','result_unknown',json.dumps({'campaign':{'campaign':{'campaign_id':'7'*19}}}),1))
+    item=ledger.items('r')[0]
+    self.assertEqual(settle_readback(ledger,item,[{'pid':'p','campaignId':'other','type':8}]),'other_campaign')
+    self.assertEqual(item['state'],'result_unknown')
+    self.assertEqual(settle_readback(ledger,item,[{'pid':'p','campaignId':'7'*19,'type':8}]),'settled')
+    self.assertEqual(item['state'],'confirmed')
+   finally:ledger.db.close()
+ def test_settle_readback_marks_a_pending_item_seen_under_any_campaign(self):
+  with tempfile.TemporaryDirectory() as d:
+   root=Path(d);(root/'var').mkdir();ledger=Selection(root)
+   try:
+    with ledger.db:ledger.db.execute('INSERT INTO intake_item VALUES(?,?,?,?,?)',('r','p','pending','{}',1))
+    item=ledger.items('r')[0]
+    self.assertEqual(settle_readback(ledger,item,[{'pid':'p','campaignId':'any','type':8}]),'settled')
+    self.assertEqual(item['state'],'already_selected')
+   finally:ledger.db.close()
+ def test_settle_readback_records_absence_for_a_submitted_item(self):
+  with tempfile.TemporaryDirectory() as d:
+   root=Path(d);(root/'var').mkdir();ledger=Selection(root)
+   try:
+    with ledger.db:ledger.db.execute('INSERT INTO intake_item VALUES(?,?,?,?,?)',('r','p','submitting','{}',1))
+    item=ledger.items('r')[0]
+    self.assertEqual(settle_readback(ledger,item,[],at=10),'absent')
+    self.assertEqual(item['state'],'submitting');self.assertEqual(item['payload']['readbackAbsences'][0]['at'],10)
    finally:ledger.db.close()
  def test_verification_rejection_is_skipped_after_two_proven_retries(self):
   with tempfile.TemporaryDirectory() as d:
