@@ -1,11 +1,21 @@
 # BDHub-Agent 当前交接
 
-更新时间：2026-09-25 23:55（Asia/Shanghai）。本页只记录运行快照；规则见 [PROJECT](../PROJECT.md)，实现见 [TECHNICAL](../TECHNICAL.md)，后续方向见[项目审计与清理](../implementation/project-audit-20260924.md)。更早流水见[历史交接](../archive/handoff/codex-takeover-history-20260923.md)。
+更新时间：2026-09-26 00:37（Asia/Shanghai）。本页只记录运行快照；规则见 [PROJECT](../PROJECT.md)，实现见 [TECHNICAL](../TECHNICAL.md)，后续方向见[项目审计与清理](../implementation/project-audit-20260924.md)。更早流水见[历史交接](../archive/handoff/codex-takeover-history-20260923.md)。
 
 
 
 
 
+
+## 2026-09-26 凌晨：UK 预检阻断收口，真实 AI 回复模拟已交付
+
+- 用户选择先修 UK 阻断，再看真实来信模拟；代码 `93cb471` 从 `../BDHub-Agent-uk-review-20260926` 合入，见[交付报告](../implementation/uk-preflight-ai-simulation-20260926.md)。没有执行后续 AI 规则改造或开启全量。
+- 原 acc11/CID 只读回查是一条空正文、身份角色无法按当前合同归类的旧消息；这不是本次卡文送达未知。非 IT 漏掉整套 ready 的预检终止处理，已确认会话又被过期清理遗漏，致使同一人反复占队头。新代码收口完全未提交的组件，保留历史、会话回执和请求；inflight/received/unknown 仍只核验。
+- 主库备份/副本幂等演练后，在原 UK executor 锁内结束 `delivery-b3c37e75c6aa86810b5b9a419f60747a`：投递/卡/文 cancelled，会话 confirmed，原请求与快照不变；_unsettled 不再返回原队头，专项平台写入 0。当前发送窗外，UK waiting_window，无实际新触达验收。
+- Python 1,458 项、6 项新增回归通过，既有 ResourceWarning 保留。四 sender `61715/61716/61717/61719` 载入新代码；scheduler 原 UK 身份阶段自然结束后恢复 `62510`，四 inbox/Agent 与 Web 未动。控制/授权/指南不变，AI 仍 pilot_complete_waiting_resume。
+- 16 组真实来信（各市场4组）用临时库和当前 revision 2 指南、DeepSeek flash、生产同一上下文/校验器模拟；每组一次，保留失败原话，不调用 apply/transport。14 组结构通过、2 组被拦截；定性复核 5 可用/4 可改进/5 需修改/2 拦截。突出问题为售后错分、重复已做步骤、无依据反馈承诺、正文与路由不一致、引用不存在的 ID。暂不建议直接开全量。
+- 用户对照文件 `outputs/ai-reply-review-20260926/report.md`，私密输入/原始响应在 `var/research/uk-preflight-ai-simulation-20260926/`。16 次模型调用，49,686 token，估算 ¥0.0431298；生产 decision/service_reply 未新增，实际发送 0，临时模拟库已删除。HTML 直接浏览器预览被策略阻止，提供 Markdown，不绕过限制。
+- 发布证据 `var/releases/uk-preflight-20260926/`；原未提交文档保留。下一步待用户看当前回复后，按已有政策修场景/路由/引用与上下文遵循；不要先修改指南重跑来掩盖本轮问题。
 
 ## 2026-09-25 夜间：集中回复范围与队列已加载
 
