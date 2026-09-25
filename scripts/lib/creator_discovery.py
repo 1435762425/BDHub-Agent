@@ -506,8 +506,12 @@ class CreatorDiscoveryWorker:
         return [lead["leadId"]] if lead["status"] == "pending" else []
 
     def _settle(self, item, report):
-        from lib.identity_retry import discovery_outcome
+        from lib.identity_retry import discovery_outcome,record
         discovery_outcome(self,item,report)
+        def healthy_find():
+            event=report.get('cohortEvidenceSha256') or _hash(report)
+            record(self.store.var_dir.parent,'it','acc6',item['handle'],event,'success',None,
+                   evidence='discovery:'+item['id'],now=self.store.now())
         count = report.get("counters", {}).get("request_count") if isinstance(report.get("counters"), dict) else None
         count = count if type(count) is int and count >= 0 else None
         try:
@@ -535,6 +539,7 @@ class CreatorDiscoveryWorker:
             if no_exact:
                 with self.store.hold_lease(item, self.owner), _AtomicIdentities(self.store.identity_path) as identities, identities._transaction():
                     self._lead(identities, item)
+                healthy_find()
                 return self.store.finish(item, self.owner, "unresolved", reason="no_exact_handle", request_count=count)
             found = importer.evidence.normalized(target["find"]) if isinstance(target.get("find"), dict) else None
             if not receipt_ok or found is None:
@@ -589,6 +594,7 @@ class CreatorDiscoveryWorker:
                 prior_marker = next((event for event in marker if event["evidenceRef"] == reference + ":discovery-result"), None)
                 created = prior_marker["payload"]["created"] if prior_marker else previous is None
                 identities.observe_profile("it", oec_id, None, observed_at, reference + ":discovery-result", payload={"created": created, "scope": "identity_only" if identity_only else "current_discovery_only", "profileCollection": "not_requested" if identity_only else "attempted"})
+            healthy_find()
             values = {"creator_id": current["creatorId"], "oec_id": oec_id, "request_count": count}
             if identity_only:
                 return self.store.finish(item,self.owner,"completed",outcome="identity_only",**values)
