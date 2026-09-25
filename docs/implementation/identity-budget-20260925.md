@@ -20,7 +20,7 @@ BR/MY/UK 保留原 probe 与一次 5 秒初始化补试。新每市场消费锁�
 
 ## 增量迁移与验证
 
-schema v22 只新增 `identity_handle_budget`、`identity_retry_event`、`identity_account_wait` 和索引，不重建原业务表。`identity-retry.py backfill --confirm` 读取保留的原失败报告，按原时间与账号代次回填；不直接把包含初始化、共享故障和历史重跑的 `attempt_no` 当作个体失败次数。
+schema v22 只新增 `identity_handle_budget`、`identity_retry_event`、`identity_account_wait` 和索引，不重建原业务表。`identity-retry.py backfill --confirm` 读取保留的原失败报告，按原时间与账号代次回填；不直接把包含初始化、共享故障和历史重跑的 `attempt_no` 当作个体失败次数。历史回填只覆盖当前保留的可验证报告；已归档或缺失证据不猜测次数，原 blocked/失败记录保留。
 
 - 一致备份主库、creator-discovery 与 creator-identities，三库 quick_check=ok；迁移重复 appliedNow 为空。
 - 副本回填读取 794 条共享故障、2,823 条健康 Find 事件，未产生个体隔离；1 份不可完整验证的报告单列，不猜测。原表行数只有迁移登记从 21 增为 22，旧来源和身份表未重建；重复回填预算摘要一致。
