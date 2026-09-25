@@ -1,11 +1,22 @@
 # BDHub-Agent 当前交接
 
-更新时间：2026-09-25 23:29（Asia/Shanghai）。本页只记录运行快照；规则见 [PROJECT](../PROJECT.md)，实现见 [TECHNICAL](../TECHNICAL.md)，后续方向见[项目审计与清理](../implementation/project-audit-20260924.md)。更早流水见[历史交接](../archive/handoff/codex-takeover-history-20260923.md)。
+更新时间：2026-09-25 23:55（Asia/Shanghai）。本页只记录运行快照；规则见 [PROJECT](../PROJECT.md)，实现见 [TECHNICAL](../TECHNICAL.md)，后续方向见[项目审计与清理](../implementation/project-audit-20260924.md)。更早流水见[历史交接](../archive/handoff/codex-takeover-history-20260923.md)。
 
 
 
 
 
+
+## 2026-09-25 夜间：集中回复范围与队列已加载
+
+- §9.14 代码 `670d3e8` 从 `../BDHub-Agent-reply-queue-20260925` 合入，见[集中回复交付](../implementation/reply-scope-queue-20260925.md)。按最早未处理来信排队，一份输入包含同达人全部当前问题，decision 冻结消息版本；apply/begin 复核，确认/no_reply 只结算覆盖范围，新来信/编辑保留且已答版本不重入队。
+- schema v25 追加精确处理证据和查询索引；只从原 cursor 回填 40 条已处理版本，历史处理时间明确未知。真实副本原表摘要一致、重复迁移为空、quick_check=ok。生产一致备份后迁移约 56ms，无旧消息/意图重写。
+- Python 全量 1,452、Node 180 通过；最后积压年龄调整后相关 17 项通过，新增范围测试 16 项，既有 ResourceWarning 保留。副本和测试零平台/模型调用；Web 无改动、未重建重载。
+- 当前问题不受 24 条历史裁剪限制；live 用当前本地对话，默认目标时刻模式兼容。超预算 input_blocked 保留诉求、不调用模型、不占队头，未实现自动分段、长期提醒记忆及完整历史状态回放。非 IT 包装的确定未提交上下文拒绝可取消 ready，unknown 仍只核验。
+- 先让 scheduler `44906` 的 UK 身份阶段自然完成/claim 释放，再停四 Agent 安全合入；新 scheduler `52659`，Agent `52662/52694/52704/52710`。四 inbox、IT/BR/MY sender 保持；UK 在合入前已 attention/unknown_message_needs_review，原监督器换 PID 后仍阻断，本批未绕过。旧项目和 Web 未改。
+- 上线四市场会话 GET 约 0.79–1.15 秒（先前约 32–58 秒），概览/发送 GET 均 200；慢点为逐达人外发/橱窗查询缺索引。真实只读候选读取约 0.03–0.09 秒，BR 队首含 3 条未答消息，未实际生成或发送回复。
+- 控制/授权/指南、旧快照/requestRef 不变，decision/service_reply 无新增；四市场仍 pilot_complete_waiting_resume、未开全量，MY 主链关闭。收信继续、scheduler 当前无错误。证据/备份 `var/releases/reply-queue-20260925/`，原未提交主文档保留。
+- 下一批模型失败分型与回执、AI unknown 有限核验隔离、二发隔离后的新入站服务资格；长期业务记忆/严格回放继续补齐。UK 原消息阻断须按原账号/证据单独诊断，不能通过重发或改成功解决。
 
 ## 2026-09-25 夜间：原邀请遇新来信的继续规则已加载
 
