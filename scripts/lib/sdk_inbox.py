@@ -65,7 +65,10 @@ class Receiver:
             self.plan=store.db.execute("SELECT id FROM plan WHERE market=? AND institution='bjn-local-research'",(self.market,)).fetchone()[0]
             inbox,service=Inbox(store),Service(store)
             with ItalyImReadSession(self.auth,{},maintenance_due=self.valid,stopped=self.stopped,use_environment_proxy=True,request_budget=RequestBudget(qps=2)) as session:
-                next_discovery=0;cursor=0;next_projection=0;needs_projection=False;cold=deque();next_cold=0
+                next_discovery=0;cursor_path=self.root/f'var/market-inbox-cursor-{self.market}.json'
+                try:cursor=int(json.loads(cursor_path.read_text()).get('cursor') or 0)
+                except (OSError,ValueError,TypeError):cursor=0
+                next_projection=0;needs_projection=False;cold=deque();next_cold=0
                 while not self.stopped():
                     self.valid()
                     pause=self.root/'var'/('cycle-inbox.pause' if self.market=='it' else f'market-inbox-{self.market}.pause')
@@ -74,6 +77,7 @@ class Receiver:
                         now=time.time()
                         if now>=next_discovery:
                             page=session.initialize(cursor);cursor=int(page['nextCursor']) if page['hasMore'] else 0
+                            temporary=cursor_path.with_suffix('.tmp');temporary.write_text(json.dumps({'cursor':cursor})+'\n');temporary.replace(cursor_path)
                             for c in page['conversations']:
                                 cid,oec=c.get('conversationId'),c.get('oecId')
                                 if c.get('conversationType')!=2 or not store.db.execute('SELECT 1 FROM relationship WHERE plan_id=? AND oec=?',(self.plan,oec)).fetchone():continue
