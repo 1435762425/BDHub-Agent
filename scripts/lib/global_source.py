@@ -209,6 +209,22 @@ class GlobalSources:
             self.db.execute("INSERT INTO global_source_attempt(run_id,page,at,code) VALUES(?,?,?,?)",
                             (id,run['next_page'],now,reason))
         return self.status(id)
+    def stop_unpublished_plain(self,id):
+        """Close an operator-stopped duplicate plain read without discarding its pages."""
+        reason='operator_stopped_duplicate_plain_collection'
+        with self.tx():
+            run=self.get(id)
+            if run['state']=='stopped' and run['terminal_reason']==reason:
+                return self.status(id)
+            if run['state']!='collecting' or run['scope'].get('partitionMode')=='category_l1_v1' or \
+               self.db.execute('SELECT 1 FROM global_source_head WHERE run_id=?',(id,)).fetchone():
+                raise GlobalSourceError('plain_stop_scope_invalid')
+            now=self.clock()
+            self.db.execute("UPDATE global_source_run SET state='stopped',terminal_reason=?,updated=? WHERE id=?",
+                            (reason,now,id))
+            self.db.execute("INSERT INTO global_source_attempt(run_id,page,at,code) VALUES(?,?,?,?)",
+                            (id,run['next_page'],now,reason))
+        return self.status(id)
     def partition_page(self,id,category_id,page,data,*,request_payload):
         data=normalize_page(data)
         if not isinstance(data,dict) or type(data.get('has_more')) is not bool or type(data.get('total')) is not int or data['total']<0 or not isinstance(data.get('products'),list):raise GlobalSourceError('page_shape_invalid')

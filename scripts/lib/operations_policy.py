@@ -82,3 +82,28 @@ def full_catalog_collection_mode(root, market, now, *, policy=None):
     if age >= threshold:
         return {"mode": "category", "reason": "monthly_category_refresh", "lastCategoryAt": float(last)}
     return {"mode": "plain", "reason": "weekly_incremental_refresh", "lastCategoryAt": float(last)}
+
+
+def published_plain_source(root, market, run_id):
+    """Return an exact published plain source for the same workflow run, if one exists."""
+    path = Path(root) / ("var/global-source.sqlite" if market == "it" else f"var/global-source-{market}.sqlite")
+    if not path.exists():
+        return None
+    with closing(sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True)) as db:
+        db.row_factory = sqlite3.Row
+        source = db.execute("SELECT state,identity_unchanged,scope FROM global_source_run WHERE id=?",
+                            (run_id,)).fetchone()
+        head = db.execute("""SELECT r.id,r.state,r.identity_unchanged,r.scope FROM global_source_head h
+                             JOIN global_source_run r ON r.id=h.run_id
+                             WHERE json_extract(r.scope,'$.market')=?""", (market,)).fetchone()
+        if not source or not head or source["state"] != "completed" or not source["identity_unchanged"] or \
+           head["state"] not in ("completed", "accepted_partial") or not head["identity_unchanged"]:
+            return None
+        source_scope = json.loads(source["scope"])
+        head_scope = json.loads(head["scope"])
+        if source_scope.get("market") != market or source_scope.get("partitionMode") == "category_l1_v1":
+            return None
+        if head["id"] != run_id and (head_scope.get("coverageOverlay") or {}).get("refreshRunId") != run_id:
+            return None
+        products = db.execute("SELECT count(*) FROM global_source_product WHERE run_id=?", (head["id"],)).fetchone()[0]
+        return {"sourceRunId": run_id, "headRunId": head["id"], "products": products}

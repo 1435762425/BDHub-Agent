@@ -10,7 +10,7 @@ from zoneinfo import ZoneInfo
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
-from lib.operations_workflow import (create_run, finish_stage, resume_kalodata_preflight,
+from lib.operations_workflow import (create_run, finish_stage, resume_kalodata_preflight, retry_failed_stage,
                                      resume_short_names, save_setting, setting, start_stage,
                                      status, update_checkpoint)  # noqa:E402
 from lib.schema_migrations import apply_database  # noqa:E402
@@ -216,6 +216,19 @@ class OperationsWorkflowTests(unittest.TestCase):
         with self.assertRaisesRegex(CycleError, "recovery_state_invalid"):
             resume_kalodata_preflight(self.store, "it", run_id,
                                       "resume-kalodata-preflight-0003", root=self.root)
+
+    def test_unpublished_catalog_is_not_automatically_recollected(self):
+        save_setting(self.store, "it", "enable-for-unpublished-0001", 0,
+                     {"automaticOperationsEnabled": True})
+        run = create_run(self.store, market="it", trigger_source="schedule", scheduled_at=NOW,
+                         request_id="unpublished-catalog-0001", only_stage="catalog", sources=["selected"])
+        start_stage(self.store, run["runId"], "catalog")
+        finish_stage(self.store, run["runId"], "catalog", state="failed", item_count=0,
+                     platform_writes=0, error_code="global_catalog_not_published")
+        result = retry_failed_stage(self.store, run["runId"], now=NOW+7200)
+        self.assertEqual(result["state"], "needs_human")
+        self.assertEqual(status(self.store)["current"]["state"], "needs_human")
+        self.assertEqual(status(self.store)["current"]["stages"][1]["state"], "failed")
 
 
 if __name__ == "__main__":

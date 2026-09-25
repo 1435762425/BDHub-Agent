@@ -139,6 +139,18 @@ class SourceTests(unittest.TestCase):
   self.assertIsNone(self.s.next_partition('stoppedcat'))
   with self.assertRaisesRegex(GlobalSourceError,'category_stop_scope_invalid'):
    self.s.stop_unpublished_category('one')
+ def test_operator_stop_preserves_unpublished_duplicate_plain_pages(self):
+  self.s.page('one',1,page([1],True,3))
+  before=self.s.status('one')
+  stopped=self.s.stop_unpublished_plain('one')
+  self.assertEqual((stopped['state'],stopped['reason'],stopped['products'],stopped['pages']),
+                   ('stopped','operator_stopped_duplicate_plain_collection',before['products'],before['pages']))
+  self.assertFalse(stopped['published'])
+  self.assertEqual(self.s.stop_unpublished_plain('one')['state'],'stopped')
+  self.s.start('next_plain',self.scope)
+  self.s.page('next_plain',1,page([2],False,1));self.s.finish_session('next_plain',True)
+  with self.assertRaisesRegex(GlobalSourceError,'plain_stop_scope_invalid'):
+   self.s.stop_unpublished_plain('next_plain')
  def test_zero_result_category_may_omit_products(self):
   self.s.blocked('one','fixture_end')
   self.s.start_partitioned('emptycat',self.scope,[{'category_id':'600099','name':'空类目','is_leaf':False}])
