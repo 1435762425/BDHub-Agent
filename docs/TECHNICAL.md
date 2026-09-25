@@ -33,13 +33,13 @@ Web 路由与 bridge 显式携带 market，URL/body/CLI/返回值一致；约 10
 | `campaign-join.py` / `campaign-collect.py` | 加入意图、未知核验、已加入列表完整采集 |
 | `global_screen.py` / `campaign_screen.py` / `catalog_binding.py` | 商品筛分、Offer 指纹与唯一当前绑定 |
 
-来源完整发布才推进下游。类目采集按一级类目保存页码、reported total、唯一数和停止原因，完成后跨类目 PID 去重。普通周更不替换更广类目 head：`coverageOverlay` 复制基线，仅更新重叠 PID，保留类目/部分接受证据；范围外 PID 留在原查询。月度 cadence 取原类目 run 时间。
+来源完整发布才推进下游。类目采集按一级类目保存页码、reported total、唯一数和停止原因，完成后跨类目 PID 去重。普通周更不替换更广类目 head：`coverageOverlay` 复制基线，仅更新重叠 PID，保留类目/部分接受证据；范围外 PID 留在原查询。月度 cadence 取原类目 run 时间。catalog 阶段用 `operations_policy.selected_source_run_id` 命名选定的来源 run（市场、workflow run 开始时间的北京日期、run id 摘要；`workflow_recovery.source_id` 使用同一函数）。若 `published_plain_source` 发现该来源已完成并发布——恰好是该市场的一个 head，即该 run 本身或 `refreshRunId` 为该 run 的覆盖层——则阶段复用它（`same_run_published`，不新采集）。`GlobalSources.stop_unpublished_plain` 关闭操作者停止的重复未发布 plain 采集并保留其页面；它没有 CLI，只能手工调用。
 
 分页重复先保存 repair page 回执再补洞/复读，符合 PROJECT 稳定重复行合同后才能发布。总数变化且无重复页可补时停止为空转错误；`--retry-partial-category` 仅重读原未发布分区。`accepted_partial` 必须由明确操作写入 `global_source_operator_acceptance`，API 不得显示 complete。
 
 IT `full_catalog_collection_mode()` 固定普通周更，拒绝新的 `--by-category`，不续已停止类目；UK 按首次/月度类目、其余普通查询。停止/修复原来源前先核对 worker、锁、原 run 和备份，不用新 run 掩盖断点。
 
-选入当前使用已验证单 PID `/pick_up/select`，不是未验收的 batch_select。先落意图，批后统一回读；验证码/登录明确拒绝，须同时有已选池缺失、当前 listing 未选入及同账号验证/新代次证据，才能重放同一冻结请求。网络歧义/code0 缺回读不重发，仍未知保留 `skipped_unknown`，后续 generation 不重新入队。真实性能证据见[四市场报告](implementation/four-market-launch-implementation-20260923.md)。
+选入当前使用已验证单 PID `/pick_up/select`，不是未验收的 batch_select。先落意图，批后统一回读；验证码/登录明确拒绝，须同时有已选池缺失、当前 listing 未选入及同账号验证/新代次证据，才能重放同一冻结请求。网络歧义/code0 缺回读不重发，仍未知保留 `skipped_unknown`，后续 generation 不重新入队。提交的选入意图只由该冻结 campaign 的回读证据确认（`matching_selection_evidence`）；已在池中（任意 campaign）的 pending 商品记为 `already_selected`。若池中只在另一 campaign 下出现该商品，该项保持原状态并记录 `otherCampaignObserved`，不记缺失，因此不会变成 `skipped_unknown`；`prepare` 会把它带入后续 intake 轮次，catalog 阶段保持 `global_selection_unresolved`（needs_human）直到人工决定（恢复工具可将其隔离为 `isolated_unverified`）。这是已知缺口，等待产品决策。真实性能证据见[四市场报告](implementation/four-market-launch-implementation-20260923.md)。
 
 ### 2.2 TapLink 与当前材料
 
@@ -47,7 +47,7 @@ IT `full_catalog_collection_mode()` 固定普通周更，拒绝新的 `--by-cate
 
 `catalog_current_binding` 是发送唯一材料投影，键覆盖 market/PID/来源/Campaign/分佣与命名指纹，保存 `currentListId`。普通历史卡不参与当前复用；仅同标准、同绑定且已核验卡幂等复用。完整 Campaign 筛分后 `reconcile_current_offers()` 将不再合格绑定 inactive、条款变化 waiting_refresh，全部写 event。
 
-短名按 `cycle_product_name.locale` 校验，非 IT 不读 IT 缓存或截断标题；缺失停止创建。IT 准备顺序 seed/read → names → create，其他市场 seed → localized names → read → create。新建回读未知隔离该 PID，整批写完公共回读，再按 30/120 秒轮询两次；仍缺失只保留 unknown，不重复 POST。
+短名按 `cycle_product_name.locale` 校验，非 IT 不读 IT 缓存或截断标题；缺失停止创建。IT 准备顺序 seed/read → names → create，其他市场 seed → localized names → read → create。新建回读未知隔离该 PID，整批写完公共回读，再按 30/120 秒轮询两次；仍缺失只保留 unknown，不重复 POST。在 `step_create` 中，若实时 offer 在尝试创建前已不再合格（`product_no_longer_eligible`）或其商业事实变化（`commercial_facts_changed:*`），`retire_or_block` 会取代已准备的意图（`catalog_link_intent.state='superseded'`，回读记录原因与 0 次创建尝试）并退役 prepare 项（`retired`，不计入 summary 计数）；已尝试/unknown 的意图保留其回读路径；若退役失败则按原样阻断该项，错误中带 `retire_failed`。
 
 清理只删除整卡平台 invalid，内部期限/佣金门槛仅本地停用。`taplink_clean` 阶段目前只对 IT 执行，BR/MY/UK 整段跳过（`market_taplink_cleanup_not_enabled`），既不本地停用也不做只读扫描。删除收口后完整回读，仍存在记 failed_known，不自动重复 DELETE。发送端本地核对 binding/Offer/currentListId，不调用 fresh_card。
 
@@ -74,7 +74,7 @@ B 类目前只在 IT 的 Kalodata 阶段执行（`kalodata-video-crawl.py` 没�
 
 `creator_discovery.py/discovery_cohort.py` 执行精确 Find，`identity_queue.py/identity-batch.py` 聚合去重身份，`profile_refresh.py` 独立刷新画像。resolved/unresolved 复用证据，blocked 保留原断点。`IdentityBridge` 只交接当前 head 的 source edge，固定索引顺序避免历史全表 JSON 扫描；OECID 发布不能等待或伪装 Profile 成功。BR/MY/UK 的 OECID 由 scheduler 调 `market-identity.py`（`lib/market_identity.py`）：每 3 个 handle 拉起一次 `probe-italy-profile.py`，证据写入 `var/market-identity-{market}-*` 目录（目前不清理）。页面的身份队列、精确发现与画像刷新接口只支持 IT。
 
-Find lanes 共用账号 QPS 和一次串行滑块结果，同账号原请求重放成功后才落身份；失败只存脱敏分类。OECID stage 排空当前 outbox 并复用已判定终态，任何 pending/queue_stalled/blocked 不发布完成 generation。稳定主键为 market×OECID，改名只追加 alias。
+Find lanes 共用账号 QPS 和一次串行滑块结果，同账号原请求重放成功后才落身份；失败只存脱敏分类。OECID stage 排空当前 outbox 并复用已判定终态，任何 pending/queue_stalled/blocked 不发布完成 generation。稳定主键为 market×OECID，改名只追加 alias。BR/MY/UK OECID（`market_identity.py` + `probe-italy-profile.py`）：被阻断的报告保留已确认的 Find 结果（Profile 读取被阻断的目标仍为 blocked，但其 OECID 已绑定）；profile 读取只用允许列表中的类型集合 `[1,2,6]`、`[1,6]`、`[2]`（默认 `[1,2,6]` 再 `[2]`；profile canary 用 `[2]`）。当探测在初始化期间未发出任何请求即失败时，`run()` 等待 5 秒并在新目录中对同一 chunk 再探测一次（`initRetries`）；探测报告记录脱敏的 `errorMessage`。
 
 ### 2.5 发送与 72 小时冷却
 
