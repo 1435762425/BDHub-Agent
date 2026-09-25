@@ -228,4 +228,20 @@ class RollingLeads(unittest.TestCase):
   self.assertEqual(self.row('it',PIDS[0],'A')['attempts'],0)
   self.assertNotIn('private login file',json.dumps(result))
 
+ def test_superseded_legacy_b_checkpoint_reuses_newer_completion_without_network(self):
+  from lib.kalodata_video_scan import initialize,scan_one
+  scope=[{'pid':PIDS[0],'units':100}]
+  old=initialize(self.root,scope,'2026-08-20','2026-09-18',clock=lambda:NOW-100)['generationId']
+  new=initialize(self.root,scope,'2026-08-25','2026-09-23',clock=lambda:NOW)['generationId']
+  scan_one(self.root,new,lambda *_:{'success':True,'data':[]},clock=lambda:NOW)
+  queue.sync(self.root,'it',at=NOW,scope=self.scope(PIDS[0]))
+  task=self.row('it',PIDS[0],'B')|{'query_id':old,'window_start':'2026-08-20','window_end':'2026-09-18'}
+  with CycleStore(self.root/'var/second-cycle.sqlite') as store,store.tx():
+   store.db.execute("UPDATE lead_query_task SET state='backoff',query_id=?,window_start=?,window_end=?,last_error='video_scan_generation_superseded' WHERE market='it' AND kind='B'",(old,task['window_start'],task['window_end']))
+  result=queue.read_b(self.root,task,lambda *_:(_ for _ in ()).throw(AssertionError('no network')),clock=lambda:NOW)
+  self.assertEqual(result['status'],'superseded')
+  queue.settle(self.root,task,result,at=NOW+1)
+  row=self.row('it',PIDS[0],'B')
+  self.assertEqual((row['state'],row['query_id'],row['last_error']),('waiting',None,None))
+
 if __name__=='__main__':unittest.main()

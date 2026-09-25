@@ -118,6 +118,12 @@ def sync(root,market,*,at=None,scope=None):
                               JOIN kalodata_video_scan_job j ON j.generation_id=g.generation_id
                               WHERE m.market=? AND j.pid=? AND j.state IN ('listing','detailing')
                               ORDER BY g.created_at DESC LIMIT 1""",(market,pid)).fetchone()
+                            newest=db.execute("""SELECT g.generation_id,g.window_end,g.created_at
+                              FROM kalodata_video_generation g JOIN kalodata_video_generation_scope m ON m.generation_id=g.generation_id
+                              JOIN kalodata_video_scan_job j ON j.generation_id=g.generation_id
+                              WHERE m.market=? AND j.pid=? AND j.state='completed'
+                              ORDER BY g.window_end DESC,g.created_at DESC,g.generation_id DESC LIMIT 1""",(market,pid)).fetchone()
+                            if pending and newest and (newest[1],newest[2],newest[0])>(pending[2],pending[3],pending[0]):pending=None
                             fresh_head=db.execute("SELECT r.observed_at FROM kalodata_video_head h JOIN kalodata_video_run r ON r.run_id=h.run_id WHERE h.market=? AND h.pid=? AND r.coverage='complete'",(market,pid)).fetchone()
                             if pending and (pending[4]!='queued' or not fresh_head or fresh_head[0]+REFRESH_SECONDS<=at):prior={'query':pending[0],'start':pending[1],'end':pending[2],'created':pending[3],'policy':POLICIES[kind]}
                         complete=None
@@ -212,6 +218,15 @@ def freeze(root,task,*,at):
 def settle(root,task,result,*,at):
     with CycleStore(Path(root)/'var/second-cycle.sqlite') as store,store.tx():
         db=store.db;done=result.get('status')=='completed';due=task['created_at']+REFRESH_SECONDS
+        if result.get('status')=='superseded':
+            _event(db,task,'superseded_read_scope',at,newerGeneration=result['generationId'])
+            due=result['observedAt']+REFRESH_SECONDS
+            db.execute("""UPDATE lead_query_task SET state='waiting',query_id=NULL,window_start=?,window_end=?,
+              last_completed=?,next_due=?,ready_at=?,attempts=0,retry_at=0,last_error=NULL,updated_at=?
+              WHERE market=? AND pid=? AND kind=? AND query_id=?""",
+              (result['windowStart'],result['windowEnd'],result['observedAt'],due,due,at,task['market'],task['pid'],task['kind'],task['query_id']))
+            return
+
         if task['policy_version']=='legacy-a20':due=at
         if done:
             _event(db,task,'completed',at,windowStart=task['window_start'],windowEnd=task['window_end'],result=result)
@@ -321,6 +336,15 @@ def read_b(root,task,requester,*,max_requests=FRAGMENT_REQUESTS,clock=time.time)
     with CycleStore(Path(root)/'var/second-cycle.sqlite',readonly=True) as store:
         generation=_generation(store,task['query_id'])
         if (generation['market'],generation['window_start'],generation['window_end'])!=(task['market'],task['window_start'],task['window_end']):raise CycleError('video_market_mismatch')
+        newest=store.db.execute("""SELECT g.generation_id,g.window_start,g.window_end,g.created_at,j.updated_at
+          FROM kalodata_video_generation g JOIN kalodata_video_generation_scope m ON m.generation_id=g.generation_id
+          JOIN kalodata_video_scan_job j ON j.generation_id=g.generation_id
+          WHERE m.market=? AND j.pid=? AND j.state='completed'
+          ORDER BY g.window_end DESC,g.created_at DESC,g.generation_id DESC LIMIT 1""",(task['market'],task['pid'])).fetchone()
+        if newest and (newest[2],newest[3],newest[0])>(generation['window_end'],generation['created_at'],task['query_id']):
+            return {'status':'superseded','generationId':newest[0],'windowStart':newest[1],
+                    'windowEnd':newest[2],'observedAt':newest[4],'networkRequests':0}
+
         job=store.db.execute('SELECT state FROM kalodata_video_scan_job WHERE generation_id=? AND pid=?',(task['query_id'],task['pid'])).fetchone()
     if job and job[0]=='completed':return {'status':'completed','networkRequests':0,'cached':True}
     return scan_one(root,task['query_id'],requester,clock=clock,pid=task['pid'],market=task['market'],max_requests=max_requests)
