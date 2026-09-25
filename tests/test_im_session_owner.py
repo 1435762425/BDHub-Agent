@@ -81,6 +81,11 @@ class SignalTests(unittest.TestCase):
   self.incoming();before=[tuple(r) for r in self.s.db.execute('select * from inbox_pending')]
   self.receiver.signal([{'cid':'999','mid':'1','text':'hello'}]*3)
   self.assertEqual(before,[tuple(r) for r in self.s.db.execute('select * from inbox_pending')]);self.assertEqual(self.s.db.execute('select count(*) from im_receive_signal').fetchone()[0],0)
+ def test_known_cards_and_attachments_are_not_false_text_edits(self):
+  self.incoming()
+  self.service.capture(self.plan,'999','123',[{'messageId':'1','format':'attachment_or_unsupported','text':None,'nativeType':'product_list','rawSha256':'card'}])
+  self.receiver.signal([{'cid':'999','mid':'1','text':'[商品列表]'}])
+  self.assertEqual(self.s.db.execute('select count(*) from im_receive_signal').fetchone()[0],0)
  def test_new_signal_is_durable_idempotent_and_does_not_fake_inbound(self):
   event={'cid':'999','mid':'2','text':'new'};self.receiver.signal([event,event]);self.assertEqual(self.s.db.execute('select count(*) from im_receive_signal').fetchone()[0],1)
   self.assertEqual(self.s.db.execute('select count(*) from inbox_event').fetchone()[0],0)

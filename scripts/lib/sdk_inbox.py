@@ -19,7 +19,7 @@ def arm_script(find_api):
       const cs=sdk.conversationService;
       const onMessage=arg=>{for(const m of (Array.isArray(arg)?arg:[arg])){
         if(!m)continue;const id=String(m.serverId||''),cid=String(m.conversationId||'');
-        if(!/^[0-9]+$/.test(id)||!/^[0-9]+$/.test(cid))continue;
+        if(!/^[0-9]+$/.test(id)||!/^[0-9]+$/.test(cid)||!/[1-9]/.test(id)||!/[1-9]/.test(cid))continue;
         if(state.buffer.length>=20000){state.overflow=true;continue;}
         let c=null;try{c=cs.conversations&&cs.conversations.get(cid);}catch(e){}
         const ext=c&&c.originExt||{};
@@ -43,12 +43,12 @@ class Receiver:
         with CycleStore(self.root/'var/second-cycle.sqlite') as s:
             plan=s.db.execute("SELECT id FROM plan WHERE market=? AND institution='bjn-local-research'",(self.market,)).fetchone()[0]
             for e in events:
-                if not isinstance(e,dict) or not str(e.get('cid','')).isdigit() or not str(e.get('mid','')).isdigit():continue
+                if not isinstance(e,dict) or not str(e.get('cid','')).isdigit() or not str(e.get('mid','')).isdigit() or int(e['mid'])<=0:continue
                 cid,mid=e['cid'],e['mid'];cp=s.db.execute('SELECT oec FROM inbox_checkpoint WHERE plan_id=? AND cid=?',(plan,cid)).fetchone()
                 oec=cp[0] if cp else str(e.get('oec') or '')
                 if not oec.isdigit() or not s.db.execute('SELECT 1 FROM relationship WHERE plan_id=? AND oec=?',(plan,oec)).fetchone():continue
                 prior=s.db.execute('SELECT e.kind,v.payload FROM inbox_event e LEFT JOIN inbox_content_head h USING(plan_id,cid,message_id) LEFT JOIN inbox_content_version v ON v.plan_id=h.plan_id AND v.cid=h.cid AND v.message_id=h.message_id AND v.hash=h.hash WHERE e.plan_id=? AND e.cid=? AND e.message_id=?',(plan,cid,mid)).fetchone()
-                if prior and (prior['kind'] not in ('creatorReplies','ourMessages') or prior['payload'] and json.loads(prior['payload']).get('text')==e.get('text')):
+                if prior and (prior['kind'] not in ('creatorReplies','ourMessages') or prior['payload'] and (json.loads(prior['payload']).get('format')!='text' or json.loads(prior['payload']).get('text')==e.get('text'))):
                     self.state['sdkReplaysSkipped']+=1;continue
                 s.db.execute('INSERT INTO im_receive_signal(market,account,cid,oec,message_id,content_hash,observed) VALUES(?,?,?,?,?,?,?) ON CONFLICT(market,account,cid,message_id,content_hash) DO UPDATE SET done=0,checked=0,next_at=0,attempts=0,error_code=NULL,observed=excluded.observed WHERE im_receive_signal.done=1',
                     (self.market,self.auth.account_name,cid,oec,mid,digest(e.get('text')),time.time()))
@@ -98,10 +98,12 @@ class Receiver:
                         if not target:time.sleep(.2);continue
                         (cid,oec),signal_at=target
                         conversation=session.conversation(cid,oec)
-                        requested=time.time();history=read_to_overlap(session,conversation,store,self.plan)
+                        requested=time.time();required={r[0] for r in store.db.execute('SELECT message_id FROM im_receive_signal WHERE market=? AND account=? AND cid=? AND done=0 AND next_at<=?',(self.market,self.auth.account_name,cid,requested+10))}
+                        history=read_to_overlap(session,conversation,store,self.plan,required_ids=required)
                         result=inbox.ingest(self.plan,cid,oec,history);captured=service.capture(self.plan,cid,oec,history.get('contents',[]));needs_projection=needs_projection or result['added']>0 or captured>0
                         for event in history.get('events',[]):
                             store.db.execute('UPDATE im_receive_signal SET done=1 WHERE market=? AND account=? AND cid=? AND message_id=? AND observed<=?',(self.market,self.auth.account_name,cid,event['messageId'],requested))
+                        store.db.execute("UPDATE im_receive_signal SET next_at=?+min(300,30*attempts),error_code='message_not_in_bounded_history' WHERE market=? AND account=? AND cid=? AND done=0 AND observed<=?",(time.time(),self.market,self.auth.account_name,cid,requested))
                         self.state['processed']+=1;self.state['consecutiveErrors']=0
                         for key in ('added','liveReplies'):self.state[key]+=result[key]
                         if signal_at:self.state['lastSignalReadSeconds']=round(max(0,time.time()-signal_at/1000),3)
@@ -123,7 +125,7 @@ class Receiver:
         if self.thread:self.thread.join()
 
 
-def read_to_overlap(session,conversation,store,plan,max_pages=5):
+def read_to_overlap(session,conversation,store,plan,max_pages=5,required_ids=()):
     combined=None;events={};contents={};cursor=0
     for _ in range(max_pages):
         page=session.history_summary(conversation,include_events=True,include_contents=True,include_pagination=True,cursor=cursor)
@@ -131,7 +133,7 @@ def read_to_overlap(session,conversation,store,plan,max_pages=5):
         for event in page['events']:events.setdefault(event['messageId'],event)
         for content in page.get('contents',[]):contents.setdefault(content['messageId'],content)
         overlap=any(store.db.execute('SELECT 1 FROM inbox_event WHERE plan_id=? AND cid=? AND message_id=?',(plan,conversation.conversation_id,e['messageId'])).fetchone() for e in page['events'])
-        if overlap or not page['hasMore']:break
+        if not page['hasMore'] or overlap and set(required_ids)<=set(events):break
         next_cursor=int(page['nextCursor'])
         if next_cursor==cursor:break
         cursor=next_cursor
