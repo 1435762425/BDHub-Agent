@@ -44,6 +44,14 @@ def backfill(root):
    key=(market,event,handle)
    if key in seen:continue
    seen.add(key);record(root,market,account,handle,event,category,reason,evidence=str(path.relative_to(root)),now=stamp);stats[category]+=1
+   # Correct only the label produced by the first v22 importer for missing
+   # verification fields; budgets, original reports and attempt IDs stay fixed.
+   if category=='shared' and reason in ('request_or_signer_error','transport_unavailable','read_contract_incomplete'):
+    with closing(sqlite3.connect(root/'var/second-cycle.sqlite')) as db,db:
+     changed=db.execute("UPDATE identity_retry_event SET reason=? WHERE id=? AND category='shared' AND reason='verification_required'",(reason,digest([market,event,handle.strip().lstrip('@').lower()]))).rowcount
+     if changed:
+      stats['reasonCorrections']+=changed
+      db.execute("UPDATE identity_account_wait SET reason=? WHERE market=? AND last_event=? AND reason='verification_required'",(reason,market,event))
  for market in ('it','br','my','uk'):stats['projected']+=project_isolated(root,market)
  return {'schema':'bdhub.identity-retry-backfill.v1','counts':dict(stats),'platformWrites':0,'realSends':0}
 

@@ -105,6 +105,8 @@ class ClassificationTests(unittest.TestCase):
  def test_captcha_login_signer_http_and_unattempted_are_not_individual_failures(self):
   for r in [self.receipt(code='16201010'),self.receipt(verificationRequired=True),self.receipt(httpStatus=500),self.receipt(status='error')]:
    self.assertEqual(classify({'requests':[r]},'a')[0],'shared')
+  missing=self.receipt(status='error');missing.pop('verificationRequired')
+  self.assertEqual(classify({'requests':[missing]},'a'),('shared','transport_unavailable'))
   self.assertEqual(classify({'reason':'probe_initialization_or_validation_error','requests':[]},'a')[0],'shared')
   self.assertEqual(classify({'requests':[self.receipt()]},'unattempted')[0],'unattempted')
  def test_target_business_error_and_malformed_target_spend_individual_budget(self):

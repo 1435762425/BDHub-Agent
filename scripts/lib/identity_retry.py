@@ -55,8 +55,9 @@ def classify(report, target_ref, *, expected_handle=None, market=None):
     r=rows[-1]
     if str(r.get('code'))=='16201010':return 'shared','auth_required'
     if str(r.get('code')) in {'98001002','98001004','100000'}:return 'shared','remote_runtime_error'
-    if r.get('verificationRequired') is not False:return 'shared','verification_required'
+    if r.get('verificationRequired') is True:return 'shared','verification_required'
     if r.get('status')!='returned' or r.get('httpStatus')!=200:return 'shared',shared or 'transport_unavailable'
+    if r.get('verificationRequired') is not False:return 'shared','read_contract_incomplete'
     if str(r.get('code'))!='0':return 'individual','find_business_error'
     target=next((t for t in report.get('targets',[]) if t.get('targetRef')==target_ref),{})
     if target.get('status')=='unresolved' and target.get('reason')=='no_exact_handle':return 'success',None
