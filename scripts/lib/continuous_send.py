@@ -344,8 +344,10 @@ def execute_once(root,store,*,authenticated=None,authorized_now=None,reconcile_o
               (plan,c['creatorId'])).fetchone()
             open_case=store.db.execute("SELECT 1 FROM service_case WHERE plan_id=? AND creator_id=? AND state='open'",
               (plan,c['creatorId'])).fetchone()
-            if not relation or relation['mode']=='human' or relation['rejected'] or \
-               relation['inbox_until']>store.clock() or open_case or pending and pending['state'] in ACTIVE_PENDING_STATES:
+            from lib.invitation_continuation import allowed
+            continuation=allowed(store,delivery['id'])
+            if not relation or relation['mode']!='auto' or relation['rejected'] or open_case or \
+               (relation['inbox_until']>store.clock() or pending and pending['state'] in ACTIVE_PENDING_STATES) and not continuation:
                 raise CycleError('conversation_needs_content_review')
         try:
             result=execute(deliveries,delivery['id'],runtime,authorize,preflight,

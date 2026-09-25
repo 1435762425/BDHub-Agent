@@ -25,9 +25,9 @@ class Inbox:
    cp=db.execute('SELECT * FROM inbox_checkpoint WHERE plan_id=? AND cid=?',(plan,cid)).fetchone()
    if cp and cp['oec']!=oec:raise CycleError('checkpoint_identity_conflict')
    baseline=cp['baseline_at'] if cp else now;known_contact=False
-   if not cp and db.execute("SELECT 1 FROM sqlite_master WHERE name='cycle_delivery_part'").fetchone():
-    sent=db.execute("""SELECT max(p.started) FROM cycle_delivery d JOIN cycle_delivery_part p ON p.delivery_id=d.id
-      WHERE d.plan_id=? AND d.oec=? AND p.kind='text' AND p.state='confirmed'""",(plan,oec)).fetchone()[0]
+   if not cp:
+    from lib.invitation_continuation import confirmed_contact_start
+    sent=confirmed_contact_start(db,plan,cid,oec)
     if sent is not None:baseline=min(baseline,float(sent));known_contact=True
    overlap=False
    for mid,e in unique.items():
@@ -36,7 +36,7 @@ class Inbox:
      overlap=True
      if prev[0]!=encoded(e):raise CycleError('event_conflict')
    gap=bool(cp and (cp['state']=='gap' or (history['hasMore'] and not overlap)))
-   added=historical=live=showcase_live=0;unlock=False
+   added=historical=live=showcase_live=0;unlock=False;interaction_events=[]
    for mid,e in unique.items():
     if db.execute('SELECT 1 FROM inbox_event WHERE plan_id=? AND cid=? AND message_id=?',(plan,cid,mid)).fetchone():continue
     stamp=e.get('createTimeRaw');valid=type(stamp) is int and 946684800000<=stamp<=int(now*1000)+300000
@@ -45,6 +45,8 @@ class Inbox:
     if e['kind'] in ('creatorReplies','showcaseNotifications'):unlock=True
     if e['kind']=='creatorReplies' and not old:live+=1
     if e['kind']=='showcaseNotifications' and not old:showcase_live+=1
+    if not old and e['kind'] in ('creatorReplies','showcaseNotifications'):
+     interaction_events.append({'kind':e['kind'],'message_id':mid,'occurred_ms':stamp})
    # Interaction evidence is separate from manual control/rejection. No marketing is dispatched here.
    if unlock and not rel['unlocked']:db.execute('UPDATE relationship SET unlocked=1,revision=revision+1 WHERE plan_id=? AND creator_id=?',(plan,rel['creator_id']))
    if gap:
@@ -54,6 +56,9 @@ class Inbox:
     db.execute("INSERT INTO inbox_pending VALUES(?,?,1,?,'awaiting_classification') ON CONFLICT(plan_id,creator_id) DO UPDATE SET revision=revision+1,due_at=excluded.due_at,state='awaiting_classification'",(plan,rel['creator_id'],now+REPLY_BATCH_SECONDS))
    state='gap' if gap else 'tracking'
    db.execute('INSERT INTO inbox_checkpoint VALUES(?,?,?,?,?,?) ON CONFLICT(plan_id,cid) DO UPDATE SET checked_at=excluded.checked_at,state=excluded.state',(plan,cid,oec,baseline,now,state))
+   if not gap and interaction_events:
+    from lib.invitation_continuation import record
+    record(self.s,plan,cid,oec,rel,interaction_events)
   if showcase_live and self.s.db.execute("SELECT 1 FROM sqlite_master WHERE name='creator_collaboration_current'").fetchone():
    from lib.collaboration_status import observe_showcase
    observe_showcase(self.s,rel['creator_id'],{'conversationId':cid,'count':showcase_live,'observedAt':now},plan_id=plan)

@@ -142,7 +142,7 @@ def tick(authorized_now=None,market="it"):
     if not decision_retry_ready(store,plan,turn['turn_id'],now):
      report['deferred']+=1;continue
     try:
-     context=production_context(ROOT,store,plan,market,turn['turn_id'])
+     context=production_context(ROOT,store,plan,market,turn['turn_id'],include_current_invitation=True)
      generated=generate(ROOT,store,plan,market,context,mode='production')
      applied=apply_production(store,plan,context,generated)
     except CycleError:

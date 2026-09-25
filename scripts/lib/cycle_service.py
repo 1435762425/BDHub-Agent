@@ -62,6 +62,9 @@ class Service:
      rel=self.s.db.execute('SELECT * FROM relationship WHERE plan_id=? AND oec=?',(plan,oec)).fetchone()
      self.s.db.execute("UPDATE inbox_pending SET revision=revision+1,due_at=?,state='awaiting_classification' WHERE plan_id=? AND creator_id=?",(self.s.clock()+REPLY_BATCH_SECONDS,plan,rel['creator_id']))
      self.s.db.execute('UPDATE relationship SET inbox_until=?,revision=revision+1 WHERE plan_id=? AND creator_id=?',(self.s.clock()+REPLY_FREEZE_SECONDS,plan,rel['creator_id']))
+     from lib.invitation_continuation import record
+     stamp=self.s.db.execute('SELECT occurred_ms FROM inbox_event WHERE plan_id=? AND cid=? AND message_id=?',(plan,cid,c['messageId'])).fetchone()[0]
+     record(self.s,plan,cid,oec,rel,[{'kind':'creatorReplies','message_id':c['messageId'],'occurred_ms':stamp}])
   return changed
  def context(self,plan,creator):
   rel=self.s.db.execute('SELECT * FROM relationship WHERE plan_id=? AND creator_id=?',(plan,creator)).fetchone()

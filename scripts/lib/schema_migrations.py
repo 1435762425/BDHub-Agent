@@ -1133,6 +1133,11 @@ CREATE TABLE outreach_allocation(delivery_id TEXT PRIMARY KEY REFERENCES cycle_d
 CREATE INDEX outreach_allocation_day ON outreach_allocation(market,day,actual_class);
 """)
 
+SECOND_CYCLE_INVITATION_INBOX = Migration(24, "invitation_inbox_proof_index_v1", """
+CREATE TABLE IF NOT EXISTS cycle_delivery_check(delivery_id TEXT NOT NULL,kind TEXT NOT NULL,checked REAL NOT NULL,payload TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS cycle_delivery_check_lookup ON cycle_delivery_check(delivery_id,kind,checked);
+""")
+
 DATABASES = {
     "catalog-links": ("catalog-links.sqlite", (CATALOG_LINKS,)),
     "second-cycle": ("second-cycle.sqlite", (SECOND_CYCLE, SECOND_CYCLE_INDEXES,
@@ -1154,7 +1159,7 @@ DATABASES = {
                                                 SECOND_CYCLE_AGENT_CONVERSATION,
                                                 SECOND_CYCLE_INBOX_HISTORY,
                                                 SECOND_CYCLE_INBOX_HISTORY_DEFERRED,
-                                                SECOND_CYCLE_ROLLING_LEADS, SECOND_CYCLE_IDENTITY_RETRY, SECOND_CYCLE_OUTREACH_SHARE)),
+                                                SECOND_CYCLE_ROLLING_LEADS, SECOND_CYCLE_IDENTITY_RETRY, SECOND_CYCLE_OUTREACH_SHARE, SECOND_CYCLE_INVITATION_INBOX)),
 }
 
 REGISTRY_SQL = """

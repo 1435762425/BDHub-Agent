@@ -62,7 +62,7 @@ def backfill(store):
               'platformWrites': 0, 'modelCalls': 0}
     with store.tx():
         if store.db.execute("SELECT 1 FROM sqlite_master WHERE name='cycle_delivery'").fetchone():
-            rows = store.db.execute("""SELECT d.*,max(CASE WHEN p.state='confirmed' THEN p.started END) sent_at
+            rows = store.db.execute("""SELECT d.*,max(CASE WHEN p.state='confirmed' AND p.kind='card' THEN p.started END) sent_at
               FROM cycle_delivery d JOIN cycle_delivery_part p ON p.delivery_id=d.id
               WHERE EXISTS(SELECT 1 FROM cycle_delivery_part c WHERE c.delivery_id=d.id
                 AND c.kind='card' AND c.state='confirmed') GROUP BY d.id ORDER BY d.created""").fetchall()
@@ -113,13 +113,18 @@ def backfill(store):
             if store.db.execute('SELECT 1 FROM turn_episode_link WHERE turn_id=?', (turn['turn_id'],)).fetchone():
                 continue
             moment = (turn['occurred_ms'] / 1000) if turn['occurred_ms'] else turn['observed_at']
-            episodes = store.db.execute("SELECT * FROM outbound_episode WHERE plan_id=? AND creator_id=? "
-                                        "AND sent_at<=? ORDER BY sent_at DESC,episode_id DESC LIMIT 3",
-                                        (turn['plan_id'],turn['creator_id'],moment)).fetchall()
+            has_parts=store.db.execute("SELECT 1 FROM sqlite_master WHERE name='cycle_delivery_part'").fetchone()
+            if has_parts:
+                episodes=store.db.execute("""SELECT e.*,coalesce(card.started,e.sent_at) anchor_at,card.started card_anchor FROM outbound_episode e
+                  LEFT JOIN cycle_delivery_part card ON card.delivery_id=e.delivery_id AND card.kind='card' AND card.state='confirmed'
+                  WHERE e.plan_id=? AND e.creator_id=? AND coalesce(card.started,e.sent_at)<=?
+                  ORDER BY anchor_at DESC,e.episode_id DESC LIMIT 3""",(turn['plan_id'],turn['creator_id'],moment)).fetchall()
+            else:
+                episodes=store.db.execute("SELECT *,sent_at anchor_at,NULL card_anchor FROM outbound_episode WHERE plan_id=? AND creator_id=? AND sent_at<=? ORDER BY sent_at DESC,episode_id DESC LIMIT 3",(turn['plan_id'],turn['creator_id'],moment)).fetchall()
             for rank, episode in enumerate(episodes, 1):
-                delta = max(0, moment - episode['sent_at'])
+                delta = max(0, moment - episode['anchor_at'])
                 confidence = 'high' if len(episodes)==1 and delta<=30*86400 else 'medium' if rank==1 else 'low'
-                evidence = encoded({'policy':'nearest-preceding-outbound-v1','secondsAfter':round(delta,3),
+                evidence = encoded({'policy':'nearest-preceding-outbound-v2','anchorKind':'confirmed_card' if episode['card_anchor'] is not None else 'legacy_episode','secondsAfter':round(delta,3),
                                     'candidateCount':len(episodes)})
                 store.db.execute('INSERT INTO turn_episode_link VALUES(?,?,?,?,?)',
                                  (turn['turn_id'],episode['episode_id'],rank,evidence,confidence))

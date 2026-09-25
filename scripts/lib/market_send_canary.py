@@ -111,9 +111,23 @@ def _preflight_conversation(store,session,plan,candidate,conversation,delivery_i
                              (plan,candidate['creatorId'])).fetchone()
     case=store.db.execute("SELECT 1 FROM service_case WHERE plan_id=? AND creator_id=? AND state='open'",
                           (plan,candidate['creatorId'])).fetchone()
-    if not relation or relation['mode']!='auto' or relation['rejected'] or relation['inbox_until']>store.clock() or \
-       case or pending and pending['state'] in ACTIVE_PENDING_STATES:
+    from lib.invitation_continuation import allowed
+    continuation=allowed(store,delivery_id)
+    if not relation or relation['mode']!='auto' or relation['rejected'] or case or \
+       (relation['inbox_until']>store.clock() or pending and pending['state'] in ACTIVE_PENDING_STATES) and not continuation:
         raise CycleError('conversation_needs_content_review')
+
+
+def _preflight_or_close(store,session,plan,candidate,conversation,did):
+    try:_preflight_conversation(store,session,plan,candidate,conversation,did)
+    except CycleError as error:
+        from lib.continuous_send import PREFLIGHT_TERMINAL
+        delivery=Deliveries(store).get(did)
+        if str(error) in PREFLIGHT_TERMINAL and delivery['state']=='running' and delivery['parts'][0]['state']=='confirmed' and delivery['parts'][1]['state']=='ready':
+            Deliveries(store).cancel_pending_text(did,str(error))
+            return {'state':'partial_delivery','deliveryId':did,'stopReason':str(error)}
+        raise
+    return None
 
 
 def _candidate(root,market,store,plan,initial,require_new_conversation=True):
@@ -206,6 +220,8 @@ def run(root,market,request_id,*,canary=True,page_control=False,reconcile_only=F
    checkpoint_time('initial')
    if active:
     delivery=Deliveries(store).get(active['id']);candidate=delivery['snapshot'];did=delivery['id']
+    from lib.invitation_continuation import require_original_sender
+    require_original_sender(candidate,market,communications,runtime['auth'].im_id)
    else:
     candidate=_candidate(root,market,store,plan,initial,canary)
     if not candidate:raise CycleError('market_send_candidate_missing')
@@ -242,10 +258,12 @@ def run(root,market,request_id,*,canary=True,page_control=False,reconcile_only=F
       raise
     Deliveries(store).save_conversation(did,receipt);conversation=session.conversation(receipt['conversationId'],candidate['oecId']);Deliveries(store).confirm_conversation(did,receipt['conversationId'],candidate['oecId'])
    checkpoint_time('conversation')
-   if not recovering_only:_preflight_conversation(store,session,plan,candidate,conversation,did)
+   if not recovering_only:
+    closed=_preflight_or_close(store,session,plan,candidate,conversation,did)
+    if closed:return report|closed
    checkpoint_time('preflight')
    origin=runtime['partnerHost']+'/api/v1/affiliate/partner/im/product_list/list';card=descriptor(candidate['card'],market,communications,origin)
-   if Deliveries(store).interrupted_by_inquiry(did):raise CycleError('market_send_inquiry_interrupted')
+   if Deliveries(store).interrupted_by_inquiry(did):return report|{'state':'partial_delivery','deliveryId':did,'stopReason':'market_send_inquiry_interrupted'}
    for kind in ('card','text'):
     part=next(row for row in Deliveries(store).get(did)['parts'] if row['kind']==kind)
     if part['state']=='confirmed':continue
@@ -263,11 +281,9 @@ def run(root,market,request_id,*,canary=True,page_control=False,reconcile_only=F
     if part['state']!='ready':raise CycleError('market_send_part_unavailable')
     if recovering_only:break
     if kind=='text':
-     try:_preflight_conversation(store,session,plan,candidate,conversation,did)
-     except CycleError:
-      if Deliveries(store).interrupted_by_inquiry(did):raise CycleError('market_send_inquiry_interrupted') from None
-      raise
-    if kind=='text' and Deliveries(store).interrupted_by_inquiry(did):raise CycleError('market_send_inquiry_interrupted')
+     closed=_preflight_or_close(store,session,plan,candidate,conversation,did)
+     if closed:return report|closed
+     if Deliveries(store).interrupted_by_inquiry(did):return report|{'state':'partial_delivery','deliveryId':did,'stopReason':'market_send_inquiry_interrupted'}
     if kind=='card' and not Deliveries(store).contact_capacity_available(did):raise CycleError('new_contact_capacity_reached')
     with write_gate(root,runtime['auth'],stopped=lambda: page_control and _stopped(store,market)) as mark:
      def permit(scope,expected=kind):
@@ -278,6 +294,14 @@ def run(root,market,request_id,*,canary=True,page_control=False,reconcile_only=F
       receipt=adapter.send_card_once(conversation,card,part['request_ref'],before_dispatch=permit) if kind=='card' else adapter.send_once(conversation,candidate['message']['textIt'],part['request_ref'],before_dispatch=permit)
      except BaseException as error:
       _record_send_failure(store,did,kind,error)
+      from lib.invitation_continuation import local_permit_error
+      from lib.continuous_send import PREFLIGHT_TERMINAL
+      latest=next(p for p in Deliveries(store).get(did)['parts'] if p['kind']==kind)
+      local=local_permit_error(error,latest)
+      if local and kind=='text' and str(local) in PREFLIGHT_TERMINAL:
+       Deliveries(store).cancel_pending_text(did,str(local))
+       return report|{'state':'partial_delivery','deliveryId':did,'stopReason':str(local)}
+      if local:raise local from None
       raise
     Deliveries(store).receipt(did,kind,receipt)
     proof=adapter.readback_card(conversation,card,part['request_ref'],message_id=receipt.get('messageId')) if kind=='card' else adapter.readback(conversation,candidate['message']['textIt'],part['request_ref'],message_id=receipt.get('messageId'))

@@ -59,6 +59,9 @@ def execute(deliveries,id,runtime_factory,authorize,preflight,*,verify_only=Fals
      except BaseException as error:
       # Once a persisted intent may have been dispatched, only verification may follow.
       latest=next(p for p in deliveries.get(id)['parts'] if p['kind']==kind)
+      from lib.invitation_continuation import local_permit_error
+      local=local_permit_error(error,latest)
+      if local:raise local from None
       if latest['state']=='inflight':
        if getattr(error,'outcome',None)=='rejected':deliveries.rejected(id,kind,error)
        else:deliveries.unknown(id,kind)

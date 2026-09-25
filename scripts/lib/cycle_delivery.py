@@ -60,12 +60,15 @@ class Deliveries:
     from lib.outreach_allocation import claim
     claim(self.s,plan,candidate,id)
   return self.get(id)
- def _eligible(self,plan,c,*,current_delivery_id=None):
+ def _eligible(self,plan,c,*,current_delivery_id=None,allow_invitation_text=False):
   from lib.outreach_policy import marketing_isolated
   if marketing_isolated(self.s.db,plan,c['creatorId'],c['oecId']):raise CycleError('marketing_isolated')
   p=self.s._plan(plan);r=self.s.db.execute('SELECT * FROM relationship WHERE plan_id=? AND creator_id=?',(plan,c['creatorId'])).fetchone()
   if p['state']!='active' or p['revision']!=c['planRevision']:raise CycleError('plan_changed')
-  if not r or r['oec']!=c['oecId'] or r['mode']!='auto' or r['rejected'] or r['inbox_until'] or r['revision']!=c['controlRevision']:raise CycleError('relationship_changed')
+  from lib.invitation_continuation import allowed
+  continuation=allow_invitation_text and current_delivery_id and allowed(self.s,current_delivery_id)
+  if not r or r['oec']!=c['oecId'] or r['mode']!='auto' or r['rejected'] or \
+     (r['inbox_until'] or r['revision']!=c['controlRevision']) and not continuation:raise CycleError('relationship_changed')
   from lib.video_window import current as video_current
   if c.get('source',{}).get('sourceClass')=='B' and not video_current(c['source'].get('videoReleasedAt'),self.s.clock()):raise CycleError('video_lead_expired')
   if not assess_offer(c['offer'],self.s.clock())['eligible']:raise CycleError('offer_not_eligible')
@@ -81,7 +84,7 @@ class Deliveries:
    d=self.get(id);c=d['snapshot']
    if authorized_snapshot_hash!=digest(c):raise CycleError('execution_authorization_missing')
    if not recipient_verified or not allowance_verified:raise CycleError('execution_evidence_missing')
-   self._eligible(d['plan_id'],c,current_delivery_id=id)
+   self._eligible(d['plan_id'],c,current_delivery_id=id,allow_invitation_text=kind=='text')
    if self.s.clock()>=d['expires']:raise CycleError('delivery_expired')
    if self.s.db.execute("SELECT 1 FROM cycle_delivery WHERE plan_id=? AND state='unknown'",(d['plan_id'],)).fetchone():raise CycleError('delivery_unknown')
    if self.s.db.execute("SELECT 1 FROM sqlite_master WHERE name='service_reply'").fetchone() and self.s.db.execute("SELECT 1 FROM service_reply WHERE plan_id=? AND state IN ('inflight','accepted','unknown')",(d['plan_id'],)).fetchone():raise CycleError('reply_reconciliation_required')
@@ -97,8 +100,10 @@ class Deliveries:
   with self.s.tx():
    d=self.get(id)
    if d['state']=='unknown' or not self.s.db.execute("SELECT 1 FROM sqlite_master WHERE name='inbox_pending'").fetchone():return False
-   pending=self.s.db.execute('SELECT 1 FROM inbox_pending WHERE plan_id=? AND creator_id=?',(d['plan_id'],d['creator_id'])).fetchone()
-   if not pending or d['parts'][0]['state']!='confirmed' or d['parts'][1]['started'] is not None:return False
+   from lib.invitation_continuation import allowed,ACTIVE_PENDING
+   if allowed(self.s,id):return False
+   pending=self.s.db.execute('SELECT state FROM inbox_pending WHERE plan_id=? AND creator_id=?',(d['plan_id'],d['creator_id'])).fetchone()
+   if not pending or pending[0] not in ACTIVE_PENDING|{'human','reviewed_ready'} or d['parts'][0]['state']!='confirmed' or d['parts'][1]['started'] is not None:return False
    self.s.db.execute("UPDATE cycle_delivery_part SET state='cancelled' WHERE delivery_id=? AND kind='text' AND started IS NULL",(id,));self.s.db.execute("UPDATE cycle_delivery SET state='partial_delivery' WHERE id=?",(id,));return True
  def cancel_pending_text(self,id,reason):
   """Keep the confirmed card, but settle text that never reached the platform."""
