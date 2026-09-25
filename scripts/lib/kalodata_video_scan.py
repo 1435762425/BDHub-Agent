@@ -15,7 +15,7 @@ AUTHOR_MISSING='author_missing'
 AUTHOR_MISSING_LIMIT=20
 
 
-def initialize(root,scope,window_start,window_end,*,min_views=1000,clock=time.time):
+def initialize(root,scope,window_start,window_end,*,min_views=1000,clock=time.time,market='it'):
     if not isinstance(scope,list) or not scope:raise CycleError('video_scan_scope_invalid')
     normalized=[]
     for row in scope:
@@ -27,11 +27,13 @@ def initialize(root,scope,window_start,window_end,*,min_views=1000,clock=time.ti
     try:
         if (date.fromisoformat(window_end)-date.fromisoformat(window_start)).days not in range(1,90):raise ValueError
     except (TypeError,ValueError):raise CycleError('kalodata_video_window_invalid') from None
-    fingerprint=digest(normalized);generation='video-generation-'+digest([window_start,window_end,min_views,fingerprint])[:24]
+    if market not in ('it','br','my','uk'):raise CycleError('video_market_invalid')
+    fingerprint=digest(normalized);generation='video-generation-'+digest(([market] if market!='it' else [])+[window_start,window_end,min_views,fingerprint])[:24]
     stamp=clock()
     with CycleStore(Path(root)/'var/second-cycle.sqlite') as store,store.tx():
         old=store.db.execute('SELECT * FROM kalodata_video_generation WHERE generation_id=?',(generation,)).fetchone()
         if old:
+            if _generation(store,generation)['market']!=market:raise CycleError('video_market_mismatch')
             if (old['window_start'],old['window_end'],old['min_views'],old['scope_fingerprint'],old['scope_count']) != \
                     (window_start,window_end,min_views,fingerprint,len(normalized)):
                 raise CycleError('video_scan_generation_conflict')
@@ -39,13 +41,17 @@ def initialize(root,scope,window_start,window_end,*,min_views=1000,clock=time.ti
         # A new scan is not a new published result. Keep each previous complete PID head.
         store.db.execute('INSERT INTO kalodata_video_generation VALUES(?,?,?,?,?,?,?,?,?,?)',
             (generation,window_start,window_end,min_views,'queued',fingerprint,len(normalized),stamp,stamp,None))
+        from lib.market_registry import market as market_record
+        registry_root=root if (Path(root)/'config/markets.json').exists() else None
+        currency=market_record(registry_root,market)['currency']
+        store.db.execute('INSERT INTO kalodata_video_generation_scope VALUES(?,?,?,?)',(generation,market,'GB' if market=='uk' else market.upper(),currency))
         store.db.executemany('INSERT INTO kalodata_video_scan_job VALUES(?,?,?,?,?,?,?,?,?,?)',
             [(generation,row['pid'],row['units'],'queued',1,0,0,0,None,stamp) for row in normalized])
     return {'generationId':generation,'scope':len(normalized),'cached':False}
 
 
 def _generation(store,generation_id):
-    row=store.db.execute('SELECT * FROM kalodata_video_generation WHERE generation_id=?',(generation_id,)).fetchone()
+    row=store.db.execute("SELECT g.*,COALESCE(s.market,'it') AS market,COALESCE(s.region,'IT') AS region,COALESCE(s.currency,'EUR') AS currency FROM kalodata_video_generation g LEFT JOIN kalodata_video_generation_scope s ON s.generation_id=g.generation_id WHERE g.generation_id=?",(generation_id,)).fetchone()
     if not row:raise CycleError('video_scan_generation_missing')
     return row
 
@@ -94,17 +100,19 @@ def _save_page(store,generation,pid,page,body,parsed,stamp):
 
 
 def _save_detail(store,generation,pid,row,detail,stamp,*,network):
+    market=_generation(store,generation)['market']
     with store.tx():
-        store.db.execute('INSERT INTO kalodata_video_author_cache VALUES(?,?,?,?,?,?) '
-                         'ON CONFLICT(video_id) DO UPDATE SET kalodata_creator_id=excluded.kalodata_creator_id,'
-                         'handle=excluded.handle,payload_hash=excluded.payload_hash,video_url=excluded.video_url,'
-                         'observed_at=excluded.observed_at',
-                         (detail['videoId'],detail['kalodataCreatorId'],detail['handle'],detail['payloadHash'],
-                          detail['videoUrl'],stamp))
+        if network:
+            store.db.execute('INSERT INTO kalodata_video_author_cache(video_id,kalodata_creator_id,handle,payload_hash,video_url,observed_at,market) VALUES(?,?,?,?,?,?,?) '
+                             'ON CONFLICT(market,video_id) DO UPDATE SET kalodata_creator_id=excluded.kalodata_creator_id,'
+                             'handle=excluded.handle,payload_hash=excluded.payload_hash,video_url=excluded.video_url,'
+                             'observed_at=excluded.observed_at',
+                             (detail['videoId'],detail['kalodataCreatorId'],detail['handle'],detail['payloadHash'],
+                              detail['videoUrl'],stamp,market))
         store.db.execute("UPDATE kalodata_video_scan_item SET detail_state='resolved',kalodata_creator_id=?,"
                          "handle=?,detail_payload_hash=?,video_url=?,observed_at=? WHERE generation_id=? AND pid=? "
                          "AND video_id=?",
-                         (detail['kalodataCreatorId'],detail['handle'],detail['payloadHash'],detail['videoUrl'],stamp,
+                         (detail['kalodataCreatorId'],detail['handle'],detail['payloadHash'],detail['videoUrl'],stamp if network else detail['observedAt'],
                           generation,pid,row['video_id']))
         if network:
             store.db.execute('UPDATE kalodata_video_scan_job SET detail_requests=detail_requests+1,updated_at=? '
@@ -115,8 +123,8 @@ def _skip_detail(store,generation,pid,row,body,stamp):
     """A video whose detail names no author cannot yield a lead: keep the response hash as evidence and move on,
     unless so many are missing in this generation that the source itself looks broken."""
     with store.tx():
-        missing=store.db.execute('SELECT count(*) FROM kalodata_video_scan_item WHERE generation_id=? AND detail_state=?',
-                                 (generation,AUTHOR_MISSING)).fetchone()[0]
+        missing=store.db.execute('SELECT count(*) FROM kalodata_video_scan_item WHERE generation_id=? AND pid=? AND detail_state=?',
+                                 (generation,pid,AUTHOR_MISSING)).fetchone()[0]
         if missing>=AUTHOR_MISSING_LIMIT:raise CycleError('kalodata_video_author_missing')
         store.db.execute('UPDATE kalodata_video_scan_item SET detail_state=?,detail_payload_hash=?,observed_at=? '
                          'WHERE generation_id=? AND pid=? AND video_id=?',
@@ -148,7 +156,7 @@ def _report(store,generation_row,job,clock):
     fingerprints=[row['rows_fingerprint'] for row in pages]
     run_id='video-run-'+digest([generation,pid,fingerprints,[row['payloadHash'] for row in evidence]]+
                                ([errors] if errors else []))[:24]
-    return {'schema':'bdhub.kalodata-video-evidence.v1','runId':run_id,'pid':pid,
+    return {'schema':'bdhub.kalodata-video-evidence.v1','runId':run_id,'pid':pid,'market':generation_row['market'],'kalodataRegion':generation_row['region'],'currency':generation_row['currency'],
         'windowStart':generation_row['window_start'],'windowEnd':generation_row['window_end'],
         'minViews':generation_row['min_views'],'maxVideos':0,'sortField':'create_time','maxPages':0,
         'pagesRead':len(pages),'rowsReceived':sum(row['rows_received'] for row in pages),
@@ -166,18 +174,24 @@ def _publish_current(store,report,generation_id):
         choice=(row['views'],released.isoformat(),row['videoId'])
         if key not in grouped or choice>grouped[key][0]:grouped[key]=(choice,row,released.isoformat())
     if not store.db.in_transaction:raise CycleError('video_publish_transaction_required')
-    store.db.execute('DELETE FROM video_lead_current WHERE pid=?',(report['pid'],))
+    store.db.execute('DELETE FROM video_lead_current WHERE market=? AND pid=?',(report.get('market','it'),report['pid']))
     for creator_id,(_,row,released) in grouped.items():
-        store.db.execute('INSERT INTO video_lead_current VALUES(?,?,?,?,?,?,?,?,?,?)',
+        store.db.execute('INSERT INTO video_lead_current(generation_id,pid,kalodata_creator_id,handle,run_id,video_id,views,released_at,video_sale,observed_at,market) VALUES(?,?,?,?,?,?,?,?,?,?,?)',
           (generation_id,report['pid'],creator_id,row['handle'],report['runId'],row['videoId'],row['views'],released,
-           row['sale'],report['observedAt']))
+           row['sale'],report['observedAt'],report.get('market','it')))
+    from lib.video_identity import backfill_current
+    backfill_current(store.db,market=report.get('market','it'),pid=report['pid'])
 
 
-def scan_one(root,generation_id,requester,*,clock=time.time):
+def scan_one(root,generation_id,requester,*,clock=time.time,pid=None,max_requests=None,market=None):
     with CycleStore(Path(root)/'var/second-cycle.sqlite') as store:
-        generation=_generation(store,generation_id);job=next_job(store,generation_id)
+        generation=_generation(store,generation_id)
+        if market is not None and generation['market']!=market:raise CycleError('video_market_mismatch')
+        job=(store.db.execute("SELECT * FROM kalodata_video_scan_job WHERE generation_id=? AND pid=? AND state IN ('listing','detailing','queued')",(generation_id,pid)).fetchone() if pid is not None else next_job(store,generation_id))
         if not job:return {'status':'idle','generationId':generation_id,'networkRequests':0}
-        pid=job['pid'];network=0
+        pid=job['pid'];network=0;processed=0
+        def yielded():
+            return {'status':'yielded','generationId':generation_id,'pid':pid,'networkRequests':network,'processed':processed}
         if job['state']=='queued':
             with store.tx():store.db.execute("UPDATE kalodata_video_scan_job SET state='listing',updated_at=? "
                                              "WHERE generation_id=? AND pid=?",(clock(),generation_id,pid))
@@ -185,6 +199,7 @@ def scan_one(root,generation_id,requester,*,clock=time.time):
             job=store.db.execute('SELECT * FROM kalodata_video_scan_job WHERE generation_id=? AND pid=?',
                                  (generation_id,pid)).fetchone()
             if job['state']!='listing':break
+            if max_requests is not None and network>=max_requests:return yielded()
             page=job['next_page'];payload={'id':pid,'startDate':generation['window_start'],
                 'endDate':generation['window_end'],'authority':True,'pageNo':page,'pageSize':50,
                 'sort':[{'field':'create_time','type':'DESC'}]}
@@ -198,12 +213,15 @@ def scan_one(root,generation_id,requester,*,clock=time.time):
                                  "AND detail_state='pending' ORDER BY source_rank,video_id LIMIT 1",
                                  (generation_id,pid)).fetchone()
             if not row:break
-            cached=store.db.execute('SELECT * FROM kalodata_video_author_cache WHERE video_id=?',
-                                    (row['video_id'],)).fetchone()
+            if max_requests is not None and processed>=100:return yielded()
+            processed+=1
+            cached=store.db.execute('SELECT * FROM kalodata_video_author_cache WHERE market=? AND video_id=?',
+                                    (generation['market'],row['video_id'])).fetchone()
             if cached:
                 detail={'videoId':row['video_id'],'kalodataCreatorId':cached['kalodata_creator_id'],
-                        'handle':cached['handle'],'payloadHash':cached['payload_hash'],'videoUrl':cached['video_url']}
+                        'handle':cached['handle'],'payloadHash':cached['payload_hash'],'videoUrl':cached['video_url'],'observedAt':cached['observed_at']}
                 _save_detail(store,generation_id,pid,row,detail,clock(),network=False);continue
+            if max_requests is not None and network>=max_requests:return yielded()
             payload={'id':row['video_id'],'startDate':generation['window_start'],
                      'endDate':generation['window_end'],'authority':True}
             body=requester(VIDEO_DETAIL_PATH,payload);network+=1
@@ -218,8 +236,8 @@ def scan_one(root,generation_id,requester,*,clock=time.time):
         # Evidence/head/current/job completion are one publication; readers see old or new, never half.
         with store.tx():
             newest=store.db.execute("""SELECT g.generation_id,g.window_end,g.created_at
-                FROM kalodata_video_generation g CROSS JOIN kalodata_video_scan_job j
-                WHERE j.generation_id=g.generation_id AND j.pid=? AND j.state='completed' ORDER BY g.window_end DESC,g.created_at DESC,g.generation_id DESC LIMIT 1""",(pid,)).fetchone()
+                FROM kalodata_video_generation g LEFT JOIN kalodata_video_generation_scope m ON m.generation_id=g.generation_id CROSS JOIN kalodata_video_scan_job j
+                WHERE COALESCE(m.market,'it')=? AND j.generation_id=g.generation_id AND j.pid=? AND j.state='completed' ORDER BY g.window_end DESC,g.created_at DESC,g.generation_id DESC LIMIT 1""",(generation['market'],pid)).fetchone()
             if newest and newest['generation_id']!=generation_id and \
                     (newest['window_end'],newest['created_at'],newest['generation_id'])> \
                     (generation['window_end'],generation['created_at'],generation_id):

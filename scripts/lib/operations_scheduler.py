@@ -17,7 +17,7 @@ from zoneinfo import ZoneInfo
 
 from lib.operations_workflow import create_run,finish_stage,retry_failed_stage,status as workflow_status
 from lib.process_liveness import pid_alive
-from lib.second_cycle import CycleError, CycleStore, digest
+from lib.second_cycle import CycleError, CycleStore, digest, encoded
 from lib.workflow_dispatch import claim_ready
 from lib.workflow_resources import assert_current,heartbeat,release
 
@@ -287,6 +287,12 @@ class SubprocessStageExecutor:
         if not isinstance(payload,dict) or not payload:
             return {'state':'failed','itemCount':0,'complete':False,'platformWrites':0,
                     'errorCode':f'{label}_report_invalid','payload':{}}
+        if args[0]=='scripts/rolling-leads.py' and not child.returncode and payload.get('sliceComplete') is True:
+            valid=payload.get('market') in ('it','br','my','uk') and payload.get('platformWrites')==0 and payload.get('realSends')==0
+            if valid:
+                paused=payload.get('stopped')=='automation_paused'
+                return {'state':'stopped' if paused else 'completed','itemCount':payload.get('completed',0),
+                        'complete':not paused,'platformWrites':0,'payload':payload,'scope':{}}
         reported_state=str(evidence.get('state') or evidence.get('status') or payload.get('state') or payload.get('status') or '')
         writes=max(_report_platform_writes(evidence),_report_platform_writes(payload))
         items=max(_report_item_count(evidence),_report_item_count(payload))
@@ -534,47 +540,16 @@ class SubprocessStageExecutor:
             return {'state':'completed','itemCount':count,
                     'complete':True,'platformWrites':writes,'scope':{'sources':sources},'payload':{'routes':outputs}}
         if stage=='kalodata':
-            completed=0;sales_passes=[]
-            for _ in range(1000):
-                sales=self._call(['scripts/leads-run.py','--market',market,'--limit','5000','--max-pages','20'],'kalodata-sales')
-                payload=sales.get('payload') or {};stopped=payload.get('stopped') or sales.get('errorCode')
-                if sales['state']!='completed' and stopped!='kalodata_daily_quota_exhausted':
-                    return {**sales,'complete':False,'itemCount':completed,
-                            'scope':{'sources':sources,'aCompleted':completed,'passes':sales_passes}}
-                done=payload.get('done');targets=payload.get('targets');due=payload.get('dueQueue');stuck=payload.get('stuck')
-                if any(type(value) is not int or value<0 for value in (done,targets,due,stuck)) or \
-                        targets>due or done>targets or payload.get('market',market)!=market:
-                    return {**sales,'state':'failed','complete':False,'itemCount':completed,
-                            'errorCode':'kalodata_scope_report_invalid','scope':{'sources':sources,'aCompleted':completed}}
-                completed+=done
-                sales_passes.append({'done':done,'targets':targets,'dueQueue':due,'stopped':stopped})
-                state='quota_exhausted' if stopped=='kalodata_daily_quota_exhausted' else sales['state']
-                if state!='completed':
-                    return {**sales,'state':state,'complete':False,'itemCount':completed,
-                            'scope':{'sources':sources,'aCompleted':completed,'passes':sales_passes}}
-                if payload.get('errors') or stuck or done!=targets or stopped not in (None,'queue_empty'):
-                    return {**sales,'state':'needs_human','complete':False,'itemCount':completed,
-                            'errorCode':'kalodata_scope_incomplete',
-                            'scope':{'sources':sources,'aCompleted':completed,'passes':sales_passes}}
-                if due==targets:break
-                if not done:
-                    return {**sales,'state':'failed','complete':False,'itemCount':completed,
-                            'errorCode':'kalodata_queue_stalled','scope':{'sources':sources,'aCompleted':completed}}
-            else:
-                return {'state':'failed','complete':False,'itemCount':completed,'platformWrites':0,
-                        'errorCode':'kalodata_scope_iteration_limit','scope':{'sources':sources,'aCompleted':completed}}
-            sales={**sales,'itemCount':completed,'scope':{'sources':sources,'aCompleted':completed,'passes':sales_passes}}
-            if market!='it':return sales
-            initialized=self._call(['scripts/kalodata-video-crawl.py','init'],'kalodata-video-init')
-            generation=(initialized.get('payload') or {}).get('generationId')
-            if initialized['state']!='completed' or not generation:return {**initialized,'state':'failed','complete':False,'errorCode':'video_generation_missing'}
-            videos=self._call(['scripts/kalodata-video-crawl.py','run','--generation',str(generation)],'kalodata-video-run')
-            video_error=str((videos.get('payload') or {}).get('error') or videos.get('errorCode') or '')
-            video_state='quota_exhausted' if video_error=='kalodata_daily_quota_exhausted' else videos['state']
-            video_counts=(((videos.get('payload') or {}).get('status') or {}).get('counts') or {})
-            video_done=int(video_counts.get('completed') or video_counts.get('done') or 0)
-            return {**videos,'state':video_state,'complete':video_state=='completed','itemCount':completed+video_done,
-                    'scope':{'sources':sources,'aCompleted':completed,'bGeneration':generation,'bCompleted':video_done}}
+            args=['scripts/rolling-leads.py','run','--market',market,'--fragments','8']
+            if run.get('triggerSource')=='schedule':args.append('--scheduled')
+            result=self._call(args,'rolling-leads');payload=result.get('payload') or {}
+            if result['state']!='completed':return result
+            if payload.get('sliceComplete') is not True or payload.get('market')!=market or any(
+                type(payload.get(k)) is not int or payload[k]<0 for k in ('completed','A','B','fragments','networkRequests')) or                     payload['completed']!=payload['A']+payload['B'] or payload['completed']>payload['fragments']:
+                return result|{'state':'failed','complete':False,'errorCode':'rolling_leads_scope_invalid'}
+            return {'state':'completed','complete':True,'platformWrites':0,'itemCount':payload['completed'],
+                    'scope':{'sources':sources,'coverage':'bounded_query_slice','aCompleted':payload['A'],
+                             'bCompleted':payload['B'],'remaining':payload.get('queue')},'payload':payload}
         if stage=='oecid':
             if market!='it':
                 total=0;outputs=[];result=None;left=0;auth_recoveries=0
@@ -629,11 +604,30 @@ class SubprocessStageExecutor:
         raise CycleError('workflow_stage_invalid')
 
 
+def _create_lead_continuation(root,store,market,stamp,blocked_run=None):
+    from lib.rolling_leads import identity_hold
+    hold=identity_hold(root,market)
+    run=create_run(store,market=market,trigger_source='schedule',scheduled_at=stamp,
+                   request_id=f'{market}:rolling-leads:{int(stamp)}',sources=['campaign'],from_stage='kalodata')
+    with store.tx():
+        if hold:
+            store.db.execute("UPDATE workflow_stage_run SET state='skipped',finished_at=?,error_code='identity_lane_waiting_recovery' WHERE run_id=? AND stage='oecid' AND state='waiting_upstream'",(stamp,run['runId']))
+        if hold or blocked_run:
+            store.db.execute('INSERT OR IGNORE INTO workflow_checkpoint VALUES(?,?,?,?,?)',
+                             (run['runId'],'kalodata','independent_supply',encoded({'blockedRunId':blocked_run,'identityHold':hold}),stamp))
+    from lib.operations_workflow import run_payload
+    return run_payload(store,run['runId'])
+
+
 def _collect_ready_runs(root,store,jobs,stamp,progress):
     """Re-read durable controls and due times; do not reuse a long-running batch snapshot."""
     projected=[]
     from lib.market_registry import enabled_market_keys
     markets=enabled_market_keys(root);snapshots={market:workflow_status(store,market) for market in markets}
+    from lib.operations_workflow import run_payload
+    for market,snapshot in snapshots.items():
+        existing=store.db.execute("SELECT run_id FROM workflow_run WHERE market=? AND state IN ('queued','running','stop_requested') ORDER BY started_at,run_id LIMIT 1",(market,)).fetchone()
+        if existing:snapshot['current']=run_payload(store,existing[0])
     it_automation=snapshots.get('it',{'setting':{'automaticOperationsEnabled':False}})['setting']
     any_automation=any(snapshot['setting']['automaticOperationsEnabled'] for snapshot in snapshots.values())
     _background(root,store,jobs,it_automation,stamp,maintenance_enabled=any_automation)
@@ -641,9 +635,15 @@ def _collect_ready_runs(root,store,jobs,stamp,progress):
     policy=load_policy(root);active=[]
     for market,snapshot in snapshots.items():
         automation=snapshot['setting'];current=snapshot['current'];sources,due_times=_scheduled_sources(root,store,market,stamp,automation,policy)
+        from lib.rolling_leads import due_at,automatic_enabled
+        lead_due=(due_at(root,market,at=stamp,refresh_scope=not current or current['state'] not in ('queued','running','stop_requested'))
+                  if automation['automaticOperationsEnabled'] and automatic_enabled(root,market) else None)
+        if lead_due is not None:due_times['leads']=lead_due
         key='workflow' if market=='it' else f'workflow:{market}'
         future=[value for value in due_times.values() if value>stamp]
         progress['nextDue'][key]=min(future) if future else min(due_times.values())
+        if lead_due is not None and lead_due<=stamp and (not current or current['state'] in ('completed','stopped')) and not sources:
+            current=_create_lead_continuation(root,store,market,stamp)
         if current and current['state']=='failed' and current['triggerSource']=='schedule':
             if not automation['automaticOperationsEnabled']:continue
             retry=retry_failed_stage(store,current['runId'],now=stamp)
@@ -655,7 +655,13 @@ def _collect_ready_runs(root,store,jobs,stamp,progress):
                 continue
         if current and current['state']=='needs_human':
             progress['error']=progress['error'] or current.get('errorCode') or 'workflow_needs_human'
-            continue
+            # A failed query implementation itself remains blocked; a failed supply/identity
+            # stage cannot prevent independent reads of already valid material.
+            failed_stage=next((s for s in current['stages'] if s['state'] in ('failed','needs_human')),None)
+            if lead_due is not None and lead_due<=stamp and automation['automaticOperationsEnabled'] and (
+                    not failed_stage or failed_stage['stage']!='kalodata' or any(s['stage']=='catalog' and s['state']!='skipped' for s in current['stages'])):
+                current=_create_lead_continuation(root,store,market,stamp,current['runId'])
+            else:continue
         if not current or current['state'] not in ('queued','running','stop_requested'):
             if automation['automaticOperationsEnabled'] and sources:
                 scheduled=min(due_times[source] for source in sources)

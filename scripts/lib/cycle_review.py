@@ -255,9 +255,13 @@ def _position_rows(store, plan, offers, identity_reader, order):
     identity = {str(row['creator_id']): {'oec': row['oec']} for row in store.db.execute(
         'SELECT creator_id,oec FROM relationship WHERE plan_id=?', (plan,))}
     edges = {}
-    for row in store.db.execute("SELECT e.payload, json_extract(e.payload,'$.sourceHandle') AS handle "
-                                "FROM source_edge e WHERE e.plan_id=? "
-                                "AND json_extract(e.payload,'$.sourceKind')='kalodata_http'", (plan,)):
+    source_sql=("SELECT e.payload,json_extract(e.payload,'$.sourceHandle') AS handle FROM current_identity_source x "
+                "JOIN source_edge e ON e.plan_id=x.plan_id AND e.source_id=x.source_id "
+                "WHERE x.plan_id=? AND x.source_kind='kalodata_http'") if store.db.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type='view' AND name='current_identity_source'").fetchone() else (
+                "SELECT e.payload,json_extract(e.payload,'$.sourceHandle') AS handle FROM source_edge e "
+                "WHERE e.plan_id=? AND json_extract(e.payload,'$.sourceKind')='kalodata_http'")
+    for row in store.db.execute(source_sql,(plan,)):
         edge = json.loads(row['payload'])
         edges.setdefault((str(row['handle']), str(edge['pid'])), row['payload'])
     rows = []
@@ -278,9 +282,12 @@ def _position_rows(store, plan, offers, identity_reader, order):
         # A-class sale edge: the frozen source explicitly carries the representative video proof.
         if not store.db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='video_lead_current'").fetchone():
             continue
-        video = store.db.execute("SELECT * FROM video_lead_current WHERE pid=? AND lower(handle)=lower(?) "
-                                 "ORDER BY views DESC,released_at DESC,video_id LIMIT 1",
-                                 (str(pid),str(person['handle']))).fetchone()
+        market=store._plan(plan)['market']
+        scoped='market' in {r[1] for r in store.db.execute('PRAGMA table_info(video_lead_current)')}
+        if not scoped and market!='it':continue
+        video=store.db.execute("SELECT * FROM video_lead_current WHERE "+("market=? AND " if scoped else "")+
+                              "pid=? AND lower(handle)=lower(?) ORDER BY views DESC,released_at DESC,video_id LIMIT 1",
+                              ((market,) if scoped else ())+(str(pid),str(person['handle']))).fetchone()
         from lib.video_window import current as video_current
         if not video or not video_current(video['released_at'],store.clock()):
             continue

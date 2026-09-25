@@ -19,21 +19,21 @@ class LeadSelectionTests(unittest.TestCase):
    db.execute("INSERT INTO plan VALUES('p','bjn-local-research','it')")
   apply_database(self.root,'second-cycle')
  def tearDown(self):self.temp.cleanup()
- def test_top_twenty_is_ranked_positive_and_deduplicated_by_creator(self):
-  rows=[edge(i) for i in range(1,26)]+[edge(30,creator='k1',units=999)]
+ def test_top_fifty_is_ranked_positive_and_deduplicated_by_creator(self):
+  rows=[edge(i) for i in range(1,66)]+[edge(70,creator='k1',units=999)]
   selected=select_top_leads(rows)
-  self.assertEqual(len(selected),20);self.assertEqual([r['sourceRank'] for r in selected],list(range(1,21)))
+  self.assertEqual(len(selected),50);self.assertEqual([r['sourceRank'] for r in selected],list(range(1,51)))
   bad=edge(1)|{'units':0}
   with self.assertRaisesRegex(ValueError,'lead_edge_invalid'):select_top_leads([bad])
- def test_publish_preserves_all_evidence_but_heads_only_twenty(self):
-  rows=[edge(i) for i in range(1,26)]
+ def test_publish_preserves_all_evidence_but_heads_only_fifty(self):
+  rows=[edge(i) for i in range(1,66)]
   result=publish_query(self.root,plan_id='p',query_id='q',pid='1',edges=rows,
                        receipt_fingerprints=['page-1'],at=10)
-  self.assertEqual((result['rawPositive'],result['selected']),(25,20))
+  self.assertEqual((result['rawPositive'],result['selected']),(65,50))
   with closing(sqlite3.connect(self.root/'var/second-cycle.sqlite')) as db,db:
-   self.assertEqual(db.execute('SELECT count(*) FROM source_edge').fetchone()[0],25)
-   self.assertEqual(db.execute('SELECT count(*) FROM source_edge_index').fetchone()[0],25)
-   self.assertEqual(db.execute('SELECT count(*) FROM lead_query_selection').fetchone()[0],20)
+   self.assertEqual(db.execute('SELECT count(*) FROM source_edge').fetchone()[0],65)
+   self.assertEqual(db.execute('SELECT count(*) FROM source_edge_index').fetchone()[0],65)
+   self.assertEqual(db.execute('SELECT count(*) FROM lead_query_selection').fetchone()[0],50)
    self.assertEqual(db.execute('SELECT query_id FROM lead_query_head').fetchone()[0],'q')
   self.assertTrue(publish_query(self.root,plan_id='p',query_id='q',pid='1',edges=rows,
                                 receipt_fingerprints=['page-1'],at=20)['cached'])

@@ -11,7 +11,7 @@ import {useLeadsQueue} from "./useLeadsQueue";
  * 达人线索：与「全托商品」「非全托商品」并列的独立一步。
  *
  * 为什么单独一页：这一步**不属于任何一条渠道**——位置＝达人×商品，渠道只挂在商品与链接上；
- * 同一个达人在两条渠道下共用冷却、500 额度与拒联记录。放在商品页里会让人以为它是那条渠道的一部分，
+ * 同一个达人在两条渠道下共用冷却、平台额度与拒联记录。放在商品页里会让人以为它是那条渠道的一部分，
  * 也会让商品页承担两种完全不同的读法。
  *
  * 顺序就是这一步自己的顺序：查线索 → 补身份（无 OECID 不进池）→ 发送池。
@@ -25,9 +25,9 @@ export default function LeadsPanel({market}:{market:string}){
  return <div className="space-y-5">
   <Notice tone="info">
     这一步<b>不分渠道</b>：位置＝达人×商品，渠道只挂在商品与链接上；同一个达人在两条渠道下共用冷却、
-    500 额度与拒联记录。所以下面看到的是整个机构的状态。
+    平台额度与拒联记录。所以下面看到的是整个机构的状态。
   </Notice>
-  {scopeValue!=null&&<MetricTable rows={[
+  {scopeValue!=null&&!queue.data?.rolling&&<MetricTable rows={[
    {label:"队列商品（全托＋非全托）",value:scopeValue.toLocaleString(),detail:byChannel?`全托 ${byChannel.selected.toLocaleString()} · 非全托 ${byChannel.campaign.toLocaleString()}`:"两条渠道并集"},
    {label:"首次待查",value:(queue.data?.firstTime??0).toLocaleString(),detail:"从没问过平台，按累计销量降序",accent:true},
    {label:"未到期",value:(queue.data?.waiting??0).toLocaleString(),detail:"7 天内查过，到期后自动回到队列"},
@@ -38,7 +38,7 @@ export default function LeadsPanel({market}:{market:string}){
   </Notice>}
 
   <Section id="stage-leads" index="①" title="达人线索查询队列"
-   summary={<>待查 {queue.data?.firstTime?.toLocaleString()??"—"} · 未到期 {queue.data?.waiting?.toLocaleString()??"—"}</>}>
+   summary={queue.data?.rolling?<>A 可运行 {queue.data.rolling.types.A.runnable} · B 可运行 {queue.data.rolling.types.B.runnable}</>:<>待查 {queue.data?.firstTime?.toLocaleString()??"—"} · 未到期 {queue.data?.waiting?.toLocaleString()??"—"}</>}>
    <div id="card-leads" className="scroll-mt-6"><LeadsQueuePanel controller={queue}/></div>
   </Section>
 

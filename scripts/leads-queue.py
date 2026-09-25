@@ -45,10 +45,13 @@ def main():
                               'items': planned['items'][:20]}, ensure_ascii=False))
             return 0
         if args.action == 'run':
-            # Foreground for CLI use; the workbench starts the same script detached.
-            import runpy
-            sys.argv = ['leads-run.py','--market',args.market] + (['--limit', str(args.batch_size)] if args.batch_size else [])
-            runpy.run_path(str(ROOT / 'scripts/leads-run.py'), run_name='__main__')
+            from lib.second_cycle import CycleStore
+            from lib.operations_workflow import create_run
+            from lib.operations_scheduler import scheduler_state,start_scheduler
+            with CycleStore(ROOT/'var/second-cycle.sqlite') as store:
+                create_run(store,market=args.market,trigger_source='manual',sources=['campaign'],from_stage='kalodata')
+            if not scheduler_state(ROOT)['running']:start_scheduler(ROOT)
+            print(json.dumps(status(ROOT,market=args.market),ensure_ascii=False))
             return 0
         if args.action == 'save':
             raw = {}

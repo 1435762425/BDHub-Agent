@@ -140,10 +140,10 @@ def _candidate(root,market,store,plan,initial,require_new_conversation=True):
     name=json.loads(name_row[0]);template=next_approved_send_template(store,root,plan,slot['creatorId'],market)
     if template is None:continue
     message=render_send_template(template,name,offer,person[0],market)
-    source=store.db.execute("SELECT x.source_id FROM source_edge_index x JOIN cycle_identity_resolution r ON r.plan_id=x.plan_id AND r.source_id=x.source_id WHERE x.plan_id=? AND x.pid=? AND r.creator_id=? ORDER BY x.source_rank LIMIT 1",(plan,offer['pid'],slot['creatorId'])).fetchone()
+    source=store.db.execute("SELECT e.payload FROM current_identity_source x JOIN source_edge e ON e.plan_id=x.plan_id AND e.source_id=x.source_id WHERE x.plan_id=? AND x.pid=? AND lower(x.source_handle)=lower(?) AND x.source_kind=? ORDER BY x.source_rank LIMIT 1",(plan,offer['pid'],person[0],'kalodata_video' if slot.get('sourceClass')=='B' else 'kalodata_http')).fetchone()
     if not source:continue
     return {'creatorId':slot['creatorId'],'oecId':relation['oec'],'handle':person[0],'pid':str(offer['pid']),
-     'source':{'sourceId':source[0]},'offer':offer,'offerFingerprint':digest(offer),'name':name,'card':card,
+     'source':json.loads(source[0]),'offer':offer,'offerFingerprint':digest(offer),'name':name,'card':card,
      'message':message,'planRevision':store._plan(plan)['revision'],'controlRevision':relation['revision'],
      'executionMode':'market-canary-v1' if require_new_conversation else 'market-continuous-v1','market':market,
      'conversationId':(conversations.get(relation['oec']) or {}).get('conversationId')}

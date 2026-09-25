@@ -1,6 +1,5 @@
-import {execFile,spawn} from "node:child_process";
+import {execFile} from "node:child_process";
 import {join} from "node:path";
-import {openSync} from "node:fs";
 import {projectRoot} from "../runtime/project-root.ts";
 
 /** Queue shape for PID -> creator-lead queries. Numbers only; the platform is not contacted. */
@@ -10,9 +9,25 @@ export type LeadsQueueNext={pid:string;units:number;title:string};
 export type LeadsQueueDue={pid:string;queriedAt:number;dueAt:number;leads:number|null;title:string};
 // ``taken`` is the batch: the top ``batchSize`` of the due queue. ``shortfall`` is how far the
 // queue fell short of the ceiling -- it is reported, never filled from products that are not due.
+export type RollingQueue={available:true;automaticEnabled:boolean;identityHold:boolean;types:Record<"A"|"B",{total:number;runnable:number;first:number;refresh:number;checkpoints:number;states:Record<string,number>;oldestReadyAt:number|null;staleCheckpoints:number;oldestWindowEnd:string|null}>;control:{state:string;retry_at:number;last_error:string|null}|null};
+function rollingQueue(value:unknown):RollingQueue|undefined{
+ if(!value||typeof value!=="object"||(value as Record<string,unknown>).available!==true)return;
+ const v=value as Record<string,unknown>,types=v.types as Record<string,unknown>;
+ if(!types||typeof types!=="object")throw Error("invalid_leads_queue");
+ const result={} as RollingQueue["types"];
+ for(const key of ["A","B"] as const){
+  const row=types[key] as Record<string,unknown>,states=row?.states as Record<string,unknown>;
+  if(!row||!states)throw Error("invalid_leads_queue");
+  const counted=Object.fromEntries(Object.entries(states).map(([state,n])=>[state,count(n)]));
+  if(Object.values(counted).reduce((a,b)=>a+b,0)!==count(row.total))throw Error("invalid_leads_queue");
+  result[key]={total:count(row.total),runnable:count(row.runnable),first:count(row.first),refresh:count(row.refresh),checkpoints:count(row.checkpoints),states:counted,staleCheckpoints:count(row.staleCheckpoints??0),oldestWindowEnd:typeof row.oldestWindowEnd==="string"?row.oldestWindowEnd:null,oldestReadyAt:typeof row.oldestReadyAt==="number"?row.oldestReadyAt:null};
+ }
+ const control=v.control as Record<string,unknown>|null;
+ return {available:true,automaticEnabled:v.automaticEnabled===true,identityHold:Boolean(v.identityHold),types:result,control:control?{state:String(control.state),retry_at:typeof control.retry_at==="number"?control.retry_at:0,last_error:typeof control.last_error==="string"?control.last_error:null}:null};
+}
 export type LeadsQueueState={market:string;config:LeadsQueueConfig;refreshDays:number;eligible:number;linked:number;scope:number;firstTime:number;due:number;waiting:number;unknownScope:number;nextFirstTime:LeadsQueueNext[];nextDue:LeadsQueueDue[];batchSize:number;dueQueue:number;taken:number;batchFirst:number;batchRefresh:number;shortfall:number;padded:boolean;stuck:number;run:LeadsRunState|null;saved?:boolean;
  // 队列是跨渠道的：这两个字段让页面能说清两条渠道各占多少、以及有多少商品没有销量数据。
- byChannel?:{selected:number;campaign:number};unitsUnknown?:number};
+ byChannel?:{selected:number;campaign:number};unitsUnknown?:number;rolling?:RollingQueue};
 
 const PID=/^\d{19}$/;
 
@@ -69,7 +84,7 @@ export function validateLeadsQueue(value:unknown,expectedMarket:string):LeadsQue
   return {pid:row.pid,queriedAt:row.queriedAt,dueAt:row.dueAt,
    leads:row.leads==null?null:count(row.leads),title:typeof row.title==="string"?row.title:""};
  });
- return {market:expectedMarket,config:validateQueueConfig(v.config),refreshDays:count(v.refreshDays),
+ return {market:expectedMarket,rolling:rollingQueue(v.rolling),config:validateQueueConfig(v.config),refreshDays:count(v.refreshDays),
   eligible:count(v.eligible),linked:count(v.linked),scope:count(v.scope),
   ...(v.byChannel&&typeof v.byChannel==="object"?{byChannel:{selected:count((v.byChannel as Record<string,unknown>).selected??0),campaign:count((v.byChannel as Record<string,unknown>).campaign??0)}}:{}),
   ...(typeof v.unitsUnknown==="number"?{unitsUnknown:count(v.unitsUnknown)}:{}),
@@ -109,11 +124,6 @@ export function validateLeadsQueueRequest(value:unknown):{action:"save";market:s
 }
 
 /** Start one batch detached; the page follows ``run`` in the status payload. */
-export function startLeadsRun(market:string):{started:boolean}{
- const root=projectRoot();
- const log=openSync(join(root,"var/leads-run.log"),"a");
- const child=spawn(join(root,".venv/bin/python"),[join(root,"scripts/leads-run.py"),"--market",market],
-  {cwd:root,detached:true,stdio:["ignore",log,log],env:{...process.env,PYTHONDONTWRITEBYTECODE:"1"}});
- child.unref();
- return {started:true};
+export function startLeadsRun(market:string):Promise<LeadsQueueState>{
+ return runQueue(["run","--market",market],market);
 }

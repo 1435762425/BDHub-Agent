@@ -28,8 +28,7 @@ export async function POST(request:Request){
   if(call.action==="run"){
    const current=await readLeadsQueue(market);
    if(current.run?.running)return Response.json({error:'leads_run_already_running'},{status:409,headers});
-   startLeadsRun(market);
-   return Response.json(await readLeadsQueue(market),{headers});
+   return Response.json(await startLeadsRun(market),{headers});
   }
   return Response.json(await saveLeadsQueue(market,call.config),{headers});
  }

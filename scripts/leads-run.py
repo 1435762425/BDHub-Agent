@@ -228,7 +228,9 @@ def main():
         progress({'startedAt': time.time(), 'targets': 0, 'done': 0, 'leads': 0,
                   'networkRequests': 0, 'stopped': None, 'errors': [], 'platformWrites': 0,
                   'batchSize': args.limit or load(ROOT)['batchSize'], 'dueQueue': 0})
-        report = run(ROOT,market=args.market, limit=args.limit, max_pages=args.max_pages, on_progress=progress)
+        from lib.rolling_leads import run as rolling_run
+        report = rolling_run(ROOT,args.market,fragments=min(args.limit or 8,100))
+        report.update(done=report['completed'],targets=report['fragments'],leads=0,dueQueue=sum(r['runnable'] for r in report['queue']['types'].values()) if report.get('queue') else 0,batchSize=min(args.limit or 8,100))
         write_state(ROOT, report | {'running': False},args.market)
         print(json.dumps(report, ensure_ascii=False))
         return 0

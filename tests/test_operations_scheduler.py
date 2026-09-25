@@ -268,25 +268,25 @@ class StageWiring(unittest.TestCase):
     def test_br_taplink_and_kalodata_are_pinned_to_br(self):
         def answers(args,_label):
             payload={'missing':0} if args[0]=='scripts/catalog-names.py' else \
-                {'market':'br','done':1,'targets':1,'dueQueue':1,'stuck':0,'errors':[],'stopped':None}
+                {'market':'br','sliceComplete':True,'completed':1,'A':1,'B':0,'fragments':1,'networkRequests':1}
             return {'state':'completed','itemCount':1,'complete':True,'platformWrites':0,'payload':payload}
         executor,calls=self.executor(answers)
         self.assertEqual(executor.execute(None,{'market':'br','applicableSources':['campaign']},'taplink_prepare',{'jobs':{}})['state'],'completed')
         self.assertTrue(all('--market' in args and args[args.index('--market')+1]=='br' for args,_ in calls))
         calls.clear();result=executor.execute(None,{'market':'br','applicableSources':['campaign']},'kalodata',{'jobs':{}})
         self.assertEqual((result['state'],result['itemCount']),('completed',1))
-        self.assertEqual(calls[0][0][:3],['scripts/leads-run.py','--market','br'])
+        self.assertEqual(calls[0][0][:4],['scripts/rolling-leads.py','run','--market','br'])
 
     def test_it_kalodata_and_send_pool_pass_required_market(self):
         def answers(args,_label):
-            if args[0]=='scripts/leads-run.py':
+            if args[0]=='scripts/rolling-leads.py':
                 return {'state':'failed','itemCount':0,'complete':False,'platformWrites':0,
                         'errorCode':'preflight-test','payload':{}}
             return {'state':'completed','itemCount':0,'complete':True,'platformWrites':0,
                     'payload':{'counts':{'positions':1}}}
         executor,calls=self.executor(answers)
         executor.execute(None,{'market':'it','applicableSources':['campaign']},'kalodata',{'jobs':{}})
-        self.assertEqual(calls[0][0][:3],['scripts/leads-run.py','--market','it'])
+        self.assertEqual(calls[0][0][:4],['scripts/rolling-leads.py','run','--market','it'])
         calls.clear()
         result=executor.execute(None,{'market':'it','applicableSources':['campaign']},'send_pool',{'jobs':{}})
         self.assertEqual(result['itemCount'],1)
@@ -579,39 +579,33 @@ class StageWiring(unittest.TestCase):
         self.assertFalse(result['complete'])
         self.assertEqual(result['errorCode'],'identity_queue_stalled')
 
-    def test_kalodata_counts_completed_video_pids_at_quota(self):
-        def answers(args,_label):
-            if args[0]=='scripts/leads-run.py':payload={'done':1261,'targets':1261,'dueQueue':1261,
-                                                        'stuck':0,'errors':[],'stopped':None}
-            elif args[1]=='init':payload={'generationId':'video-generation-test'}
-            else:payload={'error':'kalodata_daily_quota_exhausted',
-                          'status':{'counts':{'completed':20}}}
-            return {'state':'completed','itemCount':0,'complete':True,'platformWrites':0,'payload':payload}
-        result=self.executor(answers)[0].execute(
-            None,{'applicableSources':['campaign']},'kalodata',{'jobs':{}})
-        self.assertEqual(result['state'],'quota_exhausted')
-        self.assertEqual(result['itemCount'],1281)
-        self.assertEqual(result['scope']['aCompleted'],1261)
-        self.assertEqual(result['scope']['bCompleted'],20)
+    def test_kalodata_publishes_completed_subset_at_quota_with_remaining_scope(self):
+        payload={'market':'it','sliceComplete':True,'completed':5,'A':3,'B':2,'fragments':8,'networkRequests':12,
+                 'stopped':'kalodata_daily_quota_exhausted','queue':{'control':{'state':'waiting_quota'}}}
+        executor,calls=self.executor(lambda *_:{'state':'completed','complete':True,'platformWrites':0,'payload':payload})
+        result=executor.execute(None,{'applicableSources':['campaign']},'kalodata',{'jobs':{}})
+        self.assertEqual(result['state'],'completed')
+        self.assertEqual(result['itemCount'],5)
+        self.assertEqual(result['scope']['aCompleted'],3);self.assertEqual(result['scope']['bCompleted'],2)
+        self.assertEqual(result['scope']['remaining']['control']['state'],'waiting_quota')
+        self.assertEqual(len(calls),1)
 
-    def test_kalodata_sales_consumes_every_due_batch_before_identity(self):
-        reports=iter(({'market':'br','done':5000,'targets':5000,'dueQueue':8000,'stuck':0,'errors':[],'stopped':None},
-                      {'market':'br','done':3000,'targets':3000,'dueQueue':3000,'stuck':0,'errors':[],'stopped':None}))
-        def answers(args,_label):
-            return {'state':'completed','itemCount':0,'complete':True,'platformWrites':0,'payload':next(reports)}
-        executor,calls=self.executor(answers)
+    def test_kalodata_has_a_finite_slice_not_an_all_due_products_barrier(self):
+        payload={'market':'br','sliceComplete':True,'completed':2,'A':1,'B':1,'fragments':8,'networkRequests':24,
+                 'queue':{'remaining':8000}}
+        executor,calls=self.executor(lambda *_:{'state':'completed','complete':True,'platformWrites':0,'payload':payload})
         result=executor.execute(None,{'market':'br','applicableSources':['campaign']},'kalodata',{'jobs':{}})
-        self.assertEqual((result['state'],result['itemCount'],len(calls)),('completed',8000,2))
+        self.assertEqual((result['state'],result['itemCount'],len(calls)),('completed',2,1))
+        self.assertEqual(result['scope']['coverage'],'bounded_query_slice')
+        self.assertEqual(result['scope']['remaining']['remaining'],8000)
 
-    def test_kalodata_stuck_pid_blocks_generation(self):
-        def answers(args,_label):
-            return {'state':'completed','itemCount':0,'complete':True,'platformWrites':0,
-                    'payload':{'market':'br','done':0,'targets':0,'dueQueue':0,'stuck':1,
-                               'errors':[],'stopped':'queue_empty'}}
-        result=self.executor(answers)[0].execute(
-            None,{'market':'br','applicableSources':['campaign']},'kalodata',{'jobs':{}})
-        self.assertEqual(result['state'],'needs_human')
-        self.assertFalse(result['complete'])
+    def test_kalodata_single_pid_isolation_does_not_block_known_results(self):
+        payload={'market':'br','sliceComplete':True,'completed':1,'A':1,'B':0,'fragments':2,'networkRequests':4,
+                 'errors':[{'pid':'one','code':'technical_failure'}],'queue':{'isolated':1}}
+        executor,_=self.executor(lambda *_:{'state':'completed','complete':True,'platformWrites':0,'payload':payload})
+        result=executor.execute(None,{'market':'br','applicableSources':['campaign']},'kalodata',{'jobs':{}})
+        self.assertEqual(result['state'],'completed');self.assertTrue(result['complete'])
+        self.assertEqual(result['scope']['remaining']['isolated'],1)
 
     def test_success_exit_without_valid_report_or_with_busy_lock_is_failure(self):
         class Result:

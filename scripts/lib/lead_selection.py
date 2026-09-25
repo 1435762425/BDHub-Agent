@@ -1,5 +1,6 @@
 """Publish one current, bounded Kalodata lead generation without deleting raw evidence."""
 import json
+from decimal import Decimal,InvalidOperation
 from contextlib import closing
 from datetime import date, timedelta
 from pathlib import Path
@@ -9,7 +10,7 @@ import time
 from lib.second_cycle import CycleError, digest, encoded
 
 POLICY_VERSION = "kalodata-positive-gmv-v2"
-DEFAULT_LIMIT = 20
+DEFAULT_LIMIT = 50
 
 
 def _edge(value):
@@ -26,18 +27,31 @@ def _edge(value):
     return value
 
 
+def _order(edge):
+    try:gmv=Decimal(str(edge.get('revenueValue')))
+    except InvalidOperation:gmv=None
+    if gmv is not None and not gmv.is_finite():gmv=None
+    return (gmv is None,-gmv if gmv is not None else 0,edge['sourceRank'],-edge['units'],edge['sourceId'])
+
+
 def select_top_leads(edges, limit=DEFAULT_LIMIT):
     if type(limit) is not int or not 1 <= limit <= 50:
         raise CycleError("lead_limit_invalid")
     unique = {}
     for raw in edges:
         edge = _edge(raw)
-        identity = str(edge.get("kalodataCreatorId") or "handle:" + edge["sourceHandle"])
+        identity = str(edge.get("kalodataCreatorId") or "handle:"+edge["sourceHandle"].lower())
         prior = unique.get(identity)
-        key = (edge["sourceRank"], -edge["units"], edge["sourceId"])
+        key = _order(edge)
         if prior is None or key < prior[0]:
             unique[identity] = (key, edge)
-    return [row[1] for row in sorted(unique.values(), key=lambda row: row[0])[:limit]]
+    result=[];handles=set()
+    for _,edge in sorted(unique.values(),key=lambda row:row[0]):
+        handle=edge['sourceHandle'].lower()
+        if handle in handles:continue
+        handles.add(handle);result.append(edge)
+        if len(result)>=limit:break
+    return result
 
 
 def _require_schema(db):
@@ -78,7 +92,13 @@ def publish_query(root, *, plan_id, query_id, pid, edges, receipt_fingerprints,
                           old["policy_version"],old["selected_count"],old["receipt_fingerprint"])
                 if observed!=frozen:raise CycleError("lead_publication_conflict")
             else:
-                for edge in checked:
+                canonical={}
+                for edge in sorted(checked,key=_order):
+                    previous=canonical.get(edge['sourceId'])
+                    if previous and (previous['sourceHandle'].lower(),previous.get('kalodataCreatorId'))!=(edge['sourceHandle'].lower(),edge.get('kalodataCreatorId')):
+                        raise CycleError('lead_source_identity_conflict')
+                    canonical.setdefault(edge['sourceId'],edge)
+                for edge in canonical.values():
                     db.execute("INSERT OR IGNORE INTO source_edge(plan_id,source_id,payload) VALUES(?,?,?)",
                                (plan_id,edge["sourceId"],encoded(edge)))
                     db.execute("""INSERT INTO source_edge_index(
@@ -98,6 +118,10 @@ def publish_query(root, *, plan_id, query_id, pid, edges, receipt_fingerprints,
                 for position,edge in enumerate(selected,start=1):
                     db.execute("INSERT INTO lead_query_selection VALUES(?,?,?,?,?)",
                                (query_id,edge["sourceId"],edge["sourceRank"],edge["units"],position))
+            latest=db.execute("SELECT r.window_end FROM lead_query_head h JOIN lead_query_run r ON r.query_id=h.query_id WHERE h.plan_id=? AND h.pid=?",(plan_id,pid)).fetchone()
+            if latest and latest[0]>window_end:
+                db.execute("COMMIT")
+                return {"queryId":query_id,"selected":len(selected),"rawPositive":len(checked),"superseded":True}
             db.execute("INSERT INTO lead_query_head VALUES(?,?,?) ON CONFLICT(plan_id,pid) DO UPDATE SET query_id=excluded.query_id",
                        (plan_id,pid,query_id))
             db.execute("COMMIT")
@@ -107,7 +131,7 @@ def publish_query(root, *, plan_id, query_id, pid, edges, receipt_fingerprints,
             "sourceIds":[edge["sourceId"] for edge in selected],"cached":old is not None}
 
 
-def backfill_receipts(root, *, apply=False, limit=DEFAULT_LIMIT, at=None):
+def backfill_receipts(root, *, apply=False, limit=20, at=None):
     """Rebuild current selections from durable local receipts; never calls Kalodata."""
     root=Path(root);leads=root/"var/kalodata-leads.sqlite";cycle=root/"var/second-cycle.sqlite"
     if not leads.exists() or not cycle.exists():raise CycleError("lead_backfill_source_missing")

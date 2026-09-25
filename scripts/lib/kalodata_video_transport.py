@@ -14,8 +14,8 @@ from lib.second_cycle import CycleError
 
 
 class VideoProvider:
- def __init__(self,root,legacy,pid,start,end):
-  self.root=Path(root);self.legacy=Path(legacy);self.pid=pid;self.start=start;self.end=end
+ def __init__(self,root,legacy,pid,start,end,market='it'):
+  self.root=Path(root);self.legacy=Path(legacy);self.pid=pid;self.start=start;self.end=end;self.market=market
  def __enter__(self):
   configure_vendored_bdhub(root=self.root,legacy_root=self.legacy)
   from bdhub import config
@@ -24,7 +24,9 @@ class VideoProvider:
   spec=importlib.util.spec_from_file_location('video_evidence_kalodata_core',path)
   core=importlib.util.module_from_spec(spec);spec.loader.exec_module(core)
   self.cookie_path=core.COOKIE_PATH;self.before=hashlib.sha256(self.cookie_path.read_bytes()).hexdigest()
-  self.headers=core.build_headers(core.read_cookie(),self.pid,'IT','EUR');self.proxy=core.load_proxy_url()
+  from lib.market_registry import market as market_record
+  currency=market_record(self.root,self.market)['currency'];region='GB' if self.market=='uk' else self.market.upper()
+  self.headers=core.build_headers(core.read_cookie(),self.pid,region,currency);self.proxy=core.load_proxy_url()
   self.session=requests.Session(impersonate='chrome');self.last=0.;self.requests=0
   return self
  def __exit__(self,*_):
@@ -45,6 +47,15 @@ class VideoProvider:
       allow_redirects=False,proxies={'http':self.proxy,'https':self.proxy} if self.proxy else None)
   try:body=response.json()
   except ValueError:body={}
+  self.last_result={'http':response.status_code,'success':body.get('success') if isinstance(body,dict) else None}
+  if isinstance(body,dict):
+   message=body.get('message')
+   if isinstance(message,str):
+    import json
+    try:message=json.loads(message)
+    except ValueError:message={}
+   cause=(message or {}).get('cause') if isinstance(message,dict) else None
+   if isinstance(cause,str) and re.fullmatch(r'[A-Z0-9_.]{1,80}',cause):self.last_result['cause']=cause
   if quota_exhausted(body):raise CycleError('kalodata_daily_quota_exhausted')
   if response.status_code in (401,403):raise CycleError('kalodata_auth_required')
   if response.status_code!=200 or not isinstance(body,dict) or body.get('success') is not True:
@@ -53,8 +64,8 @@ class VideoProvider:
 
 
 @contextmanager
-def live_provider(root,legacy,pid,start,end):
+def live_provider(root,legacy,pid,start,end,market='it'):
  lock_path=Path(legacy)/'data/research/kalodata/.browser.lock'
  with lock_path.open('rb') as lock:
   fcntl.flock(lock,fcntl.LOCK_SH|fcntl.LOCK_NB)
-  with VideoProvider(root,legacy,pid,start,end) as provider:yield provider
+  with VideoProvider(root,legacy,pid,start,end,market) as provider:yield provider

@@ -71,7 +71,7 @@ def campaign_fixture(folder, *, chosen=None, sales=None, with_sales=True):
 class ConfigFile(unittest.TestCase):
     def test_defaults_are_the_confirmed_policy(self):
         self.assertEqual(DEFAULTS['refreshDays'], 7)
-        self.assertEqual(validate({})['leadsPerPid'], 20)
+        self.assertEqual(validate({})['leadsPerPid'], 50)
 
     def test_out_of_range_values_are_refused(self):
         for bad in [{'refreshDays': 0}, {'refreshDays': 91}, {'leadsPerPid': 51},

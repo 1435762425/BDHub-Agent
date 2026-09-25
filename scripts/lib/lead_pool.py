@@ -134,7 +134,7 @@ def _build(conn, now, limit, eligible_pids=None,root=None,market='it'):
     resolved = _rows(conn, """SELECT x.source_handle AS handle,min(r.creator_id) AS creator_id,
         count(DISTINCT r.creator_id) AS owners FROM cycle_identity_resolution r
         JOIN source_edge_index x ON x.plan_id=r.plan_id AND x.source_id=r.source_id
-        WHERE """+("x.plan_id=? AND " if plan_id else "")+"""x.source_kind='kalodata_http' GROUP BY x.source_handle HAVING owners=1""",
+        WHERE """+("x.plan_id=? AND " if plan_id else "")+"""x.source_kind IN ('kalodata_http','kalodata_video') GROUP BY x.source_handle HAVING owners=1""",
         (plan_id,) if plan_id else ())
     owner = {row['handle']: row['creator_id'] for row in resolved}
     if owner:
@@ -147,7 +147,7 @@ def _build(conn, now, limit, eligible_pids=None,root=None,market='it'):
                       'sourceClass':'A','videoViews':None,'videoId':None,'videoReleasedAt':None} for row in edges]
     else:
         positions = []
-    video_rows=_rows(conn,'SELECT * FROM video_lead_current') if market=='it' and conn.execute(
+    video_rows=_rows(conn,'SELECT * FROM video_lead_current WHERE market=?',(market,)) if conn.execute(
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name='video_lead_current'").fetchone() else []
     video_owner=_video_owner(root,market) if root else {};video_unresolved=0
     from lib.video_window import current as video_current

@@ -23,18 +23,31 @@ class IdentityBridge:
    # CROSS JOIN fixes the loop order.  With ordinary JOIN SQLite chose q -> every source_edge -> s,
    # turning a few thousand current rows into tens of millions of JSON parses while holding the
    # write transaction.  The current head must drive its bounded selection before the edge lookup.
-   sql="""SELECT e.source_id,e.payload FROM lead_query_head q
-    CROSS JOIN lead_query_selection s
-    CROSS JOIN source_edge e
-    LEFT JOIN cycle_identity_handoff h ON h.plan_id=e.plan_id AND h.source_id=e.source_id
-    WHERE s.query_id=q.query_id AND e.plan_id=q.plan_id AND e.source_id=s.source_id
-    AND e.plan_id=? AND h.source_id IS NULL AND json_extract(e.payload,'$.creatorId') IS NULL
-    AND (? IS NULL OR e.source_id IN (SELECT value FROM json_each(?)))
-    ORDER BY s.source_rank,e.source_id LIMIT 500""" if current else """SELECT e.source_id,e.payload FROM source_edge e
-    LEFT JOIN cycle_identity_handoff h ON h.plan_id=e.plan_id AND h.source_id=e.source_id
-    WHERE e.plan_id=? AND h.source_id IS NULL AND json_extract(e.payload,'$.sourceKind')='kalodata_http'
-    AND json_extract(e.payload,'$.creatorId') IS NULL
-    AND (? IS NULL OR e.source_id IN (SELECT value FROM json_each(?))) ORDER BY e.source_id LIMIT 500"""
+   if source_ids is not None:
+    sql="""SELECT e.source_id,e.payload FROM source_edge e
+     LEFT JOIN cycle_identity_handoff h ON h.plan_id=e.plan_id AND h.source_id=e.source_id
+     WHERE e.plan_id=? AND h.source_id IS NULL AND (? IS NULL OR e.source_id IN (SELECT value FROM json_each(?)))
+     AND json_extract(e.payload,'$.creatorId') IS NULL ORDER BY e.source_id LIMIT 500"""
+   elif 'current_identity_source' in {r[0] for r in self.store.db.execute("SELECT name FROM sqlite_master WHERE type='view'")}:
+    sql="""SELECT e.source_id,e.payload FROM current_identity_source x
+     JOIN source_edge e ON e.plan_id=x.plan_id AND e.source_id=x.source_id
+     LEFT JOIN cycle_identity_handoff h ON h.plan_id=x.plan_id AND h.source_id=x.source_id
+     WHERE x.plan_id=? AND h.source_id IS NULL AND json_extract(e.payload,'$.creatorId') IS NULL
+     AND (? IS NULL OR x.source_id IN (SELECT value FROM json_each(?)))
+     ORDER BY x.source_rank,x.source_id LIMIT 500"""
+   else:
+    sql="""SELECT e.source_id,e.payload FROM lead_query_head q
+     CROSS JOIN lead_query_selection s
+     CROSS JOIN source_edge e
+     LEFT JOIN cycle_identity_handoff h ON h.plan_id=e.plan_id AND h.source_id=e.source_id
+     WHERE s.query_id=q.query_id AND e.plan_id=q.plan_id AND e.source_id=s.source_id
+     AND e.plan_id=? AND h.source_id IS NULL AND json_extract(e.payload,'$.creatorId') IS NULL
+     AND (? IS NULL OR e.source_id IN (SELECT value FROM json_each(?)))
+     ORDER BY s.source_rank,e.source_id LIMIT 500""" if current else """SELECT e.source_id,e.payload FROM source_edge e
+     LEFT JOIN cycle_identity_handoff h ON h.plan_id=e.plan_id AND h.source_id=e.source_id
+     WHERE e.plan_id=? AND h.source_id IS NULL AND json_extract(e.payload,'$.sourceKind')='kalodata_http'
+     AND json_extract(e.payload,'$.creatorId') IS NULL
+     AND (? IS NULL OR e.source_id IN (SELECT value FROM json_each(?))) ORDER BY e.source_id LIMIT 500"""
    rows=self.store.db.execute(sql,(plan,encoded(source_ids) if source_ids is not None else None,encoded(source_ids) if source_ids is not None else None)).fetchall()
    if not rows:return None
    edges=[{'sourceId':r['source_id'],'handle':json.loads(r['payload'])['sourceHandle']} for r in rows]

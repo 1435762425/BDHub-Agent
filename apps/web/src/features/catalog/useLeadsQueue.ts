@@ -42,7 +42,7 @@ export function useLeadsQueue(market:string):LeadsQueueController{
    const value=await r.json();
    if(!r.ok){setMessage(r.status===409?"已经有一批在跑，等它结束再点。":"暂时无法启动查询。");return;}
    setData(value);
-   setMessage("已启动。这一批是只读查询，不发消息；额度用完会自动停下并保留断点，剩下的下次再跑。");
+   setMessage("已提交本次读取与线索衔接流程，不发消息。额度不足保留原断点；开启自动运营的市场会按状态续跑。");
   }catch{setMessage("暂时无法启动查询。");}
   finally{setBusy(false);}
  },[market]);

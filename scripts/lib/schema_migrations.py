@@ -1064,6 +1064,53 @@ ALTER TABLE inbox_history_page ADD COLUMN deferred_to_hot INTEGER NOT NULL DEFAU
 """)
 
 
+SECOND_CYCLE_ROLLING_LEADS = Migration(21, "rolling_market_leads_v1", """
+CREATE TABLE kalodata_video_generation_scope(generation_id TEXT PRIMARY KEY,market TEXT NOT NULL,region TEXT NOT NULL,currency TEXT NOT NULL);
+INSERT INTO kalodata_video_generation_scope SELECT generation_id,'it','IT','EUR' FROM kalodata_video_generation;
+CREATE TABLE kalodata_video_run_scope(run_id TEXT PRIMARY KEY,market TEXT NOT NULL);
+INSERT INTO kalodata_video_run_scope SELECT run_id,'it' FROM kalodata_video_run;
+ALTER TABLE video_lead_current RENAME TO video_lead_current_legacy_it_v20;
+CREATE TABLE video_lead_current(
+ generation_id TEXT NOT NULL,pid TEXT NOT NULL,kalodata_creator_id TEXT NOT NULL,handle TEXT NOT NULL,
+ run_id TEXT NOT NULL,video_id TEXT NOT NULL,views INTEGER NOT NULL,released_at TEXT NOT NULL,
+ video_sale INTEGER NOT NULL,observed_at REAL NOT NULL,market TEXT NOT NULL DEFAULT 'it',
+ PRIMARY KEY(market,pid,kalodata_creator_id));
+INSERT INTO video_lead_current SELECT *,'it' FROM video_lead_current_legacy_it_v20;
+CREATE INDEX video_market_current_order ON video_lead_current(market,views DESC,released_at DESC,pid,kalodata_creator_id);
+ALTER TABLE kalodata_video_author_cache RENAME TO kalodata_video_author_cache_legacy_it_v20;
+CREATE TABLE kalodata_video_author_cache(
+ video_id TEXT NOT NULL,kalodata_creator_id TEXT NOT NULL,handle TEXT NOT NULL,payload_hash TEXT NOT NULL,
+ video_url TEXT NOT NULL,observed_at REAL NOT NULL,market TEXT NOT NULL DEFAULT 'it',PRIMARY KEY(market,video_id));
+INSERT INTO kalodata_video_author_cache SELECT *,'it' FROM kalodata_video_author_cache_legacy_it_v20;
+ALTER TABLE kalodata_video_head RENAME TO kalodata_video_head_legacy_it_v20;
+CREATE TABLE kalodata_video_head(pid TEXT NOT NULL,run_id TEXT NOT NULL,market TEXT NOT NULL DEFAULT 'it',PRIMARY KEY(market,pid));
+INSERT INTO kalodata_video_head SELECT *,'it' FROM kalodata_video_head_legacy_it_v20;
+CREATE VIEW current_identity_source AS
+ SELECT h.plan_id,x.source_id,x.source_handle,x.pid,x.source_rank,x.source_kind
+ FROM lead_query_head h JOIN lead_query_selection s ON s.query_id=h.query_id
+ JOIN source_edge_index x ON x.plan_id=h.plan_id AND x.source_id=s.source_id
+ UNION ALL
+ SELECT p.id,x.source_id,x.source_handle,x.pid,x.source_rank,x.source_kind
+ FROM video_lead_current v JOIN plan p ON p.market=v.market AND p.institution='bjn-local-research'
+ JOIN source_edge_index x ON x.plan_id=p.id AND x.source_id=('video:'||v.run_id||':'||v.video_id);
+CREATE TABLE lead_query_task(
+ market TEXT NOT NULL,pid TEXT NOT NULL,kind TEXT NOT NULL,state TEXT NOT NULL,
+ query_id TEXT,window_start TEXT,window_end TEXT,policy_version TEXT NOT NULL,request_scope_json TEXT NOT NULL DEFAULT '{}',
+ ready_at REAL NOT NULL,served_at REAL NOT NULL DEFAULT 0,service_order INTEGER NOT NULL DEFAULT 0,units INTEGER NOT NULL DEFAULT 0,
+ material_key TEXT NOT NULL,attempts INTEGER NOT NULL DEFAULT 0,retry_at REAL NOT NULL DEFAULT 0,
+ last_completed REAL,next_due REAL,last_error TEXT,created_at REAL NOT NULL,updated_at REAL NOT NULL,
+ PRIMARY KEY(market,pid,kind));
+CREATE INDEX lead_query_task_ready ON lead_query_task(market,kind,state,retry_at,served_at,ready_at,pid);
+CREATE TABLE lead_query_task_event(
+ id INTEGER PRIMARY KEY AUTOINCREMENT,market TEXT NOT NULL,pid TEXT NOT NULL,kind TEXT NOT NULL,
+ query_id TEXT,state TEXT NOT NULL,detail_json TEXT NOT NULL,at REAL NOT NULL);
+CREATE TABLE lead_query_market(
+ market TEXT PRIMARY KEY,next_kind TEXT NOT NULL DEFAULT 'A',next_a_phase TEXT NOT NULL DEFAULT 'resume',next_b_phase TEXT NOT NULL DEFAULT 'resume',service_counter INTEGER NOT NULL DEFAULT 0,state TEXT NOT NULL DEFAULT 'ready',
+ retry_at REAL NOT NULL DEFAULT 0,quota_at REAL,available_at REAL,quota_checks INTEGER NOT NULL DEFAULT 0,
+ last_error TEXT,scope_checked_at REAL NOT NULL DEFAULT 0,updated_at REAL NOT NULL);
+""")
+
+
 DATABASES = {
     "catalog-links": ("catalog-links.sqlite", (CATALOG_LINKS,)),
     "second-cycle": ("second-cycle.sqlite", (SECOND_CYCLE, SECOND_CYCLE_INDEXES,
@@ -1084,7 +1131,8 @@ DATABASES = {
                                                 SECOND_CYCLE_WORKFLOW_RESOURCES,
                                                 SECOND_CYCLE_AGENT_CONVERSATION,
                                                 SECOND_CYCLE_INBOX_HISTORY,
-                                                SECOND_CYCLE_INBOX_HISTORY_DEFERRED)),
+                                                SECOND_CYCLE_INBOX_HISTORY_DEFERRED,
+                                                SECOND_CYCLE_ROLLING_LEADS)),
 }
 
 REGISTRY_SQL = """
@@ -1182,6 +1230,9 @@ def apply_database(root, key, *, clock=time.time):
                 db.execute(REGISTRY_SQL)
                 for statement in _statements(migration.sql):
                     db.execute(statement)
+                if key=="second-cycle" and migration.version==21:
+                    from lib.video_identity import backfill_current
+                    backfill_current(db)
                 if key=="second-cycle" and migration.version==15:
                     _backfill_market_templates(db)
                 db.execute("INSERT INTO agent_schema_migration(version,name,checksum,applied_at) VALUES(?,?,?,?)",

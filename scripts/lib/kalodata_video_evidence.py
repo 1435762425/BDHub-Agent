@@ -82,7 +82,7 @@ def parse_video_list(body, pid, *, window_start, window_end, min_views=1000, pag
     oldest=min(ordered).isoformat() if ordered else None;newest=max(ordered).isoformat() if ordered else None
     return {'page':page,'rowsReceived':len(rows),'candidates':candidates,'unknownDateVideoIds':unknown_dates,
             'newestReleaseDate':newest,'oldestReleaseDate':oldest,
-            'reachedWindowStart':bool(ordered and min(ordered)<=start),
+            'reachedWindowStart':bool(ordered and min(ordered)<start),
             'listFingerprint':digest(rows)}
 
 
@@ -170,6 +170,8 @@ def collect(pid, window_start, window_end, requester, *, min_views=1000, clock=t
 
 
 def persist(store, report, *, in_transaction=False):
+    market=report.get('market','it')
+    if market not in ('it','br','my','uk'):raise CycleError('video_market_invalid')
     if report.get('schema') != 'bdhub.kalodata-video-evidence.v1':
         raise CycleError('kalodata_video_report_invalid')
     required = {'kalodata_video_run','kalodata_video_evidence','kalodata_video_head'}
@@ -187,6 +189,8 @@ def persist(store, report, *, in_transaction=False):
                 report['resolvedVideos'],report['networkRequests'],report['observedAt'],report['sortField'],
                 report['maxPages'],report['pagesRead'],report['selectedVideos'],report['coverage'])
         if prior:
+            scope=store.db.execute('SELECT market FROM kalodata_video_run_scope WHERE run_id=?',(report['runId'],)).fetchone()
+            if (scope[0] if scope else 'it')!=market:raise CycleError('video_market_mismatch')
             observed=tuple(prior[key] for key in ('pid','window_start','window_end','min_views','max_videos',
                 'list_fingerprint','state','rows_received','qualifying_videos','resolved_videos','network_requests',
                 'observed_at','sort_field','max_pages','pages_read','selected_videos','coverage'))
@@ -197,13 +201,14 @@ def persist(store, report, *, in_transaction=False):
             rows_received,qualifying_videos,resolved_videos,network_requests,observed_at,
             sort_field,max_pages,pages_read,selected_videos,coverage)
             VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',(report['runId'],*frozen))
+        store.db.execute('INSERT INTO kalodata_video_run_scope VALUES(?,?)',(report['runId'],market))
         for row in report['evidence']:
             store.db.execute('INSERT INTO kalodata_video_evidence VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
                 (report['runId'],row['videoId'],row['pid'],row['kalodataCreatorId'],row['handle'],row['views'],
                  row['sale'],row['revenueRaw'],row['releaseTime'],row['duration'],row['description'],row['videoUrl'],
                  row['contentType'],int(row['isAd']),int(row['isAi']),row['payloadHash'],row['observedAt']))
-        store.db.execute('INSERT INTO kalodata_video_head VALUES(?,?) ON CONFLICT(pid) DO UPDATE SET run_id=excluded.run_id',
-                         (report['pid'],report['runId']))
+        store.db.execute('INSERT INTO kalodata_video_head(pid,run_id,market) VALUES(?,?,?) ON CONFLICT(market,pid) DO UPDATE SET run_id=excluded.run_id',
+                         (report['pid'],report['runId'],market))
     return {'runId':report['runId'],'cached':False,'videos':report['resolvedVideos']}
 
 
@@ -231,7 +236,7 @@ def zero_sale_candidates(root, store, pid, limit=20):
                 "SELECT creator_id,current_handle FROM creator_identity WHERE market='it' AND handle_conflict=0") if row[1]}
     head=store.db.execute('SELECT h.run_id,r.window_start,r.window_end,r.state,r.sort_field,r.coverage '
         'FROM kalodata_video_head h '
-        'JOIN kalodata_video_run r ON r.run_id=h.run_id WHERE h.pid=?',(pid,)).fetchone()
+        "JOIN kalodata_video_run r ON r.run_id=h.run_id WHERE h.market='it' AND h.pid=?",(pid,)).fetchone()
     if not head:return []
     if head['state']!='completed' or head['sort_field']!='create_time' or head['coverage']!='complete':return []
     window_start=date.fromisoformat(head['window_start']);as_of=date.fromisoformat(head['window_end'])
@@ -266,7 +271,7 @@ def zero_sale_candidates(root, store, pid, limit=20):
 
 
 def status(root, store, pid=None):
-    where=' WHERE h.pid=?' if pid else '';args=(pid,) if pid else ()
+    where=" WHERE h.market='it' AND h.pid=?" if pid else " WHERE h.market='it'";args=(pid,) if pid else ()
     runs=store.db.execute('SELECT count(*) FROM kalodata_video_run').fetchone()[0]
     videos=store.db.execute('SELECT count(*) FROM kalodata_video_evidence').fetchone()[0]
     heads=list(store.db.execute('SELECT h.pid,h.run_id,r.state,r.window_start,r.window_end,r.min_views,'

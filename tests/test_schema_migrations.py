@@ -28,7 +28,7 @@ class SchemaMigrations(unittest.TestCase):
     def test_check_is_read_only_and_apply_is_idempotent(self):
         before = check_all(self.root)
         self.assertFalse(before["ready"])
-        self.assertEqual([len(state["pending"]) for state in before["databases"]],[1,20])
+        self.assertEqual([len(state["pending"]) for state in before["databases"]],[1,21])
         # A check must not create its own registry.
         with closing(sqlite3.connect(self.root / "var" / "catalog-links.sqlite")) as db:
             self.assertFalse(db.execute("SELECT 1 FROM sqlite_master WHERE name='agent_schema_migration'").fetchone())
@@ -70,7 +70,7 @@ class SchemaMigrations(unittest.TestCase):
 
     def test_v19_upgrade_preserves_existing_history_page(self):
         filename, migrations = DATABASES['second-cycle']
-        with patch.dict(DATABASES, {'second-cycle': (filename, migrations[:-1])}):
+        with patch.dict(DATABASES, {'second-cycle': (filename, migrations[:-2])}):
             apply_all(self.root)
         path = self.root / 'var' / filename
         with closing(sqlite3.connect(path)) as db, db:
@@ -80,6 +80,26 @@ class SchemaMigrations(unittest.TestCase):
         with closing(sqlite3.connect(path)) as db:
             self.assertEqual(db.execute('SELECT request_cursor,next_cursor,message_count,deferred_to_hot FROM inbox_history_page').fetchone(),
                              ('0', '80', 5, 0))
+
+    def test_v21_preserves_it_projections_and_allows_the_same_pid_and_video_in_another_market(self):
+        filename,migrations=DATABASES['second-cycle']
+        with patch.dict(DATABASES,{'second-cycle':(filename,migrations[:-1])}):
+            apply_all(self.root)
+        path=self.root/'var'/filename
+        with closing(sqlite3.connect(path)) as db,db:
+            db.execute("INSERT INTO video_lead_current VALUES('g','pid','creator','handle','r','video',1000,'2026-09-01',0,100)")
+            db.execute("INSERT INTO kalodata_video_head VALUES('pid','r')")
+            db.execute("INSERT INTO kalodata_video_author_cache VALUES('video','creator','handle','hash','url',100)")
+        first=apply_all(self.root);self.assertTrue(first['ready'])
+        self.assertTrue(all(not row['appliedNow'] for row in apply_all(self.root)['databases']))
+        with closing(sqlite3.connect(path)) as db,db:
+            self.assertEqual(db.execute('SELECT count(*) FROM video_lead_current_legacy_it_v20').fetchone()[0],1)
+            self.assertEqual(db.execute("SELECT market,pid FROM video_lead_current").fetchone(),('it','pid'))
+            db.execute("INSERT INTO video_lead_current VALUES('g2','pid','creator','different','r2','video',2000,'2026-09-02',0,101,'br')")
+            db.execute("INSERT INTO kalodata_video_head VALUES('pid','r2','br')")
+            db.execute("INSERT INTO kalodata_video_author_cache VALUES('video','creator','different','hash2','url2',101,'br')")
+            self.assertEqual(db.execute('SELECT count(*) FROM video_lead_current').fetchone()[0],2)
+            self.assertEqual(db.execute("SELECT handle FROM kalodata_video_author_cache WHERE market='it'").fetchone()[0],'handle')
 
     def test_missing_database_is_never_created_by_check_or_apply(self):
         missing = self.root / "var" / "second-cycle.sqlite"

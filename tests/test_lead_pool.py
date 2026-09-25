@@ -123,7 +123,7 @@ class Layers(unittest.TestCase):
                 db.executemany('INSERT INTO creator_identity VALUES(?,?,?,0)',
                                [('a','it','a.video'),('b','it','b.video')])
             with closing(sqlite3.connect(var/'second-cycle.sqlite')) as db,db:
-                db.executemany('INSERT INTO video_lead_current VALUES(?,?,?,?,?,?,?,?,?,?)',[
+                db.executemany('INSERT INTO video_lead_current(generation_id,pid,kalodata_creator_id,handle,run_id,video_id,views,released_at,video_sale,observed_at) VALUES(?,?,?,?,?,?,?,?,?,?)',[
                   ('g',b_pid,'ka','a.video','r','va',150000,__import__('lib.video_window',fromlist=['bounds']).bounds(NOW)[1].isoformat(),0,NOW),
                   ('g',c_pid,'kb','b.video','r','vb',26000,__import__('lib.video_window',fromlist=['bounds']).bounds(NOW)[1].isoformat(),0,NOW)])
             state=pool(folder,now=NOW)
@@ -141,7 +141,7 @@ class Layers(unittest.TestCase):
                 ids.execute('CREATE TABLE creator_identity(creator_id,current_handle,market,handle_conflict)')
                 ids.execute("INSERT INTO creator_identity VALUES('b','creator.b','it',0)")
             with closing(sqlite3.connect(Path(folder)/'var/second-cycle.sqlite')) as db,db:
-                db.execute('INSERT INTO video_lead_current VALUES(?,?,?,?,?,?,?,?,?,?)',('g',pid,'k','creator.b','r','v',2000,str(bounds(NOW)[0]),0,NOW))
+                db.execute('INSERT INTO video_lead_current(generation_id,pid,kalodata_creator_id,handle,run_id,video_id,views,released_at,video_sale,observed_at) VALUES(?,?,?,?,?,?,?,?,?,?)',('g',pid,'k','creator.b','r','v',2000,str(bounds(NOW)[0]),0,NOW))
             self.assertEqual(pool(folder,now=NOW)['counts']['bPositions'],1)
             self.assertEqual(pool(folder,now=NOW+86400)['counts']['bPositions'],0)
             with closing(sqlite3.connect(Path(folder)/'var/second-cycle.sqlite')) as db:

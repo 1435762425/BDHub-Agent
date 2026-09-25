@@ -6,7 +6,7 @@ import type {LeadsQueueController} from "./useLeadsQueue";
 const stamp=(value:number|null|undefined)=>value?new Date(value*1000).toLocaleString("zh-CN",{timeZone:"Asia/Shanghai",hour12:false}):"—";
 // A stop code means "the batch ended without finishing every product", and each one has a
 // different next action. Raw codes on the page told the operator nothing.
-const STOP:Record<string,string>={queue_empty:"队列里没有可查的商品。",browser_lock_busy:"另一个 Kalodata 读取器正占用浏览器锁——本次一个商品都没查，也没消耗额度，等它结束再点一次即可。",browser_lock_missing:"浏览器锁文件不存在，抓取器可能未就绪。",kalodata_daily_quota_exhausted:"平台今日详情额度已用完，断点已保留，明天再点。",kalodata_auth_required:"抓取身份失效，请先到系统与运维页测身份。"};
+const STOP:Record<string,string>={queue_empty:"队列里没有可查的商品。",browser_lock_busy:"另一个 Kalodata 读取器正占用浏览器锁——本次一个商品都没查，也没消耗额度，等它结束再点一次即可。",browser_lock_missing:"浏览器锁文件不存在，抓取器可能未就绪。",kalodata_daily_quota_exhausted:"平台今日详情额度已用完，断点已保留；系统按原任务核对额度恢复。",kalodata_auth_required:"抓取身份失效，请先到系统与运维页测身份。"};
 
 function runLine(run:LeadsRunState){
  const done=(run.done??0).toLocaleString(),targets=(run.targets??0).toLocaleString();
@@ -22,6 +22,14 @@ export default function LeadsQueuePanel({controller}:{controller:LeadsQueueContr
  // "Already queried" has to exclude both never-asked products and the ones parked after repeated
  // failures, or the coverage bar would count work that never reached the platform as done.
  const queried=data?Math.max(0,data.scope-data.firstTime-data.stuck):0;
+ if(data?.rolling){const queue=data.rolling,control=queue.control;return <Card title="A/B 持久读取队列" subtitle="先续断点，再给新／到期项机会；A/B 每次最多 3 个请求后轮换。每 7 天到期，不每天重扫。"><div className="space-y-4 p-5">{!queue.automaticEnabled&&<Notice tone="info">自动运营总开关当前关闭，队列与断点保留。手动推进本次流程不会开启持续任务。</Notice>}{queue.identityHold&&<Notice tone="info">身份阶段因原有故障等待恢复。已确认身份的线索继续使用，A/B 读取不被阻塞；原失败记录保留。</Notice>}<MetricTable rows={(["A","B"] as const).flatMap(kind=>{const q=queue.types[kind];return [
+ {label:`${kind} · 待首次查询`,value:q.first.toLocaleString(),detail:kind==="A"?"近 14 天，每 PID 最多 50 位正销量达人":"近 30 天，单视频至少 1,000 播放"},
+ {label:`${kind} · 到期刷新`,value:q.refresh.toLocaleString(),detail:"旧到期任务与新任务按等待起点公平排序"},
+ {label:`${kind} · 可续断点`,value:q.checkpoints.toLocaleString(),detail:`保持原窗口与页码；最早窗口截至 ${q.oldestWindowEnd??"—"}${q.staleCheckpoints?`，${q.staleCheckpoints} 项窗口已陈旧，完成后立即排新窗口`:""}`},
+ {label:`${kind} · 技术隔离`,value:(q.states.isolated??0).toLocaleString(),detail:"保留错误，其他商品继续；不需人工逐项处理"},
+ {label:`${kind} · 材料暂停`,value:(q.states.material_paused??0).toLocaleString(),detail:"没有有效材料时不消耗查询额度"},
+ {label:`${kind} · 最早等待`,value:stamp(q.oldestReadyAt),detail:`队列共 ${q.total.toLocaleString()} 个 PID，当前可运行 ${q.runnable.toLocaleString()}`},
+ ];})}/>{control?.state==="waiting_quota"?<Notice tone="info">该市场等待 Kalodata 额度。下次核对：{stamp(control.retry_at)}。继续原窗口和断点；其他市场独立运行。</Notice>:control?.state==="waiting_account"?<Notice tone="info">读取通道暂不可用，任务与断点保留。下次检查：{stamp(control.retry_at)}。</Notice>:null}<Button size="sm" disabled={busy||Boolean(data.run?.running)} onClick={()=>void startRun()}>推进一段 A/B 查询</Button>{message&&<Notice tone="info">{message}</Notice>}</div></Card>;}
  return <Card title="达人线索查询队列"><div className="space-y-4 p-5">
   {!data&&<p className="text-sm text-gray-500">{loaded?"暂时无法读取查询队列。":"读取中…"}</p>}
   {data&&<>
@@ -35,7 +43,7 @@ export default function LeadsQueuePanel({controller}:{controller:LeadsQueueContr
   ]}/>
   <Progress done={queried} total={data.scope} label="线索覆盖（已查过 / 队列总数）"/>
   <MetricTable rows={[
-   {label:"A 类销售线索",value:"14 天",detail:"每 PID 最多 20 位正销量达人；按数值 GMV 降序，未查 PID 按商品累计销量优先"},
+   {label:"A 类销售线索",value:"14 天",detail:"每 PID 最多 50 位正销量达人；按数值 GMV 降序，未查 PID 按商品累计销量优先"},
    {label:"A 类刷新",value:"7 天",detail:"到期后重读最近 14 天；历史证据保留，当前 head 原子切换"},
    {label:"B 类内容线索",value:"30 天",detail:"精确 PID 视频当前播放量 ≥1,000；同达人×PID只留最高播放量代表视频"},
    {label:"B 类刷新",value:"7 天",detail:"完整重读最近 30 天视频列表，发现后来跨过 1,000 的视频"},

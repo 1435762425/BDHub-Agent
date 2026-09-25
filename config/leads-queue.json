@@ -1,7 +1,7 @@
 {
-  "version": "leads-queue-v2",
+  "version": "leads-queue-a50-v3",
   "refreshDays": 7,
-  "leadsPerPid": 20,
+  "leadsPerPid": 50,
   "windowDays": 14,
   "batchSize": 5000,
   "maxAttempts": 3

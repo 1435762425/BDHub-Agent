@@ -82,3 +82,16 @@ test('the refresh age is validated before it reaches the queue file',()=>{
   assert.throws(()=>validateLeadsQueueRequest(bad),/invalid_leads_queue_request/);
  }
 });
+
+test('rolling queue keeps A/B states, quota pause and automatic authorization separate',()=>{
+ const a={total:3,runnable:0,first:1,refresh:1,checkpoints:1,states:{queued:2,backoff:1},oldestReadyAt:100,staleCheckpoints:1,oldestWindowEnd:'2026-09-01'};
+ const b={total:2,runnable:0,first:1,refresh:0,checkpoints:0,states:{queued:1,material_paused:1},oldestReadyAt:200};
+ const rolling={available:true,automaticEnabled:false,identityHold:{error:'old_identity_failure'},types:{A:a,B:b},control:{state:'waiting_quota',retry_at:1000,last_error:'kalodata_daily_quota_exhausted'}};
+ const actual=validateLeadsQueue({...payload,rolling},'it').rolling;
+ assert.equal(actual.automaticEnabled,false);
+ assert.equal(actual.identityHold,true);
+ assert.equal(actual.types.A.staleCheckpoints,1);
+ assert.equal(actual.types.B.states.material_paused,1);
+ assert.equal(actual.control.retry_at,1000);
+ assert.throws(()=>validateLeadsQueue({...payload,rolling:{...rolling,types:{A:{...a,total:4},B:b}}},'it'),/invalid_leads_queue/);
+});

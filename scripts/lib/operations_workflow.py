@@ -172,7 +172,7 @@ def applicable_sources(store, market="it", scheduled_at=None):
 
 
 def create_run(store, *, market="it", trigger_source="manual", scheduled_at=None, request_id=None,
-               only_stage=None, sources=None):
+               only_stage=None, sources=None, from_stage=None):
     """Create one immutable run scope.  A manual run is allowed while the schedule switch is off."""
     _required(store)
     market = _market(market)
@@ -190,8 +190,9 @@ def create_run(store, *, market="it", trigger_source="manual", scheduled_at=None
     if only_stage is not None and only_stage not in STAGES:raise CycleError('workflow_stage_invalid')
     if trigger_source == "schedule" and not current["automaticOperationsEnabled"]:
         raise CycleError("workflow_automation_disabled")
+    if from_stage is not None and (from_stage not in STAGES or only_stage is not None):raise CycleError('workflow_stage_invalid')
     key = request_id or f"{market}:{trigger_source}:{int(stamp)}"
-    run_id = "workflow-" + digest([key, market, trigger_source, stamp, sources, current["revision"],only_stage])[:28]
+    run_id = "workflow-" + digest([key, market, trigger_source, stamp, sources, current["revision"],only_stage]+([from_stage] if from_stage is not None else []))[:28]
     with store.tx():
         existing = store.db.execute("SELECT * FROM workflow_run WHERE run_id=?", (run_id,)).fetchone()
         if existing:
@@ -207,7 +208,8 @@ def create_run(store, *, market="it", trigger_source="manual", scheduled_at=None
             (run_id, market, trigger_source, stamp, encoded(sources), current["revision"], store.clock()),
         )
         for position, stage in enumerate(STAGES):
-            state = ('skipped' if only_stage is not None and stage!=only_stage else
+            state = ('skipped' if from_stage is not None and position<STAGES.index(from_stage) else
+                     'skipped' if only_stage is not None and stage!=only_stage else
                      "skipped" if stage == "taplink_clean" and not (
                          datetime.fromtimestamp(stamp, BEIJING).weekday() == 0 and
                          supports(ROOT, market, 'fullManagedCatalog')

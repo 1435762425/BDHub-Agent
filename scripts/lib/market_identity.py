@@ -27,13 +27,12 @@ def pending(root,market,limit=50):
  if type(limit) is not int or not 1<=limit<=500:raise ValueError('market_identity_limit_invalid')
  with CycleStore(Path(root)/'var/second-cycle.sqlite',readonly=True) as store:
   plan=_plan(store,market)
-  rows=store.db.execute('''SELECT x.source_id,x.source_handle,x.source_rank,x.pid
-    FROM lead_query_head h CROSS JOIN lead_query_selection s CROSS JOIN source_edge_index x
+  rows=store.db.execute("""SELECT x.source_id,x.source_handle,x.source_rank,x.pid
+    FROM current_identity_source x
     LEFT JOIN cycle_identity_resolution r ON r.plan_id=x.plan_id AND r.source_id=x.source_id
     LEFT JOIN cycle_identity_outcome o ON o.plan_id=x.plan_id AND o.source_id=x.source_id
-    WHERE h.plan_id=? AND s.query_id=h.query_id AND x.plan_id=h.plan_id AND x.source_id=s.source_id
-      AND r.source_id IS NULL AND (o.status IS NULL OR o.status NOT IN ('completed','unresolved'))
-    ORDER BY s.source_rank,x.source_id LIMIT ?''',(plan,limit*20)).fetchall()
+    WHERE x.plan_id=? AND r.source_id IS NULL AND (o.status IS NULL OR o.status NOT IN ('completed','unresolved'))
+    ORDER BY x.source_rank,x.source_id LIMIT ?""",(plan,limit*20)).fetchall()
   seen=set();result=[]
   for row in rows:
    handle=str(row['source_handle']).lower()
@@ -41,6 +40,32 @@ def pending(root,market,limit=50):
    seen.add(handle);result.append({'sourceId':row['source_id'],'handle':handle,'pid':row['pid']})
    if len(result)>=limit:break
   return {'market':market,'planId':plan,'items':result}
+
+
+def reuse_judgments(root,market):
+ """Reuse exact market/handle terminal judgments for new A/B edges without a new Find."""
+ with CycleStore(Path(root)/'var/second-cycle.sqlite') as store,store.tx():
+  plan=_plan(store,market)
+  current=store.db.execute("SELECT source_id,source_handle FROM current_identity_source WHERE plan_id=?",(plan,)).fetchall()
+  judgments={}
+  for row in store.db.execute("""SELECT x.source_handle,o.status,r.creator_id,r.oec,r.evidence_ref
+    FROM source_edge_index x JOIN cycle_identity_outcome o ON o.plan_id=x.plan_id AND o.source_id=x.source_id
+    LEFT JOIN cycle_identity_resolution r ON r.plan_id=x.plan_id AND r.source_id=x.source_id
+    WHERE x.plan_id=? AND o.status IN ('completed','unresolved')""",(plan,)):
+   key=row['source_handle'].lower();prior=judgments.get(key)
+   if row['status']=='completed' and row['creator_id'] and row['evidence_ref']:
+    if prior and prior['status']=='completed' and (prior['creator_id'],prior['oec'])!=(row['creator_id'],row['oec']):raise CycleError('identity_conflict')
+    judgments[key]=row
+   elif prior is None:judgments[key]=row
+  for row in current:
+   proof=judgments.get(row['source_handle'].lower())
+   if proof is None:continue
+   if proof['status']=='completed':
+    if not proof['creator_id'] or not proof['evidence_ref']:continue
+    store.db.execute('INSERT OR IGNORE INTO cycle_identity_resolution VALUES(?,?,?,?,?)',
+                     (plan,row['source_id'],proof['creator_id'],proof['oec'],proof['evidence_ref']))
+   store.db.execute('INSERT INTO cycle_identity_outcome VALUES(?,?,?) ON CONFLICT(plan_id,source_id) DO UPDATE SET status=excluded.status',
+                    (plan,row['source_id'],proof['status']))
 
 
 def _receipt(report,target_ref):
@@ -168,7 +193,7 @@ def _probe_with_init_retry(root,market,account,chunk,payload_targets,tokens,runn
 
 
 def run(root,market,limit=3,*,profile_canary=False,runner=subprocess.run,clock=time.time,sleep=time.sleep):
- root=Path(root);scope=pending(root,market,limit);items=scope['items']
+ root=Path(root);reuse_judgments(root,market);scope=pending(root,market,limit);items=scope['items']
  report={'market':market,'targets':len(items),'resolvedHandles':0,'unresolvedHandles':0,'newBindings':0,
          'networkRuns':0,'platformWrites':0,'realSends':0,'profileCanary':bool(profile_canary),'profileVerified':0,
          'blockedHandles':0,'initRetries':0,'evidence':[]}

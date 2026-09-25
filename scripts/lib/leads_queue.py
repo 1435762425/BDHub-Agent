@@ -24,7 +24,7 @@ from pathlib import Path
 
 from lib.global_screen import sales
 
-DEFAULTS = {'version': 'leads-queue-v2', 'refreshDays': 7, 'leadsPerPid': 20, 'windowDays': 14,
+DEFAULTS = {'version': 'leads-queue-a50-v3', 'refreshDays': 7, 'leadsPerPid': 50, 'windowDays': 14,
             'batchSize': 200, 'maxAttempts': 3}
 
 SCHEMA = '''
@@ -268,6 +268,10 @@ def eligible_products(root,market='it'):
                 products[pid] = {'units': sales(listing.get('sales')) or 0,
                                  'title': str(listing.get('title') or '')[:80],
                                  'channel': 'selected'}
+    from lib.fullmanaged_candidates import candidate_rows
+    for row in candidate_rows(root,market):
+        facts=row['evidence']['product']
+        products.setdefault(row['pid'],{'units':sales(facts.get('sales')) or 0,'title':str(facts.get('title') or '')[:80],'channel':'selected'})
     return products | _campaign_products(root, products,market)
 
 
@@ -434,7 +438,11 @@ def status(root=None, *, market='it', config=None, now=None, batch_size=None):
     queue = queue_items(built)
     size = built['config']['batchSize'] if batch_size is None else batch_size
     taken = queue[:size]
-    return {'market':market,'config': built['config'], 'refreshDays': built['refreshDays'],
+    rolling=None
+    if (root/'var/second-cycle.sqlite').exists():
+        from lib.rolling_leads import status as rolling_status
+        rolling=rolling_status(root,market,at=now)
+    return {'market':market,'config': built['config'], 'refreshDays': built['refreshDays'],'rolling':rolling,
             'eligible': built['eligible'], 'linked': built['linked'], 'scope': built['scope'],
             # 渠道拆分与"有多少商品没有销量数据"必须转发：页面靠它们说清"两条渠道都在队列里"，
             # 漏转发时页面拿不到字段（症状就是渠道那格永远是空的）。
@@ -447,4 +455,4 @@ def status(root=None, *, market='it', config=None, now=None, batch_size=None):
             'batchFirst': sum(1 for row in taken if row['kind'] == 'first'),
             'batchRefresh': sum(1 for row in taken if row['kind'] == 'due'),
             'shortfall': max(0, size - len(taken)), 'padded': False,
-            'run': run_state(root,market=market)}
+            'run': ({'running':bool(rolling.get('activeRun')),'startedAt':(rolling.get('activeRun') or {}).get('started_at')} if rolling and rolling.get('control') else run_state(root,market=market))}
