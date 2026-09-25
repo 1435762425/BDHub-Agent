@@ -16,7 +16,7 @@ BEIJING = ZoneInfo("Asia/Shanghai")
 DEFAULTS = {
     "schemaVersion": 1,
     "campaignRefreshDays": 2,
-    "fullManagedCategoryRefreshDays": 30,
+    "fullManagedCategoryRefreshDays": 15,
     "kalodataMaxParallelMarkets": 2,
     "sendTemplateApprovalMinimum": 10,
 }
@@ -42,52 +42,38 @@ def load_policy(root):
 
 
 def full_catalog_collection_mode(root, market, now, *, policy=None):
-    """Choose the bounded weekly query; only markets still using discovery run category reads."""
-    root = Path(root)
-    policy = policy or load_policy(root)
-    path = root / ("var/global-source.sqlite" if market == "it" else f"var/global-source-{market}.sqlite")
+    """Discovery every fifteen days; weekly material maintenance reuses admitted candidates."""
+    root=Path(root);policy=policy or load_policy(root)
+    path=root/('var/global-source.sqlite' if market=='it' else f'var/global-source-{market}.sqlite')
     if not path.exists():
-        if market == "it":
-            raise ValueError("it_plain_baseline_unavailable")
-        return {"mode": "category", "reason": "market_onboarding", "lastCategoryAt": None}
+        return {'mode':'category','reason':'market_onboarding','lastCategoryAt':None,'nextDiscoveryAt':now}
     try:
-        with closing(sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True)) as db:
-            row = db.execute(
-                """SELECT max(CASE WHEN a.accepted_at IS NOT NULL THEN a.accepted_at ELSE r.updated END)
-                   FROM global_source_run r
-                   LEFT JOIN global_source_operator_acceptance a ON a.run_id=r.id
-                   WHERE json_extract(r.scope,'$.market')=?
-                     AND json_extract(r.scope,'$.partitionMode')='category_l1_v1'
-                     AND json_extract(r.scope,'$.coverageOverlay') IS NULL
-                     AND r.state IN ('completed','accepted_partial') AND r.identity_unchanged=1""",
-                (market,),
-            ).fetchone()
-            head = (db.execute(
-                """SELECT r.scope FROM global_source_head h JOIN global_source_run r ON r.id=h.run_id
-                   WHERE json_extract(r.scope,'$.market')=? AND r.state IN ('completed','accepted_partial')
-                     AND r.identity_unchanged=1""", (market,),
-            ).fetchone() if market == "it" else None)
+        with closing(sqlite3.connect(path.resolve().as_uri()+'?mode=ro',uri=True)) as db:
+            row=db.execute("""SELECT max(CASE WHEN a.accepted_at IS NOT NULL THEN a.accepted_at ELSE r.updated END)
+              FROM global_source_run r LEFT JOIN global_source_operator_acceptance a ON a.run_id=r.id
+              WHERE json_extract(r.scope,'$.market')=? AND json_extract(r.scope,'$.partitionMode')='category_l1_v1'
+              AND json_extract(r.scope,'$.coverageOverlay') IS NULL
+              AND r.state IN ('completed','accepted_partial') AND r.identity_unchanged=1""",(market,)).fetchone()
     except sqlite3.Error as error:
-        # A transient lock or incompatible history must never silently expand a weekly read into
-        # the expensive category-wide crawl.  Preserve the published head and surface the blocker.
-        raise ValueError("category_history_unavailable") from error
-    last = row[0] if row else None
+        raise ValueError('category_history_unavailable') from error
+    last=row[0] if row else None
     if last is None:
-        if market == "it":
-            raise ValueError("it_plain_baseline_unavailable")
-        return {"mode": "category", "reason": "market_onboarding", "lastCategoryAt": None}
-    if market == "it":
-        try:
-            if not head or json.loads(head[0]).get("partitionMode") != "category_l1_v1":
-                raise ValueError("it_plain_baseline_unavailable")
-        except (TypeError, json.JSONDecodeError):
-            raise ValueError("it_plain_baseline_unavailable") from None
-        return {"mode": "plain", "reason": "operator_plain_only", "lastCategoryAt": float(last)}
-    age = max(0.0, float(now) - float(last))
-    threshold = policy["fullManagedCategoryRefreshDays"] * 86400
-    if age >= threshold:
-        return {"mode": "category", "reason": "monthly_category_refresh", "lastCategoryAt": float(last)}
-    return {"mode": "plain", "reason": "weekly_incremental_refresh", "lastCategoryAt": float(last)}
+        return {'mode':'category','reason':'market_onboarding','lastCategoryAt':None,'nextDiscoveryAt':now}
+    due=float(last)+policy['fullManagedCategoryRefreshDays']*86400
+    return {'mode':'category' if now>=due else 'reuse',
+            'reason':'periodic_category_discovery' if now>=due else 'discovery_not_due',
+            'lastCategoryAt':float(last),'nextDiscoveryAt':due}
+
+
+def current_published_source(root,market):
+    path=Path(root)/('var/global-source.sqlite' if market=='it' else f'var/global-source-{market}.sqlite')
+    with closing(sqlite3.connect(path.resolve().as_uri()+'?mode=ro',uri=True)) as db:
+        rows=db.execute("""SELECT r.id,(SELECT count(*) FROM global_source_product p WHERE p.run_id=r.id)
+          FROM global_source_head h JOIN global_source_run r ON r.id=h.run_id
+          WHERE json_extract(r.scope,'$.market')=? AND r.state IN ('completed','accepted_partial')
+          AND r.identity_unchanged=1""",(market,)).fetchall()
+    if len(rows)!=1:raise ValueError('source_scope_ambiguous')
+    return {'headRunId':rows[0][0],'products':rows[0][1]}
 
 
 def selected_source_run_id(market, run_id, started_at):
@@ -97,7 +83,7 @@ def selected_source_run_id(market, run_id, started_at):
 
 
 def published_plain_source(root, market, run_id):
-    """Return an exact published plain source for the same workflow run, if one exists."""
+    """Return the exact published source for this workflow; the legacy function name is retained."""
     path = Path(root) / ("var/global-source.sqlite" if market == "it" else f"var/global-source-{market}.sqlite")
     if not path.exists():
         return None
@@ -111,7 +97,7 @@ def published_plain_source(root, market, run_id):
         if not source or source["state"] != "completed" or not source["identity_unchanged"]:
             return None
         source_scope = json.loads(source["scope"])
-        if source_scope.get("market") != market or source_scope.get("partitionMode") == "category_l1_v1":
+        if source_scope.get("market") != market:
             return None
         matching = []
         for head in heads:

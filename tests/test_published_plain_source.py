@@ -68,9 +68,9 @@ class PublishedPlainSource(unittest.TestCase):
         self.run_row('run-1',identity=0);self.head('h1','run-1');self.db.commit()
         self.assertIsNone(published_plain_source(self.root,'it','run-1'))
 
-    def test_category_partition_source_is_none(self):
+    def test_exact_published_category_source_is_reused_after_restart(self):
         self.run_row('run-1',partition='category_l1_v1');self.head('h1','run-1');self.db.commit()
-        self.assertIsNone(published_plain_source(self.root,'it','run-1'))
+        self.assertEqual(published_plain_source(self.root,'it','run-1')['headRunId'],'run-1')
 
     def test_database_missing_is_none(self):
         self.assertIsNone(published_plain_source(self.root/'missing','it','run-1'))

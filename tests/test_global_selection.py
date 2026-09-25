@@ -167,19 +167,17 @@ class PrepareSkipsSettled(unittest.TestCase):
         root = Path(folder)
         (root / 'config').mkdir(parents=True, exist_ok=True)
         (root / 'var').mkdir(parents=True, exist_ok=True)
+        from lib.global_source import SCHEMA,SOURCE,FILTER
         with closing(sqlite3.connect(root / 'var/global-source.sqlite')) as conn,conn:
-            conn.executescript('CREATE TABLE global_source_head(scope_hash TEXT,run_id TEXT);'
-                               'CREATE TABLE global_source_run(id TEXT,scope TEXT);'
-                               'CREATE TABLE global_source_product(run_id TEXT,pid TEXT,payload TEXT);')
-            conn.execute("INSERT INTO global_source_run VALUES('r1',?)",
-                         (json.dumps({'market': 'it', 'account': 'acc6'}),))
+            conn.executescript(SCHEMA)
+            conn.execute("INSERT INTO global_source_run(id,scope,scope_hash,state,created,updated,identity_unchanged) VALUES('r1',?,'h','completed',1,2,1)",
+                         (json.dumps({'market':'it','account':'acc6','source':SOURCE,'filter':FILTER}),))
             conn.execute("INSERT INTO global_source_head VALUES('h','r1')")
             for pid in pids:
-                conn.execute('INSERT INTO global_source_product VALUES(?,?,?)',
-                             ('r1', pid, json.dumps({'product_id': pid, 'sales': '900 已售',
-                                                     'product_rating': 4.5, 'commission_rate': 1400,
-                                                     'open_collab_rate': 900, 'fs_is_selected': False})))
-            conn.commit()
+                product={'product_id':pid,'sales':'900 已售','product_rating':4.5,'commission_rate':1400,
+                         'open_collab_rate':900,'fs_is_selected':False}
+                conn.execute('INSERT INTO global_source_product VALUES(?,?,?,?,?,?,?)',
+                             ('r1',pid,json.dumps(product),'fingerprint',1,1,2))
         return root
 
     def _threshold(self, root, min_sales):
@@ -201,11 +199,12 @@ class PrepareSkipsSettled(unittest.TestCase):
                 self._threshold(root, 200)
                 second = ledger.prepare()
                 self.assertNotEqual(first, second)
-                self.assertEqual([item['pid'] for item in ledger.items(second)], ['2' * 19])
+                self.assertEqual([item['pid'] for item in ledger.items(second) if item['state']=='pending'], ['2' * 19])
+                self.assertEqual(ledger.db.execute('SELECT count(*) FROM intake_item').fetchone()[0],2)
             finally:
                 ledger.db.close()
 
-    def test_a_merely_filtered_product_is_still_eligible_for_a_later_batch(self):
+    def test_a_filtered_product_is_not_reset_by_a_later_batch(self):
         with tempfile.TemporaryDirectory() as folder:
             root = self._root(folder, ['3' * 19])
             self._threshold(root, 300)
@@ -217,7 +216,7 @@ class PrepareSkipsSettled(unittest.TestCase):
                 ledger.db.commit()
                 self._threshold(root, 200)
                 second = ledger.prepare()
-                self.assertEqual([item['pid'] for item in ledger.items(second)], ['3' * 19])
+                self.assertEqual([item['state'] for item in ledger.items(second)], ['filtered'])
             finally:
                 ledger.db.close()
 
@@ -230,6 +229,7 @@ class PrepareSkipsSettled(unittest.TestCase):
                 ledger.update(item,'result_unknown',receipt={'http':200,'code':0},campaign={'campaign':{'campaign_id':'7'*19}})
                 self._threshold(root,200);second=ledger.prepare();copied=ledger.items(second)
                 self.assertEqual(len(copied),1);self.assertEqual(copied[0]['state'],'result_unknown')
-                self.assertEqual(copied[0]['payload']['recoveredFromRun'],first)
+                self.assertEqual(copied[0]['run_id'],first)
+                self.assertEqual(ledger.db.execute('SELECT count(*) FROM intake_item').fetchone()[0],1)
                 self.assertEqual(copied[0]['payload']['receipt'],{'http':200,'code':0})
             finally:ledger.db.close()

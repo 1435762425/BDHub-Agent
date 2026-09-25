@@ -63,3 +63,14 @@ test('a save request carries only the fields it means to change',()=>{
   assert.throws(()=>validateJobsSave(bad),/invalid_jobs_request/);
  }
 });
+
+test('discovery exposes a fixed day interval instead of an editable weekly clock',()=>{
+ const discovery={...job,id:'full_catalog_update',schedulable:false,at:null,cadence:'interval',intervalDays:15};
+ const value=validateJobs({...payload,jobs:[discovery]},'it');
+ assert.equal(value.jobs[0].intervalDays,15);
+ assert.equal(value.jobs[0].schedulable,false);
+ assert.equal(value.jobs[0].at,null);
+ for(const intervalDays of [undefined,0,-1,1.5,'15']){
+  assert.throws(()=>validateJobs({...payload,jobs:[{...discovery,intervalDays}]},'it'),/invalid_jobs/);
+ }
+});

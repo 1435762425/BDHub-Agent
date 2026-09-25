@@ -218,6 +218,11 @@ def _scheduled_sources(root,store,market,stamp,automation,policy):
         selected_due=selected_due.timestamp();last_selected=_source_success(store,market,'selected')
         if last_selected is not None and last_selected>=selected_due:
             selected_due+=7*86400
+        from lib.operations_policy import full_catalog_collection_mode
+        mode=full_catalog_collection_mode(root,market,stamp,policy=policy)
+        discovery_due=mode['nextDiscoveryAt']
+        selected_due=min(selected_due,discovery_due)
+        due_times['selectedDiscovery']=discovery_due
         due_times['selected']=selected_due
         if stamp>=selected_due:sources.insert(0,'selected')
     return sources,due_times
@@ -348,7 +353,7 @@ class SubprocessStageExecutor:
                     published=published_plain_source(self.root,market,rid)
                     if published:
                         result={'state':'completed','itemCount':published['products'],'complete':True,'platformWrites':0,
-                                'scope':{'collectionMode':{'mode':'plain','reason':'same_run_published'}},
+                                'scope':{'collectionMode':{'mode':'reuse','reason':'same_run_published'}},
                                 'payload':{'state':'completed','published':True,'products':published['products'],
                                            'reusedPublishedSource':published}}
                     else:
@@ -358,19 +363,23 @@ class SubprocessStageExecutor:
                             catalog_read_account(self.root,market=market))
                             if source_path.exists() and (self.root/'config/market-accounts.json').exists() else None)
                         if existing:
-                            if market=='it' and existing['partitioned']:
-                                return {'state':'needs_human','itemCount':0,'complete':False,'platformWrites':0,
-                                        'errorCode':'it_category_collection_disabled'}
                             rid=existing['runId']
                             collection_mode={**collection_mode,'mode':'category' if existing['partitioned'] else 'plain',
                                              'resumedExisting':rid}
-                        collect=['scripts/collect-global-opportunity.py',*market_flag,'--run-id',rid,'--pages','40','--worker']
-                        if collection_mode['mode']=='category':collect.append('--by-category')
-                        result=self._call(collect,'global-catalog')
-                        if result['state']!='completed':return result
-                        collected=result.get('payload') or {}
-                        if (collected.get('state')!='completed' and not (collected.get('state')=='accepted_partial' and collected.get('coverageOverlay'))) or collected.get('published') is not True:
-                            return {**result,'state':'failed','complete':False,'errorCode':'global_catalog_not_published'}
+                        if collection_mode['mode']=='reuse':
+                            from lib.operations_policy import current_published_source
+                            published=current_published_source(self.root,market)
+                            result={'state':'completed','itemCount':published['products'],'complete':True,
+                                    'platformWrites':0,'payload':{'state':'completed','published':True,
+                                     'products':published['products'],'reusedPublishedSource':published}}
+                        else:
+                            collect=['scripts/collect-global-opportunity.py',*market_flag,'--run-id',rid,'--pages','40','--worker']
+                            if collection_mode['mode']=='category':collect.append('--by-category')
+                            result=self._call(collect,'global-catalog')
+                            if result['state']!='completed':return result
+                            collected=result.get('payload') or {}
+                            if (collected.get('state')!='completed' and not (collected.get('state')=='accepted_partial' and collected.get('coverageOverlay'))) or collected.get('published') is not True:
+                                return {**result,'state':'failed','complete':False,'errorCode':'global_catalog_not_published'}
                         result.setdefault('scope',{})['collectionMode']=collection_mode
                 outputs.append(result);count+=int((result.get('payload') or {}).get('products') or 0)
                 prepared=self._call(['scripts/select-global-products.py','prepare',*market_flag],'global-selection-prepare')

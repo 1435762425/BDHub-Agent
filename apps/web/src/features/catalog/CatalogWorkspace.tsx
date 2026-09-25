@@ -59,7 +59,7 @@ function FullManagedPanel({definition}:{definition:MarketSummary}){
  const screen=object(composed?refresh.screen:full.screen),selection=object(composed?refresh.selection:full.selection);
  const currentProducts=typeof active.products==="number"?active.products:full.products;
  const weeklyProducts=composed?refresh.products:full.partitionMode==="category_l1_v1"?null:full.products;
- const alternative:{scope:"category"|"weekly";label:string}|null=composed?{scope:"weekly",label:"最近普通周更"}:categoryAvailable&&category.isCurrentHead!==true?{scope:"category",label:"原始类目快照"}:null;
+ const alternative:{scope:"category"|"weekly";label:string}|null=composed?{scope:"weekly",label:"历史普通查询"}:categoryAvailable&&category.isCurrentHead!==true?{scope:"category",label:"原始类目快照"}:null;
  const partial=category.state==="accepted_partial",eligible=typeof screen.eligible==="number"?screen.eligible:null;
  const selectedAtRead=typeof screen.eligibleListedSelected==="number"?screen.eligibleListedSelected:null;
  const unselectedAtRead=typeof screen.eligibleListedUnselected==="number"?screen.eligibleListedUnselected:null;
@@ -67,29 +67,31 @@ function FullManagedPanel({definition}:{definition:MarketSummary}){
  const unknownNow=typeof selection.skippedUnknown==="number"?selection.skippedUnknown:null;
  const carried=typeof selection.carriedUnknown==="number"?selection.carriedUnknown:null;
  const pending=typeof selection.pending==="number"?selection.pending:null;
+ const ended=typeof selection.endedWithoutSelection==="number"?selection.endedWithoutSelection:0;
  const other=typeof selection.untrackedEligible==="number"?selection.untrackedEligible:null;
  const screenReconciled=eligible!==null&&selectedAtRead!==null&&unselectedAtRead!==null&&eligible===selectedAtRead+unselectedAtRead;
- const selectionReconciled=unselectedAtRead!==null&&[selectedNow,unknownNow,carried,pending,other].every(value=>value!==null)&&unselectedAtRead===selectedNow!+unknownNow!+carried!+pending!+other!;
+ const selectionReconciled=unselectedAtRead!==null&&[selectedNow,unknownNow,carried,pending,other].every(value=>value!==null)&&unselectedAtRead===selectedNow!+unknownNow!+carried!+pending!+other!+ended;
  return <div className="space-y-5">
-  <Card title="全托覆盖与刷新" subtitle="类目覆盖与普通周更分别记账；本周查询的结果窗口不能代表整个市场。" action={<Button size="sm" variant="outline" disabled={refreshing} onClick={()=>{setRefreshing(true);void load().finally(()=>setRefreshing(false));}}>{refreshing?"读取中…":"刷新状态"}</Button>}><div className="space-y-4 p-5">
-   <MetricTable rows={[{label:"当前发布覆盖",value:number(currentProducts),detail:composed?"类目基线，周更仅更新重叠 PID":"当前发布 head 按 PID 去重",accent:true},
+  <Card title="全托发现与累计候选" subtitle="首次及每 15 天按类目完整探查；合格 PID 累积保留，不覆盖历史候选。旧快照仅用于追溯覆盖。" action={<Button size="sm" variant="outline" disabled={refreshing} onClick={()=>{setRefreshing(true);void load().finally(()=>setRefreshing(false));}}>{refreshing?"读取中…":"刷新状态"}</Button>}><div className="space-y-4 p-5">
+   <MetricTable rows={[{label:"累计合格候选",value:object(full.candidates).available===true?number(object(full.candidates).total):"—",detail:"历次首次合格 PID 去重保留；不等于当前可发送商品"},{label:"本来源新增候选",value:object(full.candidates).available===true?number(object(full.candidates).addedInSource):"—",detail:"首次合格证据来自当前显示来源"},{label:"当前发布覆盖",value:number(currentProducts),detail:composed?"历史类目基线与普通查询组合覆盖":"当前发布 head 按 PID 去重",accent:true},
     {label:"原始类目快照",value:number(category.products),detail:categoryAvailable?`已完整读取 ${number(category.categoriesCompleted)}/${number(category.categoryCount)} 个一级类目`:"尚无类目快照"},
-    {label:"最近普通周更",value:number(weeklyProducts),detail:"接口本次普通查询的结果窗口"},
+    {label:"历史普通查询",value:number(weeklyProducts),detail:"接口本次普通查询的结果窗口"},
     ...(composed?[{label:"周更命中并更新",value:number(overlay.overlapProducts),detail:"属于原类目覆盖的 PID"},{label:"周更范围外",value:number(overlay.refreshOutsideCoverage),detail:"保留在周更证据中，未加入类目覆盖"}]:[])]}/>
    {partial&&<Notice tone="warning">原始类目快照是用户接受的部分覆盖：{number(category.categoriesCompleted)}/{number(category.categoryCount)} 类完成，不能称为全市场完整覆盖。</Notice>}
    {!composed&&categoryAvailable&&category.isCurrentHead!==true&&<Notice tone="warning">当前发布 head 是较窄的普通周更；原始类目快照仍保留，可在商品明细切换查看。</Notice>}
    {composed&&<Notice tone="info">当前组合覆盖保留 {number(category.products)} 个 PID；最近周更更新其中 {number(overlay.overlapProducts)} 个，另 {number(overlay.refreshOutsideCoverage)} 个仅保留为周更观察。未把查询窗口外的商品误算为已覆盖。</Notice>}
    <p className="text-xs leading-5 text-gray-500">当前 head：{String(active.id??"—")} · 状态：{String(full.state??full.reason??"尚未运行")}。页面只读本机快照，不触发平台采集或选入。</p>
   </div></Card>
-  <Card title={composed?"最近普通周更：筛分与选入":"本轮筛分与选入"} subtitle="所有数字都绑定同一轮普通读取；历史未确认意图继续保留。"><div className="space-y-4 p-5">
+  <Card title={composed?"历史普通查询：筛分与选入":"本轮筛分与选入"} subtitle="本来源采集时的资格与未选候选当前处置分开统计；累计候选不受后续评分或销量变化影响。"><div className="space-y-4 p-5">
    <MetricTable rows={[{label:"筛选合格",value:number(screen.eligible),detail:"本轮确定性门槛",accent:true},
     {label:"其中采集时已选",value:number(screen.eligibleListedSelected),detail:"合格商品与采集时已选状态的交集"},
-    {label:"其中采集时未选",value:number(screen.eligibleListedUnselected),detail:"本轮需判定的候选"},
-    {label:"本轮确认选入",value:number(selection.selected),detail:"平台回读确认"},
+    {label:"其中采集时未选",value:number(screen.eligibleListedUnselected),detail:"本来源采集时未选入的合格 PID"},
+    {label:"已确认选入",value:number(selection.selected),detail:"平台回读确认"},
     {label:"本轮结果未知",value:number(selection.skippedUnknown),detail:"不重复提交原意图"},
     {label:"继承上轮未知",value:number(selection.carriedUnknown),detail:"未生成第二次选入意图"},
+    {label:"本次不可继续",value:number(ended),detail:"保留原候选与失败事实，不自动重排"},
     {label:"本轮待提交",value:number(selection.pending),detail:"当前冻结队列"}]}/>
-   {screenReconciled&&selectionReconciled?<p className="text-xs text-gray-500">本轮对账：{number(eligible)} = {number(selectedAtRead)} + {number(unselectedAtRead)}；{number(unselectedAtRead)} = {number(selectedNow)} + {number(unknownNow)} + {number(carried)} + {number(pending)}{other?` + ${number(other)} 其他未排队`:""}。</p>:<Notice tone="warning">本轮筛分或选入记录尚未形成可对账的完整快照，缺失项显示为“—”，不会冒充 0。</Notice>}
+   {screenReconciled&&selectionReconciled?<p className="text-xs text-gray-500">本轮对账：{number(eligible)} = {number(selectedAtRead)} + {number(unselectedAtRead)}；{number(unselectedAtRead)} = {number(selectedNow)} + {number(unknownNow)} + {number(carried)} + {number(pending)}{ended?` + ${number(ended)} 本次不可继续`:""}{other?` + ${number(other)} 其他未排队`:""}。</p>:<Notice tone="warning">本轮筛分或选入记录尚未形成可对账的完整快照，缺失项显示为“—”，不会冒充 0。</Notice>}
   </div></Card>
   <FullManagedProducts market={definition.key} alternative={alternative}/>
   <Card title="材料与下游" subtitle="全托已选货盘、Campaign 池、当前线索和累计触达分别有自己的来源范围。"><div className="space-y-4 p-5">

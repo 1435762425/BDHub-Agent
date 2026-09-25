@@ -56,12 +56,18 @@ class Thresholds(unittest.TestCase):
         self.assertIn('commission_gap_below_min', evaluate(product('1', total=1399, public=1200), BASE)['reasons'])
 
     def test_unrated_is_recorded_as_a_fact_not_treated_as_a_bad_rating(self):
-        quiet = product('1', rating=0)
+        quiet = product('1', rating=None)
         allowed = evaluate(quiet, BASE)
         self.assertTrue(allowed['eligible'])
         self.assertTrue(allowed['unrated'])
         strict = evaluate(quiet, {**BASE, 'allowUnrated': False})
         self.assertEqual(strict['reasons'], ['rating_unrated'])
+
+    def test_unverified_zero_is_not_interpreted_as_unrated(self):
+        result=evaluate(product('1',rating=0),BASE)
+        self.assertFalse(result['eligible'])
+        self.assertFalse(result['unrated'])
+        self.assertEqual(result['reasons'],['rating_unverified'])
 
     def test_missing_fields_are_reported_rather_than_guessed(self):
         result = evaluate({'product_id': '1'}, BASE)

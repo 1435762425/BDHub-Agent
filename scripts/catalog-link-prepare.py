@@ -867,7 +867,9 @@ def selection_items(pids=None):
         db.execute('BEGIN')
         run=db.execute('SELECT id FROM intake_run ORDER BY created DESC LIMIT 1').fetchone()
         if not run:return []
-        rows=db.execute('SELECT pid,state,payload FROM intake_item WHERE run_id=?',(run[0],)).fetchall()
+        from lib.fullmanaged_candidates import selection_rows
+        db.row_factory=sqlite3.Row
+        rows=[(r['pid'],r['state'],r['payload']) for r in selection_rows(db,run[0])]
     items=[]
     for pid,state,payload in rows:
         if state!='confirmed':continue

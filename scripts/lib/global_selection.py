@@ -9,7 +9,7 @@ import json,re,sqlite3,time
 from contextlib import closing
 from decimal import Decimal,InvalidOperation
 from pathlib import Path
-from lib.global_screen import decimal, evaluate, fingerprint, load, sales
+from lib.global_screen import decimal, evaluate, fingerprint, load, sales, promotion_assessment
 from lib.second_cycle import encoded,digest
 
 READBACK_DELAYS=(0,1,3,30,120)
@@ -51,6 +51,8 @@ class Selection:
         self.db=sqlite3.connect(self.path,timeout=15);self.db.row_factory=sqlite3.Row
         self.db.executescript('''CREATE TABLE IF NOT EXISTS intake_run(id TEXT PRIMARY KEY,rules TEXT NOT NULL,source_run TEXT NOT NULL,created REAL NOT NULL);
         CREATE TABLE IF NOT EXISTS intake_item(run_id TEXT NOT NULL,pid TEXT NOT NULL,state TEXT NOT NULL,payload TEXT NOT NULL,updated REAL NOT NULL,PRIMARY KEY(run_id,pid));''')
+        from lib.fullmanaged_candidates import SELECTION_SCHEMA
+        self.db.executescript(SELECTION_SCHEMA)
     def prepare(self):
         source_path=self.root/('var/global-source.sqlite' if self.market=='it' else f'var/global-source-{self.market}.sqlite')
         with closing(sqlite3.connect(source_path.as_uri()+'?mode=ro',uri=True)) as c:
@@ -65,33 +67,34 @@ class Selection:
             allowed={supply}|({'acc6'} if self.market=='it' else set())
             if json.loads(scope)['account'] not in allowed:
                 raise ValueError('source_account_changed')
-            rows=[json.loads(r[0]) for r in c.execute('SELECT payload FROM global_source_product WHERE run_id=?',(rid,))]
+        from lib.global_screen import screen_source
+        from lib.fullmanaged_candidates import candidate_rows,backfill_owners
+        screen_source(source_path,rid,root=self.root)
+        candidates=candidate_rows(self.root,self.market)
         config=rules(self.root);stamp=fingerprint(config)
-        id='select-'+digest([self.market,rid,config,stamp,'user-300-inclusive'])[:24]
-        # A product already proven to be in the pool is never enqueued again. Without this, every
-        # threshold change created a fresh batch of products that were all already selected, which
-        # then had to be read back one by one just to be told so.
-        settled={row[0] for row in self.db.execute(
-            "SELECT DISTINCT pid FROM intake_item WHERE state IN ('confirmed','already_selected','skipped_unknown','isolated_unverified')")}
-        unresolved={}
-        for row in self.db.execute("SELECT run_id,pid,state,payload FROM intake_item WHERE state IN "
-                                   "('submitting','awaiting_verification','result_unknown','needs_review') "
-                                   "ORDER BY updated DESC"):
-            unresolved.setdefault(row['pid'],row)
+        id='select-'+digest([self.market,rid,config,stamp,'cumulative-v1'])[:24]
         with self.db:
+            self.db.execute('BEGIN IMMEDIATE')
+            backfill_owners(self.db)
             self.db.execute('INSERT OR IGNORE INTO intake_run VALUES(?,?,?,?)',(id,encoded(config),rid,time.time()))
-            for p in rows:
-                if p['product_id'] in settled:continue
-                prior=unresolved.get(p['product_id'])
-                if prior:
-                    payload=json.loads(prior['payload'])|{'recoveredFromRun':prior['run_id']}
-                    self.db.execute('INSERT OR IGNORE INTO intake_item VALUES(?,?,?,?,?)',
-                      (id,p['product_id'],prior['state'],encoded(payload),time.time()))
-                    continue
-                if assess(p,config)['eligible'] and p.get('fs_is_selected') is False:
-                    self.db.execute('INSERT OR IGNORE INTO intake_item VALUES(?,?,?,?,?)',(id,p['product_id'],'pending',encoded({'snapshot':p}),time.time()))
+            for candidate in candidates:
+                pid=candidate['pid'];p=candidate['evidence']['product']
+                owner=self.db.execute('SELECT owner_run_id FROM intake_candidate_owner WHERE pid=?',(pid,)).fetchone()
+                if owner is None:
+                    state='already_selected' if p.get('fs_is_selected') is True else 'pending'
+                    facts={'snapshot':p,'candidateEvidence':{'market':self.market,'sourceRun':candidate['source_run'],
+                      'screenRun':candidate['screen_run'],'observedAt':candidate['observed_at']},
+                      'selectionObservation':'qualified_source_listing' if state=='already_selected' else None}
+                    self.db.execute('INSERT INTO intake_item VALUES(?,?,?,?,?)',(id,pid,state,encoded(facts),time.time()))
+                    self.db.execute('INSERT INTO intake_candidate_owner VALUES(?,?)',(pid,id))
+            # The scope references original intents, including older pending/unknown and failed
+            # rows, so changing discovery snapshots cannot reset their disposition.
+            self.db.execute("""INSERT OR IGNORE INTO intake_run_member
+              SELECT ?,pid,owner_run_id FROM intake_candidate_owner""",(id,))
         return id
-    def items(self,id):return [dict(r)|{'payload':json.loads(r['payload'])} for r in self.db.execute('SELECT * FROM intake_item WHERE run_id=? ORDER BY pid',(id,))]
+    def items(self,id):
+        from lib.fullmanaged_candidates import selection_rows
+        return [dict(r)|{'payload':json.loads(r['payload'])} for r in selection_rows(self.db,id)]
     def update(self,item,state,**facts):
         payload=item['payload']|facts
         with self.db:self.db.execute('UPDATE intake_item SET state=?,payload=?,updated=? WHERE run_id=? AND pid=?',(state,encoded(payload),time.time(),item['run_id'],item['pid']))
@@ -138,7 +141,9 @@ class Selection:
             self.update(item,'skipped_unknown',reason='unresolved_after_two_delayed_readbacks',skippedAt=stamp)
             skipped.append(item['pid'])
         return skipped
-    def status(self,id):return dict(self.db.execute('SELECT state,count(*) FROM intake_item WHERE run_id=? GROUP BY state',(id,)).fetchall())
+    def status(self,id):
+        from collections import Counter
+        return dict(Counter(r['state'] for r in self.items(id)))
 
 def selected_rows(t,pids):
     rows=[];seen=set();total=None
@@ -195,7 +200,9 @@ def observations(folder,source_run,market='it'):
     with closing(sqlite3.connect(path.resolve().as_uri()+'?mode=ro',uri=True)) as c:
         run=c.execute('SELECT id,rules FROM intake_run WHERE source_run=? ORDER BY created DESC LIMIT 1',(source_run,)).fetchone()
         if not run:return None,{}
-        rows=c.execute('SELECT pid,state,updated FROM intake_item WHERE run_id=?',(run[0],)).fetchall()
+        from lib.fullmanaged_candidates import selection_rows
+        c.row_factory=sqlite3.Row
+        rows=[(r['pid'],r['state'],r['updated']) for r in selection_rows(c,run[0])]
     from collections import Counter
     summary={'id':run[0],'rules':json.loads(run[1]),'total':len(rows),'states':dict(Counter(r[1] for r in rows)),'updatedAt':max((r[2] for r in rows),default=None)}
     status=Path(folder)/('global-selection-status.json' if market=='it' else f'global-selection-status-{market}.json')
@@ -209,7 +216,7 @@ def retryable_verification_rejection(item,present,fresh):
     return (item['state']=='result_unknown' and r.get('http')==200 and r.get('code')==10000
             and r.get('verification') is True and r.get('ambiguous') is False
             and item['pid'] not in present and fresh.get('product_id')==item['pid']
-            and fresh.get('fs_is_selected') is False and assess(fresh)['eligible']
+            and fresh.get('fs_is_selected') is False and promotion_assessment(fresh)['eligible']
             and len(item['payload'].get('priorAttempts',[]))<2)
 
 def latest_relogin_after(ledger,item):
@@ -234,7 +241,7 @@ def retryable_auth_rejection(item,present,fresh,relogin_at):
             receipt.get('ambiguous') is False and receipt.get('systemError') is False and
             isinstance(relogin_at,(int,float)) and item['pid'] not in present and
             fresh.get('product_id')==item['pid'] and fresh.get('fs_is_selected') is False and
-            assess(fresh)['eligible'] and len(item['payload'].get('priorAttempts',[]))<2)
+            promotion_assessment(fresh)['eligible'] and len(item['payload'].get('priorAttempts',[]))<2)
 
 def reconcile_verification_rejections(ledger,id,t,*,pids=None,limit=600):
     """Only explicit verification rejections with two current non-selection proofs can continue."""

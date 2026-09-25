@@ -33,6 +33,12 @@ class ConfigFile(unittest.TestCase):
             self.assertTrue(config['jobs']['campaign_catalog_update']['enabled'])
             self.assertFalse(config['jobs']['taplink_prepare']['enabled'])
 
+    def test_discovery_no_longer_accepts_an_ineffective_weekly_clock(self):
+        with tempfile.TemporaryDirectory() as folder:
+            with self.assertRaisesRegex(ValueError,'job_time_uses_discovery_cadence'):
+                save(folder,{'jobs':{'full_catalog_update':{'at':'05:00'}}})
+            self.assertFalse((Path(folder)/'config/jobs.json').exists())
+
     def test_taplink_prepare_time_round_trips_at_0730(self):
         with tempfile.TemporaryDirectory() as folder:
             saved=save(folder,{'jobs':{'taplink_prepare':{'enabled':True,'at':'07:30'}}})
@@ -74,7 +80,10 @@ class Reporting(unittest.TestCase):
             state=status(folder);self.assertEqual(state['version'],'jobs-v3')
             self.assertFalse(state['scheduler']['running'])
             self.assertTrue(all(job['manualEndpoint'] in ('/api/workflow','/api/jobs') for job in state['jobs']))
-            self.assertTrue(all(job['schedulable'] for job in state['jobs']))
+            self.assertTrue(all(job['schedulable'] for job in state['jobs'] if job['id']!='full_catalog_update'))
+            discovery=next(job for job in state['jobs'] if job['id']=='full_catalog_update')
+            self.assertFalse(discovery['schedulable'])
+            self.assertEqual((discovery['cadence'],discovery['intervalDays'],discovery['at']),('interval',15,None))
             self.assertEqual({job['id'] for job in state['jobs']},
               {'taplink_clean','full_catalog_update','campaign_catalog_update','taplink_prepare',
                'kalodata_leads','oecid','send_pool_publish','inbox_monitor','agent_reply','continuous_send'})

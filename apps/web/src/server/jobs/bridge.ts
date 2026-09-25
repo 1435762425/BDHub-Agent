@@ -3,7 +3,7 @@ import {join} from "node:path";
 import {projectRoot} from "../runtime/project-root.ts";
 
 /** One schedulable job: what it does, whether it can be started by hand, and the operator's intent. */
-export type WorkbenchJob={id:string;name:string;group:string;description:string;manual:string;manualEndpoint:string|null;lastRunAt:number|null;enabled:boolean;at:string|null;schedulable:boolean;cadence:"daily"|"weekly";weekday:number|null};
+export type WorkbenchJob={id:string;name:string;group:string;description:string;manual:string;manualEndpoint:string|null;lastRunAt:number|null;enabled:boolean;at:string|null;schedulable:boolean;cadence:"daily"|"weekly"|"interval";intervalDays?:number;weekday:number|null};
 export type SchedulerState={running:boolean;stopping:boolean;pid:number|null;startedAt:number|null;phase:string|null;cycle:string|null;checkedAt:number|null;lastSuccess:Record<string,number>;lastAttempt:Record<string,number>;nextDue:Record<string,number>;error:string|null};
 export type JobsState={version:string;market:string;jobs:WorkbenchJob[];schedulerReady:boolean;scheduler:SchedulerState;saved?:boolean};
 export type JobsSave={jobs:Record<string,{enabled?:boolean;at?:string|null;weekday?:number}>};
@@ -18,13 +18,15 @@ function validateJob(value:unknown):WorkbenchJob{
  if(v.manualEndpoint!==null&&typeof v.manualEndpoint!=="string")throw Error('invalid_jobs');
  if(v.lastRunAt!==null&&!(typeof v.lastRunAt==="number"&&Number.isFinite(v.lastRunAt)))throw Error('invalid_jobs');
  if(typeof v.enabled!=="boolean")throw Error('invalid_jobs');
- if(typeof v.schedulable!=="boolean"||(v.cadence!=="daily"&&v.cadence!=="weekly"))throw Error('invalid_jobs');
+ if(typeof v.schedulable!=="boolean"||(v.cadence!=="daily"&&v.cadence!=="weekly"&&v.cadence!=="interval"))throw Error('invalid_jobs');
+ if(v.cadence==="interval"&&(!Number.isSafeInteger(v.intervalDays)||Number(v.intervalDays)<1))throw Error("invalid_jobs");
  if(v.at!==null&&(typeof v.at!=="string"||!TIME.test(v.at)))throw Error('invalid_jobs');
  if(v.weekday!==null&&!(typeof v.weekday==="number"&&Number.isSafeInteger(v.weekday)&&v.weekday>=0&&v.weekday<=6))throw Error('invalid_jobs');
  return {id:v.id,name:v.name,group:v.group,description:v.description,manual:v.manual,
   manualEndpoint:v.manualEndpoint as string|null,
   lastRunAt:v.lastRunAt as number|null,enabled:v.enabled,at:v.at as string|null,
-  schedulable:v.schedulable,cadence:v.cadence,weekday:v.weekday as number|null};
+  schedulable:v.schedulable,cadence:v.cadence,weekday:v.weekday as number|null,
+  ...(v.cadence==="interval"?{intervalDays:Number(v.intervalDays)}:{})};
 }
 
 function validateScheduler(raw:unknown):SchedulerState{

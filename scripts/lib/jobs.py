@@ -8,7 +8,7 @@ from pathlib import Path
 DEFAULTS = {'version': 'jobs-v3', 'jobs': {}}
 JOBS = (
     {'id':'taplink_clean','name':'TapLink 清洗','group':'材料','description':'周一扫描平台卡；当前仅 IT 会删除平台明确失效且已回查的卡。','manual':'workflow','defaultAt':'04:30','cadence':'weekly','defaultWeekday':0},
-    {'id':'full_catalog_update','name':'全托周更新','group':'货盘','description':'每周普通刷新；新市场首次与每 30 天按一级类目完整刷新。','manual':'workflow','defaultAt':'04:40','cadence':'weekly','defaultWeekday':0},
+    {'id':'full_catalog_update','name':'全托商品发现','group':'货盘','description':'首次及每 15 天按类目发现新合格 PID；周度材料维护复用累计候选。','manual':'workflow','defaultAt':'04:40','cadence':'weekly','defaultWeekday':0},
     {'id':'campaign_catalog_update','name':'Campaign 每两天更新','group':'货盘','description':'每 2 天 07:00 完整刷新 Campaign；每次重新判断失效、库存、佣金与期限。','manual':'workflow','defaultAt':'07:00','cadence':'daily'},
     {'id':'taplink_prepare','name':'TapLink 准备','group':'材料','description':'货盘发布后核验并创建缺失标准链接；unknown 只回查原意图。','manual':'workflow','defaultAt':'07:20','cadence':'daily'},
     {'id':'kalodata_leads','name':'Kalodata','group':'达人','description':'整批读取 A/B 线索；最多两个市场并行，范围完成或真实额度耗尽后发布。','manual':'workflow','defaultAt':'08:00','cadence':'daily'},
@@ -61,6 +61,8 @@ def load(root):
 def save(root,raw):
     config=validate(raw);path=config_path(root)
     previous=load(root)['jobs']
+    if config['jobs']['full_catalog_update']!=previous['full_catalog_update']:
+        raise ValueError('job_time_uses_discovery_cadence')
     if any(config['jobs'][key]!=previous[key] for key in ('agent_reply','continuous_send')):
         raise ValueError('job_window_uses_market_setting')
     path.parent.mkdir(parents=True,exist_ok=True)
@@ -113,6 +115,8 @@ def status(root=None,market='it'):
     agent_start,agent_end,buffer=agent_window.split('|') if agent_window else (None,None,None)
     send_start,send_end=send_window.split('|') if send_window else (None,None)
     # The two runtime windows are saved per market, so their descriptions show the saved times, not the defaults.
+    from lib.operations_policy import load_policy,DEFAULTS as OPERATIONS_DEFAULTS
+    discovery_days=(load_policy(root) if (root/'config/operations-policy.json').exists() else OPERATIONS_DEFAULTS)['fullManagedCategoryRefreshDays']
     descriptions={'agent_reply':f'北京时间 {agent_start}–{agent_end} 处理达人来信，与二发窗口前后至少隔 {buffer} 分钟；开关与模板在会话页。'
                   if agent_window else None,
                   'continuous_send':f'北京时间 {send_start}–{send_end} 持续消费发送池，次日从台账继续。' if send_window else None}
@@ -129,7 +133,10 @@ def status(root=None,market='it'):
         jobs.append({'id':job['id'],'name':job['name'],'group':job['group'],
           'description':descriptions.get(job['id']) or job['description'],
           'manual':job['manual'],'manualEndpoint':MANUAL_ENDPOINTS[job['manual']],
-          'lastRunAt':last.get(job['id']),'enabled':enabled,'schedulable':True,
-          'at':at,'cadence':job.get('cadence','daily'),'weekday':setting.get('weekday')})
+          'lastRunAt':last.get(job['id']),'enabled':enabled,'schedulable':job['id']!='full_catalog_update',
+          'at':None if job['id']=='full_catalog_update' else at,
+          'cadence':'interval' if job['id']=='full_catalog_update' else job.get('cadence','daily'),
+          'weekday':None if job['id']=='full_catalog_update' else setting.get('weekday'),
+          **({'intervalDays':discovery_days} if job['id']=='full_catalog_update' else {})})
     from lib.operations_scheduler import scheduler_state
     return {'version':config['version'],'market':market,'jobs':jobs,'schedulerReady':True,'scheduler':scheduler_state(root)}

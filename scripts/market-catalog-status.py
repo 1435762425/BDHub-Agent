@@ -94,18 +94,22 @@ def run_decisions(store,market,run_id):
   with closing(sqlite3.connect(selection.resolve().as_uri()+'?mode=ro',uri=True)) as ledger:
    run=ledger.execute('SELECT id FROM intake_run WHERE source_run=? ORDER BY created DESC LIMIT 1',(run_id,)).fetchone()
    if run:
-    items=list(ledger.execute('SELECT pid,state FROM intake_item WHERE run_id=?',(run[0],)))
-    states=dict(Counter(row[1] for row in items));current_pids={row[0] for row in items}
+    from lib.fullmanaged_candidates import selection_rows
+    ledger.row_factory=sqlite3.Row
+    items=[(r['pid'],r['state']) for r in selection_rows(ledger,run[0])]
     unselected={row[0] for row in db.execute("""SELECT s.pid FROM global_source_screen s
      JOIN global_source_product p ON p.run_id=? AND p.pid=s.pid
      WHERE s.run_id=? AND s.state='eligible' AND json_extract(p.payload,'$.fs_is_selected')=0""",(run_id,screen[0]))} if screen else set()
+    items=[r for r in items if r[0] in unselected]
+    states=dict(Counter(row[1] for row in items));current_pids={row[0] for row in items}
     missing=unselected-current_pids;previous_unknown=set()
     if missing:
      placeholders=','.join('?'*len(missing))
      previous_unknown={row[0] for row in ledger.execute(f"SELECT DISTINCT pid FROM intake_item WHERE pid IN ({placeholders}) AND state IN ('skipped_unknown','result_unknown')",tuple(missing))}
     result['selection']={'states':states,'selected':int(states.get('confirmed') or 0)+int(states.get('already_selected') or 0),
                          'pending':int(states.get('pending') or 0),'intakeTotal':len(items),
-                         'skippedUnknown':int(states.get('skipped_unknown') or 0)+int(states.get('result_unknown') or 0),
+                         'skippedUnknown':sum(int(states.get(k) or 0) for k in ('skipped_unknown','result_unknown','submitting','awaiting_verification','needs_review','isolated_unverified')),
+                         'endedWithoutSelection':sum(n for k,n in states.items() if k not in ('confirmed','already_selected','pending','skipped_unknown','result_unknown','submitting','awaiting_verification','needs_review','isolated_unverified')),
                          'carriedUnknown':len(missing & previous_unknown),'untrackedEligible':len(missing-previous_unknown)}
  return result
 
@@ -125,6 +129,8 @@ def full_status(market):
   active=value.get('activePublished') or {}
   result['activePublished']={key:active.get(key) for key in ('id','products','updated','state')} if active else None
   result['categorySnapshot']=category_snapshot(store,market)
+  from lib.fullmanaged_candidates import candidate_summary
+  result['candidates']=candidate_summary(ROOT,market,value.get('id'))
   result.update(run_decisions(store,market,value.get('id')))
   overlay=value.get('coverageOverlay') or {}
   if overlay:

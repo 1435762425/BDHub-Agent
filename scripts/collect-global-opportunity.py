@@ -15,8 +15,6 @@ def main():
  p=argparse.ArgumentParser();p.add_argument('--market',default='it');p.add_argument('--run-id');p.add_argument('--pages',type=int,default=15);p.add_argument('--worker',action='store_true');p.add_argument('--by-category',action='store_true');p.add_argument('--retry-boundary-tail',action='store_true');p.add_argument('--retry-partial-category',action='store_true');p.add_argument('--repair-partial-category',action='store_true');p.add_argument('--repair-partial-query',action='store_true');p.add_argument('--accept-stable-duplicates',action='store_true');p.add_argument('--accept-stable-query-duplicates',action='store_true');p.add_argument('--accept-partial-snapshot',action='store_true');p.add_argument('--resume-after-relogin',action='store_true');p.add_argument('--status',action='store_true');p.add_argument('--offset',type=int,default=0);p.add_argument('--query',default='');p.add_argument('--audit-store',type=Path);a=p.parse_args()
  from lib.market_registry import supports
  if not supports(ROOT,a.market,'fullManagedCatalog'):p.error('market has no full-managed catalog')
- if a.market=='it' and a.by_category and not a.status:
-  p.error('it_category_collection_disabled')
  a.run_id=a.run_id or f'{a.market}-global-{time.strftime("%Y%m%d")}'
  db=ROOT/('var/global-source.sqlite' if a.market=='it' else f'var/global-source-{a.market}.sqlite')
  if a.audit_store:

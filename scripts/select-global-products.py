@@ -3,7 +3,7 @@
 import argparse,fcntl,json,signal,sys,time
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1];sys.dont_write_bytecode=True;sys.path.insert(0,str(ROOT/'scripts'))
-from lib.global_selection import OTHER_CAMPAIGN_MIN_DELAY,READBACK_DELAYS,Selection,assess,prioritized_selection_batch,selection_campaign,selected_rows,settle_readback
+from lib.global_selection import OTHER_CAMPAIGN_MIN_DELAY,READBACK_DELAYS,Selection,assess,promotion_assessment,prioritized_selection_batch,selection_campaign,selected_rows,settle_readback
 from lib.global_source import clean_product
 from lib.global_source_transport import opportunity_selector
 STOP=False
@@ -34,11 +34,13 @@ def main():
             if not a.confirm_skip_unknown:p.error('skip-unknown requires --confirm-skip-unknown')
             report['skippedUnknown']=ledger.skip_unknown(id);save();ledger.db.close();return
         counts=ledger.status(id)
-        if a.action.startswith('execute') and counts and set(counts)<={'confirmed','already_selected','filtered'}:
+        if a.action.startswith('execute') and counts and set(counts)<={'confirmed','already_selected','filtered','skipped_unknown','isolated_unverified'}:
             print(json.dumps({'id':id,'states':counts,'alreadyComplete':True}));ledger.db.close();return
         save()
         if a.action=='prepare':ledger.db.close();return
         scope={};pending=[i for i in ledger.items(id) if i['state'] in (('pending',) if a.action in ('execute','execute-fast','execute-serial') else ('submitting','awaiting_verification','result_unknown'))][:a.limit]
+        if a.action=='verify' and not pending:
+            save();ledger.db.close();return
         current=None
         try:
             with opportunity_selector(report,scope,market=a.market,canary=a.canary,stopped=lambda:STOP) as t:
@@ -98,8 +100,8 @@ def main():
                         for i in remaining:
                             if STOP:break
                             current=i;product=fresh.get(i['pid'])
-                            if not product or not assess(product)['eligible']:
-                                ledger.update(i,'filtered',reason=assess(product or {})['reasons'],freshProduct=product);continue
+                            if not product or not promotion_assessment(product)['eligible']:
+                                ledger.update(i,'filtered',reason=promotion_assessment(product)['reasons'],freshProduct=product);continue
                             if product.get('fs_is_selected') is True:
                                 ledger.update(i,'needs_review',reason='listed_selected_but_not_in_selected_readback');continue
                             campaign=selection_campaign(t,product,time.time(),native_listing=a.native_listing)

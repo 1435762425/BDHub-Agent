@@ -2,7 +2,7 @@
 from concurrent.futures import ThreadPoolExecutor,wait,FIRST_COMPLETED
 from threading import Lock
 import time
-from lib.global_selection import READBACK_DELAYS,assess,choose_campaign,selected_rows,settle_readback
+from lib.global_selection import READBACK_DELAYS,promotion_assessment,choose_campaign,selected_rows,settle_readback
 from lib.global_source import clean_product
 from lib.global_source_transport import DETAIL
 
@@ -89,7 +89,7 @@ def run(ledger,id,t,scope,items,report,save,stopped,*,width=8,qps=8,native_listi
                 stage('listing',time.monotonic()-began,len(batch));plans=[]
                 for item in batch:
                     p=fresh.get(item['pid'])
-                    if not p or not assess(p)['eligible']:ledger.update(item,'filtered',reason=assess(p or {})['reasons']);continue
+                    if not p or not promotion_assessment(p)['eligible']:ledger.update(item,'filtered',reason=promotion_assessment(p)['reasons']);continue
                     if p.get('fs_is_selected') is True:ledger.update(item,'needs_review',reason='listed_selected_but_no_readback');continue
                     plans.append(item)
                 # Refresh same-account session state after sequential source reads.

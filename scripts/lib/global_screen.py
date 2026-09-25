@@ -14,9 +14,8 @@ are business knobs, so they live in ``config/catalog-screen.json`` and are edita
 * every decision is recorded per product together with the metric values behind it, so a
   threshold change is auditable instead of silent.
 
-``unrated`` is recorded as a fact, never guessed. An unrated product reports rating ``0``, whose
-platform semantics are still unverified, so it is admitted only while ``allowUnrated`` is on and
-is always counted separately on the funnel.
+Missing ratings follow allowUnrated; numeric zero has unverified semantics and is not admitted
+as "unrated". Cumulative candidates preserve their original recorded admission facts.
 """
 import json
 import re
@@ -139,6 +138,19 @@ def decimal(value):
         return None
 
 
+def promotion_assessment(product):
+    """Current promotion facts only. Historical sales/rating are intake evidence, not re-entry gates."""
+    if not product:return {'eligible':False,'reasons':['product_not_in_current_listing']}
+    reasons=[]
+    total=decimal(product.get('commission_rate'));public=decimal(product.get('open_collab_rate'))
+    if total is None or public is None:reasons.append('commission_missing')
+    elif not 0<=public<=total<=10000 or total-public<200:reasons.append('commission_gap_below_min')
+    if product.get('product_status') not in (None,1,'1'):reasons.append('product_unavailable')
+    if product.get('is_under_governed') not in (None,False,0,'0'):reasons.append('product_governed')
+    if product.get('unavailable_type') not in (None,'',0,'0',8,'8'):reasons.append('product_unavailable')
+    return {'eligible':not reasons,'reasons':reasons}
+
+
 def evaluate(product, config=None):
     """Apply the thresholds to one stored listing. No network, no writes, no guesses."""
     config = config or load()
@@ -153,16 +165,21 @@ def evaluate(product, config=None):
         reasons.append('sales_missing')
     elif units < config['minSales']:
         reasons.append('sales_below_min')
-    unrated = rating is None or rating == 0
+    unrated = rating is None
+    if rating == 0:
+        reasons.append('rating_unverified')
     if unrated:
         if not config['allowUnrated']:
             reasons.append('rating_unrated')
-    elif not min_rating <= rating <= 5:
+    elif rating != 0 and not min_rating <= rating <= 5:
         reasons.append('rating_below_min')
     if total is None or public is None:
         reasons.append('commission_missing')
     elif not 0 <= public <= 10000 or not 0 <= total <= 10000 or total - public < min_gap:
         reasons.append('commission_gap_below_min')
+    for reason in promotion_assessment(product)['reasons']:
+        if reason not in reasons:
+            reasons.append(reason)
     return {'eligible': not reasons, 'reasons': reasons, 'units': units,
             'rating': None if rating is None else float(rating),
             'totalBp': None if total is None else int(total),
@@ -194,7 +211,8 @@ class Screen:
         self.clock = clock
         self.db = sqlite3.connect(self.path, timeout=15)
         self.db.row_factory = sqlite3.Row
-        self.db.executescript(SCHEMA)
+        from lib.fullmanaged_candidates import SCHEMA as CANDIDATE_SCHEMA
+        self.db.executescript(SCHEMA + CANDIDATE_SCHEMA)
 
     def close(self):
         self.db.close()
@@ -226,7 +244,9 @@ class Screen:
                 'counts=excluded.counts,updated=excluded.updated',
                 (run_id, source_run, encoded(config), fingerprint(config), 'recorded',
                  encoded({'states': counts, 'reasons': reasons}), stamp, stamp))
-        return self.detail(run_id)
+            from lib.fullmanaged_candidates import admit_screen
+            admission = admit_screen(self.db, run_id, at=stamp)
+        return self.detail(run_id) | {'candidates': admission}
 
     def run_row(self, run_id):
         return self.db.execute('SELECT * FROM global_source_screen_run WHERE run_id=?', (run_id,)).fetchone()
@@ -357,7 +377,7 @@ def screen_run_id(source_run, config):
     Keying on both means a threshold change never overwrites the previous decision, so the page
     can show what the change would add instead of silently rewriting history.
     """
-    return 'screen-' + digest([source_run, fingerprint(config)])[:24]
+    return 'screen-' + digest([source_run, fingerprint(config), 'admission-v2'])[:24]
 
 
 def screen_source(path, source_run, *, root=None, config=None, clock=time.time):
@@ -369,6 +389,15 @@ def screen_source(path, source_run, *, root=None, config=None, clock=time.time):
     config = config or load(root)
     stamp = fingerprint(config)
     run_id = screen_run_id(source_run, config)
+    # Stable published input/config is already screened. Keep the recorded admission facts.
+    with closing(sqlite3.connect(Path(path).resolve().as_uri()+'?mode=ro',uri=True)) as existing:
+        if existing.execute("SELECT 1 FROM sqlite_master WHERE name='global_candidate_publication'").fetchone():
+            publication=existing.execute('SELECT added,total FROM global_candidate_publication WHERE screen_run=?',(run_id,)).fetchone()
+            if publication:
+                ledger=Screen(path,clock=clock)
+                try:return ledger.detail(run_id)|{'candidates':{'added':publication[0],'total':publication[1],'duplicate':True}}
+                finally:ledger.close()
+
     with closing(sqlite3.connect(Path(path).resolve().as_uri() + '?mode=ro', uri=True)) as conn:
         rows = [json.loads(r[0]) for r in conn.execute('SELECT payload FROM global_source_product WHERE run_id=? ORDER BY pid', (source_run,))]
     evaluated = []
