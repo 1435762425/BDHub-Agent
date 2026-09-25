@@ -3,7 +3,7 @@
 import argparse,fcntl,json,signal,sys,time
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1];sys.dont_write_bytecode=True;sys.path.insert(0,str(ROOT/'scripts'))
-from lib.global_selection import READBACK_DELAYS,Selection,assess,prioritized_selection_batch,selection_campaign,selected_rows
+from lib.global_selection import READBACK_DELAYS,Selection,assess,matching_selection_evidence,prioritized_selection_batch,selection_campaign,selected_rows
 from lib.global_source import clean_product
 from lib.global_source_transport import opportunity_selector
 STOP=False
@@ -72,8 +72,11 @@ def main():
                         if str((r.get('campaign_info') or {}).get('crs_campaign_type')) in ('8','9'):
                             pid=str(r['campaign_product']['product_id']);matched.setdefault(pid,[]).append({'pid':pid,'campaignId':str(r['campaign_info']['campaign_id']),'type':r['campaign_info']['crs_campaign_type']})
                     for i in items:
-                        if i['pid'] in matched:ledger.update(i,'already_selected' if i['state']=='pending' else 'confirmed',selectionEvidence=matched[i['pid']],verifiedAt=time.time())
-                        elif i['state'] in ('submitting','awaiting_verification','result_unknown'):ledger.record_readback_absence(i)
+                        observed=matched.get(i['pid'],[]);exact=matching_selection_evidence(i,observed)
+                        if exact:ledger.update(i,'already_selected' if i['state']=='pending' else 'confirmed',selectionEvidence=exact,verifiedAt=time.time())
+                        elif i['state'] in ('submitting','awaiting_verification','result_unknown'):
+                            if observed:ledger.update(i,i['state'],otherCampaignObserved=observed)
+                            else:ledger.record_readback_absence(i)
                     return matched
                 if a.action=='verify':
                     for offset in range(0,len(pending),15):verify(pending[offset:offset+15]);save()

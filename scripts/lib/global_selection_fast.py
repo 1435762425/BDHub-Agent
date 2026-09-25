@@ -2,7 +2,7 @@
 from concurrent.futures import ThreadPoolExecutor,wait,FIRST_COMPLETED
 from threading import Lock
 import time
-from lib.global_selection import READBACK_DELAYS,assess,choose_campaign,selected_rows
+from lib.global_selection import READBACK_DELAYS,assess,choose_campaign,matching_selection_evidence,selected_rows
 from lib.global_source import clean_product
 from lib.global_source_transport import DETAIL
 
@@ -67,8 +67,11 @@ def run(ledger,id,t,scope,items,report,save,stopped,*,width=8,qps=8,native_listi
             if str((r.get('campaign_info') or {}).get('crs_campaign_type')) in ('8','9'):
                 pid=str(r['campaign_product']['product_id']);matches.setdefault(pid,[]).append({'pid':pid,'campaignId':str(r['campaign_info']['campaign_id']),'type':r['campaign_info']['crs_campaign_type']})
         for i in pending:
-            if i['pid'] in matches:ledger.update(i,'already_selected' if i['state']=='pending' else 'confirmed',selectionEvidence=matches[i['pid']],verifiedAt=time.time())
-            elif i['state'] in ('submitting','awaiting_verification','result_unknown'):ledger.record_readback_absence(i)
+            observed=matches.get(i['pid'],[]);exact=matching_selection_evidence(i,observed)
+            if exact:ledger.update(i,'already_selected' if i['state']=='pending' else 'confirmed',selectionEvidence=exact,verifiedAt=time.time())
+            elif i['state'] in ('submitting','awaiting_verification','result_unknown'):
+                if observed:ledger.update(i,i['state'],otherCampaignObserved=observed)
+                else:ledger.record_readback_absence(i)
         stage('readback',time.monotonic()-start,len(pending));refresh_speed();save()
     def read_offer(lane,item):
         try:return lane._xhr(method='GET',path=DETAIL,params=lane._params()|{'product_id':item['pid']},payload=None,write=False)

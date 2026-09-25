@@ -4,7 +4,7 @@ import sys
 import tempfile,unittest,tempfile,json,sqlite3
 from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'scripts'))
-from lib.global_selection import sales,assess,choose_campaign,prioritized_selection_batch,selection_campaign,Selection,observations,selected_rows,retryable_auth_rejection,retryable_verification_rejection
+from lib.global_selection import sales,assess,choose_campaign,matching_selection_evidence,prioritized_selection_batch,selection_campaign,Selection,observations,selected_rows,retryable_auth_rejection,retryable_verification_rejection
 class SelectionTests(unittest.TestCase):
  def test_inclusive_sales_and_percentage_point_boundary(self):
   p={'sales':'300 已售','product_rating':4,'commission_rate':'1200','open_collab_rate':'1000'}
@@ -26,6 +26,12 @@ class SelectionTests(unittest.TestCase):
   retried=[{'pid':'1','state':'pending'}]
   items=[{'pid':'1','state':'pending'},{'pid':'2','state':'pending'}]
   self.assertEqual([row['pid'] for row in prioritized_selection_batch(items,retried,2)],['1','2'])
+ def test_submitted_intent_only_accepts_its_frozen_campaign(self):
+  observed=[{'pid':'p','campaignId':'other','type':8},{'pid':'p','campaignId':'original','type':8}]
+  item={'pid':'p','state':'result_unknown','payload':{'campaign':{'campaign':{'campaign_id':'original'}}}}
+  self.assertEqual(matching_selection_evidence(item,observed),[observed[1]])
+  self.assertEqual(matching_selection_evidence(item,observed[:1]),[])
+  self.assertEqual(matching_selection_evidence({'pid':'p','state':'pending','payload':{}},observed),observed)
  def test_attempt_never_resubmitted(self):
   with tempfile.TemporaryDirectory() as d:
    root=Path(d);(root/'var').mkdir();s=Selection(root)

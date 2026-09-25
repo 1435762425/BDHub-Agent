@@ -142,6 +142,14 @@ def selected_rows(t,pids):
         if not data['items'] or len(rows)>total:raise ValueError('selected_incomplete')
     raise ValueError('selected_page_limit')
 
+def matching_selection_evidence(item, observed):
+    """Only the frozen campaign can settle a submitted selection intent."""
+    if item['state']=='pending':return observed
+    frozen=(item.get('payload') or {}).get('campaign') or {}
+    campaign=(frozen.get('campaign') or {}) if isinstance(frozen,dict) else {}
+    cid=str(campaign.get('campaign_id') or '')
+    return [row for row in observed if row['campaignId']==cid] if cid else []
+
 def settled_pids(root,market='it'):
     """Products any batch has proven to be in the selected pool.
 
