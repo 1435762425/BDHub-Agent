@@ -26,12 +26,18 @@
 
 ## 运行与边界
 
-生产代码已合入，**生产 Web 运行实例尚未切换**；原用户要求不动进程，发布需要短暂重启 Web，留待最终确认。已读取监听端口与进程关系确定 Web 独立于业务 worker，但没有停止、重启或恢复任何生产业务进程。
+生产代码已合入，**2026-09-25 14:47（北京时间）经用户明确允许动进程后完成 Web 发布**。只重启 `io.bdhub.agent.web`，未停止、重启或恢复任何生产业务 worker。新页面在原 `127.0.0.1:5198` 提供服务。
 
-没有数据库迁移、业务状态写入、配置/凭据修改、平台请求或模型调用；读取 SQLite 使用 mode=ro，并未将 worktree 连接为生产 var。仅修改代码和文档。临时预览由本任务启动并在显示验证后关闭。
+没有数据库迁移、业务状态写入、配置/凭据修改、平台请求或模型调用；读取 SQLite 使用 mode=ro，并未将 worktree 连接为生产 var。发布写入 Web 构建与本机发布回执，原服务日志按既有配置继续写入；不写业务台账。临时预览由本任务启动并在显示验证后关闭。
 
 本批没有提前实现 A50、B 四市场扩围、15 天全托探查、80/20 发送或任何新自动隔离政策；页面如实显示当前台账，并不伪装后续方案已上线。旧只读状态读取的多个数据库不是跨库原子快照，页面展示汇总时刻、来源与个别来源更新时间；缓存只存在 Web 进程内，不另写持久状态源。
 
-## 后续切换
+## 发布验证与回退
 
-确认 Web 切换时间后复用 worktree 已验证构建，备份旧构建，保持生产 cwd/启动命令与控制状态；只切换 Web，不动 scheduler、收信、发送、AI 或维护 worker。切换后回读四市场新 GET 和页面、确认业务 worker 未因发布重启，并记录实际运行结果。未切换前生产 5198 上不会出现新概览。
+- 复用 worktree 已验证构建，准备副本逐文件 SHA-256 与原构建一致后切换，未在生产目录重新 build。启动命令、cwd、端口、日志位置及持久业务控制不变。
+- 新 Build ID：`LJr-fYqji0wCeI4Cd_vFb`；旧 Build ID：`JYe4euXh2RqoSf8XnWeGB`。Web 监听 PID 从 `41141` 切换为 `29000`。
+- 四市场 `/api/market-overview`、`/api/operations-home`、市场页面均 HTTP 200；新接口 readOnly=true、platformWrites=0、realSends=0，身份分区恒等式和 7 日数据通过；非 IT B 不可用与当前代码范围一致。
+- 真实生产页面在四市场均完成浏览器渲染，无 pageerror 或页面横向溢出；IT 390px 窄屏也通过。检查只访问 GET，没有点击任何业务控制按钮。
+- 切换前后记录的 13 个 scheduler/收信/Agent/二发 worker PID 均保持一致。`continuous_send_control`、`agent_reply_setting` 与 `control_event` 的只读摘要哈希前后一致；没有执行任何控制写请求。
+- 旧构建备份与发布证据：`var/web-releases/readonly-overview-20260925T064754Z/previous`、同目录 `release.json`。回退时保留当前构建，恢复 previous 为 `apps/web/.next` 后只重新拉起 Web，再回读；不触及业务数据库或 worker。
+- 生产截图保存在开发 worktree 的 `outputs/operations-overview-preview/production-desktop.png` 与 `production-mobile.png`，不入 Git。发布临时脚本已清理，旧构建继续保留用于回退。

@@ -1,6 +1,15 @@
 # BDHub-Agent 当前交接
 
-更新时间：2026-09-25 10:40（Asia/Shanghai）。本页只记录运行快照；规则见 [PROJECT](../PROJECT.md)，实现见 [TECHNICAL](../TECHNICAL.md)，后续方向见[项目审计与清理](../implementation/project-audit-20260924.md)。更早流水见[历史交接](../archive/handoff/codex-takeover-history-20260923.md)。
+更新时间：2026-09-25 14:52（Asia/Shanghai）。本页只记录运行快照；规则见 [PROJECT](../PROJECT.md)，实现见 [TECHNICAL](../TECHNICAL.md)，后续方向见[项目审计与清理](../implementation/project-audit-20260924.md)。更早流水见[历史交接](../archive/handoff/codex-takeover-history-20260923.md)。
+
+
+## 2026-09-25 下午：首批只读运营概览已发布
+
+- 用户在主体模块规则逐项确认后要求开始开发；首批限定为四市场只读运营面板与统计口径。代码在独立 worktree `../BDHub-Agent-ops-overview-20260925` 验证后合入，提交 `7b812bf`、`86e31b4`；原有未提交方案文档保留，没有代为提交。
+- Python 1,305 项、Web 174 项测试通过，Web build/typecheck 与桌面/390px 显示检查通过。新 GET `/api/market-overview?market=<market>` 区分当前库存、身份来源行/去重账号名、7 日事件、等待、技术隔离和真实人工事项；未实现数据不冒充 0。
+- 用户随后明确“可以动进程，继续”：北京时间 14:47 仅切换 `io.bdhub.agent.web`，原端口 5198。新 build `LJr-fYqji0wCeI4Cd_vFb`，旧构建保留在 `var/web-releases/readonly-overview-20260925T064754Z/previous`，同目录 release.json 记录校验和回读。
+- 四市场新概览 GET、原首页 GET 与页面均 200；生产浏览器四市场渲染无脚本错误，桌面/手机无页面级横向溢出。切换前后记录的 13 个业务 worker PID 一致；二发控制、AI 设置及授权事件摘要一致。没有平台/模型调用、迁移、业务控制变更或业务 worker 重启。
+- 只上线第一批展示与口径，不代表 A50、B 四市场、15 天全托探查、80/20 发送或新的自动隔离已实施。运行证据和回退说明见[首批交付](../implementation/readonly-operations-overview-20260925.md)；后续按[模块方案](../implementation/module-optimization-plan-20260925.md) §10 接续，不重新询问已定业务规则。
 
 ## 2026-09-25 上午：审查、DeepSeek 分工与修复
 
