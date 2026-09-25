@@ -42,6 +42,11 @@ def cycle(market):
           with sync_playwright() as playwright:
             context=playwright.chromium.launch_persistent_context(str(account.profile_dir),headless=True,service_workers='block')
             try:
+                # HTTP authentication has already proved this locked account. Keep HTTP
+                # sends and backfill available while the browser hydrates its conversation list.
+                owner.accepting=True
+                def receive_stopped():return closing.is_set() or stopped(market)
+                receiver=Receiver(ROOT,market,runtime['auth'],runtime['session'].maintenance_due,receive_stopped);receiver.start()
                 def route(r):
                     path=urlsplit(r.request.url).path.rstrip('/')
                     if path.endswith('/message/send') or '/conversation/create' in path:r.abort()
@@ -58,16 +63,15 @@ def cycle(market):
                 if 'login' in page.url.lower():raise ValueError('sdk_login_required')
                 for _ in range(240):
                     if stopped(market):return
+                    if receiver.done.is_set():raise ValueError('sdk_http_reader_stopped')
+                    if not current():raise ValueError('im_owner_identity_changed')
                     if page.evaluate(ready_script(_FIND_API)):break
                     page.wait_for_timeout(500)
                 else:raise ValueError('sdk_not_ready')
                 if not matches or not all(matches):raise ValueError('sdk_im_identity_unverified')
                 armed=page.evaluate(arm_script(_FIND_API))
                 if armed.get('armed')!=2:raise ValueError('sdk_callbacks_unavailable')
-                owner.accepting=True
                 print(json.dumps({'event':'session_ready','market':market,'epoch':owner.epoch,'at':time.time()}),flush=True)
-                def receive_stopped():return closing.is_set() or stopped(market)
-                receiver=Receiver(ROOT,market,runtime['auth'],runtime['session'].maintenance_due,receive_stopped);receiver.start()
                 next_status=0;unready_since=None
                 while not stopped(market) and time.monotonic()-started<600 and current():
                     if receiver.done.is_set():raise ValueError('sdk_http_reader_stopped')

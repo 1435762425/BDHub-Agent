@@ -827,7 +827,9 @@ def _background(root,store,jobs,automation,stamp,maintenance_enabled=None):
     from lib.im_session_owner import enabled as sdk_enabled,launch as launch_session
     from lib.job_run import start as start_job,state as job_state
     if sdk_enabled(root,'it'):
-        launch_session(root,'it')
+        if (automation['automaticOperationsEnabled'] or enabled['inbox_monitor']['enabled']) and not (Path(root)/'var/job-inbox.stop').exists():
+            try:launch_session(root,'it')
+            except OSError:pass
     elif (automation['automaticOperationsEnabled'] or enabled['inbox_monitor']['enabled']) and not (job_state(root,'inbox') or {}).get('running'):
         try:start_job(root,'inbox',{'limit':12,'interval':30})
         except (ValueError,OSError):pass
@@ -862,7 +864,9 @@ def _background(root,store,jobs,automation,stamp,maintenance_enabled=None):
             inbox_state=_read(Path(root)/f'var/market-inbox-{market}.json',{})
             inbox_pid=inbox_state.get('pid')
             inbox_alive=pid_alive(inbox_pid)
-            if sdk_enabled(root,market):launch_session(root,market)
+            if sdk_enabled(root,market):
+                try:launch_session(root,market)
+                except OSError:pass
             elif not inbox_alive:
                 log=Path(root)/f'var/market-inbox-{market}.log'
                 try:

@@ -39,7 +39,9 @@ class SchedulerFlow(unittest.TestCase):
         (self.root/'var').mkdir();(self.root/'config').mkdir()
         (self.root/'config/operations-policy.json').write_text((ROOT/'config/operations-policy.json').read_text())
         (self.root/'config/markets.json').write_text((ROOT/'config/markets.json').read_text())
-        (self.root/'config/market-accounts.json').write_text((ROOT/'config/market-accounts.json').read_text())
+        accounts=json.loads((ROOT/'config/market-accounts.json').read_text())
+        for pair in accounts['markets'].values():pair.update(imSessionMode='http_polling',identityAccountRole='communications')
+        (self.root/'config/market-accounts.json').write_text(json.dumps(accounts))
         with CycleStore(self.root/'var/second-cycle.sqlite',lambda:NOW) as store:store.plan('bjn-local-research','it')
         apply_database(self.root,'second-cycle',clock=lambda:NOW)
         self.store=CycleStore(self.root/'var/second-cycle.sqlite',lambda:NOW)
@@ -214,6 +216,22 @@ class SchedulerFlow(unittest.TestCase):
 
 
 class StageWiring(unittest.TestCase):
+    def setUp(self):
+        # Legacy stage contracts must not depend on the deployment's selected role.
+        accounts=json.loads((ROOT/'config/market-accounts.json').read_text())
+        for pair in accounts['markets'].values():pair.update(imSessionMode='http_polling',identityAccountRole='communications')
+        self.account_fixture=accounts
+        p=patch('lib.market_accounts.load_config',return_value=accounts);p.start();self.addCleanup(p.stop)
+
+    def test_supply_identity_uses_bounded_route_after_it_legacy_reconcile(self):
+        self.account_fixture['markets']['it']['identityAccountRole']='supply'
+        def answers(args,label):
+            return {'state':'completed','itemCount':3,'complete':True,'platformWrites':0,'payload':{'sliceComplete':True,'queue':{}}}
+        executor,calls=self.executor(answers)
+        result=executor.execute(None,{'market':'it','runId':'r','applicableSources':['campaign']},'oecid',{'jobs':{}})
+        self.assertEqual(result['state'],'completed')
+        self.assertEqual([a[0] for a,_ in calls],['scripts/second-cycle-identities.py','scripts/market-identity.py'])
+
     def executor(self,answers):
         executor=SubprocessStageExecutor(ROOT);calls=[]
         def call(args,label,timeout=14400):

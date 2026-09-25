@@ -315,7 +315,8 @@ class ProfileRefreshJobsTests(unittest.TestCase):
         kill.assert_called_once_with(process.pid, profile_refresh.signal.SIGTERM)
         command = launch.call_args.args[0]
         self.assertEqual(command[1], str(ROOT / "scripts/probe-italy-profile.py"))
-        self.assertEqual(command[command.index("--account") + 1], "acc6")
+        from lib.im_session_owner import identity_account
+        self.assertEqual(command[command.index("--account") + 1], identity_account(ROOT,"it"))
 
     def test_cli_rejects_extra_path_or_route_fields_and_sanitizes_errors(self):
         cases = [{"creatorId": self.creator["creatorId"], "requestId": "cli", "oecId": "forged"},

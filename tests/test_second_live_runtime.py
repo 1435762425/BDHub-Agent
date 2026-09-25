@@ -88,6 +88,7 @@ class SecondLiveRuntimeTests(unittest.TestCase):
                 yield mark
             loaded = Mock(return_value=(account, identity,
                 lambda path: SimpleNamespace(headers={"Cookie": "PRIVATE_COOKIE"}), guard, maintenance, "canary"))
+            stack.enter_context(patch("lib.im_session_owner.enabled", return_value=False))
             stack.enter_context(patch.object(M, "VAR", var))
             stack.enter_context(patch.object(M, "_load_runtime", loaded))
             stack.enter_context(patch.object(M, "authenticate_it", authenticate))
