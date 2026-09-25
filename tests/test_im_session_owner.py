@@ -103,6 +103,19 @@ class SignalTests(unittest.TestCase):
   self.assertEqual(calls,[0,10]);self.assertEqual([x['messageId'] for x in combined['events']],['2','1'])
   self.assertTrue(combined['hasMore'])
 
+ def test_required_signal_beyond_overlap_and_page_budget_preserve_gap(self):
+  self.incoming()
+  for limit in (1,2):
+   calls=[]
+   pages=[{'identityVerified':True,'events':[{'messageId':'1'}],'contents':[],'hasMore':True,'nextCursor':'10'},
+          {'identityVerified':True,'events':[{'messageId':'2'}],'contents':[],'hasMore':False,'nextCursor':'20'}]
+   def read(*a,**kw):calls.append(kw['cursor']);return pages[len(calls)-1]
+   combined=read_to_overlap(SimpleNamespace(history_summary=read),SimpleNamespace(conversation_id='999'),self.s,self.plan,max_pages=limit,required_ids={'2'})
+   self.assertEqual(len(calls),limit)
+   self.assertEqual(combined['hasMore'],limit==1)
+   self.assertEqual('2' in {e['messageId'] for e in combined['events']},limit==2)
+  self.assertEqual(self.s.db.execute('select count(*) from inbox_event').fetchone()[0],1)
+
 class SdkReadinessTests(unittest.TestCase):
  def test_initializing_success_failed_and_missing_are_distinguished(self):
   import subprocess
