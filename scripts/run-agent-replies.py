@@ -70,7 +70,8 @@ def run_existing(store,replies,reply,market,stage,authorized_now=None):
  from lib.market_agent_reply import run_reply as market_run_reply
  return market_run_reply(ROOT,store,replies,reply,market,pilot=stage=='pilot_running',
                          authorized_now=authorized_now is not None,stopped=lambda:STOP)
-def pending_rows(store,plan,now):
+def pending_rows(store,plan,now,limit=20):
+ if type(limit) is not int or not 1<=limit<=20:raise CycleError('agent_pending_limit_invalid')
  rows=store.db.execute("""SELECT p.* FROM inbox_pending p JOIN relationship r
    ON r.plan_id=p.plan_id AND r.creator_id=p.creator_id
    WHERE p.plan_id=? AND p.state IN ('awaiting_content','awaiting_classification','review_partial','template_ready','policy_review','facts_ready_for_review','needs_facts')
@@ -91,7 +92,7 @@ def pending_rows(store,plan,now):
     if replied_after(store.db,plan,turn['cid'],turn['oec'],stamp):continue
     if 'agent_reply_decision_v2' in tables and not decision_retry_ready(store,plan,turn['turn_id'],now):continue
   result.append(pending)
-  if len(result)>=20:break
+  if len(result)>=limit:break
  return result
 def tick(authorized_now=None,market="it"):
  authorized_now=authorized_request(authorized_now)
@@ -130,6 +131,12 @@ def tick(authorized_now=None,market="it"):
    candidates=[] if outstanding else pending_rows(store,plan,now)
    if stage=='pilot_running':candidates=candidates[:1]
    for pending in candidates:
+    # Skip bounded technical failures, but never build a backlog of stale ready drafts.
+    current_setting=agent_setting(store,plan)
+    if STOP or not current_setting['enabled'] or authorized_now is None and (
+        not inside(current_setting,store.clock()) or
+        near_send_window(send_window(store,market),current_setting['bufferMinutes'],store.clock())):
+     break
     turn=store.db.execute('SELECT * FROM inbound_turn WHERE plan_id=? AND creator_id=? AND historical=0 ORDER BY coalesce(occurred_ms,observed_at*1000) DESC,message_id DESC LIMIT 1',(plan,pending['creator_id'])).fetchone()
     if not turn:continue
     if not decision_retry_ready(store,plan,turn['turn_id'],now):
@@ -144,6 +151,7 @@ def tick(authorized_now=None,market="it"):
     report['noReply']+=int(applied['route']=='no_reply')
     report['human']+=int(applied['route']=='handoff')
     report['prepared']+=int(applied['replyId'] is not None)
+    if applied['replyId'] is not None:break  # Send the first ready reply before another model call.
    q=store.db.execute("SELECT id FROM service_reply WHERE plan_id=? AND state='ready' AND kind IN ('agent_generated_v2','agent_request_detail_v2','agent_handoff_v2') ORDER BY created LIMIT 1",(plan,)).fetchone()
    if q:
     result=run_existing(store,replies,replies.get(q[0]),market,stage,authorized_now)
@@ -155,6 +163,12 @@ def tick(authorized_now=None,market="it"):
   report['state']='completed'
   store.db.execute("UPDATE agent_reply_run SET state='completed',finished_at=?,claimed=?,no_reply=?,prepared=?,human=?,confirmed=?,unknown=? WHERE run_id=?",(store.clock(),report['claimed'],report['noReply'],report['prepared'],report['human'],report['confirmed'],report['unknown'],run_id))
   return report|{'replyProjection':projection}
+def worker_delay(result,interval):
+ """Continue useful work promptly; wait/failed/unknown states retain bounded polling."""
+ progressed=result.get('state')=='completed' and any(int(result.get(key) or 0)>0 for key in ('claimed','confirmed','noReply','human'))
+ reconciled=result.get('state')=='original_intent_rechecked' and result.get('replyState')=='confirmed'
+ return 1 if progressed or reconciled else max(30,interval)
+
 def main():
  p=argparse.ArgumentParser();p.add_argument('--worker',action='store_true');p.add_argument('--interval',type=int,default=60);p.add_argument('--stop',type=Path);p.add_argument('--authorized-now');p.add_argument('--market',default='it');a=p.parse_args();signal.signal(signal.SIGTERM,stop);signal.signal(signal.SIGINT,stop)
  if a.worker and a.authorized_now:p.error('--authorized-now cannot be used with --worker')
@@ -169,7 +183,7 @@ def main():
    if not a.worker:break
    if a.market!='it' and result.get('state')=='disabled':break
    a.authorized_now=None
-   for _ in range(max(30,a.interval)):
+   for _ in range(worker_delay(result,a.interval)):
     if STOP or (a.stop and a.stop.exists()):break
     time.sleep(1)
 if __name__=='__main__':raise SystemExit(main())

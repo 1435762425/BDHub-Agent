@@ -1,5 +1,6 @@
 """Automatic policy replies with durable single attempts. No public draft workflow."""
 import json,re,uuid
+from contextlib import nullcontext
 from lib.second_cycle import CycleError,digest,encoded
 from lib.cycle_service import Service
 SCHEMA='''CREATE TABLE IF NOT EXISTS service_reply_fact_failure(plan_id TEXT NOT NULL,creator_id TEXT NOT NULL,revision INTEGER NOT NULL,attempts INTEGER NOT NULL,PRIMARY KEY(plan_id,creator_id,revision));
@@ -116,14 +117,15 @@ class AutoReplies:
    self.s.db.execute("INSERT INTO service_reply(id,plan_id,creator_id,pending_revision,oec,cid,kind,case_id,text,context_hash,state,request_ref,receipt,proof,created,started,control_revision) VALUES(?,?,?,?,?,?,?,NULL,?,?,\'ready\',?,NULL,NULL,?,NULL,?)",(reply_id,plan,creator,pending_revision,rel['oec'],cid,action,text.strip(),digest(context),str(uuid.uuid4()),self.s.clock(),rel['revision']))
    return self.get(reply_id)
  def prepare_generated(self,plan,creator,cid,pending_revision,turn_id,decision_id,text,
-                       *,handoff_case_id=None,wait_for='none',expected_control_revision=None):
+                       *,handoff_case_id=None,wait_for='none',expected_control_revision=None,in_transaction=False):
   """Freeze one generated body under the same receipt and context fence as legacy replies."""
   kind=('agent_handoff_v2' if handoff_case_id else
         'agent_request_detail_v2' if wait_for in ('contact','clarification') else 'agent_generated_v2')
   if not isinstance(text,str) or not text.strip() or len(text)>1200 or \
      not isinstance(decision_id,str) or not decision_id.startswith('agent-decision-'):
    raise CycleError('agent_generated_reply_invalid')
-  with self.s.tx():
+  if in_transaction and not self.s.db.in_transaction:raise CycleError('reply_prepare_transaction_required')
+  with nullcontext() if in_transaction else self.s.tx():
    rel=self.s.db.execute('SELECT * FROM relationship WHERE plan_id=? AND creator_id=?',(plan,creator)).fetchone()
    pending=self.s.db.execute('SELECT * FROM inbox_pending WHERE plan_id=? AND creator_id=?',(plan,creator)).fetchone()
    expected_mode='human' if handoff_case_id else 'auto'

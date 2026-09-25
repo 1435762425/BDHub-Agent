@@ -143,6 +143,52 @@ class AgentReplyV2Tests(unittest.TestCase):
    call=lambda *_args,**_kwargs:{'content':json.dumps(raw)})
   self.assertIsNone(apply_production(self.store,self.plan,current,followup)['replyId'])
   self.assertEqual(self.store.db.execute('SELECT state FROM inbox_pending').fetchone()[0],'waiting_contact')
+ def test_worker_dispatches_first_prepared_reply_before_more_model_calls(self):
+  from contextlib import nullcontext
+  from unittest.mock import patch
+  import test_agent_reply_worker as worker_tests
+  worker=worker_tests.WORKER;context=self.live_context();events=[]
+  def generate(*_args,**_kwargs):events.append('generate');return self.generated(context)
+  def send(*_args,**_kwargs):events.append('send');return {'state':'confirmed','realSends':1,'platformWrites':1}
+  config={'enabled':True,'revision':1,'bufferMinutes':30}
+  with patch.object(worker,'CycleStore',return_value=nullcontext(self.store)), \
+       patch.object(worker,'agent_setting',return_value=config), \
+       patch.object(worker,'rollout_stage',return_value='full'), \
+       patch.object(worker,'inside',return_value=True), \
+       patch.object(worker,'near_send_window',return_value=False), \
+       patch.object(worker,'send_window',return_value=['16:30','24:00']), \
+       patch.object(worker,'backfill',return_value={}), \
+       patch.object(worker,'pending_rows',return_value=[{'creator_id':context['creatorId']}]*2), \
+       patch.object(worker,'production_context',return_value=context), \
+       patch.object(worker,'generate',side_effect=generate), \
+       patch.object(worker,'run_existing',side_effect=send):
+   result=worker.tick(market='it')
+  self.assertEqual(events,['generate','send'])
+  self.assertEqual(result['prepared'],1)
+
+ def test_handoff_prepare_failure_rolls_back_case_and_control_then_retries_once(self):
+  from unittest.mock import patch
+  context=self.live_context();generated=self.generated(context,'handoff','Ricevuto, ti rispondiamo.')
+  with patch.object(AutoReplies,'prepare_generated',side_effect=CycleError('reply_context_changed')):
+   with self.assertRaisesRegex(CycleError,'reply_context_changed'):
+    apply_production(self.store,self.plan,context,generated)
+  self.assertEqual(self.store.db.execute('SELECT mode FROM relationship').fetchone()[0],'auto')
+  self.assertEqual(self.store.db.execute('SELECT count(*) FROM service_case').fetchone()[0],0)
+  self.assertEqual(self.store.db.execute('SELECT count(*) FROM service_reply').fetchone()[0],0)
+  result=apply_production(self.store,self.plan,context,generated)
+  self.assertEqual(self.store.db.execute('SELECT count(*) FROM service_case').fetchone()[0],1)
+  self.assertEqual(self.store.db.execute('SELECT service_reply_id FROM agent_reply_decision_v2 WHERE decision_id=?',(generated['decisionId'],)).fetchone()[0],result['replyId'])
+
+ def test_decision_link_failure_rolls_back_reply_intent(self):
+  context=self.live_context();generated=self.generated(context)
+  self.store.db.execute("CREATE TEMP TRIGGER fail_reply_link BEFORE UPDATE OF service_reply_id ON agent_reply_decision_v2 BEGIN SELECT RAISE(ABORT,'injected_link_failure'); END")
+  with self.assertRaisesRegex(Exception,'injected_link_failure'):
+   apply_production(self.store,self.plan,context,generated)
+  self.assertEqual(self.store.db.execute('SELECT count(*) FROM service_reply').fetchone()[0],0)
+  self.store.db.execute('DROP TRIGGER fail_reply_link')
+  result=apply_production(self.store,self.plan,context,generated)
+  self.assertIsNotNone(result['replyId'])
+
  def test_handoff_locks_creator_before_ack_and_keeps_it_locked(self):
   context=self.live_context();generated=self.generated(context,'handoff','Ricevuto, ti rispondiamo.')
   reply_id=apply_production(self.store,self.plan,context,generated)['replyId']

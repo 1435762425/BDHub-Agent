@@ -103,4 +103,25 @@ class AgentReplyWorkerTests(unittest.TestCase):
   db.execute("UPDATE inbox_pending SET state='awaiting_content'")
   self.assertEqual(len(WORKER.pending_rows(self.store,'p',1000)),1)
 
+ def test_reply_queue_selects_one_creator_before_generating(self):
+  db=self.store.db
+  db.execute('CREATE TABLE inbox_pending(plan_id,creator_id,state,due_at)')
+  db.execute('CREATE TABLE relationship(plan_id,creator_id,mode,rejected)')
+  db.execute('CREATE TABLE service_case(plan_id,creator_id,state)')
+  for creator,stamp in [('older',10),('newer',20)]:
+   db.execute("INSERT INTO relationship VALUES('p',?,'auto',0)",(creator,))
+   db.execute("INSERT INTO inbox_pending VALUES('p',?,'awaiting_content',?)",(creator,stamp))
+  selected=WORKER.pending_rows(self.store,'p',100,limit=1)
+  self.assertEqual([r['creator_id'] for r in selected],['older'])
+  self.assertEqual(len(WORKER.pending_rows(self.store,'p',100)),2)
+
+ def test_useful_reply_progress_has_no_fixed_minute_idle_but_errors_back_off(self):
+  for result in ({'state':'completed','claimed':1},{'state':'completed','confirmed':1},
+                 {'state':'completed','noReply':1},{'state':'original_intent_rechecked','replyState':'confirmed'}):
+   self.assertEqual(WORKER.worker_delay(result,60),1)
+  for result in ({'state':'failed'},{'state':'outside_reply_window'},
+                 {'state':'completed','deferred':1},{'state':'original_intent_rechecked','replyState':'unknown'}):
+   self.assertEqual(WORKER.worker_delay(result,60),60)
+  self.assertEqual(WORKER.worker_delay({'state':'waiting_dispatch'},1),30)
+
 if __name__=='__main__':unittest.main()

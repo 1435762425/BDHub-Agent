@@ -386,16 +386,18 @@ def apply_production(store, plan, context, generated):
                              'DO UPDATE SET event_rowid=max(event_rowid,excluded.event_rowid)',
                              (plan,creator,event[0]))
         return {'route':route,'replyId':None}
-    case_id = None
-    if route == 'handoff':
-        with store.tx():
-            live=store.db.execute('SELECT revision FROM inbox_pending WHERE plan_id=? AND creator_id=?',
-                                  (plan,creator)).fetchone()
-            control=store.db.execute('SELECT revision,mode FROM relationship WHERE plan_id=? AND creator_id=?',
-                                     (plan,creator)).fetchone()
-            if not live or live['revision']!=pending['revision'] or not control or \
-                    control['revision']!=rel['revision'] or control['mode']!='auto':
-                raise CycleError('agent_context_changed')
+    # Case/control changes, the frozen reply, and its decision link are a single local commit.
+    # A crash cannot strand a human lock without an acknowledgement intent, or lose waitFor linkage.
+    with store.tx():
+        live=store.db.execute('SELECT revision FROM inbox_pending WHERE plan_id=? AND creator_id=?',
+                              (plan,creator)).fetchone()
+        control=store.db.execute('SELECT revision,mode FROM relationship WHERE plan_id=? AND creator_id=?',
+                                 (plan,creator)).fetchone()
+        if not live or live['revision']!=pending['revision'] or not control or \
+                control['revision']!=rel['revision'] or control['mode']!='auto':
+            raise CycleError('agent_context_changed')
+        case_id = None
+        if route == 'handoff':
             case_id = 'case-' + digest([plan,creator,pending['revision'],'agent-v2'])[:24]
             now = store.clock()
             store.db.execute("INSERT INTO service_case VALUES(?,?,?,'open',?,?,?,?, 'not_sent')",
@@ -405,10 +407,11 @@ def apply_production(store, plan, context, generated):
                              (plan,creator,pending['revision']))
             store.db.execute("UPDATE relationship SET mode='human',revision=revision+1 WHERE plan_id=? AND creator_id=? AND revision=?",
                              (plan,creator,rel['revision']))
-    q = replies.prepare_generated(plan,creator,context['conversationId'],pending['revision'],turn_id,
-                                  generated['decisionId'],decision['replyText'],handoff_case_id=case_id,
-                                  wait_for=decision['waitFor'],
-                                  expected_control_revision=rel['revision']+(1 if case_id else 0))
-    store.db.execute('UPDATE agent_reply_decision_v2 SET service_reply_id=? WHERE decision_id=?',
-                     (q['id'],generated['decisionId']))
+        q = replies.prepare_generated(plan,creator,context['conversationId'],pending['revision'],turn_id,
+                                      generated['decisionId'],decision['replyText'],handoff_case_id=case_id,
+                                      wait_for=decision['waitFor'],
+                                      expected_control_revision=rel['revision']+(1 if case_id else 0),
+                                      in_transaction=True)
+        store.db.execute('UPDATE agent_reply_decision_v2 SET service_reply_id=? WHERE decision_id=?',
+                         (q['id'],generated['decisionId']))
     return {'route':route,'replyId':q['id']}
