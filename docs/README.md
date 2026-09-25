@@ -6,7 +6,7 @@
 
 | 问题 | 资料 |
 | --- | --- |
-| 下一步改进、缺陷与验收指标 | [项目审计与清理](implementation/project-audit-20260924.md) |
+| 下一步改进、缺陷与验收指标 | [各模块优化方案](implementation/module-optimization-plan-20260925.md)（待 Codex 审查）、[项目审计与清理](implementation/project-audit-20260924.md) |
 | 商品全生命周期 | [PID 生命周期](architecture/pid-lifecycle-v1.md)、[Campaign](architecture/non-full-managed-campaign-v1.md) |
 | 工作流、市场与账号 | [自动运营设计](architecture/automated-operations-workflow-v1.md)、[市场接入标准](architecture/market-rollout-standard-v1.md)、[账号生命周期](architecture/dual-account-lifecycle.md) |
 | 身份与排序 | [稳定身份](architecture/creator-identity-and-rename.md)、[排序规则](PROJECT.md#43-发送位置) |
