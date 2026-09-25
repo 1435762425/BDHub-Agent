@@ -86,6 +86,8 @@ class Layers(unittest.TestCase):
             self.assertEqual(counts['ready'], 1)
             self.assertEqual(counts['readyCreators'], 1)
             self.assertEqual(counts['queued'], 2)
+            self.assertEqual(counts['candidateQueued'], 2)
+            self.assertEqual(counts['identityQueued'], 0)
             # The strongest lead is the one that would go out.
             self.assertEqual(state['pools']['ready'][0]['rank'], 2)
 
