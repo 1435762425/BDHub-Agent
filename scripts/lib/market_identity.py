@@ -48,6 +48,16 @@ def _receipt(report,target_ref):
  return row
 
 
+def _followup_blocked(report,target_ref):
+ """Whether a confirmed Find target was later blocked by Profile or another read stage."""
+ for row in report.get('requests',[]):
+  if not isinstance(row,dict) or row.get('targetRef')!=target_ref or row.get('stage')=='find':continue
+  if row.get('status')!='returned' or row.get('httpStatus')!=200 or row.get('code')!='0' or \
+    row.get('verificationRequired') is not False:
+   return True
+ return False
+
+
 def validated_report_targets(report,requested,market,account):
  """Keep confirmed prefix results from a blocked cohort and leave every other intent pending."""
  if report.get('market')!=market or report.get('account')!=account or report.get('status') not in {'completed','blocked'} or \
@@ -75,6 +85,11 @@ def validated_report_targets(report,requested,market,account):
    if report.get('status')!='blocked':raise CycleError('market_identity_report_invalid')
    blocked.add(ref);continue
   valid.append((target,source,receipt))
+  # A profile canary may prove Find/OECID first and then receive a known non-zero response from the
+  # Profile endpoint.  Preserve the confirmed Find result, but keep the same target visibly blocked
+  # for the profile capability.  Treating this as an invalid report discarded valid OECID evidence
+  # and forced the next run to repeat the Find request.
+  if report.get('status')=='blocked' and _followup_blocked(report,ref):blocked.add(ref)
  if report.get('status')=='blocked' and not blocked:raise CycleError('market_identity_report_invalid')
  blocked_codes={str(row.get('code')) for row in report.get('requests',[]) if isinstance(row,dict) and row.get('targetRef') in blocked}
  code='market_identity_auth_required' if '16201010' in blocked_codes else 'market_identity_blocked'
@@ -133,7 +148,8 @@ def run(root,market,limit=3,*,profile_canary=False,runner=subprocess.run,clock=t
   chunk=items[offset:offset+3];token=digest([market,clock(),offset,chunk])[:16]
   folder=root/f'var/market-identity-{market}-{token}';targets=folder/'targets.private.json';output=folder/'output'
   folder.mkdir(parents=True,exist_ok=False,mode=0o700)
-  payload={'market':market,'identityOnly':not profile_canary,'targets':[
+  payload={'market':market,'identityOnly':not profile_canary,
+           **({'profileTypeSets':[[2]]} if profile_canary else {}),'targets':[
    {'ref':'market_identity_'+digest([market,row['sourceId']])[:24],'handle':row['handle'],'externalId':row['sourceId']} for row in chunk]}
   targets.write_text(json.dumps(payload,ensure_ascii=False));targets.chmod(0o600)
   child=runner([str(root/'.venv/bin/python'),str(root/'scripts/probe-italy-profile.py'),'--market',market,'--account',account,

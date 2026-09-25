@@ -175,6 +175,19 @@ def network_child(account_name: str, target_file: Path, output: Path, market: st
     if target_input.get('market','it')!=market:raise ValueError('target_market_mismatch')
     if type(target_input.get("identityOnly",False)) is not bool:raise ValueError("invalid_identity_mode")
     identity_only=target_input.get("identityOnly",False)
+    raw_profile_sets=target_input.get('profileTypeSets')
+    allowed_profile_sets={(1,2,6),(1,6),(2,)}
+    if raw_profile_sets is None:
+        profile_type_sets=((1,2,6),(2,))
+    else:
+        if identity_only or not isinstance(raw_profile_sets,list) or not 1<=len(raw_profile_sets)<=3:
+            raise ValueError('invalid_profile_type_sets')
+        profile_type_sets=[]
+        for row in raw_profile_sets:
+            if not isinstance(row,list) or tuple(row) not in allowed_profile_sets:
+                raise ValueError('invalid_profile_type_sets')
+            profile_type_sets.append(tuple(row))
+        profile_type_sets=tuple(profile_type_sets)
     targets = [normalize_target(t) for t in target_input["targets"]]
     cohort=target_input.get('cohortId')
     stress=target_input.get('stressRun') is not None;stress_folder=None;stress_fingerprint=None;rate=3
@@ -375,9 +388,10 @@ def network_child(account_name: str, target_file: Path, output: Path, market: st
                                       historicalCrossSourceIdentityProven=False,profileCollection="not_requested")
                         save()
                         continue
-                    # Explicit controlled comparison, including [2] even if IT's minimal completeness check passed.
-                    for profile_types in ([1, 2, 6], [2]):
-                        payload = request("profile", {"creator_oec_id": oec, "profile_types": profile_types}, target["ref"])
+                    # The caller may request a strictly allowlisted minimal canary such as [2].
+                    # The default retains the historical controlled comparison for existing flows.
+                    for profile_types in profile_type_sets:
+                        payload = request("profile", {"creator_oec_id": oec, "profile_types": list(profile_types)}, target["ref"])
                         if payload is None:
                             break
                         profile = payload.get("creator_profile")
@@ -421,6 +435,7 @@ def network_child(account_name: str, target_file: Path, output: Path, market: st
                     save()
                 if report["status"] not in {"blocked", "bounded_timeout"}:
                     report["status"] = "completed"
+                report['profileTypeSets']=[list(row) for row in profile_type_sets]
                 report["identityFileUnchanged"] = hashlib.sha256(identity_file.read_bytes()).hexdigest() == before_identity
                 report["businessRequests"] = collect_counters(client).get("request_count",0)
                 report["sdkBootstrapSeparate"] = True

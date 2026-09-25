@@ -309,6 +309,27 @@ class ProfileProbePipelineTests(unittest.TestCase):
             self.assertEqual(h.timer_calls[0].args, (signal.ITIMER_REAL, 175))
             self.assertEqual(h.timer_calls[-1].args, (signal.ITIMER_REAL, 0))
 
+    def test_minimal_profile_canary_uses_only_allowlisted_type_two(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            h=ProbeHarness(Path(temporary),replies=[
+                {"code":0,"exact":profile()},
+                {"code":0,"creator_profile":profile()},
+            ])
+            data=json.loads(h.targets.read_text());data['profileTypeSets']=[[2]]
+            h.targets.write_text(json.dumps(data))
+            code,report=h.run()
+            self.assertEqual(code,0)
+            self.assertEqual([stage for stage,_ in h.calls],['find','profile'])
+            self.assertEqual([body['profile_types'] for stage,body in h.calls if stage=='profile'],[[2]])
+            self.assertEqual(report['profileTypeSets'],[[2]])
+            self.assertEqual(report['targets'][0]['status'],'completed')
+
+    def test_profile_type_set_override_rejects_unapproved_shapes(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            h=ProbeHarness(Path(temporary));data=json.loads(h.targets.read_text());data['profileTypeSets']=[[1,2]]
+            h.targets.write_text(json.dumps(data))
+            with self.assertRaisesRegex(ValueError,'invalid_profile_type_sets'):h.run()
+
     def test_non_exact_handle_never_requests_profile_even_if_helper_returns_row(self):
         with tempfile.TemporaryDirectory() as temporary:
             h = ProbeHarness(Path(temporary), replies=[{

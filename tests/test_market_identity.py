@@ -40,5 +40,16 @@ class MarketIdentityReportTests(unittest.TestCase):
     report('blocked',[unresolved],[receipt('a','16201010')]),requested,'br','acc1')
   self.assertEqual(valid,[]);self.assertEqual(blocked,{'a'});self.assertEqual(code,'market_identity_auth_required')
 
+ def test_blocked_profile_keeps_confirmed_find_without_repeating_it(self):
+  requested=[request('a','alice')]
+  partial=target('a','alice')|{'status':None}
+  profile={'targetRef':'a','stage':'profile','status':'returned','httpStatus':200,
+           'code':'100000','verificationRequired':False}
+  valid,blocked,code=validated_report_targets(
+    report('blocked',[partial],[receipt('a'),profile]),requested,'br','acc1')
+  self.assertEqual([row[0]['targetRef'] for row in valid],['a'])
+  self.assertEqual(blocked,{'a'})
+  self.assertEqual(code,'market_identity_blocked')
+
 
 if __name__=='__main__':unittest.main()
