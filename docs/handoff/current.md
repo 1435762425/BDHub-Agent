@@ -1,11 +1,20 @@
 # BDHub-Agent 当前交接
 
-更新时间：2026-09-26 01:08（Asia/Shanghai）。本页只记录运行快照；规则见 [PROJECT](../PROJECT.md)，实现见 [TECHNICAL](../TECHNICAL.md)，后续方向见[项目审计与清理](../implementation/project-audit-20260924.md)。更早流水见[历史交接](../archive/handoff/codex-takeover-history-20260923.md)。
+更新时间：2026-09-26 02:00（Asia/Shanghai）。本页只记录运行快照；规则见 [PROJECT](../PROJECT.md)，实现见 [TECHNICAL](../TECHNICAL.md)，后续方向见[项目审计与清理](../implementation/project-audit-20260924.md)。更早流水见[历史交接](../archive/handoff/codex-takeover-history-20260923.md)。
 
 
 
 
 
+
+## 2026-09-26 凌晨：同账号 SDK/HTTP 前置共存验证通过，尚未切换生产
+
+- 用户同意先验证原推荐架构：通讯账号SDK收信＋保留HTTP发信，另一账号货盘/OECID。实验 worktree `../BDHub-Agent-sdk-probe-20260926`、提交 `4969c7d` 未合入生产，详见[共存验证](../implementation/sdk-http-coexistence-probe-20260926.md)。
+- MY/acc8 当前窗外且主链关闭，无在途消息，做两轮各约50秒的只读探针。持原账号锁，在同账号临时 Profile 副本启动SDK；IM身份与原HTTP匹配，两个回调挂载。原独立消费者抢锁被拒绝，负责人复用HTTP会话可读；临时副本已删除、锁释放，headers/身份代次不变。
+- 每轮基线3对会话＋历史读取、SDK在线4对；中位数分别约1.00/1.01秒→0.91/0.92秒，不能当发信提速证明。第二轮原HTTP发送适配器走到最终许可被拒绝，POST0、sendRequests不变。没有真实测试消息或建会话，也没有消息写入生产台账。
+- 第一轮1,511条回调全部是原库已有旧消息；第二轮按SDK消息时间无探针期间新消息。不能称捕获了上千新来信或已测实时延迟。上线必须处理启动回放、精确去重和四市场通知识别，不能直接复制旧文本正则。
+- 2项锁测试＋55项IM协议测试通过。原MY收信PID44917已恢复completed，四市场收信当前无错误；正式worker、授权、代码、旧项目均未改动。证据 `var/research/sdk-http-coexistence-20260926/`。
+- 下一步是会话负责人和单市场小批真实业务试点入口；真实卡文吞吐、确认率、新来信延迟、维护/断线和其他市场仍待验证。新执行器真实首发按页面明确启动；此探针不提供发送入口，不从技术共存推导已可全量迁移。
 
 ## 2026-09-26 凌晨：用户授权四市场 AI 全量，已开启并实际回复
 
