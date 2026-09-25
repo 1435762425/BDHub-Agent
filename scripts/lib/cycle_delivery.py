@@ -122,10 +122,10 @@ class Deliveries:
   """Settle frozen deliveries that expired with nothing left in flight (across a pause, after the day's quota ran out,
   or while an unknown card waited for readback) so a sender never picks them up again or sends them late.  A delivery
   whose card is confirmed and whose text never started keeps the card as partial_delivery.  Anything that may have
-  reached the platform -- a begun conversation create, a started or unknown component -- is left for verification."""
+  reached the platform -- an unconfirmed conversation create, a started or unknown component -- is left for verification."""
   marks=','.join('?'*len(modes));settled=[]
   for row in self.s.db.execute(f"""SELECT d.id,d.state FROM cycle_delivery d LEFT JOIN cycle_conversation_intent c ON c.delivery_id=d.id
-    WHERE d.plan_id=? AND d.expires<=? AND (d.state='running' OR d.state='ready' AND (c.state IS NULL OR c.state='ready'))
+    WHERE d.plan_id=? AND d.expires<=? AND (d.state='running' OR d.state='ready' AND (c.state IS NULL OR c.state IN ('ready','confirmed')))
       AND json_extract(d.snapshot,'$.executionMode') IN ({marks}) ORDER BY d.created""",(plan,self.s.clock(),*modes)).fetchall():
    try:
     if row[1]=='ready':self.cancel_unsubmitted(row[0],'delivery_expired')
@@ -139,6 +139,9 @@ class Deliveries:
   with self.s.tx():
    d=self.get(id)
    if d['state']=='cancelled':return d
+   intent=self.conversation_intent(id)
+   if d['state'] not in ('ready','running') or intent and intent['state'] not in ('ready','confirmed'):
+    raise CycleError('delivery_cancel_not_safe')
    if any(p['state']!='ready' or p['started'] is not None or p['receipt'] is not None or p['confirmation'] is not None for p in d['parts']):
     raise CycleError('delivery_cancel_not_safe')
    self.s.db.execute("UPDATE cycle_delivery_part SET state='cancelled' WHERE delivery_id=?",(id,))

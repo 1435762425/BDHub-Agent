@@ -123,9 +123,15 @@ def _preflight_or_close(store,session,plan,candidate,conversation,did):
     except CycleError as error:
         from lib.continuous_send import PREFLIGHT_TERMINAL
         delivery=Deliveries(store).get(did)
-        if str(error) in PREFLIGHT_TERMINAL and delivery['state']=='running' and delivery['parts'][0]['state']=='confirmed' and delivery['parts'][1]['state']=='ready':
-            Deliveries(store).cancel_pending_text(did,str(error))
-            return {'state':'partial_delivery','deliveryId':did,'stopReason':str(error)}
+        if str(error) in PREFLIGHT_TERMINAL:
+            if delivery['state']=='running' and delivery['parts'][0]['state']=='confirmed' and delivery['parts'][1]['state']=='ready':
+                Deliveries(store).cancel_pending_text(did,str(error))
+                return {'state':'partial_delivery','deliveryId':did,'stopReason':str(error)}
+            # A recipient-specific history exclusion must not pin the whole market to one ready
+            # delivery. Keep the history and confirmed conversation; cancel only unsubmitted parts.
+            if delivery['state']=='ready':
+                Deliveries(store).cancel_unsubmitted(did,str(error))
+                return {'state':'cancelled','deliveryId':did,'stopReason':str(error)}
         raise
     return None
 
