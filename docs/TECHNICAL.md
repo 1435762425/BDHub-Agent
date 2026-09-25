@@ -86,10 +86,12 @@ schema v21 增加视频 generation/run 的市场归属与请求 region/currency�
 
 B 全窗口读取完成后，将回执/head/current/job 同事务发布；单条缺作者仍沿用明确缺口记录，过多缺口只影响对应 PID。`video_identity.py` 把当前 B 代表视频接到既有 source/身份台账，`current_identity_source` 汇合当前 A/B；不同市场同 PID/handle/videoId 不互借结果。A/B 同达人×PID 合并为 A、保留视频证据；B 按当前 30 天发布时间资格消费，未知作者不可发送。非 IT 的新来源边复用同市场已验证成功/有效未匹配结论，不因换 PID/窗口重查。
 
-调度在没有新货盘任务时也可从 kalodata 开始一个有界续跑，然后衔接可完成的身份/发送池；沿用 workflow claims、fence、市场互斥与 Kalodata 全局两槽。已失败身份阶段单独等待原恢复证据（成功身份阶段或新的通信账号身份代次）；已解析线索和 A/B 读取可继续，原失败 run/checkpoint 不改判成功。页面手动推进也经同一 workflow 调度，不另开无资源约束的消费者。身份技术失败预算与隔离已接入，80/20 发送已接入 §2.5 的正式候选入口；二发有限核验隔离见 §2.5。
+调度在没有新货盘任务时也可从 kalodata 开始一个有界续跑，然后衔接可完成的身份/发送池；沿用 workflow claims、fence、市场互斥与 Kalodata 全局两槽。已失败身份阶段单独等待原恢复证据（成功身份阶段或新的所选身份查询账号代次）；已解析线索和 A/B 读取可继续，原失败 run/checkpoint 不改判成功。页面手动推进也经同一 workflow 调度，不另开无资源约束的消费者。身份技术失败预算与隔离已接入，80/20 发送已接入 §2.5 的正式候选入口；二发有限核验隔离见 §2.5。
 
 身份映射后的 `project_current_offers` 按本次涉及的 source ID 增量计算，未变化不写，最多 100 项一段短事务；计算移到写锁外，提交时核对原 catalog head。重复绑定后的中断可补投影，不重查身份或重写原回执；B 使用独立视频证据，不覆盖旧正销量 opportunity。全量 catalog 更新仍可重算完整投影，历史 source 事实不删除。
 `creator_discovery.py/discovery_cohort.py` 执行精确 Find，`identity_queue.py/identity-batch.py` 聚合去重身份，`profile_refresh.py` 独立刷新画像。resolved/unresolved 复用证据，blocked 保留原断点。`IdentityBridge` 只交接当前 head 的 source edge，固定索引顺序避免历史全表 JSON 扫描；OECID 发布不能等待或伪装 Profile 成功。BR/MY/UK 的 OECID 由 scheduler 调 `market-identity.py`（`lib/market_identity.py`）：每 3 个 handle 拉起一次 `probe-italy-profile.py`，证据写入 `var/market-identity-{market}-*` 目录（目前不清理）。页面的身份队列、精确发现与画像刷新接口只支持 IT。
+
+四市场 `identityAccountRole=supply` 时，OECID 走对应供给账号：IT acc9、BR acc2、MY acc5、UK acc4，先要求该账号已发布 `oecid_find=verified`。IT 先结算旧 cohort/outbox 的原报告，再使用 `market-identity.py` 的有界每批 3 人、每轮最多 50 人路径；原 acc6 的 12 QPS 验收不转授 acc9。旧 started 按原账号读取报告，当前批次也按冻结账号消费；handle 预算、有效身份和未匹配结论跨角色切换保留，账号故障只等待当前所选账号。workflow 的 OECID 资源槽绑定供给账号，与同账号货盘任务互斥。下面的 IT cohort 描述适用于兼容模式与旧任务恢复。
 
 Find lanes 共用原账号 QPS 和滑块验证合同；IT 沿用已发布的 Find cohort 策略，其他市场沿用每 3 个 handle 的 probe。有效 unresolved 与已验证身份按同市场规范化 handle 复用，不因新 PID、A/B 或窗口重查；Profile 后续失败不丢弃已确认 Find。IT 的 `identity_only` 成功证据可交接为可用身份，原画像失败记录保留。
 
@@ -137,13 +139,19 @@ worker 在等待窗口、池或容量时常驻退避；同账号在途写串行�
 
 ### 2.6 双向消息与会话
 
-`cycle_inbox.py`、`poll-cycle-inbox.py`、`poll-market-inbox.py` 负责最近会话发现与旧 checkpoint 公平补扫；`inbox_event/inbox_content*` 保存事件和正文。新会话精确匹配本市场关系后落库；冷 checkpoint 也重新校验 plan，合作状态不能回退 IT。
+四市场当前采用 `market-accounts.json.imSessionMode=sdk_http`：每市场 `im-session-worker.py` 持通讯账号原 ProfileLease，负责浏览器 SDK 收信和现有 HTTP 会话的私有 IPC 借用。HTTP 已认证后即可服务原二发、AI 和回查；浏览器初始化不阻塞 HTTP。发送仍走原 HTTP 执行器、逐写门禁、原账号与 requestRef，SDK 不承担发送。
+
+`sdk_inbox.py` 将 onMessageReceive/onMessageUpsert 变为持久唤醒信号，先提交 schema v26 `im_receive_signal` 再清浏览器缓存；消息身份、市场、正文和编辑版本仍由原 HTTP proof/history 解析器核实，进入原 Inbox/Service/reply_events。已知相同文本与非文本回放不产生新待回复。回查优先处理到期通知，保留 30 秒分页发现和冷 checkpoint 补扫；游标跨会话续期保存。指定 messageId 最多补查 5 页，仍缺失保留信号退避，不清 gap 或伪造回执。进程内读取预算 2 QPS，不能当作账号所有消费者共享的全局限速。
+
+SDK 当前平台枚举为 0 未初始化、1 初始化中、2 成功、3 失败；必须等 2 才挂接接收回调。会话约每 600 秒续期，退出/维护时先拒绝新借用，等原 HTTP 客户端收口后释放 ProfileLease。Unix socket 为同 UID、0600，凭据仅在内存和私有 IPC 中，客户端检查 epoch、身份代次和 headers 指纹；借用不产生发送授权。维护/登录失效沿用原账号恢复任务。启动/断线由原 scheduler 监督，存活与 SDK 初始化成功均不能替代新来信时延验收。
+
+缺省或显式 `http_polling` 时，`cycle_inbox.py`、`poll-cycle-inbox.py`、`poll-market-inbox.py` 负责最近会话发现与旧 checkpoint 公平补扫；`inbox_event/inbox_content*` 保存事件和正文。新会话精确匹配本市场关系后落库；冷 checkpoint 也重新校验 plan，合作状态不能回退 IT。
 
 机构后台 `ourMessages` 与达人消息一并持久化正文、发生时间、精确 messageId 和市场/会话身份。保存或编辑我方正文不创建达人回复任务；只有外发、尚无达人入站的会话也可打开。`conversation_workbench.py` 与 V2 上下文读取同一事实；与本地 delivery/service_reply 的重复按精确 messageId 合并，不能按文本相同去重，不能把我方消息误作达人 pending。`observed_messages.py` 按 plan/OEC/cid/messageId 排除本系统已有回执，只把其余平台消息投影为 observed。热读每会话取最新 20 条，优先补缺失机构正文；`inbox-history.py` 使用原生 OLDER 游标做有界历史补扫，按页原子保存去重回执和断点。历史断点绑定原账号、IM 身份、完整 CID/OEC 与市场；不推进热读水位，不解除 gap/unknown，不创建回复任务。`completeOlderRange` 只证明从首次成功读取时间向旧的游标链完成；延后热读项单列，不能据此声称全部正文已入库。
 
 首次 checkpoint 以同 plan/CID/OEC 最新已确认卡的 started 为实时回复基线，兼容只有文字确认的旧记录；没有已确认外发则首次导入为历史。冻结 CID 缺失时只由原已确认 conversation intent 补齐，received/inflight 不能猜测。查询按关系和原投递定点限定；不翻转旧 historical 行或重开已处理事项。已确认卡和文字按各自 `cycle_delivery_part` 状态/时间投影，不用 episode 冻结正文冒充已发文字。showcaseNotifications 单列系统事件，不输入文字分类器。消息完整性以覆盖/水位证明，worker 存活不足以证明新鲜。
 
-IT 默认热点＋冷 checkpoint 每轮 12 个/30 秒；其他三市场 20 个/10 秒，每个 poller 进程各自 2 QPS 读预算（进程内节拍，收信与发送不共用）。认证短持 profile 租约后释放，每次读取仍核验维护与身份指纹；账号忙显示 waiting_account。认证读取遇到平台业务码 16201010（通讯账号登录失效；BR/MY/UK 由 `market_im_runtime._read` 附在原错误上，IT 取认证报告 `authReads`）时，收信经 `login_recovery.request_refresh` 为当前身份代次登记一次 `refresh`（失败回退重登）并拉起维护 worker；请求号由市场、账号和代次决定，同一代次之后的失败只读回同一意图，刷新失败或需验证时保留告警等人处理，新代次发布后才可再试。状态文件的 `accountRecovery` 记录这次登记。扫描规模增长后应按真实覆盖延迟调参，不能仅提高 tick。
+兼容 HTTP polling 模式下，IT 默认热点＋冷 checkpoint 每轮 12 个/30 秒；其他三市场 20 个/10 秒，每个 poller 进程各自 2 QPS 读预算（进程内节拍，收信与发送不共用）。认证短持 profile 租约后释放，每次读取仍核验维护与身份指纹；账号忙显示 waiting_account。认证读取遇到平台业务码 16201010（通讯账号登录失效；BR/MY/UK 由 `market_im_runtime._read` 附在原错误上，IT 取认证报告 `authReads`）时，收信经 `login_recovery.request_refresh` 为当前身份代次登记一次 `refresh`（失败回退重登）并拉起维护 worker；请求号由市场、账号和代次决定，同一代次之后的失败只读回同一意图，刷新失败或需验证时保留告警等人处理，新代次发布后才可再试。状态文件的 `accountRecovery` 记录这次登记。扫描规模增长后应按真实覆盖延迟调参，不能仅提高 tick。
 
 ### 2.7 Agent V2 与回复 transport
 
@@ -240,6 +248,8 @@ inbox 趋势和日明细使用同一账本，totals 等于每日求和，文字�
 ## 5. 账号、配置与 vendor
 
 通信/货盘固定为 IT ACC6/ACC9、BR ACC1/ACC2、MY ACC8/ACC5、UK ACC11/ACC4。`market-accounts.json` 定角色，`account_runtime_setting` 和已发布 generation 定当前能力；不继承旧项目停用状态。
+
+能力验收发布使用 `reason=capability`，不推迟原 browser/HTTP/IM 身份的维护时钟；`identity_baseline` 找同一组引用的最近非能力发布作为基线。
 
 账号 72 小时串行维护：可见浏览器读取既有保存凭据，候选 browser/HTTP/IM 联合验证后发布项目内新代次，失败保留上一代。重登不自动把未验收能力变 verified。同市场/账号/机构的新身份可继承已验证能力，新的 failed/blocked 观察优先。
 

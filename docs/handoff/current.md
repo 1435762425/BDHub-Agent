@@ -1,11 +1,22 @@
 # BDHub-Agent 当前交接
 
-更新时间：2026-09-26 02:00（Asia/Shanghai）。本页只记录运行快照；规则见 [PROJECT](../PROJECT.md)，实现见 [TECHNICAL](../TECHNICAL.md)，后续方向见[项目审计与清理](../implementation/project-audit-20260924.md)。更早流水见[历史交接](../archive/handoff/codex-takeover-history-20260923.md)。
+更新时间：2026-09-26 03:41（Asia/Shanghai）。本页只记录运行快照；规则见 [PROJECT](../PROJECT.md)，实现见 [TECHNICAL](../TECHNICAL.md)，后续方向见[项目审计与清理](../implementation/project-audit-20260924.md)。更早流水见[历史交接](../archive/handoff/codex-takeover-history-20260923.md)。
 
 
 
 
 
+
+## 2026-09-26 凌晨：四市场 SDK 收信与原 HTTP 发信已切换
+
+- 用户明确要求直接上线四市场并做好 Git 备份；生产原未提交文档先原样提交 `ba3b6d0`。回退标签 `pre-sdk-rollout-20260926`、同名备份分支（`codex/` 前缀）及已验证 bundle 保留；三库在线备份、生产副本迁移幂等与旧表不变检查完成。详见[上线与回退报告](../implementation/sdk-http-rollout-20260926.md)，私密证据 `var/releases/sdk-http-rollout-20260926/`。
+- 主实现 `1c43f95`，运行修复至 `34dcb23`，从独立 worktree `../BDHub-Agent-sdk-rollout-20260926` 合入。IT acc6/acc9、BR acc1/acc2、MY acc8/acc5、UK acc11/acc4：前者 SDK 收信＋原 HTTP 二发/AI，后者供给＋OECID。schema v26 只追加持久唤醒；原账号、请求和消息台账不重建。
+- 四供给账号真实 Find 通过；IT/UK Profile type2 通过，BR/MY 该额外接口业务码 100000，未授予画像能力。IT/BR/UK 主链已出现新供给账号成功事件；MY 主链关闭状态保留，只有只读 canary，不称其自动主链已运行。
+- 初启旧非文本回放误排唤醒，已按原权威消息精确收口且未改业务状态；旧探针把 SDK 初始化中 1 误当就绪，正常成功 2 后触发约 80 秒重连。核对平台枚举并修复，四市场已正常运行满约 600 秒并完成续期、重新就绪；32 次周期采样中 IT 1 次、其余各 2 次在交接短暂借用不可用，随后全部自动恢复。初始化期间 HTTP 继续服务，没有新的 sdk_disconnected。
+- 原 scheduler 自然完成在途身份阶段后恢复 PID `98148`；会话 owner IT/BR/MY/UK 为 `97786/97788/97790/97792`，原发送/AI worker 继续。四市场页面和概览均 200，Web 未重建重载，旧项目未修改。
+- Python 全量 1,474、Node 180 通过；末次只加目标消息补查回归后 owner 专项 15 通过，既有 ResourceWarning 保留。9,718 个投递快照、19,436 个 requestRef、8 个旧隔离投递、控制/授权/指南和八账号 headers 一致，主库 quick_check=ok。
+- 本次 scheduler 首次恢复后原 HTTP AI 确认 BR4/UK2，无未结 AI unknown；IT窗外、MY未到窗口。SDK通知有回查证据，但四市场自然新来信实时延迟及正常二发窗口的卡文吞吐尚无完整验收样本，不能用初始化回放代替。
+- 回退优先保留当前代码/数据库，只切回 `http_polling` 与 `identityAccountRole=communications` 并按报告安全换 worker；旧代码不认识 v26，禁止盲目回旧代码并覆盖整库导致丢新来信。四市场 AI full 授权保持，未来 AI unknown 隔离优化仍属后续。
 
 ## 2026-09-26 凌晨：同账号 SDK/HTTP 前置共存验证通过，尚未切换生产
 

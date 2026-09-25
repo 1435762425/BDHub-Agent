@@ -22,6 +22,7 @@
 | Web 模板许可 | [TailAdmin 许可核对](research/tailadmin-license-review.md)、[第三方来源](../apps/web/THIRD_PARTY_NOTICES.md) |
 | 旧需求/决策/状态 | [归档](archive/README.md)；2026-09-24 移出的文档用 `git show audit-base-20260924:<路径>` 查看 |
 
+- [四市场 SDK 收信与 HTTP 发信上线](implementation/sdk-http-rollout-20260926.md)：账号分工、真实验收、Git 备份与保留消息的回退。
 - [UK 预检收口与真实 AI 模拟](implementation/uk-preflight-ai-simulation-20260926.md)：单达人历史问题不占住队头、16 组真实来信现状评测。
 - [集中回复范围与队列](implementation/reply-scope-queue-20260925.md)：最早未处理排序、多问题合并、精确结算和会话慢读修复。
 - [原卡文邀请与新来信衔接](implementation/invitation-inbound-20260925.md)：原文字继续、待回复保留、四市场验证和运行边界。
