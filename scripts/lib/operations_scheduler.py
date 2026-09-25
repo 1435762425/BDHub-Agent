@@ -298,7 +298,7 @@ class SubprocessStageExecutor:
         items=max(_report_item_count(evidence),_report_item_count(payload))
         stopped=payload.get('stopped') or evidence.get('stopped')
         errors=payload.get('errors') or evidence.get('errors')
-        invalid_stop=stopped not in (None,'queue_empty','nothing_missing','kalodata_daily_quota_exhausted')
+        invalid_stop=stopped not in (None,'queue_empty','nothing_missing','kalodata_daily_quota_exhausted') and not (args[0]=='scripts/market-identity.py' and stopped=='nothing_pending')
         if child.returncode or reported_state in {'blocked','failed','partial','needs_human','stopped'} or \
                 payload.get('error') or evidence.get('error') or invalid_stop or errors:
             code=str(payload.get('error') or evidence.get('error') or
@@ -644,6 +644,9 @@ def _collect_ready_runs(root,store,jobs,stamp,progress):
         progress['nextDue'][key]=min(future) if future else min(due_times.values())
         if lead_due is not None and lead_due<=stamp and (not current or current['state'] in ('completed','stopped')) and not sources:
             current=_create_lead_continuation(root,store,market,stamp)
+        if current and current['state']=='failed' and lead_due is not None and lead_due<=stamp and any(
+                stage['stage']=='oecid' and stage['state']=='failed' for stage in current['stages']):
+            current=_create_lead_continuation(root,store,market,stamp,current['runId'])
         if current and current['state']=='failed' and current['triggerSource']=='schedule':
             if not automation['automaticOperationsEnabled']:continue
             retry=retry_failed_stage(store,current['runId'],now=stamp)

@@ -607,6 +607,15 @@ class StageWiring(unittest.TestCase):
         self.assertEqual(result['state'],'completed');self.assertTrue(result['complete'])
         self.assertEqual(result['scope']['remaining']['isolated'],1)
 
+    def test_identity_nothing_pending_is_success_for_the_exact_identity_cli(self):
+        class Result:
+            returncode=0;stderr='';stdout=json.dumps({'market':'uk','targets':0,'networkRuns':0,'stopped':'nothing_pending'})
+        executor=SubprocessStageExecutor(ROOT,runner=lambda *_args,**_kwargs:Result())
+        result=executor._call(['scripts/market-identity.py','run','--market','uk'],'identity-empty')
+        self.assertEqual(result['state'],'completed')
+        other=executor._call(['scripts/catalog-link-batch.py'],'not-identity')
+        self.assertEqual(other['state'],'failed')
+
     def test_success_exit_without_valid_report_or_with_busy_lock_is_failure(self):
         class Result:
             returncode=0;stderr=''
