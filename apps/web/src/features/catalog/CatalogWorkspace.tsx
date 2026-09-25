@@ -67,10 +67,10 @@ function FullManagedPanel({definition}:{definition:MarketSummary}){
  const unknownNow=typeof selection.skippedUnknown==="number"?selection.skippedUnknown:null;
  const carried=typeof selection.carriedUnknown==="number"?selection.carriedUnknown:null;
  const pending=typeof selection.pending==="number"?selection.pending:null;
- const ended=typeof selection.endedWithoutSelection==="number"?selection.endedWithoutSelection:0;
+ const ended=typeof selection.endedWithoutSelection==="number"?selection.endedWithoutSelection:null;
  const other=typeof selection.untrackedEligible==="number"?selection.untrackedEligible:null;
  const screenReconciled=eligible!==null&&selectedAtRead!==null&&unselectedAtRead!==null&&eligible===selectedAtRead+unselectedAtRead;
- const selectionReconciled=unselectedAtRead!==null&&[selectedNow,unknownNow,carried,pending,other].every(value=>value!==null)&&unselectedAtRead===selectedNow!+unknownNow!+carried!+pending!+other!+ended;
+ const selectionReconciled=unselectedAtRead!==null&&[selectedNow,unknownNow,carried,pending,other,ended].every(value=>value!==null)&&unselectedAtRead===selectedNow!+unknownNow!+carried!+pending!+other!+ended!;
  return <div className="space-y-5">
   <Card title="全托发现与累计候选" subtitle="首次及每 15 天按类目完整探查；合格 PID 累积保留，不覆盖历史候选。旧快照仅用于追溯覆盖。" action={<Button size="sm" variant="outline" disabled={refreshing} onClick={()=>{setRefreshing(true);void load().finally(()=>setRefreshing(false));}}>{refreshing?"读取中…":"刷新状态"}</Button>}><div className="space-y-4 p-5">
    <MetricTable rows={[{label:"累计合格候选",value:object(full.candidates).available===true?number(object(full.candidates).total):"—",detail:"历次首次合格 PID 去重保留；不等于当前可发送商品"},{label:"本来源新增候选",value:object(full.candidates).available===true?number(object(full.candidates).addedInSource):"—",detail:"首次合格证据来自当前显示来源"},{label:"当前发布覆盖",value:number(currentProducts),detail:composed?"历史类目基线与普通查询组合覆盖":"当前发布 head 按 PID 去重",accent:true},
@@ -80,7 +80,7 @@ function FullManagedPanel({definition}:{definition:MarketSummary}){
    {partial&&<Notice tone="warning">原始类目快照是用户接受的部分覆盖：{number(category.categoriesCompleted)}/{number(category.categoryCount)} 类完成，不能称为全市场完整覆盖。</Notice>}
    {!composed&&categoryAvailable&&category.isCurrentHead!==true&&<Notice tone="warning">当前发布 head 是较窄的普通周更；原始类目快照仍保留，可在商品明细切换查看。</Notice>}
    {composed&&<Notice tone="info">当前组合覆盖保留 {number(category.products)} 个 PID；最近周更更新其中 {number(overlay.overlapProducts)} 个，另 {number(overlay.refreshOutsideCoverage)} 个仅保留为周更观察。未把查询窗口外的商品误算为已覆盖。</Notice>}
-   <p className="text-xs leading-5 text-gray-500">当前 head：{String(active.id??"—")} · 状态：{String(full.state??full.reason??"尚未运行")}。页面只读本机快照，不触发平台采集或选入。</p>
+   <p className="text-xs leading-5 text-gray-500">当前 head：{String(active.id??"—")} · 发布状态：{String(full.state??full.reason??"尚未运行")}。{object(full.latestRun).id!==active.id?`最近采集：${String(object(full.latestRun).state??"尚未运行")}。`:""}页面只读本机快照，不触发平台采集或选入。</p>
   </div></Card>
   <Card title={composed?"历史普通查询：筛分与选入":"本轮筛分与选入"} subtitle="本来源采集时的资格与未选候选当前处置分开统计；累计候选不受后续评分或销量变化影响。"><div className="space-y-4 p-5">
    <MetricTable rows={[{label:"筛选合格",value:number(screen.eligible),detail:"本轮确定性门槛",accent:true},

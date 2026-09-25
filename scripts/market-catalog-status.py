@@ -121,13 +121,16 @@ def full_status(market):
  if not path.exists():return {'applicable':True,'available':False,'reason':'not_collected'}
  store=GlobalSources(path,readonly=True)
  try:
-  value=store.status()
+  latest=store.status()
+  active_id=(latest.get('activePublished') or {}).get('id')
+  value=store.status(active_id) if active_id and active_id!=latest.get('id') else latest
   result={'applicable':True,**{key:value.get(key) for key in (
    'available','id','state','products','pages','reportedTotal','reason','published','coverage',
    'partitionMode','categoryCount','categoriesCompleted','categoryMemberships','categoryOverlap','stableDuplicateRows',
    'listedSelectedProducts','listedUnselectedProducts','detailProducts','operatorAcceptance','coverageOverlay','updatedAt','elapsedSeconds') if key in value}}
   active=value.get('activePublished') or {}
   result['activePublished']={key:active.get(key) for key in ('id','products','updated','state')} if active else None
+  result['latestRun']={key:latest.get(key) for key in ('id','state','updatedAt','products')}
   result['categorySnapshot']=category_snapshot(store,market)
   from lib.fullmanaged_candidates import candidate_summary
   result['candidates']=candidate_summary(ROOT,market,value.get('id'))

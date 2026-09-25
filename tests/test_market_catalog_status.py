@@ -54,5 +54,23 @@ class PublishedScreenTests(unittest.TestCase):
    result=MODULE.category_snapshot(SimpleNamespace(db=db),'uk')
    self.assertEqual((result['runId'],result['products'],result['pages']),('category-a',1,3))
 
+ def test_stopped_latest_read_does_not_replace_published_catalog_metrics(self):
+  import tempfile,json
+  from lib.global_source import SCHEMA
+  with tempfile.TemporaryDirectory() as directory:
+   root=Path(directory);(root/'var').mkdir();path=root/'var/global-source.sqlite'
+   with closing(sqlite3.connect(path)) as db,db:
+    db.executescript(SCHEMA)
+    scope=json.dumps({'market':'it','account':'acc9'})
+    for rid,state,stamp in [('published','completed',10),('last-read','stopped',20)]:
+     db.execute('INSERT INTO global_source_run(id,scope,scope_hash,state,created,updated,identity_unchanged) VALUES(?,?,?,?,?,?,1)',(rid,scope,'same',state,stamp,stamp))
+    db.execute("INSERT INTO global_source_head VALUES('same','published')")
+   with patch.object(MODULE,'ROOT',root),patch.object(MODULE,'market_record',return_value={'capabilities':{'fullManagedCatalog':True}}):
+    result=MODULE.full_status('it')
+   self.assertEqual(result['id'],'published')
+   self.assertEqual(result['state'],'completed')
+   self.assertEqual(result['latestRun']['id'],'last-read')
+   self.assertEqual(result['latestRun']['state'],'stopped')
+
 
 if __name__=='__main__':unittest.main()
