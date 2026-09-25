@@ -1,7 +1,17 @@
 # BDHub-Agent 当前交接
 
-更新时间：2026-09-25 14:52（Asia/Shanghai）。本页只记录运行快照；规则见 [PROJECT](../PROJECT.md)，实现见 [TECHNICAL](../TECHNICAL.md)，后续方向见[项目审计与清理](../implementation/project-audit-20260924.md)。更早流水见[历史交接](../archive/handoff/codex-takeover-history-20260923.md)。
+更新时间：2026-09-25 15:51（Asia/Shanghai）。本页只记录运行快照；规则见 [PROJECT](../PROJECT.md)，实现见 [TECHNICAL](../TECHNICAL.md)，后续方向见[项目审计与清理](../implementation/project-audit-20260924.md)。更早流水见[历史交接](../archive/handoff/codex-takeover-history-20260923.md)。
 
+
+
+## 2026-09-25 下午：调度/B 类连续性与 Agent 执行修复已加载
+
+- 按用户“按照新计划持续推进”执行两个独立小批次，详见[交付报告](../implementation/continuity-agent-runtime-20260925.md)。旧项目未修改，原有未提交方案文档保留；没有 schema 迁移或重建任务。
+- `fb30003` scheduler 常驻模式在长任务中补领就绪阶段、每轮刷新状态/续租，阶段发布事务内校验 fence；`62630b7` B 新代次保留旧投影，每 PID 的回执/head/current/job 同事务发布，兼容旧中断，并在池/候选/逐写前检查 30 天视频窗口。全量 1,318 项通过；生产库临时副本零网络回放通过。
+- 15:26 核对无主链 claim/在途阶段、IT sender 等待窗口且无在途/未知投递后，仅重载 scheduler 和 IT sender，新 PID `36586`、`36591`；其他 11 个业务进程未动，持久控制/授权摘要不变。证据 `var/releases/continuity-20260925T072608Z/release.json`。
+- `7041651` 移除 Jev adapter/新执行入口及配置样例，历史分类/评测和消息 backfill 保留，本机私密 TypeSafe 配置未读/未删；`1bb0c4a` Agent 的 case/锁/确认意图/decision 关联原子提交，准备首份可发回复即执行，不再积压 20 份草稿，有进展时短间隔继续、等待和失败仍退避。全量 1,320 项通过。
+- 15:42 确认无 ready/inflight/accepted/unknown 服务回复后重载四个 Agent；其余 9 个业务进程不变。四市场均保持 pilot_complete_waiting_resume，生产模型/回复行数未增加，设置、授权与已发布指南哈希一致；没有开启 AI 全量。证据 `var/releases/reply-cleanup-20260925T074208Z/release.json`。
+- 四市场概览 GET 回读正常；本轮没有主动平台写入或模型调用。下一批仍需完成 Campaign 有限核验、全托增量候选及 A50/B 四市场滚动队列等；AI 的 live/replay 上下文、处理范围和新隔离政策也未因本批修复自动上线。用户已允许必要进程切换，后续继续先核对相关进程/锁/断点，不重复询问已定业务规则。
 
 ## 2026-09-25 下午：首批只读运营概览已发布
 
