@@ -1,8 +1,17 @@
 # BDHub-Agent 当前交接
 
-更新时间：2026-09-25 15:51（Asia/Shanghai）。本页只记录运行快照；规则见 [PROJECT](../PROJECT.md)，实现见 [TECHNICAL](../TECHNICAL.md)，后续方向见[项目审计与清理](../implementation/project-audit-20260924.md)。更早流水见[历史交接](../archive/handoff/codex-takeover-history-20260923.md)。
+更新时间：2026-09-25 16:22（Asia/Shanghai）。本页只记录运行快照；规则见 [PROJECT](../PROJECT.md)，实现见 [TECHNICAL](../TECHNICAL.md)，后续方向见[项目审计与清理](../implementation/project-audit-20260924.md)。更早流水见[历史交接](../archive/handoff/codex-takeover-history-20260923.md)。
 
 
+
+## 2026-09-25 下午：Campaign 连续性与有限核验已加载
+
+- 用户要求按新方案持续推进。`2018b7c` 在独立 worktree 验证后快进合入：新申请普通未知不截断其他活动/下一批，旧已加入采集独立；确认材料先准备，再共享最多 4 轮/300 秒只读核验，耗尽停止跟进且不重发/不建人工事项。最终范围仍属于原 catalog generation，详情见 [Campaign 交付](../implementation/campaign-continuity-20260925.md)。
+- 四个 Campaign 库备份后新增五列，973 条原记录及原字段未变；临时副本重复迁移/quick_check 通过，历史请求 JSON 不伪造。状态只读，无库不创建；未知活动缺席不误退役其原绑定。
+- Python 1,340 项、Web 176 项、build/typecheck、文档与 diff 检查通过。修复 MY 累计 842 条活动触发页面 400 条上限；展示区分有限核验与停止跟进，不要求用户逐项查。
+- 16:19 核对无 claim/在途主链/Campaign 子进程后，仅换 scheduler（`46046`）与 Web（listener `46073`，build `lzuNcEdG1PaRiduck1_sf`）；另外 12 个业务 worker 原 PID 保留。控制/授权/指南摘要一致，四市场 AI 仍 `pilot_complete_waiting_resume`，没有全量授权变化。
+- 四市场 Campaign/概览/首页 HTTP 200，IT Campaign 页面正常。未主动发起平台申请/发送/模型调用；生产当前无 Campaign unknown，真实新政策案例尚未发生。证据及四库备份、旧 Web 位于 `var/releases/campaign-20260925T081751Z/`。
+- 下一批：全托首次/15 天按类目发现与累计候选，再接 A50/B 四市场滚动队列。现有 IT Kalodata 旧失败、历史账号事项等未在本批自动重排；不把 Campaign 上线当作其他模块已完成。原有未提交方案文档继续保留，不代为整体提交。
 
 ## 2026-09-25 下午：调度/B 类连续性与 Agent 执行修复已加载
 
