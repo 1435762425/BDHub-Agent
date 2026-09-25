@@ -1,11 +1,18 @@
 # BDHub-Agent 当前交接
 
-更新时间：2026-09-26 00:37（Asia/Shanghai）。本页只记录运行快照；规则见 [PROJECT](../PROJECT.md)，实现见 [TECHNICAL](../TECHNICAL.md)，后续方向见[项目审计与清理](../implementation/project-audit-20260924.md)。更早流水见[历史交接](../archive/handoff/codex-takeover-history-20260923.md)。
+更新时间：2026-09-26 00:59（Asia/Shanghai）。本页只记录运行快照；规则见 [PROJECT](../PROJECT.md)，实现见 [TECHNICAL](../TECHNICAL.md)，后续方向见[项目审计与清理](../implementation/project-audit-20260924.md)。更早流水见[历史交接](../archive/handoff/codex-takeover-history-20260923.md)。
 
 
 
 
 
+
+## 2026-09-26 凌晨：用户认可首轮 AI 质量，第二轮 16 组对照已交付
+
+- 用户认为首轮回复质量较高，不认可助理主观评级，要求再看16组；没有要求改变指南或开启 AI 全量。本轮不做质量分级，只列来信、模型实际原文、中文对照和系统校验结果。
+- 固定随机种子 2026092602，四市场各4位；16位达人及原消息与首轮无重叠。沿用 revision 2 指南、DeepSeek flash、生产 live 上下文及校验器，临时数据库隔离，每组只调用一次；14组校验通过、2组未通过，全部保留原文，不重试挑答案。
+- 更正首轮 MY-03：所谓“不存在的消息 ID”实际来自输入 showcaseEvidence 的加橱窗通知。是校验器仅接受 messages 数组引用导致拦截，不应归因于模型凭空引用。旧对照和交付报告已补正，原始模型证据未动。本轮 MY-R2-02 同类；MY-R2-04 是 reply 与 waitFor=clarification 的结构不匹配。未修改运行代码。
+- 对照 `outputs/ai-reply-review-round2-20260926/report.md`；私密请求/响应/抽样依据在 `var/research/ai-real-message-round2-20260926/`。16次调用、48,106 token、估算 ¥0.0330064；生产指南、授权、回复/决策台账摘要未变，实际发送0，临时模拟库已删除，未操作进程。
 
 ## 2026-09-26 凌晨：UK 预检阻断收口，真实 AI 回复模拟已交付
 
