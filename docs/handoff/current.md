@@ -1,9 +1,23 @@
 # BDHub-Agent 当前交接
 
-更新时间：2026-09-25 19:32（Asia/Shanghai）。本页只记录运行快照；规则见 [PROJECT](../PROJECT.md)，实现见 [TECHNICAL](../TECHNICAL.md)，后续方向见[项目审计与清理](../implementation/project-audit-20260924.md)。更早流水见[历史交接](../archive/handoff/codex-takeover-history-20260923.md)。
+更新时间：2026-09-25 21:15（Asia/Shanghai）。本页只记录运行快照；规则见 [PROJECT](../PROJECT.md)，实现见 [TECHNICAL](../TECHNICAL.md)，后续方向见[项目审计与清理](../implementation/project-audit-20260924.md)。更早流水见[历史交接](../archive/handoff/codex-takeover-history-20260923.md)。
 
 
 
+
+
+## 2026-09-25 晚间：身份技术预算、成功子集交接与锁回归恢复
+
+- 用户要求开始身份阶段；主实现 `8f14f83`，修复 `5417d30/ec9f2c7/3ef575c/1dde00f` 已从 `../BDHub-Agent-identity-20260925` 合入，见[身份预算报告](../implementation/identity-budget-20260925.md)。原未提交方案文档保留。
+- schema v22 追加 handle 预算/事件/账号等待表，三库一致备份、重复迁移与回填演练通过。按原报告回填 794 条共享故障和 2,823 条健康 Find，未制造个体隔离；1 份不可完整验证报告单列。旧混合用途 attempt_no 不当作个体失败次数。
+- 单市场/规范化 handle 累计 3 次个体失败后隔离，退避 5/30 分钟；账号/共享故障按 1/15/60 分钟等待，不消耗达人预算、不建人工案件。健康 Find 或新代次恢复通道，个体预算不重置。IT 保留原 cohort/lease/QPS，其他市场持久开始事件、原报告恢复与消费锁。
+- IT 每段至多 4×50/200 次领取，其他市场 50 位/每批 3 位；成功子集先交接，剩余如实保留，到期可独立从 OECID 续跑。Profile 失败不丢 Find；A/B 身份计数统一 handle 判定并单列隔离。
+- 首次切换出现 IT 旧 handoff 在写事务中慢扫当前来源，导致数据库锁等待；IT inbox 及 IT/BR/UK sender 退出。停止 scheduler 并终止只做本地交接的 submit 后回滚未提交事务；共享来源读取改到写事务外、materialize，写前复核 heads/handoff。副本交接 0.08 秒、最长写锁 7ms；身份统计 75 秒慢展开也修到两组合计 0.31 秒。
+- 恢复 worker：IT inbox `14505`，IT/BR/UK sender `14506/14508/14509`；MY sender `3530`、其他三市场 inbox `73852/73855/73858`、四 Agent `72227/72231/72234/72237` 保持原进程。scheduler `14910`，Web build `YIlVVsnOFNFzgkTkV-EkJ`。不能称为全程业务进程未变。
+- 原零写入失败轮次 `workflow-742c332ba5913ca4a7ed1160f341` 按原阶段与 upstream 保存恢复 checkpoint 后续跑；IT 首段 200 handle：found 172、notFound 28、pending 360→160，发送池已发布。BR/UK 也完成有界身份阶段并衔接发送池，仍有原初始化等共享等待；MY 主链保持关闭。
+- 最终全量 Python 1,402 项、Node 179 项、build/typecheck 通过；既有 ResourceWarning 保留。身份 GET 200、约 0.61 秒、行/handle 分项一致，四市场概览 GET 200。最后 scheduler 无锁错，恢复 worker 存活，收信扫描正常；控制/授权/指南/原隔离发送冻结证据摘要一致，AI 仍 pilot_complete_waiting_resume。
+- 证据/三库备份/旧 Web：`var/releases/identity-budget-20260925T124004Z/`。回退消费者须停身份消费或保留新预算门禁，不能恢复旧整库抹去新增消息/身份。
+- 下一批：80/20 发送机会分配，然后原卡文邀请遇新来信的完成例外、AI 集中回复与上下文；本批没有开启 AI 全量或改商业回复规则。
 
 ## 2026-09-25 晚间：二发未知有限核验和技术隔离
 
