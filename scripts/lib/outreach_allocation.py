@@ -92,10 +92,36 @@ def summary(db,market,at):
         arranged[kind]+=n;states.setdefault(kind,{})[state]=n
     for kind,n in db.execute('SELECT actual_class,count(*) FROM outreach_allocation WHERE market=? AND day=? AND borrowed_reason IS NOT NULL GROUP BY actual_class',(market,stamp)):borrowed[kind]=n
     return {'policy':POLICY,'day':stamp,'position':cursor,'nextPreferred':'B' if cursor==4 else 'A',
-            'arranged':arranged,'borrowed':borrowed,'outcomes':states,'scope':'post_cutover_allocations'}
+            'arranged':arranged,'borrowed':borrowed,'outcomes':states,'scope':'post_cutover_allocations','observations':observations(db,market,stamp,at)}
 
 
 def allocated_creators(db,plan,market,at):
     if not enabled(db) or not db.execute('SELECT 1 FROM outreach_allocation WHERE market=? AND day=? LIMIT 1',(market,day(at))).fetchone():return set()
     return {r[0] for r in db.execute("""SELECT r.creator_id FROM relationship r JOIN outreach_allocation a ON a.oec=r.oec
        WHERE r.plan_id=? AND a.market=? AND a.day=?""",(plan,market,day(at)))}
+
+
+def observations(db,market,cohort_day,at):
+    """Unique recipients observed in the same CID after a confirmed card, within 72h.
+
+    This is temporal observation, not causal attribution. Unknown message times,
+    another market/CID and messages predating the card never contribute.
+    """
+    tables={r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    if not {'inbox_event','cycle_delivery_part','cycle_conversation_intent'}<=tables:return None
+    value={kind:{'cardConfirmed':0,'replied':0,'showcased':0} for kind in ('A','B')}
+    rows=db.execute("""SELECT a.actual_class,d.plan_id,d.oec,
+        coalesce(json_extract(d.snapshot,'$.conversationId'),i.cid) cid,p.started
+      FROM outreach_allocation a JOIN cycle_delivery d ON d.id=a.delivery_id
+      JOIN cycle_delivery_part p ON p.delivery_id=d.id AND p.kind='card' AND p.state='confirmed'
+      LEFT JOIN cycle_conversation_intent i ON i.delivery_id=d.id
+      WHERE a.market=? AND a.day=?""",(market,cohort_day)).fetchall()
+    for kind,plan,oec,cid,started in rows:
+        value[kind]['cardConfirmed']+=1
+        if not cid or started is None:continue
+        found={r[0] for r in db.execute("""SELECT DISTINCT kind FROM inbox_event WHERE plan_id=? AND cid=? AND oec=?
+          AND kind IN ('creatorReplies','showcaseNotifications') AND occurred_ms>? AND occurred_ms<=?""",
+          (plan,cid,oec,started*1000,min(at,started+72*3600)*1000))}
+        value[kind]['replied']+=int('creatorReplies' in found)
+        value[kind]['showcased']+=int('showcaseNotifications' in found)
+    return value

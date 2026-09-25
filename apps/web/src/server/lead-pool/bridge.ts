@@ -10,7 +10,7 @@ export type LeadPoolCounts={leads:number;merged:number;unresolved:number;queued:
 export type LeadPosition={creatorId:string;handle:string;pid:string;rank:number|null;units:number|null;
  sourceClass:"A"|"B";gmv:string|null;videoViews:number|null;videoId:string|null;videoReleasedAt:string|null;
  unlocked:boolean;sentAt:number|null;readyAt:number|null;layer:string;caseUpdatedAt?:number|null};
-export type OutreachAllocation={day:string;position:number;nextPreferred:"A"|"B";arranged:{A:number;B:number};borrowed:{A:number;B:number};outcomes:Record<string,Record<string,number>>};
+export type OutreachAllocation={day:string;position:number;nextPreferred:"A"|"B";arranged:{A:number;B:number};borrowed:{A:number;B:number};outcomes:Record<string,Record<string,number>>;observations:Record<string,{cardConfirmed:number;replied:number;showcased:number}>|null};
 export type LeadPoolState={schema:"bdhub.lead-pool.v3";market:string;available:boolean;now?:number;counts:LeadPoolCounts;
  cooldown:{unlocked:number;locked:number};layers:Record<string,number>;pools:Record<string,LeadPosition[]>;
  business:{sendable:number;waiting:number;inactive:number;total:number};reasons:Record<string,number>;
@@ -118,5 +118,15 @@ function validateAllocation(raw:unknown):OutreachAllocation|null{
   }
   if(total!==arranged[kind]||borrowed[kind]>arranged[kind])throw Error('invalid_lead_pool');
  }
- return {day:a.day,position,nextPreferred:position===4?"B":"A",arranged,borrowed,outcomes};
+ let observations:OutreachAllocation["observations"]=null;
+ if(a.observations!=null){
+  observations={};
+  for(const kind of ["A","B"] as const){
+   const o=(a.observations as Record<string,Record<string,unknown>>)?.[kind];
+   const cardConfirmed=count(o?.cardConfirmed,"cardConfirmed"),replied=count(o?.replied,"replied"),showcased=count(o?.showcased,"showcased");
+   if(cardConfirmed>arranged[kind]||replied>cardConfirmed||showcased>cardConfirmed)throw Error('invalid_lead_pool');
+   observations[kind]={cardConfirmed,replied,showcased};
+  }
+ }
+ return {day:a.day,position,nextPreferred:position===4?"B":"A",arranged,borrowed,outcomes,observations};
 }

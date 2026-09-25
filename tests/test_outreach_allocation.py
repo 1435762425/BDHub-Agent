@@ -111,6 +111,20 @@ class AllocationTests(unittest.TestCase):
    self.store.db.execute("UPDATE relationship SET unlocked=1 WHERE creator_id='newcontact'")
    picked=select(self.store,'it',self.plan,{'pools':{'ready':rows}},lambda row:c)
    self.assertEqual(picked['creatorId'],'newcontact')
+ def test_observation_counts_recipients_not_messages_and_excludes_wrong_time_cid_or_market(self):
+  from lib.cycle_inbox import Inbox
+  from lib.outreach_allocation import observations
+  Inbox(self.store)
+  c=self.choose([self.candidate('observed')]);c['conversationId']='123456';d=self.d.prepare(self.plan,c)
+  self.store.db.execute("UPDATE cycle_delivery_part SET state='confirmed',started=? WHERE delivery_id=? AND kind='card'",(self.now,d['id']))
+  for mid,kind,stamp,cid in [('1','creatorReplies',self.now+1,'123456'),('2','creatorReplies',self.now+2,'123456'),('3','showcaseNotifications',self.now+3,'123456'),('4','creatorReplies',self.now-1,'123456'),('5','creatorReplies',self.now+4,'wrong-cid'),('6','creatorReplies',None,'123456')]:
+   self.store.db.execute('INSERT INTO inbox_event VALUES(?,?,?,?,?,?,?,?,?)',(self.plan,cid,mid,c['oecId'],kind,None if stamp is None else stamp*1000,'{}',0,self.now))
+  value=observations(self.store.db,'it',day(self.now),self.now+10)
+  self.assertEqual(value['A'],{'cardConfirmed':1,'replied':1,'showcased':1})
+  self.assertEqual(observations(self.store.db,'uk',day(self.now),self.now+10)['A']['replied'],0)
+  self.store.db.execute("DELETE FROM inbox_event WHERE message_id IN ('1','2','3')")
+  self.store.db.execute('INSERT INTO inbox_event VALUES(?,?,?,?,?,?,?,?,?)',(self.plan,'123456','7',c['oecId'],'creatorReplies',(self.now+72*3600+1)*1000,'{}',0,self.now))
+  self.assertEqual(observations(self.store.db,'it',day(self.now),self.now+4*86400)['A']['replied'],0)
  def test_other_market_has_independent_cursor_and_legacy_is_not_backfilled(self):
   c=self.candidate('old');self.d.prepare(self.plan,c)
   self.assertEqual(position(self.store.db,'it'),0);self.assertEqual(position(self.store.db,'uk'),0)

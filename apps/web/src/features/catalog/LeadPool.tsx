@@ -22,7 +22,8 @@ export default function LeadPool({data,loaded}:{data:LeadPoolState|null;loaded?:
   <p className="text-xs text-gray-500">每 4 位 A 类后安排 1 位 B 类，空缺可补位，跨日保留进度。A 类按 GMV、销量和稳定顺序，B 类按视频播放量和发布时间择优；同达人有合格 A 时归 A，当天只安排一次。</p>
   {a&&<details className="text-xs text-gray-500"><summary className="cursor-pointer">{a.day} 份额上线后安排：A {a.arranged.A} · B {a.arranged.B}，下一优先 {a.nextPreferred}</summary>
    <p className="mt-2">补位：A {a.borrowed.A} · B {a.borrowed.B}。安排数不等于确认触达数，原在途不补计。</p>
-   {(["A","B"] as const).map(kind=>{const v=a.outcomes[kind]??{};return <p key={kind}>{kind} 类：已确认 {v.confirmed??0}，部分送达 {v.partial_delivery??0}，拒绝 {v.rejected??0}，未知含隔离 {(v.unknown??0)+(v.quarantined_unknown??0)}，取消 {v.cancelled??0}，待执行/执行中 {(v.ready??0)+(v.running??0)}</p>;})}
+   {(["A","B"] as const).map(kind=>{const v=a.outcomes[kind]??{};return <p key={kind}>{kind} 类：已确认 {v.confirmed??0}，部分送达 {v.partial_delivery??0}，拒绝/明确失败 {(v.rejected??0)+(v.failed_known??0)}，未知含隔离 {(v.unknown??0)+(v.quarantined_unknown??0)}，取消 {v.cancelled??0}，待执行/执行中 {(v.ready??0)+(v.running??0)}</p>;})}
+   {a.observations&&<p className="mt-2">本日安排、卡已确认后 72 小时内的同会话观察（按达人去重，当前窗口尚未结束）：A 回复 {a.observations.A.replied} / 加橱窗 {a.observations.A.showcased}，B 回复 {a.observations.B.replied} / 加橱窗 {a.observations.B.showcased}；不等同于本次推品造成的转化。</p>}
   </details>}
   <p className="text-xs text-gray-500">池里只有<b>已经拿到 OECID</b>的达人：handle 解析不到身份的线索根本不会成为一条位置，所以这里不显示「缺身份」这一层。身份进度在上一张卡。</p>
   </div>
