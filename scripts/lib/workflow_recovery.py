@@ -19,7 +19,7 @@ VIDEO_KEY='recovery:video_author_missing'
 VIDEO_AUTHOR_MISSING='kalodata_video_author_missing'
 AUTH_KEY='recovery:kalodata_auth_restored'
 AUTH_REQUIRED='kalodata_auth_required'
-FIXED_STAGE_ERRORS={'oecid':frozenset({'market_identity_report_invalid'}),'kalodata':frozenset({'kalodata-video-run_report_invalid'})}
+FIXED_STAGE_ERRORS={'oecid':frozenset({'market_identity_report_invalid','oecid-submit_report_invalid'}),'kalodata':frozenset({'kalodata-video-run_report_invalid'})}
 AFTER_FIX_KEY='recovery:after_fix'
 
 

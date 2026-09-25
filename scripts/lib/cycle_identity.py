@@ -15,46 +15,62 @@ class IdentityBridge:
   if 'settled' not in {r[1] for r in store.db.execute('PRAGMA table_info(cycle_identity_outbox)')}:
    store.db.execute('ALTER TABLE cycle_identity_outbox ADD COLUMN settled INTEGER NOT NULL DEFAULT 0')
  def freeze(self,plan,*,source_ids=None):
+  if self.store._plan(plan)['market']!='it':raise CycleError('identity_market_not_enabled')
+  if self.store._plan(plan)['state']!='active':raise CycleError('plan_paused')
+  heads=self._source_heads(plan)
+  tables={r[0] for r in self.store.db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+  current={'lead_query_head','lead_query_selection'}<=tables and self.store.db.execute('SELECT 1 FROM lead_query_head WHERE plan_id=? LIMIT 1',(plan,)).fetchone()
+  # CROSS JOIN fixes the loop order.  With ordinary JOIN SQLite chose q -> every source_edge -> s,
+  # turning a few thousand current rows into tens of millions of JSON parses while holding the
+  # write transaction.  The current head must drive its bounded selection before the edge lookup.
+  if source_ids is not None:
+   sql="""SELECT e.source_id,e.payload FROM source_edge e
+    LEFT JOIN cycle_identity_handoff h ON h.plan_id=e.plan_id AND h.source_id=e.source_id
+    WHERE e.plan_id=? AND h.source_id IS NULL AND (? IS NULL OR e.source_id IN (SELECT value FROM json_each(?)))
+    AND json_extract(e.payload,'$.creatorId') IS NULL ORDER BY e.source_id LIMIT 500"""
+  elif 'current_identity_source' in {r[0] for r in self.store.db.execute("SELECT name FROM sqlite_master WHERE type='view'")}:
+   sql="""WITH current_sources AS MATERIALIZED (SELECT * FROM current_identity_source WHERE plan_id=?)
+    SELECT e.source_id,e.payload FROM current_sources x
+    CROSS JOIN source_edge e
+    LEFT JOIN cycle_identity_handoff h ON h.plan_id=x.plan_id AND h.source_id=x.source_id
+    WHERE e.plan_id=x.plan_id AND e.source_id=x.source_id AND h.source_id IS NULL AND json_extract(e.payload,'$.creatorId') IS NULL
+    AND (? IS NULL OR x.source_id IN (SELECT value FROM json_each(?)))
+    ORDER BY x.source_rank,x.source_id LIMIT 500"""
+  else:
+   sql="""SELECT e.source_id,e.payload FROM lead_query_head q
+    CROSS JOIN lead_query_selection s
+    CROSS JOIN source_edge e
+    LEFT JOIN cycle_identity_handoff h ON h.plan_id=e.plan_id AND h.source_id=e.source_id
+    WHERE s.query_id=q.query_id AND e.plan_id=q.plan_id AND e.source_id=s.source_id
+    AND e.plan_id=? AND h.source_id IS NULL AND json_extract(e.payload,'$.creatorId') IS NULL
+    AND (? IS NULL OR e.source_id IN (SELECT value FROM json_each(?)))
+    ORDER BY s.source_rank,e.source_id LIMIT 500""" if current else """SELECT e.source_id,e.payload FROM source_edge e
+    LEFT JOIN cycle_identity_handoff h ON h.plan_id=e.plan_id AND h.source_id=e.source_id
+    WHERE e.plan_id=? AND h.source_id IS NULL AND json_extract(e.payload,'$.sourceKind')='kalodata_http'
+    AND json_extract(e.payload,'$.creatorId') IS NULL
+    AND (? IS NULL OR e.source_id IN (SELECT value FROM json_each(?))) ORDER BY e.source_id LIMIT 500"""
+  rows=self.store.db.execute(sql,(plan,encoded(source_ids) if source_ids is not None else None,encoded(source_ids) if source_ids is not None else None)).fetchall()
+  if not rows:return None
   with self.store.tx():
-   if self.store._plan(plan)['market']!='it':raise CycleError('identity_market_not_enabled')
    if self.store._plan(plan)['state']!='active':raise CycleError('plan_paused')
-   tables={r[0] for r in self.store.db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-   current={'lead_query_head','lead_query_selection'}<=tables and self.store.db.execute('SELECT 1 FROM lead_query_head WHERE plan_id=? LIMIT 1',(plan,)).fetchone()
-   # CROSS JOIN fixes the loop order.  With ordinary JOIN SQLite chose q -> every source_edge -> s,
-   # turning a few thousand current rows into tens of millions of JSON parses while holding the
-   # write transaction.  The current head must drive its bounded selection before the edge lookup.
-   if source_ids is not None:
-    sql="""SELECT e.source_id,e.payload FROM source_edge e
-     LEFT JOIN cycle_identity_handoff h ON h.plan_id=e.plan_id AND h.source_id=e.source_id
-     WHERE e.plan_id=? AND h.source_id IS NULL AND (? IS NULL OR e.source_id IN (SELECT value FROM json_each(?)))
-     AND json_extract(e.payload,'$.creatorId') IS NULL ORDER BY e.source_id LIMIT 500"""
-   elif 'current_identity_source' in {r[0] for r in self.store.db.execute("SELECT name FROM sqlite_master WHERE type='view'")}:
-    sql="""SELECT e.source_id,e.payload FROM current_identity_source x
-     CROSS JOIN source_edge e
-     LEFT JOIN cycle_identity_handoff h ON h.plan_id=x.plan_id AND h.source_id=x.source_id
-     WHERE x.plan_id=? AND e.plan_id=x.plan_id AND e.source_id=x.source_id AND h.source_id IS NULL AND json_extract(e.payload,'$.creatorId') IS NULL
-     AND (? IS NULL OR x.source_id IN (SELECT value FROM json_each(?)))
-     ORDER BY x.source_rank,x.source_id LIMIT 500"""
-   else:
-    sql="""SELECT e.source_id,e.payload FROM lead_query_head q
-     CROSS JOIN lead_query_selection s
-     CROSS JOIN source_edge e
-     LEFT JOIN cycle_identity_handoff h ON h.plan_id=e.plan_id AND h.source_id=e.source_id
-     WHERE s.query_id=q.query_id AND e.plan_id=q.plan_id AND e.source_id=s.source_id
-     AND e.plan_id=? AND h.source_id IS NULL AND json_extract(e.payload,'$.creatorId') IS NULL
-     AND (? IS NULL OR e.source_id IN (SELECT value FROM json_each(?)))
-     ORDER BY s.source_rank,e.source_id LIMIT 500""" if current else """SELECT e.source_id,e.payload FROM source_edge e
-     LEFT JOIN cycle_identity_handoff h ON h.plan_id=e.plan_id AND h.source_id=e.source_id
-     WHERE e.plan_id=? AND h.source_id IS NULL AND json_extract(e.payload,'$.sourceKind')='kalodata_http'
-     AND json_extract(e.payload,'$.creatorId') IS NULL
-     AND (? IS NULL OR e.source_id IN (SELECT value FROM json_each(?))) ORDER BY e.source_id LIMIT 500"""
-   rows=self.store.db.execute(sql,(plan,encoded(source_ids) if source_ids is not None else None,encoded(source_ids) if source_ids is not None else None)).fetchall()
+   if heads!=self._source_heads(plan):return None
+   # Another consumer may have handed these exact source edges off while we read.
+   rows=[r for r in rows if not self.store.db.execute('SELECT 1 FROM cycle_identity_handoff WHERE plan_id=? AND source_id=?',(plan,r['source_id'])).fetchone()]
    if not rows:return None
-   edges=[{'sourceId':r['source_id'],'handle':json.loads(r['payload'])['sourceHandle']} for r in rows]
+   edges=[{'sourceId':r['source_id'],'handle':json.loads(r['payload'])['sourceHandle'].strip().lstrip('@').lower()} for r in rows]
    payload={'edges':edges,'handles':sorted(set(e['handle'] for e in edges))};oid='cycle-identity-'+digest([plan,payload])[:32]
    self.store.db.execute('INSERT INTO cycle_identity_outbox(id,plan_id,payload,batch_id) VALUES(?,?,?,NULL)',(oid,plan,encoded(payload)))
    for e in edges:self.store.db.execute('INSERT INTO cycle_identity_handoff VALUES(?,?,?)',(plan,e['sourceId'],oid))
    return oid
+ def _source_heads(self,plan):
+  tables={r[0] for r in self.store.db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+  a=tuple(tuple(r) for r in self.store.db.execute('SELECT pid,query_id FROM lead_query_head WHERE plan_id=? ORDER BY pid',(plan,))) if 'lead_query_head' in tables else ()
+  b=()
+  if 'kalodata_video_head' in tables:
+   columns={r[1] for r in self.store.db.execute('PRAGMA table_info(kalodata_video_head)')}
+   query='SELECT pid,run_id FROM kalodata_video_head'+(' WHERE market=?' if 'market' in columns else '')+' ORDER BY pid'
+   b=tuple(tuple(r) for r in self.store.db.execute(query,(self.store._plan(plan)['market'],) if 'market' in columns else ()))
+  return a,b
  def dispatch(self,plan,*,outbox_ids=None):
   if self.store._plan(plan)['market']!='it':raise CycleError('identity_market_not_enabled')
   result=[]

@@ -831,12 +831,9 @@ def _background(root,store,jobs,automation,stamp,maintenance_enabled=None):
     if {'continuous_send_control','cycle_delivery','cycle_delivery_part'}<=tables:
         from lib.continuous_send import control as send_control,launch_worker,worker_state
         control=send_control(store,root)
-        unresolved_it=store.db.execute("""SELECT 1 FROM cycle_delivery d JOIN plan p ON p.id=d.plan_id
-            WHERE p.market='it' AND p.institution='bjn-local-research' AND d.state='unknown'
-              AND json_extract(d.snapshot,'$.executionMode')='continuous-v1' LIMIT 1""").fetchone()
         if (enabled['continuous_send']['enabled'] or control['automaticEnabled'] or control['runRequested']) and \
            (control['automaticEnabled'] or control['runRequested']) and \
-           not control['stopRequested'] and not unresolved_it and not worker_state(root)['running']:
+           not control['stopRequested'] and not worker_state(root)['running']:
             launch_worker(root)
     from lib.operations_workflow import setting as market_setting
     from lib.market_registry import enabled_market_keys
