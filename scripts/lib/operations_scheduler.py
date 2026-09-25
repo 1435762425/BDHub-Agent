@@ -600,63 +600,82 @@ class SubprocessStageExecutor:
         raise CycleError('workflow_stage_invalid')
 
 
-def tick(root,*,now=None,executor=None):
-    root=Path(root);stamp=time.time() if now is None else float(now);executor=executor or SubprocessStageExecutor(root)
+def _collect_ready_runs(root,store,jobs,stamp,progress):
+    """Re-read durable controls and due times; do not reuse a long-running batch snapshot."""
+    projected=[]
+    from lib.market_registry import enabled_market_keys
+    markets=enabled_market_keys(root);snapshots={market:workflow_status(store,market) for market in markets}
+    it_automation=snapshots.get('it',{'setting':{'automaticOperationsEnabled':False}})['setting']
+    any_automation=any(snapshot['setting']['automaticOperationsEnabled'] for snapshot in snapshots.values())
+    _background(root,store,jobs,it_automation,stamp,maintenance_enabled=any_automation)
+    from lib.operations_policy import load_policy
+    policy=load_policy(root);active=[]
+    for market,snapshot in snapshots.items():
+        automation=snapshot['setting'];current=snapshot['current'];sources,due_times=_scheduled_sources(root,store,market,stamp,automation,policy)
+        key='workflow' if market=='it' else f'workflow:{market}'
+        future=[value for value in due_times.values() if value>stamp]
+        progress['nextDue'][key]=min(future) if future else min(due_times.values())
+        if current and current['state']=='failed' and current['triggerSource']=='schedule':
+            if not automation['automaticOperationsEnabled']:continue
+            retry=retry_failed_stage(store,current['runId'],now=stamp)
+            if retry['state']=='resumed':current=workflow_status(store,market)['current']
+            elif retry['state']=='waiting':
+                progress['nextDue'][key]=retry['nextAt'];continue
+            else:
+                progress['error']=progress['error'] or retry.get('reason') or 'workflow_retry_exhausted'
+                continue
+        if current and current['state']=='needs_human':
+            progress['error']=progress['error'] or current.get('errorCode') or 'workflow_needs_human'
+            continue
+        if not current or current['state'] not in ('queued','running','stop_requested'):
+            if automation['automaticOperationsEnabled'] and sources:
+                scheduled=min(due_times[source] for source in sources)
+                attempts=store.db.execute("SELECT count(*) FROM workflow_run WHERE market=? AND trigger_source='schedule' AND scheduled_at=?",
+                                          (market,scheduled)).fetchone()[0]
+                same_failure=bool(current and current['state']=='failed' and current['scheduledAt']==scheduled)
+                retry_at=(current['finishedAt'] or stamp)+3600 if same_failure else stamp
+                if same_failure and (attempts>=4 or stamp<retry_at):
+                    progress['nextDue']['workflow' if market=='it' else f'workflow:{market}']=retry_at if attempts<4 else None
+                    progress['error']=progress['error'] or current.get('errorCode') or 'workflow_retry_exhausted'
+                else:
+                    request_id=f'{market}:schedule:{int(scheduled)}:retry:{attempts}' if attempts else None
+                    current=create_run(store,market=market,trigger_source='schedule',scheduled_at=scheduled,
+                                       sources=sources,request_id=request_id)
+        if current and current['triggerSource']=='schedule' and current['state']!='stop_requested' and not automation['automaticOperationsEnabled']:
+            continue
+        if current and current['state'] in ('queued','running','stop_requested'):active.append(current)
+    for row in active:
+        if row['state']!='stop_requested':continue
+        with store.tx():
+            store.db.execute("UPDATE workflow_stage_run SET state='stopped',finished_at=? WHERE run_id=? AND state IN ('queued','waiting_upstream')",(stamp,row['runId']))
+            if not store.db.execute("SELECT 1 FROM workflow_stage_run WHERE run_id=? AND state='running' LIMIT 1",(row['runId'],)).fetchone():
+                store.db.execute("UPDATE workflow_run SET state='stopped',finished_at=? WHERE run_id=?",(stamp,row['runId']))
+        projected.append((row['market'],'operations'))
+    active=[row for row in active if row['state']!='stop_requested']
+    return active,policy,projected
+
+
+def tick(root,*,now=None,executor=None,refill=False,clock=None,wait_seconds=30,stopped=lambda:False):
+    """Run one dispatch cycle; resident mode refills free slots while other stages are pending.
+
+    ``refill=False`` keeps --once bounded to its initial claims. No new authorization is created.
+    Running children finish their original stage on shutdown; claims remain supervised until then.
+    """
+    if not 0<wait_seconds<=30:raise ValueError('scheduler_wait_invalid')
+    current_time=clock or (time.time if now is None else lambda:float(now))
+    root=Path(root);stamp=current_time();executor=executor or SubprocessStageExecutor(root)
     database=root/'var/second-cycle.sqlite'
     previous=_read(status_path(root),{})
     progress={'checkedAt':stamp,'runId':None,'stage':None,'lastSuccess':previous.get('lastSuccess') or {},
-              'lastAttempt':previous.get('lastAttempt') or {},'nextDue':{},'error':None}
+              'lastAttempt':previous.get('lastAttempt') or {},'nextDue':{},'error':None,'runningStages':[]}
     if not database.exists():progress['error']='workflow_database_missing';_write(status_path(root),progress);return progress
+    if stopped() or stop_path(root).exists():
+        progress['state']='stopping';_write(status_path(root),progress);return progress
     from lib.jobs import load
     jobs=load(root)
     projected=[]
-    with CycleStore(database) as store:
-        from lib.market_registry import enabled_market_keys
-        markets=enabled_market_keys(root);snapshots={market:workflow_status(store,market) for market in markets}
-        it_automation=snapshots.get('it',{'setting':{'automaticOperationsEnabled':False}})['setting']
-        any_automation=any(snapshot['setting']['automaticOperationsEnabled'] for snapshot in snapshots.values())
-        _background(root,store,jobs,it_automation,stamp,maintenance_enabled=any_automation)
-        from lib.operations_policy import load_policy
-        policy=load_policy(root);active=[]
-        for market,snapshot in snapshots.items():
-            automation=snapshot['setting'];current=snapshot['current'];sources,due_times=_scheduled_sources(root,store,market,stamp,automation,policy)
-            key='workflow' if market=='it' else f'workflow:{market}'
-            future=[value for value in due_times.values() if value>stamp]
-            progress['nextDue'][key]=min(future) if future else min(due_times.values())
-            if current and current['state']=='failed' and current['triggerSource']=='schedule':
-                if not automation['automaticOperationsEnabled']:continue
-                retry=retry_failed_stage(store,current['runId'],now=stamp)
-                if retry['state']=='resumed':current=workflow_status(store,market)['current']
-                elif retry['state']=='waiting':
-                    progress['nextDue'][key]=retry['nextAt'];continue
-                else:
-                    progress['error']=progress['error'] or retry.get('reason') or 'workflow_retry_exhausted'
-                    continue
-            if current and current['state']=='needs_human':
-                progress['error']=progress['error'] or current.get('errorCode') or 'workflow_needs_human'
-                continue
-            if not current or current['state'] not in ('queued','running','stop_requested'):
-                if automation['automaticOperationsEnabled'] and sources:
-                    scheduled=min(due_times[source] for source in sources)
-                    attempts=store.db.execute("SELECT count(*) FROM workflow_run WHERE market=? AND trigger_source='schedule' AND scheduled_at=?",
-                                              (market,scheduled)).fetchone()[0]
-                    same_failure=bool(current and current['state']=='failed' and current['scheduledAt']==scheduled)
-                    retry_at=(current['finishedAt'] or stamp)+3600 if same_failure else stamp
-                    if same_failure and (attempts>=4 or stamp<retry_at):
-                        progress['nextDue']['workflow' if market=='it' else f'workflow:{market}']=retry_at if attempts<4 else None
-                        progress['error']=progress['error'] or current.get('errorCode') or 'workflow_retry_exhausted'
-                    else:
-                        request_id=f'{market}:schedule:{int(scheduled)}:retry:{attempts}' if attempts else None
-                        current=create_run(store,market=market,trigger_source='schedule',scheduled_at=scheduled,
-                                           sources=sources,request_id=request_id)
-            if current and current['state'] in ('queued','running','stop_requested'):active.append(current)
-        for row in active:
-            if row['state']!='stop_requested':continue
-            with store.tx():
-                store.db.execute("UPDATE workflow_stage_run SET state='stopped',finished_at=? WHERE run_id=? AND state IN ('queued','waiting_upstream')",(stamp,row['runId']))
-                store.db.execute("UPDATE workflow_run SET state='stopped',finished_at=? WHERE run_id=?",(stamp,row['runId']))
-            projected.append((row['market'],'operations'))
-        active=[row for row in active if row['state']!='stop_requested']
+    with CycleStore(database,**({'clock':clock} if clock else {})) as store:
+        active,policy,updates=_collect_ready_runs(root,store,jobs,stamp,progress);projected.extend(updates)
         owner_id=f'scheduler-{os.getpid()}-{int(stamp*1000)}'
         selection=claim_ready(store,root,active,policy,owner_id,max_parallel=min(14,len(active) or 1),worker_pid=os.getpid())
         tasks=selection['claimed']
@@ -666,27 +685,33 @@ def tick(root,*,now=None,executor=None):
             _write(status_path(root),progress);return progress
         first=tasks[0];progress.update(runId=first['run']['runId'],market=first['run']['market'],stage=first['stage']['stage'],
                                      parallelMarkets=[task['run']['market'] for task in tasks])
-        for task in tasks:
-            market=task['run']['market'];stage=task['stage']['stage']
-            progress['lastAttempt'][stage if market=='it' else f'{market}:{stage}']=stamp
-        _write(status_path(root),progress)
 
-        def execute_one(task):
-            with CycleStore(database) as stage_store:
+        def execute_one(task,job_config):
+            with CycleStore(database,**({'clock':clock} if clock else {})) as stage_store:
                 if isinstance(executor,SubprocessStageExecutor):
                     executor._claims.ticket=task['ticket']|{'ownerId':owner_id}
-                try:return executor.execute(stage_store,task['run'],task['stage']['stage'],jobs)
+                try:return executor.execute(stage_store,task['run'],task['stage']['stage'],job_config)
                 finally:
                     if isinstance(executor,SubprocessStageExecutor):executor._claims.ticket=None
 
-        with ThreadPoolExecutor(max_workers=len(tasks)) as pool:
-            pending={pool.submit(execute_one,task):task for task in tasks}
+        with ThreadPoolExecutor(max_workers=14 if refill else len(tasks)) as pool:
+            pending={}
+            def submit(tasks,job_config):
+                for task in tasks:
+                    market=task['run']['market'];stage=task['stage']['stage']
+                    progress['lastAttempt'][stage if market=='it' else f'{market}:{stage}']=current_time()
+                    pending[pool.submit(execute_one,task,job_config)]=task
+            submit(tasks,jobs)
+            _write(status_path(root),progress)
             while pending:
-                done,_=wait(tuple(pending),timeout=30,return_when=FIRST_COMPLETED)
-                # Long catalog reads may take hours. Independent inbox/send/Agent and account
-                # maintenance supervision must still advance while those subprocesses run.
-                try:_background(root,store,jobs,it_automation,time.time(),maintenance_enabled=any_automation)
-                except (CycleError,sqlite3.Error,OSError) as error:progress['error']=str(error)[:120]
+                done,_=wait(tuple(pending),timeout=wait_seconds,return_when=FIRST_COMPLETED)
+                stamp=current_time();progress['checkedAt']=stamp
+                # A fresh heartbeat/status must advance even when no future has completed.
+                for future,task in pending.items():
+                    if future in done:continue
+                    ticket=task['ticket']
+                    try:heartbeat(store,ticket['stageRunId'],owner_id,ticket['fence'],lease_seconds=300)
+                    except (CycleError,sqlite3.Error) as error:progress['error']=str(error)[:120]
                 for future in done:
                     task=pending.pop(future);run=task['run'];stage=task['stage']['stage'];ticket=task['ticket']
                     try:result=future.result()
@@ -697,7 +722,8 @@ def tick(root,*,now=None,executor=None):
                         assert_current(store,ticket['stageRunId'],owner_id,ticket['fence'])
                         finish_stage(store,run['runId'],stage,state=result['state'],item_count=result.get('itemCount',0),
                           scope=result.get('scope'),payload=result.get('payload'),complete=result.get('complete',True),
-                          platform_writes=result.get('platformWrites',0),error_code=result.get('errorCode'))
+                          platform_writes=result.get('platformWrites',0),error_code=result.get('errorCode'),
+                          claim_ticket=ticket|{'ownerId':owner_id})
                         release(store,ticket['stageRunId'],owner_id,ticket['fence'])
                     except (CycleError,sqlite3.Error) as error:
                         progress['error']=str(error)[:120];continue
@@ -706,12 +732,30 @@ def tick(root,*,now=None,executor=None):
                     elif progress['error'] is None:progress['error']=result.get('errorCode') or result['state']
                     projected.append((market,'operations'))
                     if stage in ('catalog','taplink_prepare'):projected.append((market,'catalog'))
-                for task in pending.values():
-                    ticket=task['ticket']
-                    try:heartbeat(store,ticket['stageRunId'],owner_id,ticket['fence'],lease_seconds=300)
-                    except (CycleError,sqlite3.Error) as error:progress['error']=str(error)[:120]
-                if done:_write(status_path(root),progress)
-    _project_read_models(root,projected,progress)
+                if not stopped() and not stop_path(root).exists():
+                    try:
+                        jobs=load(root)
+                        if refill and pending and len(pending)<14:
+                            active,policy,updates=_collect_ready_runs(root,store,jobs,stamp,progress)
+                            projected.extend(updates)
+                            selection=claim_ready(store,root,active,policy,owner_id,
+                                max_parallel=max(1,14-len(pending)),worker_pid=os.getpid())
+                            submit(selection['claimed'],jobs)
+                            if selection['recovered']:
+                                progress.setdefault('recoveredStageRuns',[]).extend(selection['recovered'])
+                        else:
+                            from lib.market_registry import enabled_market_keys
+                            snapshots={m:workflow_status(store,m) for m in enabled_market_keys(root)}
+                            automation=snapshots.get('it',{'setting':{'automaticOperationsEnabled':False}})['setting']
+                            _background(root,store,jobs,automation,stamp,
+                                maintenance_enabled=any(v['setting']['automaticOperationsEnabled'] for v in snapshots.values()))
+                    except (CycleError,sqlite3.Error,OSError,ValueError) as error:progress['error']=str(error)[:120]
+                else:progress['state']='stopping'
+                progress['runningStages']=[{'runId':t['run']['runId'],'market':t['run']['market'],
+                    'stage':t['stage']['stage'],'fence':t['ticket']['fence']} for t in pending.values()]
+                _write(status_path(root),progress)
+                if projected:
+                    _project_read_models(root,projected,progress);projected=[]
     _write(status_path(root),progress);return progress
 
 

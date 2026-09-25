@@ -487,7 +487,7 @@ def update_checkpoint(store, run_id, stage, checkpoint_key, value, counts=None):
 
 
 def finish_stage(store, run_id, stage, *, state, item_count=0, scope=None, payload=None,
-                 complete=True, platform_writes=0, error_code=None):
+                 complete=True, platform_writes=0, error_code=None, claim_ticket=None):
     """Finish one stage and atomically publish its generation when its barrier is satisfied."""
     _required(store)
     if stage not in STAGES or state not in STAGE_TERMINAL:
@@ -505,6 +505,11 @@ def finish_stage(store, run_id, stage, *, state, item_count=0, scope=None, paylo
         ).fetchone()
         if not run or not row:
             raise CycleError("workflow_run_missing")
+        if claim_ticket is not None:
+            from lib.workflow_resources import assert_current
+            if row['stage_run_id']!=claim_ticket['stageRunId']:
+                raise CycleError('workflow_stage_fence_stale')
+            assert_current(store,row['stage_run_id'],claim_ticket['ownerId'],claim_ticket['fence'])
         if row["state"] in STAGE_TERMINAL:
             return stage_payload(row) | {"duplicate": True}
         if row["state"] != "running":
