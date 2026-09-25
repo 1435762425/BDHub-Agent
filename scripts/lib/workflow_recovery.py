@@ -9,6 +9,7 @@ from zoneinfo import ZoneInfo
 
 from lib.global_screen import fingerprint,load as screen_rules
 from lib.second_cycle import CycleError,digest,encoded
+from lib.operations_policy import selected_source_run_id
 from lib.operations_workflow import STAGE_SUCCESS,_request_id,run_payload
 
 KEY='recovery:published_selected_catalog'
@@ -30,8 +31,7 @@ def _isolation(isolate_pids):
 
 
 def source_id(run):
-    day=datetime.fromtimestamp(run['started_at'],TZ).strftime('%Y%m%d')
-    return f"{run['market']}-global-{day}-"+digest([run['run_id'],'selected'])[:12]
+    return selected_source_run_id(run['market'],run['run_id'],run['started_at'])
 
 
 def _run(store,run_id):

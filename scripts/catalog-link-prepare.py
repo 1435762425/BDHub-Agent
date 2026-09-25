@@ -21,6 +21,21 @@ ROUTES=('selected','campaign')
 # 非全托读卡用的渠道号：卡清单是 `source=1, campaign_id=<活动>`，成员读也要带 source=1。
 CAMPAIGN_SOURCE='1'
 
+def retire_or_block(prep,run_id,pid,cid,src,intent_id,code,*,attempted,retired,blocked,seconds):
+    """Retire a local-only frozen intent, or record the block. Never lets a retire failure abort the batch."""
+    error=code
+    if not attempted and (code=='product_no_longer_eligible' or code.startswith('commercial_facts_changed:')):
+        try:
+            prep.retire_live_change(run_id,pid,cid,src,intent_id,code)
+            retired.append({'pid':pid,'reason':code,'intentId':intent_id,'platformCreateAttempts':0})
+            return 'retired'
+        except Exception as failure:
+            error=code+';retire_failed:'+str(failure)[:200]
+    try:prep.mark_progress(run_id,pid,cid,src,'unknown' if attempted else 'missing',error=error)
+    except Exception:pass
+    blocked.append({'pid':pid,'error':error,'seconds':seconds})
+    return 'blocked'
+
 def submit_create_with_verification(transport,payload,pid,report):
     """Submit once; when challenged, solve on the same session and replay this exact request once."""
     def request():
@@ -768,12 +783,9 @@ def step_create(prep,run_id,limit,report,pace=0.0,lanes=1,qps=5,canary=False,pid
                 pid=item['pid'];outcome,error=preflight.get(pid,(None,ValueError('card_search_unresolved')))
                 if error is not None:
                     code=str(error) if isinstance(error,ValueError) else f'{type(error).__name__}:{str(error)[:80]}'
-                    if code=='product_no_longer_eligible' or code.startswith('commercial_facts_changed:'):
-                        prep.retire_live_change(run_id,pid,item['campaign_id'],item['catalog_source'],intent['id'],code)
-                        retired.append({'pid':pid,'reason':code,'intentId':intent['id'],'platformCreateAttempts':0})
-                        continue
-                    prep.mark_progress(run_id,pid,item['campaign_id'],item['catalog_source'],'missing',error=code)
-                    blocked.append({'pid':pid,'error':code,'seconds':0.0});prep.release(run_id,pid,item['campaign_id'],item['catalog_source']);continue
+                    if retire_or_block(prep,run_id,pid,item['campaign_id'],item['catalog_source'],intent['id'],code,
+                                       attempted=False,retired=retired,blocked=blocked,seconds=0.0)=='retired':continue
+                    prep.release(run_id,pid,item['campaign_id'],item['catalog_source']);continue
                 if outcome.get('state')=='standard':
                     ledger.confirm_existing_standard(intent['id'],outcome['card'])
                     prep.mark_progress(run_id,pid,item['campaign_id'],item['catalog_source'],'ready',card=outcome['card'])
@@ -818,13 +830,8 @@ def step_create(prep,run_id,limit,report,pace=0.0,lanes=1,qps=5,canary=False,pid
                     try:attempted=ledger.get(intent['id'])['state'] in ('submitted','receipt_saved','unknown')
                     except Exception:attempted=False
                     # Never lose the failure: an attempted write stays for readback, an untouched plan returns to the queue.
-                    if not attempted and (code=='product_no_longer_eligible' or code.startswith('commercial_facts_changed:')):
-                        prep.retire_live_change(run_id,pid,cid,src,intent['id'],code)
-                        retired.append({'pid':pid,'reason':code,'intentId':intent['id'],'platformCreateAttempts':0})
-                    else:
-                        try:prep.mark_progress(run_id,pid,cid,src,'unknown' if attempted else 'missing',error=code)
-                        except Exception:pass
-                        blocked.append({'pid':pid,'error':code,'seconds':round(time.time()-t0,2)})
+                    retire_or_block(prep,run_id,pid,cid,src,intent['id'],code,attempted=attempted,
+                                    retired=retired,blocked=blocked,seconds=round(time.time()-t0,2))
                     if code in ('verification_failed','source_maintenance_due','taplink_account_maintenance_due',
                                 'login_required','account_disabled','transport_unavailable'):
                         raise

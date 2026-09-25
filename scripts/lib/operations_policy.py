@@ -4,7 +4,13 @@ from __future__ import annotations
 import json
 import sqlite3
 from contextlib import closing
+from datetime import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
+
+from lib.second_cycle import digest
+
+BEIJING = ZoneInfo("Asia/Shanghai")
 
 
 DEFAULTS = {
@@ -84,6 +90,12 @@ def full_catalog_collection_mode(root, market, now, *, policy=None):
     return {"mode": "plain", "reason": "weekly_incremental_refresh", "lastCategoryAt": float(last)}
 
 
+def selected_source_run_id(market, run_id, started_at):
+    """The one formula for the selected-source run id: Beijing date plus a digest of the workflow run."""
+    day = datetime.fromtimestamp(started_at, BEIJING).strftime("%Y%m%d")
+    return f"{market}-global-{day}-" + digest([run_id, "selected"])[:12]
+
+
 def published_plain_source(root, market, run_id):
     """Return an exact published plain source for the same workflow run, if one exists."""
     path = Path(root) / ("var/global-source.sqlite" if market == "it" else f"var/global-source-{market}.sqlite")
@@ -93,17 +105,29 @@ def published_plain_source(root, market, run_id):
         db.row_factory = sqlite3.Row
         source = db.execute("SELECT state,identity_unchanged,scope FROM global_source_run WHERE id=?",
                             (run_id,)).fetchone()
-        head = db.execute("""SELECT r.id,r.state,r.identity_unchanged,r.scope FROM global_source_head h
-                             JOIN global_source_run r ON r.id=h.run_id
-                             WHERE json_extract(r.scope,'$.market')=?""", (market,)).fetchone()
-        if not source or not head or source["state"] != "completed" or not source["identity_unchanged"] or \
-           head["state"] not in ("completed", "accepted_partial") or not head["identity_unchanged"]:
+        heads = db.execute("""SELECT r.id,r.state,r.identity_unchanged,r.scope FROM global_source_head h
+                              JOIN global_source_run r ON r.id=h.run_id
+                              WHERE json_extract(r.scope,'$.market')=?""", (market,)).fetchall()
+        if not source or source["state"] != "completed" or not source["identity_unchanged"]:
             return None
         source_scope = json.loads(source["scope"])
-        head_scope = json.loads(head["scope"])
         if source_scope.get("market") != market or source_scope.get("partitionMode") == "category_l1_v1":
             return None
-        if head["id"] != run_id and (head_scope.get("coverageOverlay") or {}).get("refreshRunId") != run_id:
+        matching = []
+        for head in heads:
+            try:
+                head_scope = json.loads(head["scope"])
+            except (TypeError, ValueError):
+                continue
+            if head_scope.get("market") != market:
+                continue
+            if head["id"] != run_id and (head_scope.get("coverageOverlay") or {}).get("refreshRunId") != run_id:
+                continue
+            matching.append(head)
+        if len(matching) != 1:
+            return None
+        head = matching[0]
+        if head["state"] not in ("completed", "accepted_partial") or not head["identity_unchanged"]:
             return None
         products = db.execute("SELECT count(*) FROM global_source_product WHERE run_id=?", (head["id"],)).fetchone()[0]
         return {"sourceRunId": run_id, "headRunId": head["id"], "products": products}

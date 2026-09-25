@@ -342,8 +342,8 @@ class SubprocessStageExecutor:
                             'payload':{'state':'accepted_partial','published':True,'reusedPublishedSnapshot':frozen}}
                 else:
                     started=run.get('startedAt') or self.clock()
-                    rid=f'{market}-global-'+datetime.fromtimestamp(started,BEIJING).strftime('%Y%m%d')+'-'+digest([run['runId'],'selected'])[:12]
-                    from lib.operations_policy import full_catalog_collection_mode,published_plain_source
+                    from lib.operations_policy import full_catalog_collection_mode,published_plain_source,selected_source_run_id
+                    rid=selected_source_run_id(market,run['runId'],started)
                     from lib.market_accounts import catalog_read_account
                     published=published_plain_source(self.root,market,rid)
                     if published:
