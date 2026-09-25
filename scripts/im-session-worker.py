@@ -61,7 +61,9 @@ def cycle(market):
                             import re
                             body=response.text()
                             snippets=[body[max(0,m.start()-160):m.end()+200] for m in list(re.finditer('sdkStatus',body))[:35]]
-                            if snippets:print(json.dumps({'event':'sdk_public_code','snippets':snippets}),flush=True)
+                            if snippets:
+                                (ROOT/'var/sdk-public-client-diagnostic.js').write_text(body)
+                                print(json.dumps({'event':'sdk_public_code','snippets':snippets}),flush=True)
                         except Exception:pass
                     page.on('response',inspect_script)
                 page.on('response',observe);page.goto(im_page(market),wait_until='domcontentloaded',timeout=60000)

@@ -234,7 +234,7 @@ def _run(root,market,limit=3,*,profile_canary=False,runner=subprocess.run,clock=
    'retryReport':f'var/market-identity-{market}-{tokens[1]}/output/report.private.json'},now=clock())
   try:
    child,evidence_paths,private,retried=_probe_with_init_retry(root,market,account,chunk,payload_targets,tokens,runner,profile_canary,sleep)
-   applied=_apply(root,market,private,requested)
+   applied=_apply(root,market,private,requested,expected_account=account)
   except (CycleError,subprocess.TimeoutExpired,ValueError,OSError) as error:
    for row in chunk:retry_record(root,market,account,row['handle'],token,'shared',getattr(error,'code',None) or type(error).__name__,now=clock())
    report['accountWait']=retry_snapshot(root,market,now=clock())['accountWait'];break
