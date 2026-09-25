@@ -118,24 +118,24 @@ export function validateCampaignJoin(value:unknown,expectedMarket:string):Campai
 // （每次写入前都落了 write_attempted，所以被杀还能回查，但不该故意制造这种局面）。
 const WRITE_TIMEOUT_MS=10*60*1000;
 
+// Pure decoding keeps transport-envelope regressions independent of production state.
+export function decodeCampaignOutput(out:string,err=""):unknown{
+ let parsed:unknown;
+ try{parsed=JSON.parse(out);}
+ catch{
+  const tail=String(err??"").trim().split("\n").filter(Boolean).pop()??"";
+  throw Error(tail?`campaign_unavailable:${tail.slice(0,200)}`:"campaign_unavailable");
+ }
+ // A job's historical error is data; only a bare error envelope rejects the call.
+ if(parsed&&typeof parsed==="object"&&Object.keys(parsed).length===1&&typeof (parsed as {error?:unknown}).error==="string"&&(parsed as {error:string}).error!=="")throw Error((parsed as {error:string}).error);
+ return parsed;
+}
 function run(script:string,args:string[],limit=4*1024*1024,timeout=60000):Promise<unknown>{
  const root=projectRoot();
  return new Promise((resolve,reject)=>{
   execFile(join(root,".venv/bin/python"),[join(root,"scripts",script),...args],
    {cwd:root,timeout,maxBuffer:limit,env:{...process.env,PYTHONDONTWRITEBYTECODE:"1"}},(error,out,err)=>{
-    let parsed:unknown;
-    try{parsed=JSON.parse(out);}
-    catch{
-     // stdout 不是 JSON（脚本崩了/被打断）时，把 stderr 的最后一行带出去：
-     // 只回一句 campaign_unavailable 会把真正的原因挡在操作者看不到的地方。
-     const tail=String(err??"").trim().split("\n").filter(Boolean).pop()??"";
-     reject(Error(tail?`campaign_unavailable:${tail.slice(0,200)}`:"campaign_unavailable"));return;}
-    // 失败约定是**只有 error 一个键**的裸信封（各 CLI 的失败输出都是 json.dumps({"error": code})）。
-    // 不能只判"有非空 error"：status 里的 error 是 job 的历史错误，是给人看的记录，
-    // 那样一来"只要这个 job 存过一次错误，状态接口就再也读不出来"。
-    if(parsed&&typeof parsed==="object"&&Object.keys(parsed).length===1&&typeof (parsed as {error?:unknown}).error==="string"&&(parsed as {error:string}).error!==""){
-     reject(Error((parsed as {error:string}).error));return;}
-    resolve(parsed);
+    try{resolve(decodeCampaignOutput(out,err));}catch(caught){reject(caught);}
    });
  });
 }

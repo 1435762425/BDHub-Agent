@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {validateCampaignJoin,validateCampaignJoinRequest,validateCampaignLinks,validateCampaignPanel} from '../src/server/campaign/bridge.ts';
+import {decodeCampaignOutput,validateCampaignJoin,validateCampaignJoinRequest,validateCampaignLinks,validateCampaignPanel} from '../src/server/campaign/bridge.ts';
 
 const panel={available:true,market:'it',source:'campaign',snapshot:'catalog-1',offers:3622,
  counts:{eligible:925,ineligible:2697},reasons:{insufficient_commission_gap:2057},
@@ -85,24 +85,16 @@ test('campaign link preparation reports the pool targets and never claims a writ
   /invalid_missing/);
 });
 
-test('current status payloads are not mistaken for failures',async()=>{
- // 回归（同一个坑的两半）：
- //  ① campaign-join.py 成功时也带 error:""（空串），桥接曾把它当失败；
- //  ② 改成"非空即失败"之后，status 里那个 **job 的历史错误**又把它当成了传输失败——
- //     于是"只要这个 job 存过一次错误，状态接口就再也读不出来"。
- // 正确判据是"只有 error 一个键"的裸信封（各 CLI 的失败输出就是 json.dumps({"error": code})）。
- const {readCampaignJoin}=await import('../src/server/campaign/bridge.ts');
- const v=await readCampaignJoin('it');          // 必须 resolve，不能 reject
- assert.equal(v.available,true);
- assert.equal(typeof v.error,'string');     // 历史错误是**数据**，照实显示
- assert.ok((v.items??[]).length>0);
+test('current status payloads are not mistaken for failures',()=>{
+ // Historical job errors must remain data; no local production database is needed.
+ for(const error of ['', 'previous_failure']){
+  const value=validateCampaignJoin(decodeCampaignOutput(JSON.stringify({...join,error})),'it');
+  assert.equal(value.available,true);assert.equal(value.error,error);assert.ok(value.items.length>0);
+ }
 });
 
-test('a bare error envelope from the CLI is still surfaced as a failure',async()=>{
- // 另一半必须保住：真正的失败（裸信封）仍要 reject 出它自己的错误码，而不是被当成成功。
- // 邮箱非法会在任何写入之前就被 join_payload 拒绝，所以这一条不会碰平台。
- const {applyCampaignJoin}=await import('../src/server/campaign/bridge.ts');
- await assert.rejects(()=>applyCampaignJoin('it',['1'.repeat(19)],'not-an-email'),/campaign_join_email_invalid/);
+test('a bare error envelope from the CLI is still surfaced as a failure',()=>{
+ assert.throws(()=>decodeCampaignOutput('{"error":"campaign_join_email_invalid"}'),/campaign_join_email_invalid/);
 });
 
 test('one-click join takes no campaign list and still demands confirmation',()=>{

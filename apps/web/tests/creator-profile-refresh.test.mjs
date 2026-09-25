@@ -1,5 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import {existsSync} from "node:fs";
+import {join} from "node:path";
 import {decodeRefreshOutput,parseRefreshRequest,parseRefreshQuery,projectRoot} from "../src/server/creator-identities/refresh.ts";
 
 const creatorId="creator_"+"a".repeat(32);
@@ -18,5 +20,5 @@ test("CLI errors expose only fixed messages, never raw process diagnostics",()=>
   assert.throws(()=>decodeRefreshOutput("Traceback private token"),e=>e.status===503&&!e.message.includes("token"));
 });
 test("project resolution is stable from both web and repository directories",()=>{
-  const root=projectRoot();assert.equal(projectRoot(root+"/apps/web"),root);assert.match(root,/BDHub-Agent$/);
+  const root=projectRoot();assert.equal(projectRoot(root+"/apps/web"),root);assert.ok(existsSync(join(root,"scripts/lib/creator_identity.py")));assert.ok(existsSync(join(root,"apps/web/package.json")));
 });
