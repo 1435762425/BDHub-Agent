@@ -37,7 +37,7 @@ def _data(payload):
 
 
 @contextmanager
-def authenticated(root,market,report,*,canary=False,read_only=False,capability='message_send',stopped=lambda:False):
+def authenticated(root,market,report,*,canary=False,read_only=False,capability='message_send',stopped=lambda:False,owner=False):
  root=Path(root);pair=load_config(root)['markets'][market];account_name=pair['roles']['communications']
  if capability not in ('message_send','agent_reply'):raise ValueError('market_im_capability_invalid')
  if canary:
@@ -64,6 +64,24 @@ def authenticated(root,market,report,*,canary=False,read_only=False,capability='
  lease=ProfileLease(account.profile_dir,account=account.name,market=market,
                     operation='agent-im-read' if read_only else 'agent-im-send-canary')
  auth_started=time.monotonic()
+ from lib.im_session_owner import enabled,borrow,OwnerUnavailable
+ if not owner and enabled(root,market):
+  from contextlib import contextmanager as _contextmanager
+  @_contextmanager
+  def borrowed():
+   try:
+    with borrow(root,market,account_name,stopped=stopped) as value:yield value
+   except OwnerUnavailable:raise ProfileBusyError('im_session_unavailable') from None
+  with borrowed() as (auth,owner_check):
+   def available():
+    owner_check()
+    if hashlib.sha256(headers_path.read_bytes()).hexdigest()!=before:raise ValueError('market_send_identity_changed')
+    return scheduled_relogin.maintenance_due(account,initialize=False,ignore_retry_throttle=True)
+   report.update(market=market,account=account.name,sendCapability='read_only' if read_only else 'enabled',authSource='sdk_http_owner',platformWrites=0,realSends=0)
+   with ItalyImReadSession(auth,report,use_environment_proxy=True,stopped=stopped,maintenance_due=available,request_budget=RequestBudget(qps=2 if read_only else 3)) as session:
+    yield {'account':account,'identity':identity,'auth':auth,'session':session,'adapter':None if read_only else ItalyImDeliveryAdapter(auth,session),'partnerHost':auth.native_context['partner_host'],'headersPath':headers_path,'beforeHash':before}
+   report['identityFileUnchanged']=hashlib.sha256(headers_path.read_bytes()).hexdigest()==before
+  return
  try:
   with ExitStack() as guard:
    deadline=time.monotonic()+5 if read_only else 0
@@ -108,7 +126,7 @@ def authenticated(root,market,report,*,canary=False,read_only=False,capability='
     _AUTH_CACHE[cache_key]={'auth':auth,'partnerHost':partner_host,'at':time.monotonic()}
    # The IM token is an immutable snapshot. Only authentication needs the profile
    # lease; read-only polling must not monopolize it while scanning conversations.
-   if read_only:guard.close()
+   if read_only and not owner:guard.close()
    def session_unavailable():
     if hashlib.sha256(headers_path.read_bytes()).hexdigest()!=before:raise ValueError('market_send_identity_changed')
     return scheduled_relogin.maintenance_due(account,initialize=False,ignore_retry_throttle=True)

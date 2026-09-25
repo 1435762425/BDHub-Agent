@@ -17,6 +17,8 @@ import uuid
 
 from lib.creator_identity import CreatorIdentityStore
 
+from lib.im_session_owner import identity_account as _identity_account
+
 ROOT = Path(__file__).resolve().parents[2]
 VAR = ROOT / "var"
 PROJECT_PYTHON = ROOT / ".venv/bin/python"
@@ -260,7 +262,7 @@ def _execute_probe(target_file, output):
     # These paths are constructed from job IDs under our fixed var directory,
     # never from a request payload or an environment-selected script path.
     command = [str(PROJECT_PYTHON), str(ROOT / "scripts/probe-italy-profile.py"),
-               "--account", "acc6", "--targets", str(target_file), "--output", str(output)]
+               "--account", _identity_account(ROOT,"it"), "--targets", str(target_file), "--output", str(output)]
     process = subprocess.Popen(command, cwd=ROOT, start_new_session=True, stdin=subprocess.DEVNULL,
                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                                env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"})
@@ -380,7 +382,7 @@ class ProfileRefreshWorker:
             self._identity(job)
             targets, requests = report.get("targets"), report.get("requests")
             if report.get("schema") != "bdhub.italy-profile-probe.v3" or report.get("market") != job["market"] or \
-                    report.get("account") != "acc6" or report.get("identityFileUnchanged") is not True or \
+                    report.get("account") not in {"acc6",_identity_account(ROOT,job["market"])} or report.get("identityFileUnchanged") is not True or \
                     type(report.get("oldDatabaseWrites")) is not int or report["oldDatabaseWrites"] != 0 or \
                     type(report.get("realSends")) is not int or report["realSends"] != 0 or \
                     not isinstance(targets, list) or len(targets) != 1 or not isinstance(requests, list) or not requests:

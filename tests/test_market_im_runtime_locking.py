@@ -101,6 +101,20 @@ class MarketImRuntimeLockingTests(unittest.TestCase):
                     with self.assertRaisesRegex(ValueError, 'market_send_identity_changed'):
                         context['session'].maintenance_due()
                     headers.write_text('original')
+                from lib.italy_im_auth import ItalyImAuthContext
+                borrowed_auth=ItalyImAuthContext('acc1','6',{'token':'private'}, {'market':'br','partner_host':'https://partner.example'}, {})
+                checks=[]
+                @contextmanager
+                def borrow(*args,**kwargs):
+                    self.assertFalse(state['held'])
+                    yield borrowed_auth,lambda:checks.append('check')
+                with patch('lib.im_session_owner.enabled',return_value=True),patch('lib.im_session_owner.borrow',borrow),patch.object(runtime,'ItalyImDeliveryAdapter',return_value=object()):
+                    with runtime.authenticated(root,'br',{}) as context:
+                        self.assertFalse(state['held']);self.assertIs(context['auth'],borrowed_auth)
+                        self.assertFalse(context['session'].maintenance_due());self.assertEqual(checks,['check'])
+                    from lib.second_cycle import CycleError
+                    with self.assertRaisesRegex(CycleError,'business_failure'):
+                        with runtime.authenticated(root,'br',{}):raise CycleError('business_failure')
                 with patch.object(runtime, 'ItalyImDeliveryAdapter', return_value=object()):
                     with runtime.authenticated(root, 'br', {}) as context:
                         self.assertTrue(state['held'])

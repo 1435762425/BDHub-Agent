@@ -12,6 +12,7 @@ from pathlib import Path
 
 from lib.creator_identity import CreatorIdentityStore
 from lib.market_accounts import load_config
+from lib.im_session_owner import identity_account
 from lib.second_cycle import CycleError,CycleStore,digest
 
 INIT_RETRY_SECONDS=5.0
@@ -49,7 +50,7 @@ def pending(root,market,limit=50):
 
 def reuse_judgments(root,market):
  """Reuse exact market/handle terminal judgments for new A/B edges without a new Find."""
- with CycleStore(Path(root)/'var/second-cycle.sqlite') as store,store.tx():
+ with CycleStore(Path(root)/'var/second-cycle.sqlite') as store:
   plan=_plan(store,market)
   current=store.db.execute("SELECT x.source_id,x.source_handle FROM current_identity_source x LEFT JOIN cycle_identity_outcome o ON o.plan_id=x.plan_id AND o.source_id=x.source_id WHERE x.plan_id=? AND (o.status IS NULL OR o.status NOT IN ('completed','unresolved'))",(plan,)).fetchall()
   judgments={}
@@ -62,15 +63,16 @@ def reuse_judgments(root,market):
     if prior and prior['status']=='completed' and (prior['creator_id'],prior['oec'])!=(row['creator_id'],row['oec']):raise CycleError('identity_conflict')
     judgments[key]=row
    elif prior is None:judgments[key]=row
-  for row in current:
-   proof=judgments.get(row['source_handle'].lower())
-   if proof is None:continue
-   if proof['status']=='completed':
-    if not proof['creator_id'] or not proof['evidence_ref']:continue
-    store.db.execute('INSERT OR IGNORE INTO cycle_identity_resolution VALUES(?,?,?,?,?)',
-                     (plan,row['source_id'],proof['creator_id'],proof['oec'],proof['evidence_ref']))
-   store.db.execute('INSERT INTO cycle_identity_outcome VALUES(?,?,?) ON CONFLICT(plan_id,source_id) DO UPDATE SET status=excluded.status',
-                    (plan,row['source_id'],proof['status']))
+  with store.tx():
+   for row in current:
+    proof=judgments.get(row['source_handle'].lower())
+    if proof is None:continue
+    if proof['status']=='completed':
+     if not proof['creator_id'] or not proof['evidence_ref']:continue
+     store.db.execute('INSERT OR IGNORE INTO cycle_identity_resolution VALUES(?,?,?,?,?)',
+                      (plan,row['source_id'],proof['creator_id'],proof['oec'],proof['evidence_ref']))
+    store.db.execute('INSERT INTO cycle_identity_outcome VALUES(?,?,?) ON CONFLICT(plan_id,source_id) DO UPDATE SET status=excluded.status',
+                     (plan,row['source_id'],proof['status']))
 
 
 def _receipt(report,target_ref):
@@ -128,8 +130,9 @@ def validated_report_targets(report,requested,market,account):
  return valid,blocked,code
 
 
-def _apply(root,market,report,requested):
- account=load_config(root)['markets'][market]['roles']['communications']
+def _apply(root,market,report,requested,*,expected_account=None):
+ account=expected_account or identity_account(root,market,pair=load_config(root)['markets'][market])
+ if account not in load_config(root)['markets'][market]['accounts']:raise CycleError('identity_original_account_invalid')
  valid,blocked,block_code=validated_report_targets(report,requested,market,account)
  observed=report.get('finishedAt') or datetime.now(timezone.utc).isoformat();resolved={};unresolved=set()
  with CreatorIdentityStore(Path(root)/'var/creator-identities.sqlite') as identities:
@@ -208,14 +211,18 @@ def _run(root,market,limit=3,*,profile_canary=False,runner=subprocess.run,clock=
  root=Path(root)
  if not retry_snapshot(root,market)['enabled']:raise CycleError('identity_retry_schema_required')
  from lib.identity_retry import recover_started,project_isolated
- account=load_config(root)['markets'][market]['roles']['communications']
+ account=identity_account(root,market,pair=load_config(root)['markets'][market])
  recover_started(root,market,account,_apply)
+ from lib.account_identity import current_generation
+ if account==load_config(root)['markets'][market]['roles'].get('supply'):
+  with CycleStore(root/'var/second-cycle.sqlite',readonly=True) as checked:
+   if (current_generation(checked,market,account) or {}).get('capabilities',{}).get('oecid_find',{}).get('state')!='verified':raise CycleError('identity_supply_capability_unverified')
  reuse_judgments(root,market);project_isolated(root,market);scope=pending(root,market,limit);items=scope['items']
  report={'market':market,'targets':len(items),'resolvedHandles':0,'unresolvedHandles':0,'newBindings':0,
          'networkRuns':0,'platformWrites':0,'realSends':0,'profileCanary':bool(profile_canary),'profileVerified':0,
          'blockedHandles':0,'initRetries':0,'evidence':[],'sliceComplete':True,'coverage':'bounded_identity_slice'}
  if not items:return report|{'stopped':'account_wait' if scope.get('accountWait') else 'nothing_pending','queue':scope}
- account=load_config(root)['markets'][market]['roles']['communications']
+ account=identity_account(root,market,pair=load_config(root)['markets'][market])
  for offset in range(0,len(items),3):
   if retry_snapshot(root,market,now=clock())['accountWait']:break
   chunk=items[offset:offset+3];token=digest([market,clock(),offset,chunk])[:16]

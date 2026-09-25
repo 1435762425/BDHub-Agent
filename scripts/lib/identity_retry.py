@@ -35,7 +35,10 @@ def snapshot(root, market, *, now=None):
         if wait:
             generation=db.execute("SELECT generation_id FROM account_identity_generation WHERE market=? AND account=? AND state='published' ORDER BY published_at DESC LIMIT 1",(market,wait['account'])).fetchone()
             current=generation[0] if generation else ''
-            if current==wait['generation'] and wait['next_at']>now:
+            from lib.im_session_owner import identity_account
+            try:selected_account=identity_account(root,market)
+            except (OSError,KeyError,ValueError):selected_account=wait['account']
+            if selected_account==wait['account'] and current==wait['generation'] and wait['next_at']>now:
                 result['accountWait']=dict(wait)
     return result
 
@@ -107,9 +110,11 @@ def discovery_outcome(worker,item,report):
     worker._retry_events[item['id']]=event
     category,reason=classify(report,item['id'],expected_handle=item['handle'],market='it')
     if category=='success':return  # existing validated settlement is the identity authority
-    if report.get('schema')!='bdhub.italy-profile-probe.v3' or report.get('market')!='it' or report.get('account')!='acc6':category,reason='shared','probe_report_invalid'
+    from lib.im_session_owner import identity_account
+    actual=report.get('account','acc6')
+    if report.get('schema')!='bdhub.italy-profile-probe.v3' or report.get('market')!='it' or actual not in ('acc6','acc9'):category,reason='shared','probe_report_invalid'
     event=report.get('cohortEvidenceSha256') or digest(report)
-    record(root,'it','acc6',item['handle'],event,category,reason,evidence='discovery:'+item['id'],now=worker.store.now())
+    record(root,'it',actual,item['handle'],event,category,reason,evidence='discovery:'+item['id'],now=worker.store.now())
 
 
 def due_at(root,market,*,now=None):
@@ -171,13 +176,14 @@ def recover_started(root,market,account,apply):
     if not snapshot(root,market)['enabled']:return
     path=Path(root)/'var/second-cycle.sqlite'
     with closing(sqlite3.connect(path.resolve().as_uri()+'?mode=ro',uri=True)) as db:
-        rows=db.execute("""SELECT s.handle,s.payload FROM identity_retry_event s WHERE s.market=? AND s.category='started'
+        rows=db.execute("""SELECT s.handle,s.payload,s.account FROM identity_retry_event s WHERE s.market=? AND s.category='started'
           AND NOT EXISTS(SELECT 1 FROM identity_retry_event f WHERE f.market=s.market AND f.handle=s.handle
             AND json_extract(f.payload,'$.eventId')=substr(json_extract(s.payload,'$.eventId'),1,length(json_extract(s.payload,'$.eventId'))-8))""",(market,)).fetchall()
     groups={}
-    for handle,payload in rows:
-        payload=json.loads(payload);groups.setdefault(payload['eventId'][:-8],[]).append((handle,payload.get('evidence')))
-    for token,items in groups.items():
+    for handle,payload,original_account in rows:
+        payload=json.loads(payload);groups.setdefault((payload['eventId'][:-8],original_account),[]).append((handle,payload.get('evidence')))
+    for (token,original_account),items in groups.items():
+        account=original_account
         evidence=items[0][1]
         if not isinstance(evidence,dict):
             for handle,_ in items:record(root,market,account,handle,token,'shared','probe_interrupted')
@@ -189,7 +195,9 @@ def recover_started(root,market,account,apply):
         if not file.resolve().is_relative_to((Path(root)/'var').resolve()):raise ValueError('identity_evidence_scope_invalid')
         try:
             report=json.loads(file.read_text())
-            apply(root,market,report,evidence['requested'])
+            import inspect
+            if 'expected_account' in inspect.signature(apply).parameters:apply(root,market,report,evidence['requested'],expected_account=original_account)
+            else:apply(root,market,report,evidence['requested'])
         except (OSError,ValueError,RuntimeError) as error:
             for handle,_ in items:record(root,market,account,handle,token,'shared','probe_interrupted',evidence=str(file))
             continue

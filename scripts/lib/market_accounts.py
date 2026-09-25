@@ -16,6 +16,8 @@ def validate_config(value):
                                        ('project_owned','agent_identity_generation')}:
             raise ValueError('credential_handoff_not_implemented')
         if pair.get('automaticRoleSwitchEnabled') is not False:raise ValueError('automatic_role_switch_not_implemented')
+        if pair.get('imSessionMode','http_polling') not in ('http_polling','sdk_http'):raise ValueError('im_session_mode_invalid')
+        if pair.get('identityAccountRole','communications') not in ('communications','supply'):raise ValueError('identity_account_role_invalid')
         used.update(accounts)
     lifecycle=value.get('lifecycle',{})
     project_owned=any(pair.get('credentialAuthority')=='project_owned' for pair in value['markets'].values())

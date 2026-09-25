@@ -353,6 +353,12 @@ def start(root, name, raw=None, *, clock=time.time, spawn=subprocess.Popen):
     current = state(root, name)
     if current and current.get('running'):
         raise ValueError('job_already_running')
+    if name == 'inbox':
+        from lib.im_session_owner import enabled as sdk_enabled,launch
+        if sdk_enabled(root,'it'):
+            stop_path(root,name).unlink(missing_ok=True)
+            launch(root,'it')
+            return state(root,name)
     # 两条链接作业互斥：它们会开同一个账号的会话、写同一份链接账本。让第二个直接说"已经在跑"，
     # 而不是让它进去撞账号锁、报一个看不出原因的错。
     if name in LINK_JOBS:

@@ -94,11 +94,10 @@ def project_identity_maintenance_due(root, account, now=None):
         return None
     try:
         with closing(sqlite3.connect((root / "var/second-cycle.sqlite").as_uri() + "?mode=ro", uri=True)) as db:
+            reason_filter=" AND p.reason<>'capability'" if 'reason' in {r[1] for r in db.execute('PRAGMA table_info(account_identity_generation)')} else ''
             row = db.execute(
-                "SELECT role,published_at FROM account_identity_generation "
-                "WHERE account=? AND state='published' "
-                "ORDER BY published_at DESC,rowid DESC LIMIT 1", (account,),
-            ).fetchone()
+                "SELECT g.role,(SELECT max(p.published_at) FROM account_identity_generation p WHERE p.account=g.account AND p.market=g.market AND p.state='published'"+reason_filter+" AND p.browser_ref=g.browser_ref AND p.http_ref=g.http_ref AND p.im_ref=g.im_ref) FROM account_identity_generation g "
+                "WHERE g.account=? AND g.state='published' ORDER BY g.published_at DESC,g.rowid DESC LIMIT 1",(account,)).fetchone()
     except (OSError, sqlite3.Error):
         return None
     if not row or row[0] not in _ROLE_SLOT or not isinstance(row[1], (int, float)):
@@ -133,6 +132,14 @@ def project_account_enabled(root, account):
     return bool(row[0]) if row else True
 
 
+def _supply_identity_enabled(root,market):
+    from lib.im_session_owner import identity_account
+    try:
+        pair=json.loads((Path(root)/'config/market-accounts.json').read_text())['markets'][market]
+        return pair.get('identityAccountRole')=='supply'
+    except (OSError,ValueError,KeyError):return False
+
+
 def _install_project_account_overlay(config, root):
     """Make all vendored transports consume a published project identity when one exists."""
     if not hasattr(config, "_bdhub_agent_base_load_accounts"):
@@ -156,7 +163,7 @@ def _install_project_account_overlay(config, root):
                                       headers_json=paths["headersJson"], market=market,
                                       enabled=bool(project_account_enabled(agent_root, account.name)),
                                       listener_pool=False, im_send_pool=True,
-                                      collection_pool=role == "communications", report_pool=False,
+                                      collection_pool=role == "communications" or (role == "supply" and _supply_identity_enabled(agent_root,market)), report_pool=False,
                                       share_link_pool=False, sample_review_pool=False,
                                       identity_lifecycle_enabled=False, auto_relogin=False))
             return output

@@ -1164,6 +1164,15 @@ def _reply_scope_backfill(db):
     for table,required,sql in indexes:
         if table in tables and required<=columns(table):db.execute('CREATE INDEX IF NOT EXISTS '+sql)
 
+SECOND_CYCLE_SDK_SIGNALS = Migration(26,"sdk_receive_durable_signal_v1", """
+CREATE TABLE im_receive_signal(
+ market TEXT NOT NULL,account TEXT NOT NULL,cid TEXT NOT NULL,oec TEXT NOT NULL,message_id TEXT NOT NULL,
+ content_hash TEXT NOT NULL,observed REAL NOT NULL,checked REAL NOT NULL DEFAULT 0,done INTEGER NOT NULL DEFAULT 0,
+ attempts INTEGER NOT NULL DEFAULT 0,next_at REAL NOT NULL DEFAULT 0,error_code TEXT,
+ PRIMARY KEY(market,account,cid,message_id,content_hash));
+CREATE INDEX im_receive_signal_pending ON im_receive_signal(market,account,done,next_at,observed);
+""")
+
 DATABASES = {
     "catalog-links": ("catalog-links.sqlite", (CATALOG_LINKS,)),
     "second-cycle": ("second-cycle.sqlite", (SECOND_CYCLE, SECOND_CYCLE_INDEXES,
@@ -1185,7 +1194,7 @@ DATABASES = {
                                                 SECOND_CYCLE_AGENT_CONVERSATION,
                                                 SECOND_CYCLE_INBOX_HISTORY,
                                                 SECOND_CYCLE_INBOX_HISTORY_DEFERRED,
-                                                SECOND_CYCLE_ROLLING_LEADS, SECOND_CYCLE_IDENTITY_RETRY, SECOND_CYCLE_OUTREACH_SHARE, SECOND_CYCLE_INVITATION_INBOX, SECOND_CYCLE_REPLY_SCOPE)),
+                                                SECOND_CYCLE_ROLLING_LEADS, SECOND_CYCLE_IDENTITY_RETRY, SECOND_CYCLE_OUTREACH_SHARE, SECOND_CYCLE_INVITATION_INBOX, SECOND_CYCLE_REPLY_SCOPE, SECOND_CYCLE_SDK_SIGNALS)),
 }
 
 REGISTRY_SQL = """

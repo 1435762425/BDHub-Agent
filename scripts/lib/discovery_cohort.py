@@ -24,7 +24,8 @@ def run_cohort(worker,limit=20,lanes=3,soak_id=None,only_batch=None,use_producti
     soak=None;service=None;published=None
     if use_production_policy and not soak_id:
         from lib.identity_acceptance import production_policy
-        published=production_policy(store.var_dir.parent)
+        from lib.im_session_owner import identity_account
+        published=production_policy(store.var_dir.parent,identity_account(store.var_dir.parent,'it'))
         if published['acceptanceId']:lanes=published['lanes']
     if soak_id:
         from lib.batch_task_service import TaskService

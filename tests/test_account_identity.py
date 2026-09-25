@@ -203,6 +203,15 @@ class AccountIdentityTests(unittest.TestCase):
         promoted=promote_capabilities(self.store,market="it",account="acc9",capabilities=["taplink"],evidence_ref="new-canary")
         self.assertEqual(promoted["capabilities"]["campaign_join"],{"state":"verified","evidenceRef":"old-canary","observedAt":NOW})
 
+    def test_capability_promotion_preserves_identity_maintenance_baseline(self):
+        from lib.account_identity import identity_baseline
+        identity={'browserRef':'b','httpRef':'h','imRef':'i','institutionFingerprint':'i'*64}
+        first=publish_generation(self.store,market='it',account='acc9',role='supply',reason='baseline',identity=identity,capabilities={'partner_http':{'state':'verified'}})
+        self.store.clock=lambda:NOW+3600
+        promoted=promote_capabilities(self.store,market='it',account='acc9',capabilities=['oecid_find'],evidence_ref='verified')
+        self.assertGreater(promoted['publishedAt'],first['publishedAt'])
+        self.assertEqual(identity_baseline(self.store,promoted),first['publishedAt'])
+
     def test_failed_new_generation_does_not_replace_last_published(self):
         first = publish_generation(self.store, market="it", account="acc6", role="communications",
                                    reason="baseline", identity={"browserRef": "browser:1", "httpRef": "http:1",

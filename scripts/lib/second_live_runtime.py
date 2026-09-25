@@ -100,6 +100,19 @@ def _fingerprint(path):
 
 @contextmanager
 def _authenticated(report, *, stopped, read_only=False):
+    from lib.im_session_owner import enabled,borrow
+    if enabled(ROOT,'it'):
+        from lib.market_im_runtime import authenticated
+        try:
+            with authenticated(ROOT,'it',report,read_only=read_only,stopped=stopped) as runtime:
+                from bdhub.enrich.identity_store import load_identity
+                account=runtime['account'];identity=runtime['identity'];headers=load_identity(account.headers_json).headers
+                available=runtime['session'].maintenance_due
+                yield account,identity,headers,runtime['auth'],available,available
+        except Exception as error:
+            if type(error).__name__=='ProfileBusyError':raise SecondLiveRuntimeError('live_guard_busy') from None
+            raise
+        return
     try:
         with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
             account, identity, load_identity, guard, maintenance, capability = _load_runtime()

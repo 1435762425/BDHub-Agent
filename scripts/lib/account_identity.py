@@ -179,6 +179,14 @@ def current_generation(store, market, account):
     return generation_payload(store, row) if row else None
 
 
+def identity_baseline(store,generation):
+    """Capability-only publications cannot postpone the credential maintenance deadline."""
+    if not generation:return None
+    row=store.db.execute("SELECT max(published_at) FROM account_identity_generation WHERE account=? AND market=? AND state='published' AND reason<>'capability' AND browser_ref=? AND http_ref=? AND im_ref=?",
+        (generation['account'],generation['market'],generation['browserRef'],generation['httpRef'],generation['imRef'])).fetchone()
+    return row[0] if row and row[0] is not None else generation['publishedAt']
+
+
 def generation_payload(store, row):
     if not row:
         return None
@@ -198,7 +206,7 @@ def generation_payload(store, row):
 def publish_generation(store, *, market, account, role, reason, identity, capabilities, now=None):
     """Atomically publish browser/HTTP/IM references only after their joint validation succeeds."""
     _required(store)
-    if role not in ROLE_ORDER or reason not in {"baseline", "refresh", "relogin"}:
+    if role not in ROLE_ORDER or reason not in {"baseline", "refresh", "relogin", "capability"}:
         raise CycleError("identity_generation_invalid")
     if not isinstance(identity, dict) or set(identity) != {
         "browserRef", "httpRef", "imRef", "institutionFingerprint",
@@ -259,7 +267,7 @@ def promote_capabilities(store, *, market, account, capabilities, evidence_ref):
         "browserRef", "httpRef", "imRef", "institutionFingerprint",
     )}
     return publish_generation(store, market=market, account=account, role=current["role"],
-                              reason="refresh", identity=identity, capabilities=merged)
+                              reason="capability", identity=identity, capabilities=merged)
 
 
 def carry_verified_capabilities(previous, identity, capabilities):
@@ -511,7 +519,7 @@ def status(store, root):
         ).fetchone()
         rows.append({**assignment, "setting": local, "generation": current,
                      "maintenance": intent_payload(pending) if pending else None,
-                     "nextMaintenanceAt": next_due(current["publishedAt"] if current else None,
+                     "nextMaintenanceAt": next_due(identity_baseline(store,current),
                                                    assignment["role"], now)})
     queue = [intent_payload(row) for row in store.db.execute(
         "SELECT i.* FROM account_maintenance_intent i "

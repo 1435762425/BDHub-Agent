@@ -555,7 +555,13 @@ class SubprocessStageExecutor:
                     'scope':{'sources':sources,'coverage':'bounded_query_slice','aCompleted':payload['A'],
                              'bCompleted':payload['B'],'remaining':payload.get('queue')},'payload':payload}
         if stage=='oecid':
-            if market!='it':
+            from lib.im_session_owner import identity_account
+            from lib.market_accounts import load_config as account_config
+            identity_role='supply' if identity_account(self.root,market)==account_config(self.root)['markets'][market]['roles']['supply'] else 'communications'
+            if market=='it' and identity_role=='supply':
+                reconciled=self._call(['scripts/second-cycle-identities.py','reconcile'],'oecid-legacy-reconcile')
+                if reconciled['state']!='completed':return reconciled
+            if market!='it' or identity_role=='supply':
                 total=0;outputs=[];result=None;left=0;auth_recoveries=0
                 for _ in range(500):
                     result=self._call(['scripts/market-identity.py','run','--market',market,'--limit','50'],'oecid')
@@ -563,12 +569,12 @@ class SubprocessStageExecutor:
                     bounded=result.get('payload') or {}
                     if result['state']=='completed' and bounded.get('sliceComplete'):
                         if bounded.get('authRequired'):
-                            outputs.append(self._relogin_market_account(store,market,'communications',run['runId'],'bounded-oecid-auth'))
+                            outputs.append(self._relogin_market_account(store,market,identity_role,run['runId'],'bounded-oecid-auth'))
                         return result|{'scope':{'sources':sources,'coverage':'bounded_identity_slice',
                             'queue':bounded.get('queue'),'blockedHandles':bounded.get('blockedHandles',0)}}
                     if result['state']!='completed':
                         if result.get('errorCode')=='market_identity_auth_required' and auth_recoveries<2:
-                            relogin=self._relogin_market_account(store,market,'communications',run['runId'],
+                            relogin=self._relogin_market_account(store,market,identity_role,run['runId'],
                                                                 f'oecid-{auth_recoveries}')
                             if relogin['state']=='completed':auth_recoveries+=1;outputs.append(relogin);continue
                         return result|{'itemCount':total,'scope':{'sources':sources,'pending':None,
@@ -603,7 +609,7 @@ class SubprocessStageExecutor:
             result=self._call(['scripts/identity-batch.py','--limit','200','--cohort-size','50','--rounds','4'],'oecid')
             payload=result.get('payload') or {};pending=int(payload.get('pending') or 0)
             if payload.get('sliceComplete') and (payload.get('accountWait') or {}).get('reason')=='auth_required':
-                self._relogin_market_account(store,market,'communications',run['runId'],'bounded-oecid-auth')
+                self._relogin_market_account(store,market,identity_role,run['runId'],'bounded-oecid-auth')
             result['itemCount']=int(payload.get('found') or 0) if payload.get('sliceComplete') else int(payload.get('claimed') or 0)
             result['scope']={'sources':sources,'handoffBatches':submitted,'pending':pending,'coverage':payload.get('coverage'),'claimed':payload.get('claimed'),'notFound':payload.get('notFound'),'technicalIsolatedLeads':payload.get('technicalIsolatedLeads'),'stopReason':payload.get('stopReason'),'accountWait':payload.get('accountWait')}
             if result['state']=='completed' and pending and not payload.get('sliceComplete'):
@@ -818,8 +824,11 @@ def tick(root,*,now=None,executor=None,refill=False,clock=None,wait_seconds=30,s
 def _background(root,store,jobs,automation,stamp,maintenance_enabled=None):
     """Keep independent monitors/runtimes alive without treating them as serial workflow stages."""
     enabled=jobs['jobs']
+    from lib.im_session_owner import enabled as sdk_enabled,launch as launch_session
     from lib.job_run import start as start_job,state as job_state
-    if (automation['automaticOperationsEnabled'] or enabled['inbox_monitor']['enabled']) and not (job_state(root,'inbox') or {}).get('running'):
+    if sdk_enabled(root,'it'):
+        launch_session(root,'it')
+    elif (automation['automaticOperationsEnabled'] or enabled['inbox_monitor']['enabled']) and not (job_state(root,'inbox') or {}).get('running'):
         try:start_job(root,'inbox',{'limit':12,'interval':30})
         except (ValueError,OSError):pass
     from lib.template_library import agent_setting
@@ -853,7 +862,8 @@ def _background(root,store,jobs,automation,stamp,maintenance_enabled=None):
             inbox_state=_read(Path(root)/f'var/market-inbox-{market}.json',{})
             inbox_pid=inbox_state.get('pid')
             inbox_alive=pid_alive(inbox_pid)
-            if not inbox_alive:
+            if sdk_enabled(root,market):launch_session(root,market)
+            elif not inbox_alive:
                 log=Path(root)/f'var/market-inbox-{market}.log'
                 try:
                     with log.open('a',encoding='utf-8') as handle:
@@ -888,7 +898,7 @@ def _background(root,store,jobs,automation,stamp,maintenance_enabled=None):
                 try:launch_market_sender(root,market)
                 except OSError:pass
     if (automation['automaticOperationsEnabled'] if maintenance_enabled is None else maintenance_enabled):
-        from lib.account_identity import assignments,current_generation,next_due,request_maintenance,recover_abandoned,status as account_status
+        from lib.account_identity import assignments,current_generation,next_due,identity_baseline,request_maintenance,recover_abandoned,status as account_status
         abandoned=recover_abandoned(store,now=stamp)
         for intent_id in abandoned:
             prior=store.db.execute('SELECT * FROM account_maintenance_intent WHERE intent_id=?',(intent_id,)).fetchone()
@@ -902,7 +912,7 @@ def _background(root,store,jobs,automation,stamp,maintenance_enabled=None):
         except (OSError,ValueError):rows=[]
         for row in rows:
             generation=current_generation(store,row['market'],row['account'])
-            due=next_due(generation['publishedAt'] if generation else None,row['role'],stamp)
+            due=next_due(identity_baseline(store,generation),row['role'],stamp)
             if stamp<due:continue
             request_id=f"scheduled-{row['account']}-{int(due)}"
             try:request_maintenance(store,root,market=row['market'],account=row['account'],operation='refresh',request_id=request_id,scheduled_at=due)

@@ -248,7 +248,13 @@ def network_child(account_name: str, target_file: Path, output: Path, market: st
             return 2
         report['readinessCanary']=canary
         cfg = config.load()
-        prepared, unavailable = worker.prepare_collection_accounts(cfg, config.load_accounts(cfg), market=market, requested_names=[account_name])
+        accounts=config.load_accounts(cfg)
+        if canary:
+            from lib.market_accounts import load_config as account_config
+            from dataclasses import replace
+            if account_name==account_config(ROOT)['markets'][market]['roles']['supply']:
+                accounts=[replace(a,collection_pool=True) if a.name==account_name else a for a in accounts]
+        prepared, unavailable = worker.prepare_collection_accounts(cfg, accounts, market=market, requested_names=[account_name])
         if not prepared:
             report.update(status="blocked", reason="account_not_prepared")
             return 2
@@ -477,13 +483,18 @@ def network_child(account_name: str, target_file: Path, output: Path, market: st
 
 
 def main() -> int:
+    global ROOT,VAR
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--runtime-root",type=Path)
     parser.add_argument("--account", default="acc6")
     parser.add_argument("--market",default="it")
     parser.add_argument("--targets", type=Path, default=VAR / "italy-profile-probe-targets.json")
     parser.add_argument("--output", type=Path)
     parser.add_argument("--network-child", action="store_true")
     args = parser.parse_args()
+    if args.runtime_root is not None:
+        ROOT=args.runtime_root.resolve();VAR=ROOT/"var"
+        if not (ROOT/"AGENTS.md").is_file():raise ValueError("runtime_root_invalid")
     output = (args.output or VAR / ("italy-profile-probe-" + datetime.now().strftime("%Y%m%d-%H%M%S"))).resolve()
     if not output.is_relative_to(VAR.resolve()) or not args.targets.resolve().is_relative_to(VAR.resolve()):
         raise ValueError("Probe input and output must stay in new project var.")
@@ -493,7 +504,7 @@ def main() -> int:
     if (output / "report.private.json").exists():
         raise ValueError("Existing probe evidence is immutable; select a new output directory.")
     env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1")
-    command = [sys.executable, str(Path(__file__).resolve()), "--network-child", "--account", args.account, "--market",args.market,"--targets", str(args.targets.resolve()), "--output", str(output)]
+    command = [sys.executable, str(Path(__file__).resolve()), "--runtime-root",str(ROOT), "--network-child", "--account", args.account, "--market",args.market,"--targets", str(args.targets.resolve()), "--output", str(output)]
     child_process = subprocess.Popen(command, env=env, start_new_session=True, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     timeout = False
     def cancelled(*_):

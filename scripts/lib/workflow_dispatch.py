@@ -20,7 +20,8 @@ def resources(root,market,stage,policy,*,accounts=None):
  if not pair or not isinstance(pair.get('roles'),dict):raise CycleError('workflow_resource_market_unavailable')
  needed=[(f'workflow:{market}',1)]
  if stage in SUPPLY_STAGES:needed.append((f"supply:{pair['roles']['supply']}",1))
- elif stage in COMMUNICATION_STAGES:needed.append((f"communications:{pair['roles']['communications']}",1))
+ elif stage in COMMUNICATION_STAGES:
+  role=pair.get('identityAccountRole','communications');needed.append((f"{role}:{pair['roles'][role]}",1))
  elif stage=='kalodata':needed.append(('kalodata:global',policy['kalodataMaxParallelMarkets']))
  elif stage!='send_pool':raise CycleError('workflow_resource_stage_invalid')
  if stage in PLATFORM_STAGES:needed.append(('platform:global',PLATFORM_PARALLEL_MARKETS))

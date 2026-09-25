@@ -17,6 +17,7 @@ import uuid
 
 from lib.creator_identity import CreatorIdentityStore
 from lib.profile_refresh import ROOT, VAR, SAFE_ERRORS, LEASE_SECONDS, _alive, _execute_probe, _iso
+from lib.im_session_owner import identity_account as _identity_account
 
 # 「被挡住」不是"没问过"：请求构造/签名失败、账号起不来、被远端挡回——**一条都没拿到平台的真实回答**。
 # 所以它必须能重试（否则这些达人永远停在"待补"），但也不能疯狂重试：退避 15 分钟，最多 3 次。
@@ -486,7 +487,7 @@ class CreatorDiscoveryWorker:
         from lib.identity_retry import record,SHARED_REASONS
         if code in SHARED_REASONS:
             event=getattr(self,'_retry_events',{}).get(item['id'],item['id']+':'+str(item.get('attempt_no',1)))
-            record(self.store.var_dir.parent,'it','acc6',item['handle'],event,'shared',code,now=self.store.now())
+            record(self.store.var_dir.parent,'it',_identity_account(ROOT,'it'),item['handle'],event,'shared',code,now=self.store.now())
         return self.store.finish(item, self.owner, "blocked", reason=code if isinstance(code, str) and code in ERRORS else "probe_failed", **values)
 
     @staticmethod
@@ -510,12 +511,12 @@ class CreatorDiscoveryWorker:
         discovery_outcome(self,item,report)
         def healthy_find():
             event=report.get('cohortEvidenceSha256') or _hash(report)
-            record(self.store.var_dir.parent,'it','acc6',item['handle'],event,'success',None,
+            record(self.store.var_dir.parent,'it',_identity_account(ROOT,'it'),item['handle'],event,'success',None,
                    evidence='discovery:'+item['id'],now=self.store.now())
         count = report.get("counters", {}).get("request_count") if isinstance(report.get("counters"), dict) else None
         count = count if type(count) is int and count >= 0 else None
         try:
-            if report.get("schema") != "bdhub.italy-profile-probe.v3" or report.get("market") != "it" or report.get("account") != "acc6" or \
+            if report.get("schema") != "bdhub.italy-profile-probe.v3" or report.get("market") != "it" or report.get("account") not in {"acc6",_identity_account(ROOT,"it")} or \
                     type(report.get("oldDatabaseWrites")) is not int or report["oldDatabaseWrites"] != 0 or \
                     type(report.get("realSends")) is not int or report["realSends"] != 0:
                 raise CreatorDiscoveryError("probe_report_invalid")
