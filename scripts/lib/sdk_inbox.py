@@ -10,9 +10,15 @@ from lib.request_budget import RequestBudget
 from lib.reply_events import backfill
 
 
+def ready_script(find_api):
+    # Current partner web client enum: UN_INIT=0, INIT_LOADING=1,
+    # INIT_SUCCESS=2, INIT_FAILED=3. UI loading is not socket health.
+    return '() => {'+find_api+'return !!(api&&api.sdkInstance&&api.sdkStatus===2);}'
+
+
 def arm_script(find_api):
     return '''() => {'''+find_api+'''
-      if(!api||!api.sdkInstance||api.sdkStatus!==1)return {armed:0};
+      if(!api||!api.sdkInstance||api.sdkStatus!==2)return {armed:0};
       const sdk=api.sdkInstance;
       if(window.__BDHUB_RECEIVE&&window.__BDHUB_RECEIVE.sdk===sdk)return {armed:2};
       const state=window.__BDHUB_RECEIVE||{buffer:[],overflow:false};state.sdk=sdk;window.__BDHUB_RECEIVE=state;

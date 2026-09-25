@@ -6,7 +6,7 @@ from urllib.parse import urlsplit
 ROOT=Path(__file__).resolve().parents[1];sys.dont_write_bytecode=True;sys.path.insert(0,str(ROOT/'scripts'))
 from lib.im_session_owner import OwnerState,serve,publish,enabled,maintenance_pending
 from lib.market_im_runtime import authenticated
-from lib.sdk_inbox import Receiver,arm_script,DRAIN,ACK
+from lib.sdk_inbox import Receiver,arm_script,ready_script,DRAIN,ACK
 from lib.legacy_runtime import project_identity_paths,project_account_enabled
 STOP=False
 
@@ -19,7 +19,7 @@ def stopped(market):
 def cycle(market):
     from lib.legacy_runtime import configure_vendored_bdhub
     configure_vendored_bdhub(root=ROOT,legacy_root=ROOT.parent/'01-BDSystem-V2')
-    from bdhub.imbase.transport import _FIND_API,_JS_SDK_READY
+    from bdhub.imbase.transport import _FIND_API
     from bdhub.hub.markets import im_page
     from playwright.sync_api import sync_playwright
     from lib.market_accounts import load_config
@@ -29,7 +29,7 @@ def cycle(market):
     with authenticated(ROOT,market,report,read_only=True,owner=True,stopped=lambda:stopped(market)) as runtime:
         account=runtime['account'];paths=project_identity_paths(ROOT,account.name)
         if not paths or Path(account.profile_dir).resolve()!=paths['profileDir'].resolve():raise ValueError('im_owner_project_profile_required')
-        original=hashlib.sha256(Path(account.headers_json).read_bytes()).hexdigest();generation=paths['candidateId'];started=time.monotonic();sdk_heartbeat=[time.monotonic()]
+        original=hashlib.sha256(Path(account.headers_json).read_bytes()).hexdigest();generation=paths['candidateId'];started=time.monotonic()
         def current():
             if not project_account_enabled(ROOT,account.name):return False
             if maintenance_pending(ROOT,account.name):return False
@@ -54,36 +54,24 @@ def cycle(market):
                             data=response.json();data=data.get('data') if isinstance(data.get('data'),dict) else data
                             matches.append(str(data.get('im_id'))==runtime['auth'].im_id)
                         except Exception:pass
-                if market=='my':
-                    def inspect_script(response):
-                        if response.request.resource_type!='script':return
-                        try:
-                            import re
-                            body=response.text()
-                            snippets=[body[max(0,m.start()-160):m.end()+200] for m in list(re.finditer('sdkStatus',body))[:35]]
-                            if snippets:
-                                (ROOT/'var/sdk-public-client-diagnostic.js').write_text(body)
-                                print(json.dumps({'event':'sdk_public_code','snippets':snippets}),flush=True)
-                        except Exception:pass
-                    page.on('response',inspect_script)
                 page.on('response',observe);page.goto(im_page(market),wait_until='domcontentloaded',timeout=60000)
                 if 'login' in page.url.lower():raise ValueError('sdk_login_required')
-                for _ in range(100):
+                for _ in range(240):
                     if stopped(market):return
-                    if page.evaluate(_JS_SDK_READY):break
+                    if page.evaluate(ready_script(_FIND_API)):break
                     page.wait_for_timeout(500)
                 else:raise ValueError('sdk_not_ready')
                 if not matches or not all(matches):raise ValueError('sdk_im_identity_unverified')
                 armed=page.evaluate(arm_script(_FIND_API))
                 if armed.get('armed')!=2:raise ValueError('sdk_callbacks_unavailable')
-                sdk_heartbeat[0]=time.monotonic();owner.accepting=True
+                owner.accepting=True
                 print(json.dumps({'event':'session_ready','market':market,'epoch':owner.epoch,'at':time.time()}),flush=True)
                 def receive_stopped():return closing.is_set() or stopped(market)
                 receiver=Receiver(ROOT,market,runtime['auth'],runtime['session'].maintenance_due,receive_stopped);receiver.start()
                 next_status=0;unready_since=None
                 while not stopped(market) and time.monotonic()-started<600 and current():
                     if receiver.done.is_set():raise ValueError('sdk_http_reader_stopped')
-                    ready=bool(page.evaluate('() => {'+_FIND_API+'return !!(api&&api.sdkInstance&&api.sdkStatus===1);}'))
+                    ready=bool(page.evaluate(ready_script(_FIND_API)))
                     armed=page.evaluate(arm_script(_FIND_API)) if ready else {'armed':0}
                     if not ready or armed.get('armed')!=2:
                         if unready_since is None:unready_since=time.monotonic()
@@ -95,7 +83,7 @@ def cycle(market):
                                 except Exception:pass
                             raise ValueError('sdk_disconnected')
                         page.wait_for_timeout(250);continue
-                    unready_since=None;sdk_heartbeat[0]=time.monotonic();data=page.evaluate(DRAIN)
+                    unready_since=None;data=page.evaluate(DRAIN)
                     if data.get('overflow'):raise ValueError('sdk_receive_buffer_overflow')
                     if data['events']:
                         receiver.signal(data['events'])  # Durable wakeups commit before clearing browser buffer.

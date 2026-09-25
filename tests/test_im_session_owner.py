@@ -102,3 +102,13 @@ class SignalTests(unittest.TestCase):
   combined=read_to_overlap(SimpleNamespace(history_summary=read),SimpleNamespace(conversation_id='999'),self.s,self.plan)
   self.assertEqual(calls,[0,10]);self.assertEqual([x['messageId'] for x in combined['events']],['2','1'])
   self.assertTrue(combined['hasMore'])
+
+class SdkReadinessTests(unittest.TestCase):
+ def test_initializing_success_failed_and_missing_are_distinguished(self):
+  import subprocess
+  from lib.sdk_inbox import ready_script,arm_script
+  script=ready_script('const api=globalThis.fixture;')
+  arm=arm_script('const api=globalThis.fixture;')
+  program="globalThis.window={}; const ready="+script+";const arm="+arm+";let subscriptions=0;const sdk={onMessageReceive:()=>subscriptions++,onMessageUpsert:()=>subscriptions++};"+"const values=[null,...[0,1,2,3].map(sdkStatus=>({sdkInstance:sdk,sdkStatus,isSDKLoading:false}))]; console.log(JSON.stringify(values.map(f=>{globalThis.fixture=f;return [ready(),arm().armed]})));"
+  result=subprocess.run(['node','-e',program],capture_output=True,text=True,check=True)
+  self.assertEqual(json.loads(result.stdout),[[False,0],[False,0],[False,0],[True,2],[False,0]])
