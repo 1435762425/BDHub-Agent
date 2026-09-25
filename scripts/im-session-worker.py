@@ -35,7 +35,6 @@ def cycle(market):
             if maintenance_pending(ROOT,account.name):return False
             if hashlib.sha256(Path(account.headers_json).read_bytes()).hexdigest()!=original:return False
             if (project_identity_paths(ROOT,account.name) or {}).get('candidateId')!=generation:return False
-            if time.monotonic()-sdk_heartbeat[0]>45:return False
             return not runtime['session'].maintenance_due()
         owner=OwnerState(market,account.name,runtime['auth'],current)
         # Serve in another thread so HTTP dispatch does not wait for the browser's receive tick.
@@ -66,12 +65,13 @@ def cycle(market):
                 armed=page.evaluate(arm_script(_FIND_API))
                 if armed.get('armed')!=2:raise ValueError('sdk_callbacks_unavailable')
                 sdk_heartbeat[0]=time.monotonic();owner.accepting=True
+                print(json.dumps({'event':'session_ready','market':market,'epoch':owner.epoch,'at':time.time()}),flush=True)
                 def receive_stopped():return closing.is_set() or stopped(market)
                 receiver=Receiver(ROOT,market,runtime['auth'],runtime['session'].maintenance_due,receive_stopped);receiver.start()
                 next_status=0;unready_since=None
                 while not stopped(market) and time.monotonic()-started<600 and current():
                     if receiver.done.is_set():raise ValueError('sdk_http_reader_stopped')
-                    ready=bool(page.evaluate(_JS_SDK_READY))
+                    ready=bool(page.evaluate('() => {'+_FIND_API+'return !!(api&&api.sdkInstance&&api.sdkStatus===1);}'))
                     armed=page.evaluate(arm_script(_FIND_API)) if ready else {'armed':0}
                     if not ready or armed.get('armed')!=2:
                         if unready_since is None:unready_since=time.monotonic()
@@ -87,6 +87,7 @@ def cycle(market):
                     page.wait_for_timeout(250)
             finally:
                 # Stop new clients; retain the profile until submitted HTTP calls finish.
+                print(json.dumps({'event':'session_draining','market':market,'epoch':owner.epoch,'ageSeconds':round(time.monotonic()-started,1),'errorType':type(sys.exc_info()[1]).__name__ if sys.exc_info()[1] else None,'at':time.time()}),flush=True)
                 owner.accepting=False;closing.set()
                 if receiver:receiver.close()
                 owner.drain()
@@ -102,6 +103,7 @@ def main():
             try:cycle(a.market)
             except Exception as error:
                 code=getattr(error,'code',None) or (str(error) if isinstance(error,ValueError) else type(error).__name__)
+                print(json.dumps({'event':'session_error','market':a.market,'error':code,'at':time.time()}),flush=True)
                 publish(ROOT,a.market,{'pid':os.getpid(),'state':'waiting_account' if code=='ProfileBusyError' else 'attention','error':code,'checkedAt':time.time(),'market':a.market})
                 if getattr(error,'platform_code',None)==16201010 or code=='sdk_login_required':
                     from lib.second_cycle import CycleStore

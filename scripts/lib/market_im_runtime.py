@@ -69,9 +69,17 @@ def authenticated(root,market,report,*,canary=False,read_only=False,capability='
   from contextlib import contextmanager as _contextmanager
   @_contextmanager
   def borrowed():
-   try:
-    with borrow(root,market,account_name,stopped=stopped) as value:yield value
+   import sys
+   deadline=time.monotonic()+5
+   while True:
+    manager=borrow(root,market,account_name,stopped=stopped)
+    try:value=manager.__enter__();break
+    except OwnerUnavailable:
+     if stopped() or time.monotonic()>=deadline:raise ProfileBusyError('im_session_unavailable') from None
+     time.sleep(.1)
+   try:yield value
    except OwnerUnavailable:raise ProfileBusyError('im_session_unavailable') from None
+   finally:manager.__exit__(*sys.exc_info())
   with borrowed() as (auth,owner_check):
    def available():
     owner_check()
