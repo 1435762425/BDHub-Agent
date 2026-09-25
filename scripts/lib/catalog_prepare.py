@@ -214,6 +214,36 @@ DROP TABLE catalog_prepare_reuse_old;''')
         return self.item(run_id,r['pid'],r['campaign_id'],r['catalog_source'])
     def release(self,run_id,pid,cid,src):
         with self.db:self.db.execute("UPDATE catalog_prepare_item SET lease_until=0,updated=? WHERE run_id=? AND pid=? AND campaign_id=? AND catalog_source=?",(time.time(),run_id,str(pid),str(cid),src))
+    def retire_live_change(self,run_id,pid,cid,src,intent_id,reason,now=None):
+        """Close a local-only frozen intent after the live offer became ineligible or changed.
+
+        This path is deliberately unavailable once a platform create may have been attempted.  An
+        attempted/unknown intent must keep using its readback path; only ``prepared`` intents with no
+        receipt can be superseded and removed from the current preparation scope.
+        """
+        now=now if now is not None else time.time()
+        if reason!='product_no_longer_eligible' and not str(reason).startswith('commercial_facts_changed:'):
+            raise ValueError('catalog_live_change_invalid')
+        reason=str(reason)
+        if len(reason)>240 or re.search(r'[\x00-\x1f\x7f]',reason):raise ValueError('catalog_live_change_invalid')
+        item=self.item(run_id,pid,cid,src)
+        if item.get('intent_id')!=intent_id:raise ValueError('catalog_live_change_intent_mismatch')
+        intent=self.db.execute('SELECT state,receipt FROM catalog_link_intent WHERE id=?',(intent_id,)).fetchone()
+        if not intent or intent['state']!='prepared' or intent['receipt'] is not None:
+            raise ValueError('catalog_intent_requires_verification')
+        evidence=encoded({'reason':'superseded_by_live_offer_change','detail':reason,
+                          'platformCreateAttempts':0,'observedAt':now})
+        with self.db:
+            settled=self.db.execute("UPDATE catalog_link_intent SET state='superseded',readback=?,updated=? "
+                                    "WHERE id=? AND state='prepared' AND receipt IS NULL",
+                                    (evidence,now,intent_id)).rowcount
+            if settled!=1:raise ValueError('catalog_intent_requires_verification')
+            retired=self.db.execute("UPDATE catalog_prepare_item SET state='retired',blocker=?,error=NULL,"
+                                    "lease_until=0,updated=? WHERE run_id=? AND pid=? AND campaign_id=? "
+                                    "AND catalog_source=? AND intent_id=?",
+                                    (reason,now,run_id,str(pid),str(cid),src,intent_id)).rowcount
+            if retired!=1:raise ValueError('catalog_live_change_item_missing')
+        return True
     # ---- read contracts ---------------------------------------------------------
     def verified_link(self,pid,campaign_id,catalog_source):
         """Consumer contract: the unique canonical current standard card, never a historical card."""

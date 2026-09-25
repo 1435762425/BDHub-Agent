@@ -632,7 +632,7 @@ def step_create(prep,run_id,limit,report,pace=0.0,lanes=1,qps=5,canary=False,pid
     a creation, so a batch shares one session. Safety is unchanged: every write must equal the
     frozen request of its own product, and each product is written at most once per session.
     """
-    created=[];blocked=[];timings=[]
+    created=[];blocked=[];retired=[];timings=[]
     # Pin the naming config once per run: a template edited mid-run must not split the batch.
     from lib.link_naming import load as load_naming
     naming=load_naming(ROOT,SCOPE['market'])
@@ -682,7 +682,7 @@ def step_create(prep,run_id,limit,report,pace=0.0,lanes=1,qps=5,canary=False,pid
                 blocked.append({'pid':pid,'error':code,'seconds':0.0})
                 prep.release(run_id,pid,cid,src)
         report['createFrozen']=len(work)
-        if not work:return {'created':created,'blocked':blocked,'timings':timings,'paceSeconds':pace}
+        if not work:return {'created':created,'blocked':blocked,'retired':retired,'timings':timings,'paceSeconds':pace}
         # Phase 2: one session. Every read is done up front in batch/parallel, so the write
         # loop is left with exactly two serial requests per product (write + member readback).
         payloads={str(intent['spec']['pid']):intent['spec']['payload'] for _,intent in work}
@@ -768,6 +768,10 @@ def step_create(prep,run_id,limit,report,pace=0.0,lanes=1,qps=5,canary=False,pid
                 pid=item['pid'];outcome,error=preflight.get(pid,(None,ValueError('card_search_unresolved')))
                 if error is not None:
                     code=str(error) if isinstance(error,ValueError) else f'{type(error).__name__}:{str(error)[:80]}'
+                    if code=='product_no_longer_eligible' or code.startswith('commercial_facts_changed:'):
+                        prep.retire_live_change(run_id,pid,item['campaign_id'],item['catalog_source'],intent['id'],code)
+                        retired.append({'pid':pid,'reason':code,'intentId':intent['id'],'platformCreateAttempts':0})
+                        continue
                     prep.mark_progress(run_id,pid,item['campaign_id'],item['catalog_source'],'missing',error=code)
                     blocked.append({'pid':pid,'error':code,'seconds':0.0});prep.release(run_id,pid,item['campaign_id'],item['catalog_source']);continue
                 if outcome.get('state')=='standard':
@@ -814,9 +818,13 @@ def step_create(prep,run_id,limit,report,pace=0.0,lanes=1,qps=5,canary=False,pid
                     try:attempted=ledger.get(intent['id'])['state'] in ('submitted','receipt_saved','unknown')
                     except Exception:attempted=False
                     # Never lose the failure: an attempted write stays for readback, an untouched plan returns to the queue.
-                    try:prep.mark_progress(run_id,pid,cid,src,'unknown' if attempted else 'missing',error=code)
-                    except Exception:pass
-                    blocked.append({'pid':pid,'error':code,'seconds':round(time.time()-t0,2)})
+                    if not attempted and (code=='product_no_longer_eligible' or code.startswith('commercial_facts_changed:')):
+                        prep.retire_live_change(run_id,pid,cid,src,intent['id'],code)
+                        retired.append({'pid':pid,'reason':code,'intentId':intent['id'],'platformCreateAttempts':0})
+                    else:
+                        try:prep.mark_progress(run_id,pid,cid,src,'unknown' if attempted else 'missing',error=code)
+                        except Exception:pass
+                        blocked.append({'pid':pid,'error':code,'seconds':round(time.time()-t0,2)})
                     if code in ('verification_failed','source_maintenance_due','taplink_account_maintenance_due',
                                 'login_required','account_disabled','transport_unavailable'):
                         raise
@@ -844,7 +852,7 @@ def step_create(prep,run_id,limit,report,pace=0.0,lanes=1,qps=5,canary=False,pid
     finally:
         try:ledger.db.close()
         except Exception:pass
-    return {'created':created,'blocked':blocked,'timings':timings,'paceSeconds':pace}
+    return {'created':created,'blocked':blocked,'retired':retired,'timings':timings,'paceSeconds':pace}
 
 def selection_items(pids=None):
     """Confirmed full-managed selections from the durable intake ledger."""

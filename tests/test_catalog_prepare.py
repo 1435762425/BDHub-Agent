@@ -172,6 +172,40 @@ class BatchLinkTests(unittest.TestCase):
         self.prep.close();self.prep=CatalogPreparation(self.root)  # restart
         self.assertIsNone(self.prep.claim_create(self.run))
         self.assertEqual(self.prep.offer_status(self.offer)['reason'],'card_read_unresolved')
+    def test_live_offer_change_retires_only_an_unsubmitted_frozen_intent(self):
+        pid,cid=self.offer['pid'],self.offer['campaignId']
+        self.seed(pid,cid);self.prep.claim_read(self.run,limit=5)
+        self.prep.apply_read(self.run,pid,cid,'selected',{'state':'missing','listing':self.plan_listing()})
+        intent=self.prep.freeze(self.run,pid,cid,'selected',self.spec(pid,cid,self.offer['creatorPercent']))
+        self.assertTrue(self.prep.retire_live_change(self.run,pid,cid,'selected',intent['id'],
+                                                     'product_no_longer_eligible',now=123))
+        self.assertEqual(self.prep.item(self.run,pid,cid)['state'],'retired')
+        summary=self.prep.summary(self.run)
+        self.assertEqual((summary['total'],summary['pendingCount'],summary['retiredCount']),(0,0,1))
+        ledger=CatalogLinks(self.root)
+        try:
+            closed=ledger.get(intent['id'])
+            self.assertEqual(closed['state'],'superseded')
+            self.assertEqual(closed['readback']['platformCreateAttempts'],0)
+            self.assertEqual(closed['readback']['detail'],'product_no_longer_eligible')
+        finally:ledger.db.close()
+        self.assertIsNone(self.prep.claim_create(self.run))
+    def test_live_offer_change_never_retires_an_attempted_intent(self):
+        pid,cid=self.offer['pid'],self.offer['campaignId']
+        self.seed(pid,cid);self.prep.claim_read(self.run,limit=5)
+        self.prep.apply_read(self.run,pid,cid,'selected',{'state':'missing','listing':self.plan_listing()})
+        intent=self.prep.freeze(self.run,pid,cid,'selected',self.spec(pid,cid,self.offer['creatorPercent']))
+        ledger=CatalogLinks(self.root)
+        try:ledger.begin(intent['id'],'acc9')
+        finally:ledger.db.close()
+        self.prep.mark_progress(self.run,pid,cid,'selected','submitted')
+        with self.assertRaisesRegex(ValueError,'catalog_intent_requires_verification'):
+            self.prep.retire_live_change(self.run,pid,cid,'selected',intent['id'],
+                                         'commercial_facts_changed:publicPercent 8->15')
+        self.assertEqual(self.prep.item(self.run,pid,cid)['state'],'submitted')
+        ledger=CatalogLinks(self.root)
+        try:self.assertEqual(ledger.get(intent['id'])['state'],'submitted')
+        finally:ledger.db.close()
     def test_unknown_is_reconciled_after_batch_without_a_second_post(self):
         pid,cid=self.offer['pid'],self.offer['campaignId']
         self.seed(pid,cid);self.prep.claim_read(self.run,limit=5)
