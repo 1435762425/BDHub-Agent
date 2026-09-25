@@ -229,6 +229,23 @@ class ProbeHarness:
 
 
 class ProfileProbePipelineTests(unittest.TestCase):
+    def test_safe_error_message_redacts_long_tokens_and_truncates(self):
+        self.assertEqual(probe.safe_error_message(RuntimeError("boom")), "boom")
+        self.assertEqual(probe.safe_error_message(RuntimeError("token=abcdefghijklmnopqrstuvwxyz")), "token=<redacted>")
+        self.assertEqual(probe.safe_error_message(RuntimeError("a" * 200)), "<redacted>")
+        self.assertEqual(len(probe.safe_error_message(RuntimeError("word " * 100))), 160)
+        self.assertNotIn("\x00", probe.safe_error_message(RuntimeError("a\x00b")))
+
+    def test_initialization_failure_records_safe_error_message(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            h = ProbeHarness(Path(temporary))
+            h.child._load_runtime = lambda _: (_ for _ in ()).throw(RuntimeError("token=abcdefghijklmnopqrstuvwxyz"))
+            result, report = h.run()
+            self.assertEqual(result, 2)
+            self.assertEqual(report["reason"], "probe_initialization_or_validation_error")
+            self.assertEqual(report["errorType"], "RuntimeError")
+            self.assertEqual(report["errorMessage"], "token=<redacted>")
+
     def test_remote_code_text_cannot_leak_sensitive_diagnostics(self):
         for remote_code in (
             "cookie=private-cookie token=private-token https://private.invalid/?secret=1",

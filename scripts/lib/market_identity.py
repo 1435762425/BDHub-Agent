@@ -14,6 +14,8 @@ from lib.creator_identity import CreatorIdentityStore
 from lib.market_accounts import load_config
 from lib.second_cycle import CycleError,CycleStore,digest
 
+INIT_RETRY_SECONDS=5.0
+
 
 def _plan(store,market):
  row=store.db.execute("SELECT id FROM plan WHERE institution='bjn-local-research' AND market=? AND state='active'",(market,)).fetchone()
@@ -137,27 +139,50 @@ def _apply(root,market,report,requested):
          'blockedHandles':len(blocked),'blockCode':block_code if blocked else None}
 
 
-def run(root,market,limit=3,*,profile_canary=False,runner=subprocess.run,clock=time.time):
+def _probe_chunk(root,market,account,chunk,payload_targets,token,runner,profile_canary):
+ folder=root/f'var/market-identity-{market}-{token}';targets=folder/'targets.private.json';output=folder/'output'
+ folder.mkdir(parents=True,exist_ok=False,mode=0o700)
+ payload={'market':market,'identityOnly':not profile_canary,
+          **({'profileTypeSets':[[2]]} if profile_canary else {}),'targets':payload_targets}
+ targets.write_text(json.dumps(payload,ensure_ascii=False));targets.chmod(0o600)
+ child=runner([str(root/'.venv/bin/python'),str(root/'scripts/probe-italy-profile.py'),'--market',market,'--account',account,
+               '--targets',str(targets),'--output',str(output)],cwd=str(root),capture_output=True,text=True,timeout=200)
+ evidence=output/'report.private.json'
+ if not evidence.exists():raise CycleError('market_identity_probe_missing')
+ private=json.loads(evidence.read_text(encoding='utf-8'))
+ return child,evidence,private
+
+
+def _initialization_failed(private):
+ return private.get('status')=='blocked' and private.get('reason')=='probe_initialization_or_validation_error' and not private.get('requests')
+
+
+def _probe_with_init_retry(root,market,account,chunk,payload_targets,tokens,runner,profile_canary,sleep):
+ child,evidence,private=_probe_chunk(root,market,account,chunk,payload_targets,tokens[0],runner,profile_canary)
+ evidence_paths=[evidence];retried=False
+ if _initialization_failed(private):
+  sleep(INIT_RETRY_SECONDS)
+  child,evidence,private=_probe_chunk(root,market,account,chunk,payload_targets,tokens[1],runner,profile_canary)
+  evidence_paths.append(evidence);retried=True
+ return child,evidence_paths,private,retried
+
+
+def run(root,market,limit=3,*,profile_canary=False,runner=subprocess.run,clock=time.time,sleep=time.sleep):
  root=Path(root);scope=pending(root,market,limit);items=scope['items']
  report={'market':market,'targets':len(items),'resolvedHandles':0,'unresolvedHandles':0,'newBindings':0,
          'networkRuns':0,'platformWrites':0,'realSends':0,'profileCanary':bool(profile_canary),'profileVerified':0,
-         'blockedHandles':0,'evidence':[]}
+         'blockedHandles':0,'initRetries':0,'evidence':[]}
  if not items:return report|{'stopped':'nothing_pending'}
  account=load_config(root)['markets'][market]['roles']['communications']
  for offset in range(0,len(items),3):
   chunk=items[offset:offset+3];token=digest([market,clock(),offset,chunk])[:16]
-  folder=root/f'var/market-identity-{market}-{token}';targets=folder/'targets.private.json';output=folder/'output'
-  folder.mkdir(parents=True,exist_ok=False,mode=0o700)
-  payload={'market':market,'identityOnly':not profile_canary,
-           **({'profileTypeSets':[[2]]} if profile_canary else {}),'targets':[
-   {'ref':'market_identity_'+digest([market,row['sourceId']])[:24],'handle':row['handle'],'externalId':row['sourceId']} for row in chunk]}
-  targets.write_text(json.dumps(payload,ensure_ascii=False));targets.chmod(0o600)
-  child=runner([str(root/'.venv/bin/python'),str(root/'scripts/probe-italy-profile.py'),'--market',market,'--account',account,
-                '--targets',str(targets),'--output',str(output)],cwd=str(root),capture_output=True,text=True,timeout=200)
-  evidence=output/'report.private.json'
-  if not evidence.exists():raise CycleError('market_identity_probe_missing')
-  private=json.loads(evidence.read_text(encoding='utf-8'));applied=_apply(root,market,private,[{'ref':row['ref'],**source} for row,source in zip(payload['targets'],chunk)])
-  report['networkRuns']+=1;report['resolvedHandles']+=applied['resolvedHandles'];report['unresolvedHandles']+=applied['unresolvedHandles'];report['newBindings']+=applied['newBindings'];report['profileVerified']+=applied['profileVerified'];report['evidence'].append(str(evidence.relative_to(root)))
+  payload_targets=[{'ref':'market_identity_'+digest([market,row['sourceId']])[:24],'handle':row['handle'],'externalId':row['sourceId']} for row in chunk]
+  tokens=[token,digest([market,clock(),offset,chunk,'init-retry'])[:16]]
+  child,evidence_paths,private,retried=_probe_with_init_retry(root,market,account,chunk,payload_targets,tokens,runner,profile_canary,sleep)
+  applied=_apply(root,market,private,[{'ref':row['ref'],**source} for row,source in zip(payload_targets,chunk)])
+  report['networkRuns']+=1;report['resolvedHandles']+=applied['resolvedHandles'];report['unresolvedHandles']+=applied['unresolvedHandles'];report['newBindings']+=applied['newBindings'];report['profileVerified']+=applied['profileVerified']
+  report['evidence'].extend(str(path.relative_to(root)) for path in evidence_paths)
+  report['initRetries']+=retried
   report['blockedHandles']+=applied['blockedHandles']
   if applied['blockedHandles']:
    report['stopped']=applied['blockCode'];break

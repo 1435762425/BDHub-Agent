@@ -37,6 +37,13 @@ class ProbeDeadline(BaseException):
     pass
 
 
+def safe_error_message(error) -> str:
+    text = "".join(c for c in str(error) if c.isprintable() or c in "\t")
+    import re
+    text = re.sub(r"[A-Za-z0-9_\-]{20,}", "<redacted>", text)
+    return text[:160]
+
+
 def collect_counters(client) -> dict:
     if getattr(client,'cohort_counters',None) is not None:return dict(client.cohort_counters)
     def count(value):
@@ -455,7 +462,8 @@ def network_child(account_name: str, target_file: Path, output: Path, market: st
                         probe = None
     except (Exception, ProbeDeadline) as error:
         report.update(status="bounded_timeout" if isinstance(error, ProbeDeadline) else "blocked",
-                      reason="whole_probe_deadline" if isinstance(error, ProbeDeadline) else "probe_initialization_or_validation_error", errorType=type(error).__name__)
+                      reason="whole_probe_deadline" if isinstance(error, ProbeDeadline) else "probe_initialization_or_validation_error",
+                      errorType=type(error).__name__, errorMessage=safe_error_message(error))
     finally:
         if client is not None:
             client.session.close()
