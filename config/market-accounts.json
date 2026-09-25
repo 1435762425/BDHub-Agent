@@ -23,7 +23,9 @@
       "catalogCapabilities": {
         "campaign": true,
         "fullManaged": true
-      }
+      },
+      "imSessionMode": "sdk_http",
+      "identityAccountRole": "supply"
     },
     "br": {
       "accounts": [
@@ -42,7 +44,9 @@
       "catalogCapabilities": {
         "campaign": true,
         "fullManaged": false
-      }
+      },
+      "imSessionMode": "sdk_http",
+      "identityAccountRole": "supply"
     },
     "my": {
       "accounts": [
@@ -61,7 +65,9 @@
       "catalogCapabilities": {
         "campaign": true,
         "fullManaged": false
-      }
+      },
+      "imSessionMode": "sdk_http",
+      "identityAccountRole": "supply"
     },
     "uk": {
       "accounts": [
@@ -80,7 +86,9 @@
       "catalogCapabilities": {
         "campaign": true,
         "fullManaged": true
-      }
+      },
+      "imSessionMode": "sdk_http",
+      "identityAccountRole": "supply"
     }
   },
   "lifecycle": {
