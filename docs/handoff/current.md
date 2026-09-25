@@ -1,8 +1,18 @@
 # BDHub-Agent 当前交接
 
-更新时间：2026-09-25 16:22（Asia/Shanghai）。本页只记录运行快照；规则见 [PROJECT](../PROJECT.md)，实现见 [TECHNICAL](../TECHNICAL.md)，后续方向见[项目审计与清理](../implementation/project-audit-20260924.md)。更早流水见[历史交接](../archive/handoff/codex-takeover-history-20260923.md)。
+更新时间：2026-09-25 16:58（Asia/Shanghai）。本页只记录运行快照；规则见 [PROJECT](../PROJECT.md)，实现见 [TECHNICAL](../TECHNICAL.md)，后续方向见[项目审计与清理](../implementation/project-audit-20260924.md)。更早流水见[历史交接](../archive/handoff/codex-takeover-history-20260923.md)。
 
 
+
+## 2026-09-25 下午：全托累计候选与 15 天发现已加载
+
+- `c1a304f`、`141d3d3` 在独立 worktree 验证后合入，详见 [全托交付](../implementation/fullmanaged-incremental-discovery-20260925.md)。IT/UK 首次/15 天按类目发现，周度材料维护复用已发布来源；不恢复历史 stopped 任务。原 fullCatalogWeeklyEnabled 字段与授权保留，页面改为全托商品发现。
+- source 新增累计候选/发布记录，selection 新增原意图 owner/member 引用；新轮不覆盖资格、不复制未知、不重排已知失败。当前推广检查不重新筛销量/评分；新入池评分 0 不当无评分，旧资格不改判。
+- 四库备份后增量迁移，回填 IT 2,333、UK 8,341 个历史候选（不是新扫描新增）；9,563 条原 intake 行及所有原表哈希不变。重复迁移新增 0，quick_check=ok；临时副本 prepare 继续引用原任务，不改旧行。
+- Python 全量 1,352 项、展示补充 3 项、Web 177 项及 build/typecheck 通过。16:50 换 scheduler `51866` 与 Web，16:55 Web 展示补修后 listener `52597`、build `m-yPr1G9zYulZG5X4nki2`。其余 11 个业务 worker PID 不变，控制/授权/配置摘要一致，AI 四市场仍 pilot_complete_waiting_resume。
+- 四市场货盘/作业/概览/首页 HTTP 200；IT 当前发布货盘 completed 与最后采集 stopped 分开，UK accepted_partial 如实保留。下一次发现按来源时间到期：IT 10-06 05:56、UK 10-06 16:11（北京）；旧故障/暂停不会被到期绕过。未主动执行新平台扫描/选入/发送，旧项目未改。
+- 发布前英国 sender `76463` 已因 market_send_conversation_result_unknown 停在 attention，不在本次 11 个运行 worker 中；原建会话意图未重放。IT 既有 Kalodata read_failed、池空等断点也未自动重排。下一批 A50/B 滚动队列与身份衔接；新发送隔离仍待实施。
+- 证据/四库备份/旧 Web：`var/releases/fullmanaged-20260925T084852Z/`。原有未提交方案文档保留，未整体代为提交。
 
 ## 2026-09-25 下午：Campaign 连续性与有限核验已加载
 
