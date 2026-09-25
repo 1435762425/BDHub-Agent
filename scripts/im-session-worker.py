@@ -54,6 +54,16 @@ def cycle(market):
                             data=response.json();data=data.get('data') if isinstance(data.get('data'),dict) else data
                             matches.append(str(data.get('im_id'))==runtime['auth'].im_id)
                         except Exception:pass
+                if market=='my':
+                    def inspect_script(response):
+                        if response.request.resource_type!='script':return
+                        try:
+                            import re
+                            body=response.text()
+                            snippets=[body[max(0,m.start()-160):m.end()+200] for m in list(re.finditer('sdkStatus',body))[:35]]
+                            if snippets:print(json.dumps({'event':'sdk_public_code','snippets':snippets}),flush=True)
+                        except Exception:pass
+                    page.on('response',inspect_script)
                 page.on('response',observe);page.goto(im_page(market),wait_until='domcontentloaded',timeout=60000)
                 if 'login' in page.url.lower():raise ValueError('sdk_login_required')
                 for _ in range(100):
