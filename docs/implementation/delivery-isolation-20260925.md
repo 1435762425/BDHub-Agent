@@ -23,7 +23,13 @@ Python 全量 1,384 项通过；随后新增两项原账号/四市场只读认�
 
 ## 生产切换与真实核验
 
-运行结果将在本节记录。证据和主库备份：`var/releases/delivery-isolation-20260925T120210Z/`。仅本项目代码/状态和进程涉及切换，旧 BDHub 仍为只读依赖。
+20:04 左右发送停止信号，scheduler 先退出；BR/MY sender 随后退出，IT sender 完成本次在途收口后退出，没有强杀。确认旧进程已结束且无在途组件/服务回复后重载调度器，按原持久授权启动新 sender。四个收信进程与四个 AI worker 保持原 PID，AI 均为 `pilot_complete_waiting_resume`。
+
+Web 首次 launchctl 提交后没有正常监听，重新提交恢复，5198 `/uk` 返回 200。最终 build `VyHKtxQxnezA8uwx5IjTU`，四市场 `/api/lead-pool` 均 200，并返回独立技术隔离分类。没有把短暂 Web 启动失败描述为无中断切换。
+
+UK 原建会话未知 `delivery-c9a59543a01769ed361dfa2bcd54cc10`：第一轮通过原 acc11 读取 101 页、1,000 个会话；第二轮由新 worker 按持久预算自动读取同样范围。两轮均不能关联原请求，因预算耗尽自动记为 `quarantined_unknown`。这是停止核验而非认定平台未创建会话；专项核验平台业务写入 0。原会话意图仍 inflight/CID 空，卡片及文字仍 ready/未提交；三项原冻结摘要一致，新增人工 case 为 0。其他旧案件保留。
+
+`continuous_send_control`、市场自动运营设置、Agent 设置/授权、已发布指南摘要与备份一致，MY 自动运营关闭状态保留。UK 隔离后已进入其他达人的正常处理；后台原有授权下的发送与本批只读核验分开计数。证据和主库备份：`var/releases/delivery-isolation-20260925T120210Z/`。仅本项目代码/状态和进程涉及切换，旧 BDHub 仍为只读依赖。
 
 ## 回退限制与后续
 
