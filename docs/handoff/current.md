@@ -1,8 +1,20 @@
 # BDHub-Agent 当前交接
 
-更新时间：2026-09-25 16:58（Asia/Shanghai）。本页只记录运行快照；规则见 [PROJECT](../PROJECT.md)，实现见 [TECHNICAL](../TECHNICAL.md)，后续方向见[项目审计与清理](../implementation/project-audit-20260924.md)。更早流水见[历史交接](../archive/handoff/codex-takeover-history-20260923.md)。
+更新时间：2026-09-25 19:32（Asia/Shanghai）。本页只记录运行快照；规则见 [PROJECT](../PROJECT.md)，实现见 [TECHNICAL](../TECHNICAL.md)，后续方向见[项目审计与清理](../implementation/project-audit-20260924.md)。更早流水见[历史交接](../archive/handoff/codex-takeover-history-20260923.md)。
 
 
+
+## 2026-09-25 晚间：A50/B 四市场滚动队列已加载并修复运行回归
+
+- 用户要求开始下一批。独立 worktree `../BDHub-Agent-leads-20260925` 验证后合入 `13ee781`，后续修复 `d9afd89/a643f2b/ba2d2f4`；详见 [滚动队列交付](../implementation/rolling-market-leads-20260925.md)。A50 独立新范围，B 四市场隔离，原窗口/分页/轮转持久化；3 请求一片段、8 片段一阶段，已完成 PID 先交接，配额按市场等待。
+- schema v21 在五库备份后应用；原 B 1,942 条投影、182 个 head、4,039 条作者缓存及不可变 run/evidence 校验一致，旧 IT 三表保留为 legacy。重复迁移无新增。初始每类范围 IT 2,736 / BR 1,480 / MY 3,047 / UK 9,962。
+- 真只读接入验证 12 请求，四市场列表及作者均通过、身份文件未改。Python 最终全量 1,373 项、Web 178 项、build/typecheck 通过。没有平台测试发送、AI 全量授权或未知重发。
+- 初次约 19:00 重载 scheduler、三个运行 sender、四个 Agent 及 Web。后发现身份投影长 SQLite 写锁，四个收信 worker 被原监督器自动重启；不是承诺中的“全程 PID 未变”，已明确记录回归。`a643f2b` 增量/幂等、100 项短事务修复，真实备份副本 200 边最大写锁约 1ms。
+- `d9afd89` 让被更新完整结果覆盖的旧 B 断点本地 supersede、不再请求；`ba2d2f4` 正确接受身份 nothing_pending，并使原身份失败不堵读取。UK 原零写入错误阶段按原 run 记录恢复 checkpoint 后重排。原 identity_queue_stalled/report_invalid 等技术等待仍单独保留，不冒充已解决。
+- 当前 scheduler `80618`，Web listener `72253`、build `_FImgNrvahFKTkbQNrZlO`。收信 `73849/73852/73855/73858` 在 19:25–19:31 核对期间无新增锁错、PID 稳定、状态无错误；四市场 Agent 仍 pilot_complete_waiting_resume。业务控制/指南与原未知发送摘要不变。
+- 19:31 A50 已发布 IT 276、BR 146、UK 189 个 PID 查询，IT/BR 已有 50 位结果；B 当前投影 IT 2,005 / BR 39 / UK 9（含历史，不当新增）。MY 总开关保持关闭、没有自动读取。四市场队列接口 200，UK 页面 A/B/额度/隔离/身份等待显示正常。已开启市场依原授权继续，业务发送不计作本轮测试。
+- 证据、五库备份、旧 Web：`var/releases/rolling-leads-20260925T105701Z/`。旧代码不能直接无 market 过滤读取新 B 投影，不能用旧整库覆盖新收信。
+- 下一批仍需统一身份技术失败隔离、二发 80/20 和发送 unknown 有限核验；UK 原建会话 unknown 仍未重发，真实发送仍受其阻断。新队列上线不代表这些政策已经执行。原未提交方案文档继续保留。
 
 ## 2026-09-25 下午：全托累计候选与 15 天发现已加载
 
