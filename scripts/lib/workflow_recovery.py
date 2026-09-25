@@ -19,6 +19,8 @@ VIDEO_KEY='recovery:video_author_missing'
 VIDEO_AUTHOR_MISSING='kalodata_video_author_missing'
 AUTH_KEY='recovery:kalodata_auth_restored'
 AUTH_REQUIRED='kalodata_auth_required'
+FIXED_STAGE_ERRORS={'oecid':frozenset({'market_identity_report_invalid'}),'kalodata':frozenset({'kalodata-video-run_report_invalid'})}
+AFTER_FIX_KEY='recovery:after_fix'
 
 
 def _isolation(isolate_pids):
@@ -245,3 +247,43 @@ def resume_kalodata_auth(store,market,run_id,request_id):
         if read is None or read<=stage['finished_at']:raise CycleError('workflow_recovery_evidence_unverified')
         return {'kalodataReadAt':read}
     return _resume_kalodata(store,market,run_id,request_id,AUTH_KEY,AUTH_REQUIRED,evidence_of)
+
+
+def resume_after_fix(store,market,run_id,request_id):
+    """Re-queue once the first failed stage of a run whose automatic retries are exhausted, when that stage failed
+    with an error whose cause has been fixed in code and made no platform writes."""
+    _request_id(request_id)
+    if not isinstance(market,str) or not market:raise CycleError('workflow_recovery_scope_invalid')
+    with store.tx():
+        run=_run(store,run_id)
+        prior=store.db.execute('SELECT value_json FROM workflow_checkpoint WHERE run_id=? AND checkpoint_key=?',
+                               (run_id,AFTER_FIX_KEY)).fetchone()
+        if prior:
+            evidence=json.loads(prior[0])
+            if evidence['requestId']!=request_id:raise CycleError('workflow_recovery_already_requested')
+            return {'duplicate':True,'run':run_payload(store,run_id),'evidence':evidence}
+        stages=list(store.db.execute('SELECT * FROM workflow_stage_run WHERE run_id=? ORDER BY position',(run_id,)))
+        stage=next((row for row in stages if row['state']=='failed'),None)
+        if run['market']!=market or run['state']!='needs_human' or run['error_code']!='workflow_retry_exhausted' or \
+                run['stop_requested_at'] is not None or not stage or stage['platform_writes'] or \
+                stage['error_code'] not in FIXED_STAGE_ERRORS.get(stage['stage'],()) or \
+                any(row['state'] not in STAGE_SUCCESS for row in stages[:stage['position']]) or \
+                any(row['state']!='waiting_upstream' for row in stages[stage['position']+1:]):
+            raise CycleError('workflow_recovery_state_invalid')
+        upstream=next((row['output_generation_id'] for row in reversed(stages[:stage['position']])
+                       if row['output_generation_id']),None)
+        if stage['input_generation_id']!=upstream:raise CycleError('workflow_recovery_barrier_changed')
+        active=store.db.execute("SELECT 1 FROM workflow_run WHERE market=? AND run_id<>? "
+                                "AND state IN ('queued','running','stop_requested')",(market,run_id)).fetchone()
+        claimed=store.db.execute('SELECT 1 FROM workflow_stage_claim c JOIN workflow_stage_run s USING(stage_run_id) '
+                                 'JOIN workflow_run r USING(run_id) WHERE r.market=?',(market,)).fetchone()
+        if active or claimed:raise CycleError('workflow_recovery_claim_active')
+        now=store.clock()
+        evidence={'requestId':request_id,'market':market,'runId':run_id,'stage':stage['stage'],
+                  'previousError':stage['error_code'],'previousFinishedAt':stage['finished_at'],'recoveredAt':now}
+        store.db.execute('INSERT INTO workflow_checkpoint VALUES(?,?,?,?,?)',
+                         (run_id,stage['stage'],AFTER_FIX_KEY,encoded(evidence),now))
+        store.db.execute("UPDATE workflow_stage_run SET state='queued',started_at=NULL,finished_at=NULL,error_code=NULL "
+                         "WHERE stage_run_id=?",(stage['stage_run_id'],))
+        store.db.execute("UPDATE workflow_run SET state='running',finished_at=NULL,error_code=NULL WHERE run_id=?",(run_id,))
+    return {'duplicate':False,'run':run_payload(store,run_id),'evidence':evidence}

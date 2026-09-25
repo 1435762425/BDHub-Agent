@@ -27,7 +27,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("action", choices=("status", "save", "run", "stop", "resume-short-names",
                                            "resume-kalodata-preflight", "check-selected-recovery", "resume-selected-recovery",
-                                           "resume-video-author-skip", "resume-kalodata-auth"))
+                                           "resume-video-author-skip", "resume-kalodata-auth", "resume-after-fix"))
     parser.add_argument("--json")
     args = parser.parse_args()
     try:
@@ -46,10 +46,11 @@ def main():
                 result=(selected_catalog_evidence(store,ROOT,market,body['runId'],body['duplicateRunId'],isolate)
                         if args.action=='check-selected-recovery' else
                         resume_selected_catalog(store,ROOT,market,body['runId'],body['duplicateRunId'],body['requestId'],isolate))
-            elif args.action in ('resume-video-author-skip','resume-kalodata-auth'):
-                from lib.workflow_recovery import resume_kalodata_auth,resume_video_author_skip
+            elif args.action in ('resume-video-author-skip','resume-kalodata-auth','resume-after-fix'):
+                from lib.workflow_recovery import resume_after_fix,resume_kalodata_auth,resume_video_author_skip
                 if set(body)!={'market','runId','requestId'}:raise CycleError('workflow_recovery_scope_invalid')
-                resume=resume_video_author_skip if args.action=='resume-video-author-skip' else resume_kalodata_auth
+                resume={'resume-video-author-skip':resume_video_author_skip,'resume-kalodata-auth':resume_kalodata_auth,
+                        'resume-after-fix':resume_after_fix}[args.action]
                 result=resume(store,market,body['runId'],body['requestId'])
             elif args.action == "save":
                 result = save_setting(store, market, body.get("requestId"), body.get("expectedRevision"),
