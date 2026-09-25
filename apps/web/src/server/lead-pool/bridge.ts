@@ -15,7 +15,7 @@ export type LeadPoolState={schema:"bdhub.lead-pool.v3";market:string;available:b
  business:{sendable:number;waiting:number;inactive:number;total:number};reasons:Record<string,number>;
  history:{sent:number;currentPositions:number}};
 
-const LAYERS=new Set(["ready","queued","cooling","awaiting_reply","excluded","product_inactive","sent"]);
+const LAYERS=new Set(["ready","queued","cooling","awaiting_reply","technical_isolated","excluded","product_inactive","sent"]);
 
 function count(value:unknown,name:string):number{
  if(typeof value!=="number"||!Number.isSafeInteger(value)||value<0)throw Error('invalid_lead_pool');

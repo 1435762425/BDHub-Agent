@@ -68,6 +68,23 @@ def layers(state):
 
 
 class Layers(unittest.TestCase):
+    def test_technical_isolation_is_inactive_without_human_case(self):
+        with tempfile.TemporaryDirectory() as folder:
+            fixture(folder, [('a', '1'*19, 1), ('b', '2'*19, 2)],
+                    [('a', 0, 'auto', 0), ('b', 0, 'auto', 0)])
+            with closing(sqlite3.connect(Path(folder)/'var/second-cycle.sqlite')) as db, db:
+                db.executescript("CREATE TABLE plan(id TEXT,institution TEXT,market TEXT,state TEXT);"
+                    "INSERT INTO plan VALUES('p','bjn-local-research','it','active');"
+                    "ALTER TABLE relationship ADD COLUMN oec TEXT;"
+                    "UPDATE relationship SET oec=creator_id;"
+                    "ALTER TABLE cycle_delivery ADD COLUMN oec TEXT;"
+                    "INSERT INTO cycle_delivery VALUES('isolation','p','a','old-pid','quarantined_unknown','a');")
+            state=pool(folder,now=NOW)
+            self.assertEqual(state['layers']['technical_isolated'],1)
+            self.assertEqual(state['layers']['awaiting_reply'],0)
+            self.assertEqual(state['layers']['ready'],1)
+            self.assertEqual(state['business'],{'sendable':1,'waiting':0,'inactive':1,'total':2})
+
     def test_a_clear_creator_is_ready_and_sorted_by_lead_rank(self):
         with tempfile.TemporaryDirectory() as folder:
             fixture(folder, [('a', '1' * 19, 9), ('b', '2' * 19, 1),

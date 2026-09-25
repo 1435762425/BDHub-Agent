@@ -20,10 +20,10 @@ def expected_wait_state(code):
  if code=='market_send_candidate_missing':return 'waiting_pool'
  # Stay alive and re-read the original request every five minutes: the readback confirms the card or, after two
  # reads that find it absent, isolates the creator.  The scheduler does not relaunch a sender stopped on unknown.
- if code=='market_send_result_unknown':return 'waiting_reconciliation'
+ if code in ('market_send_result_unknown','market_send_conversation_result_unknown'):return 'waiting_reconciliation'
  # A platform refusal is settled and counted by the new-contact gate, which then holds until the next day.
  if code in ('new_contact_capacity_reached','it_delivery_send_rejected'):return 'waiting_capacity'
- if code in ('ProfileBusyError','live_guard_busy'):return 'waiting_account'
+ if code in ('ProfileBusyError','live_guard_busy','delivery_executor_busy'):return 'waiting_account'
  return None
 
 def inbox_waiting(market):
@@ -66,6 +66,7 @@ def main():
    try:
     started=time.monotonic()
     result=run(ROOT,a.market,request,canary=canary,page_control=True)
+    waiting='waiting_reconciliation' if result.get('state')=='waiting_reconciliation' else None
     sent=result.get('state')=='confirmed' and result.get('realSends',0)>0
     write(a.market,{'running':True,'state':result.get('state') or result.get('stopped') or 'idle','pid':os.getpid(),
                     'checkedAt':time.time(),'runDurationMs':round((time.monotonic()-started)*1000,1),'result':result})

@@ -338,6 +338,8 @@ def choose_candidates(store,plan,identity_reader,limit=3,positions=None):
  else:
   rows=store.db.execute('SELECT e.payload,r.creator_id,r.oec,r.evidence_ref FROM cycle_identity_resolution r JOIN source_edge e USING(plan_id,source_id) WHERE r.plan_id=?',(plan,)).fetchall()
  candidates=[];skipped=[]
+ from lib.outreach_policy import isolated_creators
+ isolated=isolated_creators(store.db,plan)
  last_contacts=last_contact_by_creator(store.db,plan)
  for row in rows:
   edge=json.loads(row['payload'])
@@ -347,6 +349,8 @@ def choose_candidates(store,plan,identity_reader,limit=3,positions=None):
   if not o:
    # 商品已经不在当前合格货盘里（快照/佣金/有效期变了）——这是**规则**，不该发。
    skipped.append({'sourceId':edge['sourceId'],'reason':'offer_not_in_current_catalog'});continue
+  if row['creator_id'] in isolated:
+   skipped.append({'sourceId':edge['sourceId'],'reason':'marketing_isolated'});continue
   if not control or control['mode']!='auto' or control['rejected'] or control['inbox_until']:
    skipped.append({'sourceId':edge['sourceId'],'reason':'relationship_blocked'});continue
   last=last_contacts.get(row['creator_id'])

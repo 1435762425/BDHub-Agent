@@ -43,6 +43,8 @@ class MarketLaunchContracts(unittest.TestCase):
   self.assertEqual(len(_unknown_deliveries(self.store,self.plan,{'running':False,'state':'attention'})),1)
   self.store.db.execute("UPDATE cycle_delivery SET state='unknown' WHERE id='delivery-live'")
   self.assertEqual(len(_unknown_deliveries(self.store,self.plan,{'running':True,'state':'confirmed'})),1)
+  self.store.db.execute("UPDATE cycle_delivery SET state='quarantined_unknown' WHERE id='delivery-live'")
+  self.assertEqual(_unknown_deliveries(self.store,self.plan,{'running':False,'state':'attention'}),[])
 
  def test_received_conversation_resumes_only_the_original_exact_receipt(self):
   intent={'request_ref':'original-ref','cid':'123','receipt':json.dumps({

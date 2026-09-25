@@ -224,7 +224,7 @@ def evaluate(facts):
                 "只按原账号和原意图核验，不会自动重发；结清前本市场二发和 AI 回复都暂停。", market=key, since=market["unknown"]["oldestAt"], href=base)
         if market["quarantined"]["count"]:
             add(f"{key}-send-quarantined", "info", f"{name} {market['quarantined']['count']} 条未知发送已隔离",
-                "保留原意图和案件，不会重发。", market=key, since=market["quarantined"]["oldestAt"], href=base)
+                "保留原意图，不会重发或新建技术人工事项；历史案件保留。", market=key, since=market["quarantined"]["oldestAt"], href=base)
         rejections = market.get("platformRejections") or {"count": 0}
         if rejections["count"]:
             from lib.cycle_delivery import PLATFORM_REJECTION_HOLD

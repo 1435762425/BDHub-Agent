@@ -16,7 +16,7 @@ class ExecutorTests(unittest.TestCase):
   card=SimpleNamespace(product_id='1',list_id='2',binding_sha256='hash')
   class Adapter:
    def create_once(self,oec,ref,before_dispatch):
-    before_dispatch({'oecId':oec,'requestRef':ref,'stage':'create_conversation','market':'it','account':'acc6'});owner.calls.append('create');return {'conversationId':'88'}
+    before_dispatch({'oecId':oec,'requestRef':ref,'stage':'create_conversation','market':'it','account':'acc6'});owner.calls.append('create');return {'conversationId':'88','requestRef':ref,'candidate':True}
    def send(self,kind,ref,before):
     scope={'oecId':c['oecId'],'conversationId':'88','market':'it','account':'acc6','requestRef':ref,'componentKind':kind,'stage':'send_message','productId':'1','listId':'2','campaignId':'0','bindingSha256':'hash'}
     before(scope);owner.calls.append(kind)

@@ -161,29 +161,15 @@ class ContinuousSendTests(unittest.TestCase):
                  json.dumps(base),NOW,NOW+1800,'unknown'))
             self.store.db.execute("INSERT INTO cycle_delivery_part(delivery_id,kind,request_ref,state) VALUES('delivery-unknown','card','card-ref','unknown')")
             self.store.db.execute("INSERT INTO cycle_delivery_part(delivery_id,kind,request_ref,state) VALUES('delivery-unknown','text','text-ref','ready')")
-        seen={}
-        @contextmanager
-        def auth(_report,**options):
-            seen['readOnlyAuth']=options['read_only']
-            yield SimpleNamespace(),SimpleNamespace(),{},SimpleNamespace(),lambda:False,lambda:None
-        @contextmanager
-        def live(_binding,_report,**options):
-            seen['readOnlyRuntime']=options['read_only']
-            yield {'adapter':SimpleNamespace(),'reads':SimpleNamespace()}
-        def verify(_deliveries,_id,_runtime,authorize,_preflight,**options):
-            seen['verifyOnly']=options['verify_only']
-            with _runtime(base):pass
-            with self.assertRaisesRegex(Exception,'reconcile_dispatch_forbidden'):
-                authorize(base)
-            return {'state':'running'}
-        with patch('lib.second_live_runtime._authenticated',side_effect=auth), \
-             patch('lib.second_live_runtime.live_runtime',side_effect=live), \
-             patch.object(continuous,'execute',side_effect=verify), \
+        with patch('lib.delivery_reconciliation.read_original',return_value={
+                'status':'confirmed','messageId':'123','evidenceRef':'original-read'}) as read, \
+             patch.object(continuous,'execute',side_effect=AssertionError('dispatch_must_not_run')), \
              patch.object(continuous,'_candidate',side_effect=AssertionError('candidate_must_not_run')):
             result=continuous.reconcile_once(self.root,self.store)
-        self.assertEqual(result['state'],'running',result)
+        self.assertEqual(result['state'],'partial_delivery',result)
         self.assertEqual(result['platformWrites'],0)
-        self.assertEqual(seen,{'readOnlyAuth':True,'readOnlyRuntime':True,'verifyOnly':True})
+        self.assertEqual(read.call_args.args[3],'card')
+        self.assertEqual(self.store.db.execute("SELECT state FROM cycle_delivery_part WHERE delivery_id='delivery-unknown' AND kind='text'").fetchone()[0],'cancelled')
 
     def test_live_history_uses_current_cooldown_not_the_retired_32_day_canary_rule(self):
         base={'identityVerified':True,'hasMore':False,'senderCounts':{

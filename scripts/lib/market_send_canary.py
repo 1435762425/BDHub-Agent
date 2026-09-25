@@ -54,9 +54,9 @@ def _unsettled(store,plan,*,canary=False):
 def _recovering(store,plan):
     row=store.db.execute("""SELECT DISTINCT d.* FROM cycle_delivery d
       LEFT JOIN cycle_delivery_part p ON p.delivery_id=d.id
-      WHERE d.plan_id=? AND d.state IN ('running','unknown')
+      WHERE d.plan_id=? AND d.state IN ('ready','running','unknown')
         AND json_extract(d.snapshot,'$.executionMode') IN ('market-canary-v1','market-continuous-v1')
-        AND (d.state='unknown' OR p.state IN ('inflight','accepted','unknown'))
+        AND (d.state='unknown' OR p.state IN ('inflight','accepted','unknown') OR EXISTS (SELECT 1 FROM cycle_conversation_intent i WHERE i.delivery_id=d.id AND i.state IN ('inflight','received')))
       ORDER BY d.created LIMIT 1""",(plan,)).fetchone()
     return dict(row) if row else None
 
@@ -150,6 +150,9 @@ def _candidate(root,market,store,plan,initial,require_new_conversation=True):
  return None
 
 
+from lib.delivery_reconciliation import serialized, reconcile as reconcile_delivery
+
+@serialized()
 def run(root,market,request_id,*,canary=True,page_control=False,reconcile_only=False):
  root=Path(root);pair=load_config(root)['markets'][market];communications=pair['roles']['communications']
  report={'market':market,'account':communications,'requestId':request_id,'platformWrites':0,'realSends':0}
@@ -167,6 +170,8 @@ def run(root,market,request_id,*,canary=True,page_control=False,reconcile_only=F
    Deliveries(store).cancel_expired_unsubmitted(plan,modes)
    Deliveries(store).quarantine_refused_creates(plan,modes)
   active=_recovering(store,plan)
+  if active is not None:
+   return report|reconcile_delivery(root,market,Deliveries(store),active['id'])
   recovering_only=reconcile_only or active is not None
   if active is not None:
    canary=json.loads(active['snapshot']).get('executionMode')=='market-canary-v1'
@@ -193,6 +198,7 @@ def run(root,market,request_id,*,canary=True,page_control=False,reconcile_only=F
     candidate=_candidate(root,market,store,plan,initial,canary)
     if not candidate:raise CycleError('market_send_candidate_missing')
     _binding_current(root,market,candidate)
+    candidate['senderAccount']=communications;candidate['senderImId']=runtime['auth'].im_id
     delivery=Deliveries(store).prepare(plan,candidate);did=delivery['id'];candidate=delivery['snapshot']
    checkpoint_time('candidate')
    if not recovering_only:_dispatch_allowed(store,market,canary=canary,page_control=page_control)

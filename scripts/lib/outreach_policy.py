@@ -57,3 +57,18 @@ def last_contact_by_creator(db, plan_id=None, *, creator_id=None, current_delive
     for creator, stamp in rows:
         latest[creator] = max(stamp, latest.get(creator, stamp))
     return latest
+
+
+def isolated_creators(db, plan):
+    if not db.execute("SELECT 1 FROM sqlite_master WHERE name='cycle_delivery'").fetchone():return set()
+    if not db.execute("SELECT 1 FROM cycle_delivery WHERE state='quarantined_unknown' LIMIT 1").fetchone():return set()
+    return {r[0] for r in db.execute("""SELECT DISTINCT r.creator_id FROM relationship r JOIN plan p ON p.id=r.plan_id
+        JOIN plan old ON old.market=p.market JOIN cycle_delivery d ON d.plan_id=old.id AND d.oec=r.oec
+        WHERE r.plan_id=? AND d.state='quarantined_unknown'""",(plan,))}
+
+
+def marketing_isolated(db, plan, creator, oec):
+    if not db.execute("SELECT 1 FROM sqlite_master WHERE name='cycle_delivery'").fetchone():return False
+    return bool(db.execute("""SELECT 1 FROM cycle_delivery d JOIN plan old ON old.id=d.plan_id
+        JOIN plan p ON p.market=old.market WHERE p.id=? AND d.oec=? AND d.state='quarantined_unknown' LIMIT 1""",
+        (plan,oec)).fetchone())

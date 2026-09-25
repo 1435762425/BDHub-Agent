@@ -222,9 +222,9 @@ def _reconcile_delivery(store,plan):
     """Only an already submitted component may be read back by the reconcile action."""
     row=store.db.execute("""SELECT DISTINCT d.* FROM cycle_delivery d
       LEFT JOIN cycle_delivery_part p ON p.delivery_id=d.id
-      WHERE d.plan_id=? AND d.state IN ('running','unknown')
+      WHERE d.plan_id=? AND d.state IN ('ready','running','unknown')
         AND json_extract(d.snapshot,'$.executionMode')='continuous-v1'
-        AND (d.state='unknown' OR p.state IN ('inflight','accepted','unknown'))
+        AND (d.state='unknown' OR p.state IN ('inflight','accepted','unknown') OR EXISTS (SELECT 1 FROM cycle_conversation_intent i WHERE i.delivery_id=d.id AND i.state IN ('inflight','received')))
       ORDER BY d.created LIMIT 1""",(plan,)).fetchone()
     return dict(row) if row else None
 
@@ -233,6 +233,9 @@ def _legacy_batch_active(store):
     return bool(store.db.execute("SELECT 1 FROM cycle_bulk_freeze WHERE state IN ('starting','running','stop_requested','waiting_reconciliation')").fetchone()) if store.db.execute("SELECT 1 FROM sqlite_master WHERE name='cycle_bulk_freeze'").fetchone() else False
 
 
+from lib.delivery_reconciliation import serialized, reconcile as reconcile_delivery, target as reconciliation_target
+
+@serialized('it')
 def execute_once(root,store,*,authenticated=None,authorized_now=None,reconcile_only=False):
     """Advance at most one delivery. Tests can inject an authenticated context; status calls never enter."""
     root=Path(root);_required(store);plan=_plan(store);cfg=control(store,root);now=store.clock()
@@ -248,6 +251,12 @@ def execute_once(root,store,*,authenticated=None,authorized_now=None,reconcile_o
         Deliveries(store).quarantine_refused_creates(plan,('continuous-v1',))
     active=_reconcile_delivery(store,plan) if reconcile_only else _active_delivery(store,plan)
     if reconcile_only and active is None:return {'state':'nothing_to_reconcile','platformWrites':0,'realSends':0}
+    if active and reconciliation_target(Deliveries(store),active['id']):
+        result=reconcile_delivery(root,'it',Deliveries(store),active['id'])
+        if reconcile_only:return result
+        waiting=result['state']=='waiting_reconciliation'
+        return publish_runtime(store,plan,'waiting_reconciliation' if waiting else 'sending',
+            delivery=active if waiting else None,stop_reason=result['state'],unknown=int(waiting))
     candidate=None
     if active:
         delivery=Deliveries(store).get(active['id']);candidate=delivery['snapshot']
@@ -370,7 +379,7 @@ def status(root,store=None,*,include_preview=True):
         runtime['confirmedToday']=_today_confirmed(store,plan,now)
         recent=store.db.execute("SELECT count(DISTINCT d.id) FROM cycle_delivery d JOIN cycle_delivery_part p ON p.delivery_id=d.id WHERE d.plan_id=? AND d.state='confirmed' AND p.kind='card' AND p.started>?",(plan,now-300)).fetchone()[0]
         runtime['speedPerMinute']=round(recent/5,2)
-        unknown=[{'deliveryId':row['id'],'creatorId':row['creator_id'],'pid':row['pid']} for row in store.db.execute("SELECT id,creator_id,pid FROM cycle_delivery WHERE plan_id=? AND state IN ('unknown','quarantined_unknown') AND json_extract(snapshot,'$.executionMode')='continuous-v1'",(plan,))]
+        unknown=[{'deliveryId':row['id'],'creatorId':row['creator_id'],'pid':row['pid']} for row in store.db.execute("SELECT id,creator_id,pid FROM cycle_delivery WHERE plan_id=? AND state='unknown' AND json_extract(snapshot,'$.executionMode')='continuous-v1'",(plan,))]
         runtime['unknown']=max(runtime['unknown'],len(unknown))
         sample=None;remaining=None
         if include_preview:

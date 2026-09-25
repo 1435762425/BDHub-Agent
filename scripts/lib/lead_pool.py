@@ -32,7 +32,7 @@ RESOLVED_PENDING = frozenset({'resolved_by_human','suppressed_no_reply','resolve
 _ELIGIBLE_CACHE = {}
 # ``ready`` holds one position per creator -- the slot that would be sent next. A creator's other
 # positions stay in ``queued``: they are not lost, they simply are not the next thing to do.
-LAYER_ORDER = ('ready', 'queued', 'cooling', 'awaiting_reply', 'excluded', 'product_inactive', 'sent')
+LAYER_ORDER = ('ready', 'queued', 'cooling', 'awaiting_reply', 'technical_isolated', 'excluded', 'product_inactive', 'sent')
 
 
 def root_of(module_file=__file__):
@@ -196,6 +196,8 @@ def _build(conn, now, limit, eligible_pids=None,root=None,market='it'):
     creators = {row['creator_id'] for row in _rows(conn, 'SELECT DISTINCT creator_id FROM relationship'+(' WHERE plan_id=?' if plan_id else ''),
         (plan_id,) if plan_id else ())}
 
+    from lib.outreach_policy import isolated_creators
+    isolated=isolated_creators(conn,plan_id)
     layers = {name: [] for name in LAYER_ORDER}
     unique_creators = set()
     for row in positions:
@@ -221,6 +223,8 @@ def _build(conn, now, limit, eligible_pids=None,root=None,market='it'):
             layer = 'product_inactive'
         elif excluded:
             layer = 'excluded'
+        elif creator in isolated:
+            layer = 'technical_isolated'
         elif blocked:
             layer = 'awaiting_reply'
         elif ready_at is None or now >= ready_at:
@@ -287,11 +291,12 @@ def _build(conn, now, limit, eligible_pids=None,root=None,market='it'):
               'videoUnresolved':video_unresolved,
               'cooling': len(layers['cooling']),
               'awaitingReply': len(layers['awaiting_reply']),
+              'technicalIsolated': len(layers['technical_isolated']),
               'excluded': len(layers['excluded']),
               'creatorsWithRelationship': len(creators)}
     business={'sendable':len(layers['ready']),
               'waiting':len(layers['queued'])+len(layers['cooling'])+len(layers['awaiting_reply']),
-              'inactive':len(layers['excluded'])+len(layers['product_inactive'])}
+              'inactive':len(layers['excluded'])+len(layers['product_inactive'])+len(layers['technical_isolated'])}
     business['total']=business['sendable']+business['waiting']+business['inactive']
     return {'schema':'bdhub.lead-pool.v3','available': True, 'now': now, 'counts': counts,
             'cooldown': {'unlocked': MARKETING_COOLDOWN_SECONDS, 'locked': MARKETING_COOLDOWN_SECONDS},

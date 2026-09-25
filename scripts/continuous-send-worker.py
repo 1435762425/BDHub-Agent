@@ -27,6 +27,9 @@ def main():
             cfg=control(store,ROOT)
             if cfg['stopRequested'] or not (cfg['runRequested'] or cfg['automaticEnabled']):break
             try:state=execute_once(ROOT,store)
+            except CycleError as error:
+                if str(error)!='delivery_executor_busy':raise
+                state=publish_runtime(store,plan,'waiting_reconciliation',stop_reason='delivery_executor_busy')
             except SecondLiveRuntimeError as error:
                 if error.code!='live_guard_busy':raise
                 state=publish_runtime(store,plan,'paused',stop_reason='live_guard_busy')

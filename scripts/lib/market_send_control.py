@@ -33,7 +33,7 @@ def _unknown_deliveries(store,plan,worker):
  active=bool(worker.get('running')) and worker.get('state') in ('starting','confirmed','sending')
  return [{'deliveryId':row['id'],'creatorId':row['creator_id'],'pid':row['pid']} for row in store.db.execute("""SELECT DISTINCT d.id,d.creator_id,d.pid FROM cycle_delivery d
  LEFT JOIN cycle_conversation_intent c ON c.delivery_id=d.id
- WHERE d.plan_id=? AND (d.state='unknown' OR EXISTS(
+ WHERE d.plan_id=? AND d.state<>'quarantined_unknown' AND (d.state='unknown' OR EXISTS(
  SELECT 1 FROM cycle_delivery_part p WHERE p.delivery_id=d.id AND p.state='unknown') OR
  (?=0 AND (c.state IN ('inflight','received') OR EXISTS(
  SELECT 1 FROM cycle_delivery_part p WHERE p.delivery_id=d.id AND p.state IN ('inflight','accepted')))))

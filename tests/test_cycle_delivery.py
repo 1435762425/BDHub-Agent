@@ -73,7 +73,7 @@ class DeliveryTests(unittest.TestCase):
   self.assertEqual(self.d.cancel_expired_unsubmitted(self.p,(mode,)),[])
  def absence(self,reason='it_delivery_history_not_found'):
   self.d.record_check(self.id,'card',{'status':'result_unknown','reason':reason,'messageId':None,'evidenceRef':'history'})
- def test_card_missing_from_two_history_reads_is_isolated_to_a_human(self):
+ def test_card_missing_from_two_history_reads_is_marketing_isolated(self):
   self.begin('card');self.d.unknown(self.id,'card')
   self.absence();self.absence('it_delivery_history_unavailable')
   self.now+=400;self.absence('it_delivery_history_unavailable')
@@ -82,8 +82,8 @@ class DeliveryTests(unittest.TestCase):
   self.assertTrue(self.d.quarantine_absent_card(self.id))
   self.assertEqual(self.d.get(self.id)['state'],'quarantined_unknown')
   self.assertEqual([p['state'] for p in self.d.get(self.id)['parts']],['unknown','ready'])
-  self.assertEqual(self.s.db.execute('SELECT mode FROM relationship WHERE plan_id=? AND creator_id=?',(self.p,self.c['creatorId'])).fetchone()[0],'human')
-  self.assertEqual(tuple(self.s.db.execute('SELECT reason,state FROM service_case WHERE plan_id=? AND creator_id=?',(self.p,self.c['creatorId'])).fetchone()),('card_result_unknown','open'))
+  self.assertEqual(self.s.db.execute('SELECT mode FROM relationship WHERE plan_id=? AND creator_id=?',(self.p,self.c['creatorId'])).fetchone()[0],'auto')
+  self.assertFalse(self.s.db.execute("SELECT 1 FROM sqlite_master WHERE name='service_case'").fetchone())
   self.assertFalse(self.d.quarantine_absent_card(self.id))
  def test_isolated_card_no_longer_blocks_the_next_creator(self):
   self.begin('card');self.d.unknown(self.id,'card');self.absence();self.now+=400;self.absence()
@@ -181,9 +181,8 @@ class DeliveryTests(unittest.TestCase):
   self.assertEqual(self.d.conversation_intent(self.id)['request_ref'],intent['request_ref'])
   self.assertEqual(self.d.conversation_intent(self.id)['state'],'inflight')
   self.assertEqual(self.s.db.execute('SELECT mode FROM relationship WHERE plan_id=? AND creator_id=?',
-                                     (self.p,self.c['creatorId'])).fetchone()[0],'human')
-  self.assertEqual(self.s.db.execute("SELECT count(*) FROM service_case WHERE plan_id=? AND creator_id=? AND state='open'",
-                                     (self.p,self.c['creatorId'])).fetchone()[0],1)
+                                     (self.p,self.c['creatorId'])).fetchone()[0],'auto')
+  self.assertFalse(self.s.db.execute("SELECT 1 FROM sqlite_master WHERE name='service_case'").fetchone())
   self.assertEqual(self.d.quarantine_unknown_conversation(self.id,'quarantine-it-20260923',
                    observed_conversations=748,matching_conversations=0)['state'],'quarantined_unknown')
   with self.assertRaisesRegex(CycleError,'quarantine_request_conflict'):

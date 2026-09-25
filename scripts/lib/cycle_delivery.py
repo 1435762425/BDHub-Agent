@@ -45,6 +45,8 @@ class Deliveries:
    for kind in ('card','text'):self.s.db.execute('INSERT INTO cycle_delivery_part(delivery_id,kind,request_ref) VALUES(?,?,?)',(id,kind,str(uuid.uuid4())))
   return self.get(id)
  def _eligible(self,plan,c,*,current_delivery_id=None):
+  from lib.outreach_policy import marketing_isolated
+  if marketing_isolated(self.s.db,plan,c['creatorId'],c['oecId']):raise CycleError('marketing_isolated')
   p=self.s._plan(plan);r=self.s.db.execute('SELECT * FROM relationship WHERE plan_id=? AND creator_id=?',(plan,c['creatorId'])).fetchone()
   if p['state']!='active' or p['revision']!=c['planRevision']:raise CycleError('plan_changed')
   if not r or r['oec']!=c['oecId'] or r['mode']!='auto' or r['rejected'] or r['inbox_until'] or r['revision']!=c['controlRevision']:raise CycleError('relationship_changed')
@@ -125,13 +127,20 @@ class Deliveries:
    self.s.db.execute("DELETE FROM cycle_contact_reservation WHERE plan_id=? AND oec=? AND reserved>=?",
      (d['plan_id'],d['oec'],d['created']))
   return self.get(id)
+ def isolate_technical(self,id,kind,reason):
+  """Marketing-only isolation; retain unknown parts, real cases and relationship controls."""
+  with self.s.tx():
+   d=self.get(id)
+   if d['state']=='quarantined_unknown':return False
+   if d['state']!='unknown':raise CycleError('isolation_scope_changed')
+   self.s.db.execute("UPDATE cycle_delivery SET state='quarantined_unknown' WHERE id=?",(id,))
+   self.s.db.execute('INSERT INTO cycle_delivery_check VALUES(?,?,?,?)',(id,'technical_isolation',self.s.clock(),encoded(
+    {'status':'quarantined_unknown','component':kind,'reason':reason,'marketingBlocked':True,'platformWrites':0})))
+  return True
  def quarantine_absent_card(self,id):
   """Isolate a card whose result stayed unknown although at least two history reads, five minutes or more apart,
-  found no such message (user decision 2026-09-24): the delivery is quarantined, the creator moves to human handling
-  and is never sent to automatically again, and the market stops waiting on it.  A read that could not see the
+  found no such message: marketing is blocked without creating a human case.  A read that could not see the
   history is not evidence of absence, and nothing is resent."""
-  from lib.cycle_service import Service
-  Service(self.s)
   with self.s.tx():
    d=self.get(id)
    if d['state']!='unknown' or len(d['parts'])!=2:return False
@@ -142,19 +151,10 @@ class Deliveries:
      AND json_extract(payload,'$.reason')='it_delivery_history_not_found' AND json_extract(payload,'$.messageId') IS NULL
      ORDER BY checked""",(id,))]
    if len(reads)<CARD_ABSENCE_READS or reads[-1]-reads[0]<CARD_ABSENCE_SPAN_SECONDS:return False
-   rel=self.s.db.execute('SELECT mode FROM relationship WHERE plan_id=? AND creator_id=? AND oec=?',
-                         (d['plan_id'],d['creator_id'],d['oec'])).fetchone()
-   if not rel:return False
    self.s.db.execute("UPDATE cycle_delivery SET state='quarantined_unknown' WHERE id=?",(id,))
-   if rel['mode']=='auto':
-    self.s.db.execute("UPDATE relationship SET mode='human',revision=revision+1 WHERE plan_id=? AND creator_id=?",
-                      (d['plan_id'],d['creator_id']))
-   now=self.s.clock();case_id='case-'+digest([id,'card_quarantine'])[:24]
-   self.s.db.execute("INSERT OR IGNORE INTO service_case VALUES(?,?,?,'open',0,'card_result_unknown',?,?,'not_sent')",
-                     (case_id,d['plan_id'],d['creator_id'],now,now))
-   self.s.db.execute('INSERT INTO cycle_delivery_check VALUES(?,?,?,?)',(id,'card_quarantine',now,encoded(
-     {'status':'quarantined_unknown','reason':'card_result_unknown','absentReads':len(reads),
-      'firstAbsentAt':reads[0],'lastAbsentAt':reads[-1],'textStarted':False,'platformWrites':0})))
+   self.s.db.execute('INSERT INTO cycle_delivery_check VALUES(?,?,?,?)',(id,'technical_isolation',self.s.clock(),encoded(
+     {'status':'quarantined_unknown','component':'card','reason':'card_result_unknown','absentReads':len(reads),
+      'firstAbsentAt':reads[0],'lastAbsentAt':reads[-1],'marketingBlocked':True,'platformWrites':0})))
   return True
  def quarantine_refused_creates(self,plan,modes):
   """Isolate creators whose conversation create the platform refused with business code 201 (the old system's
@@ -190,8 +190,6 @@ class Deliveries:
   if not isinstance(request_id,str) or not re.fullmatch(r'[A-Za-z0-9._:-]{8,120}',request_id):raise CycleError('quarantine_request_invalid')
   if type(observed_conversations) is not int or observed_conversations<0 or matching_conversations!=0:
    raise CycleError('quarantine_evidence_invalid')
-  from lib.cycle_service import Service
-  Service(self.s)
   with self.s.tx():
    d=self.get(id)
    prior=self.s.db.execute("SELECT payload FROM cycle_delivery_check WHERE delivery_id=? AND kind='conversation_quarantine' ORDER BY checked DESC LIMIT 1",(id,)).fetchone()
@@ -206,12 +204,7 @@ class Deliveries:
                          (d['plan_id'],d['creator_id'],d['oec'])).fetchone()
    if not rel:raise CycleError('relationship_missing')
    self.s.db.execute("UPDATE cycle_delivery SET state='quarantined_unknown' WHERE id=?",(id,))
-   if rel['mode']=='auto':
-    self.s.db.execute("UPDATE relationship SET mode='human',revision=revision+1 WHERE plan_id=? AND creator_id=?",
-                      (d['plan_id'],d['creator_id']))
-   now=self.s.clock();case_id='case-'+digest([id,'conversation_quarantine'])[:24]
-   self.s.db.execute("INSERT OR IGNORE INTO service_case VALUES(?,?,?,'open',0,'conversation_create_unknown',?,?,'not_sent')",
-                     (case_id,d['plan_id'],d['creator_id'],now,now))
+   now=self.s.clock()
    evidence={'status':'quarantined_unknown','reason':'conversation_create_result_unknown',
              'requestId':request_id,'originalRequestRef':intent['request_ref'],
              'observedConversations':observed_conversations,'matchingConversations':0,
@@ -260,7 +253,7 @@ class Deliveries:
  def save_conversation(self,id,receipt):
   with self.s.tx():
    row=self.conversation_intent(id)
-   if row['state']!='inflight' or not str(receipt.get('conversationId','')).isdigit():raise CycleError('conversation_receipt_invalid')
+   if row['state']!='inflight' or receipt.get('requestRef')!=row['request_ref'] or not str(receipt.get('conversationId','')).isdigit():raise CycleError('conversation_receipt_invalid')
    self.s.db.execute("UPDATE cycle_conversation_intent SET state='received',cid=?,receipt=? WHERE delivery_id=?",(receipt['conversationId'],encoded(receipt),id))
  def confirm_conversation(self,id,cid,oec):
   with self.s.tx():
@@ -283,7 +276,7 @@ class Deliveries:
    self.s.db.execute("UPDATE cycle_delivery_part SET state='unknown' WHERE delivery_id=? AND kind=? AND state IN ('inflight','accepted')",(id,kind));self.s.db.execute("UPDATE cycle_delivery SET state='unknown' WHERE id=? AND state NOT IN ('confirmed','quarantined_unknown')",(id,))
  def record_check(self,id,kind,evidence):
   self.s.db.execute('INSERT INTO cycle_delivery_check VALUES(?,?,?,?)',(id,kind,self.s.clock(),encoded(evidence)))
- def confirm(self,id,kind,evidence):
+ def confirm(self,id,kind,evidence,*,close_unsubmitted=False):
   with self.s.tx():
    d=self.get(id);p=next(p for p in d['parts'] if p['kind']==kind)
    if p['state']=='confirmed':
@@ -291,8 +284,15 @@ class Deliveries:
     return
    if p['state'] not in ('inflight','accepted','unknown') or evidence.get('status')!='confirmed' or evidence.get('requestRef')!=p['request_ref'] or evidence.get('oecId')!=d['oec'] or evidence.get('kind')!=kind or not evidence.get('messageId') or not evidence.get('evidenceRef'):raise CycleError('confirmation_invalid')
    self.s.db.execute("UPDATE cycle_delivery_part SET state='confirmed',confirmation=? WHERE delivery_id=? AND kind=?",(encoded(evidence),id,kind))
+   if close_unsubmitted and kind=='card' and d['state']!='quarantined_unknown' and d['parts'][1]['state']=='ready':
+    self.s.db.execute("UPDATE cycle_delivery_part SET state='cancelled' WHERE delivery_id=? AND kind='text' AND started IS NULL",(id,))
+    self.s.db.execute("UPDATE cycle_delivery SET state='partial_delivery' WHERE id=?",(id,))
+    self.s.db.execute('INSERT INTO cycle_delivery_check VALUES(?,?,?,?)',(id,'text',self.s.clock(),encoded(
+      {'status':'not_submitted','reason':'reconciled_card_text_not_submitted','platformWrites':0})))
+    return
    remaining=self.s.db.execute("SELECT count(*) FROM cycle_delivery_part WHERE delivery_id=? AND state<>'confirmed'",(id,)).fetchone()[0]
-   self.s.db.execute('UPDATE cycle_delivery SET state=? WHERE id=?',('confirmed' if not remaining else 'running',id))
+   if d['state']!='quarantined_unknown':
+    self.s.db.execute('UPDATE cycle_delivery SET state=? WHERE id=?',('confirmed' if not remaining else 'running',id))
 
 def delivery_status(store,plan):
  if not store.db.execute("SELECT 1 FROM sqlite_master WHERE name='cycle_delivery'").fetchone():return None

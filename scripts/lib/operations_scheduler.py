@@ -867,10 +867,9 @@ def _background(root,store,jobs,automation,stamp,maintenance_enabled=None):
         if (current['continuousSendEnabled'] or sender_control['automaticEnabled'] or sender_control['runRequested']) and \
            not sender_control['stopRequested'] and not market_sender_state(root,market)['running']:
             sender=market_sender_state(root,market)
-            error=sender.get('error') or ''
-            uncertain=error in ('market_send_result_unknown','market_send_conversation_result_unknown')
+            # Restart keeps the existing authorization and enters bounded original-intent reads.
             cooling=sender.get('state')=='attention' and stamp-float(sender.get('checkedAt') or stamp)<300
-            if not uncertain and not cooling:
+            if not cooling:
                 try:launch_market_sender(root,market)
                 except OSError:pass
     if (automation['automaticOperationsEnabled'] if maintenance_enabled is None else maintenance_enabled):
