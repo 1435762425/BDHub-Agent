@@ -264,7 +264,8 @@ def resume_after_fix(store,market,run_id,request_id):
             return {'duplicate':True,'run':run_payload(store,run_id),'evidence':evidence}
         stages=list(store.db.execute('SELECT * FROM workflow_stage_run WHERE run_id=? ORDER BY position',(run_id,)))
         stage=next((row for row in stages if row['state']=='failed'),None)
-        if run['market']!=market or run['state']!='needs_human' or run['error_code']!='workflow_retry_exhausted' or \
+        if run['market']!=market or not ((run['state']=='needs_human' and run['error_code']=='workflow_retry_exhausted') or
+                (run['state']=='failed' and stage and stage['error_code']=='oecid-submit_report_invalid')) or \
                 run['stop_requested_at'] is not None or not stage or stage['platform_writes'] or \
                 stage['error_code'] not in FIXED_STAGE_ERRORS.get(stage['stage'],()) or \
                 any(row['state'] not in STAGE_SUCCESS for row in stages[:stage['position']]) or \

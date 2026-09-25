@@ -51,6 +51,13 @@ class ResumeAfterFixTests(unittest.TestCase):
         with self.assertRaisesRegex(CycleError,'workflow_recovery_already_requested'):
             resume_after_fix(self.store,'uk',run,'resume-after-fix-002')
 
+    def test_fixed_local_handoff_can_resume_without_consuming_automatic_retry_hours(self):
+        run=self.failed_run('oecid-submit_report_invalid')
+        self.store.db.execute("UPDATE workflow_run SET state='failed',error_code='oecid-submit_report_invalid' WHERE run_id=?",(run,))
+        result=resume_after_fix(self.store,'uk',run,'resume-handoff-fix-001')
+        self.assertEqual(result['evidence']['previousError'],'oecid-submit_report_invalid')
+        self.assertEqual(self.stages(run)['oecid'],'queued')
+
     def test_error_not_in_allowlist_is_rejected(self):
         run=self.failed_run('market_identity_report_missing')
         with self.assertRaisesRegex(CycleError,'workflow_recovery_state_invalid'):
