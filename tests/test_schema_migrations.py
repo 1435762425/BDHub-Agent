@@ -28,7 +28,7 @@ class SchemaMigrations(unittest.TestCase):
     def test_check_is_read_only_and_apply_is_idempotent(self):
         before = check_all(self.root)
         self.assertFalse(before["ready"])
-        self.assertEqual([len(state["pending"]) for state in before["databases"]],[1,24])
+        self.assertEqual([len(state["pending"]) for state in before["databases"]],[1,25])
         # A check must not create its own registry.
         with closing(sqlite3.connect(self.root / "var" / "catalog-links.sqlite")) as db:
             self.assertFalse(db.execute("SELECT 1 FROM sqlite_master WHERE name='agent_schema_migration'").fetchone())

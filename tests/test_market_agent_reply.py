@@ -64,6 +64,15 @@ class MarketAgentReplyTests(unittest.TestCase):
   self.assertEqual(result['platformWrites'],0)
   self.assertEqual(self.replies.get('reply-1')['state'],'cancelled')
 
+ def test_wrapped_stale_ready_refusal_is_also_cancelled(self):
+  from lib.italy_im_delivery import ItalyImDeliveryError
+  original=self.replies.begin
+  def wrapped(*args):
+   try:original(*args)
+   except CycleError:raise ItalyImDeliveryError('it_delivery_dispatch_not_allowed')
+  self.replies.begin=wrapped
+  self.test_stale_ready_reply_is_settled_without_a_platform_write()
+
  def test_unknown_reply_readback_uses_read_only_auth_and_no_write_gate(self):
   self.store.db.execute("UPDATE service_reply SET state='unknown' WHERE id='reply-1'")
   self.reply['state']='unknown'

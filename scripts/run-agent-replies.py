@@ -80,6 +80,21 @@ def pending_rows(store,plan,now,limit=20):
    ORDER BY p.due_at""",(plan,now))
  tables={row[0] for row in store.db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
  result=[]
+ scoped='service_message_resolution' in tables
+ if scoped:
+  from lib.reply_scope import unresolved,freeze,retry_ready
+  from lib.agent_reply_v2 import guide
+  guide_revision=guide(ROOT,store,plan)["revision"]
+  ordered=[]
+  for row in rows:
+   scope=unresolved(store,plan,row['creator_id'])
+   if not scope:continue
+   # Missing content, multiple CIDs and gaps cannot monopolize the runnable queue.
+   if any(not r['contentHash'] for r in scope) or len({r['conversationId'] for r in scope})!=1:continue
+   if store.db.execute("SELECT 1 FROM inbox_checkpoint WHERE plan_id=? AND oec=(SELECT oec FROM relationship WHERE plan_id=? AND creator_id=?) AND state='gap'",(plan,plan,row['creator_id'])).fetchone():continue
+   if not retry_ready(store,plan,row['creator_id'],freeze(scope),now,guide_revision):continue
+   ordered.append((min(r['at'] for r in scope),row['creator_id'],dict(row)|{'scopeTurnId':scope[-1]['turnId']}))
+  return [v[2] for v in sorted(ordered,key=lambda v:(v[0],v[1]))[:limit]]
  for pending in rows:
   if 'inbound_turn' in tables:
    turn=store.db.execute('SELECT turn_id,cid,oec,occurred_ms,observed_at FROM inbound_turn '
@@ -138,11 +153,13 @@ def tick(authorized_now=None,market="it"):
         near_send_window(send_window(store,market),current_setting['bufferMinutes'],store.clock())):
      break
     turn=store.db.execute('SELECT * FROM inbound_turn WHERE plan_id=? AND creator_id=? AND historical=0 ORDER BY coalesce(occurred_ms,observed_at*1000) DESC,message_id DESC LIMIT 1',(plan,pending['creator_id'])).fetchone()
+    if isinstance(pending,dict) and pending.get('scopeTurnId'):
+     turn=store.db.execute('SELECT * FROM inbound_turn WHERE turn_id=?',(pending['scopeTurnId'],)).fetchone()
     if not turn:continue
-    if not decision_retry_ready(store,plan,turn['turn_id'],now):
+    if not (isinstance(pending,dict) and pending.get('scopeTurnId')) and not decision_retry_ready(store,plan,turn['turn_id'],now):
      report['deferred']+=1;continue
     try:
-     context=production_context(ROOT,store,plan,market,turn['turn_id'],include_current_invitation=True)
+     context=production_context(ROOT,store,plan,market,turn['turn_id'],include_current_invitation=True,live=True)
      generated=generate(ROOT,store,plan,market,context,mode='production')
      applied=apply_production(store,plan,context,generated)
     except CycleError:

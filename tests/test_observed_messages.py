@@ -73,11 +73,18 @@ class ObservedMessagesTests(unittest.TestCase):
         self.store.db.execute('DELETE FROM service_case')
         self.store.db.execute("UPDATE relationship SET mode='auto'")
         self.store.db.execute("UPDATE inbox_pending SET state='awaiting_content',due_at=?",(NOW,))
+        # The runnable queue now requires canonical inbox/content evidence, not a standalone turn.
+        def inbound(mid,stamp,text):
+            Inbox(self.store).ingest(self.plan,'999','123',{'identityVerified':True,'hasMore':False,
+                'events':[{'messageId':mid,'kind':'creatorReplies','conversationId':'999','oecId':'123','createTimeRaw':int(stamp*1000)}]})
+            Service(self.store).capture(self.plan,'999','123',[{'messageId':mid,'format':'text','text':text,'nativeType':'text','rawSha256':'test'}])
+            from lib.reply_events import backfill
+            backfill(self.store)
+        inbound('1000',NOW,'Ho un problema')
         self.assertEqual(len(WORKER.pending_rows(self.store,self.plan,NOW)),1)
         self.observe()
         self.assertEqual(WORKER.pending_rows(self.store,self.plan,NOW+11),[])
-        self.store.db.execute('INSERT INTO inbound_turn VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',
-            ('turn-'+'b'*24,self.plan,'creator-1','123','999','2002','c'*64,'text','A new question',int((NOW+20)*1000),0,NOW+20))
+        inbound('2002',NOW+20,'A new question')
         self.assertEqual(len(WORKER.pending_rows(self.store,self.plan,NOW+21)),1)
 
 

@@ -54,6 +54,12 @@ def run_reply(root,store,replies,reply,market,*,pilot=False,authorized_now=False
      replies.accepted(reply['id'],receipt)
     except Exception as error:
      latest=replies.get(reply['id'])
+     # The adapter wraps before_dispatch refusals. Only a proven unsubmitted reply may recover
+     # the original local reason; accepted/unknown replies remain on original-intent reads.
+     original=getattr(error,'__context__',None)
+     if latest['state']=='ready' and latest['started'] is None and not latest['receipt'] and not latest['proof'] and \
+          getattr(error,'code',None)=='it_delivery_dispatch_not_allowed' and isinstance(original,CycleError):
+      error=original
      if latest['state']=='inflight':replies.unknown(reply['id'])
      elif latest['state']=='ready' and latest['started'] is None and not latest['receipt'] and not latest['proof'] and \
           str(error) in ('reply_context_changed','reply_human_control','handoff_changed'):

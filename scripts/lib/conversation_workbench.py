@@ -66,6 +66,10 @@ def unread_backlog(store,market='it'):
                        f"WHERE r.plan_id=? AND p.state IN ({marks})",(plan,*UNREAD_PENDING)):
   latest=_latest_turn(db,plan,rel['creator_id']);_,external=_latest_external(db,plan,rel,latest);inbound_at=_turn_at(latest)
   if external and external['occurredAt']>inbound_at:continue
+  from lib.reply_scope import available,unresolved
+  if available(db):
+   scope=unresolved(store,plan,rel['creator_id'])
+   if scope:inbound_at=min(r['at'] for r in scope)
   count+=1
   if inbound_at and (oldest is None or inbound_at<oldest):oldest=inbound_at
  return {'unread':count,'oldestAt':oldest}
@@ -169,11 +173,22 @@ def list_conversations(root,store,view='human',query='',limit=30,offset=0,market
   handle=handles.get(rel['creator_id'])
   if query and query.casefold() not in f"{handle or ''} {rel['oec']} {(latest['text'] if latest else '')} {(external['text'] if external else '')}".casefold():continue
   reason=(case['reason'] if case else _human_reason(decision) if action=='human' else None)
+  waiting_since=None;scope=[];input_blocked=False
+  if pending and pending['state'] in UNREAD_PENDING:
+   from lib.reply_scope import available,unresolved
+   if available(db):
+    scope=unresolved(store,plan,rel['creator_id'])
+    if scope:waiting_since=min(r['at'] for r in scope)
+  if scope and state=='agent':
+   from lib.reply_scope import freeze
+   blocked=db.execute("SELECT input_json FROM agent_reply_decision_v2 WHERE plan_id=? AND creator_id=? AND mode='production' AND state='input_blocked' ORDER BY created_at DESC LIMIT 1",(plan,rel['creator_id'])).fetchone()
+   input_blocked=bool(blocked and json.loads(blocked[0]).get('context',{}).get('replyScope')==freeze(scope))
   status_label=('待人工处理' if state=='human' else
                 '机构后台已回复，等待达人' if state=='waiting' and externally_answered else
                 '等待达人提供联系方式' if state=='waiting' and pending and pending['state']=='waiting_contact' else
                 '等待达人说明' if state=='waiting' else
                 'AI 已关闭' if state=='agent' and not setting['enabled'] else
+                '上下文过长，待答问题已保留' if state=='agent' and input_blocked else
                 'AI 模型连续失败，需检查' if state=='agent' and failed_model else
                 'AI 运行异常' if state=='agent' and agent_failed else
                 '等待回复窗口' if state=='agent' and not(setting['replyStart']<=clock<setting['replyEnd']) else
@@ -186,7 +201,7 @@ def list_conversations(root,store,view='human',query='',limit=30,offset=0,market
    'state':state,'queueStatusLabel':status_label,'humanReason':reason,
    'humanReasonLabel':_human_label(db,plan,rel['creator_id'],reason),
    'latestText':display_text,'latestMeaningZh':meaning if latest and display_text==latest['text'] else None,
-   'latestAt':display_at,'waitingSeconds':max(0,int(store.clock()-display_at)) if display_at and state in ('human','agent') else 0,
+   'latestAt':display_at,'waitingSeconds':max(0,int(store.clock()-(waiting_since or display_at))) if (waiting_since or display_at) and state in ('human','agent') else 0,
    'unread':bool(not externally_answered and pending and pending['state'] in UNREAD_PENDING),
    'action':action,'caseId':case['id'] if case else None})
  order={'human':0,'agent':1,'waiting':2,'completed':3}

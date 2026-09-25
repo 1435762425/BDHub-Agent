@@ -160,6 +160,9 @@ class AutoReplies:
    if not manual and (r['mode']!='human' if q['case_id'] else r['mode']!='auto'):
     raise CycleError('reply_human_control')
    if q['kind'] in ('agent_generated_v2','agent_request_detail_v2','agent_handoff_v2'):
+    from lib.reply_scope import from_reply,check
+    scope=from_reply(self.s.db,id)
+    if scope:check(self.s,q['plan_id'],q['creator_id'],scope)
     turn=self.s.db.execute('SELECT occurred_ms,observed_at FROM inbound_turn WHERE plan_id=? AND cid=? '
                            'ORDER BY coalesce(occurred_ms,observed_at*1000) DESC,message_id DESC LIMIT 1',
                            (q['plan_id'],q['cid'])).fetchone()
@@ -190,6 +193,15 @@ class AutoReplies:
    if q['case_id']:self.s.db.execute("UPDATE service_case SET ack_state='confirmed' WHERE id=?",(q['case_id'],))
    elif q['kind'] in ('manual','manual_card'):pass
    else:
+    if q['kind'] in ('agent_generated_v2','agent_request_detail_v2'):
+     from lib.reply_scope import from_reply,settle
+     scope=from_reply(self.s.db,id)
+     if scope:
+      waiting=_decision_wait_for(self.s.db,id)
+      state='waiting_contact' if waiting=='contact' else 'waiting_clarification' if waiting=='clarification' else 'answered'
+      settle(self.s,q['plan_id'],q['creator_id'],scope,id,state,expected_control_revision=q['control_revision'])
+      return
+
     p=self.s.db.execute('SELECT revision FROM inbox_pending WHERE plan_id=? AND creator_id=?',(q['plan_id'],q['creator_id'])).fetchone()
     if p and p[0]==q['pending_revision']:
      state='waiting_contact' if q['kind']=='agent_request_detail_v2' and \

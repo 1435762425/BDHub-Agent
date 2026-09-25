@@ -1138,6 +1138,32 @@ CREATE TABLE IF NOT EXISTS cycle_delivery_check(delivery_id TEXT NOT NULL,kind T
 CREATE INDEX IF NOT EXISTS cycle_delivery_check_lookup ON cycle_delivery_check(delivery_id,kind,checked);
 """)
 
+SECOND_CYCLE_REPLY_SCOPE = Migration(25, "reply_message_scope_and_read_indexes_v1", """
+CREATE TABLE service_message_resolution(
+ plan_id TEXT NOT NULL,cid TEXT NOT NULL,message_id TEXT NOT NULL,content_hash TEXT NOT NULL,
+ creator_id TEXT NOT NULL,reference TEXT NOT NULL,handled_at REAL,
+ PRIMARY KEY(plan_id,cid,message_id,content_hash));
+""")
+
+
+def _reply_scope_backfill(db):
+    tables={r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    columns=lambda t:{r[1] for r in db.execute('PRAGMA table_info('+t+')')}
+    if {'service_cursor','inbox_event','inbox_content_head','relationship'}<=tables and 'oec' in columns('relationship'):
+        db.execute("""INSERT OR IGNORE INTO service_message_resolution
+          SELECT e.plan_id,e.cid,e.message_id,coalesce(h.hash,''),r.creator_id,'legacy_service_cursor',NULL
+          FROM service_cursor c JOIN relationship r ON r.plan_id=c.plan_id AND r.creator_id=c.creator_id
+          JOIN inbox_event e ON e.plan_id=r.plan_id AND e.oec=r.oec AND e.kind='creatorReplies'
+          LEFT JOIN inbox_content_head h ON h.plan_id=e.plan_id AND h.cid=e.cid AND h.message_id=e.message_id
+          WHERE e.historical=0 AND e.rowid<=c.event_rowid""")
+    indexes=[('inbox_event',{'plan_id','oec','kind','occurred_ms','observed_at','message_id'},
+              'inbox_event_creator_kind_time ON inbox_event(plan_id,oec,kind,coalesce(occurred_ms,observed_at*1000) DESC,message_id DESC)'),
+             ('cycle_delivery',{'plan_id','oec'},'cycle_delivery_oec ON cycle_delivery(plan_id,oec)'),
+             ('service_reply',{'plan_id','creator_id','created'},'service_reply_creator_time ON service_reply(plan_id,creator_id,created DESC)'),
+             ('service_reply',{'plan_id','oec','cid'},'service_reply_conversation ON service_reply(plan_id,oec,cid)')]
+    for table,required,sql in indexes:
+        if table in tables and required<=columns(table):db.execute('CREATE INDEX IF NOT EXISTS '+sql)
+
 DATABASES = {
     "catalog-links": ("catalog-links.sqlite", (CATALOG_LINKS,)),
     "second-cycle": ("second-cycle.sqlite", (SECOND_CYCLE, SECOND_CYCLE_INDEXES,
@@ -1159,7 +1185,7 @@ DATABASES = {
                                                 SECOND_CYCLE_AGENT_CONVERSATION,
                                                 SECOND_CYCLE_INBOX_HISTORY,
                                                 SECOND_CYCLE_INBOX_HISTORY_DEFERRED,
-                                                SECOND_CYCLE_ROLLING_LEADS, SECOND_CYCLE_IDENTITY_RETRY, SECOND_CYCLE_OUTREACH_SHARE, SECOND_CYCLE_INVITATION_INBOX)),
+                                                SECOND_CYCLE_ROLLING_LEADS, SECOND_CYCLE_IDENTITY_RETRY, SECOND_CYCLE_OUTREACH_SHARE, SECOND_CYCLE_INVITATION_INBOX, SECOND_CYCLE_REPLY_SCOPE)),
 }
 
 REGISTRY_SQL = """
@@ -1257,6 +1283,8 @@ def apply_database(root, key, *, clock=time.time):
                 db.execute(REGISTRY_SQL)
                 for statement in _statements(migration.sql):
                     db.execute(statement)
+                if key=="second-cycle" and migration.version==25:
+                    _reply_scope_backfill(db)
                 if key=="second-cycle" and migration.version==21:
                     from lib.video_identity import backfill_current
                     backfill_current(db)
