@@ -1,11 +1,21 @@
 # BDHub-Agent 当前交接
 
-更新时间：2026-09-25 22:22（Asia/Shanghai）。本页只记录运行快照；规则见 [PROJECT](../PROJECT.md)，实现见 [TECHNICAL](../TECHNICAL.md)，后续方向见[项目审计与清理](../implementation/project-audit-20260924.md)。更早流水见[历史交接](../archive/handoff/codex-takeover-history-20260923.md)。
+更新时间：2026-09-25 23:29（Asia/Shanghai）。本页只记录运行快照；规则见 [PROJECT](../PROJECT.md)，实现见 [TECHNICAL](../TECHNICAL.md)，后续方向见[项目审计与清理](../implementation/project-audit-20260924.md)。更早流水见[历史交接](../archive/handoff/codex-takeover-history-20260923.md)。
 
 
 
 
 
+
+## 2026-09-25 夜间：原邀请遇新来信的继续规则已加载
+
+- §9.13 代码 `ceca684` 从 `../BDHub-Agent-invitation-20260925` 合入，详见[邀请衔接交付](../implementation/invitation-inbound-20260925.md)。原卡已确认、文字从未提交时，只有同 CID 实时入站造成的连续版本变化可让原文字继续；pending/unread 保留，其他门禁不放宽，旧取消/隔离不复活。入站先落库而卡后确认未放宽。
+- 首次收信基线改为同会话已确认卡的 started；真实 Agent 窄范围补入同套已确认邀请，默认 replay 不看未来，旧 episode/link 不改写。集中合并/排序、完整 live/replay 和 SDK 接收适配仍未完成。
+- Python 1,435 项、Node 180 项通过；四市场生产副本演练通过、零平台/模型调用，新增写事务最长约 15.4ms。两次一致备份后迁移 v24，只加查询索引；131 张业务表摘要不变，重复迁移为空、quick_check=ok。既有 ResourceWarning 保留。
+- scheduler 安全结束原 BR 身份阶段、claim 清空后停四 sender/inbox/Agent；无未隔离在途组件/AI 回复才迁移合入。23:23 恢复 scheduler `44906`，四 sender `44913/44916/44919/44922`、inbox `44910/44914/44917/44920`、Agent `44911/44915/44918/44921`。Web 未重载，旧项目未改。
+- 控制/授权事件/指南不变，9,639 份旧快照、19,278 个 requestRef、191 个旧终结状态不变。四市场持久 AI pilot_complete、未开 full；瞬时 send_dispatch_active 不代表全量。MY 主链仍关闭，sender 等额度；正常收信/原授权发送继续，scheduler 当前无错误。
+- 四市场概览/发送/会话共 12 个 GET 200；会话列表实测 32–58 秒，未做旧版对照，需下一批定位，不能宣称性能验收通过。BR/UK 真实完整邀请数从静止快照增长 9/13；新继续凭证仍 0，尚无目标交错的真实自然案例，一般发送增长不能代替新规则实测。
+- 证据 `var/releases/invitation-inbound-20260925T145214Z/` 含备份、演练、测试和发布检查。原未提交主文档保留并补充本批边界。下一批按最早未处理来信的集中排序/合并与精确处理水位，再完善上下文和隔离服务；不重开已经确认的商业政策。
 
 ## 2026-09-25 夜间：A/B 发送份额已上线
 
