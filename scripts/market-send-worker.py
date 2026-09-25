@@ -17,7 +17,7 @@ def write(market,value):
  path=state_path(market);tmp=path.with_suffix('.tmp');tmp.write_text(json.dumps(value,ensure_ascii=False,indent=2)+'\n');tmp.replace(path)
 
 def expected_wait_state(code):
- if code=='market_send_candidate_missing':return 'waiting_pool'
+ if code in ('market_send_candidate_missing','outreach_allocation_stale','outreach_recipient_already_allocated'):return 'waiting_pool'
  # Stay alive and re-read the original request every five minutes: the readback confirms the card or, after two
  # reads that find it absent, isolates the creator.  The scheduler does not relaunch a sender stopped on unknown.
  if code in ('market_send_result_unknown','market_send_conversation_result_unknown'):return 'waiting_reconciliation'

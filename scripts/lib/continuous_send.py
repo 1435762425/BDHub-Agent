@@ -165,33 +165,46 @@ def _identities(root):
 
 
 def _candidate(root,store,plan,control_value,*,limit=200):
-    state=pool(root,now=store.clock(),limit=limit,cache_eligible_seconds=30)
-    positions=[(row['creatorId'],row['pid']) for row in (state.get('pools') or {}).get('ready',[])]
+    from lib.outreach_allocation import select
+    from lib.cycle_delivery import capacity_for_candidate
+    state=pool(root,now=store.clock(),limit=None,cache_eligible_seconds=30)
+    pools=state.get('pools') or {}
+    slots=list(pools.get('ready') or [])+list(pools.get('queued') or [])
+    positions=list(dict.fromkeys((r['creatorId'],r['pid']) for r in slots))
     if not positions:return None,state
     with closing(_identities(root)) as ids:
+        people={}
         def person(creator,oec):
-            row=ids.execute("SELECT current_handle FROM creator_identity WHERE market='it' AND creator_id=? AND oec_id=? AND handle_conflict=0",(creator,oec)).fetchone()
-            return {'handle':row[0]} if row else None
+            if (creator,oec) not in people:
+                row=ids.execute("SELECT current_handle FROM creator_identity WHERE market='it' AND creator_id=? AND oec_id=? AND handle_conflict=0",(creator,oec)).fetchone()
+                people[(creator,oec)]={'handle':row[0]} if row else None
+            return people[(creator,oec)]
         candidates,_=choose_candidates(store,plan,person,len(positions),positions=positions)
-    if not candidates:return None,state
-    # The immutable delivery key is also the durable dedupe key.  Confirmed, rejected and
-    # preflight-cancelled rows remain audit evidence and must never be picked as a fresh delivery.
-    candidate=None;spec=None
-    for row in candidates:
+    capacity_blocked=False
+    indexed={(c['creatorId'],str(c['pid'])):c for c in reversed(candidates)}
+    def build(slot):
+        nonlocal capacity_blocked
+        row=indexed.get((slot['creatorId'],str(slot['pid'])))
+        if row is None:return None
         if store.db.execute('SELECT 1 FROM cycle_delivery WHERE plan_id=? AND creator_id=? AND pid=? AND source_id=?',
-          (plan,row['creatorId'],str(row['pid']),row['source']['sourceId'])).fetchone():continue
-        selected=next_approved_send_template(store,root,plan,row['creatorId'],'it')
-        if selected is not None:candidate,spec=row,selected;break
-    if candidate is None:return None,state
-    candidate=json.loads(encoded(candidate))
-    candidate['message']=render_send_template(spec,candidate['name'],candidate['offer'],candidate['handle'])
-    candidate['message'].setdefault('templateRevision',spec['revision'])
-    candidate['executionMode']='continuous-v1';candidate['continuousControlRevision']=control_value['revision']
-    candidate['continuousClaimKey']=digest([plan,candidate['creatorId'],candidate['pid'],candidate['source']['sourceId'],control_value['revision']])
-    with closing(sqlite3.connect((Path(root)/'var/it-conversations.sqlite').resolve().as_uri()+'?mode=ro',uri=True)) as idx:
-        rows=idx.execute("SELECT cid FROM conversation WHERE scope='it:acc6' AND oec=? AND kind=2",(candidate['oecId'],)).fetchall()
-    if len(rows)>1:raise CycleError('ambiguous_conversation')
-    candidate['conversationId']=rows[0][0] if rows else None
+          (plan,row['creatorId'],str(row['pid']),row['source']['sourceId'])).fetchone():return None
+        spec=next_approved_send_template(store,root,plan,row['creatorId'],'it')
+        if spec is None:return None
+        if not capacity_for_candidate(store,plan,row):capacity_blocked=True;return None
+        try:_local_card(root,store,plan,row)
+        except CycleError:return None
+        candidate=json.loads(encoded(row))
+        candidate['message']=render_send_template(spec,candidate['name'],candidate['offer'],candidate['handle'])
+        candidate['message'].setdefault('templateRevision',spec['revision'])
+        candidate['executionMode']='continuous-v1';candidate['continuousControlRevision']=control_value['revision']
+        candidate['continuousClaimKey']=digest([plan,candidate['creatorId'],candidate['pid'],candidate['source']['sourceId'],control_value['revision']])
+        with closing(sqlite3.connect((Path(root)/'var/it-conversations.sqlite').resolve().as_uri()+'?mode=ro',uri=True)) as idx:
+            rows=idx.execute("SELECT cid FROM conversation WHERE scope='it:acc6' AND oec=? AND kind=2",(candidate['oecId'],)).fetchall()
+        if len(rows)>1:return None
+        candidate['conversationId']=rows[0][0] if rows else None
+        return candidate
+    candidate=select(store,'it',plan,state,build)
+    if candidate is None and capacity_blocked:raise CycleError('new_contact_capacity_reached')
     return candidate,state
 
 
@@ -268,7 +281,10 @@ def execute_once(root,store,*,authenticated=None,authorized_now=None,reconcile_o
                 return {'state':'waiting_reconciliation','deliveryId':active['id'],
                         'stopReason':'conversation_result_unknown','platformWrites':0,'realSends':0}
     else:
-        candidate,pool_state=_candidate(root,store,plan,cfg)
+        try:candidate,pool_state=_candidate(root,store,plan,cfg)
+        except CycleError as error:
+            if str(error)=='new_contact_capacity_reached':return publish_runtime(store,plan,'waiting_capacity',stop_reason=str(error))
+            raise
         if candidate is None:return publish_runtime(store,plan,'paused',stop_reason='send_pool_empty')
         if authorized_now is not None:candidate['authorizedNowRequestId']=authorized_now
     from lib.second_live_runtime import _authenticated,live_runtime,sender_binding_sha256
@@ -282,6 +298,9 @@ def execute_once(root,store,*,authenticated=None,authorized_now=None,reconcile_o
         if active is None:
             card=_local_card(root,store,plan,candidate);candidate['nativeCard']=asdict(card)
             candidate['senderBindingHash']=sender_binding_sha256(auth)
+            fresh=control(store,root)
+            if fresh['stopRequested'] or not (fresh['runRequested'] or fresh['automaticEnabled']):raise CycleError('continuous_send_stopped')
+            if authorized_now is None and not window_state(fresh['window'],store.clock())['open']:raise CycleError('outside_send_window')
             delivery=Deliveries(store).prepare(plan,candidate);active={'id':delivery['id'],'creator_id':delivery['creator_id'],'pid':delivery['pid']}
         else:delivery=Deliveries(store).get(active['id'])
         deliveries=Deliveries(store)

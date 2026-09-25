@@ -38,3 +38,13 @@ test("A and B position evidence survives the Web decoder",()=>{
  assert.equal(value.pools.ready[1].sourceClass,"B");
  assert.equal(value.pools.ready[1].videoViews,12000);
 });
+
+
+test("allocation counts stay separate from delivery outcomes and validate their partition",()=>{
+ const base={schema:"bdhub.lead-pool.v3",available:true,counts,cooldown:{unlocked:259200,locked:259200},layers,pools:{},business:{sendable:2,waiting:4,inactive:2,total:8},reasons:{allocated_today:1},history:{sent:2,currentPositions:2}};
+ const allocation={policy:"outreach-ab-4-to-1-v1",scope:"post_cutover_allocations",day:"2026-09-25",position:4,nextPreferred:"B",arranged:{A:4,B:0},borrowed:{A:1,B:0},outcomes:{A:{confirmed:2,unknown:1,cancelled:1}}};
+ const decoded=validateLeadPool({...base,allocation});assert.equal(decoded.allocation.arranged.A,4);assert.equal(decoded.allocation.outcomes.A.confirmed,2);
+ for(const bad of [{...allocation,nextPreferred:"A"},{...allocation,arranged:{A:5,B:0}},{...allocation,borrowed:{A:5,B:0}}]){
+  assert.throws(()=>validateLeadPool({...base,allocation:bad}),/invalid_lead_pool/);
+ }
+});

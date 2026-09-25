@@ -1124,6 +1124,15 @@ CREATE TABLE IF NOT EXISTS identity_account_wait(
  next_at REAL NOT NULL,last_event TEXT NOT NULL,reason TEXT,updated REAL NOT NULL);
 """)
 
+SECOND_CYCLE_OUTREACH_SHARE = Migration(23, "outreach_ab_share_v1", """
+CREATE TABLE outreach_rotation(market TEXT PRIMARY KEY,position INTEGER NOT NULL CHECK(position BETWEEN 0 AND 4),updated REAL NOT NULL);
+CREATE TABLE outreach_allocation(delivery_id TEXT PRIMARY KEY REFERENCES cycle_delivery(id),market TEXT NOT NULL,day TEXT NOT NULL,
+ oec TEXT NOT NULL,creator_id TEXT NOT NULL,actual_class TEXT NOT NULL CHECK(actual_class IN ('A','B')),
+ preferred_class TEXT NOT NULL CHECK(preferred_class IN ('A','B')),position INTEGER NOT NULL,
+ borrowed_reason TEXT,allocated REAL NOT NULL,UNIQUE(market,day,oec));
+CREATE INDEX outreach_allocation_day ON outreach_allocation(market,day,actual_class);
+""")
+
 DATABASES = {
     "catalog-links": ("catalog-links.sqlite", (CATALOG_LINKS,)),
     "second-cycle": ("second-cycle.sqlite", (SECOND_CYCLE, SECOND_CYCLE_INDEXES,
@@ -1145,7 +1154,7 @@ DATABASES = {
                                                 SECOND_CYCLE_AGENT_CONVERSATION,
                                                 SECOND_CYCLE_INBOX_HISTORY,
                                                 SECOND_CYCLE_INBOX_HISTORY_DEFERRED,
-                                                SECOND_CYCLE_ROLLING_LEADS, SECOND_CYCLE_IDENTITY_RETRY)),
+                                                SECOND_CYCLE_ROLLING_LEADS, SECOND_CYCLE_IDENTITY_RETRY, SECOND_CYCLE_OUTREACH_SHARE)),
 }
 
 REGISTRY_SQL = """

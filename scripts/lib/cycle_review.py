@@ -255,15 +255,16 @@ def _position_rows(store, plan, offers, identity_reader, order):
     identity = {str(row['creator_id']): {'oec': row['oec']} for row in store.db.execute(
         'SELECT creator_id,oec FROM relationship WHERE plan_id=?', (plan,))}
     edges = {}
-    source_sql=("SELECT e.payload,json_extract(e.payload,'$.sourceHandle') AS handle FROM current_identity_source x "
-                "JOIN source_edge e ON e.plan_id=x.plan_id AND e.source_id=x.source_id "
-                "WHERE x.plan_id=? AND x.source_kind='kalodata_http'") if store.db.execute(
+    source_sql=("SELECT e.payload,x.source_handle AS handle FROM lead_query_head h "
+                "CROSS JOIN lead_query_selection q CROSS JOIN source_edge_index x CROSS JOIN source_edge e "
+                "WHERE h.plan_id=? AND q.query_id=h.query_id AND x.plan_id=h.plan_id AND x.source_id=q.source_id "
+                "AND e.plan_id=x.plan_id AND e.source_id=x.source_id AND x.source_kind='kalodata_http'") if store.db.execute(
                     "SELECT 1 FROM sqlite_master WHERE type='view' AND name='current_identity_source'").fetchone() else (
                 "SELECT e.payload,json_extract(e.payload,'$.sourceHandle') AS handle FROM source_edge e "
                 "WHERE e.plan_id=? AND json_extract(e.payload,'$.sourceKind')='kalodata_http'")
     for row in store.db.execute(source_sql,(plan,)):
         edge = json.loads(row['payload'])
-        edges.setdefault((str(row['handle']), str(edge['pid'])), row['payload'])
+        edges.setdefault((str(row['handle']).lower(), str(edge['pid'])), row['payload'])
     rows = []
     for creator_id, pid in order:
         who = identity.get(str(creator_id))
@@ -272,7 +273,7 @@ def _position_rows(store, plan, offers, identity_reader, order):
         person = identity_reader(creator_id, who['oec'])
         if not person or not person.get('handle'):
             continue
-        payload = edges.get((str(person['handle']), str(pid)))
+        payload = edges.get((str(person['handle']).lower(), str(pid)))
         if payload:
             edge = json.loads(payload);edge.setdefault('sourceClass','A');payload=encoded(edge)
             rows.append({'payload': payload, 'creator_id': creator_id, 'oec': who['oec'],

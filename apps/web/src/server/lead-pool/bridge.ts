@@ -10,12 +10,13 @@ export type LeadPoolCounts={leads:number;merged:number;unresolved:number;queued:
 export type LeadPosition={creatorId:string;handle:string;pid:string;rank:number|null;units:number|null;
  sourceClass:"A"|"B";gmv:string|null;videoViews:number|null;videoId:string|null;videoReleasedAt:string|null;
  unlocked:boolean;sentAt:number|null;readyAt:number|null;layer:string;caseUpdatedAt?:number|null};
+export type OutreachAllocation={day:string;position:number;nextPreferred:"A"|"B";arranged:{A:number;B:number};borrowed:{A:number;B:number};outcomes:Record<string,Record<string,number>>};
 export type LeadPoolState={schema:"bdhub.lead-pool.v3";market:string;available:boolean;now?:number;counts:LeadPoolCounts;
  cooldown:{unlocked:number;locked:number};layers:Record<string,number>;pools:Record<string,LeadPosition[]>;
  business:{sendable:number;waiting:number;inactive:number;total:number};reasons:Record<string,number>;
- history:{sent:number;currentPositions:number}};
+ history:{sent:number;currentPositions:number};allocation?:OutreachAllocation|null};
 
-const LAYERS=new Set(["ready","queued","cooling","awaiting_reply","technical_isolated","excluded","product_inactive","sent"]);
+const LAYERS=new Set(["ready","queued","cooling","awaiting_reply","technical_isolated","allocated_today","excluded","product_inactive","sent"]);
 
 function count(value:unknown,name:string):number{
  if(typeof value!=="number"||!Number.isSafeInteger(value)||value<0)throw Error('invalid_lead_pool');
@@ -71,7 +72,7 @@ export function validateLeadPool(value:unknown,expectedMarket?:string):LeadPoolS
  return {schema:"bdhub.lead-pool.v3",market,available:true,now:typeof v.now==="number"?v.now:undefined,counts:counts as unknown as LeadPoolCounts,
   cooldown:{unlocked:count(cooldown?.unlocked,"unlocked"),locked:count(cooldown?.locked,"locked")},
   layers:(v.layers as Record<string,number>)??{},pools,business:projected,
-  reasons:countsRecord(v.reasons),history:{sent,currentPositions}};
+  reasons:countsRecord(v.reasons),history:{sent,currentPositions},allocation:validateAllocation(v.allocation)};
 }
 
 function countsRecord(raw:unknown):Record<string,number>{
@@ -96,3 +97,26 @@ function run(market:string):Promise<LeadPoolState>{
 }
 
 export function readLeadPool(market:string):Promise<LeadPoolState>{return run(market);}
+
+
+function validateAllocation(raw:unknown):OutreachAllocation|null{
+ if(raw==null)return null;
+ if(typeof raw!=="object"||Array.isArray(raw))throw Error('invalid_lead_pool');
+ const a=raw as Record<string,unknown>;
+ if(a.policy!=="outreach-ab-4-to-1-v1"||a.scope!=="post_cutover_allocations"||typeof a.day!=="string"||!/^\d{4}-\d{2}-\d{2}$/.test(a.day))throw Error('invalid_lead_pool');
+ const position=count(a.position,"position");
+ if(position>4||a.nextPreferred!==(position===4?"B":"A"))throw Error('invalid_lead_pool');
+ const pair=(v:unknown)=>{const r=v as Record<string,unknown>;return {A:count(r?.A,"A"),B:count(r?.B,"B")};};
+ const arranged=pair(a.arranged),borrowed=pair(a.borrowed),outcomes:Record<string,Record<string,number>>={};
+ const statuses=new Set(["ready","running","unknown","quarantined_unknown","confirmed","partial_delivery","rejected","failed_known","cancelled"]);
+ for(const kind of ["A","B"] as const){
+  const rows=(a.outcomes as Record<string,unknown>)?.[kind]??{};
+  if(typeof rows!=="object"||rows===null||Array.isArray(rows))throw Error('invalid_lead_pool');
+  outcomes[kind]={};let total=0;
+  for(const [key,value] of Object.entries(rows)){
+   if(!statuses.has(key))throw Error('invalid_lead_pool');const n=count(value,key);outcomes[kind][key]=n;total+=n;
+  }
+  if(total!==arranged[kind]||borrowed[kind]>arranged[kind])throw Error('invalid_lead_pool');
+ }
+ return {day:a.day,position,nextPreferred:position===4?"B":"A",arranged,borrowed,outcomes};
+}

@@ -32,7 +32,7 @@ RESOLVED_PENDING = frozenset({'resolved_by_human','suppressed_no_reply','resolve
 _ELIGIBLE_CACHE = {}
 # ``ready`` holds one position per creator -- the slot that would be sent next. A creator's other
 # positions stay in ``queued``: they are not lost, they simply are not the next thing to do.
-LAYER_ORDER = ('ready', 'queued', 'cooling', 'awaiting_reply', 'technical_isolated', 'excluded', 'product_inactive', 'sent')
+LAYER_ORDER = ('ready', 'queued', 'cooling', 'awaiting_reply', 'technical_isolated', 'allocated_today', 'excluded', 'product_inactive', 'sent')
 
 
 def root_of(module_file=__file__):
@@ -89,6 +89,15 @@ def _money(value,currency):
     try:return Decimal(str(value))
     except InvalidOperation:return None
 
+
+def lead_strength(row):
+    if row.get('sourceClass','A')=='A':
+        gmv=_money(row.get('gmv'),'XXX')
+        return (0,0 if gmv is not None else 1,-(gmv or Decimal(0)),-(row.get('units') or 0),
+                row.get('rank') if row.get('rank') is not None else 10**9,row['pid'],row['creatorId'])
+    try:released=date.fromisoformat(row.get('videoReleasedAt')).toordinal()
+    except (TypeError,ValueError):released=0
+    return (1,-(row.get('videoViews') or 0),-released,row['pid'],row['creatorId'])
 
 def _video_owner(root,market='it'):
     path=Path(root)/'var/creator-identities.sqlite'
@@ -198,6 +207,8 @@ def _build(conn, now, limit, eligible_pids=None,root=None,market='it'):
 
     from lib.outreach_policy import isolated_creators
     isolated=isolated_creators(conn,plan_id)
+    from lib.outreach_allocation import allocated_creators,summary as allocation_summary
+    allocated=allocated_creators(conn,plan_id,market,now)
     layers = {name: [] for name in LAYER_ORDER}
     unique_creators = set()
     for row in positions:
@@ -227,6 +238,8 @@ def _build(conn, now, limit, eligible_pids=None,root=None,market='it'):
             layer = 'technical_isolated'
         elif blocked:
             layer = 'awaiting_reply'
+        elif creator in allocated and (ready_at is None or now>=ready_at):
+            layer = 'allocated_today'
         elif ready_at is None or now >= ready_at:
             layer = 'ready'
         else:
@@ -243,14 +256,7 @@ def _build(conn, now, limit, eligible_pids=None,root=None,market='it'):
 
     # Ready positions: strongest lead first, one slot per creator so a single creator cannot fill
     # the whole page while others never surface. Cooling follows the clock, not the lead strength.
-    def strength(row):
-        if row['sourceClass']=='A':
-            gmv=_money(row['gmv'],currency)
-            return (0,0 if gmv is not None else 1,-(gmv or Decimal(0)),-(row['units'] or 0),
-                    row['rank'] if row['rank'] is not None else 10**9,row['pid'],row['creatorId'])
-        try:released=date.fromisoformat(row['videoReleasedAt']).toordinal()
-        except (TypeError,ValueError):released=0
-        return (1,-(row['videoViews'] or 0),-released,row['pid'],row['creatorId'])
+    strength=lead_strength
     layers['ready'].sort(key=strength)
     # One slot per creator: sending the best lead first, the rest wait their turn in the pool.
     seen = set()
@@ -295,7 +301,7 @@ def _build(conn, now, limit, eligible_pids=None,root=None,market='it'):
               'excluded': len(layers['excluded']),
               'creatorsWithRelationship': len(creators)}
     business={'sendable':len(layers['ready']),
-              'waiting':len(layers['queued'])+len(layers['cooling'])+len(layers['awaiting_reply']),
+              'waiting':len(layers['queued'])+len(layers['cooling'])+len(layers['awaiting_reply'])+len(layers['allocated_today']),
               'inactive':len(layers['excluded'])+len(layers['product_inactive'])+len(layers['technical_isolated'])}
     business['total']=business['sendable']+business['waiting']+business['inactive']
     return {'schema':'bdhub.lead-pool.v3','available': True, 'now': now, 'counts': counts,
@@ -303,4 +309,4 @@ def _build(conn, now, limit, eligible_pids=None,root=None,market='it'):
             'layers': {name: len(rows) for name, rows in layers.items()},
             'pools': {name: rows[:limit] for name, rows in layers.items()},
             'business':business,'reasons':{name:len(rows) for name,rows in layers.items() if name not in ('ready','sent')},
-            'history':{'sent':sent,'currentPositions':current_sent}}
+            'history':{'sent':sent,'currentPositions':current_sent},'allocation':allocation_summary(conn,market,now)}

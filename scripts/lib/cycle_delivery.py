@@ -14,9 +14,21 @@ CREATE_REFUSED_CODE=201
 CARD_ABSENCE_SPAN_SECONDS=300
 BEIJING=timezone(timedelta(hours=8))
 def platform_rejections_today(store,plan):
+ if not store.db.execute("SELECT 1 FROM sqlite_master WHERE name='cycle_platform_signal'").fetchone():return 0
  day=datetime.fromtimestamp(store.clock(),BEIJING).replace(hour=0,minute=0,second=0,microsecond=0).timestamp()
  return store.db.execute("SELECT count(*) FROM cycle_platform_signal s JOIN cycle_delivery d ON d.id=s.delivery_id "
                          "WHERE d.plan_id=? AND s.outcome='rejected' AND s.at>=?",(plan,day)).fetchone()[0]
+def capacity_for_candidate(store,plan,c):
+ d={'plan_id':plan,'creator_id':c['creatorId'],'oec':c['oecId']};r=store.db.execute('SELECT unlocked FROM relationship WHERE plan_id=? AND creator_id=?',(d['plan_id'],d['creator_id'])).fetchone()
+ if not r:return False
+ if r[0]:return True
+ old=store.db.execute('SELECT reserved FROM cycle_contact_reservation WHERE plan_id=? AND oec=?',(d['plan_id'],d['oec'])).fetchone()
+ if old and old[0]>store.clock()-86400:return True
+ if NEW_CONTACT_LIMIT is not None:
+  count=store.db.execute("SELECT count(*) FROM (SELECT oec FROM cycle_contact_reservation WHERE plan_id=? AND reserved>? UNION SELECT d.oec FROM cycle_delivery d JOIN cycle_delivery_part p ON p.delivery_id=d.id WHERE d.plan_id=? AND p.kind='card' AND p.started>?)",(d['plan_id'],store.clock()-86400,d['plan_id'],store.clock()-86400)).fetchone()[0]
+  if count>=NEW_CONTACT_LIMIT:return False
+ return platform_rejections_today(store,d['plan_id'])<PLATFORM_REJECTION_HOLD
+
 SCHEMA='''CREATE TABLE IF NOT EXISTS cycle_platform_signal(id INTEGER PRIMARY KEY AUTOINCREMENT,delivery_id TEXT NOT NULL,at REAL NOT NULL,outcome TEXT,code TEXT,native_status INTEGER,check_code INTEGER,check_message TEXT,response_ref TEXT);
 CREATE TABLE IF NOT EXISTS cycle_conversation_intent(delivery_id TEXT PRIMARY KEY,request_ref TEXT NOT NULL UNIQUE,state TEXT NOT NULL,cid TEXT,receipt TEXT);
 CREATE TABLE IF NOT EXISTS cycle_contact_reservation(plan_id TEXT NOT NULL,oec TEXT NOT NULL,reserved REAL NOT NULL,PRIMARY KEY(plan_id,oec));
@@ -43,6 +55,10 @@ class Deliveries:
    self._eligible(plan,candidate)
    self.s.db.execute('INSERT INTO cycle_delivery VALUES(?,?,?,?,?,?,?,?,?,?)',(id,plan,candidate['creatorId'],candidate['oecId'],candidate['pid'],source,encoded(candidate),self.s.clock(),self.s.clock()+1800,'ready'))
    for kind in ('card','text'):self.s.db.execute('INSERT INTO cycle_delivery_part(delivery_id,kind,request_ref) VALUES(?,?,?)',(id,kind,str(uuid.uuid4())))
+   if candidate.get('sendAllocation'):
+    if not self.candidate_capacity_available(plan,candidate):raise CycleError('new_contact_capacity_reached')
+    from lib.outreach_allocation import claim
+    claim(self.s,plan,candidate,id)
   return self.get(id)
  def _eligible(self,plan,c,*,current_delivery_id=None):
   from lib.outreach_policy import marketing_isolated
@@ -222,15 +238,9 @@ class Deliveries:
    if old and old[0]>self.s.clock()-86400:return
    self.s.db.execute('INSERT INTO cycle_contact_reservation VALUES(?,?,?) ON CONFLICT(plan_id,oec) DO UPDATE SET reserved=excluded.reserved',(d['plan_id'],d['oec'],self.s.clock()))
  def contact_capacity_available(self,id):
-  d=self.get(id);r=self.s.db.execute('SELECT unlocked FROM relationship WHERE plan_id=? AND creator_id=?',(d['plan_id'],d['creator_id'])).fetchone()
-  if not r:return False
-  if r[0]:return True
-  old=self.s.db.execute('SELECT reserved FROM cycle_contact_reservation WHERE plan_id=? AND oec=?',(d['plan_id'],d['oec'])).fetchone()
-  if old and old[0]>self.s.clock()-86400:return True
-  if NEW_CONTACT_LIMIT is not None:
-   count=self.s.db.execute("SELECT count(*) FROM (SELECT oec FROM cycle_contact_reservation WHERE plan_id=? AND reserved>? UNION SELECT d.oec FROM cycle_delivery d JOIN cycle_delivery_part p ON p.delivery_id=d.id WHERE d.plan_id=? AND p.kind='card' AND p.started>?)",(d['plan_id'],self.s.clock()-86400,d['plan_id'],self.s.clock()-86400)).fetchone()[0]
-   if count>=NEW_CONTACT_LIMIT:return False
-  return platform_rejections_today(self.s,d['plan_id'])<PLATFORM_REJECTION_HOLD
+  d=self.get(id);return self.candidate_capacity_available(d['plan_id'],{'creatorId':d['creator_id'],'oecId':d['oec']})
+ def candidate_capacity_available(self,plan,c):
+  return capacity_for_candidate(self.s,plan,c)
  def conversation_intent(self,id):
   row=self.s.db.execute('SELECT * FROM cycle_conversation_intent WHERE delivery_id=?',(id,)).fetchone()
   return dict(row) if row else None

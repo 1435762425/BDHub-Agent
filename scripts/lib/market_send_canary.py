@@ -117,18 +117,22 @@ def _preflight_conversation(store,session,plan,candidate,conversation,delivery_i
 
 
 def _candidate(root,market,store,plan,initial,require_new_conversation=True):
+ from lib.outreach_allocation import select
+ from lib.cycle_delivery import capacity_for_candidate
  state=pool(root,market=market,now=store.clock(),limit=None,cache_eligible_seconds=30)
  conversations={row['oecId']:row for row in initial.get('conversations',[])}
  offers_by_pid={}
  for _,offer in store._offers(plan):offers_by_pid.setdefault(str(offer['pid']),[]).append(offer)
  with closing(sqlite3.connect((Path(root)/'var/creator-identities.sqlite').resolve().as_uri()+'?mode=ro',uri=True)) as identities,closing(sqlite3.connect((Path(root)/'var/catalog-links.sqlite').resolve().as_uri()+'?mode=ro',uri=True)) as links:
   identities.row_factory=sqlite3.Row;links.row_factory=sqlite3.Row
-  for slot in (state.get('pools') or {}).get('ready',[]):
+  capacity_blocked=False
+  def build(slot):
+   nonlocal capacity_blocked
    relation=store.db.execute('SELECT * FROM relationship WHERE plan_id=? AND creator_id=?',(plan,slot['creatorId'])).fetchone()
-   if not relation or require_new_conversation and relation['oec'] in conversations:continue
-   if store.db.execute('SELECT 1 FROM cycle_delivery WHERE plan_id=? AND creator_id=? AND pid=?',(plan,slot['creatorId'],str(slot['pid']))).fetchone():continue
+   if not relation or require_new_conversation and relation['oec'] in conversations:return None
+   if store.db.execute('SELECT 1 FROM cycle_delivery WHERE plan_id=? AND creator_id=? AND pid=?',(plan,slot['creatorId'],str(slot['pid']))).fetchone():return None
    person=identities.execute("SELECT current_handle FROM creator_identity WHERE market=? AND creator_id=? AND oec_id=? AND handle_conflict=0",(market,slot['creatorId'],relation['oec'])).fetchone()
-   if not person:continue
+   if not person:return None
    current=sorted((offer for offer in offers_by_pid.get(str(slot['pid']),[]) if assess_offer(offer,store.clock())['eligible']),
                   key=lambda offer:(0 if offer.get('catalogSource')=='selected' else 1,-float(offer.get('creatorPercent') or 0),str(offer.get('campaignId') or '')))
    for offer in current:
@@ -142,12 +146,20 @@ def _candidate(root,market,store,plan,initial,require_new_conversation=True):
     message=render_send_template(template,name,offer,person[0],market)
     source=store.db.execute("SELECT e.payload FROM current_identity_source x JOIN source_edge e ON e.plan_id=x.plan_id AND e.source_id=x.source_id WHERE x.plan_id=? AND x.pid=? AND lower(x.source_handle)=lower(?) AND x.source_kind=? ORDER BY x.source_rank LIMIT 1",(plan,offer['pid'],person[0],'kalodata_video' if slot.get('sourceClass')=='B' else 'kalodata_http')).fetchone()
     if not source:continue
-    return {'creatorId':slot['creatorId'],'oecId':relation['oec'],'handle':person[0],'pid':str(offer['pid']),
-     'source':json.loads(source[0]),'offer':offer,'offerFingerprint':digest(offer),'name':name,'card':card,
+    source_payload=json.loads(source[0]);source_payload['sourceClass']=slot.get('sourceClass','A')
+    candidate={'creatorId':slot['creatorId'],'oecId':relation['oec'],'handle':person[0],'pid':str(offer['pid']),
+     'source':source_payload,'offer':offer,'offerFingerprint':digest(offer),'name':name,'card':card,
      'message':message,'planRevision':store._plan(plan)['revision'],'controlRevision':relation['revision'],
      'executionMode':'market-canary-v1' if require_new_conversation else 'market-continuous-v1','market':market,
      'conversationId':(conversations.get(relation['oec']) or {}).get('conversationId')}
- return None
+    if not capacity_for_candidate(store,plan,candidate):capacity_blocked=True;return None
+    try:_binding_current(root,market,candidate)
+    except CycleError:continue
+    return candidate
+   return None
+  candidate=select(store,market,plan,state,build)
+  if candidate is None and capacity_blocked:raise CycleError('new_contact_capacity_reached')
+  return candidate
 
 
 from lib.delivery_reconciliation import serialized, reconcile as reconcile_delivery
@@ -199,6 +211,7 @@ def run(root,market,request_id,*,canary=True,page_control=False,reconcile_only=F
     if not candidate:raise CycleError('market_send_candidate_missing')
     _binding_current(root,market,candidate)
     candidate['senderAccount']=communications;candidate['senderImId']=runtime['auth'].im_id
+    _dispatch_allowed(store,market,canary=canary,page_control=page_control)
     delivery=Deliveries(store).prepare(plan,candidate);did=delivery['id'];candidate=delivery['snapshot']
    checkpoint_time('candidate')
    if not recovering_only:_dispatch_allowed(store,market,canary=canary,page_control=page_control)

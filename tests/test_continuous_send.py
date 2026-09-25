@@ -85,7 +85,9 @@ class ContinuousSendTests(unittest.TestCase):
             mutate_control(self.store,self.root,action='save',request_id='continuous-save-0001',expected_revision=1,
               changes={'automaticEnabled':False})
 
-    def test_claim_snapshot_key_is_stable_and_not_a_bulk_candidate(self):
+    @patch('lib.continuous_send._local_card',return_value=None)
+    @patch('lib.cycle_delivery.capacity_for_candidate',return_value=True)
+    def test_claim_snapshot_key_is_stable_and_not_a_bulk_candidate(self,*_):
         original_pool,original_choose=continuous.pool,continuous.choose_candidates
         try:
             continuous.pool=lambda *_args,**_kwargs:{'available':True,'layers':{'ready':1},'pools':{'ready':[{'creatorId':'c1','pid':'1729480061238089885'}]}}
@@ -100,7 +102,9 @@ class ContinuousSendTests(unittest.TestCase):
             self.assertEqual(self.store.db.execute('SELECT count(*) FROM cycle_bulk_candidate').fetchone()[0],0)
         finally:continuous.pool,continuous.choose_candidates=original_pool,original_choose
 
-    def test_candidate_skips_every_existing_immutable_delivery(self):
+    @patch('lib.continuous_send._local_card',return_value=None)
+    @patch('lib.cycle_delivery.capacity_for_candidate',return_value=True)
+    def test_candidate_skips_every_existing_immutable_delivery(self,*_):
         original_pool,original_choose=continuous.pool,continuous.choose_candidates
         try:
             first=candidate('c1','1729480061238089885');first['oecId']='1c1'
