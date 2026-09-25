@@ -1,11 +1,19 @@
 # BDHub-Agent 当前交接
 
-更新时间：2026-09-26 00:59（Asia/Shanghai）。本页只记录运行快照；规则见 [PROJECT](../PROJECT.md)，实现见 [TECHNICAL](../TECHNICAL.md)，后续方向见[项目审计与清理](../implementation/project-audit-20260924.md)。更早流水见[历史交接](../archive/handoff/codex-takeover-history-20260923.md)。
+更新时间：2026-09-26 01:08（Asia/Shanghai）。本页只记录运行快照；规则见 [PROJECT](../PROJECT.md)，实现见 [TECHNICAL](../TECHNICAL.md)，后续方向见[项目审计与清理](../implementation/project-audit-20260924.md)。更早流水见[历史交接](../archive/handoff/codex-takeover-history-20260923.md)。
 
 
 
 
 
+
+## 2026-09-26 凌晨：用户授权四市场 AI 全量，已开启并实际回复
+
+- 用户认可两轮模拟，明确允许确认不与二发冲突后全部开启；经页面同一 resume-full API 为 IT/BR/MY/UK 保存 agent-v2-full-run，四市场均 enabled=true、rolloutStage=full。此前“等待用户开全量”已不再是当前状态。详见[开启记录](../implementation/agent-full-activation-20260926.md)。
+- 实际二发均北京时间16:30–24:00；AI 为 IT 00:30–03:00、BR 00:30–08:00、MY 09:00–16:00、UK 00:30–04:00，全部满足30分钟缓冲。开启前无未结回复/在途二发门禁冲突，同账号共用写锁。窗口、指南、设置版本和二发控制未改，worker 未重启。
+- 01:07 快照：本次授权后新回复确认 IT11/BR8/UK4，MY窗外等待09:00；同期新二发投递0、四 sender 等待窗口。UK 短暂 ProfileBusyError 后已继续；BR 也遇到身份任务账号占用、原 ready 保留后自动重试。不能把这种账号等待当作二发同时发送。
+- 已明确说明现有异常边界：AI 回复结果未知仍可能使同市场二发等待核验；本次没有实施 §9.18 的有限核验隔离。所有原 unknown 保护保留，没有重发或改判结果。
+- 证据 `var/releases/agent-full-run-20260926/activation.json` 含原设置、窗口检查、四次 API 回执/授权事件与实际送达计数。此次是真实启用后的业务回复，非模拟；没有修改代码、进程或旧项目。
 
 ## 2026-09-26 凌晨：用户认可首轮 AI 质量，第二轮 16 组对照已交付
 
