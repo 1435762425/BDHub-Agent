@@ -12,7 +12,7 @@
 - 耗尽只隔离主动营销，保留原组件状态，不创建技术人工案件、不改变关系/拒联/历史商业案件。新执行锁覆盖原请求及收口；迟到确认不重开投递，核验确认卡片与关闭未提交文字同事务；发送池与状态接口独立展示技术隔离。
 - 全量 Python 1,384 项通过，后增两项账号与四市场只读合同测试、相关 12 项通过；Node 178 项、build/typecheck 通过。主库一致备份/quick_check 和真实 UK 意图副本演练通过，无新 schema 迁移；保留既有测试 ResourceWarning。
 - scheduler 与三条原运行 sender 安全退出后重载（IT 等当前投递收口），四个 inbox 和四个 Agent PID 保持。Web 首次提交未正常监听，重新提交恢复；四市场发送池 GET 200。所有控制、授权和指南摘要一致，四市场 AI 仍 pilot_complete_waiting_resume，MY 主链仍关闭。
-- UK 原 unknown `delivery-c9a59543a01769ed361dfa2bcd54cc10` 经原 acc11 两轮各 101 页/1,000 会话，只读预算耗尽后自动隔离；不把列表缺失或匹配当原请求回执。原请求/快照/卡文组件摘要不变，case 数 0，专项平台写入 0。新 sender 已继续领取其他达人。
+- UK 原 unknown `delivery-c9a59543a01769ed361dfa2bcd54cc10` 经原 acc11 两轮各 101 页/1,000 会话，只读预算耗尽后自动隔离；不把列表缺失或匹配当原请求回执。原请求/快照/卡文组件摘要不变，case 数 0，专项平台写入 0。截至约 20:13，新 sender 已向其他 9 位达人完成卡＋文字并回读确认（UK confirmed 1,553→1,562），原未知意图没有重发。
 - 证据 `var/releases/delivery-isolation-20260925T120210Z/release.json`，备份 `before.sqlite`，报告 [二发未知隔离](../implementation/delivery-isolation-20260925.md)。回退旧 sender 必须保留新营销隔离门禁或先停发送，旧代码依赖 human 关系会遗漏新隔离；不得回灌旧库覆盖新增收信。
 - 后续优先 §9.8：market×规范化 handle 持久身份技术预算，区分账号/共享运行时故障，不让成功子集等整批；然后 80/20 发送、原邀请遇入站的完成例外、AI 新上下文/队列规则。
 
