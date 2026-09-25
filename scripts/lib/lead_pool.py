@@ -150,7 +150,9 @@ def _build(conn, now, limit, eligible_pids=None,root=None,market='it'):
     video_rows=_rows(conn,'SELECT * FROM video_lead_current') if market=='it' and conn.execute(
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name='video_lead_current'").fetchone() else []
     video_owner=_video_owner(root,market) if root else {};video_unresolved=0
+    from lib.video_window import current as video_current
     for row in video_rows:
+        if not video_current(row['released_at'],now):continue
         creator=video_owner.get(str(row['handle']).lower())
         if not creator:video_unresolved+=1;continue
         positions.append({'creator_id':creator,'handle':row['handle'],'pid':row['pid'],'rank':None,'units':0,

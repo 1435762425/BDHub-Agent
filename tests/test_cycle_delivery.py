@@ -16,6 +16,15 @@ class DeliveryTests(unittest.TestCase):
  def tearDown(self):self.s.close();self.t.cleanup()
  def begin(self,kind):return self.d.begin(self.id,kind,authorized_snapshot_hash=digest(self.c),recipient_verified=True,allowance_verified=True)
  def proof(self,kind):return {'status':'confirmed','requestRef':next(p['request_ref'] for p in self.d.get(self.id)['parts'] if p['kind']==kind),'oecId':self.c['oecId'],'messageId':'10','evidenceRef':'verified','kind':kind}
+ def test_b_source_expiry_is_rechecked_before_platform_write(self):
+  from lib.video_window import bounds
+  self.d.cancel_unsubmitted(self.id,'test_replaced')
+  candidate={**self.c,'source':{'sourceId':'video-source-expiry','sourceClass':'B','videoReleasedAt':str(bounds(self.now)[0])}}
+  did=self.d.prepare(self.p,candidate)['id']
+  self.now+=86400
+  with self.assertRaisesRegex(CycleError,'video_lead_expired'):
+   self.d.begin(did,'card',authorized_snapshot_hash=digest(candidate),recipient_verified=True,allowance_verified=True)
+  self.assertEqual(self.d.get(did)['parts'][0]['state'],'ready')
  def test_order_receipt_is_not_delivery_and_finished_not_repeated(self):
   with self.assertRaisesRegex(CycleError,'card_not_confirmed'):self.begin('text')
   ref=self.begin('card')['requestRef'];self.d.receipt(self.id,'card',{'requestRef':ref})

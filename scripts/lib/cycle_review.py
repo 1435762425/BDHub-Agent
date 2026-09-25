@@ -281,7 +281,8 @@ def _position_rows(store, plan, offers, identity_reader, order):
         video = store.db.execute("SELECT * FROM video_lead_current WHERE pid=? AND lower(handle)=lower(?) "
                                  "ORDER BY views DESC,released_at DESC,video_id LIMIT 1",
                                  (str(pid),str(person['handle']))).fetchone()
-        if not video:
+        from lib.video_window import current as video_current
+        if not video or not video_current(video['released_at'],store.clock()):
             continue
         edge={'sourceId':f"video:{video['run_id']}:{video['video_id']}",'pid':str(pid),
               'sourceKind':'kalodata_video','sourceClass':'B','sourceHandle':str(video['handle']),

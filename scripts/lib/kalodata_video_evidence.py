@@ -5,7 +5,7 @@ qualified video is therefore resolved through the fixed video-detail endpoint be
 evidence.  This module never sends messages or changes send-pool eligibility.
 """
 from collections import defaultdict
-from contextlib import closing
+from contextlib import closing, nullcontext
 from datetime import date
 import json
 from pathlib import Path
@@ -169,7 +169,7 @@ def collect(pid, window_start, window_end, requester, *, min_views=1000, clock=t
             'evidence':evidence, 'errors':errors, 'platformWrites':0, 'realSends':0}
 
 
-def persist(store, report):
+def persist(store, report, *, in_transaction=False):
     if report.get('schema') != 'bdhub.kalodata-video-evidence.v1':
         raise CycleError('kalodata_video_report_invalid')
     required = {'kalodata_video_run','kalodata_video_evidence','kalodata_video_head'}
@@ -179,7 +179,8 @@ def persist(store, report):
     paging={'sort_field','max_pages','pages_read','selected_videos','coverage'}
     if found != required or not paging<=columns:
         raise CycleError('second_cycle_schema_migration_required')
-    with store.tx():
+    if in_transaction and not store.db.in_transaction:raise CycleError('video_publish_transaction_required')
+    with nullcontext() if in_transaction else store.tx():
         prior = store.db.execute('SELECT * FROM kalodata_video_run WHERE run_id=?',(report['runId'],)).fetchone()
         frozen=(report['pid'],report['windowStart'],report['windowEnd'],report['minViews'],report['maxVideos'],
                 report['listFingerprint'],report['state'],report['rowsReceived'],report['qualifyingVideos'],

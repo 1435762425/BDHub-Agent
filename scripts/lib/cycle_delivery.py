@@ -48,6 +48,8 @@ class Deliveries:
   p=self.s._plan(plan);r=self.s.db.execute('SELECT * FROM relationship WHERE plan_id=? AND creator_id=?',(plan,c['creatorId'])).fetchone()
   if p['state']!='active' or p['revision']!=c['planRevision']:raise CycleError('plan_changed')
   if not r or r['oec']!=c['oecId'] or r['mode']!='auto' or r['rejected'] or r['inbox_until'] or r['revision']!=c['controlRevision']:raise CycleError('relationship_changed')
+  from lib.video_window import current as video_current
+  if c.get('source',{}).get('sourceClass')=='B' and not video_current(c['source'].get('videoReleasedAt'),self.s.clock()):raise CycleError('video_lead_expired')
   if not assess_offer(c['offer'],self.s.clock())['eligible']:raise CycleError('offer_not_eligible')
   if self.s.db.execute("SELECT 1 FROM sqlite_master WHERE name='cycle_card_creation'").fetchone() and self.s.db.execute("SELECT 1 FROM cycle_card_creation WHERE plan_id=? AND offer_json=? AND state='invalidated'",(plan,encoded(c['offer']))).fetchone():raise CycleError('offer_currently_ineligible')
   current={o['offerKey']:o for _,o in self.s._offers(plan)}

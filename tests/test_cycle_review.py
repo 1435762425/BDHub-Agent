@@ -53,7 +53,7 @@ class ReviewTests(unittest.TestCase):
    generation_id TEXT,pid TEXT,kalodata_creator_id TEXT,handle TEXT,run_id TEXT,video_id TEXT,
    views INTEGER,released_at TEXT,video_sale INTEGER,observed_at REAL)''')
   self.s.db.execute('INSERT INTO video_lead_current VALUES(?,?,?,?,?,?,?,?,?,?)',
-                    ('g','2','k1','video.handle','run-1','video-1',12000,'2026-09-18',0,self.now))
+                    ('g','2','k1','video.handle','run-1','video-1',12000,__import__('lib.video_window',fromlist=['bounds']).bounds(self.now)[1].isoformat(),0,self.now))
   rows=_position_rows(self.s,self.p,{},lambda creator,oec:{'handle':'video.handle'},[('c1','2')])
   self.assertEqual(len(rows),1)
   source=json.loads(rows[0]['payload'])

@@ -35,7 +35,7 @@ PREFLIGHT_TERMINAL = frozenset({
     'conversation_needs_content_review','unknown_message_needs_review','history_incomplete',
     'message_time_missing','recent_contact_needs_allowance_review','conversation_index_conflict',
     'relationship_changed','offer_not_eligible','offer_currently_ineligible','offer_changed',
-    'marketing_cooldown','delivery_expired','card_binding_changed','recipient_message_limit',
+    'marketing_cooldown','video_lead_expired','delivery_expired','card_binding_changed','recipient_message_limit',
 })
 ACTIVE_PENDING_STATES = frozenset({
     'awaiting_classification','awaiting_content','review_partial','template_ready','reviewed_ready',

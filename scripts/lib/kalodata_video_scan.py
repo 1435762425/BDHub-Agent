@@ -36,8 +36,7 @@ def initialize(root,scope,window_start,window_end,*,min_views=1000,clock=time.ti
                     (window_start,window_end,min_views,fingerprint,len(normalized)):
                 raise CycleError('video_scan_generation_conflict')
             return {'generationId':generation,'scope':old['scope_count'],'cached':True}
-        store.db.execute('DELETE FROM video_lead_current')
-        store.db.execute('DELETE FROM kalodata_video_head')
+        # A new scan is not a new published result. Keep each previous complete PID head.
         store.db.execute('INSERT INTO kalodata_video_generation VALUES(?,?,?,?,?,?,?,?,?,?)',
             (generation,window_start,window_end,min_views,'queued',fingerprint,len(normalized),stamp,stamp,None))
         store.db.executemany('INSERT INTO kalodata_video_scan_job VALUES(?,?,?,?,?,?,?,?,?,?)',
@@ -166,12 +165,12 @@ def _publish_current(store,report,generation_id):
         if released is None:raise CycleError('kalodata_video_release_date_missing')
         choice=(row['views'],released.isoformat(),row['videoId'])
         if key not in grouped or choice>grouped[key][0]:grouped[key]=(choice,row,released.isoformat())
-    with store.tx():
-        store.db.execute('DELETE FROM video_lead_current WHERE pid=?',(report['pid'],))
-        for creator_id,(_,row,released) in grouped.items():
-            store.db.execute('INSERT INTO video_lead_current VALUES(?,?,?,?,?,?,?,?,?,?)',
-              (generation_id,report['pid'],creator_id,row['handle'],report['runId'],row['videoId'],row['views'],released,
-               row['sale'],report['observedAt']))
+    if not store.db.in_transaction:raise CycleError('video_publish_transaction_required')
+    store.db.execute('DELETE FROM video_lead_current WHERE pid=?',(report['pid'],))
+    for creator_id,(_,row,released) in grouped.items():
+        store.db.execute('INSERT INTO video_lead_current VALUES(?,?,?,?,?,?,?,?,?,?)',
+          (generation_id,report['pid'],creator_id,row['handle'],report['runId'],row['videoId'],row['views'],released,
+           row['sale'],report['observedAt']))
 
 
 def scan_one(root,generation_id,requester,*,clock=time.time):
@@ -215,9 +214,22 @@ def scan_one(root,generation_id,requester,*,clock=time.time):
             _save_detail(store,generation_id,pid,row,detail,clock(),network=True)
         job=store.db.execute('SELECT * FROM kalodata_video_scan_job WHERE generation_id=? AND pid=?',
                              (generation_id,pid)).fetchone()
-        report=_report(store,generation,job,clock);persist(store,report)
-        _publish_current(store,report,generation_id)
+        report=_report(store,generation,job,clock)
+        # Evidence/head/current/job completion are one publication; readers see old or new, never half.
         with store.tx():
+            newest=store.db.execute("""SELECT g.generation_id,g.window_end,g.created_at
+                FROM kalodata_video_generation g CROSS JOIN kalodata_video_scan_job j
+                WHERE j.generation_id=g.generation_id AND j.pid=? AND j.state='completed' ORDER BY g.window_end DESC,g.created_at DESC,g.generation_id DESC LIMIT 1""",(pid,)).fetchone()
+            if newest and newest['generation_id']!=generation_id and \
+                    (newest['window_end'],newest['created_at'],newest['generation_id'])> \
+                    (generation['window_end'],generation['created_at'],generation_id):
+                raise CycleError('video_scan_generation_superseded')
+            # Older code could commit the immutable report/head before publishing current/job.
+            # Resume that exact receipt rather than conflict on a newly generated observation time.
+            prior=store.db.execute('SELECT observed_at FROM kalodata_video_run WHERE run_id=?',(report['runId'],)).fetchone()
+            if prior:report['observedAt']=prior['observed_at']
+            persist(store,report,in_transaction=True)
+            _publish_current(store,report,generation_id)
             store.db.execute("UPDATE kalodata_video_scan_job SET state='completed',error=NULL,updated_at=? "
                              "WHERE generation_id=? AND pid=?",(clock(),generation_id,pid))
             remaining=store.db.execute("SELECT count(*) FROM kalodata_video_scan_job WHERE generation_id=? "

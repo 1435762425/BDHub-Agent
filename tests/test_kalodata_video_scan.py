@@ -119,5 +119,66 @@ class VideoScanTests(unittest.TestCase):
    self.assertEqual(store.db.execute('SELECT state FROM kalodata_video_scan_job').fetchone()[0],'detailing')
    self.assertEqual(store.db.execute('SELECT count(*) FROM video_lead_current').fetchone()[0],0)
 
+ def projection(self):
+  with CycleStore(self.root/'var/second-cycle.sqlite',readonly=True) as store:
+   return ([tuple(r) for r in store.db.execute('SELECT pid,run_id FROM kalodata_video_head ORDER BY pid')],
+           [tuple(r) for r in store.db.execute('SELECT pid,run_id,video_id FROM video_lead_current ORDER BY pid')])
+
+ def test_initialization_and_failed_scan_preserve_previous_complete_pids(self):
+  second_pid='1729000000000000002';scope=[{'pid':PID,'units':300},{'pid':second_pid,'units':200}]
+  first=initialize(self.root,scope,'2026-08-20','2026-09-18',clock=lambda:2.)['generationId']
+  scan_one(self.root,first,self.requester([]),clock=lambda:3.)
+  scan_one(self.root,first,self.requester([]),clock=lambda:4.)
+  before=self.projection()
+  newer=initialize(self.root,scope,'2026-08-21','2026-09-19',clock=lambda:5.)['generationId']
+  self.assertEqual(self.projection(),before)
+  with self.assertRaisesRegex(CycleError,'quota'):
+   scan_one(self.root,newer,lambda *_:(_ for _ in ()).throw(CycleError('quota')),clock=lambda:6.)
+  self.assertEqual(self.projection(),before)
+  # A completed empty PID removes its old projection only. The second incomplete PID stays.
+  scan_one(self.root,newer,lambda *_:{'success':True,'data':[]},clock=lambda:7.)
+  head,rows=self.projection()
+  self.assertEqual([r[0] for r in rows],[second_pid])
+  self.assertEqual(head[1],before[0][1]);self.assertNotEqual(head[0],before[0][0])
+
+ def test_report_head_current_and_job_publish_atomically_and_recover(self):
+  first=initialize(self.root,[{'pid':PID,'units':300}],'2026-08-20','2026-09-18',clock=lambda:2.)['generationId']
+  scan_one(self.root,first,self.requester([]),clock=lambda:3.)
+  before=self.projection();newer=initialize(self.root,[{'pid':PID,'units':300}],'2026-08-21','2026-09-19',clock=lambda:4.)['generationId']
+  def fail_after_head(*args):
+   self.assertEqual(self.projection(),before)  # A concurrent reader still sees the old committed head.
+   raise RuntimeError('publish-crash')
+  with mock.patch('lib.kalodata_video_scan._publish_current',side_effect=fail_after_head),self.assertRaisesRegex(RuntimeError,'publish-crash'):
+   scan_one(self.root,newer,self.requester([]),clock=lambda:5.)
+  self.assertEqual(self.projection(),before)
+  with CycleStore(self.root/'var/second-cycle.sqlite',readonly=True) as store:
+   self.assertEqual(store.db.execute('SELECT count(*) FROM kalodata_video_run').fetchone()[0],1)
+   self.assertEqual(store.db.execute('SELECT state FROM kalodata_video_scan_job WHERE generation_id=?',(newer,)).fetchone()[0],'detailing')
+  calls=[];scan_one(self.root,newer,self.requester(calls),clock=lambda:6.)
+  self.assertEqual(calls,[]);self.assertNotEqual(self.projection(),before)
+
+ def test_resumes_legacy_report_committed_before_current_projection(self):
+  from lib.kalodata_video_evidence import persist
+  generation=initialize(self.root,[{'pid':PID,'units':300}],'2026-08-20','2026-09-18',clock=lambda:2.)['generationId']
+  captured=[]
+  def crash(store,report,_generation):
+   captured.append(report.copy());raise RuntimeError('old-interruption')
+  with mock.patch('lib.kalodata_video_scan._publish_current',side_effect=crash),self.assertRaises(RuntimeError):
+   scan_one(self.root,generation,self.requester([]),clock=lambda:3.)
+  with CycleStore(self.root/'var/second-cycle.sqlite') as store:persist(store,captured[0])
+  calls=[];scan_one(self.root,generation,self.requester(calls),clock=lambda:4.)
+  self.assertEqual(calls,[]);self.assertEqual(status(self.root,generation)['completed'],1)
+  self.assertEqual(len(self.projection()[1]),1)
+
+ def test_late_old_generation_cannot_replace_a_newer_complete_head(self):
+  scope=[{'pid':PID,'units':300}]
+  older=initialize(self.root,scope,'2026-08-20','2026-09-18',clock=lambda:2.)['generationId']
+  newer=initialize(self.root,scope,'2026-08-21','2026-09-19',clock=lambda:3.)['generationId']
+  scan_one(self.root,newer,self.requester([]),clock=lambda:4.)
+  before=self.projection()
+  with self.assertRaisesRegex(CycleError,'video_scan_generation_superseded'):
+   scan_one(self.root,older,self.requester([]),clock=lambda:5.)
+  self.assertEqual(self.projection(),before)
+
 
 if __name__=='__main__':unittest.main()

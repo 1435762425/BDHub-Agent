@@ -124,13 +124,28 @@ class Layers(unittest.TestCase):
                                [('a','it','a.video'),('b','it','b.video')])
             with closing(sqlite3.connect(var/'second-cycle.sqlite')) as db,db:
                 db.executemany('INSERT INTO video_lead_current VALUES(?,?,?,?,?,?,?,?,?,?)',[
-                  ('g',b_pid,'ka','a.video','r','va',150000,'2026-09-18',0,NOW),
-                  ('g',c_pid,'kb','b.video','r','vb',26000,'2026-09-18',0,NOW)])
+                  ('g',b_pid,'ka','a.video','r','va',150000,__import__('lib.video_window',fromlist=['bounds']).bounds(NOW)[1].isoformat(),0,NOW),
+                  ('g',c_pid,'kb','b.video','r','vb',26000,__import__('lib.video_window',fromlist=['bounds']).bounds(NOW)[1].isoformat(),0,NOW)])
             state=pool(folder,now=NOW)
             self.assertEqual([(row['creatorId'],row['sourceClass']) for row in state['pools']['ready']],
                              [('a','A'),('b','B')])
             self.assertEqual((state['pools']['queued'][0]['pid'],state['pools']['queued'][0]['videoViews']),
                              (b_pid,150000))
+
+    def test_retained_b_projection_exits_pool_when_its_query_window_expires(self):
+        from lib.video_window import bounds
+        with tempfile.TemporaryDirectory() as folder:
+            pid='1'*19
+            fixture(folder,[],[('b',0,'auto',0)])
+            with closing(sqlite3.connect(Path(folder)/'var/creator-identities.sqlite')) as ids,ids:
+                ids.execute('CREATE TABLE creator_identity(creator_id,current_handle,market,handle_conflict)')
+                ids.execute("INSERT INTO creator_identity VALUES('b','creator.b','it',0)")
+            with closing(sqlite3.connect(Path(folder)/'var/second-cycle.sqlite')) as db,db:
+                db.execute('INSERT INTO video_lead_current VALUES(?,?,?,?,?,?,?,?,?,?)',('g',pid,'k','creator.b','r','v',2000,str(bounds(NOW)[0]),0,NOW))
+            self.assertEqual(pool(folder,now=NOW)['counts']['bPositions'],1)
+            self.assertEqual(pool(folder,now=NOW+86400)['counts']['bPositions'],0)
+            with closing(sqlite3.connect(Path(folder)/'var/second-cycle.sqlite')) as db:
+                self.assertEqual(db.execute('SELECT count(*) FROM video_lead_current').fetchone()[0],1)
 
     def test_a_recent_send_puts_every_position_of_that_creator_on_cooldown(self):
         with tempfile.TemporaryDirectory() as folder:
