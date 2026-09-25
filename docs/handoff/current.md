@@ -1,10 +1,23 @@
 # BDHub-Agent 当前交接
 
-更新时间：2026-09-25 21:17（Asia/Shanghai）。本页只记录运行快照；规则见 [PROJECT](../PROJECT.md)，实现见 [TECHNICAL](../TECHNICAL.md)，后续方向见[项目审计与清理](../implementation/project-audit-20260924.md)。更早流水见[历史交接](../archive/handoff/codex-takeover-history-20260923.md)。
+更新时间：2026-09-25 22:22（Asia/Shanghai）。本页只记录运行快照；规则见 [PROJECT](../PROJECT.md)，实现见 [TECHNICAL](../TECHNICAL.md)，后续方向见[项目审计与清理](../implementation/project-audit-20260924.md)。更早流水见[历史交接](../archive/handoff/codex-takeover-history-20260923.md)。
 
 
 
 
+
+
+## 2026-09-25 夜间：A/B 发送份额已上线
+
+- 用户要求继续下一批；`fd64aea` 实现持久 4 A / 1 B，`cb6ad41` 补同会话观察，均从 `../BDHub-Agent-outreach-20260925` 合入。详见[80/20 交付](../implementation/outreach-share-20260925.md)；原未提交方案文档保留。
+- schema v23 只加轮转/份额表和索引，四库备份、重复迁移、旧 delivery/part/conversation intent 摘要检查通过；旧冻结/在途不回填。market×北京时间日×OEC 去重，游标跨日延续；新 delivery/两组件/份额同事务，失败回滚，回查不重复计数。
+- 同人有合格 A 归 A，否则可用 B；两类内部择优，空侧借位且不积欠额。机构额度不足先筛已解锁/预留达人；窗口、72 小时冷却、来信/人工/隔离和逐写许可不改。安排与最终预检取消、确认、未知分开。
+- 离线修复 IT 候选历史扫描（79 秒→约 2.5 秒）与 MY 额度空查材料（35–38 秒→约 0.37–0.52 秒）。副本实际冻结/replay 幂等、零平台写入；最长写事务约 0.96 秒，未在事务内请求平台。
+- Python 全量 1,417 项、Node 180 项、build/typecheck 通过；既有 ResourceWarning 保留。四市场发送池 GET 200，页面显示今日安排/补位/结果；卡确认后同会话 72 小时内回复、加橱窗按达人观察，不当因果归因。
+- 安全点切换 scheduler `26232`，IT/BR/MY/UK sender `26249/26252/26255/26258`；四 inbox `14505/73852/73855/73858` 和四 Agent `72227/72231/72234/72237` 未变。Web build `gO-lvIJ1kdedvqM_h2bgH`，观察显示补充仅重载 Web。
+- IT 真实前十新领取 `AAAABAAAAB`，前八个 A 最终历史预检取消、B 确认，不称十位都触达。后续同一快照：IT 安排 87A/53B、整套确认44A/52B、A取消43/B在途1；BR 3A/39B 均确认；UK 116A 确认；MY 0，额度等待。B 补位 IT25/BR31，A 补位 UK23；这是供给差异，不凑成功比例。
+- 控制/授权/指南和旧快照/requestRef 校验一致，scheduler 无错误，MY 主链仍关闭、AI 均 pilot_complete_waiting_resume。证据 `var/releases/outreach-share-20260925T133752Z/release.json`，包含备份、回退 Web、测试与实际业务快照。
+- 下一批：§9.13 原卡确认后遇入站仍发完冻结文字，并保留未回答来信；随后集中回复和 AI 上下文。最终历史预检取消的 A 候选可另评估资格前移，本批没有绕过门禁。
 
 ## 2026-09-25 晚间：身份技术预算、成功子集交接与锁回归恢复
 
