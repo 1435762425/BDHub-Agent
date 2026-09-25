@@ -1,6 +1,14 @@
 # BDHub-Agent 当前交接
 
-更新时间：2026-09-25 02:15（Asia/Shanghai）。本页只记录运行快照；规则见 [PROJECT](../PROJECT.md)，实现见 [TECHNICAL](../TECHNICAL.md)，后续方向见[项目审计与清理](../implementation/project-audit-20260924.md)。更早流水见[历史交接](../archive/handoff/codex-takeover-history-20260923.md)。
+更新时间：2026-09-25 10:40（Asia/Shanghai）。本页只记录运行快照；规则见 [PROJECT](../PROJECT.md)，实现见 [TECHNICAL](../TECHNICAL.md)，后续方向见[项目审计与清理](../implementation/project-audit-20260924.md)。更早流水见[历史交接](../archive/handoff/codex-takeover-history-20260923.md)。
+
+## 2026-09-25 上午：审查、DeepSeek 分工与修复
+
+- 分工（用户要求）：Claude 写任务并审阅，deepseek-flash（关闭 thinking）写代码，工具 `~/.config/deepseek/ds_patch.py`（密钥同目录，0600，不入 Git）；改动先在 worktree 审阅再测试、合入。不再批量调用 agent。
+- 16 个 Codex 未提交文件经审查后原样提交（`89d6349`、`0644375`、`4b8f0f4`、`5a9c62d`），内容未变，生产目录已无未提交改动。
+- 修复：`32f28ad` Kalodata 视频列表翻页移动导致同一视频重复写入崩溃（IT 07:00 轮次 07:48 起 kalodata-video-run_report_invalid）；`6e478bf` 退役失败回退为阻断、同轮已发布货源只认对应且唯一的 head、`selected_source_run_id` 统一运行号；`3d0c2fb` OECID 探针初始化失败（未发请求）等 5 秒重试一次并记录脱敏 errorMessage；`e1e2411` `resume-after-fix`；`f3f3c29` TECHNICAL 补齐；`4407195` 跨活动选品两次相隔 5 分钟以上回读即自动 `isolated_unverified`（用户决定），告警条提示近 7 天隔离数。
+- 10:30 `resume-after-fix`（`resume-uk-oecid-after-fix-20260925`）重排 UK 09-24 轮次 OECID，10:37 运行中。IT 09-25 07:00 campaign 轮次 kalodata 已失败 2 次，10:48 第 3 次自动重试（新代码）；若仍失败，用 `resume-after-fix` 续跑。
+- 待用户：四市场 AI 首轮试点已完成，需页面核对后开启全量；建会话无回执是否自动核验隔离；IT B 类作者是否送 OECID 解析。
 
 ## 2026-09-25 凌晨：IT AI 回复空转、收信自动刷新与 UK OECID
 
