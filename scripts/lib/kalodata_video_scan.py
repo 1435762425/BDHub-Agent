@@ -76,6 +76,10 @@ def _save_page(store,generation,pid,page,body,parsed,stamp):
             (generation,pid,page,parsed['rowsReceived'],fingerprint,parsed['newestReleaseDate'],
              parsed['oldestReleaseDate'],int(parsed['reachedWindowStart']),payload,stamp))
         for row in parsed['candidates']:
+            # The list can move between page reads (a late-indexed video pushes the rest down), so a video already
+            # stored from an earlier page of this PID is the same video again, not a new one.
+            if store.db.execute('SELECT 1 FROM kalodata_video_scan_item WHERE generation_id=? AND pid=? AND video_id=?',
+                                (generation,pid,row['videoId'])).fetchone():continue
             store.db.execute('''INSERT INTO kalodata_video_scan_item(
               generation_id,pid,video_id,source_rank,views,sale,revenue_raw,release_time,duration,
               description,content_type,is_ad,is_ai,list_payload_hash,detail_state,kalodata_creator_id,

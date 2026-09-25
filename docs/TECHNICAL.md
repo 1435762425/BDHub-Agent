@@ -68,7 +68,7 @@ IT `full_catalog_collection_mode()` 固定普通周更，拒绝新的 `--by-cate
 
 `leads_queue.py` 管理 PID 到期/尝试，`leads-run.py` 读取 A 类，`kalodata_video_scan.py` 管理 B 类扫描、作者缓存与 current 投影。`leads_page_scope` 以市场/PID/查询窗口生成 query ID，原窗口断点复用，新窗口重新读取；完整发布后才更新 queried_at，旧 receipt 转历史表。
 
-`lead_query_head/selection` 发布每 PID 当前 A 类范围，`video_lead_current` 发布当前最高单视频 B 类。两类保存来源时间、数值币种与原始证据；额度耗尽只发布已完整完成的 PID。Kalodata 额度按市场分别计算，一个市场耗尽不影响其他市场读取。B 类重复页、坏日期、缺作者或中断不能冒充完整覆盖：扫描中详情缺作者的单条视频记为 `author_missing`（保留响应 hash），该 PID 的 run 记 `completed_with_gaps`，其余视频照常进入 current 投影；同一代超过 20 条缺作者时整体停下转人工。
+`lead_query_head/selection` 发布每 PID 当前 A 类范围，`video_lead_current` 发布当前最高单视频 B 类。两类保存来源时间、数值币种与原始证据；额度耗尽只发布已完整完成的 PID。Kalodata 额度按市场分别计算，一个市场耗尽不影响其他市场读取。B 类重复页、坏日期、缺作者或中断不能冒充完整覆盖：扫描中详情缺作者的单条视频记为 `author_missing`（保留响应 hash），该 PID 的 run 记 `completed_with_gaps`，其余视频照常进入 current 投影；同一代超过 20 条缺作者时整体停下转人工。列表在两页读取之间移动时，同一 PID 已存的视频在下一页再次出现只记一次（整页重复仍按重复页停下）；扫描命令遇到存储异常也输出带错误码的报告。
 
 B 类目前只在 IT 的 Kalodata 阶段执行（`kalodata-video-crawl.py` 没有 `--market`，`video_lead_current` 没有 market 列），BR/MY/UK 发送池只有 A 类。B 类作者只按 `creator_identity.current_handle` 匹配已知达人；OECID 提交（`cycle_identity.freeze`）只取 A 类 selection，未知作者计入 `videoUnresolved`，不进入可发层。每次 IT Kalodata 阶段新建一代 B 类，窗口截至两天前；没有单独的 7 天重读节奏（7 天是 A 类队列的 `refreshDays`）。**已知缺陷**：新一代初始化时立即清空 `video_lead_current` 与 `kalodata_video_head`（`kalodata_video_scan.py`），扫描完成前 B 类位置消失，与 PROJECT §3.1“未完成时继续消费上一完整版本”不符。
 

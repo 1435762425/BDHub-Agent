@@ -3,6 +3,7 @@
 import argparse
 from datetime import date,timedelta
 import json
+import sqlite3
 from pathlib import Path
 import sys
 
@@ -47,15 +48,17 @@ def main(argv=None):
                          (generation,)).fetchone()
    with live_provider(ROOT,LEGACY,pid,gen['window_start'],gen['window_end']) as provider:
     scan_one(ROOT,generation,provider.request)
- except (CycleError,BlockingIOError,OSError,ValueError) as error:
-  code=str(error) if isinstance(error,(CycleError,ValueError)) else 'kalodata_video_unavailable'
+ except (CycleError,BlockingIOError,OSError,ValueError,sqlite3.Error) as error:
+  # A storage error must still end in a report: without one the scheduler only sees a report-less child.
+  code=str(error) if isinstance(error,(CycleError,ValueError)) else \
+       'kalodata_video_storage_failed' if isinstance(error,sqlite3.Error) else 'kalodata_video_unavailable'
   if 'generation' in locals() and generation:
    try:mark_stopped(ROOT,generation,code)
-   except (CycleError,OSError,ValueError):pass
+   except (CycleError,OSError,ValueError,sqlite3.Error):pass
   result={'error':code,'platformWrites':0,'realSends':0}
   if 'generation' in locals() and generation:
    try:result['status']=status(ROOT,generation)
-   except (CycleError,OSError,ValueError):pass
+   except (CycleError,OSError,ValueError,sqlite3.Error):pass
   print(json.dumps(result,ensure_ascii=False));return 2
 
 

@@ -88,6 +88,25 @@ class VideoScanTests(unittest.TestCase):
    self.assertEqual(tuple(store.db.execute('SELECT state,coverage,qualifying_videos,resolved_videos FROM kalodata_video_run')
                           .fetchone()),('completed_with_gaps','complete',3,2))
 
+ def test_a_video_repeated_on_the_next_page_is_stored_once(self):
+  generation=initialize(self.root,[{'pid':PID,'units':300}],'2026-08-20','2026-09-18',clock=lambda:2.)
+  first=[str(7674344776354860400+n) for n in range(50)]
+  # A late-indexed video moved the list down one place: page 2 starts with page 1's last video.
+  second=[first[-1],'7674344776354860300','7674344776354860299']
+  def request(path,payload):
+   if path==VIDEO_LIST_PATH:
+    ids=first if payload['pageNo']==1 else second
+    return {'success':True,'data':[{'id':video,'views':'1,500','sale':'0','revenue':'€0.00',
+      'create_time':'2026/09/15' if payload['pageNo']==1 else '2026/09/'+('15' if video==first[-1] else '10'),
+      'duration':'20s','description':'qualified','content_type':'video','ad':0,'ai_video':0} for video in ids]}
+   return {'success':True,'data':{'id':payload['id'],'handle':'creator.one','creator_id':'7592705921965884434',
+      'views':'1,500','sale':'0','revenue':'€0.00','release_time':'2026/09/10','description':'qualified'}}
+  result=scan_one(self.root,generation['generationId'],request,clock=lambda:3.)
+  self.assertEqual((result['status'],result['pages'],result['videos']),('completed',2,52))
+  with CycleStore(self.root/'var/second-cycle.sqlite') as store:
+   self.assertEqual(store.db.execute('SELECT count(*),count(DISTINCT video_id) FROM kalodata_video_scan_item').fetchone()[:],
+                    (52,52))
+
  def test_many_videos_without_author_still_stop_the_scan(self):
   generation=initialize(self.root,[{'pid':PID,'units':300}],'2026-08-20','2026-09-18',clock=lambda:2.)
   with mock.patch('lib.kalodata_video_scan.AUTHOR_MISSING_LIMIT',1),self.assertRaisesRegex(CycleError,'kalodata_video_author_missing'):
