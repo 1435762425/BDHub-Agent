@@ -11,7 +11,7 @@ def main():
  if a.market not in enabled_market_keys(ROOT) or not 1<=a.limit<=500:p.error('invalid market identity scope')
  try:
   value=pending(ROOT,a.market,a.limit) if a.action=='status' else run(ROOT,a.market,a.limit,profile_canary=a.profile_canary)
-  if a.action=='run' and value.get('stopped'):
+  if a.action=='run' and value.get('stopped') and not value.get('sliceComplete'):
    print(json.dumps(value|{'error':value['stopped']},ensure_ascii=False));return 2
   print(json.dumps(value,ensure_ascii=False));return 0
  except Exception as error:

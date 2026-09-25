@@ -19,6 +19,14 @@ class BridgeTests(unittest.TestCase):
   with self.d.transaction():self.d._db.execute("UPDATE discovery_item SET status='completed',creator_id='c1',oec_id='123',outcome='created' WHERE id=?",(item['id'],))
   if proof:
    with closing(sqlite3.connect(self.ids)) as c,c:c.execute('INSERT INTO identity_observation VALUES(?,?,?,?)',('c1','it','123','creator-discovery:'+item['id']+':'+('a'*64)+':discovery-result'))
+ def test_confirmed_find_is_reused_when_only_profile_failed(self):
+  self.b.freeze(self.p);self.b.dispatch(self.p);self.resolve()
+  with self.d.transaction():self.d._db.execute("UPDATE discovery_item SET status='blocked',reason='remote_error',outcome='identity_only'")
+  result=self.b.reconcile(self.p)
+  self.assertEqual(result['newBindings'],2)
+  self.assertEqual(self.s.db.execute("SELECT count(*) FROM cycle_identity_outcome WHERE status='completed'").fetchone()[0],2)
+  self.assertEqual(self.d._db.execute('SELECT status FROM discovery_item').fetchone()[0],'blocked')
+  self.assertEqual(self.b.reconcile(self.p)['newBindings'],0)
  def test_freeze_and_submit_deduplicate_handles(self):
   self.assertIsNotNone(self.b.freeze(self.p));self.assertIsNone(self.b.freeze(self.p));self.b.dispatch(self.p);self.assertEqual(self.b.dispatch(self.p),[])
   self.assertEqual(self.d._db.execute('SELECT count(*) FROM discovery_item').fetchone()[0],1)

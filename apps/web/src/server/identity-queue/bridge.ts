@@ -14,7 +14,7 @@ export type IdentityWalk={settled:number;newHandles:number;repeats:number};
 export type IdentityBlockedReason={reason:string;count:number};
 export type IdentityByCreator={handles:number;resolved:number;unresolved:number;
  /** 「被挡住」＝问过但没拿到平台的真实回答（请求/签名失败、账号起不来、被远端挡回）。可重试。 */
- blocked:number;unknown:number;blockedReasons:IdentityBlockedReason[];
+ blocked:number;unknown:number;isolated:number;blockedReasons:IdentityBlockedReason[];
  /** 可达位置＝达人×商品：一位达人有了 OECID，他名下的所有线索商品就都是位置（达人级一次）。 */
  positions:number;leads:number;reconciled:boolean};
 // Two jobs publish different steps, so this is the identity driver's shape, not the link driver's.
@@ -67,11 +67,11 @@ function identityByCreator(value:unknown):IdentityByCreator|null{
   return {reason:item.reason,count:whole(item.count)};
  });
  const by={handles:whole(v.handles),resolved:whole(v.resolved),unresolved:whole(v.unresolved),
-  blocked:whole(v.blocked),unknown:whole(v.unknown),blockedReasons,
+  blocked:whole(v.blocked),isolated:whole(v.isolated??0),unknown:whole(v.unknown),blockedReasons,
   leads:whole(v.leads),positions:whole(v.positions),reconciled:v.reconciled===true};
  // 达人四项必须互斥且加成 handle 总数：这是这张卡唯一敢放主数字的理由，对不上就不能画。
  if(!by.reconciled
-    ||by.resolved+by.unresolved+by.blocked+by.unknown!==by.handles)throw Error('invalid_identity_queue');
+    ||by.resolved+by.unresolved+by.blocked+by.unknown+by.isolated!==by.handles)throw Error('invalid_identity_queue');
  return by;
 }
 

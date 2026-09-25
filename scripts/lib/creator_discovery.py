@@ -179,6 +179,12 @@ class CreatorDiscoveryStore:
         counts["retryableBlocked"] = self._db.execute(
             "SELECT count(*) FROM discovery_item WHERE batch_id=? AND status='blocked' AND attempt_no<?",
             (batch_id, BLOCKED_MAX_ATTEMPTS)).fetchone()[0]
+        from lib.identity_retry import snapshot
+        policy=snapshot(self.var_dir.parent,batch['market'],now=self.now())
+        if policy['enabled']:
+            blocked=[r[0] for r in self._db.execute("SELECT handle FROM discovery_item WHERE batch_id=? AND status='blocked'",(batch_id,))]
+            counts['retryableBlocked']=sum(h not in policy['isolated'] for h in blocked)
+            counts['technicalIsolated']=sum(h in policy['isolated'] for h in blocked)
         return {"id": batch_id, "market": batch["market"], "sourceLabel": batch["source_label"], "status": batch["status"],
                 "createdAt": batch["created_at"], "startedAt": batch["started_at"], "finishedAt": batch["finished_at"],
                 "errorCode": batch["error_code"], "counts": counts, "workerOnline": self.worker_online()}
@@ -257,6 +263,12 @@ class CreatorDiscoveryStore:
             return any(_alive(r[0]) for r in self._db.execute("SELECT pid FROM discovery_heartbeat WHERE seen_at>=?", (self.now() - 30,)))
 
     def _next_items(self,limit,batch_ids=None,distinct=False,skip_judged=False,retry_blocked=False):
+        from lib.identity_retry import snapshot
+        policy=snapshot(self.var_dir.parent,'it',now=self.now())
+        if policy['accountWait']:return []
+        excluded=policy['isolated']|policy['deferred']
+        excluded_sql="AND lower(i.handle) NOT IN (SELECT value FROM json_each('"+_json(sorted(excluded)).replace("'","''")+"')) "
+        attempt_limit=2147483647 if policy['enabled'] else BLOCKED_MAX_ATTEMPTS
         # Unknown handles grow the creator pool first; this only changes
         # queue order, never substitutes cached identity for exact Find.
         #
@@ -264,7 +276,8 @@ class CreatorDiscoveryStore:
         # 所以一位达人被判过之后，他名下其它线索再问一遍平台不会有新答案——找到的早已找到，找不到的
         # 也不会变得找得到（用户确认过"搜索不到不自动重试"）。这里把这部分整段排除，只留真正没判过的。
         judged = ("AND NOT EXISTS (SELECT 1 FROM discovery_item old WHERE old.handle=i.handle "
-                  "AND old.id<>i.id AND old.status IN ('completed','unresolved')) ") if skip_judged else ''
+                  "AND old.id<>i.id AND (old.status IN ('completed','unresolved') OR old.outcome='identity_only')) ") if skip_judged else ''
+        judged+=excluded_sql
         known=[]; identity_path=self.var_dir/'creator-identities.sqlite'
         if identity_path.exists():
             with closing(sqlite3.connect(identity_path.resolve().as_uri()+'?mode=ro',uri=True)) as identities:
@@ -273,13 +286,13 @@ class CreatorDiscoveryStore:
         if distinct:
             # noqa: 参数顺序 = known(优先级) / now / retry_blocked / attempt 上限 / batch_ids×2 / known / limit
             return self._db.execute("""WITH candidates AS (
-              SELECT i.*,b.created_at queue_created,CASE WHEN b.source_label='Kalodata 二发线索身份解析' THEN CASE WHEN i.handle IN (SELECT value FROM json_each(?)) THEN 2 WHEN EXISTS(SELECT 1 FROM discovery_item old WHERE old.handle=i.handle AND old.id<>i.id AND old.status IN ('completed','unresolved')) THEN 1 ELSE 0 END ELSE 0 END queue_priority
+              SELECT i.*,b.created_at queue_created,CASE WHEN b.source_label='Kalodata 二发线索身份解析' THEN CASE WHEN i.handle IN (SELECT value FROM json_each(?)) THEN 2 WHEN EXISTS(SELECT 1 FROM discovery_item old WHERE old.handle=i.handle AND old.id<>i.id AND (old.status IN ('completed','unresolved') OR old.outcome='identity_only')) THEN 1 ELSE 0 END ELSE 0 END queue_priority
               FROM discovery_item i JOIN discovery_batch b ON b.id=i.batch_id WHERE i.retry_at<=? AND ((i.status='queued' AND b.status IN ('queued','running')) OR (?=1 AND i.status='blocked' AND i.attempt_no<? AND b.status IN ('queued','running','blocked'))) AND (? IS NULL OR b.id IN (SELECT value FROM json_each(?))) """ + judged + """
             ), unique_handles AS (SELECT *,row_number() OVER(PARTITION BY handle ORDER BY queue_priority,queue_created,batch_id,row_index) occurrence FROM candidates)
-            SELECT * FROM unique_handles WHERE occurrence=1 ORDER BY queue_priority,queue_created,batch_id,row_index LIMIT ?""",(_json(known),self.now(),1 if retry_blocked else 0,BLOCKED_MAX_ATTEMPTS,_json(batch_ids) if batch_ids is not None else None,_json(batch_ids) if batch_ids is not None else None,limit)).fetchall()
+            SELECT * FROM unique_handles WHERE occurrence=1 ORDER BY queue_priority,queue_created,batch_id,row_index LIMIT ?""",(_json(known),self.now(),1 if retry_blocked else 0,attempt_limit,_json(batch_ids) if batch_ids is not None else None,_json(batch_ids) if batch_ids is not None else None,limit)).fetchall()
         return self._db.execute("""SELECT i.* FROM discovery_item i JOIN discovery_batch b ON b.id=i.batch_id
             WHERE i.retry_at<=? AND ((i.status='queued' AND b.status IN ('queued','running')) OR (?=1 AND i.status='blocked' AND i.attempt_no<? AND b.status IN ('queued','running','blocked'))) AND (? IS NULL OR b.id IN (SELECT value FROM json_each(?))) """ + judged + """
-            ORDER BY CASE WHEN b.source_label='Kalodata 二发线索身份解析' THEN CASE WHEN i.handle IN (SELECT value FROM json_each(?)) THEN 2 WHEN EXISTS(SELECT 1 FROM discovery_item old WHERE old.handle=i.handle AND old.id<>i.id AND old.status IN ('completed','unresolved')) THEN 1 ELSE 0 END ELSE 0 END,b.created_at,b.id,i.row_index LIMIT ?""",(self.now(),1 if retry_blocked else 0,BLOCKED_MAX_ATTEMPTS,_json(batch_ids) if batch_ids is not None else None,_json(batch_ids) if batch_ids is not None else None,_json(known),limit)).fetchall()
+            ORDER BY CASE WHEN b.source_label='Kalodata 二发线索身份解析' THEN CASE WHEN i.handle IN (SELECT value FROM json_each(?)) THEN 2 WHEN EXISTS(SELECT 1 FROM discovery_item old WHERE old.handle=i.handle AND old.id<>i.id AND (old.status IN ('completed','unresolved') OR old.outcome='identity_only')) THEN 1 ELSE 0 END ELSE 0 END,b.created_at,b.id,i.row_index LIMIT ?""",(self.now(),1 if retry_blocked else 0,attempt_limit,_json(batch_ids) if batch_ids is not None else None,_json(batch_ids) if batch_ids is not None else None,_json(known),limit)).fetchall()
 
     def claim(self, owner, *, recovery=False):
         with self.transaction():
@@ -374,8 +387,10 @@ class CreatorDiscoveryStore:
                 # 注意 `attempt_no` **不在这里加**：它表示"已经被尝试过几次"，由领到的那一刻 +1。
                 # 这样每一次尝试的取证落在 attempt-<n>/ 下，**旧的一次不被覆盖也不被删**——正是它拦住了
                 # 上一次重试（新旧字节不同被当成"证据被篡改"→ probe_report_invalid）。
-                self._db.execute("UPDATE discovery_item SET retry_at=? WHERE id=?",
-                                 (self.now() + BLOCKED_RETRY_SECONDS, item["id"]))
+                from lib.identity_retry import snapshot
+                policy=snapshot(self.var_dir.parent,'it',now=self.now())
+                retry_at=policy['retryAt'].get(item['handle'],self.now()) if policy['enabled'] else self.now()+BLOCKED_RETRY_SECONDS
+                self._db.execute("UPDATE discovery_item SET retry_at=? WHERE id=?",(retry_at,item['id']))
                 self._db.execute("UPDATE discovery_batch SET status=?,error_code=?,finished_at=? WHERE id=?",
                     ("paused" if paused else "blocked", reason, None if paused else _iso(self.now()), item["batch_id"]))
             elif not batch["counts"]["queued"] and not batch["counts"]["running"]:
@@ -468,6 +483,10 @@ class CreatorDiscoveryWorker:
         return value
 
     def _blocked(self, item, code, **values):
+        from lib.identity_retry import record,SHARED_REASONS
+        if code in SHARED_REASONS:
+            event=getattr(self,'_retry_events',{}).get(item['id'],item['id']+':'+str(item.get('attempt_no',1)))
+            record(self.store.var_dir.parent,'it','acc6',item['handle'],event,'shared',code,now=self.store.now())
         return self.store.finish(item, self.owner, "blocked", reason=code if isinstance(code, str) and code in ERRORS else "probe_failed", **values)
 
     @staticmethod
@@ -487,6 +506,8 @@ class CreatorDiscoveryWorker:
         return [lead["leadId"]] if lead["status"] == "pending" else []
 
     def _settle(self, item, report):
+        from lib.identity_retry import discovery_outcome
+        discovery_outcome(self,item,report)
         count = report.get("counters", {}).get("request_count") if isinstance(report.get("counters"), dict) else None
         count = count if type(count) is int and count >= 0 else None
         try:

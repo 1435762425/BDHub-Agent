@@ -67,9 +67,9 @@ class Counts(unittest.TestCase):
                     handles={0: 'same', 1: 'same', 2: 'same', 3: 'same'})
             measured = counts(folder)
             self.assertEqual(measured['leads'], 4)
-            self.assertEqual(measured['resolvedLeads'], 1)
-            self.assertEqual(measured['pendingCreators'], 1)
-            self.assertEqual(measured['pendingLeads'], 3)
+            self.assertEqual(measured['resolvedLeads'], 4)
+            self.assertEqual(measured['pendingCreators'], 0)
+            self.assertEqual(measured['pendingLeads'], 0)
 
     def test_a_workspace_without_the_identity_tables_reports_unavailable(self):
         with tempfile.TemporaryDirectory() as folder:

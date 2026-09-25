@@ -125,7 +125,7 @@ def main():
                             cohort_result=run_cohort(discovery,args.cohort_size,lanes=args.cohort_lanes,
                                 soak_id=args.soak_run,only_batch=args.only_batch,
                                 use_production_policy=True,skip_judged=args.skip_judged)
-                        discovered = None if cohort_result else discovery.run_once()
+                        discovered = None if cohort_result or args.only_batch else discovery.run_once()
                         cycle_result = reconcile_cycle(store.var_dir,discovery_store,args.only_batch)
                         if refreshed is not None or discovered is not None or cohort_result is not None or args.once:
                             print(json.dumps({"refresh": refreshed, **({"cohort":cohort_result} if cohort_result else {}), "discovery": discovered["batch"] if discovered else None,**({"cycleIdentity":cycle_result} if cycle_result is not None else {})}), flush=True)

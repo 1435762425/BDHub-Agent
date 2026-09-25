@@ -15,7 +15,7 @@ const text=(v:unknown,max=300)=>typeof v==="string"&&v.length<=max?v:fail();
 const count=(v:unknown)=>typeof v==="number"&&Number.isSafeInteger(v)&&v>=0?v:fail();
 const stamp=(v:unknown)=>v===null?null:typeof v==="number"&&Number.isFinite(v)&&v>=0?v:fail();
 const boolean=(v:unknown)=>typeof v==="boolean"?v:fail();
-const states=["resolved","notFound","queued","blocked","noRecord","conflict"];
+const states=["resolved","notFound","queued","blocked","isolated","noRecord","conflict"];
 const dayKeys=["cards","texts","creators","unconfirmed","replies","showcase","ourMessages","autoReplies","casesOpened"] as const;
 export function validateOverview(raw:unknown,market:string):MarketOverview{
  const v=object(raw);
@@ -30,9 +30,9 @@ export function validateOverview(raw:unknown,market:string):MarketOverview{
   if(!result.available&&metrics.length)fail();
   if(result.id==="identity"&&result.available){
    const rows=object(p.rows),handles=object(p.handles),labels=object(p.labels);
-   result.rows=Object.fromEntries(states.map(k=>[k,count(rows[k])]));
-   result.handles=Object.fromEntries(states.map(k=>[k,count(handles[k])]));
-   result.labels=Object.fromEntries(states.map(k=>[k,text(labels[k],60)]));
+   result.rows=Object.fromEntries(states.map(k=>[k,count(rows[k]??(k==="isolated"?0:undefined))]));
+   result.handles=Object.fromEntries(states.map(k=>[k,count(handles[k]??(k==="isolated"?0:undefined))]));
+   result.labels=Object.fromEntries(states.map(k=>[k,text(labels[k]??(k==="isolated"?"技术隔离（停止重试）":undefined),60)]));
    for(const [key,values] of [["rows",result.rows],["handles",result.handles]] as const){
     if(metrics.find(m=>m.key===key)?.value!==Object.values(values).reduce((a,b)=>a+b,0))fail();
    }

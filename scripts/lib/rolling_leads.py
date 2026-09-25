@@ -438,6 +438,9 @@ def identity_hold(root,market):
           JOIN workflow_run r ON r.run_id=s.run_id WHERE r.market=? AND s.stage='oecid'
           AND s.state IN ('failed','needs_human') ORDER BY s.finished_at DESC LIMIT 1""",(market,)).fetchone()
         if not failure:return None
+        if store.db.execute("SELECT 1 FROM sqlite_master WHERE name='identity_handle_budget'").fetchone() and failure['error_code'] in {
+                'identity_queue_stalled','market_identity_report_invalid','market_identity_blocked','identity_retry_wait','nothing_pending'}:
+            return None  # New bounded lane owns these technical waits; original failed run remains unchanged.
         success=store.db.execute("SELECT max(s.finished_at) FROM workflow_stage_run s JOIN workflow_run r ON r.run_id=s.run_id WHERE r.market=? AND s.stage='oecid' AND s.state='completed'",(market,)).fetchone()[0]
         refreshed=store.db.execute("SELECT max(published_at) FROM account_identity_generation WHERE market=? AND account=? AND state='published'",(market,account)).fetchone()[0]
         if max(success or 0,refreshed or 0)>=(failure['finished_at'] or 0):return None

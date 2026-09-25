@@ -98,7 +98,7 @@ def one_round(root, cohort_size, *, timeout=ROUND_TIMEOUT,only_batch=None):
         note = f"池位回填未成功：{cycle.get('error') or cycle.get('status')}（这一轮的判定结果没有写进发送池）"
     return {'ok': True, 'code': None, 'targets': int(cohort.get('targets') or 0),
             'cohortId': cohort.get('id'), 'seconds': cohort.get('seconds'), 'note': note,
-            'batchIds': batches}
+            'batchIds': batches,'accountWait':cohort.get('accountWait')}
 
 
 def current_batch_scopes(root,limit=50):
@@ -124,9 +124,9 @@ def current_batch_scopes(root,limit=50):
             return []
         plan_id = plan[0]
         current = {row[0] for row in cycle.execute(
-            f'SELECT DISTINCT source_handle FROM ({CURRENT}) WHERE plan_id=?', (plan_id,))}
+            f"SELECT DISTINCT source_handle FROM ({'SELECT plan_id,source_id,pid,source_handle FROM current_identity_source' if cycle.execute('SELECT 1 FROM sqlite_master WHERE name=?',('current_identity_source',)).fetchone() else CURRENT}) WHERE plan_id=?", (plan_id,))}
         resolved = {row[0] for row in cycle.execute(
-            f'SELECT source_handle FROM ({OWNERS})')}
+            f'SELECT source_handle FROM ({OWNERS}) WHERE plan_id=?',(plan_id,))}
         unresolved = {row[0] for row in cycle.execute(
             f'''SELECT DISTINCT k.source_handle FROM ({CURRENT}) k
                 JOIN cycle_identity_outcome o ON o.plan_id=k.plan_id AND o.source_id=k.source_id
@@ -140,15 +140,18 @@ def current_batch_scopes(root,limit=50):
         return []
     with closing(sqlite3.connect(discovery_path.resolve().as_uri() + '?mode=ro', uri=True)) as discovery:
         judged = {row[0] for row in discovery.execute(
-            "SELECT DISTINCT handle FROM discovery_item WHERE status IN ('completed','unresolved')")}
-        pending -= judged
+            "SELECT DISTINCT handle FROM discovery_item WHERE status IN ('completed','unresolved') OR outcome='identity_only'")}
+        from lib.identity_retry import snapshot
+        policy=snapshot(root,'it')
+        if policy['accountWait']:return []
+        pending -= judged|policy['isolated']|policy['deferred']
         if not pending:
             return []
         eligible = {}
         for batch_id, handle in discovery.execute(
             '''SELECT i.batch_id,i.handle FROM discovery_item i JOIN discovery_batch b ON b.id=i.batch_id
                WHERE i.retry_at<=? AND b.status IN ('queued','running','blocked') AND
-                 (i.status='queued' OR (i.status='blocked' AND i.attempt_no<3))''',(time.time(),)):
+                 (i.status='queued' OR (i.status='blocked' AND i.attempt_no<?))''',(time.time(),2147483647 if policy['enabled'] else 3)):
             if handle in pending:
                 eligible.setdefault(batch_id, set()).add(handle)
     candidates=[]
@@ -207,8 +210,10 @@ def run(root=None, *, limit=2000, cohort_size=50, progress=None, rounds=None, cl
     pending_start = int(before.get('pendingCreators') or 0)
     resolved_start = int(before.get('resolvedCreators') or 0)
     unresolved_start = int(before.get('unresolvedCreators') or 0)
-    report = {'startedAt': started, 'finishedAt': None, 'limit': limit, 'cohortSize': cohort_size,
-              'pendingAtStart': pending_start, 'pending': pending_start, 'claimed': 0, 'rounds': 0,
+    from lib.identity_retry import snapshot
+    policy=snapshot(root,'it',now=clock())
+    report = {'sliceComplete':bool(policy['enabled']),'coverage':'bounded_identity_slice' if policy['enabled'] else 'legacy_backlog', 'startedAt': started, 'finishedAt': None, 'limit': limit, 'cohortSize': cohort_size,
+              'technicalIsolatedLeads':int(before.get('technicalIsolatedLeads') or 0), 'pendingAtStart': pending_start, 'pending': pending_start, 'claimed': 0, 'rounds': 0,
               'found': 0, 'notFound': 0, 'stopReason': None, 'lastTargets': 0, 'retry': 0,
               'errors': [], 'platformWrites': 0}
     publish(progress, report | {'updatedAt': clock()})
@@ -257,15 +262,19 @@ def run(root=None, *, limit=2000, cohort_size=50, progress=None, rounds=None, cl
         if outcome.get('note'):
             report['errors'].append({'round': report['rounds'], 'detail': str(outcome['note'])})
         report['claimed'] += report['lastTargets']
+        if outcome.get('accountWait'):report['accountWait']=outcome['accountWait']
         now = read() or {}
         # The live backlog is reported, not used as the measure of this run's work: another worker
         # keeps importing new Kalodata leads, so the queue can grow while the backfill drains it.
         report['pending'] = int(now.get('pendingCreators') or 0)
+        report['technicalIsolatedLeads']=int(now.get('technicalIsolatedLeads') or 0)
         report['found'] = max(0, int(now.get('resolvedCreators') or 0) - resolved_start)
         report['notFound'] = max(0, int(now.get('unresolvedCreators') or 0) - unresolved_start)
         report['roundRunning'] = 0
         report['roundStartedAt'] = None
         publish(progress, report | {'updatedAt': clock()})
+        if report.get('accountWait'):
+            report['stopReason']='account_wait';break
         if report['pending'] == 0:
             report['stopReason'] = 'backlog_clear'
             break
@@ -276,7 +285,7 @@ def run(root=None, *, limit=2000, cohort_size=50, progress=None, rounds=None, cl
         # items. Two in a row is the honest end of this run.
         idle = idle + 1 if report['lastTargets'] == 0 else 0
         if idle >= IDLE_ROUNDS:
-            report['stopReason'] = 'queue_stalled'
+            report['stopReason'] = 'retry_wait' if policy['enabled'] else 'queue_stalled'
             break
     else:
         report['stopReason'] = 'round_limit'
@@ -293,6 +302,7 @@ def main():
     parser.add_argument('--stop', type=Path, help='stop file the launcher creates to end the batch')
     parser.add_argument('--report', type=Path)
     parser.add_argument('--only-batch',action='append')
+    parser.add_argument('--rounds',type=int,default=MAX_ROUNDS)
     args = parser.parse_args()
     progress = args.progress.resolve() if args.progress else None
     if progress is not None and not progress.is_relative_to(ROOT / 'var'):
@@ -305,7 +315,7 @@ def main():
         if args.only_batch is not None and any(not re.fullmatch(r'discovery_[0-9a-f]{32}',batch) for batch in args.only_batch):
             raise ValueError('identity_batch_scope_invalid')
         report = run(ROOT, limit=args.limit, cohort_size=args.cohort_size, progress=progress,
-                     stop=args.stop,only_batch=args.only_batch)
+                     stop=args.stop,only_batch=args.only_batch,rounds=args.rounds)
     except ValueError as error:
         print(json.dumps({'error': str(error)}, ensure_ascii=False))
         return 2

@@ -293,6 +293,10 @@ class SubprocessStageExecutor:
                 paused=payload.get('stopped')=='automation_paused'
                 return {'state':'stopped' if paused else 'completed','itemCount':payload.get('completed',0),
                         'complete':not paused,'platformWrites':0,'payload':payload,'scope':{}}
+        if args[0]=='scripts/market-identity.py' and not child.returncode and payload.get('sliceComplete') is True:
+            if '--market' in args and payload.get('market')==args[args.index('--market')+1] and payload.get('market') in ('br','my','uk') and payload.get('platformWrites')==0 and payload.get('realSends')==0:
+                return {'state':'completed','complete':True,'itemCount':payload.get('newBindings',0),
+                        'platformWrites':0,'payload':payload,'scope':{'coverage':'bounded_identity_slice'}}
         reported_state=str(evidence.get('state') or evidence.get('status') or payload.get('state') or payload.get('status') or '')
         writes=max(_report_platform_writes(evidence),_report_platform_writes(payload))
         items=max(_report_item_count(evidence),_report_item_count(payload))
@@ -556,6 +560,12 @@ class SubprocessStageExecutor:
                 for _ in range(500):
                     result=self._call(['scripts/market-identity.py','run','--market',market,'--limit','50'],'oecid')
                     outputs.append(result)
+                    bounded=result.get('payload') or {}
+                    if result['state']=='completed' and bounded.get('sliceComplete'):
+                        if bounded.get('authRequired'):
+                            outputs.append(self._relogin_market_account(store,market,'communications',run['runId'],'bounded-oecid-auth'))
+                        return result|{'scope':{'sources':sources,'coverage':'bounded_identity_slice',
+                            'queue':bounded.get('queue'),'blockedHandles':bounded.get('blockedHandles',0)}}
                     if result['state']!='completed':
                         if result.get('errorCode')=='market_identity_auth_required' and auth_recoveries<2:
                             relogin=self._relogin_market_account(store,market,'communications',run['runId'],
@@ -590,11 +600,13 @@ class SubprocessStageExecutor:
                         'errorCode':'identity_handoff_limit','scope':{'sources':sources},'payload':{}}
             reconciled=self._call(['scripts/second-cycle-identities.py','reconcile'],'oecid-reconcile')
             if reconciled['state']!='completed':return reconciled
-            result=self._call(['scripts/identity-batch.py','--limit','200000','--cohort-size','50'],'oecid')
+            result=self._call(['scripts/identity-batch.py','--limit','200','--cohort-size','50','--rounds','4'],'oecid')
             payload=result.get('payload') or {};pending=int(payload.get('pending') or 0)
-            result['itemCount']=int(payload.get('claimed') or 0)
-            result['scope']={'sources':sources,'handoffBatches':submitted,'pending':pending}
-            if result['state']=='completed' and pending:
+            if payload.get('sliceComplete') and (payload.get('accountWait') or {}).get('reason')=='auth_required':
+                self._relogin_market_account(store,market,'communications',run['runId'],'bounded-oecid-auth')
+            result['itemCount']=int(payload.get('found') or 0) if payload.get('sliceComplete') else int(payload.get('claimed') or 0)
+            result['scope']={'sources':sources,'handoffBatches':submitted,'pending':pending,'coverage':payload.get('coverage'),'claimed':payload.get('claimed'),'notFound':payload.get('notFound'),'technicalIsolatedLeads':payload.get('technicalIsolatedLeads'),'stopReason':payload.get('stopReason'),'accountWait':payload.get('accountWait')}
+            if result['state']=='completed' and pending and not payload.get('sliceComplete'):
                 reason=str(payload.get('stopReason') or 'pending')
                 result.update(state='needs_human',complete=False,errorCode=('identity_'+reason)[:120])
             return result
@@ -604,11 +616,11 @@ class SubprocessStageExecutor:
         raise CycleError('workflow_stage_invalid')
 
 
-def _create_lead_continuation(root,store,market,stamp,blocked_run=None):
+def _create_lead_continuation(root,store,market,stamp,blocked_run=None,from_stage='kalodata'):
     from lib.rolling_leads import identity_hold
     hold=identity_hold(root,market)
     run=create_run(store,market=market,trigger_source='schedule',scheduled_at=stamp,
-                   request_id=f'{market}:rolling-leads:{int(stamp)}',sources=['campaign'],from_stage='kalodata')
+                   request_id=f'{market}:rolling-leads:{int(stamp)}',sources=['campaign'],from_stage=from_stage)
     with store.tx():
         if hold:
             store.db.execute("UPDATE workflow_stage_run SET state='skipped',finished_at=?,error_code='identity_lane_waiting_recovery' WHERE run_id=? AND stage='oecid' AND state='waiting_upstream'",(stamp,run['runId']))
@@ -638,15 +650,21 @@ def _collect_ready_runs(root,store,jobs,stamp,progress):
         from lib.rolling_leads import due_at,automatic_enabled
         lead_due=(due_at(root,market,at=stamp,refresh_scope=not current or current['state'] not in ('queued','running','stop_requested'))
                   if automation['automaticOperationsEnabled'] and automatic_enabled(root,market) else None)
+        from lib.identity_retry import due_at as identity_due_at
+        identity_due=identity_due_at(root,market,now=stamp) if automation['automaticOperationsEnabled'] else None
+        if identity_due is not None:due_times['identity']=identity_due
+        only_identity=identity_due is not None and identity_due<=stamp and (lead_due is None or lead_due>stamp)
+        if only_identity:lead_due=identity_due
+        continuation_stage='oecid' if only_identity else 'kalodata'
         if lead_due is not None:due_times['leads']=lead_due
         key='workflow' if market=='it' else f'workflow:{market}'
         future=[value for value in due_times.values() if value>stamp]
         progress['nextDue'][key]=min(future) if future else min(due_times.values())
         if lead_due is not None and lead_due<=stamp and (not current or current['state'] in ('completed','stopped')) and not sources:
-            current=_create_lead_continuation(root,store,market,stamp)
+            current=_create_lead_continuation(root,store,market,stamp,from_stage=continuation_stage)
         if current and current['state']=='failed' and lead_due is not None and lead_due<=stamp and any(
                 stage['stage']=='oecid' and stage['state']=='failed' for stage in current['stages']):
-            current=_create_lead_continuation(root,store,market,stamp,current['runId'])
+            current=_create_lead_continuation(root,store,market,stamp,current['runId'],from_stage=continuation_stage)
         if current and current['state']=='failed' and current['triggerSource']=='schedule':
             if not automation['automaticOperationsEnabled']:continue
             retry=retry_failed_stage(store,current['runId'],now=stamp)
@@ -663,7 +681,7 @@ def _collect_ready_runs(root,store,jobs,stamp,progress):
             failed_stage=next((s for s in current['stages'] if s['state'] in ('failed','needs_human')),None)
             if lead_due is not None and lead_due<=stamp and automation['automaticOperationsEnabled'] and (
                     not failed_stage or failed_stage['stage']!='kalodata' or any(s['stage']=='catalog' and s['state']!='skipped' for s in current['stages'])):
-                current=_create_lead_continuation(root,store,market,stamp,current['runId'])
+                current=_create_lead_continuation(root,store,market,stamp,current['runId'],from_stage=continuation_stage)
             else:continue
         if not current or current['state'] not in ('queued','running','stop_requested'):
             if automation['automaticOperationsEnabled'] and sources:

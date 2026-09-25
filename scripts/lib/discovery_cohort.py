@@ -18,6 +18,9 @@ def slice_report(report,item):
 def run_cohort(worker,limit=20,lanes=3,soak_id=None,only_batch=None,use_production_policy=False,skip_judged=False):
     if type(lanes) is not int or lanes not in (3,6,9):raise CreatorDiscoveryError("invalid_request")
     store=worker.store;store.heartbeat(worker.owner)
+    from lib.identity_retry import snapshot,record
+    policy=snapshot(store.var_dir.parent,'it',now=store.now())
+    if policy['accountWait']:return {'targets':0,'accountWait':policy['accountWait']}
     soak=None;service=None;published=None
     if use_production_policy and not soak_id:
         from lib.identity_acceptance import production_policy
@@ -69,6 +72,8 @@ def run_cohort(worker,limit=20,lanes=3,soak_id=None,only_batch=None,use_producti
             item=dict(current)
             part=slice_report(report,item) if report else None
             if part is None:
+                if not report or report.get('status')!='completed':
+                    record(store.var_dir.parent,'it','acc6',item['handle'],_hash(report) if report else group['id'],'shared',(report or {}).get('reason') or 'probe_incomplete',evidence=str(output/'report.private.json'),now=store.now())
                 store.defer_busy(item,worker.owner,consume_attempt=False);continue
             _,single,_=worker._paths(item);single.mkdir(parents=True,exist_ok=True,mode=0o700)
             evidence=single/'report.private.json';payload=_json(part)
@@ -88,7 +93,7 @@ def run_cohort(worker,limit=20,lanes=3,soak_id=None,only_batch=None,use_producti
                 if r['status']=='completed' and r['oec_id']:confirmed.append(r['oec_id'])
             soak.record(soak_id,group['id'],report,confirmed)
         with store.transaction():store._db.execute("UPDATE discovery_cohort SET state='completed' WHERE id=?",(group['id'],))
-        return {'id':group['id'],'recovered':bool(group.get('recovering')),'targets':len(items),'seconds':round(time.monotonic()-started,3),'report':str(output/'report.private.json')}
+        return {'id':group['id'],'recovered':bool(group.get('recovering')),'targets':len(items),'seconds':round(time.monotonic()-started,3),'report':str(output/'report.private.json'),'accountWait':snapshot(store.var_dir.parent,'it',now=store.now())['accountWait']}
     except BaseException:
         # Keep cohort ownership/evidence for recovery; the probe supervisor closes its child.
         raise

@@ -133,7 +133,7 @@ test('the identity card counts creators, and its three classes must add up',()=>
  const by={handles:3069,resolved:2074,unresolved:976,blocked:19,unknown:0,
   blockedReasons:[{reason:'request_or_signer_error',count:19}],leads:12996,positions:6967,reconciled:true};
  const v=validateIdentityQueue({...payload,byCreator:by});
- assert.deepEqual(v.byCreator,by);
+ assert.deepEqual(v.byCreator,{...by,isolated:0});
  assert.equal(v.byCreator.resolved+v.byCreator.unresolved+v.byCreator.blocked+v.byCreator.unknown,v.byCreator.handles);
  // 可达位置是达人×商品：一位达人有了 OECID，他名下的所有线索商品都成为位置。
  assert.ok(v.byCreator.positions>=v.byCreator.resolved);
@@ -146,4 +146,11 @@ test('the identity card counts creators, and its three classes must add up',()=>
  }
  // 老载荷没有这一块：按"没有"读，不能因此让整张卡消失。
  assert.equal(validateIdentityQueue(payload).byCreator,null);
+});
+
+
+test('technical isolation is its own creator partition and never reported as not found',()=>{
+ const by={handles:3,resolved:1,unresolved:0,blocked:0,unknown:1,isolated:1,blockedReasons:[],leads:4,positions:2,reconciled:true};
+ assert.equal(validateIdentityQueue({...payload,byCreator:by}).byCreator.isolated,1);
+ assert.throws(()=>validateIdentityQueue({...payload,byCreator:{...by,isolated:2}}),/invalid_identity_queue/);
 });

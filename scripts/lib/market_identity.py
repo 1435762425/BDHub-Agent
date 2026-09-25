@@ -15,6 +15,7 @@ from lib.market_accounts import load_config
 from lib.second_cycle import CycleError,CycleStore,digest
 
 INIT_RETRY_SECONDS=5.0
+from lib.identity_retry import snapshot as retry_snapshot, record as retry_record, classify as classify_retry
 
 
 def _plan(store,market):
@@ -27,19 +28,23 @@ def pending(root,market,limit=50):
  if type(limit) is not int or not 1<=limit<=500:raise ValueError('market_identity_limit_invalid')
  with CycleStore(Path(root)/'var/second-cycle.sqlite',readonly=True) as store:
   plan=_plan(store,market)
+  policy=retry_snapshot(root,market)
+  if policy['accountWait']:return {'market':market,'planId':plan,'items':[],'accountWait':policy['accountWait']}
+  excluded=sorted(policy['isolated']|policy['deferred'])
   rows=store.db.execute("""SELECT x.source_id,x.source_handle,x.source_rank,x.pid
     FROM current_identity_source x
     LEFT JOIN cycle_identity_resolution r ON r.plan_id=x.plan_id AND r.source_id=x.source_id
     LEFT JOIN cycle_identity_outcome o ON o.plan_id=x.plan_id AND o.source_id=x.source_id
     WHERE x.plan_id=? AND r.source_id IS NULL AND (o.status IS NULL OR o.status NOT IN ('completed','unresolved'))
-    ORDER BY x.source_rank,x.source_id LIMIT ?""",(plan,limit*20)).fetchall()
+    AND lower(x.source_handle) NOT IN (SELECT value FROM json_each(?))
+    GROUP BY lower(x.source_handle) ORDER BY min(x.source_rank),x.source_id LIMIT ?""",(plan,json.dumps(excluded),limit)).fetchall()
   seen=set();result=[]
   for row in rows:
    handle=str(row['source_handle']).lower()
    if handle in seen:continue
    seen.add(handle);result.append({'sourceId':row['source_id'],'handle':handle,'pid':row['pid']})
    if len(result)>=limit:break
-  return {'market':market,'planId':plan,'items':result}
+  return {'market':market,'planId':plan,'items':result,'technicalIsolated':len(policy['isolated']),'deferred':len(policy['deferred'])}
 
 
 def reuse_judgments(root,market):
@@ -194,23 +199,48 @@ def _probe_with_init_retry(root,market,account,chunk,payload_targets,tokens,runn
 
 
 def run(root,market,limit=3,*,profile_canary=False,runner=subprocess.run,clock=time.time,sleep=time.sleep):
- root=Path(root);reuse_judgments(root,market);scope=pending(root,market,limit);items=scope['items']
+ from lib.identity_retry import locked
+ with locked(root,market):
+  return _run(root,market,limit,profile_canary=profile_canary,runner=runner,clock=clock,sleep=sleep)
+
+
+def _run(root,market,limit=3,*,profile_canary=False,runner=subprocess.run,clock=time.time,sleep=time.sleep):
+ root=Path(root)
+ if not retry_snapshot(root,market)['enabled']:raise CycleError('identity_retry_schema_required')
+ from lib.identity_retry import recover_started,project_isolated
+ account=load_config(root)['markets'][market]['roles']['communications']
+ recover_started(root,market,account,_apply)
+ reuse_judgments(root,market);project_isolated(root,market);scope=pending(root,market,limit);items=scope['items']
  report={'market':market,'targets':len(items),'resolvedHandles':0,'unresolvedHandles':0,'newBindings':0,
          'networkRuns':0,'platformWrites':0,'realSends':0,'profileCanary':bool(profile_canary),'profileVerified':0,
-         'blockedHandles':0,'initRetries':0,'evidence':[]}
- if not items:return report|{'stopped':'nothing_pending'}
+         'blockedHandles':0,'initRetries':0,'evidence':[],'sliceComplete':True,'coverage':'bounded_identity_slice'}
+ if not items:return report|{'stopped':'account_wait' if scope.get('accountWait') else 'nothing_pending','queue':scope}
  account=load_config(root)['markets'][market]['roles']['communications']
  for offset in range(0,len(items),3):
+  if retry_snapshot(root,market,now=clock())['accountWait']:break
   chunk=items[offset:offset+3];token=digest([market,clock(),offset,chunk])[:16]
   payload_targets=[{'ref':'market_identity_'+digest([market,row['sourceId']])[:24],'handle':row['handle'],'externalId':row['sourceId']} for row in chunk]
+  requested=[{'ref':row['ref'],**source} for row,source in zip(payload_targets,chunk)]
   tokens=[token,digest([market,clock(),offset,chunk,'init-retry'])[:16]]
-  child,evidence_paths,private,retried=_probe_with_init_retry(root,market,account,chunk,payload_targets,tokens,runner,profile_canary,sleep)
-  applied=_apply(root,market,private,[{'ref':row['ref'],**source} for row,source in zip(payload_targets,chunk)])
+  for row in chunk:retry_record(root,market,account,row['handle'],token+':started','started',None,evidence={
+   'requested':requested,'report':f'var/market-identity-{market}-{tokens[0]}/output/report.private.json',
+   'retryReport':f'var/market-identity-{market}-{tokens[1]}/output/report.private.json'},now=clock())
+  try:
+   child,evidence_paths,private,retried=_probe_with_init_retry(root,market,account,chunk,payload_targets,tokens,runner,profile_canary,sleep)
+   applied=_apply(root,market,private,requested)
+  except (CycleError,subprocess.TimeoutExpired,ValueError,OSError) as error:
+   for row in chunk:retry_record(root,market,account,row['handle'],token,'shared',getattr(error,'code',None) or type(error).__name__,now=clock())
+   report['accountWait']=retry_snapshot(root,market,now=clock())['accountWait'];break
   report['networkRuns']+=1;report['resolvedHandles']+=applied['resolvedHandles'];report['unresolvedHandles']+=applied['unresolvedHandles'];report['newBindings']+=applied['newBindings'];report['profileVerified']+=applied['profileVerified']
   report['evidence'].extend(str(path.relative_to(root)) for path in evidence_paths)
-  report['initRetries']+=retried
-  report['blockedHandles']+=applied['blockedHandles']
-  if applied['blockedHandles']:
-   report['stopped']=applied['blockCode'];break
-  if child.returncode not in (0,2):raise CycleError('market_identity_probe_failed')
+  report['initRetries']+=retried;report['blockedHandles']+=applied['blockedHandles']
+  for row in requested:
+   category,reason=classify_retry(private,row['ref'],expected_handle=row['handle'],market=market)
+   retry_record(root,market,account,row['handle'],token,category,reason,evidence=str(evidence_paths[-1].relative_to(root)),now=clock())
+  if applied['blockCode']=='market_identity_auth_required':
+   report['authRequired']=True;report['stopped']='market_identity_auth_required';break
+  if child.returncode not in (0,2):
+   retry_record(root,market,account,chunk[0]['handle'],token+':exit','shared','market_identity_probe_failed',now=clock());break
+ project_isolated(root,market)
+ report['queue']=pending(root,market,1)
  return report

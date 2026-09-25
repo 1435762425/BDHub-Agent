@@ -28,7 +28,7 @@ class SchemaMigrations(unittest.TestCase):
     def test_check_is_read_only_and_apply_is_idempotent(self):
         before = check_all(self.root)
         self.assertFalse(before["ready"])
-        self.assertEqual([len(state["pending"]) for state in before["databases"]],[1,21])
+        self.assertEqual([len(state["pending"]) for state in before["databases"]],[1,22])
         # A check must not create its own registry.
         with closing(sqlite3.connect(self.root / "var" / "catalog-links.sqlite")) as db:
             self.assertFalse(db.execute("SELECT 1 FROM sqlite_master WHERE name='agent_schema_migration'").fetchone())
@@ -70,7 +70,7 @@ class SchemaMigrations(unittest.TestCase):
 
     def test_v19_upgrade_preserves_existing_history_page(self):
         filename, migrations = DATABASES['second-cycle']
-        with patch.dict(DATABASES, {'second-cycle': (filename, migrations[:-2])}):
+        with patch.dict(DATABASES, {'second-cycle': (filename, tuple(m for m in migrations if m.version<=19))}):
             apply_all(self.root)
         path = self.root / 'var' / filename
         with closing(sqlite3.connect(path)) as db, db:
@@ -83,7 +83,7 @@ class SchemaMigrations(unittest.TestCase):
 
     def test_v21_preserves_it_projections_and_allows_the_same_pid_and_video_in_another_market(self):
         filename,migrations=DATABASES['second-cycle']
-        with patch.dict(DATABASES,{'second-cycle':(filename,migrations[:-1])}):
+        with patch.dict(DATABASES,{'second-cycle':(filename,tuple(m for m in migrations if m.version<=20))}):
             apply_all(self.root)
         path=self.root/'var'/filename
         with closing(sqlite3.connect(path)) as db,db:

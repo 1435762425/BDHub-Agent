@@ -98,7 +98,7 @@ class OverviewTests(unittest.TestCase):
             db.execute("INSERT INTO discovery_item VALUES('foreign','new','unresolved')")
         with read_db(path) as db:
             value = identity_counts(self.root, db, 'p', 'it')
-            self.assertEqual(value['rows'], {'resolved':2,'notFound':1,'queued':1,'blocked':1,'noRecord':1,'conflict':1})
+            self.assertEqual(value['rows'], {'resolved':2,'notFound':1,'queued':1,'blocked':1,'isolated':0,'noRecord':1,'conflict':1})
             self.assertEqual(sum(value['handles'].values()), 6)
             self.assertEqual(sum(value['rows'].values()), 7)
             with self.assertRaises(sqlite3.OperationalError):

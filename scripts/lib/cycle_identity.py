@@ -73,7 +73,9 @@ class IdentityBridge:
   （2026-09-15 实测：40 个批次里 39 个被这样结算掉）。被挡住是"没拿到答案"，不是结论。
   """
   try:
-   detail=self.discovery._db.execute("SELECT batch_id FROM discovery_item WHERE status='blocked' AND attempt_no<? GROUP BY batch_id",(BLOCKED_MAX_ATTEMPTS,)).fetchall()
+   from lib.identity_retry import snapshot
+   policy=snapshot(self.identity_path.parent.parent,'it',now=self.store.clock())
+   detail=self.discovery._db.execute("SELECT batch_id FROM discovery_item WHERE status='blocked' AND attempt_no<? GROUP BY batch_id",(2147483647 if policy['enabled'] else BLOCKED_MAX_ATTEMPTS,)).fetchall()
   except Exception:
    return 0
   reopened=0
@@ -90,6 +92,8 @@ class IdentityBridge:
   bound=0;states={};finished=[];bound_ids=[]
   with closing(sqlite3.connect(self.identity_path.resolve().as_uri()+'?mode=ro',uri=True)) as identities, identities:
    identities.row_factory=sqlite3.Row
+   from lib.identity_retry import snapshot
+   policy=snapshot(self.identity_path.parent.parent,'it',now=self.store.clock())
    judgments={}
    def judgment(handle,current):
     """Reuse one exact handle judgment across every current source edge.
@@ -102,9 +106,9 @@ class IdentityBridge:
     """
     if handle in judgments:return judgments[handle]
     rows=[dict(r) for r in self.discovery._db.execute(
-     "SELECT * FROM discovery_item WHERE handle=? AND status IN ('completed','unresolved') "
+     "SELECT * FROM discovery_item WHERE handle=? AND (status IN ('completed','unresolved') OR outcome='identity_only') "
      "ORDER BY CASE status WHEN 'completed' THEN 0 ELSE 1 END,finished_at DESC,rowid DESC",(handle,)).fetchall()]
-    completed=[r for r in rows if r['status']=='completed' and r['creator_id'] and r['oec_id']]
+    completed=[r for r in rows if (r['status']=='completed' or r['outcome']=='identity_only') and r['creator_id'] and r['oec_id']]
     if completed:
      identities_seen={(r['creator_id'],r['oec_id']) for r in completed}
      if len(identities_seen)!=1:raise CycleError('identity_conflict')
@@ -117,11 +121,13 @@ class IdentityBridge:
       pattern=re.compile(re.escape(f"creator-discovery:{candidate['id']}:")+r'[a-f0-9]{64}:discovery-result$')
       proofs=[r[0] for r in proofs if pattern.fullmatch(r[0])]
       if len(proofs)==1:
-       judgments[handle]=({**candidate,'creatorId':candidate['creator_id'],'oecId':candidate['oec_id']},proofs[0])
+       judgments[handle]=({**candidate,'status':'completed','creatorId':candidate['creator_id'],'oecId':candidate['oec_id']},proofs[0])
        return judgments[handle]
      raise CycleError('identity_proof_missing')
     unresolved=next((r for r in rows if r['status']=='unresolved'),None)
-    judgments[handle]=(unresolved,None) if unresolved else (current,None)
+    if not unresolved and handle in policy['isolated']:
+     judgments[handle]=({'status':'technical_isolated','outcome':None,'creatorId':None,'oecId':None},None)
+    else:judgments[handle]=(unresolved,None) if unresolved else (current,None)
     return judgments[handle]
    for box in self.store.db.execute('SELECT * FROM cycle_identity_outbox WHERE plan_id=? AND batch_id IS NOT NULL AND settled=0 AND (? IS NULL OR id IN (SELECT value FROM json_each(?)))',(plan,encoded(outbox_ids) if outbox_ids is not None else None,encoded(outbox_ids) if outbox_ids is not None else None)).fetchall():
     detail=self.discovery.detail(box['batch_id']);states[box['batch_id']]=detail['batch']['counts']
@@ -135,7 +141,7 @@ class IdentityBridge:
      if not item:
       all_terminal=False
       continue
-     terminal=item['status'] in ('completed','unresolved')
+     terminal=item['status'] in ('completed','unresolved','technical_isolated')
      all_terminal=all_terminal and terminal
      with self.store.tx():
       self.store.db.execute('INSERT INTO cycle_identity_outcome VALUES(?,?,?) ON CONFLICT(plan_id,source_id) DO UPDATE SET status=excluded.status',(plan,edge['sourceId'],item['status']))

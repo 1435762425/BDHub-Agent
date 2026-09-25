@@ -1111,6 +1111,19 @@ CREATE TABLE lead_query_market(
 """)
 
 
+SECOND_CYCLE_IDENTITY_RETRY = Migration(22, "identity_retry_budget_v1", """
+CREATE TABLE IF NOT EXISTS identity_handle_budget(
+ market TEXT NOT NULL,handle TEXT NOT NULL,failures INTEGER NOT NULL,next_at REAL NOT NULL,
+ last_event TEXT NOT NULL,reason TEXT,updated REAL NOT NULL,PRIMARY KEY(market,handle));
+CREATE TABLE IF NOT EXISTS identity_retry_event(
+ id TEXT PRIMARY KEY,market TEXT NOT NULL,handle TEXT NOT NULL,account TEXT NOT NULL,
+ category TEXT NOT NULL,reason TEXT,at REAL NOT NULL,payload TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS identity_retry_market_handle ON identity_retry_event(market,handle,at);
+CREATE TABLE IF NOT EXISTS identity_account_wait(
+ market TEXT PRIMARY KEY,account TEXT NOT NULL,generation TEXT NOT NULL,failures INTEGER NOT NULL,
+ next_at REAL NOT NULL,last_event TEXT NOT NULL,reason TEXT,updated REAL NOT NULL);
+""")
+
 DATABASES = {
     "catalog-links": ("catalog-links.sqlite", (CATALOG_LINKS,)),
     "second-cycle": ("second-cycle.sqlite", (SECOND_CYCLE, SECOND_CYCLE_INDEXES,
@@ -1132,7 +1145,7 @@ DATABASES = {
                                                 SECOND_CYCLE_AGENT_CONVERSATION,
                                                 SECOND_CYCLE_INBOX_HISTORY,
                                                 SECOND_CYCLE_INBOX_HISTORY_DEFERRED,
-                                                SECOND_CYCLE_ROLLING_LEADS)),
+                                                SECOND_CYCLE_ROLLING_LEADS, SECOND_CYCLE_IDENTITY_RETRY)),
 }
 
 REGISTRY_SQL = """

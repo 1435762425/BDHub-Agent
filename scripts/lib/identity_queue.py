@@ -38,14 +38,14 @@ CURRENT = """SELECT h.plan_id,s.source_id,x.pid,x.source_handle
  WHERE s.query_id=h.query_id AND x.plan_id=h.plan_id AND x.source_id=s.source_id"""
 LEGACY_CURRENT = f"""SELECT e.plan_id,e.source_id,json_extract(e.payload,'$.pid') AS pid,
  {HANDLE} AS source_handle FROM source_edge e WHERE {KALODATA}"""
-OWNERS = """SELECT x.source_handle,min(r.creator_id) AS creator_id
+OWNERS = """SELECT x.plan_id,x.source_handle,min(r.creator_id) AS creator_id
  FROM cycle_identity_resolution r JOIN source_edge_index x
  ON x.plan_id=r.plan_id AND x.source_id=r.source_id
- WHERE x.source_kind='kalodata_http' GROUP BY x.source_handle HAVING count(DISTINCT r.creator_id)=1"""
-LEGACY_OWNERS = f"""SELECT {HANDLE} AS source_handle,min(r.creator_id) AS creator_id
+ WHERE x.source_kind IN ('kalodata_http','kalodata_video') GROUP BY x.plan_id,x.source_handle HAVING count(DISTINCT r.creator_id)=1"""
+LEGACY_OWNERS = f"""SELECT e.plan_id,{HANDLE} AS source_handle,min(r.creator_id) AS creator_id
  FROM cycle_identity_resolution r JOIN source_edge e
  ON e.plan_id=r.plan_id AND e.source_id=r.source_id
- WHERE {KALODATA} GROUP BY {HANDLE} HAVING count(DISTINCT r.creator_id)=1"""
+ WHERE {KALODATA} GROUP BY e.plan_id,{HANDLE} HAVING count(DISTINCT r.creator_id)=1"""
 
 
 def root_of(module_file=__file__):
@@ -100,42 +100,33 @@ def _counts_once(root):
             return None
         plan_id = plan[0]
         current=CURRENT if {'source_edge_index','lead_query_head','lead_query_selection'}<=found and conn.execute('SELECT 1 FROM lead_query_head WHERE plan_id=? LIMIT 1',(plan_id,)).fetchone() else LEGACY_CURRENT
-        leads = conn.execute(f'SELECT count(*) FROM ({current}) k WHERE k.plan_id=?',(plan_id,)).fetchone()[0]
-        if current==CURRENT:
-            resolved_leads,resolved_creators=conn.execute(
-                f'SELECT count(*),count(DISTINCT o.creator_id) FROM ({current}) k JOIN ({OWNERS}) o '
-                'ON o.source_handle=k.source_handle WHERE k.plan_id=?',(plan_id,)).fetchone()
-            owner_filter=f"LEFT JOIN ({OWNERS}) own ON own.source_handle=k.source_handle"
-            owner_missing='AND own.creator_id IS NULL'
-        else:
-            resolved_leads,resolved_creators=conn.execute(
-                f'SELECT count(*),count(DISTINCT r.creator_id) FROM ({current}) k JOIN cycle_identity_resolution r '
-                'ON r.plan_id=k.plan_id AND r.source_id=k.source_id WHERE k.plan_id=?',(plan_id,)).fetchone()
-            owner_filter='';owner_missing=''
-        outcomes = {row[0]: row[1] for row in conn.execute(
-            f'SELECT o.status,count(*) FROM ({current}) k JOIN cycle_identity_outcome o '
-            f'ON o.plan_id=k.plan_id AND o.source_id=k.source_id {owner_filter} WHERE k.plan_id=? {owner_missing} GROUP BY o.status',(plan_id,))}
-        unresolved_leads = outcomes.get('unresolved', 0)
-        # The three ways a lead can still be undecided, kept apart because the next action differs:
-        # nothing submitted yet, waiting in the Find queue, and blocked by the account.
-        breakdown = {'unhanded': max(0, leads - resolved_leads - unresolved_leads - outcomes.get('queued', 0)
-                                     - outcomes.get('blocked', 0)),
-                     'queued': outcomes.get('queued', 0), 'blocked': outcomes.get('blocked', 0)}
-        pending_leads = sum(breakdown.values())
-        unresolved_creators = conn.execute(f"""SELECT count(DISTINCT k.source_handle) FROM ({current}) k
-            JOIN cycle_identity_outcome o ON o.plan_id=k.plan_id AND o.source_id=k.source_id
-            {owner_filter} WHERE k.plan_id=? AND o.status='unresolved' {owner_missing}""", (plan_id,)).fetchone()[0]
-        pending_creators = conn.execute(f"""SELECT count(DISTINCT k.source_handle) FROM ({current}) k
-            LEFT JOIN cycle_identity_outcome o ON o.plan_id=k.plan_id AND o.source_id=k.source_id
-            {owner_filter} WHERE k.plan_id=? AND (o.status IS NULL OR o.status IN ('queued','blocked')) {owner_missing}""",
-            (plan_id,)).fetchone()[0]
-    return {'plan': plan_id, 'leads': leads, 'resolvedLeads': resolved_leads, 'resolvedCreators': resolved_creators,
-            'pendingLeads': pending_leads, 'pendingCreators': pending_creators,
-            'unresolvedLeads': unresolved_leads, 'unresolvedCreators': unresolved_creators,
-            'pendingBreakdown': breakdown,
-            # If these ever disagree the stage is showing numbers it cannot account for, and the
-            # page says so instead of quietly presenting a total that does not add up.
-            'reconciled': leads == resolved_leads + unresolved_leads + pending_leads}
+        if conn.execute("SELECT 1 FROM sqlite_master WHERE name='current_identity_source'").fetchone():
+            current='SELECT plan_id,source_id,pid,source_handle FROM current_identity_source'
+        owners=OWNERS if current!=LEGACY_CURRENT else LEGACY_OWNERS
+        owner_map={str(h).lower():creator for h,creator in conn.execute(
+            f'SELECT source_handle,creator_id FROM ({owners}) WHERE plan_id=?',(plan_id,))}
+        grouped={}
+        for handle,status in conn.execute(f"""SELECT k.source_handle,o.status FROM ({current}) k
+            LEFT JOIN cycle_identity_outcome o ON o.plan_id=k.plan_id AND o.source_id=k.source_id WHERE k.plan_id=?""",(plan_id,)):
+            grouped.setdefault(str(handle).lower(),[]).append(status)
+        rows={'resolved':0,'unresolved':0,'isolated':0,'unhanded':0,'queued':0,'blocked':0}
+        handles={key:0 for key in rows};creators=set()
+        for handle,states in grouped.items():
+            if handle in owner_map:state='resolved';creators.add(owner_map[handle])
+            elif 'unresolved' in states:state='unresolved'
+            elif 'technical_isolated' in states:state='isolated'
+            elif 'blocked' in states:state='blocked'
+            elif 'queued' in states:state='queued'
+            else:state='unhanded'
+            rows[state]+=len(states);handles[state]+=1
+        pending_keys=('unhanded','queued','blocked');leads=sum(rows.values())
+        pending=sum(rows[k] for k in pending_keys)
+    return {'plan':plan_id,'leads':leads,'resolvedLeads':rows['resolved'],'resolvedCreators':len(creators),
+            'technicalIsolatedLeads':rows['isolated'],'technicalIsolatedCreators':handles['isolated'],
+            'pendingLeads':pending,'pendingCreators':sum(handles[k] for k in pending_keys),
+            'unresolvedLeads':rows['unresolved'],'unresolvedCreators':handles['unresolved'],
+            'pendingBreakdown':{k:rows[k] for k in pending_keys},
+            'reconciled':leads==rows['resolved']+rows['unresolved']+rows['isolated']+pending}
 
 
 def policy(root):
@@ -222,30 +213,35 @@ def by_creator(root):
         if not plan:
             return None
         current=CURRENT if {'source_edge_index','lead_query_head','lead_query_selection'}<=tables and conn.execute('SELECT 1 FROM lead_query_head WHERE plan_id=? LIMIT 1',(plan[0],)).fetchone() else LEGACY_CURRENT
-        owners = OWNERS if current == CURRENT else LEGACY_OWNERS
+        if conn.execute("SELECT 1 FROM sqlite_master WHERE name='current_identity_source'").fetchone():
+            current='SELECT plan_id,source_id,pid,source_handle FROM current_identity_source'
+        owners = OWNERS if current != LEGACY_CURRENT else LEGACY_OWNERS
+        owners = f'SELECT * FROM ({owners}) WHERE plan_id=:plan'
         sql = f"""
-        WITH K AS (SELECT source_handle AS h,source_id,pid FROM ({current}) WHERE plan_id=:plan),
+        WITH K AS MATERIALIZED (SELECT source_handle AS h,source_id,pid FROM ({current}) WHERE plan_id=:plan),
         O AS ({owners}),
         R AS (SELECT DISTINCT k.h FROM K k JOIN O o ON o.source_handle=k.h),
-        U AS (SELECT DISTINCT k.h FROM K k JOIN cycle_identity_outcome o ON o.source_id=k.source_id
+        U AS (SELECT DISTINCT k.h FROM K k JOIN cycle_identity_outcome o ON o.plan_id=:plan AND o.source_id=k.source_id
               WHERE o.status='unresolved'),
         -- 「被挡住」＝问过但没拿到平台的真实回答（请求/签名失败、账号起不来、被远端挡回）。它不是
         -- "没问过"，也不是"找不到"；这一批必须能重试，否则这些达人永远停在待补、补 OECID 一直空转。
-        B AS (SELECT DISTINCT k.h FROM K k JOIN cycle_identity_outcome o ON o.source_id=k.source_id
+        I AS (SELECT DISTINCT k.h FROM K k JOIN cycle_identity_outcome o ON o.plan_id=:plan AND o.source_id=k.source_id WHERE o.status='technical_isolated'),
+        B AS (SELECT DISTINCT k.h FROM K k JOIN cycle_identity_outcome o ON o.plan_id=:plan AND o.source_id=k.source_id
               WHERE o.status='blocked')
         SELECT
           (SELECT count(DISTINCT h) FROM K) AS handles,
           (SELECT count(*) FROM R) AS resolved,
           (SELECT count(*) FROM U WHERE h NOT IN (SELECT h FROM R)) AS unresolved,
-          (SELECT count(*) FROM B WHERE h NOT IN (SELECT h FROM R) AND h NOT IN (SELECT h FROM U)) AS blocked,
-          (SELECT group_concat(h, '|') FROM B WHERE h NOT IN (SELECT h FROM R) AND h NOT IN (SELECT h FROM U)) AS blocked_handles,
+          (SELECT count(*) FROM B WHERE h NOT IN (SELECT h FROM R) AND h NOT IN (SELECT h FROM U) AND h NOT IN (SELECT h FROM I)) AS blocked,
+          (SELECT group_concat(h, '|') FROM B WHERE h NOT IN (SELECT h FROM R) AND h NOT IN (SELECT h FROM U) AND h NOT IN (SELECT h FROM I)) AS blocked_handles,
           (SELECT count(DISTINCT h) FROM K WHERE h NOT IN (SELECT h FROM R)
-             AND h NOT IN (SELECT h FROM U) AND h NOT IN (SELECT h FROM B)) AS unknown,
+             AND h NOT IN (SELECT h FROM U) AND h NOT IN (SELECT h FROM B) AND h NOT IN (SELECT h FROM I)) AS unknown,
           (SELECT count(*) FROM K) AS leads,
           -- 可达位置：已就位达人的**全部**线索商品，去重到 达人×商品。
           -- `json_extract` 必须先抽成列再连接：直接在 ON 里对每一行调它，3000×13000 次会把读卡住。
           (SELECT count(*) FROM (SELECT DISTINCT k.h,k.pid FROM K k
-             WHERE k.h IN (SELECT h FROM R))) AS positions
+             WHERE k.h IN (SELECT h FROM R))) AS positions,
+          (SELECT count(*) FROM I WHERE h NOT IN (SELECT h FROM R) AND h NOT IN (SELECT h FROM U)) AS isolated
         """
         row = conn.execute(sql, {'plan': plan[0]}).fetchone()
     if row is None:
@@ -253,11 +249,11 @@ def by_creator(root):
     # 列顺序：handles / resolved / unresolved / blocked / blocked_handles / unknown / leads / positions
     values = {'handles': int(row[0]), 'resolved': int(row[1]), 'unresolved': int(row[2]),
               'blocked': int(row[3]), 'unknown': int(row[5]), 'leads': int(row[6]),
-              'positions': int(row[7])}
+              'positions': int(row[7]),'isolated':int(row[8])}
     blocked_handles = str(row[4] or '').split('|') if row[4] else []
     # 四项互斥、相加必须等于 handle 总数：这是由查询本身保证的，对不上就说明这一读不可信。
     values['reconciled'] = (values['resolved'] + values['unresolved'] + values['blocked']
-                            + values['unknown']) == values['handles']
+                            + values['unknown'] + values['isolated']) == values['handles']
     # 被挡住的原因分布：只说"被挡住"不够，要说清为什么没问成。**只统计真的落在这一桶里的达人**，
     # 否则会看到"被挡住 19"旁边写着 56（那 56 里有 52 位的身份其实已经从别的线索拿到了）。
     reasons = []

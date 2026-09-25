@@ -567,6 +567,16 @@ class StageWiring(unittest.TestCase):
                           'scripts/second-cycle-identities.py',
                           'scripts/identity-batch.py'])
 
+    def test_bounded_identity_slice_publishes_found_subset_and_preserves_pending_scope(self):
+        def answers(args,_label):
+            payload=({'submittedBatches':[]} if args[:2]==['scripts/second-cycle-identities.py','submit'] else
+                     {'newBindings':0,'batches':{}} if args[0]=='scripts/second-cycle-identities.py' else
+                     {'sliceComplete':True,'coverage':'bounded_identity_slice','pending':40,'claimed':50,'found':7,'notFound':3,'technicalIsolatedLeads':2,'stopReason':'retry_wait'})
+            return {'state':'completed','itemCount':0,'complete':True,'platformWrites':0,'payload':payload}
+        result=self.executor(answers)[0].execute(None,{'applicableSources':['campaign']},'oecid',{'jobs':{}})
+        self.assertEqual(result['state'],'completed');self.assertEqual(result['itemCount'],7)
+        self.assertEqual(result['scope']['pending'],40);self.assertEqual(result['scope']['technicalIsolatedLeads'],2)
+
     def test_oecid_never_publishes_with_a_stalled_pending_queue(self):
         def answers(args,_label):
             payload=({'submittedBatches':[]} if args[:2]==['scripts/second-cycle-identities.py','submit'] else

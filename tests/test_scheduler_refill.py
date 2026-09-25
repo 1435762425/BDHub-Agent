@@ -41,7 +41,9 @@ class RefillTests(unittest.TestCase):
     def wait_status(self,predicate):
         deadline=time.monotonic()+2
         while time.monotonic()<deadline:
-            value=json.loads(status_path(self.root).read_text())
+            try:value=json.loads(status_path(self.root).read_text())
+            except FileNotFoundError:
+                time.sleep(.01);continue  # The stage may enter before the first atomic status publication.
             if predicate(value):return value
             time.sleep(.01)
         self.fail('scheduler status condition did not arrive')

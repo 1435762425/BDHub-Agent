@@ -13,7 +13,7 @@ from lib.cycle_stats import daily
 from lib.lead_pool import pool
 from lib.market_registry import require_operational
 
-IDENTITY_STATES = ('resolved', 'notFound', 'queued', 'blocked', 'noRecord', 'conflict')
+IDENTITY_STATES = ('resolved', 'notFound', 'queued', 'blocked', 'isolated', 'noRecord', 'conflict')
 TECHNICAL_CASES = ('card_result_unknown', 'conversation_business_rejected', 'conversation_create_unknown')
 
 
@@ -87,6 +87,9 @@ def identity_counts(root, db, plan, market):
                 (market, json.dumps(list(grouped)))):
                 judgments[row['handle']].add(row['status'])
             discovery_read = True
+    from lib.identity_retry import snapshot
+    isolated=snapshot(root,market)['isolated']
+    for handle in isolated:judgments[handle].add('technical_isolated')
     row_counts = dict.fromkeys(IDENTITY_STATES, 0)
     handle_counts = dict.fromkeys(IDENTITY_STATES, 0)
     for handle, outcomes in grouped.items():
@@ -102,6 +105,8 @@ def identity_counts(root, db, plan, market):
             state = 'notFound'
         elif states & {'queued', 'running'}:
             state = 'queued'
+        elif 'technical_isolated' in states:
+            state = 'isolated'
         elif 'blocked' in states:
             state = 'blocked'
         elif states - {None}:
@@ -113,7 +118,7 @@ def identity_counts(root, db, plan, market):
     if sum(row_counts.values()) != len(rows) or sum(handle_counts.values()) != len(grouped):
         raise ValueError('identity_counts_unreconciled')
     labels = {'resolved': '已解析', 'notFound': '已判定搜索不到', 'queued': '解析排队/处理中',
-              'blocked': '技术阻断', 'noRecord': '未有解析记录', 'conflict': '绑定或状态待核对'}
+              'blocked': '技术退避', 'isolated':'技术隔离（停止重试）', 'noRecord': '未有解析记录', 'conflict': '绑定或状态待核对'}
     return {'metrics': [metric('rows', '当前 A 类线索', len(rows), '条'),
                         metric('handles', '去重账号名', len(grouped), '个')],
             'rows': row_counts, 'handles': handle_counts, 'labels': labels,

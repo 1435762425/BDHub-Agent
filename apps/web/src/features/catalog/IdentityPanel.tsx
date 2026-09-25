@@ -8,6 +8,8 @@ const STOP:Record<string,string>={
  nothing_pending:"没有待补充身份。",
  limit_reached:"已达到本次上限。",
  stopped_by_operator:"已按要求停止。",
+ retry_wait:"暂时没有到期的可查达人，系统将自动续查。",
+ account_wait:"身份账号通道等待恢复，其他已解析达人继续。",
  queue_stalled:"当前没有可继续查询的达人。",
  round_limit:"已达到本次轮次上限。",
  round_timeout:"本轮超时，断点已保留。",
@@ -51,6 +53,7 @@ export default function IdentityPanel({controller}:{controller:IdentityControlle
    <MetricTable rows={[
     {label:"已就位",value:(by?.resolved??data.resolvedCreators).toLocaleString(),detail:"可进入发送池"},
     {label:"待补充身份",value:(by?by.blocked+by.unknown:data.pendingCreators).toLocaleString(),detail:"等待查询 OECID",accent:true},
+    {label:"技术隔离",value:(by?.isolated??0).toLocaleString(),detail:"停止重试，无需逐个处理"},
     {label:"搜索不到",value:(by?.unresolved??data.unresolvedCreators).toLocaleString(),detail:"平台没有返回精确达人"},
    ]}/>
 

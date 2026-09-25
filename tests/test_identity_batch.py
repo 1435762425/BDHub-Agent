@@ -400,10 +400,10 @@ class CurrentScope(unittest.TestCase):
                 db.execute('INSERT INTO cycle_identity_outbox VALUES(?,?,?,0)',(b1,json.dumps({'handles':['h1','h2']}),'p'))
                 db.execute('INSERT INTO cycle_identity_outbox VALUES(?,?,?,0)',(b2,json.dumps({'handles':['h2','h3']}),'p'))
             with closing(sqlite3.connect(var/'creator-discovery.sqlite')) as db, db:
-                db.executescript('CREATE TABLE discovery_batch(id TEXT,status TEXT); CREATE TABLE discovery_item(batch_id TEXT,handle TEXT,status TEXT,attempt_no INTEGER,retry_at REAL);')
+                db.executescript('CREATE TABLE discovery_batch(id TEXT,status TEXT); CREATE TABLE discovery_item(batch_id TEXT,handle TEXT,status TEXT,attempt_no INTEGER,retry_at REAL,outcome TEXT);')
                 db.executemany('INSERT INTO discovery_batch VALUES(?,?)',[(old,'completed'),(b1,'queued'),(b2,'queued')])
-                db.execute("INSERT INTO discovery_item VALUES(?,?,?,1,0)",(old,'h1','unresolved'))
-                db.executemany('INSERT INTO discovery_item VALUES(?,?,?,1,0)',[(b1,'h1','queued'),(b1,'h2','queued'),(b2,'h2','queued'),(b2,'h3','queued')])
+                db.execute("INSERT INTO discovery_item VALUES(?,?,?,1,0,NULL)",(old,'h1','unresolved'))
+                db.executemany('INSERT INTO discovery_item VALUES(?,?,?,1,0,NULL)',[(b1,'h1','queued'),(b1,'h2','queued'),(b2,'h2','queued'),(b2,'h3','queued')])
             self.assertEqual(identity_batch.current_batch_scope(folder),b2)
 
 
