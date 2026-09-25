@@ -68,13 +68,16 @@ def cycle(market):
                 sdk_heartbeat[0]=time.monotonic();owner.accepting=True
                 def receive_stopped():return closing.is_set() or stopped(market)
                 receiver=Receiver(ROOT,market,runtime['auth'],runtime['session'].maintenance_due,receive_stopped);receiver.start()
-                next_status=0
+                next_status=0;unready_since=None
                 while not stopped(market) and time.monotonic()-started<600 and current():
                     if receiver.done.is_set():raise ValueError('sdk_http_reader_stopped')
-                    if not page.evaluate(_JS_SDK_READY):raise ValueError('sdk_disconnected')
-                    armed=page.evaluate(arm_script(_FIND_API))
-                    if armed.get('armed')!=2:raise ValueError('sdk_callbacks_unavailable')
-                    sdk_heartbeat[0]=time.monotonic();data=page.evaluate(DRAIN)
+                    ready=bool(page.evaluate(_JS_SDK_READY))
+                    armed=page.evaluate(arm_script(_FIND_API)) if ready else {'armed':0}
+                    if not ready or armed.get('armed')!=2:
+                        if unready_since is None:unready_since=time.monotonic()
+                        if time.monotonic()-unready_since>30:raise ValueError('sdk_disconnected')
+                        page.wait_for_timeout(250);continue
+                    unready_since=None;sdk_heartbeat[0]=time.monotonic();data=page.evaluate(DRAIN)
                     if data.get('overflow'):raise ValueError('sdk_receive_buffer_overflow')
                     if data['events']:
                         receiver.signal(data['events'])  # Durable wakeups commit before clearing browser buffer.
