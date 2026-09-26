@@ -19,6 +19,15 @@ def _idle_continuous(store,market,account):
  from lib.market_send_control import status
  return status(ROOT,store,market)
 
+# One typed figure per stage (H07): what it counts, in which unit and over which window. A value that
+# the stage did not record is null, never 0; worker lanes do not report platform writes here.
+STAGE_METRICS={'taplink_clean':('本轮核查链接','item'),'catalog':('本轮货盘商品','item'),
+ 'taplink_prepare':('本轮处理链接','item'),'kalodata':('本轮完成查询','query'),
+ 'oecid':('本轮解析身份','item'),'send_pool':('本轮发送池位置','creator_pid')}
+
+def _metric(label,unit,scope,value):
+ return {'label':label,'unit':unit,'scope':scope,'value':value,'availability':'known' if value is not None else 'not_recorded'}
+
 def home(store,market='it'):
  workflow=workflow_status(store,market);current=workflow['current']
  all_accounts=account_status(store,ROOT);accounts={**all_accounts,
@@ -39,18 +48,25 @@ def home(store,market='it'):
    'processed':int((row['counts'] if row else {}).get('items') or 0),
    'lastSuccessAt':last,
    'nextAt':None,'checkpoint':row['checkpoint'] if row else {},'stopReason':row['errorCode'] if row else None,
-   'platformWrites':row['platformWrites'] if row else 0,'generationId':row['outputGenerationId'] if row else None})
+   'platformWrites':row['platformWrites'] if row else 0,'generationId':row['outputGenerationId'] if row else None,
+   'metric':_metric(*STAGE_METRICS[key],'run',int(row['counts']['items']) if row and isinstance((row['counts'] or {}).get('items'),int) else None),
+   'writes':{'value':row['platformWrites'] if row else None,
+             'availability':'uncertain' if row and (row['counts'] or {}).get('writeEvidence')=='uncertain' else 'known' if row else 'not_recorded'}})
  stages.append({'id':'continuous_send','label':'持续二发','state':continuous['runtime']['state'],
   'counts':{'confirmedToday':continuous['runtime']['confirmedToday'],'failedKnown':continuous['runtime']['failedKnown'],'unknown':continuous['runtime']['unknown']},
   'processed':continuous['runtime']['confirmedToday'],'lastSuccessAt':continuous['runtime']['lastSuccessAt'],
   'nextAt':None,'checkpoint':{'deliveryId':continuous['runtime']['currentDeliveryId']},
-  'stopReason':continuous['runtime']['stopReason'],'platformWrites':0,'generationId':None})
+  'stopReason':continuous['runtime']['stopReason'],'platformWrites':0,'generationId':None,
+  'metric':_metric('今日确认触达','delivery','today',continuous['runtime']['confirmedToday']),
+  'writes':{'value':None,'availability':'not_recorded'}})
  agent_counts={key:int(latest_agent[key] or 0) for key in ('claimed','no_reply','prepared','human','confirmed','unknown')} if latest_agent else {}
  stages.append({'id':'agent_reply','label':'Agent 回复','state':'disabled' if not agent['enabled'] else latest_agent['state'] if latest_agent else 'queued',
   'counts':agent_counts,'processed':latest_agent['confirmed'] if latest_agent else 0,
   'lastSuccessAt':latest_agent['finished_at'] if latest_agent and latest_agent['state']=='completed' else None,
   'nextAt':None,'checkpoint':{},'stopReason':latest_agent['error'] if latest_agent else None,
-  'platformWrites':0,'generationId':None})
+  'platformWrites':0,'generationId':None,
+  'metric':_metric('最近一轮确认回复','message','last_run',int(latest_agent['confirmed'] or 0) if latest_agent else None),
+  'writes':{'value':None,'availability':'not_recorded'}})
  issues=[]
  template_review=send_template_reviews(store,ROOT,market)
  if not template_review['ready']:

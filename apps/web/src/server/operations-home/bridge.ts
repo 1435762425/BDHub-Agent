@@ -6,7 +6,10 @@ import {enabledMarket} from "../markets/registry.ts";
 import {singleflight} from "../runtime/singleflight.ts";
 
 export type OperationsSetting={market:string;automaticOperationsEnabled:boolean;fullCatalogWeeklyEnabled:boolean;continuousSendEnabled:boolean;revision:number;updatedAt:number};
-export type OperationsStage={id:string;label:string;state:string;counts:Record<string,unknown>;processed:number;lastSuccessAt:number|null;nextAt:number|null;checkpoint:Record<string,unknown>;stopReason:string|null;platformWrites:number;generationId:string|null};
+export type StageMetric={label:string;unit:string;scope:"run"|"today"|"last_run";value:number|null;availability:"known"|"not_recorded"};
+export type StageWrites={value:number|null;availability:"known"|"uncertain"|"not_recorded"};
+// metric/writes are absent from an older backend: the card then falls back to the legacy fields.
+export type OperationsStage={id:string;label:string;state:string;counts:Record<string,unknown>;processed:number;lastSuccessAt:number|null;nextAt:number|null;checkpoint:Record<string,unknown>;stopReason:string|null;platformWrites:number;generationId:string|null;metric?:StageMetric;writes?:StageWrites};
 export type OperationsHome={schemaVersion:"bdhub.operations-home.v1";market:string;setting:OperationsSetting;workflow:{runId:string|null;state:string;startedAt:number|null;finishedAt:number|null};stages:OperationsStage[];issues:Array<{kind:string;id:string;title:string;reason:string}>;jobs:unknown;accounts:unknown;continuousSend:unknown;agent:{enabled:boolean;revision:number;replyWindow:[string,string]};templateReview:{minimumApproved:number;approved:number;total:number;ready:boolean};readOnly:true;platformWrites:0;realSends:0};
 
 const text=(value:unknown,max=160,empty=false)=>{if(typeof value!=="string"||(!empty&&!value)||value.length>max)throw Error("invalid_operations_home");return value;};
