@@ -88,6 +88,9 @@ def _nested_failure(payload):
     steps=payload.get('steps') if isinstance(payload,dict) else None
     for step in steps if isinstance(steps,list) else []:
         if not isinstance(step,dict):return 'nested_step_invalid'
+        # Only batch sub-steps (label/exitCode/result) are judged here; other reports use "steps" for
+        # progress, e.g. campaign-collect's per-pass {"status":"paused",...} entries, which are not failures.
+        if not {'label','exitCode','result'}&step.keys():continue
         result=step.get('result')
         if step.get('exitCode') not in (0,None) or not isinstance(result,dict) or str(result.get('state') or '') in FAILED_REPORT_STATES:
             label=str(step.get('label') or 'step')

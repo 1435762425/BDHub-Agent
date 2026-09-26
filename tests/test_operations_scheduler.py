@@ -854,6 +854,21 @@ class StageWiring(unittest.TestCase):
         self.assertEqual((result['state'],result['errorCode'],result['platformWrites']),
                          ('failed','nested_create-01_blocked',1))
 
+    def test_progress_steps_of_a_completed_collection_are_not_nested_failures(self):
+        # campaign-collect reports each budgeted pass as {"status":"paused",...}; the run itself completed.
+        class Result:
+            returncode=0;stdout='{"status":"completed","platformWrites":0}\n';stderr=''
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder);(root/'var').mkdir()
+            def runner(command,**_kwargs):
+                Path(command[command.index('--report')+1]).write_text(json.dumps({'status':'completed','platformWrites':0,
+                    'steps':[{'status':'paused','requests':150,'error':None,'platformWrites':0},
+                             {'status':'completed','requests':716,'error':None,'platformWrites':0}],'error':None}))
+                return Result()
+            result=SubprocessStageExecutor(root,runner=runner)._call(
+                ['scripts/campaign-collect.py','--market','my'],'progress-steps-fixture')
+        self.assertEqual((result['state'],result.get('errorCode')),('completed',None))
+
     def test_batch_outcome_never_turns_a_missing_create_count_into_zero(self):
         import importlib.util
         spec=importlib.util.spec_from_file_location('catalog_link_batch',ROOT/'scripts/catalog-link-batch.py')
