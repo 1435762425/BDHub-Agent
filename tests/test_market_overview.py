@@ -138,12 +138,12 @@ class OverviewTests(unittest.TestCase):
             db.execute('CREATE TABLE video_lead_current(handle)')
             db.executemany('INSERT INTO video_lead_current(handle) VALUES(?)',[('known',),('unknown',)])
             result=video_counts(self.root,db,'it')
-            self.assertEqual({m['key']:m['value'] for m in result['metrics']},{'rows':2,'known':1,'unknown':1})
+            self.assertEqual({m['key']:m['value'] for m in result['metrics']},{'rows':2,'known':1,'notFound':0,'unknown':1})
             with self.assertRaises(ValueError):video_counts(self.root,db,'br')
             db.execute("ALTER TABLE video_lead_current ADD COLUMN market TEXT DEFAULT 'it'")
             db.execute("INSERT INTO video_lead_current(handle,market) VALUES('unknown','br')")
             result=video_counts(self.root,db,'br')
-            self.assertEqual({m['key']:m['value'] for m in result['metrics']},{'rows':1,'known':1,'unknown':0})
+            self.assertEqual({m['key']:m['value'] for m in result['metrics']},{'rows':1,'known':1,'notFound':0,'unknown':0})
 
     def test_unknowns_and_technical_cases_do_not_disappear_or_change_business_cases(self):
         with closing(sqlite3.connect(':memory:')) as db, db:

@@ -166,9 +166,21 @@ def video_counts(root, db, market):
         owners = {str(r[0]).lower() for r in ids.execute('''SELECT current_handle FROM creator_identity
             WHERE market=? AND handle_conflict=0 AND current_handle IS NOT NULL''', (market,))}
     known = sum(str(r['handle']).lower() in owners for r in rows)
+    # An unmatched author is either already judged "not found" by the OECID search (final, not
+    # re-queried) or still waiting for resolution; the two were once shown together as "待匹配".
+    not_found = set()
+    if {'source_edge_index', 'cycle_identity_outcome', 'plan'} <= tables(db):
+        not_found = {str(r[0]).lower() for r in db.execute(
+            "SELECT DISTINCT s.source_handle FROM source_edge_index s "
+            "JOIN plan p ON p.id=s.plan_id AND p.market=? "
+            "JOIN cycle_identity_outcome o ON o.plan_id=s.plan_id AND o.source_id=s.source_id "
+            "WHERE s.source_kind='kalodata_video' AND o.status='unresolved'", (market,))}
+    unmatched = [str(r['handle']).lower() for r in rows if str(r['handle']).lower() not in owners]
+    judged = sum(handle in not_found for handle in unmatched)
     return {'metrics': [metric('rows', '当前 B 类投影', len(rows), '条'),
                         metric('known', '已匹配作者', known, '条'),
-                        metric('unknown', '待匹配作者', len(rows) - known, '条')],
+                        metric('notFound', '已判定搜索不到', judged, '条', 'OECID 已查过、未找到的作者；按规则不再自动重查，不会进入发送池。'),
+                        metric('unknown', '待解析作者', len(unmatched) - judged, '条', '尚未得到 OECID 结果，排队等身份阶段处理。')],
             'note': '计当前视频投影行，不等于去重达人或可发位置；未接通市场显示不可用。'}
 
 
