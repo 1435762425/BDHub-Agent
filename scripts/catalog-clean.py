@@ -6,6 +6,7 @@
     python scripts/catalog-clean.py status
     python scripts/catalog-clean.py delete --max-deletes 50 --report var/...
     python scripts/catalog-clean.py verify      --report var/...
+    python scripts/catalog-clean.py check-bindings --market br --report var/...
 
 Design: the health rules and the delete protocol come from the legacy implementation and are
 reused verbatim. A card is deleted only when the whole list is platform-confirmed invalid, it is
@@ -22,7 +23,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(ROOT / 'scripts'))
-from lib.catalog_clean import CatalogClean, CLEAN_READ_EXTRA, classify_card, decide, used_list_ids  # noqa: E402
+from lib.catalog_clean import CatalogClean, CLEAN_READ_EXTRA, check_market_bindings, classify_card, decide, used_list_ids  # noqa: E402
 from lib.catalog_prepare import TaplinkInventory, list_rows, read_members, scan_lists  # noqa: E402
 from lib.cohort_find import SharedPacer  # noqa: E402
 from lib.global_source_transport import opportunity_list_deleter_batch, opportunity_reader  # noqa: E402
@@ -262,7 +263,8 @@ def verify_deleted(clean, read, report):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action', choices=['refresh', 'classify', 'status', 'delete', 'verify'])
+    parser.add_argument('action', choices=['refresh', 'classify', 'status', 'delete', 'verify', 'check-bindings'])
+    parser.add_argument('--market', default='it')
     parser.add_argument('--report', type=Path)
     parser.add_argument('--lanes', type=int, default=1, choices=[1, 3, 6, 9])
     parser.add_argument('--qps', type=int, default=5, choices=[3, 5, 8, 12])
@@ -280,8 +282,21 @@ def main():
     if not output.is_relative_to(ROOT / 'var') or output.exists():
         parser.error('new report under var required')
 
+    if args.action != 'check-bindings' and args.market != 'it':
+        parser.error('only check-bindings is market scoped; inventory and delete stay IT-only')
     report = {'action': args.action, 'realSends': 0, 'platformWrites': 0, 'startedAt': time.time()}
-    if args.action == 'refresh':
+    if args.action == 'check-bindings':
+        # Read-only market-isolated check through that market's own supply account; never deletes.
+        try:
+            with opportunity_reader(report, market=args.market, extra_read_endpoints=CLEAN_READ_EXTRA,
+                                    wait_seconds=60) as transport:
+                report['bindings'] = check_market_bindings(ROOT, args.market, reader_for(transport))
+            report['summary'] = {key: value if not isinstance(value, list) else len(value)
+                                 for key, value in report['bindings'].items()}
+        except Exception as error:
+            report['state'] = 'failed'
+            report['error'] = str(error)[:80] if isinstance(error, ValueError) else type(error).__name__
+    elif args.action == 'refresh':
         report['refresh'] = step_refresh(report, lanes=args.lanes, qps=args.qps)
     elif args.action == 'classify':
         report['withCampaigns'] = not args.no_campaigns
@@ -314,7 +329,8 @@ def main():
     output.write_text(json.dumps(report, ensure_ascii=False, indent=2) + '\n')
     print(json.dumps({'action': args.action, 'state': report['state'],
                       'platformWrites': report.get('platformWrites'),
-                      'summary': report.get('summary')}, ensure_ascii=False))
+                      'summary': report.get('summary'), **({'error': report['error']} if report.get('error') else {})},
+                     ensure_ascii=False))
     return 0
 
 

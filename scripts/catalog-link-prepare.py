@@ -792,6 +792,10 @@ def step_create(prep,run_id,limit,report,pace=0.0,lanes=1,qps=5,canary=False,pid
                     created.append({'pid':pid,'state':'existing_standard','listId':outcome['card']['listId'],
                                     'creatorPercent':outcome['card']['creatorPercent'],'seconds':0.0})
                     prep.release(run_id,pid,item['campaign_id'],item['catalog_source']);continue
+                if outcome.get('state')=='ineligible':
+                    # An exact standard card the platform reports unusable blocks creation for review.
+                    prep.mark_progress(run_id,pid,item['campaign_id'],item['catalog_source'],'review',card=outcome['card'],error=outcome['error'])
+                    blocked.append({'pid':pid,'error':outcome['blocker'],'seconds':0.0});prep.release(run_id,pid,item['campaign_id'],item['catalog_source']);continue
                 if outcome.get('state')!='missing':
                     prep.mark_progress(run_id,pid,item['campaign_id'],item['catalog_source'],'missing',error='catalog_standard_search_unresolved')
                     blocked.append({'pid':pid,'error':'catalog_standard_search_unresolved','seconds':0.0});prep.release(run_id,pid,item['campaign_id'],item['catalog_source']);continue

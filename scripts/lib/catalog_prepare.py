@@ -139,10 +139,11 @@ DROP TABLE catalog_prepare_reuse_old;''')
     def apply_read(self,run_id,pid,cid,src,outcome,now=None):
         """Persist a complete read. Historical cards are evidence, never current material."""
         now=now if now is not None else time.time();state=outcome['state']
-        if state not in ('standard','missing','read_incomplete'):raise ValueError('catalog_prepare_state_invalid')
+        if state not in ('standard','missing','read_incomplete','ineligible'):raise ValueError('catalog_prepare_state_invalid')
         listing=outcome.get('listing') or {}
         card=outcome.get('card')
-        stored_state='ready' if state=='standard' else state
+        # An unusable standard card is held for review: not ready, not a creation target.
+        stored_state={'standard':'ready','ineligible':'review'}.get(state,state)
         if state=='missing' and not card:
             card={'state':'standard_missing','pid':str(pid),'campaignId':str(cid),'catalogSource':src,
                   'searchTotal':int(outcome.get('total') or 0),'historicalCount':len(outcome.get('reuse') or []),
@@ -161,6 +162,18 @@ DROP TABLE catalog_prepare_reuse_old;''')
                     (run_id,str(pid),str(cid),src,'verifiedLink',encoded(card),now))
                 from lib.catalog_binding import CatalogBindings
                 CatalogBindings(self.root,connection=self.db).promote(spec,card,None,now=now)
+            if state=='ineligible':self._withdraw_ineligible(outcome,card,now)
+    def _withdraw_ineligible(self,outcome,card,now):
+        """Only the same list, explicitly reported unusable, leaves the sendable projection."""
+        spec=outcome.get('standardSpec')
+        if not isinstance(spec,dict) or not isinstance(spec.get('offer'),dict) or not isinstance(card,dict):return
+        from lib.catalog_binding import CatalogBindings
+        bindings=CatalogBindings(self.root,connection=self.db)
+        market=spec.get('market') or self.market;offer=spec['offer']
+        row=bindings.active_for_offer(offer,market=market)
+        if row and str(row['list_id'])==str(card.get('listId')):
+            bindings.mark_waiting_refresh(offer,reason=card.get('reason') or 'link_not_platform_valid',
+                                          evidence_ref=','.join(card.get('memberEvidenceRefs') or []) or None,now=now,market=market)
     def reuse_rows(self,run_id,pid,cid,src):
         return [dict(r) for r in self.db.execute('SELECT * FROM catalog_prepare_reuse WHERE run_id=? AND pid=? AND campaign_id=? AND catalog_source=? ORDER BY observed_at DESC,list_id',(run_id,str(pid),str(cid),src))]
     # ---- freeze and execute -----------------------------------------------------
@@ -468,7 +481,7 @@ def classify_pid(pid,offer,read,policy,standard_spec=None):
         matched.append((lid,sha,row,products[0]))
         raw=Decimal(str(products[0]['creator_commission_percent']))/100 if products[0].get('creator_commission_percent') is not None else None
         if raw is not None:rates.append(format(raw,'f'))
-    observed=[];standard=None
+    observed=[];standard=None;ineligible=None
     for lid,sha,row,product in matched:
         body,members_sha=read(MEMBERS,{'list_id':lid,'source':2 if wire=='0' else 1})
         data=body.get('data');rows=list_rows(data,'total_num','campaign_products')
@@ -490,11 +503,22 @@ def classify_pid(pid,offer,read,policy,standard_spec=None):
         observed.append(fact|{'reusable':ok,'reason':reason})
         if standard_spec and fact.get('listName')==standard_spec.get('listName') and \
                 rate_text(fact.get('creatorRaw'))==str(standard_spec.get('creatorPercent')):
+            if fact.get('platformValid') is not True or fact.get('productEligible') is not True:
+                # A card of the exact standard shape that the platform reports unusable is evidence,
+                # never current material, and never proof that a replacement may be created.
+                evidence={'listId':lid,'platformValid':fact.get('platformValid'),'productEligible':fact.get('productEligible'),
+                          'reason':'link_not_platform_valid' if fact.get('platformValid') is not True else 'link_product_not_eligible',
+                          'memberEvidenceRefs':fact.get('memberEvidenceRefs')}
+                if ineligible is None or str(lid)<str(ineligible['listId']):ineligible=evidence
+                continue
             card=reused_card(fact,pid,wanted,offer['catalogSource'],time.time())
             card['reused']=False
             if standard is None or str(card['listId'])<str(standard['listId']):standard=card
     if standard:return {'state':'standard','total':total,'rates':sorted(set(rates)),'reuse':observed,
                         'card':standard,'standardSpec':standard_spec,'listing':listing}
+    if ineligible:return {'state':'ineligible','total':total,'rates':sorted(set(rates)),'reuse':observed,
+                          'card':ineligible,'standardSpec':standard_spec,'listing':listing,
+                          'blocker':'catalog_standard_card_ineligible','error':ineligible['reason']}
     return {'state':'missing','total':total,'rates':sorted(set(rates)),'reuse':observed,
             'listing':listing,'standardSearchComplete':True}
 

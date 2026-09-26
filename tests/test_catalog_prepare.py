@@ -107,6 +107,75 @@ class BatchLinkTests(unittest.TestCase):
         outcome['listing']=self.plan_listing();self.prep.apply_read(self.run,'1','2','selected',outcome,now=10)
         self.assertEqual(self.prep.item(self.run,'1','2')['state'],'ready')
         self.assertEqual(self.prep.verified_link('1','2','selected')['listId'],'99')
+    def standard_reader(self,spec,**member):
+        base={'product_id':'1','campaign_id':'2','creator_commission_percent':'1300',
+              'plan_commission_percent':'1200','product_status':2,'unavailable_type':None,'stock':500}|member
+        def read(path,extra):
+            if path==CARD:
+                row={'product_list_id':'99','campaign_id':'0','product_list_name':spec['listName'],
+                     'campaign_products':[{'product_id':'1','creator_commission_percent':'1300'}]}
+                return {'code':0,'data':{'total':1,'list':[row]}},'card-proof'
+            return {'code':0,'data':{'total_num':1,'campaign_products':[base]}},'member-proof'
+        return read
+    def test_exact_standard_card_reported_unusable_is_never_published_or_replaced(self):
+        offer=self.make_offer('1','2');spec=self.spec('1','2',offer['creatorPercent'])
+        self.seed('1','2')
+        for member,reason in (({'product_status':3},'link_not_platform_valid'),
+                              ({'is_under_governed':True},'link_product_not_eligible')):
+            outcome=classify_pid('1',offer,self.standard_reader(spec,**member),POLICY,spec)
+            self.assertEqual((outcome['state'],outcome['error'],outcome['card']['listId']),('ineligible',reason,'99'))
+            self.prep.claim_read(self.run,limit=1)
+            outcome['listing']=self.plan_listing();self.prep.apply_read(self.run,'1','2','selected',outcome,now=10)
+            item=self.prep.item(self.run,'1','2')
+            self.assertEqual((item['state'],item['blocker']),('review','catalog_standard_card_ineligible'))
+            self.assertIsNone(self.prep.verified_link('1','2','selected'))
+            self.assertIsNone(self.prep.claim_create(self.run))
+            with self.assertRaisesRegex(ValueError,'catalog_prepare_not_missing'):
+                self.prep.freeze(self.run,'1','2','selected',spec)
+            with self.prep.db:self.prep.db.execute("UPDATE catalog_prepare_item SET state='pending' WHERE run_id=?",(self.run,))
+        valid=classify_pid('1',offer,self.standard_reader(spec),POLICY,spec)
+        self.assertEqual(valid['state'],'standard')
+    def test_explicitly_unusable_card_withdraws_only_its_own_active_binding(self):
+        offer=self.make_offer('1','2');spec=self.spec('1','2',offer['creatorPercent'])
+        self.seed('1','2');self.prep.claim_read(self.run,limit=1)
+        valid=classify_pid('1',offer,self.standard_reader(spec),POLICY,spec)
+        valid['listing']=self.plan_listing();self.prep.apply_read(self.run,'1','2','selected',valid,now=10)
+        self.assertEqual(self.prep.verified_link('1','2','selected')['listId'],'99')
+        with self.prep.db:self.prep.db.execute("UPDATE catalog_prepare_item SET state='pending' WHERE run_id=?",(self.run,))
+        self.prep.claim_read(self.run,limit=1)
+        failed={'state':'read_incomplete','error':'card_members_incomplete','listing':self.plan_listing()}
+        self.prep.apply_read(self.run,'1','2','selected',failed,now=20)
+        self.assertEqual(self.prep.verified_link('1','2','selected')['listId'],'99')
+        with self.prep.db:self.prep.db.execute("UPDATE catalog_prepare_item SET state='pending' WHERE run_id=?",(self.run,))
+        self.prep.claim_read(self.run,limit=1)
+        invalid=classify_pid('1',offer,self.standard_reader(spec,product_status=3),POLICY,spec)
+        invalid['listing']=self.plan_listing();self.prep.apply_read(self.run,'1','2','selected',invalid,now=30)
+        self.assertIsNone(self.prep.verified_link('1','2','selected'))
+        bindings=CatalogBindings(self.root)
+        try:self.assertEqual(bindings.get('it','selected','1','2')['state'],'waiting_refresh')
+        finally:bindings.close()
+    def test_market_binding_check_withdraws_only_explicit_invalids_and_keeps_failed_reads(self):
+        from lib.catalog_clean import check_market_bindings
+        offer=self.make_offer('1','2');spec=self.spec('1','2',offer['creatorPercent'])
+        self.seed('1','2');self.prep.claim_read(self.run,limit=1)
+        valid=classify_pid('1',offer,self.standard_reader(spec),POLICY,spec)
+        valid['listing']=self.plan_listing();self.prep.apply_read(self.run,'1','2','selected',valid,now=10)
+        def members(**member):
+            def read(path,extra):
+                row={'product_id':'1','product_status':2,'unavailable_type':None}|member
+                return {'code':0,'data':{'total_num':1,'campaign_products':[row]}},'members'
+            return read
+        def failing(path,extra):raise ValueError('taplink_members_malformed')
+        other=check_market_bindings(self.root,'br',members(product_status=3))
+        self.assertEqual((other['checked'],other['withdrawn']),(0,[]))
+        kept=check_market_bindings(self.root,'it',failing)
+        self.assertEqual((kept['unresolved'],kept['withdrawn'],kept['platformWrites']),(1,[],0))
+        stock=check_market_bindings(self.root,'it',members(unavailable_type=8))
+        self.assertEqual(stock['valid'],1)
+        self.assertEqual(self.prep.verified_link('1','2','selected')['listId'],'99')
+        withdrawn=check_market_bindings(self.root,'it',members(product_status=3))
+        self.assertEqual(withdrawn['withdrawn'],[{'pid':'1','listId':'99','reason':'link_not_platform_valid'}])
+        self.assertIsNone(self.prep.verified_link('1','2','selected'))
     def test_creator_not_above_public_or_agency_below_one_point_is_not_reused(self):
         # Plan is 17%/12%: creator must exceed 12 and the agency must keep at least one point.
         cases=[({'creator_commission_percent':'1200'},'link_creator_not_above_public'),

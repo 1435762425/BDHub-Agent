@@ -212,3 +212,48 @@ WHERE run_id=?
     def pending_deletes(self, run_id):
         # Receipt-saved intents are exactly the ones awaiting a delete readback.
         return [dict(r) for r in self.db.execute("SELECT * FROM catalog_clean_intent WHERE run_id=? AND state IN ('prepared','submitted','receipt_saved','unknown') ORDER BY list_id", (run_id,))]
+
+
+def check_market_bindings(root, market, read, *, now=None):
+    """Read-only health check of one market's active material bindings; no platform write.
+
+    Every active binding's own TapLink is re-read through the market's supply account. Only an
+    explicit platform fact (product gone from the list, product_status not 2, governed, or an
+    unavailable type other than temporary stock absence 8) withdraws that binding locally to
+    ``waiting_refresh`` with evidence. A failed or incomplete read keeps the last trusted binding.
+    """
+    from lib.catalog_binding import CatalogBindings
+    from lib.catalog_prepare import read_members
+    stamp = time.time() if now is None else now
+    result = {'market': market, 'checked': 0, 'valid': 0, 'withdrawn': [], 'unresolved': 0,
+              'platformWrites': 0, 'remoteDelete': 'not_enabled'}
+    bindings = CatalogBindings(root)
+    try:
+        rows = list(bindings.db.execute(
+            "SELECT * FROM catalog_current_binding WHERE market=? AND state='active' ORDER BY list_id,pid",
+            (market,)))
+        for row in rows:
+            result['checked'] += 1
+            source = '2' if row['catalog_source'] == 'selected' else '1'
+            try:
+                members = read_members(read, row['list_id'], source)
+            except Exception:
+                result['unresolved'] += 1
+                continue
+            member = next((m for m in members if str(m.get('product_id')) == str(row['pid'])), None)
+            unavailable = member.get('unavailable_type') if member else None
+            reason = ('link_member_binding_missing' if member is None else
+                      'link_not_platform_valid' if str(member.get('product_status')) != '2' else
+                      'link_product_not_eligible' if member.get('is_under_governed') is True or
+                      unavailable not in (None, '', 0, '0', '0.0', 8, '8', '8.0') else None)
+            if reason is None:
+                result['valid'] += 1
+                continue
+            offer = {'pid': row['pid'], 'campaignId': row['campaign_id'], 'catalogSource': row['catalog_source'],
+                     'planFingerprint': row['offer_fingerprint']}
+            evidence = 'binding-check:' + digest([market, row['list_id'], row['pid'], member])[:24]
+            if bindings.mark_waiting_refresh(offer, reason=reason, evidence_ref=evidence, now=stamp, market=market):
+                result['withdrawn'].append({'pid': row['pid'], 'listId': row['list_id'], 'reason': reason})
+    finally:
+        bindings.close()
+    return result
