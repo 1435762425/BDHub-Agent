@@ -59,7 +59,7 @@ Campaign 核验最多首次加 3 次补查，同市场整批共享 300 秒墙钟
 
 短名按 `cycle_product_name.locale` 校验，非 IT 不读 IT 缓存或截断标题；缺失停止创建。IT 准备顺序 seed/read → names → create，其他市场 seed → localized names → read → create。新建回读未知隔离该 PID，整批写完公共回读，再按 30/120 秒轮询两次；仍缺失只保留 unknown，不重复 POST。在 `step_create` 中，若实时 offer 在尝试创建前已不再合格（`product_no_longer_eligible`）或其商业事实变化（`commercial_facts_changed:*`），`retire_or_block` 会取代已准备的意图（`catalog_link_intent.state='superseded'`，回读记录原因与 0 次创建尝试）并退役 prepare 项（`retired`，不计入 summary 计数）；已尝试/unknown 的意图保留其回读路径；若退役失败则按原样阻断该项，错误中带 `retire_failed`。
 
-清理只删除整卡平台 invalid，内部期限/佣金门槛仅本地停用。`taplink_clean` 每周一排期：IT 执行账号库存 refresh/classify/delete；BR/MY/UK 只运行 `catalog-clean.py check-bindings --market`，经本市场供给账号只读重读每个 active binding 自己的卡成员，仅在商品不在卡内、`product_status≠2`、被治理或非 8 类不可用时把该 binding 转 `waiting_refresh` 并记证据，读取失败保留原可信 binding；非 IT 不复用 IT 账号库存表，远端删除不开放。标准卡判定（`classify_pid`）要求名称/creator 佣金精确匹配且平台有效、商品合格；同形但平台报不可用的卡返回 `ineligible`，落 `review` 并阻止替代建链，同一卡已是 active binding 时转 `waiting_refresh`。删除收口后完整回读，仍存在记 failed_known，不自动重复 DELETE。发送端本地核对 binding/Offer/currentListId，不调用 fresh_card。
+清理只删除整卡平台 invalid，内部期限/佣金门槛仅本地停用。`taplink_clean` 按 `jobs.json` 中 `taplink_clean.weekday`（作业页可改，默认周一，所有市场共用）排期：IT 执行账号库存 refresh/classify/delete；BR/MY/UK 只运行 `catalog-clean.py check-bindings --market`，经本市场供给账号只读重读每个 active binding 自己的卡成员，仅在商品不在卡内、`product_status≠2`、被治理或非 8 类不可用时把该 binding 转 `waiting_refresh` 并记证据，读取失败保留原可信 binding；非 IT 不复用 IT 账号库存表，远端删除不开放。标准卡判定（`classify_pid`）要求名称/creator 佣金精确匹配且平台有效、商品合格；同形但平台报不可用的卡返回 `ineligible`，落 `review` 并阻止替代建链，同一卡已是 active binding 时转 `waiting_refresh`。删除收口后完整回读，仍存在记 failed_known，不自动重复 DELETE。发送端本地核对 binding/Offer/currentListId，不调用 fresh_card。
 
 ### 2.3 工作流与调度
 
@@ -143,13 +143,13 @@ worker 在等待窗口、池或容量时常驻退避；同账号在途写串行�
 
 四市场当前采用 `market-accounts.json.imSessionMode=sdk_http`：每市场 `im-session-worker.py` 持通讯账号原 ProfileLease，负责浏览器 SDK 收信和现有 HTTP 会话的私有 IPC 借用。HTTP 已认证后即可服务原二发、AI 和回查；浏览器初始化不阻塞 HTTP。发送仍走原 HTTP 执行器、逐写门禁、原账号与 requestRef，SDK 不承担发送。
 
-`sdk_inbox.py` 将 onMessageReceive/onMessageUpsert 变为持久唤醒信号，先提交 schema v26 `im_receive_signal` 再清浏览器缓存；消息身份、市场、正文和编辑版本仍由原 HTTP proof/history 解析器核实，进入原 Inbox/Service/reply_events。已知相同文本与非文本回放不产生新待回复。回查优先处理到期通知，保留 30 秒分页发现和冷 checkpoint 补扫；游标跨会话续期保存。每轮最多 5 页；已有 checkpoint 的会话未在预算内接上补读开始前已入库的消息（`inbox_event` rowid 水位）时，Inbox 记 `backfilling` 并在 `inbox_backfill` 保存原账号/IM/OEC 绑定的原生游标：期间消息入库但不生成待回复、暂停该达人营销，冷扫描优先该会话；下轮先读首页，接上本次补读已入库范围后从游标继续，直到覆盖证明成立才按 live 规则一次结算补读期间的新来信。换读取身份从首页重建链；旧 `gap` 保持原语义，不伪造回执。进程内读取预算 2 QPS，不能当作账号所有消费者共享的全局限速。
+`sdk_inbox.py` 将 onMessageReceive/onMessageUpsert 变为持久唤醒信号，先提交 schema v26 `im_receive_signal` 再清浏览器缓存；消息身份、市场、正文和编辑版本仍由原 HTTP proof/history 解析器核实，进入原 Inbox/Service/reply_events。已知相同文本与非文本回放不产生新待回复。回查优先处理到期通知，保留 30 秒分页发现和冷 checkpoint 补扫；游标跨会话续期保存。每轮最多 5 页；已有 checkpoint 的会话未在预算内接上补读开始前已入库的消息（`inbox_event` rowid 水位）时，Inbox 记 `backfilling` 并在 `inbox_backfill` 保存原账号/IM/OEC 绑定的原生游标：期间消息入库但不生成待回复、暂停该达人营销，冷扫描优先该会话；下轮先读首页，接上本次补读已入库范围后从游标继续，直到覆盖证明成立才按 live 规则一次结算补读期间的新来信。换读取身份从首页重建链。其他单页读取入口（HTTP 轮询、回复前读取）遇到读不到重叠时同样转 `backfilling` 并记录读取前水位，不再产生新的 `gap`。存量 `gap` 用 `scripts/inbox-gap.py diagnose` 只读列出，`recover --cid --confirm` 仅在存在 gap 前最后一条 live 事件（作为水位）时转入补读；gap 期间已记为历史的事件保持历史，不改写为待回复；缺少水位证据时报告 `not_recoverable`。进程内读取预算 2 QPS，不能当作账号所有消费者共享的全局限速。
 
 SDK 当前平台枚举为 0 未初始化、1 初始化中、2 成功、3 失败；必须等 2 才挂接接收回调。会话约每 600 秒续期，退出/维护时先拒绝新借用，等原 HTTP 客户端收口后释放 ProfileLease。Unix socket 为同 UID、0600，凭据仅在内存和私有 IPC 中，客户端检查 epoch、身份代次和 headers 指纹；借用不产生发送授权。维护/登录失效沿用原账号恢复任务。启动/断线由原 scheduler 监督，存活与 SDK 初始化成功均不能替代新来信时延验收。
 
 缺省或显式 `http_polling` 时，`cycle_inbox.py`、`poll-cycle-inbox.py`、`poll-market-inbox.py` 负责最近会话发现与旧 checkpoint 公平补扫；`inbox_event/inbox_content*` 保存事件和正文。新会话精确匹配本市场关系后落库；冷 checkpoint 也重新校验 plan，合作状态不能回退 IT。
 
-机构后台 `ourMessages` 与达人消息一并持久化正文、发生时间、精确 messageId 和市场/会话身份。保存或编辑我方正文不创建达人回复任务；只有外发、尚无达人入站的会话也可打开。`conversation_workbench.py` 与 V2 上下文读取同一事实；与本地 delivery/service_reply 的重复按精确 messageId 合并，不能按文本相同去重，不能把我方消息误作达人 pending。`observed_messages.py` 按 plan/OEC/cid/messageId 排除本系统已有回执，只把其余平台消息投影为 observed。热读每会话取最新 20 条，优先补缺失机构正文；`inbox-history.py` 使用原生 OLDER 游标做有界历史补扫，按页原子保存去重回执和断点。历史断点绑定原账号、IM 身份、完整 CID/OEC 与市场；不推进热读水位，不解除 gap/unknown，不创建回复任务。`completeOlderRange` 只证明从首次成功读取时间向旧的游标链完成；延后热读项单列，不能据此声称全部正文已入库。
+机构后台 `ourMessages` 与达人消息一并持久化正文、发生时间、精确 messageId 和市场/会话身份。保存或编辑我方正文不创建达人回复任务；只有外发、尚无达人入站的会话也可打开。`conversation_workbench.py` 与 V2 上下文读取同一事实；与本地 delivery/service_reply 的重复按精确 messageId 合并，不能按文本相同去重，不能把我方消息误作达人 pending。`observed_messages.py` 按 plan/OEC/cid/messageId 排除本系统已有回执，只把其余平台消息投影为 observed。会话列表先用集合查询预筛可能成行的达人（有入站、案件、pending、已确认/隔离回复、human 模式、收信补读或未记账的机构后台消息），其余关系与原逐行规则同样不会成行；在生产快照上与原实现结果一致。列表另有“技术挂起”队列（回复送达未知已隔离、收信 gap/backfilling），与商业人工分开。详情时间线默认最近 300 条，以 `occurredAt|id` 游标向上翻页；`heldReplies` 列出未决/隔离的 AI 回复，只能按原 requestRef 与冻结身份只读核验。人工发送失败时 CLI 返回 `intent=absent/not_submitted/unresolved`，只有前两者清除页面待核验；bridge 与 CLI 共用 32KB 请求体上限。热读每会话取最新 20 条，优先补缺失机构正文；`inbox-history.py` 使用原生 OLDER 游标做有界历史补扫，按页原子保存去重回执和断点。历史断点绑定原账号、IM 身份、完整 CID/OEC 与市场；不推进热读水位，不解除 gap/unknown，不创建回复任务。`completeOlderRange` 只证明从首次成功读取时间向旧的游标链完成；延后热读项单列，不能据此声称全部正文已入库。
 
 首次 checkpoint 以同 plan/CID/OEC 最新已确认卡的 started 为实时回复基线，兼容只有文字确认的旧记录；没有已确认外发则首次导入为历史。冻结 CID 缺失时只由原已确认 conversation intent 补齐，received/inflight 不能猜测。查询按关系和原投递定点限定；不翻转旧 historical 行或重开已处理事项。已确认卡和文字按各自 `cycle_delivery_part` 状态/时间投影，不用 episode 冻结正文冒充已发文字。showcaseNotifications 单列系统事件，不输入文字分类器。消息完整性以覆盖/水位证明，worker 存活不足以证明新鲜。
 
@@ -173,7 +173,7 @@ schema v25 追加处理证据，并在已有模块上建立 inbox 按市场/OEC/
 
 指南包含肯定合作但未观察到当前商品橱窗证据时的加橱窗提醒，要求已有真实卡、不重复已提醒内容，并按市场语言说明下一个视频/直播生效。上下文提供实际观察事实；“未观察到”不升级成“核实没有”。
 
-`run-agent-replies.py` 先回查 inflight/accepted/unknown，再处理新 turn；`begin()` 在转 inflight 的同一事务冻结 `sender_account`/`sender_identity`（非 IT 为 IM id，IT 为 sender binding hash），恢复时通讯角色或身份与冻结值不同即拒绝读取，旧记录缺失时不以当前账号补。未知回复最多 3 次只读核验（间隔 ≥120 秒，提交起 900 秒后且至少核验一次即停止），计数在读取前持久化，读取未能开始（发送锁/账号不可用）退还；耗尽转 `isolated`，保留原正文/requestRef/证据，只暂停该达人的自动回复和主动推品（并入 `outreach_policy` 营销隔离），其他达人继续，精确迟到证据仍可幂等结算，商业 handoff 案件保留。模型失败逐达人隔离，同输入最多三次。确定未提交而上下文过期的 ready 可审计终结，已提交只核验。IT 人工/Agent 共用 `reply_transport.py`，其他市场用 `market_agent_reply.py`，均冻结唯一 `service_reply` 正文/requestRef 再发送。Agent 生成第一份可发送回复后立即进入执行，不再批量积压 20 份草稿；有处理进展时短间隔继续，等待/错误/未知保持轮询退避。每次生成前重查停止、窗口与缓冲。
+`run-agent-replies.py` 先回查 inflight/accepted/unknown，再处理新 turn；`begin()` 在转 inflight 的同一事务冻结 `sender_account`/`sender_identity`（非 IT 为 IM id，IT 为 sender binding hash），恢复时通讯角色或身份与冻结值不同即拒绝读取，旧记录缺失时不以当前账号补。未知回复最多 3 次只读核验（间隔 ≥120 秒），计数在读取前持久化，读取未能开始（发送锁/账号不可用）退还次数但不延长期限：提交起 900 秒截止，与读取是否完成无关，一轮内一条回复被推迟时继续检查其他回复；`service_reply` 新列在 `BEGIN IMMEDIATE` 内复查后追加，多进程首次启动每列只加一次；耗尽转 `isolated`，保留原正文/requestRef/证据，只暂停该达人的自动回复和主动推品（并入 `outreach_policy` 营销隔离），其他达人继续，精确迟到证据仍可幂等结算，商业 handoff 案件保留。模型失败逐达人隔离，同输入最多三次。确定未提交而上下文过期的 ready 可审计终结，已提交只核验。IT 人工/Agent 共用 `reply_transport.py`，其他市场用 `market_agent_reply.py`，均冻结唯一 `service_reply` 正文/requestRef 再发送。Agent 生成第一份可发送回复后立即进入执行，不再批量积压 20 份草稿；有处理进展时短间隔继续，等待/错误/未知保持轮询退避。每次生成前重查停止、窗口与缓冲。
 
 模型调用统一经 `draft_provider.py`：DeepSeek `https://api.deepseek.com/chat/completions`、模型 `deepseek-flash`，JSON object 输出、关闭 thinking，单次请求不重试，上限约 24,000 输入字节、1,200 输出 token、60 秒。密钥先读 `DEEPSEEK_API_KEY`，缺失时只读旧项目 `01-BDSystem-V2/config.yaml` 的 `reply.api_key`（绝对路径写死）。用途：Agent V2、会话翻译、商品短名和离线评测。Jev 可执行 adapter、配置样例和新分类入口已移除；`reply_events.py` 保留消息投影、DeepSeek V1 兼容及历史评测只读，不读取 TypeSafe 配置或执行 Jev。私密历史配置由原备份规则保护，不作为运行依赖。
 
@@ -226,6 +226,8 @@ IT 使用无后缀文件名，其他市场加 `-{market}` 后缀。`state-backup
 ## 4. API 与 Web
 
 2026-09-25 首批只读运营概览代码已合入：`GET /api/market-overview?market=<market>` → 固定 argv `market-overview.py` → `lib/market_overview.py`。直接只读现有台账，不初始化 Store/库、不发布新持久投影；同市场 singleflight 加 30 秒进程内缓存。页面分当前库存、近 7 日事件、等待和人工事项，身份来源行/去重 handle 分区对账，历史技术案件保留真实锁定状态。原 `lead_pool.counts.queued` 保持发送候选排队含义，新增 `candidateQueued` 别名与 `identityQueued`，不改变发送资格。B 旧表只认 IT，其他市场在实现接通前显示不可用；累计候选没有台账也显示不可用。生产 Web 切换状态和验证见[首批交付报告](implementation/readonly-operations-overview-20260925.md)，不把代码合入当成运行页面已更新。
+
+首页开关保存返回提交回执（requestId、实际设置与 revision、worker 启动错误）；保存后读模型投影或页面重读失败只标记 `projectionStale/refreshFailed`，不再报“未保存”，关闭开关不受开启前置条件限制。首页与告警条读取失败时显示“状态不可确认”及上次成功时间，不沿用旧的“运行正常/无告警”。
 
 全部 `/api/*` 限本机；写请求校验 Origin/Host、JSON 大小、market、revision、字段白名单和范围。bridge 固定 argv/cwd，不拼 shell；返回 decoder 复核枚举、ID、数量恒等式，available=false 与 0 分开。本机校验只接受 Host `127.0.0.1:5198`/`localhost:5198`，在其他端口起开发服务时全部 API 返回 403。已知例外：`/api/creator-identities` 由 Node 只读直连 `creator-identities.sqlite` 与 `second-cycle.sqlite`，并在 SQL 中计算投影，待迁回 CLI bridge。
 
