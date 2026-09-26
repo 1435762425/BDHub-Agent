@@ -28,6 +28,21 @@ KEEP_VERSIONS = 2
 REPORT_DAYS = 14
 IDENTITY_SAFETY_HOURS = 72
 ROTATE_LOG_BYTES = 20 * 1024 * 1024
+# A log still held open by a live writer is only rotated past this size, and then marked as possibly
+# missing the bytes appended between the last copy and the truncate (H10).
+FORCE_ROTATE_LOG_BYTES = 5 * ROTATE_LOG_BYTES
+
+
+def open_writers(path):
+    """PIDs holding ``path`` open, or None when that cannot be determined (treated as busy)."""
+    import subprocess
+    try:
+        result = subprocess.run(["lsof", "-t", "--", str(path)], capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if result.returncode not in (0, 1):
+        return None
+    return sorted({int(line) for line in result.stdout.split() if line.strip().isdigit()})
 COMPLETE_SOURCE_STATES = ("completed", "accepted_partial")
 FINISHED_SOURCE_STATES = COMPLETE_SOURCE_STATES + ("stopped", "partial", "failed")
 CLOSED_WORKFLOW_STATES = ("completed", "failed", "cancelled")
@@ -350,16 +365,27 @@ def apply(root, archive_root, *, now=None, vacuum=False):
 
     for relative_path in current["rotateLogs"]:
         path = root / relative_path
+        # Writers are resident processes holding O_APPEND descriptors with no reopen protocol: a line
+        # appended after the copy reached EOF but before the truncate would be lost. Rotate only logs
+        # nobody writes; a live writer's log waits for it to exit unless it outgrows the hard cap.
+        writers = open_writers(path)
+        if writers != [] and path.stat().st_size <= FORCE_ROTATE_LOG_BYTES:
+            manifest.setdefault("skippedLogs", []).append(
+                {"log": relative_path, "reason": "writer_active" if writers else "writers_unknown"})
+            continue
         archive = target / f"{path.name}.{stamp}.gz"
-        size = path.stat().st_size
         with open(path, "rb") as source_file, gzip.open(archive, "wb") as out:
             shutil.copyfileobj(source_file, out, 1 << 20)
+            # Catch up with whatever was appended while copying, right before the truncate.
+            shutil.copyfileobj(source_file, out, 1 << 20)
+            size = source_file.tell()
         with gzip.open(archive, "rb") as check:
             if sum(len(chunk) for chunk in iter(lambda: check.read(1 << 20), b"")) < size:
                 raise RetentionError("state_retention_archive_mismatch")
         # Writers append with O_APPEND, so truncating keeps their descriptors valid.
         os.truncate(path, 0)
         manifest["archives"].append({"file": archive.name, "rotatedLog": relative_path, "bytes": size,
+                                     "mayMissTail": bool(writers) or writers is None,
                                      "sha256": _sha256(archive)})
 
     if vacuum:

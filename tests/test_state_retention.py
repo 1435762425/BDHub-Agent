@@ -133,6 +133,29 @@ class RetentionTests(unittest.TestCase):
                                                          "var/account-identities/acc4/generations/gen-orphan"])
         self.assertEqual(result["identityKept"], {"acc4": ["gen-cur", "gen-prev"]})
 
+    def test_a_log_with_a_live_writer_is_left_alone_until_it_outgrows_the_hard_cap(self):
+        log = self.root / "var/big.log"
+        with open(log, "a", encoding="utf-8") as writer:  # this process keeps it open, like a worker
+            writer.write("still writing\n"); writer.flush()
+            with unittest.mock.patch.object(state_retention, "ROTATE_LOG_BYTES", 10):
+                receipt = state_retention.apply(self.root, self.archive_root, now=NOW)
+            manifest = json.loads((Path(receipt["archive"]) / "manifest.json").read_text())
+            self.assertEqual(manifest["skippedLogs"], [{"log": "var/big.log", "reason": "writer_active"}])
+            self.assertGreater(log.stat().st_size, 0)
+            with unittest.mock.patch.object(state_retention, "ROTATE_LOG_BYTES", 10), \
+                 unittest.mock.patch.object(state_retention, "FORCE_ROTATE_LOG_BYTES", 10):
+                forced = state_retention.apply(self.root, self.archive_root, now=NOW + 1)
+            rotated = next(row for row in forced["archives"] if row.get("rotatedLog") == "var/big.log")
+            self.assertTrue(rotated["mayMissTail"])
+            self.assertEqual(log.stat().st_size, 0)
+
+    def test_unknown_writers_count_as_busy(self):
+        with unittest.mock.patch.object(state_retention, "ROTATE_LOG_BYTES", 10), \
+             unittest.mock.patch.object(state_retention, "open_writers", lambda _path: None):
+            receipt = state_retention.apply(self.root, self.archive_root, now=NOW)
+        manifest = json.loads((Path(receipt["archive"]) / "manifest.json").read_text())
+        self.assertEqual(manifest["skippedLogs"][0]["reason"], "writers_unknown")
+
     def test_apply_archives_before_removing_and_restore_puts_everything_back(self):
         with unittest.mock.patch.object(state_retention, "ROTATE_LOG_BYTES", 10):
             receipt = state_retention.apply(self.root, self.archive_root, now=NOW)
