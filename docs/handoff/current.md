@@ -14,7 +14,7 @@
 - 12:20–12:35 按原流程重启常驻进程：SIGTERM scheduler 待 UK OECID 在途阶段自然完成、claim 清零；停四市场 AI/发送 worker 与会话 owner，确认无在途回复/投递、无残留。**磁盘仅约 1.3GB 可用，静止备份因 `database or disk is full` 失败**（无残留临时目录）；本轮无库结构变更，最近可用恢复点仍为 11:32 的 `20260926T033201Z-pre-review-fix-restart-20260926`。随后 `start_scheduler` 恢复（PID `53012`），由其按原持久授权拉起全部 worker；无 stop/pause 标记。
 - 重启后四市场 SDK 收信 `completed`、gap/backfilling 0，发送 worker 等待窗口，AI 窗外/正常完成，scheduler 无错误；控制/授权哈希与重启前一致，19,436 个 requestRef 不变，主库 `quick_check=ok`。
 - Web：worktree 构建 `M3ovMuGEsvm0eoohmYlwH` 逐文件 SHA-256 核对后切换，旧构建 `gO-lvIJ1kdedvqM_h2bgH` 移至 `var/web-releases/followup-review-20260926T042718Z/previous`（同目录 `release.json`），只 kickstart `io.bdhub.agent.web`（新监听 PID 53434）；四市场页面/会话/首页/技术挂起队列/概览及告警接口均 200，浏览器只读打开会话页、首页、作业页无脚本错误；切换前后 13 个常驻 worker PID 一致。
-- 待用户决定：磁盘接近满（`var/backups/state` 约 17GB，多为 09-21～09-24 的旧备份），需清理或迁移后才能恢复发布前完整备份；未做任何删除。
+- 磁盘清理（用户要求“只保留最新 3 个备份”）：保留并校验 `var/backups/state` 中 `20260926T033201Z-pre-review-fix-restart-20260926`、`20260924T035449Z-pre-retention-20260924`、`20260923T164039Z-pre-storage-cleanup`（各 33 库，valid）；其余 29 项完整/单库备份、`var/backups/20260920-*` 6 个目录及 `var/releases/*` 中全部发布前数据库快照（约 20GB，均早于 11:32 完整备份）移入废纸篓 `~/.Trash/BDHub-Agent-old-backups-20260926`，发布回执、日志、git bundle 与旧 Web 构建保留。清倒废纸篓后空间才释放，由用户执行。SDK 上线报告所述“三库在线备份”已不在原位，回退仍按报告保留当前库，不恢复旧快照。
 
 ## 2026-09-26：外部静态审查 R1–R10 修复合入生产
 
