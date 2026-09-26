@@ -340,13 +340,13 @@ export class ConversationController {
     } catch {if(this.current(cid,selection))this.update({error:"原回复暂时无法核验；已保留原请求，不会重发。"});}
     finally {this.update({busy:false});}
   };
-  translateInbound = async (id:string, text:string) => {
+  translateMessage = async (id:string, text:string) => {
     const cid = this.snapshot.selected, selection = this.selectionVersion;if(!cid)return;
     this.update({translationBusy:id});
     try {
       const value = await this.post({action:"translate",target:"zh",text});
       if(this.current(cid,selection))this.update({translations:{...this.snapshot.translations,[id]:value.translation}});
-    } catch {if(this.current(cid,selection))this.update({error:"达人消息暂时无法翻译，原文已保留。"});}
+    } catch {if(this.current(cid,selection))this.update({error:"这条消息暂时无法翻译，原文已保留。"});}
     finally {if(this.current(cid,selection))this.update({translationBusy:null});}
   };
   loadTrace = async (decisionId:string) => {
