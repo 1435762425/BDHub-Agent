@@ -261,6 +261,7 @@ def failed(root,task,code,*,at):
 
 
 def status(root,market,*,at=None):
+    from lib.lead_contribution import later_outcomes
     if market not in ('it','br','my','uk'):raise CycleError('lead_queue_scope_invalid')
     at=time.time() if at is None else at
     with CycleStore(Path(root)/'var/second-cycle.sqlite',readonly=True) as store:
@@ -287,6 +288,8 @@ def status(root,market,*,at=None):
         hold=identity_hold(root,market) if m and (Path(root)/'config/market-accounts.json').exists() else None
         return {'automaticEnabled':enabled,'identityHold':hold,'activeRun':dict(active) if active else None,
                 'lastFinishedRun':last_finished_run(store.db,market),
+                # What leads published in the last 7 days later became (sends, replies); read-only.
+                'recentOutcomes':later_outcomes(store.db,market,at-7*86400,at),
                 'available':True,'market':market,'types':summary,'control':dict(m) if m else None,'platformWrites':0}
 
 

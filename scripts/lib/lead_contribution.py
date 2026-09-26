@@ -43,3 +43,42 @@ def between(db, market, started, finished):
         return None
     return {"publications": row[0], "newPairs": row[1], "refreshedPairs": row[2], "newCreators": row[3],
             "aPublications": row[4], "bPublications": row[5]}
+
+
+def later_outcomes(db, market, since, now):
+    """What became of the leads published since ``since`` (H13, third layer); read-only.
+
+    Each delivery is credited only to the source it froze when it was prepared (never to every source
+    that also listed the creator). Replies count creators whose first non-historical inbound message
+    came after that delivery's confirmed card. Correlation over an open observation window, not a
+    causal conversion and no revenue."""
+    tables = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    if not {'plan', 'lead_query_selection', 'lead_query_run', 'cycle_delivery', 'cycle_delivery_part'} <= tables:
+        return None
+    plan = db.execute("SELECT id FROM plan WHERE market=? AND institution='bjn-local-research'", (market,)).fetchone()
+    if not plan:
+        return None
+    plan = plan[0]
+    sources = {'A': {row[0] for row in db.execute("""SELECT s.source_id FROM lead_query_selection s
+        JOIN lead_query_run q ON q.query_id=s.query_id WHERE q.plan_id=? AND q.published_at>=?""", (plan, since))}, 'B': set()}
+    if {'source_edge_index', 'kalodata_video_run'} <= tables:
+        sources['B'] = {row[0] for row in db.execute("""SELECT e.source_id FROM source_edge_index e JOIN kalodata_video_run r
+            ON r.run_id=substr(e.source_id,7,instr(substr(e.source_id,7),':')-1)
+            WHERE e.plan_id=? AND e.source_kind='kalodata_video' AND r.observed_at>=?""", (plan, since))}
+    deliveries = list(db.execute("""SELECT d.id,d.creator_id,d.state,d.source_id,
+        (SELECT min(p.started) FROM cycle_delivery_part p WHERE p.delivery_id=d.id AND p.kind='card' AND p.state='confirmed') card_at
+        FROM cycle_delivery d WHERE d.plan_id=? AND d.created>=?""", (plan, since)))
+    first_reply = {}
+    if 'inbound_turn' in tables:
+        for creator, at in db.execute("""SELECT creator_id,coalesce(occurred_ms/1000.0,observed_at) FROM inbound_turn
+            WHERE plan_id=? AND historical=0 AND coalesce(occurred_ms/1000.0,observed_at)>=?""", (plan, since)):
+            first_reply.setdefault(creator, []).append(at)
+    result = {'since': since, 'asOf': now}
+    for kind, ids in sources.items():
+        used = [row for row in deliveries if row[3] in ids]
+        sent = [row for row in used if row[2] in ('confirmed', 'partial_delivery') and row[4]]
+        creators = {row[1] for row in sent}
+        replied = {row[1] for row in sent if any(at > row[4] for at in first_reply.get(row[1], []))}
+        result[kind] = {'publishedSources': len(ids), 'deliveries': len(used), 'sentDeliveries': len(sent),
+                        'creatorsReached': len(creators), 'creatorsReplied': len(replied)}
+    return result

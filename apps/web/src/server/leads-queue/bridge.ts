@@ -14,7 +14,8 @@ export type LeadsQueueNext={pid:string;units:number;title:string};
 export type LeadsQueueDue={pid:string;queriedAt:number;dueAt:number;leads:number|null;title:string};
 // ``taken`` is the batch: the top ``batchSize`` of the due queue. ``shortfall`` is how far the
 // queue fell short of the ceiling -- it is reported, never filled from products that are not due.
-export type RollingQueue={available:true;automaticEnabled:boolean;identityHold:boolean;types:Record<"A"|"B",{total:number;runnable:number;first:number;refresh:number;checkpoints:number;states:Record<string,number>;oldestReadyAt:number|null;staleCheckpoints:number;oldestWindowEnd:string|null}>;control:{state:string;retry_at:number;last_error:string|null}|null};
+export type LeadOutcome={publishedSources:number;deliveries:number;sentDeliveries:number;creatorsReached:number;creatorsReplied:number};
+export type RollingQueue={available:true;automaticEnabled:boolean;identityHold:boolean;recentOutcomes?:{since:number;asOf:number;A:LeadOutcome;B:LeadOutcome}|null;types:Record<"A"|"B",{total:number;runnable:number;first:number;refresh:number;checkpoints:number;states:Record<string,number>;oldestReadyAt:number|null;staleCheckpoints:number;oldestWindowEnd:string|null}>;control:{state:string;retry_at:number;last_error:string|null}|null};
 function rollingQueue(value:unknown):RollingQueue|undefined{
  if(!value||typeof value!=="object"||(value as Record<string,unknown>).available!==true)return;
  const v=value as Record<string,unknown>,types=v.types as Record<string,unknown>;
@@ -28,7 +29,10 @@ function rollingQueue(value:unknown):RollingQueue|undefined{
   result[key]={total:count(row.total),runnable:count(row.runnable),first:count(row.first),refresh:count(row.refresh),checkpoints:count(row.checkpoints),states:counted,staleCheckpoints:count(row.staleCheckpoints??0),oldestWindowEnd:typeof row.oldestWindowEnd==="string"?row.oldestWindowEnd:null,oldestReadyAt:typeof row.oldestReadyAt==="number"?row.oldestReadyAt:null};
  }
  const control=v.control as Record<string,unknown>|null;
- return {available:true,automaticEnabled:v.automaticEnabled===true,identityHold:Boolean(v.identityHold),types:result,control:control?{state:String(control.state),retry_at:typeof control.retry_at==="number"?control.retry_at:0,last_error:typeof control.last_error==="string"?control.last_error:null}:null};
+ const outcome=(raw:unknown):LeadOutcome=>{const o=raw as Record<string,unknown>;if(!o||typeof o!=="object")throw Error("invalid_leads_queue");
+  return {publishedSources:count(o.publishedSources),deliveries:count(o.deliveries),sentDeliveries:count(o.sentDeliveries),creatorsReached:count(o.creatorsReached),creatorsReplied:count(o.creatorsReplied)};};
+ const recent=v.recentOutcomes==null?null:(()=>{const r=v.recentOutcomes as Record<string,unknown>;if(typeof r.since!=="number"||typeof r.asOf!=="number")throw Error("invalid_leads_queue");return {since:r.since,asOf:r.asOf,A:outcome(r.A),B:outcome(r.B)};})();
+ return {available:true,automaticEnabled:v.automaticEnabled===true,identityHold:Boolean(v.identityHold),recentOutcomes:recent,types:result,control:control?{state:String(control.state),retry_at:typeof control.retry_at==="number"?control.retry_at:0,last_error:typeof control.last_error==="string"?control.last_error:null}:null};
 }
 export type LeadsQueueState={market:string;config:LeadsQueueConfig;refreshDays:number;eligible:number;linked:number;scope:number;firstTime:number;due:number;waiting:number;unknownScope:number;nextFirstTime:LeadsQueueNext[];nextDue:LeadsQueueDue[];batchSize:number;dueQueue:number;taken:number;batchFirst:number;batchRefresh:number;shortfall:number;padded:boolean;stuck:number;run:LeadsRunState|null;saved?:boolean;
  // 队列是跨渠道的：这两个字段让页面能说清两条渠道各占多少、以及有多少商品没有销量数据。

@@ -113,3 +113,10 @@ test('the last run carries what its publications added, and refuses a malformed 
  assert.equal(validateLeadsQueue({...payload,run:{running:false,lastFinished:{...last,contribution:null}}},'it').run.lastFinished.contribution,null);
  assert.throws(()=>validateLeadsQueue({...payload,run:{running:false,lastFinished:{...last,contribution:{...last.contribution,newPairs:-1}}}},'it'),/invalid_leads_queue/);
 });
+test('recent lead outcomes survive validation per class and refuse negative counts',()=>{
+ const a={total:1,runnable:0,first:0,refresh:0,checkpoints:0,states:{queued:1},oldestReadyAt:null};
+ const o={publishedSources:10,deliveries:4,sentDeliveries:3,creatorsReached:3,creatorsReplied:1};
+ const rolling={available:true,automaticEnabled:true,identityHold:null,types:{A:a,B:a},control:null,recentOutcomes:{since:1,asOf:2,A:o,B:{...o,creatorsReplied:0}}};
+ assert.equal(validateLeadsQueue({...payload,rolling},'it').rolling.recentOutcomes.A.creatorsReplied,1);
+ assert.throws(()=>validateLeadsQueue({...payload,rolling:{...rolling,recentOutcomes:{...rolling.recentOutcomes,B:{...o,deliveries:-1}}}},'it'),/invalid_leads_queue/);
+});
