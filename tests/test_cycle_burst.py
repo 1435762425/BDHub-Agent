@@ -162,8 +162,9 @@ class FrozenCohortTests(unittest.TestCase):
       before(scope);calls.append((conv.oec_id,kind))
       if unknown_first and conv.oec_id=='123' and kind=='card':raise RuntimeError('network_lost')
       if reject_first and conv.oec_id=='123' and kind=='card':
-       raise ItalyImDeliveryError('it_delivery_send_rejected',outcome='rejected',native_status=1,
-        check_code=0,response_ref='im-response:'+'b'*64)
+       status,check,message=reject_first if isinstance(reject_first,tuple) else (3,100,'im_limit_reached')
+       raise ItalyImDeliveryError('it_delivery_send_rejected',outcome='rejected',native_status=status,
+        check_code=check,check_message=message,response_ref='im-response:'+'b'*64)
       return {'requestRef':ref}
      def send_card_once(self,conv,sent_card,ref,before_dispatch):return self.send(conv,ref,before_dispatch,'card',sent_card)
      def send_once(self,conv,text,ref,before_dispatch):return self.send(conv,ref,before_dispatch,'text')
@@ -199,14 +200,21 @@ class FrozenCohortTests(unittest.TestCase):
    self.assertEqual(calls,[])
    self.assertTrue(all(item['state']=='material_stale' for item in result['items']))
 
- def test_an_explicit_card_rejection_holds_the_remaining_new_contacts_for_the_day(self):
-  # User decision 2026-09-24: a platform refusal means the day's quota is used, so later new contacts wait.
+ def test_an_explicit_quota_rejection_holds_the_remaining_new_contacts_for_the_day(self):
+  # Only the platform's quota receipt (status 3, check 100, im_limit_reached) holds later new contacts.
   with self.fixture(reject_first=True) as (root,db,plan,calls,auths):
    result=M.run_cohort('frozen',lanes=1)
    items={item['creatorId']:item for item in result['items']}
    self.assertEqual({key:item['state'] for key,item in items.items()},{'c1':'material_stale','c2':'error'})
    self.assertEqual(items['c2'].get('reason'),'new_contact_capacity_reached')
    with CycleStore(db) as s:self.assertEqual(s.db.execute('SELECT state FROM cycle_bulk').fetchone()[0],'local_capacity_reached')
+
+ def test_a_non_quota_rejection_ends_only_its_creator(self):
+  with self.fixture(reject_first=(1,0,'recipient_refused')) as (root,db,plan,calls,auths):
+   result=M.run_cohort('frozen',lanes=1)
+   items={item['creatorId']:item for item in result['items']}
+   self.assertEqual(items['c2']['state'],'confirmed')
+   self.assertNotEqual(items['c1']['state'],'confirmed')
 
  def test_unknown_in_frozen_batch_halts_all_lanes(self):
   with self.fixture(unknown_first=True) as (root,db,plan,calls,auths):

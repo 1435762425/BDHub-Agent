@@ -87,6 +87,8 @@ def _market_facts(root, store, market, accounts):
     rejected = db.execute("SELECT count(*),min(s.at) FROM cycle_platform_signal s JOIN cycle_delivery d ON d.id=s.delivery_id "
                           "WHERE d.plan_id=? AND s.outcome='rejected' AND s.at>=?", (plan, day)).fetchone() \
         if _has(db, "cycle_platform_signal") and _has(db, "cycle_delivery") else (0, None)
+    from lib.cycle_delivery import new_contact_hold
+    rejection_hold = new_contact_hold(store, plan) if _has(db, "cycle_delivery") else None
     empty = {"count": 0, "oldestAt": None}
     return {
         "market": market,
@@ -100,7 +102,7 @@ def _market_facts(root, store, market, accounts):
         "stages": stages,
         "unknown": deliveries.get("unknown", empty), "quarantined": deliveries.get("quarantined_unknown", empty),
         "humanCases": {"count": cases[0], "oldestAt": _stamp(cases[1])},
-        "platformRejections": {"count": rejected[0], "oldestAt": _stamp(rejected[1])},
+        "platformRejections": {"count": rejected[0], "oldestAt": _stamp(rejected[1]), "hold": rejection_hold},
         "unread": unread_backlog(store, market),
         "agent": {"enabled": bool(agent["enabled"]), "rolloutStage": rollout_stage(store, plan, market),
                   "runtimeState": runtime.get("state"), "replyWindow": [agent["replyStart"], agent["replyEnd"]]},
@@ -227,11 +229,12 @@ def evaluate(facts):
                 "保留原意图，不会重发或新建技术人工事项；历史案件保留。", market=key, since=market["quarantined"]["oldestAt"], href=base)
         rejections = market.get("platformRejections") or {"count": 0}
         if rejections["count"]:
-            from lib.cycle_delivery import PLATFORM_REJECTION_HOLD
-            held = rejections["count"] >= PLATFORM_REJECTION_HOLD
+            hold = rejections.get("hold")
+            detail = {"platform_quota": "平台明确提示新联系额度用尽，已暂停新联系到明天。",
+                      "platform_rejection_repeated": "同一类非额度拒绝今天重复出现，已暂停新联系到明天；按平台回执核对原因。"
+                      }.get(hold, "非额度拒绝只结束对应达人，继续发送；同类拒绝再重复会暂停新联系。")
             add(f"{key}-platform-rejected", "warning", f"{name} 平台今天拒绝发送 {rejections['count']} 次",
-                "已暂停新联系到明天，按平台回执核对原因。" if held else "继续发送；再被拒绝 1 次将暂停新联系到明天。",
-                market=key, since=rejections["oldestAt"], href=f"{base}/workspace/send")
+                detail, market=key, since=rejections["oldestAt"], href=f"{base}/workspace/send")
         isolated = market.get("selectionIsolated") or 0
         if isolated:
             add(f"{key}-selection-isolated", "warning", f"{name} {isolated} 个选品因活动不符已隔离",

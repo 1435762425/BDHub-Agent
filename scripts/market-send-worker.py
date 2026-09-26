@@ -21,8 +21,10 @@ def expected_wait_state(code):
  # Stay alive and re-read the original request every five minutes: the readback confirms the card or, after two
  # reads that find it absent, isolates the creator.  The scheduler does not relaunch a sender stopped on unknown.
  if code in ('market_send_result_unknown','market_send_conversation_result_unknown'):return 'waiting_reconciliation'
- # A platform refusal is settled and counted by the new-contact gate, which then holds until the next day.
- if code in ('new_contact_capacity_reached','it_delivery_send_rejected'):return 'waiting_capacity'
+ if code=='new_contact_capacity_reached':return 'waiting_capacity'
+ # A refusal is settled on its own delivery; the classified new-contact gate decides on the next pass
+ # whether it was the day's quota (hold) or one creator's refusal (continue).
+ if code=='it_delivery_send_rejected':return 'waiting_platform_refusal'
  if code in ('ProfileBusyError','live_guard_busy','delivery_executor_busy'):return 'waiting_account'
  return None
 

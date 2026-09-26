@@ -148,14 +148,27 @@ class DeliveryTests(unittest.TestCase):
   self.s.db.executemany('INSERT INTO cycle_contact_reservation VALUES(?,?,?)',[(self.p,'other'+str(i),self.now) for i in range(600)])
   self.assertTrue(self.d.contact_capacity_available(self.id))
   midnight=datetime.fromtimestamp(self.now,timezone(timedelta(hours=8))).replace(hour=0,minute=0,second=0,microsecond=0).timestamp()
-  signal="INSERT INTO cycle_platform_signal(delivery_id,at,outcome,code,native_status) VALUES(?,?,?,?,?)"
-  self.s.db.executemany(signal,[(self.id,midnight-60,'rejected','it_delivery_send_rejected',1)]*3)
-  self.s.db.execute(signal,(self.id,self.now,'result_unknown','it_delivery_create_unknown',None))
+  signal="INSERT INTO cycle_platform_signal(delivery_id,at,outcome,code,native_status,check_code,check_message) VALUES(?,?,?,?,?,?,?)"
+  quota=('rejected','it_delivery_send_rejected',3,100,'im_limit_reached')
+  self.s.db.executemany(signal,[(self.id,midnight-60,*quota)]*3)
+  self.s.db.execute(signal,(self.id,self.now,'result_unknown','it_delivery_create_unknown',None,None,None))
+  # One non-quota refusal ends only its own creator; it is not read as the day's quota.
+  self.s.db.execute(signal,(self.id,self.now,'rejected','it_delivery_send_rejected',2,7,'recipient_refused'))
+  self.assertIsNone(cycle_delivery.new_contact_hold(self.s,self.p))
   self.assertTrue(self.d.contact_capacity_available(self.id))
-  self.s.db.execute(signal,(self.id,self.now,'rejected','it_delivery_send_rejected',1))
+  self.s.db.execute(signal,(self.id,self.now,*quota))
+  self.assertEqual(cycle_delivery.new_contact_hold(self.s,self.p),'platform_quota')
   self.assertFalse(self.d.contact_capacity_available(self.id))
   with self.assertRaisesRegex(CycleError,'capacity_reached'):self.d.reserve_contact(self.id)
   self.assertTrue(all(p['started'] is None for p in self.d.get(self.id)['parts']))
+ def test_repeated_unclassified_refusal_holds_as_systemic_not_as_quota(self):
+  signal="INSERT INTO cycle_platform_signal(delivery_id,at,outcome,code,native_status,check_code,check_message) VALUES(?,?,?,?,?,?,?)"
+  other=(self.id,self.now,'rejected','it_delivery_send_rejected',2,7,'recipient_refused')
+  self.s.db.executemany(signal,[other]*(cycle_delivery.REPEATED_REJECTION_HOLD-1))
+  self.assertTrue(self.d.contact_capacity_available(self.id))
+  self.s.db.execute(signal,other)
+  self.assertEqual(cycle_delivery.new_contact_hold(self.s,self.p),'platform_rejection_repeated')
+  self.assertFalse(self.d.contact_capacity_available(self.id))
  def test_known_preflight_exclusion_cancels_only_an_unsubmitted_delivery(self):
   self.d.reserve_contact(self.id)
   cancelled=self.d.cancel_unsubmitted(self.id,'conversation_needs_content_review')

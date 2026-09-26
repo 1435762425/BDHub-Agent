@@ -4,20 +4,33 @@ from datetime import datetime,timedelta,timezone
 from lib.outreach_policy import MARKETING_COOLDOWN_SECONDS,last_contact_by_creator
 from lib.second_cycle import CycleError,digest,encoded,assess_offer
 # No local rolling cap on new contacts (user decision 2026-09-24): the platform's daily agency quota decides.
-# Set an integer to restore a local cap.  The first explicit platform rejection in a Beijing day stops new
-# contacts until the next day: on 2026-09-24 BR and UK were refused right after about 1000 new contacts, and
-# no other refusal has ever been recorded, so a refusal means the day's agency quota is used up.
+# Set an integer to restore a local cap.  Only the platform's explicit quota receipt (send status 3, check
+# code 100, im_limit_reached; seen for BR/UK/MY on 2026-09-24/25) stops new contacts until the next Beijing
+# day.  Any other rejection ends only that creator's delivery and keeps its evidence; the same non-quota
+# signature repeating is held separately as a systemic refusal, never reported as a confirmed quota.
 NEW_CONTACT_LIMIT=None
 PLATFORM_REJECTION_HOLD=1
+QUOTA_REJECTION=(3,100,'im_limit_reached')
+REPEATED_REJECTION_HOLD=3
 CARD_ABSENCE_READS=2
 CREATE_REFUSED_CODE=201
 CARD_ABSENCE_SPAN_SECONDS=300
 BEIJING=timezone(timedelta(hours=8))
-def platform_rejections_today(store,plan):
- if not store.db.execute("SELECT 1 FROM sqlite_master WHERE name='cycle_platform_signal'").fetchone():return 0
+def rejection_class(native_status,check_code,check_message):
+ return 'quota' if (native_status,check_code,check_message)==QUOTA_REJECTION else 'other'
+def new_contact_hold(store,plan):
+ """Why new contacts wait today: 'platform_quota', 'platform_rejection_repeated', or None."""
+ if not store.db.execute("SELECT 1 FROM sqlite_master WHERE name='cycle_platform_signal'").fetchone():return None
  day=datetime.fromtimestamp(store.clock(),BEIJING).replace(hour=0,minute=0,second=0,microsecond=0).timestamp()
- return store.db.execute("SELECT count(*) FROM cycle_platform_signal s JOIN cycle_delivery d ON d.id=s.delivery_id "
-                         "WHERE d.plan_id=? AND s.outcome='rejected' AND s.at>=?",(plan,day)).fetchone()[0]
+ rows=store.db.execute("SELECT s.native_status,s.check_code,s.check_message,count(*) FROM cycle_platform_signal s "
+                       "JOIN cycle_delivery d ON d.id=s.delivery_id WHERE d.plan_id=? AND s.outcome='rejected' AND s.at>=? "
+                       "GROUP BY 1,2,3",(plan,day)).fetchall()
+ if any(rejection_class(*row[:3])=='quota' for row in rows):return 'platform_quota'
+ if any(row[3]>=REPEATED_REJECTION_HOLD for row in rows):return 'platform_rejection_repeated'
+ return None
+def platform_rejections_today(store,plan):
+ """Held rejection signals (compatibility count for PLATFORM_REJECTION_HOLD callers)."""
+ return PLATFORM_REJECTION_HOLD if new_contact_hold(store,plan) else 0
 def capacity_for_candidate(store,plan,c):
  d={'plan_id':plan,'creator_id':c['creatorId'],'oec':c['oecId']};r=store.db.execute('SELECT unlocked FROM relationship WHERE plan_id=? AND creator_id=?',(d['plan_id'],d['creator_id'])).fetchone()
  if not r:return False

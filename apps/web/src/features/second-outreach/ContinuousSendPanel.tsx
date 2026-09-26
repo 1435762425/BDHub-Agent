@@ -3,14 +3,14 @@ import {Button,Card,Field,Input,Notice,Pill,StatTile,Toggle} from "../bdhub/ui";
 import type {SendController} from "./useContinuousSend";
 import SendTemplateManager from "./SendTemplateManager";
 
-const labels:Record<string,string>={off:"关闭",stopped:"已停止",waiting_window:"等待窗口",waiting_pool:"等待发送池",waiting_account:"等待账号空闲",sending:"发送中",waiting_capacity:"当日额度用尽",paused:"暂停",waiting_reconciliation:"待核验",first_send_requires_page_start:"等待页面启动"};
+const labels:Record<string,string>={off:"关闭",stopped:"已停止",waiting_window:"等待窗口",waiting_pool:"等待发送池",waiting_account:"等待账号空闲",sending:"发送中",waiting_capacity:"当日额度用尽",waiting_platform_refusal:"平台拒绝该达人，继续发送",paused:"暂停",waiting_reconciliation:"待核验",first_send_requires_page_start:"等待页面启动"};
 const number=(value:number|null|undefined)=>value==null?"—":value.toLocaleString("zh-CN");
 
 export default function ContinuousSendPanel({market,controller}:{market:string;controller:SendController}){
  const {data,draft,setDraft,busy,message,loaded,save,start,stop,reconcile}=controller;
  if(!data||!draft)return <Card title="持续二发"><div className="p-5 text-sm text-gray-500">{loaded?"暂时无法读取持续发送台账。":"正在读取持续发送台账…"}</div></Card>;
  const dirty=draft.automaticEnabled!==data.control.automaticEnabled||draft.template!==data.control.template||draft.window.some((value,index)=>value!==data.control.window[index]);
- const active=["waiting_window","waiting_pool","waiting_account","sending","waiting_capacity","waiting_reconciliation","paused"].includes(data.runtime.state)&&!data.control.stopRequested;
+ const active=["waiting_window","waiting_pool","waiting_account","sending","waiting_capacity","waiting_platform_refusal","waiting_reconciliation","paused"].includes(data.runtime.state)&&!data.control.stopRequested;
  return <div className="space-y-5">
   {data.runtime.state==="waiting_reconciliation"&&<Notice tone="warning"><strong>有发送结果未知。</strong> 系统已停止领取新达人；只能核验原 delivery、原 requestRef 和原账号，不会重发。</Notice>}
   <SendTemplateManager market={market} controller={controller}/>

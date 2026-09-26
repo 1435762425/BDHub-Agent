@@ -120,9 +120,11 @@ class EvaluateTests(unittest.TestCase):
         self.assertIn("AI 回复已关闭", stale[0]["detail"])
 
     def test_platform_rejections_say_when_new_contacts_are_held(self):
-        one = evaluate(facts(market("br", platformRejections={"count": 1, "oldestAt": NOW - 600})))
+        one = evaluate(facts(market("br", platformRejections={"count": 1, "oldestAt": NOW - 600, "hold": "platform_quota"})))
         self.assertEqual(levels(one), {"br-platform-rejected": "warning"})
-        self.assertIn("已暂停新联系到明天", one[0]["detail"])
+        self.assertIn("额度用尽，已暂停新联系到明天", one[0]["detail"])
+        other = evaluate(facts(market("br", platformRejections={"count": 1, "oldestAt": NOW - 600, "hold": None})))
+        self.assertIn("继续发送", other[0]["detail"])
 
     def test_offsite_copy_missing_or_stale_is_reported(self):
         self.assertEqual(levels(evaluate(facts(offsite=None))), {"offsite-missing": "warning"})
