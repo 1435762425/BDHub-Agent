@@ -7,7 +7,7 @@ import {singleflight} from "../runtime/singleflight.ts";
 export type OpsAlertLevel="critical"|"warning"|"info";
 export type OpsAlert={id:string;level:OpsAlertLevel;market:string|null;title:string;detail:string;since:number|null;href:string|null};
 export type RuntimeProcess={role:string;pid:number;sha:string|null;startedAt:number|null;current:boolean};
-export type RuntimeEvidence={head:string|null;processes:RuntimeProcess[];scheduler:{running:boolean;checkedAt:number|null};
+export type RuntimeEvidence={head:string|null;runtimeDirty:boolean;processes:RuntimeProcess[];scheduler:{running:boolean;checkedAt:number|null};
  modelService:{paused:boolean;nextAt:number|null;lastError:string|null};
  restoreDrill:{backup:string;state:string;finishedAt:number|null;blockers:string[]}|null};
 export type OpsAlerts={schemaVersion:"bdhub.ops-alerts.v1";checkedAt:number;alerts:OpsAlert[];evidence:RuntimeEvidence|null;readOnly:true;platformWrites:0};
@@ -32,7 +32,7 @@ function validateEvidence(raw:unknown):RuntimeEvidence|null{
  let drill:RuntimeEvidence["restoreDrill"]=null;
  if(value.restoreDrill!=null){const row=object(value.restoreDrill);if(!Array.isArray(row.blockers)||row.blockers.length>5)fail();
   drill={backup:text(row.backup,200),state:text(row.state,40),finishedAt:stamp(row.finishedAt),blockers:(row.blockers as unknown[]).map(item=>text(item,200))};}
- return {head:sha(value.head),processes,scheduler:{running:flag(scheduler.running),checkedAt:stamp(scheduler.checkedAt)},
+ return {head:sha(value.head),runtimeDirty:value.runtimeDirty===true,processes,scheduler:{running:flag(scheduler.running),checkedAt:stamp(scheduler.checkedAt)},
   modelService:{paused:flag(service.paused),nextAt:stamp(service.nextAt),lastError:service.lastError==null?null:text(service.lastError,120)},restoreDrill:drill};
 }
 

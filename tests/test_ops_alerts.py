@@ -191,6 +191,43 @@ class RuntimeReleaseTests(unittest.TestCase):
         rows = {row["role"]: row["current"] for row in evidence(base)["processes"]}
         self.assertEqual(rows, {"scheduler": True, "agent-reply-it": False})
 
+    def test_uncommitted_runtime_edits_are_never_reported_as_current(self):
+        from lib.ops_alerts import evidence
+        base = facts()
+        base["release"] = {"head": "b" * 40, "headCode": "tree-1", "headDirty": "edit-1",
+                           "loaded": [{"role": "scheduler", "sha": "b" * 40, "code": "tree-1", "runtimeDirty": "edit-1"},
+                                      {"role": "agent-reply-it", "sha": "b" * 40, "code": "tree-1", "runtimeDirty": None},
+                                      {"role": "im-session-it", "sha": "b" * 40, "code": "tree-1"}]}
+        alerts = {alert["id"]: alert for alert in evaluate(base)}
+        self.assertIn("runtime-code-uncommitted", alerts)
+        self.assertIn("agent-reply-it", alerts["runtime-version-mixed"]["detail"])
+        self.assertIn("im-session-it", alerts["runtime-version-mixed"]["detail"])
+        self.assertEqual({row["role"]: row["current"] for row in evidence(base)["processes"]},
+                         {"scheduler": True, "agent-reply-it": False, "im-session-it": False})
+        base["release"]["headDirty"] = None  # clean tree: an older registration without the field still counts
+        self.assertEqual({row["role"]: row["current"] for row in evidence(base)["processes"]},
+                         {"scheduler": False, "agent-reply-it": True, "im-session-it": True})
+        base["release"]["headDirty"] = "unknown"
+        self.assertFalse(any(row["current"] for row in evidence(base)["processes"]))
+
+    def test_runtime_dirty_ignores_config_and_docs(self):
+        import subprocess, tempfile
+        from pathlib import Path
+        from lib.runtime_release import runtime_dirty
+        with tempfile.TemporaryDirectory() as folder:
+            run = lambda *args: subprocess.run(["git", *args], cwd=folder, check=True, capture_output=True)
+            run("init", "-q"); run("config", "user.email", "t@example.com"); run("config", "user.name", "t")
+            for name in ("scripts/a.py", "vendor/v.py", "config/c.json", "docs/d.md"):
+                (Path(folder) / name).parent.mkdir(exist_ok=True); (Path(folder) / name).write_text("1")
+            run("add", "."); run("commit", "-qm", "base")
+            (Path(folder) / "config/c.json").write_text("2"); (Path(folder) / "docs/d.md").write_text("2")
+            self.assertIsNone(runtime_dirty(folder))
+            (Path(folder) / "scripts/new.py").write_text("x")
+            untracked = runtime_dirty(folder)
+            self.assertIsNotNone(untracked)
+            (Path(folder) / "scripts/a.py").write_text("2")
+            self.assertNotEqual(runtime_dirty(folder), untracked)
+
     def test_registration_records_the_loaded_commit_and_ignores_dead_processes(self):
         import json, os, tempfile
         from pathlib import Path

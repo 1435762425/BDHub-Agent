@@ -27,7 +27,7 @@ export default function RuntimeEvidencePanel(){
   {failed&&<Notice tone="warning">运行证据暂时读不到，状态待核实{checkedAt?`；以下是 ${time(checkedAt)} 的记录`:""}。</Notice>}
   {missing&&<Notice tone="warning">当前后端未提供运行证据，状态待核实。</Notice>}
   <Card title="代码版本" subtitle={`读取于 ${time(checkedAt)} · 进程存在不代表业务在推进，业务进度看运营首页与作业页`} action={evidence?<Pill tone={stale.length?"warning":"success"}>{stale.length?`${stale.length} 个进程不是当前代码`:"全部为当前代码"}</Pill>:undefined}>
-   <div className="p-5">{evidence?<MetricTable rows={[{label:"仓库当前提交",value:short(evidence.head),detail:"下一次启动的进程会载入它"},
+   <div className="space-y-3 p-5">{evidence?.runtimeDirty&&<Notice tone="warning">scripts/ 或 vendor/ 有未提交的改动：下一次拉起的进程会读到它们，这些进程不算与当前代码一致。</Notice>}{evidence?<MetricTable rows={[{label:"仓库当前提交",value:short(evidence.head),detail:"下一次启动的进程会载入它"},
     ...evidence.processes.map(row=>({label:roleLabel(row.role),value:<span className="font-mono">{short(row.sha)}</span>,
      detail:`PID ${row.pid} · 启动于 ${time(row.startedAt)}${row.current?"":" · 与当前代码不同，按发布流程安全重启后生效"}`,accent:!row.current}))]}/>
     :<p className="text-sm text-gray-500">{failed?"读不到进程登记。":"正在读取…"}</p>}</div>

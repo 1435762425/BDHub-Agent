@@ -37,6 +37,26 @@ def code_id(root, sha):
     return hashlib.sha256(' '.join(trees).encode()).hexdigest()[:16] if len(trees) == len(RUNTIME_TREES) else None
 
 
+def runtime_dirty(root):
+    """Digest of uncommitted changes to the code processes load (scripts/, vendor/), or None if clean.
+
+    Tracked edits and untracked files both count; config/ that pages rewrite and docs never do."""
+    try:
+        diff = _git(root, 'diff', 'HEAD', '--', *RUNTIME_TREES)
+        untracked = _git(root, 'ls-files', '--others', '--exclude-standard', '--', *RUNTIME_TREES).split()
+    except (OSError, subprocess.SubprocessError):
+        return 'unknown'
+    untracked = [path for path in untracked if '__pycache__' not in path and not path.endswith('.pyc')]
+    if not diff and not untracked:
+        return None
+    digest = hashlib.sha256(diff.encode())
+    for path in sorted(untracked):
+        digest.update(path.encode())
+        try:digest.update((Path(root) / path).read_bytes())
+        except OSError:digest.update(b'unreadable')
+    return digest.hexdigest()[:16]
+
+
 def current_release(root):
     try:
         sha = _git(root, 'rev-parse', 'HEAD').strip()
@@ -44,7 +64,8 @@ def current_release(root):
     except (OSError, subprocess.SubprocessError):
         return {'sha': None, 'dirty': None, 'contentDigest': None}
     return {'sha': sha or None, 'dirty': bool(diff),
-            'contentDigest': hashlib.sha256(diff.encode()).hexdigest()[:16] if diff else None}
+            'contentDigest': hashlib.sha256(diff.encode()).hexdigest()[:16] if diff else None,
+            'runtimeDirty': runtime_dirty(root)}
 
 
 def directory(root):

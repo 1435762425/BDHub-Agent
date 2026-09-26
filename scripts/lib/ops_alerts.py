@@ -135,21 +135,29 @@ def _restore_drill(root):
             "finishedAt": _stamp(report.get("finishedAt")), "blockers": list(report.get("blockers") or [])[:5]}
 
 
-def _same_code(row, head, head_code):
-    if head_code and row.get("code"):
-        return row["code"] == head_code
-    return row.get("sha") == head
+def _same_code(row, head, head_code, head_dirty=None):
+    """Same committed runtime trees and the same uncommitted runtime edits (H08).
+
+    A registration from before runtimeDirty was recorded cannot prove it loaded today's uncommitted
+    edits, so it only counts as current while the runtime trees are clean."""
+    same = row["code"] == head_code if head_code and row.get("code") else row.get("sha") == head
+    if not same or head_dirty == "unknown":
+        return False if head_dirty == "unknown" else same
+    if "runtimeDirty" not in row:
+        return head_dirty is None
+    return row.get("runtimeDirty") == head_dirty
 
 
 def evidence(facts):
     """Read-only runtime evidence for the page (G21/U3): what each process loaded, not only that it exists."""
     release = facts.get("release") or {}
-    head, head_code = release.get("head"), release.get("headCode")
+    head, head_code, head_dirty = release.get("head"), release.get("headCode"), release.get("headDirty")
     processes = [{"role": row.get("role"), "pid": row.get("pid"), "sha": row.get("sha"),
-                  "startedAt": _stamp(row.get("startedAt")), "current": bool(head) and _same_code(row, head, head_code)}
+                  "startedAt": _stamp(row.get("startedAt")),
+                  "current": bool(head) and _same_code(row, head, head_code, head_dirty)}
                  for row in release.get("loaded") or [] if isinstance(row.get("role"), str)]
     service = facts.get("modelService")
-    return {"head": head, "processes": processes,
+    return {"head": head, "runtimeDirty": bool(head_dirty), "processes": processes,
             "scheduler": {"running": facts["scheduler"]["running"], "checkedAt": facts["scheduler"]["checkedAt"]},
             "modelService": {"paused": True, "nextAt": _stamp(service.get("nextAt")), "lastError": service.get("lastError")}
                             if service else {"paused": False, "nextAt": None, "lastError": None},
@@ -167,14 +175,14 @@ def gather(root, store):
     scheduler = scheduler_state(root)
     stop = stop_path(root)
     requested = (_stamp(_read_json(stop).get("requestedAt")) or stop.stat().st_mtime) if stop.exists() else None
-    from lib.runtime_release import code_id, head_sha, loaded
+    from lib.runtime_release import code_id, head_sha, loaded, runtime_dirty
     head, live, codes = head_sha(root), loaded(root), {}
     for row in live:
         if row.get("sha") not in codes:
             codes[row.get("sha")] = code_id(root, row.get("sha"))
         row["code"] = codes[row.get("sha")]
     facts = {"now": store.clock(), "offsite": offsite_latest(root), "markets": [],
-             "release": {"head": head, "headCode": code_id(root, head), "loaded": live},
+             "release": {"head": head, "headCode": code_id(root, head), "headDirty": runtime_dirty(root) if head else None, "loaded": live},
              "modelService": _model_service(store), "restoreDrill": _restore_drill(root),
              "scheduler": {"running": bool(scheduler["running"]), "stopRequestedAt": requested,
                            "checkedAt": _stamp(scheduler.get("checkedAt"))}}
@@ -237,7 +245,12 @@ def evaluate(facts):
     head, head_code, live = release.get("head"), release.get("headCode"), release.get("loaded") or []
     # The loaded code trees are compared (a docs-only commit is not a version difference); the commit is
     # the fallback when a tree cannot be resolved. Pages legitimately rewrite tracked config at runtime.
-    stale = sorted(row["role"] for row in live if head and not _same_code(row, head, head_code))
+    head_dirty = release.get("headDirty")
+    stale = sorted(row["role"] for row in live if head and not _same_code(row, head, head_code, head_dirty))
+    if head_dirty:
+        add("runtime-code-uncommitted", "warning", "运行代码有未提交的改动",
+            "scripts/ 或 vendor/ 在工作区里有未提交的修改：下一次拉起的进程会读到它们，版本无法与提交对应。"
+            if head_dirty != "unknown" else "读不到运行代码的未提交改动状态，进程版本一致性待核实。")
     if stale:
         add("runtime-version-mixed", "warning", f"{len(stale)} 个常驻进程运行的不是当前代码",
             f"{'、'.join(stale)} 载入的版本与仓库当前提交 {head[:7]} 不同；按发布流程安全重启后新代码才生效。")
