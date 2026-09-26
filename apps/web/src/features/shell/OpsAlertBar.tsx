@@ -8,12 +8,20 @@ const time=(value:number)=>new Date(value*1000).toLocaleString("zh-CN",{timeZone
 const DOT={critical:"bg-error-500",warning:"bg-warning-500",info:"bg-gray-400"} as const;
 // A paused or stopped scheduler explains most other alerts, so it leads the bar whatever its level.
 const HEADLINES=["scheduler-down","production-paused"];
+// Three kinds, derived from the alert id (H15): system faults that affect every market, work a person
+// must do (the same items the overview lists under "需要我处理"), and normal waits or notices that
+// the system is already handling. Only the first two make the bar orange or count as "需处理".
+type Kind="system"|"people"|"waiting";
+const PEOPLE=/-(human|unread|needs-human|identity-overdue|send-unknown|agent-failed|agent-first-send|agent-pilot-complete|selection-isolated)$|-stage-/;
+const WAITING=/-(platform-rejected|send-quarantined|inbox-stopped)$|^production-paused$/;
+const kind=(alert:OpsAlert):Kind=>WAITING.test(alert.id)?"waiting":PEOPLE.test(alert.id)?"people":"system";
+const GROUPS:{kind:Kind;title:string}[]=[{kind:"system",title:"系统问题"},{kind:"people",title:"需要人工处理"},{kind:"waiting",title:"正常等待与提示（系统已在处理）"}];
 
 function Row({alert}:{alert:OpsAlert}){
  return <li className="flex items-start gap-3 py-2">
   <span aria-hidden className={`mt-1.5 size-2 shrink-0 rounded-full ${DOT[alert.level]}`}/>
   <div className="min-w-0 flex-1"><p className="text-sm font-medium text-gray-800 dark:text-gray-100">{alert.title}</p><p className="text-xs leading-5 text-gray-500 dark:text-gray-400">{alert.detail}{alert.since?` · 自 ${time(alert.since)}`:""}</p></div>
-  {alert.href&&<Link href={alert.href} className="shrink-0 text-xs font-medium text-brand-500 hover:text-brand-600">处理 →</Link>}
+  {alert.href&&<Link href={alert.href} className="shrink-0 text-xs font-medium text-brand-500 hover:text-brand-600">{kind(alert)==="people"?"处理 →":"查看 →"}</Link>}
  </li>;
 }
 
@@ -35,10 +43,11 @@ export default function OpsAlertBar(){
  if(!data||!data.alerts.length)return null;
  const headline=HEADLINES.map(id=>data.alerts.find(alert=>alert.id===id)).find(Boolean);
  const rest=data.alerts.filter(alert=>alert!==headline);
- const count=(level:OpsAlert["level"])=>data.alerts.filter(alert=>alert.level===level).length;
- const urgent=rest.filter(alert=>alert.level!=="info");
+ const count=(level:OpsAlert["level"])=>data.alerts.filter(alert=>alert.level===level&&kind(alert)!=="waiting").length;
+ const urgent=rest.filter(alert=>kind(alert)!=="waiting"&&alert.level!=="info");
+ const kinds=(k:Kind)=>rest.filter(alert=>kind(alert)===k);
  const tone=count("critical")?"border-error-200 bg-error-50 dark:border-error-900 dark:bg-error-900/10":count("warning")?"border-warning-200 bg-warning-50 dark:border-warning-900 dark:bg-warning-900/10":"border-gray-200 bg-gray-50 dark:border-gray-800 dark:bg-gray-900";
- const summary=[["critical","严重"],["warning","需处理"],["info","提示"]].map(([level,label])=>[label,count(level as OpsAlert["level"])] as const).filter(([,value])=>value).map(([label,value])=>`${label} ${value}`).join(" · ");
+ const summary=[["系统",kinds("system").length+(headline&&kind(headline)==="system"?1:0)],["需人工",kinds("people").length],["等待/提示",kinds("waiting").length+(headline&&kind(headline)==="waiting"?1:0)]].filter(([,value])=>value).map(([label,value])=>`${label} ${value}`).join(" · ");
  return <div role="region" aria-label="运行告警" className={`border-b px-4 py-2.5 sm:px-6 ${tone}`}>
   <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
    <span aria-hidden className={`size-2 shrink-0 rounded-full ${DOT[headline?.level??(count("critical")?"critical":count("warning")?"warning":"info")]}`}/>
@@ -51,7 +60,7 @@ export default function OpsAlertBar(){
   </div>
   {open&&<div className="mt-2 border-t border-black/5 pt-1 dark:border-white/10">
    {headline&&<p className="py-2 text-xs leading-5 text-gray-600 dark:text-gray-300">{headline.detail}</p>}
-   <ul className="divide-y divide-black/5 dark:divide-white/10">{rest.map(alert=><Row key={alert.id} alert={alert}/>)}</ul>
+   {GROUPS.map(group=>{const items=kinds(group.kind);return items.length?<div key={group.kind} className="pt-2"><p className="text-[11px] font-medium text-gray-500">{group.title}</p><ul className="divide-y divide-black/5 dark:divide-white/10">{items.map(alert=><Row key={alert.id} alert={alert}/>)}</ul></div>:null;})}
    <p className="pt-1 text-[11px] text-gray-400">检查于 {time(data.checkedAt)} · 页面打开时每分钟刷新</p>
   </div>}
  </div>;

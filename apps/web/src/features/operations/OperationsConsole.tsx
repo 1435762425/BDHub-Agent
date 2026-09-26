@@ -56,6 +56,20 @@ function Finished({row,labels}:{row:FinishedStage|null;labels:Record<string,stri
  return <span>{labels[row.stage]??row.stage} <Pill tone={tone(row.state)}>{label(row.state)}</Pill> <span className="text-xs text-gray-400">{time(row.finishedAt)}{row.items!=null?` · 本轮 ${row.items.toLocaleString()} 项`:""}</span></span>;
 }
 
+const WRITES:Record<string,string>={zero:"没有平台写入",known:"有已记录的平台写入",uncertain:"平台写入情况待核实"};
+// Read-only detail of one finished stage, from the row the console already returned.
+function RunDetail({row}:{row:FinishedStage}){
+ const took=row.startedAt&&row.finishedAt?`${Math.max(0,Math.round((row.finishedAt-row.startedAt)/60))} 分钟`:"—";
+ return <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 rounded-lg bg-gray-50 px-3 py-2 text-xs dark:bg-white/[0.03]">
+  <dt className="text-gray-400">开始 / 结束</dt><dd>{time(row.startedAt)} → {time(row.finishedAt)}（{took}）</dd>
+  <dt className="text-gray-400">处理项数</dt><dd>{row.items!=null?row.items.toLocaleString():"未记录"}</dd>
+  <dt className="text-gray-400">平台写入</dt><dd>{row.writeEvidence?WRITES[row.writeEvidence]??row.writeEvidence:"未记录"}</dd>
+  {row.errorCode&&<><dt className="text-gray-400">原因代码</dt><dd className="font-mono text-warning-600">{row.errorCode}</dd></>}
+  <dt className="text-gray-400">运行编号</dt><dd className="break-all font-mono text-gray-500">{row.runId}</dd>
+  <dt className="text-gray-400">去处理</dt><dd><Link href={`/${row.market}/ops/jobs`} className="text-brand-500">{row.market.toUpperCase()} 作业页 →</Link></dd>
+ </dl>;
+}
+
 export default function OperationsConsole(){
  const [data,setData]=useState<State|null>(null),[failed,setFailed]=useState(false);
  const [overviews,setOverviews]=useState<Record<string,MarketOverview>>({}),[overviewFailed,setOverviewFailed]=useState<string[]>([]);
@@ -119,7 +133,7 @@ export default function OperationsConsole(){
     <div className="grid gap-5 p-5 xl:grid-cols-[1fr_1fr]">
      <div className="space-y-2 text-sm"><p className="text-xs font-medium text-gray-500">各市场主链</p>{rows.map(row=><div key={row.market} className="flex flex-wrap items-baseline justify-between gap-2"><span className="font-semibold">{row.market.toUpperCase()}</span><span className="text-xs"><Situation row={row} labels={labels} now={now}/> · 最近结束：<Finished row={row.lastFinished} labels={labels}/></span></div>)}
       <p className="pt-3 text-xs font-medium text-gray-500">资源占用</p>{data.resources.length?data.resources.map(row=><p key={`${row.resource}-${row.market}`} className="text-xs text-gray-500">{resource(row.resource)}：{row.market.toUpperCase()} {labels[row.stage]??row.stage} · 已 {minutes(row.since,now)} · 心跳 {time(row.heartbeatAt)}</p>):<p className="text-xs text-gray-400">当前没有阶段占用资源。</p>}</div>
-     <div className="divide-y divide-gray-100 dark:divide-gray-800"><p className="pb-2 text-xs font-medium text-gray-500">最近运行（跳过的阶段不列出）</p>{data.recent.map(row=><div key={`${row.runId}-${row.stage}`} className="flex flex-wrap items-center justify-between gap-2 py-2 text-sm"><span><span className="mr-2 font-medium">{row.market.toUpperCase()}</span>{labels[row.stage]??row.stage}</span><span className="flex items-center gap-2 text-xs text-gray-500">{row.items!=null?`${row.items.toLocaleString()} 项 · `:""}{time(row.finishedAt)} <Pill tone={tone(row.state)}>{label(row.state)}</Pill></span></div>)}</div>
+     <div className="divide-y divide-gray-100 dark:divide-gray-800"><p className="pb-2 text-xs font-medium text-gray-500">最近运行（跳过的阶段不列出）</p>{data.recent.map(row=><details key={`${row.runId}-${row.stage}`} className="py-2 text-sm"><summary className="flex cursor-pointer list-none flex-wrap items-center justify-between gap-2"><span><span className="mr-2 font-medium">{row.market.toUpperCase()}</span>{labels[row.stage]??row.stage}</span><span className="flex items-center gap-2 text-xs text-gray-500">{row.items!=null?`${row.items.toLocaleString()} 项 · `:""}{time(row.finishedAt)} <Pill tone={tone(row.state)}>{label(row.state)}</Pill></span></summary><RunDetail row={row}/></details>)}</div>
     </div>
    </details>
   </>}
