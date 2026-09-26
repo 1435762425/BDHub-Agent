@@ -92,23 +92,39 @@ def home(store,market='it'):
 
 def main():
  parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('action',choices=('status','save'));parser.add_argument('--json');args=parser.parse_args()
+ saved=None
  try:
   body=json.loads(args.json or '{}');market=body.get('market','it')
   with CycleStore(ROOT/'var/second-cycle.sqlite',readonly=args.action=='status') as store:
    if args.action=='save':saved=save_setting(store,market,body.get('requestId'),body.get('expectedRevision'),body.get('changes'))
-   result=home(store,market)
+   try:result=home(store,market)
+   except Exception as error:
+    if saved is None:raise
+    # The setting is committed: a failed re-read may not be reported as "not saved".
+    result=None;refresh_error=str(error) if isinstance(error,CycleError) else type(error).__name__
+  launch_errors=[]
   if args.action=='save' and (saved['automaticOperationsEnabled'] or saved['continuousSendEnabled']):
+   def attempt(name,action):
+    try:action()
+    except Exception as error:launch_errors.append({'worker':name,'error':str(error) if isinstance(error,(CycleError,ValueError)) else type(error).__name__})
    from lib.operations_scheduler import scheduler_state,start_scheduler
-   if not scheduler_state(ROOT)['running']:start_scheduler(ROOT)
+   attempt('scheduler',lambda:None if scheduler_state(ROOT)['running'] else start_scheduler(ROOT))
    if saved['continuousSendEnabled']:
     if market=='it':
      from lib.continuous_send import launch_worker
-     launch_worker(ROOT)
+     attempt('continuous_send',lambda:launch_worker(ROOT))
     else:
      from lib.market_send_worker import launch
-     launch(ROOT,market)
+     attempt('market_send',lambda:launch(ROOT,market))
+  if args.action=='save':
+   commit={'requestId':body.get('requestId'),'committed':True,'duplicate':bool(saved.get('duplicate')),
+           'setting':{k:saved[k] for k in ('market','automaticOperationsEnabled','fullCatalogWeeklyEnabled','continuousSendEnabled','revision','updatedAt')},
+           'launchErrors':launch_errors}
+   if result is None:
+    print(json.dumps({'error':'operations_home_refresh_failed','refreshError':refresh_error,'commit':commit},ensure_ascii=False));return 2
+   result=result|{'commit':commit}
   print(json.dumps(result,ensure_ascii=False));return 0
  except (CycleError,ValueError,TypeError,json.JSONDecodeError) as error:
-  print(json.dumps({'error':str(error)},ensure_ascii=False));return 2
+  print(json.dumps({'error':str(error),**({'commit':{'committed':True}} if saved is not None else {})},ensure_ascii=False));return 2
 
 if __name__=='__main__':raise SystemExit(main())

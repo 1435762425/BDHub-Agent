@@ -30,7 +30,8 @@ export default function OpsAlertBar(){
   document.addEventListener("visibilitychange",visible);void poll();
   return()=>{stopped=true;if(timer)clearTimeout(timer);document.removeEventListener("visibilitychange",visible);};
  },[]);
- if(failed&&!data)return <div role="region" aria-label="运行告警" className="border-b border-gray-200 bg-gray-50 px-4 py-2 text-xs text-gray-500 dark:border-gray-800 dark:bg-gray-900 sm:px-6">异常巡检暂时读不到，页面其它数据不受影响。</div>;
+ // A failed read is shown whatever came before: "no alerts" from an old sample is not "no faults now".
+ if(failed&&(!data||!data.alerts.length))return <div role="region" aria-label="运行告警" className="border-b border-warning-200 bg-warning-50 px-4 py-2 text-xs text-warning-700 dark:border-warning-900 dark:bg-warning-900/10 dark:text-warning-300 sm:px-6">异常巡检暂时读不到，当前运行状态无法确认{data?`（上次成功检查于 ${time(data.checkedAt)}，当时无告警）`:""}；页面其它数据不受影响。</div>;
  if(!data||!data.alerts.length)return null;
  const headline=HEADLINES.map(id=>data.alerts.find(alert=>alert.id===id)).find(Boolean);
  const rest=data.alerts.filter(alert=>alert!==headline);
@@ -44,6 +45,7 @@ export default function OpsAlertBar(){
    <strong className="font-semibold text-gray-800 dark:text-gray-100">{headline?headline.title:urgent.length?`${urgent.length} 项需要处理`:"运行提示"}</strong>
    {headline?.since&&<span className="text-xs text-gray-500">自 {time(headline.since)}</span>}
    <span className="text-xs text-gray-500">{summary}</span>
+   {failed&&<span className="text-xs font-medium text-warning-700 dark:text-warning-300">巡检读取失败，以下为 {time(data.checkedAt)} 的旧结果</span>}
    {!open&&urgent.length>0&&<span className="min-w-0 truncate text-xs text-gray-600 dark:text-gray-300">{urgent.slice(0,2).map(alert=>alert.title).join(" · ")}{urgent.length>2?` 等 ${urgent.length} 项`:""}</span>}
    <button type="button" aria-expanded={open} onClick={()=>setOpen(value=>!value)} className="ml-auto text-xs font-medium text-brand-500 hover:text-brand-600">{open?"收起":"查看全部"}</button>
   </div>

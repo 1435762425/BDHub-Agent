@@ -1,5 +1,5 @@
 "use client";
-import {useEffect,useState} from "react";
+import {useEffect,useRef,useState} from "react";
 import {Button,Card,Field,Input,Notice,Pill} from "../bdhub/ui";
 import type {KalodataIdentityConfig,KalodataIdentityState} from "../../server/kalodata-identity/bridge";
 
@@ -17,7 +17,10 @@ export default function KalodataIdentityPanel({market}:{market:string}){
  const [draft,setDraft]=useState<KalodataIdentityConfig|null>(null);
  const [busy,setBusy]=useState<string|null>(null);
  const [message,setMessage]=useState<string|null>(null);
- async function refresh(signal?:AbortSignal){if(market!=="it")return;const r=await fetch(`/api/kalodata-identity?market=${encodeURIComponent(market)}`,{signal,cache:"no-store"});if(!r.ok)throw Error();const v:KalodataIdentityState=await r.json();setData(v);setDraft(v.config);}
+ // Polling refreshes facts only; the editable fields change only on load/save or when not edited.
+ const dirty=useRef(false);
+ const edit=(value:KalodataIdentityConfig)=>{setDraft(value);dirty.current=true;};
+ async function refresh(signal?:AbortSignal){if(market!=="it")return;const r=await fetch(`/api/kalodata-identity?market=${encodeURIComponent(market)}`,{signal,cache:"no-store"});if(!r.ok)throw Error();const v:KalodataIdentityState=await r.json();setData(v);setDraft(current=>dirty.current&&current?current:v.config);}
  useEffect(()=>{if(market!=="it")return;const controller=new AbortController();void(async()=>{try{await refresh(controller.signal);}catch{if(!controller.signal.aborted)setData(null);}})();return()=>controller.abort();},[market]);
  // Poll while the grabber's Chrome is open, so the page shows when the operator closes it.
  useEffect(()=>{if(!data?.login?.running)return;const timer=setInterval(()=>void refresh().catch(()=>{}),5000);return()=>clearInterval(timer);},[data?.login?.running]);
@@ -28,7 +31,7 @@ export default function KalodataIdentityPanel({market}:{market:string}){
    const r=await fetch(`/api/kalodata-identity?market=${encodeURIComponent(market)}`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
    const v=await r.json();
    if(!r.ok){setMessage(typeof v?.error==="string"?`请求被拒绝：${v.error}`:"请求被拒绝。");return;}
-   setData(v);setDraft(v.config);
+   setData(v);if(action==="save"||action==="activate"||!dirty.current){setDraft(v.config);dirty.current=false;}
    const probe=v.lastProbe;
    setMessage(action==="save"?"激活码与测试用 PID 已保存（本机 0600 权限）。"
     :action==="probe"?(probe?.verdict==="quota_exhausted"?"身份正常：平台接受了请求并回了额度用尽，说明登录有效。":probe?.verdict==="ready"?"身份正常：已取到达人列表数据。":"测试完成，结论见下方状态。")
@@ -50,8 +53,8 @@ export default function KalodataIdentityPanel({market}:{market:string}){
   </div>
   {verdict&&<Notice tone={verdict.tone==="neutral"?"warning":"info"}>{verdict.text}{probe?.detail?`（${probe.detail}）`:""}</Notice>}
   <div className="grid gap-4 lg:grid-cols-3">
-   <div className="lg:col-span-2"><Field label="插件激活码（卡号）" hint="存在本机 config/kalodata-identity.json，权限 0600，不会写进日志。刷新身份时复用扩展里已保存的卡号，不用重填。"><Input type="password" autoComplete="off" value={draft.activationCode} maxLength={200} placeholder="填入扩展激活码" onChange={e=>setDraft({...draft,activationCode:e.target.value})}/></Field></div>
-   <Field label="测试用 PID" hint="留空则自动取当前采集里的一条真实商品。"><Input value={draft.canaryPid} maxLength={19} placeholder={data.probePid||"自动选择"} onChange={e=>setDraft({...draft,canaryPid:e.target.value.replace(/\D/g,"")})}/></Field>
+   <div className="lg:col-span-2"><Field label="插件激活码（卡号）" hint="存在本机 config/kalodata-identity.json，权限 0600，不会写进日志。刷新身份时复用扩展里已保存的卡号，不用重填。"><Input type="password" autoComplete="off" value={draft.activationCode} maxLength={200} placeholder="填入扩展激活码" onChange={e=>edit({...draft,activationCode:e.target.value})}/></Field></div>
+   <Field label="测试用 PID" hint="留空则自动取当前采集里的一条真实商品。"><Input value={draft.canaryPid} maxLength={19} placeholder={data.probePid||"自动选择"} onChange={e=>edit({...draft,canaryPid:e.target.value.replace(/\D/g,"")})}/></Field>
   </div>
   <div className="flex flex-wrap gap-2">
    <Button size="sm" variant="outline" disabled={busy!==null} onClick={()=>void act("save")}>{busy==="save"?"保存中…":"保存设置"}</Button>
