@@ -23,7 +23,7 @@ def run_reply(root,store,replies,reply,market,*,pilot=False,authorized_now=False
  root=Path(root);report={'market':market,'platformWrites':0,'realSends':0}
  if reply['kind'] not in ('agent_generated_v2','agent_request_detail_v2','agent_handoff_v2'):
   raise CycleError('market_agent_reply_kind_invalid')
- recovering=reply['state'] in ('inflight','accepted','unknown')
+ recovering=reply['state'] in ('inflight','accepted','unknown','isolated')
  if not recovering and not agent_setting(store,reply['plan_id'])['enabled']:
   raise CycleError('agent_reply_disabled')
  if recovering:

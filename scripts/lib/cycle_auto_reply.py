@@ -43,9 +43,12 @@ def _decision_wait_for(db,reply_id):
 class AutoReplies:
  def __init__(self,store):
   self.s=store;self.service=Service(store);store.db.executescript(SCHEMA)
-  present={r[1] for r in store.db.execute('PRAGMA table_info(service_reply)')}
-  for name,kind in REPLY_COLUMNS:
-   if name not in present:store.db.execute(f'ALTER TABLE service_reply ADD COLUMN {name} {kind}')
+  if {name for name,_ in REPLY_COLUMNS}-{r[1] for r in store.db.execute('PRAGMA table_info(service_reply)')}:
+   # Concurrent first starts: re-check under the write lock so each column is added exactly once.
+   with store.tx():
+    present={r[1] for r in store.db.execute('PRAGMA table_info(service_reply)')}
+    for name,kind in REPLY_COLUMNS:
+     if name not in present:store.db.execute(f'ALTER TABLE service_reply ADD COLUMN {name} {kind}')
  def enabled(self,plan):
   r=self.s.db.execute('SELECT enabled FROM service_reply_config WHERE plan_id=?',(plan,)).fetchone();return bool(r and r[0])
  def enable(self,plan,authorization):
@@ -212,11 +215,16 @@ class AutoReplies:
   """Next action for one unresolved reply: 'check' (read-only), 'wait' until nextAt, or 'isolate'."""
   q=self.get(id)
   if not q or q['state'] not in ('inflight','accepted','unknown'):return {'action':'none'}
-  now=self.s.clock();started=q['started'] if q['started'] is not None else q['created']
-  if q['check_attempts']>=REPLY_CHECK_MAX or now>=started+REPLY_CHECK_DEADLINE and q['check_attempts']>0:
+  now=self.s.clock()
+  # The market-wide hold is bounded by wall time from submission, not by how many reads ran:
+  # refunded (never started) reads may not extend it.
+  if q['check_attempts']>=REPLY_CHECK_MAX or now>=self.deadline(q):
    return {'action':'isolate'}
   if now<q['next_check_at']:return {'action':'wait','nextAt':q['next_check_at']}
   return {'action':'check','attempt':q['check_attempts']+1}
+ @staticmethod
+ def deadline(q):
+  return (q['started'] if q['started'] is not None else q['created'])+REPLY_CHECK_DEADLINE
  def record_check(self,id):
   """Spend one verification before the read, so a restart never resets the budget."""
   with self.s.tx():

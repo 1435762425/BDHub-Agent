@@ -57,18 +57,51 @@ class AutoReplyTests(unittest.TestCase):
   # Exact late evidence of the original message still settles it idempotently.
   self.auto.confirm(q['id'],self.proof(q));self.auto.confirm(q['id'],self.proof(q))
   self.assertEqual(self.auto.get(q['id'])['state'],'confirmed')
- def test_deadline_isolates_after_a_real_check_and_unstarted_reads_are_refunded(self):
+ def test_refunded_reads_never_extend_the_market_hold_past_the_deadline(self):
+  q=self.unknown_reply();reads=[]
+  def busy(*args):reads.append(args[2]['id']);raise BlockingIOError()
+  with patch.object(WORKER,'run_existing',side_effect=busy):
+   for _ in range(6):
+    self.now+=REPLY_CHECK_INTERVAL+1
+    self.assertEqual(WORKER.recover_unresolved(self.s,self.p,'it','full')['state'],'reply_check_deferred')
+    # A restart between ticks keeps the same submission deadline.
+    self.assertEqual(AutoReplies(self.s).get(q['id'])['check_attempts'],0)
+   self.assertEqual(reply_blocker(self.s.db,self.p),'reply_unknown')
+   self.now=q['created']+REPLY_CHECK_DEADLINE+1
+   self.assertIsNone(WORKER.recover_unresolved(self.s,self.p,'it','full'))
+  self.assertEqual(len(reads),6)
+  self.assertEqual(self.auto.get(q['id'])['state'],'isolated')
+  self.assertIsNone(reply_blocker(self.s.db,self.p))
+  self.assertEqual(reply_blocker(self.s.db,self.p,self.creator),'reply_isolated')
+ def test_an_identity_refusal_counts_and_other_replies_are_still_visited(self):
   q=self.unknown_reply()
-  with patch.object(WORKER,'run_existing',side_effect=BlockingIOError()):
-   self.now+=REPLY_CHECK_INTERVAL+1
-   self.assertEqual(WORKER.recover_unresolved(self.s,self.p,'it','full')['state'],'reply_check_deferred')
-  self.assertEqual(self.auto.get(q['id'])['check_attempts'],0)
-  self.now+=REPLY_CHECK_DEADLINE
-  self.assertEqual(self.auto.recovery_step(q['id'])['action'],'check')
+  self.now+=REPLY_CHECK_INTERVAL+1
   with patch.object(WORKER,'run_existing',side_effect=CycleError('reply_original_identity_changed')):
    result=WORKER.recover_unresolved(self.s,self.p,'it','full')
   self.assertEqual((result['replyState'],result['error']),('unknown','reply_original_identity_changed'))
-  self.assertEqual(self.auto.recovery_step(q['id'])['action'],'isolate')
+  self.assertEqual(self.auto.get(q['id'])['check_attempts'],1)
+ def test_concurrent_first_starts_add_each_reply_column_once(self):
+  import sqlite3,threading
+  from lib.second_cycle import CycleStore
+  from lib.cycle_auto_reply import REPLY_COLUMNS
+  import tempfile
+  folder=tempfile.TemporaryDirectory();self.addCleanup(folder.cleanup);path=Path(folder.name)/'legacy.sqlite'
+  with sqlite3.connect(path) as db:
+   db.execute("CREATE TABLE service_reply(id TEXT PRIMARY KEY,plan_id TEXT NOT NULL,creator_id TEXT NOT NULL,pending_revision INTEGER NOT NULL,oec TEXT NOT NULL,cid TEXT NOT NULL,kind TEXT NOT NULL,case_id TEXT,text TEXT NOT NULL,context_hash TEXT NOT NULL,state TEXT NOT NULL,request_ref TEXT NOT NULL UNIQUE,receipt TEXT,proof TEXT,created REAL NOT NULL,started REAL)")
+   db.execute("INSERT INTO service_reply VALUES('r','p','c',1,'o','1','manual',NULL,'t','h','unknown','req-legacy-001',NULL,NULL,1,1)")
+  barrier=threading.Barrier(4);errors=[]
+  def start():
+   try:
+    with CycleStore(path) as store:barrier.wait(timeout=5);AutoReplies(store)
+   except Exception as error:errors.append(error)
+  threads=[threading.Thread(target=start) for _ in range(4)];[t.start() for t in threads];[t.join() for t in threads]
+  self.assertEqual(errors,[])
+  with sqlite3.connect(path) as db:
+   columns=[r[1] for r in db.execute('PRAGMA table_info(service_reply)')]
+   row=db.execute("SELECT state,request_ref FROM service_reply WHERE id='r'").fetchone()
+  self.assertEqual(sorted(c for c in columns if c in dict(REPLY_COLUMNS)),sorted(dict(REPLY_COLUMNS)))
+  self.assertEqual(len(columns),len(set(columns)))
+  self.assertEqual(row,('unknown','req-legacy-001'))
  def test_disabled_never_creates_reply(self):
   self.baseline();self.add('1','Il link non funziona');self.process();self.assertIsNone(self.auto.prepare(self.p,self.creator))
  def test_handoff_ack_once_and_case_keeps_human_control(self):

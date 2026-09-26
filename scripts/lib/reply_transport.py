@@ -25,7 +25,7 @@ def refresh_card(candidate,*,stopped=lambda:False):
 def run_reply(store,replies,reply,*,root=ROOT,authorized_now=False,stopped=lambda:False,
               read_binding=read_sender_binding,live=live_runtime,refresh=None):
     """Send once if ready; otherwise read back only the original requestRef."""
-    root=Path(root);report={};recovering=reply['state'] in ('inflight','accepted','unknown')
+    root=Path(root);report={};recovering=reply['state'] in ('inflight','accepted','unknown','isolated')
     card=None
     if reply['kind']=='manual_card':
         from lib.cycle_send_runtime import descriptor

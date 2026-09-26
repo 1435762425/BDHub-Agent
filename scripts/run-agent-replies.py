@@ -4,7 +4,7 @@ import argparse,fcntl,json,re,signal,sys,time
 from datetime import datetime,timezone,timedelta
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1];sys.dont_write_bytecode=True;sys.path.insert(0,str(ROOT/'scripts'))
-from lib.cycle_auto_reply import AutoReplies,reply_blocker
+from lib.cycle_auto_reply import REPLY_CHECK_INTERVAL,AutoReplies,reply_blocker
 from lib.reply_events import backfill
 from lib.agent_reply_v2 import apply_production,generate,production_context,rollout_stage
 from lib.second_cycle import CycleError,CycleStore,digest
@@ -61,7 +61,7 @@ def decision_retry_ready(store,plan,turn_id,now):
  return now-attempts[0]['created_at']>=3600
 
 def run_existing(store,replies,reply,market,stage,authorized_now=None):
- recovering=reply['state'] in ('inflight','accepted','unknown')
+ recovering=reply['state'] in ('inflight','accepted','unknown','isolated')
  if market=='it':
   from lib.reply_transport import run_reply
   state=run_reply(store,replies,reply,root=ROOT,authorized_now=authorized_now is not None,stopped=lambda:STOP)
@@ -80,7 +80,7 @@ def recover_unresolved(store,plan,market,stage):
    AND (kind IN ('agent_generated_v2','agent_request_detail_v2','agent_handoff_v2') OR ?='it')
    ORDER BY created""",(plan,market)).fetchall()
  if not rows:return None
- replies=AutoReplies(store);waiting=[];isolated=0
+ replies=AutoReplies(store);waiting=[];isolated=0;deferred=[]
  for row in rows:
   step=replies.recovery_step(row['id'])
   if step['action']=='isolate':replies.isolate(row['id']);isolated+=1;continue
@@ -90,14 +90,16 @@ def recover_unresolved(store,plan,market,stage):
   try:state=run_existing(store,replies,reply,market,stage)['state']
   except CycleError as error:state=replies.get(row['id'])['state'];code=str(error)
   except Exception as error:
-   # The read could not start or finish (send lock, account unavailable): no evidence, no spent check.
-   replies.refund_check(row['id'])
-   return {'state':'reply_check_deferred','error':type(error).__name__,'platformWrites':0,'realSends':0}
+   # The read could not start or finish (send lock, account unavailable): no evidence, no spent
+   # check. The submission deadline still bounds the market hold; later replies are still visited.
+   replies.refund_check(row['id']);deferred.append(type(error).__name__)
+   waiting.append(min(store.clock()+REPLY_CHECK_INTERVAL,AutoReplies.deadline(reply)));continue
   else:code=None
   return {'state':'original_intent_rechecked','replyState':state,'attempt':step['attempt'],
           **({'error':code} if code else {}),'isolated':isolated,'platformWrites':0,'realSends':0}
  if waiting:
-  return {'state':'waiting_reply_check','nextAt':min(waiting),'isolated':isolated,'platformWrites':0,'realSends':0}
+  return {'state':'reply_check_deferred' if deferred else 'waiting_reply_check','nextAt':min(waiting),'isolated':isolated,
+          **({'error':deferred[0]} if deferred else {}),'platformWrites':0,'realSends':0}
  return None
 def pending_rows(store,plan,now,limit=20):
  if type(limit) is not int or not 1<=limit<=20:raise CycleError('agent_pending_limit_invalid')
