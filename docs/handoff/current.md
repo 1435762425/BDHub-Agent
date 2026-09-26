@@ -7,6 +7,14 @@
 
 
 
+## 2026-09-26 20:00：审计 H01–H16 与总控制台上线
+
+- 依据 `b1d16cc` 只读审计，在 worktree `../BDHub-Agent-h-20260926`（分支 `codex/console-audit-20260926`）实现后，用户确认合入并推送 GitHub `main`（`a527f68`）。内容：旧回执重放不再启动进程；租约过期后结果照常结算、被回收的迟到结果存证、写阶段过期转人工核对；模型熔断按调用代次；时间线复合游标下推；Kalodata 状态区分排队/运行并给出最近一次抓取；线索状态只读；首页类型化指标、供给主链与持续通道分组；运行代码未提交改动告警；恢复演练逐意图核对冻结身份；活跃日志不做复制截断；市场轮流领取主链资源；只读总控制台 `/<市场>/console`。H11 增量读模型、H13 净增量/后续归因、认证等待让出平台槽与阶段切片未做。
+- 部署前发现：第三轮加入的嵌套失败检测把 `campaign-collect` 报告里的逐轮进度 `steps`（`status: paused`）当成失败子步骤，MY 货盘 15:53 起 6 次实际完成（如 19:10 一轮 16,803 条 offer、4,865 个合格 PID）却记为 `nested_step_exit_None`，每轮约 26 分钟占住平台读取槽，BR/IT/UK 的 OECID 因此长时间排队；货盘从未发布，MY 发送 worker 因 `offer_changed` 停在 attention。本次一并修复（只把带 label/exitCode/result 的条目当子步骤）。这些失败 run 已被自动转为 `needs_human`（`workflow_retry_requires_review`），作为历史保留未改写；Campaign 采集本身零平台写入。
+- 19:45 在线备份 `var/backups/state/20260926T114550Z-pre-console-restart-20260926`（33 库，valid，演练 restorable，8 条二发意图无冻结身份记为待核实）；按“保留最新 3 份”将 `20260926T043827Z-post-followup-release-20260926` 移入废纸篓，现保留 14:18、15:26、19:45 三份。
+- 按原流程重启：SIGTERM scheduler 后等 MY 货盘在途阶段自然结束（19:55，这一轮是真实的 `taplink_remote_read_failed`），claim 清零；停 AI/发送 worker 与四个会话 owner，无在途投递/回复、无残留后 `start_scheduler` 恢复（scheduler `19140`），各常驻进程载入 `a527f68`、运行代码无未提交改动。控制/授权七表哈希不变；requestRef 25,522 唯一（较 19:46 增加的是发送窗口内的正常发送）；`quick_check=ok`；四市场会话 owner ready、收信 gap 0。MY 发送 worker 仍因 `offer_changed` 周期性停在 attention，待 MY 货盘成功发布后应自行恢复。
+- Web：worktree 构建 `s9RlPjPiMHuy3fsk9LJyQ` 逐文件校验 289 个文件后切换，旧构建 `S33VU3T7Rm0laxo8dzm0x` 在 `var/web-releases/console-audit-20260926T115743Z/previous`；四市场首页、总控、会话、货盘、运行证据及各接口共 34 项均 200，总控只读打开无脚本错误，可见各市场 OECID 按轮次领取平台槽；切换前后常驻进程 PID 不变。
+
 ## 2026-09-26 15:30：第三轮后续（G15、G17、G18、G21）上线
 
 - 用户确认后从 worktree `../BDHub-Agent-r3b-20260926`（分支 `codex/round3-followups-20260926`）快进合入并推送 GitHub `main`（`4875710`）；G13/G14 按用户要求暂缓。内容：认证失效统一经 `login_recovery.request_recovery`，同市场/账号/代次/错误族只有一条先刷新后重登的维护意图；`state-backup.py drill` 离线恢复演练；会话队列游标翻页、表结构单次读取、`inbox_checkpoint_oec` 索引、回复投影增量分块；运行证据页、未知状态显示“状态待核实”；版本告警改为比较 `scripts`/`vendor` 代码树（此前 14:30 的纯文档提交曾让告警条误报 13 个进程版本不同）。
