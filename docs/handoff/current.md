@@ -12,7 +12,8 @@
 - 依据用户提供的 `acad472` 只读审查（GPT 静态审查），逐项核对代码后在独立 worktree `../BDHub-Agent-review-20260926`（分支 `codex/review-fixes-20260926`）修复，用户确认后快进合入本机生产分支并推送 GitHub `main`。
 - 内容：阶段写入证据（`writeEvidence`，写入类阶段仅确认零写才自动重排）；IT OECID 有界切片归一化；OECID 等待绑定实际执行账号；TapLink 标准卡须平台有效/商品合格；AI 回复冻结原发送身份、最多 3 次只读核验（≥120 秒、900 秒预算）后按达人隔离；SDK 收信断点续读（`backfilling`）；全托 ≤3 个未决 PID 时只冻结该 PID、Campaign 继续；仅平台额度回执暂停当日新联系（同类非额度拒绝 3 次按系统性拒绝暂停）；BR/MY/UK 每周一只读 binding 检查（不删除）。参数按用户要求保持默认。
 - 验证：Python 全量 1,503、Web 180 通过，build/typecheck 通过。仅离线测试与只读 SQLite 查询；未调用平台、未写生产库、未改配置或授权。
-- 未重启任何常驻进程（scheduler、AI 回复 worker、SDK 会话 owner、发送 worker）：新拉起的子脚本立即使用新代码，常驻进程在下次正常重启后生效。`service_reply` 新列由新代码首次实例化 `AutoReplies` 时原地追加；`inbox_backfill` 由 `Inbox` 自建，均为 additive。
+- 11:30 左右按 [上线报告](../implementation/sdk-http-rollout-20260926.md) 原流程重启常驻进程：SIGTERM scheduler `98148`，等 UK OECID 在途阶段自然完成、claim 清零；再停四市场 AI/发送 worker 与四个会话 owner，确认无在途回复/投递组件、无本项目残留浏览器。库静止后备份 `var/backups/state/20260926T033201Z-pre-review-fix-restart-20260926`（33 库，valid）；运行中在线备份因 second-cycle 持续写入反复重启而中止，其临时目录已删除。随后 `start_scheduler` 恢复（scheduler `46164`），由其按原持久授权拉起四个 owner、IT 发送与四市场 AI、BR/MY/UK 发送；无 stop/pause 标记需保留。
+- 重启后核对：四市场 SDK 收信 `completed`、gap/backfilling 均 0；发送 worker 等待窗口，AI 窗外或正常完成；scheduler 无错误并以新代码运行 IT/UK 阶段。自动运营、发送控制及请求、AI 设置、回复配置、控制事件、账号运行设置哈希与重启前一致；19,436 个 requestRef 唯一不变，`service_reply` 已追加发送身份/核验列，主库 `quick_check=ok`。Web 未重建重启（发送面板新状态文案待下次 Web 发布生效）。`service_reply` 新列由新代码首次实例化 `AutoReplies` 时原地追加；`inbox_backfill` 由 `Inbox` 自建，均为 additive。
 - 已知生产影响：IT 选品台账现有 1 个 `result_unknown`，新 scheduler 生效后 IT catalog 会绕开该 PID 继续选入（产生新的选入写入）；旧的无写入证据失败写入阶段不再自动重排而转 needs_human；BR/MY/UK 周一新增只读平台读取。
 
 ## 2026-09-26：仓库文档与已发布代码同步
