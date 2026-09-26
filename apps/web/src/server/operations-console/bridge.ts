@@ -6,12 +6,15 @@ import {singleflight} from "../runtime/singleflight.ts";
 
 /** Read-only cross-market console (H12). Every figure carries its own time; missing data stays null. */
 export type Holder={market:string;stage:string;since:number|null};
-export type ConsoleStage={stage:string;state:"running"|"queued";since:number|null;heartbeatAt:number|null;waitingOn:{resource:string;heldBy:Holder[]}[]};
+// waitingKnown=false: the stage's resource needs could not be determined, which is not "nothing to wait for" (I05).
+export type ConsoleStage={stage:string;state:"running"|"queued";since:number|null;heartbeatAt:number|null;waitingOn:{resource:string;heldBy:Holder[]}[];waitingKnown:boolean;waitReason:string|null};
 export type FinishedStage={market:string;runId:string;stage:string;state:string;startedAt:number|null;finishedAt:number|null;errorCode:string|null;items:number|null;writeEvidence:string|null};
-export type Lane={state:string|null;value:number|null;label:string|null;lastSuccessAt:number|null;stopReason:string|null};
+export type Lane={state:string|null;value:number|null;label:string|null;unit:string|null;scope:string|null;lastSuccessAt:number|null;stopReason:string|null};
 export type ConsoleMarket={market:string;available:true;setting:{automaticOperationsEnabled:boolean;continuousSendEnabled:boolean;fullCatalogWeeklyEnabled:boolean};
  run:{runId:string;state:string;startedAt:number|null}|null;current:ConsoleStage|null;lastFinished:FinishedStage|null;
  needsReview:{runId:string;state:string;errorCode:string|null;at:number|null}|null;openHumanCases:number|null;
+ // The conversation page's own human queue (I02); open cases are a different count.
+ humanQueue:{human:number|null;technical:number|null}|null;
  lanes:{available:boolean;observedAt:number|null;continuousSend:Lane|null;agentReply:Lane|null}}|{market:string;available:false;error:string};
 export type OperationsConsole={schemaVersion:"bdhub.operations-console.v1";checkedAt:number;markets:ConsoleMarket[];
  resources:(Holder&{resource:string;heartbeatAt:number|null})[];recent:FinishedStage[];scheduler:{running:boolean;checkedAt:number|null};
@@ -29,7 +32,7 @@ const holder=(raw:unknown):Holder=>{const v=object(raw);return {market:text(v.ma
 const finished=(raw:unknown):FinishedStage=>{const v=object(raw);return {market:text(v.market,8),runId:text(v.runId),stage:text(v.stage,40),state:text(v.state,40),
  startedAt:time(v.startedAt),finishedAt:time(v.finishedAt),errorCode:maybeText(v.errorCode),items:count(v.items),writeEvidence:maybeText(v.writeEvidence,20)};};
 const lane=(raw:unknown):Lane|null=>{if(raw==null)return null;const v=object(raw);
- return {state:maybeText(v.state,40),value:count(v.value),label:maybeText(v.label,40),lastSuccessAt:time(v.lastSuccessAt),stopReason:maybeText(v.stopReason)};};
+ return {state:maybeText(v.state,40),value:count(v.value),label:maybeText(v.label,40),unit:maybeText(v.unit,20),scope:maybeText(v.scope,20),lastSuccessAt:time(v.lastSuccessAt),stopReason:maybeText(v.stopReason)};};
 
 export function validateOperationsConsole(raw:unknown):OperationsConsole{
  const v=object(raw);
@@ -41,12 +44,14 @@ export function validateOperationsConsole(raw:unknown):OperationsConsole{
   let current:ConsoleStage|null=null;
   if(m.current!=null){const c=object(m.current);if(c.state!=="running"&&c.state!=="queued")fail();
    current={stage:text(c.stage,40),state:c.state as "running"|"queued",since:time(c.since),heartbeatAt:time(c.heartbeatAt),
-    waitingOn:list(c.waitingOn,10).map(w=>{const row=object(w);return {resource:text(row.resource,120),heldBy:list(row.heldBy,10).map(holder)};})};}
+    waitingOn:list(c.waitingOn,10).map(w=>{const row=object(w);return {resource:text(row.resource,120),heldBy:list(row.heldBy,10).map(holder)};}),
+    waitingKnown:c.waitingKnown!==false,waitReason:maybeText(c.waitReason,120)};}
   const run=m.run==null?null:(()=>{const r=object(m.run);return {runId:text(r.runId),state:text(r.state,40),startedAt:time(r.startedAt)};})();
   const review=m.needsReview==null?null:(()=>{const r=object(m.needsReview);return {runId:text(r.runId),state:text(r.state,40),errorCode:maybeText(r.errorCode),at:time(r.at)};})();
   return {market:text(m.market,8),available:true,
    setting:{automaticOperationsEnabled:flag(setting.automaticOperationsEnabled),continuousSendEnabled:flag(setting.continuousSendEnabled),fullCatalogWeeklyEnabled:flag(setting.fullCatalogWeeklyEnabled)},
    run,current,lastFinished:m.lastFinished==null?null:finished(m.lastFinished),needsReview:review,openHumanCases:count(m.openHumanCases),
+   humanQueue:m.humanQueue==null?null:(()=>{const h=object(m.humanQueue);return {human:count(h.human),technical:count(h.technical)};})(),
    lanes:{available:flag(lanes.available),observedAt:time(lanes.observedAt),continuousSend:lane(lanes.continuousSend),agentReply:lane(lanes.agentReply)}};});
  const scheduler=object(v.scheduler),labels=object(v.stageLabels);
  return {schemaVersion:"bdhub.operations-console.v1",checkedAt:time(v.checkedAt)??fail(),markets,

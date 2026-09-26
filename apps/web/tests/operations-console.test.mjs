@@ -19,3 +19,12 @@ test('console refuses write claims, unknown stage states and negative counts',()
  assert.throws(()=>validateOperationsConsole({...payload,markets:[{...market,current:{...market.current,state:'done'}}]}),/invalid_operations_console/);
  assert.throws(()=>validateOperationsConsole({...payload,markets:[{...market,openHumanCases:-1}]}),/invalid_operations_console/);
 });
+test('human queue and unknown waits survive validation and old payloads still read',()=>{
+ const withQueue={...market,humanQueue:{human:4,technical:1},current:{...market.current,waitingKnown:false,waitReason:'roles'}};
+ const value=validateOperationsConsole({...payload,markets:[withQueue]});
+ assert.deepEqual(value.markets[0].humanQueue,{human:4,technical:1});
+ assert.equal(value.markets[0].current.waitingKnown,false);assert.equal(value.markets[0].current.waitReason,'roles');
+ const old=validateOperationsConsole(payload);
+ assert.equal(old.markets[0].humanQueue,null);assert.equal(old.markets[0].current.waitingKnown,true);
+ assert.throws(()=>validateOperationsConsole({...payload,markets:[{...withQueue,humanQueue:{human:-1,technical:0}}]}),/invalid_operations_console/);
+});
