@@ -7,6 +7,12 @@
 
 
 
+## 2026-09-27 00:45：总览“账号需人工”口径修正与意大利全托类目重扫
+
+- `a3a295c`：经营总览“账号需人工处理”改与账号页同一规则——某账号的 needs_human 维护意图只要之后有更新的维护意图即视为已被取代。原计数把 BR acc2、IT acc6/acc9、UK acc4 已被后续成功维护取代的 5 条旧意图算进来；修正后四市场均为 0（生产只读核对）。MY acc8 最近 failed_known `NameError` 为 09-24 已修复缺陷（`a8e6d94`），新代次已发布，无需处理。
+- 00:35 在线备份 `var/backups/state/20260926T163544Z-pre-acct-count-20260927`（33 库，valid，restorable）；`20260926T125331Z-pre-sender-fix-restart-20260926` 移入废纸篓，现保留 21:41、23:25、00:35 三份。完整流程重启：scheduler 等 IT OECID 收口、claim 清零；停 AI/发送 worker 与会话 owner，无在途投递/回复后恢复（scheduler `72929`），13/13 进程载入 `a3a295c`。控制七表哈希不变，requestRef 26,886 唯一，`quick_check=ok`，收信 gap 0，无版本混用告警。
+- 00:40 按用户要求用 `global-source-control.py` 显式启动意大利全托一级类目只读重扫（run `it-global-20260927-a5e6432c7c7b5bc409df`，acc9）；上次完整类目发现为 09-21（31,809 商品）。新合格商品的选入仍由主链货盘阶段执行（IT 下一次 selected 到期 09-28 04:30）。
+
 ## 2026-09-27 00:25：会话中我方消息也可翻译（仅 Web）
 
 - `4873bc4`：会话时间线中我方发出的消息（机构后台、人工、AI、主动邀请）也显示“翻译成中文”，复用原翻译接口，只调用模型、无平台写入。构建 `RFWphfGerY6JazDkJRp3w` 逐文件校验 286 个文件后切换，旧构建 `4OockedwlUJBitQxK7-v8` 在 `var/web-releases/translate-*/previous`；四市场页面、会话接口、总控与告警均 200，浏览器只读确认 IT 会话我方气泡显示按钮。后台进程未重启。
