@@ -7,6 +7,15 @@
 
 
 
+## 2026-09-26 中午：第二轮审查（F01–F12、D01）修复上线
+
+- 依据用户提供的 `0d9f39d` 复核审查，在 worktree `../BDHub-Agent-followup-20260926`（分支 `codex/followup-review-20260926`）修复后，用户确认合入并推送 GitHub `main`（`093f04d`）。内容：AI 回复 900 秒期限只看提交时刻；`service_reply` 懒加列串行化；会话“技术挂起”队列、隔离/未决回复只读核验、时间线分页、发送失败区分确定未提交与未知、草稿按会话保留、详情随列表刷新、列表集合预筛（生产快照结果一致，UK 单次约 4.1s→0.12s）；首页保存回执与状态不可确认提示；TapLink 按保存星期执行；单页读取不再产生新 gap，`scripts/inbox-gap.py` 诊断/有证据恢复存量 gap（生产当前 0）。
+- 验证：Python 1,515、Web 187 通过，build/typecheck 通过；仅离线测试与只读 SQLite。
+- 12:20–12:35 按原流程重启常驻进程：SIGTERM scheduler 待 UK OECID 在途阶段自然完成、claim 清零；停四市场 AI/发送 worker 与会话 owner，确认无在途回复/投递、无残留。**磁盘仅约 1.3GB 可用，静止备份因 `database or disk is full` 失败**（无残留临时目录）；本轮无库结构变更，最近可用恢复点仍为 11:32 的 `20260926T033201Z-pre-review-fix-restart-20260926`。随后 `start_scheduler` 恢复（PID `53012`），由其按原持久授权拉起全部 worker；无 stop/pause 标记。
+- 重启后四市场 SDK 收信 `completed`、gap/backfilling 0，发送 worker 等待窗口，AI 窗外/正常完成，scheduler 无错误；控制/授权哈希与重启前一致，19,436 个 requestRef 不变，主库 `quick_check=ok`。
+- Web：worktree 构建 `M3ovMuGEsvm0eoohmYlwH` 逐文件 SHA-256 核对后切换，旧构建 `gO-lvIJ1kdedvqM_h2bgH` 移至 `var/web-releases/followup-review-20260926T042718Z/previous`（同目录 `release.json`），只 kickstart `io.bdhub.agent.web`（新监听 PID 53434）；四市场页面/会话/首页/技术挂起队列/概览及告警接口均 200，浏览器只读打开会话页、首页、作业页无脚本错误；切换前后 13 个常驻 worker PID 一致。
+- 待用户决定：磁盘接近满（`var/backups/state` 约 17GB，多为 09-21～09-24 的旧备份），需清理或迁移后才能恢复发布前完整备份；未做任何删除。
+
 ## 2026-09-26：外部静态审查 R1–R10 修复合入生产
 
 - 依据用户提供的 `acad472` 只读审查（GPT 静态审查），逐项核对代码后在独立 worktree `../BDHub-Agent-review-20260926`（分支 `codex/review-fixes-20260926`）修复，用户确认后快进合入本机生产分支并推送 GitHub `main`。
