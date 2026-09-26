@@ -7,6 +7,14 @@
 
 
 
+## 2026-09-26 21:10：MY 发送停机修复、认证等待让槽、模型熔断全覆盖、Kalodata 贡献上线
+
+- 用户确认后合入并推送 GitHub `main`（`051dc47`）。内容：BR/MY/UK 发送在卡片派发前被本地判定为单个收件人终态（如货盘刷新后冻结报价失效 `offer_changed`）时只取消该投递未提交组件并继续，不再让整个市场 worker 停在 attention（今天 MY 货盘刷新后出现 4 次，每次停到该投递 30 分钟到期）；等待账号恢复的阶段把 `platform:global` 借给其他市场；会话翻译、商品短名、素材准备接入模型服务熔断；每次 A/B 发布记录新增达人×商品、刷新组合与全新达人，线索页“最近一次抓取”显示；总控补“已停止，需关注”文案。
+- MY 货盘 20:16–20:43 正常完成并发布（16,803 项），误判修复生效。随后 MY 首次建链（`taplink_prepare`）于 20:53 开始；用户说明 MY 此前已建过大量链接，要求打断。21:04 核实其处于读取阶段（`catalog-link-prepare.py read`）、阶段写入 0、近 30 分钟无任何建链意图后，对该进程组发 SIGTERM；阶段记为失败（`taplink-read-campaign_report_invalid`，写入证据保守记 uncertain），不会自动重跑，未产生链接意图。
+- 20:53 在线备份 `var/backups/state/20260926T125331Z-pre-sender-fix-restart-20260926`（33 库，valid，演练 restorable）；按“保留最新 3 份”将 `20260926T061807Z-pre-round3-restart-20260926` 移入废纸篓，现保留 15:26、19:45、20:53 三份。
+- 按原流程重启：scheduler 退出、claim 清零；停 AI/发送 worker 与四个会话 owner，无在途投递/回复后 `start_scheduler` 恢复（scheduler `30797`），13 个常驻进程均载入 `051dc47`。控制/授权七表哈希不变；requestRef 26,538 唯一；`quick_check=ok`；四市场会话 owner ready、收信 gap 0。MY 卡住的投递 `delivery-559f3083…` 由新逻辑结算为 `offer_changed`、平台写入 0，MY 发送随即恢复并确认新投递。
+- Web：构建 `0_3YEjKiE3FMWr2tEGPBE` 逐文件校验 289 个文件后切换，旧构建 `s9RlPjPiMHuy3fsk9LJyQ` 在 `var/web-releases/sender-fix-20260926T130701Z/previous`；四市场 32 项页面/接口及总控、告警接口均 200，切换前后常驻进程不变。
+
 ## 2026-09-26 20:00：审计 H01–H16 与总控制台上线
 
 - 依据 `b1d16cc` 只读审计，在 worktree `../BDHub-Agent-h-20260926`（分支 `codex/console-audit-20260926`）实现后，用户确认合入并推送 GitHub `main`（`a527f68`）。内容：旧回执重放不再启动进程；租约过期后结果照常结算、被回收的迟到结果存证、写阶段过期转人工核对；模型熔断按调用代次；时间线复合游标下推；Kalodata 状态区分排队/运行并给出最近一次抓取；线索状态只读；首页类型化指标、供给主链与持续通道分组；运行代码未提交改动告警；恢复演练逐意图核对冻结身份；活跃日志不做复制截断；市场轮流领取主链资源；只读总控制台 `/<市场>/console`。H11 增量读模型、H13 净增量/后续归因、认证等待让出平台槽与阶段切片未做。
