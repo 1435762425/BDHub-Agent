@@ -19,7 +19,7 @@ from lib.operations_workflow import create_run,finish_stage,retry_failed_stage,s
 from lib.process_liveness import pid_alive
 from lib.second_cycle import CycleError, CycleStore, digest, encoded
 from lib.workflow_dispatch import claim_ready
-from lib.workflow_resources import assert_current,heartbeat,release
+from lib.workflow_resources import heartbeat,record_late_result,release
 
 
 BEIJING = ZoneInfo('Asia/Shanghai')
@@ -385,7 +385,16 @@ class SubprocessStageExecutor:
                     except ProcessLookupError:pass
                     process.communicate()
                 raise
-            finally:os.close(write_fd)
+            finally:
+                os.close(write_fd)
+                # The child is gone: the claim's live process is the supervisor again, so a lapsed
+                # lease is not mistaken for a dead owner while the result is still being settled.
+                if process.poll() is not None:
+                    try:
+                        from lib.workflow_resources import adopt_worker
+                        with CycleStore(self.root/'var/second-cycle.sqlite') as claim_store:
+                            adopt_worker(claim_store,ticket['stageRunId'],ticket['ownerId'],ticket['fence'],os.getpid())
+                    except (CycleError,sqlite3.Error,OSError):pass
         else:
             if ledger is not None:ledger['launched']+=1
             child=self.runner(command,cwd=str(self.root),capture_output=True,text=True,timeout=timeout,
@@ -934,6 +943,16 @@ def tick(root,*,now=None,executor=None,refill=False,clock=None,wait_seconds=30,s
                 finally:
                     if tracked:executor._claims.ticket=None;executor._claims.ledger=None
 
+        # Read-model projection runs beside the supervision loop (each target may take up to 60 s):
+        # heartbeats and settlement never wait for it.
+        projector=[None]
+        def project_async():
+            nonlocal projected
+            if not projected or (projector[0] is not None and projector[0].is_alive()):return
+            targets,projected=projected,[]
+            projector[0]=threading.Thread(target=_project_read_models,args=(root,targets,progress),daemon=True)
+            projector[0].start()
+
         with ThreadPoolExecutor(max_workers=14 if refill else len(tasks)) as pool:
             pending={}
             def submit(tasks,job_config):
@@ -959,7 +978,6 @@ def tick(root,*,now=None,executor=None,refill=False,clock=None,wait_seconds=30,s
                         result={'state':'failed','itemCount':0,'complete':False,'platformWrites':0,'writeEvidence':'uncertain',
                                 'scope':{},'payload':{},'errorCode':str(error) if isinstance(error,(CycleError,ValueError)) else type(error).__name__}
                     try:
-                        assert_current(store,ticket['stageRunId'],owner_id,ticket['fence'])
                         finish_stage(store,run['runId'],stage,state=result['state'],item_count=result.get('itemCount',0),
                           scope=result.get('scope'),payload=result.get('payload'),complete=result.get('complete',True),
                           platform_writes=result.get('platformWrites',0),error_code=result.get('errorCode'),
@@ -967,7 +985,12 @@ def tick(root,*,now=None,executor=None,refill=False,clock=None,wait_seconds=30,s
                           claim_ticket=ticket|{'ownerId':owner_id})
                         release(store,ticket['stageRunId'],owner_id,ticket['fence'])
                     except (CycleError,sqlite3.Error) as error:
-                        progress['error']=str(error)[:120];continue
+                        progress['error']=str(error)[:120]
+                        if str(error)=='workflow_stage_fence_stale':
+                            # Recovered by another owner meanwhile: keep this result as evidence.
+                            try:record_late_result(store,ticket['stageRunId'],owner_id,ticket['fence'],result)
+                            except (CycleError,sqlite3.Error):pass
+                        continue
                     market=run['market'];key=stage if market=='it' else f'{market}:{stage}'
                     if result['state'] in ('completed','quota_exhausted','skipped'):progress['lastSuccess'][key]=stamp
                     elif progress['error'] is None:progress['error']=result.get('errorCode') or result['state']
@@ -995,8 +1018,9 @@ def tick(root,*,now=None,executor=None,refill=False,clock=None,wait_seconds=30,s
                 progress['runningStages']=[{'runId':t['run']['runId'],'market':t['run']['market'],
                     'stage':t['stage']['stage'],'fence':t['ticket']['fence']} for t in pending.values()]
                 _write(status_path(root),progress)
-                if projected:
-                    _project_read_models(root,projected,progress);projected=[]
+                project_async()
+        if projector[0] is not None:projector[0].join()
+        if projected:_project_read_models(root,projected,progress)
     _write(status_path(root),progress);return progress
 
 

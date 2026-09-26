@@ -267,9 +267,43 @@ class SchedulerFlow(unittest.TestCase):
                 return {'state':'completed','itemCount':1,'complete':True,'platformWrites':0}
         first=tick(self.root,now=NOW+100,executor=RecoveryExecutor())
         self.assertEqual(first['recoveredStageRuns'],[stage['stageRunId']])
-        self.assertEqual(seen,[])
         tick(self.root,now=NOW+110,executor=RecoveryExecutor())
-        self.assertEqual(seen,[('catalog',{'key':'page','value':{'number':7}})])
+        # A write-capable stage whose owner died may have written: it waits for review, never re-runs.
+        self.assertEqual(seen,[])
+        row=self.store.db.execute('SELECT state,error_code FROM workflow_stage_run WHERE stage_run_id=?',(stage['stageRunId'],)).fetchone()
+        self.assertEqual(tuple(row),('needs_human','recovery_claim_expired_write_unknown'))
+
+    def test_a_result_arriving_after_its_lease_lapsed_still_settles(self):
+        from lib.operations_workflow import create_run,stage_state
+        run=create_run(self.store,market='it',trigger_source='manual',scheduled_at=NOW,
+                       request_id='late-settle-request',only_stage='oecid',sources=['campaign'])
+        clock=[NOW+100]
+        class SlowExecutor:
+            def execute(self,_store,_current,stage,_jobs):
+                clock[0]+=1000  # well past the 300 s lease, with no heartbeat in between
+                return {'state':'completed','itemCount':2,'complete':True,'platformWrites':0}
+        tick(self.root,clock=lambda:clock[0],executor=SlowExecutor())
+        self.assertEqual(stage_state(self.store,run['runId'],'oecid')['state'],'completed')
+        self.assertEqual(self.store.db.execute('SELECT count(*) FROM workflow_stage_claim').fetchone()[0],0)
+
+    def test_dead_read_only_claim_resumes_from_its_checkpoint(self):
+        from lib.operations_workflow import create_run,update_checkpoint
+        from lib.workflow_resources import claim
+        run=create_run(self.store,market='it',trigger_source='manual',scheduled_at=NOW,
+                       request_id='recover-oecid-request',only_stage='oecid',sources=['campaign'])
+        stage=next(item for item in run['stages'] if item['state']=='queued')
+        self.assertEqual(stage['stage'],'oecid')
+        claim(self.store,stage['stageRunId'],'scheduler-dead-owner',[('workflow:it',1),('communications:acc6',1)],
+              lease_seconds=5,worker_pid=999999)
+        update_checkpoint(self.store,run['runId'],'oecid','page',{'number':7})
+        seen=[]
+        class RecoveryExecutor:
+            def execute(self,_store,current,stage,_jobs):
+                seen.append((stage,next(row['checkpoint'] for row in current['stages'] if row['stage']==stage)))
+                return {'state':'completed','itemCount':1,'complete':True,'platformWrites':0}
+        tick(self.root,now=NOW+100,executor=RecoveryExecutor())
+        tick(self.root,now=NOW+110,executor=RecoveryExecutor())
+        self.assertEqual(seen,[('oecid',{'key':'page','value':{'number':7}})])
 
 
 class StageWiring(unittest.TestCase):

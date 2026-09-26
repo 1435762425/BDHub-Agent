@@ -566,10 +566,11 @@ def finish_stage(store, run_id, stage, *, state, item_count=0, scope=None, paylo
         if not run or not row:
             raise CycleError("workflow_run_missing")
         if claim_ticket is not None:
-            from lib.workflow_resources import assert_current
+            from lib.workflow_resources import assert_owned
             if row['stage_run_id']!=claim_ticket['stageRunId']:
                 raise CycleError('workflow_stage_fence_stale')
-            assert_current(store,row['stage_run_id'],claim_ticket['ownerId'],claim_ticket['fence'])
+            # A lapsed lease that was not recovered still settles: its fence proves no other attempt ran.
+            assert_owned(store,row['stage_run_id'],claim_ticket['ownerId'],claim_ticket['fence'])
         if row["state"] in STAGE_TERMINAL:
             return stage_payload(row) | {"duplicate": True}
         if row["state"] != "running":

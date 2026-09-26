@@ -4,7 +4,7 @@ from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1];sys.path.insert(0,str(ROOT/'scripts'))
 from lib.schema_migrations import apply_database  # noqa:E402
 from lib.second_cycle import CycleError,CycleStore  # noqa:E402
-from lib.workflow_resources import assert_current,claim,heartbeat,recover_expired,release  # noqa:E402
+from lib.workflow_resources import assert_current,assert_owned,claim,heartbeat,record_late_result,recover_expired,release  # noqa:E402
 
 class WorkflowResourceTests(unittest.TestCase):
  def setUp(self):
@@ -50,5 +50,30 @@ class WorkflowResourceTests(unittest.TestCase):
    claim(self.store,'stage-1','scheduler-owner-b',[('supply:acc9',1)],worker_pid=99999)
   self.assertEqual(recover_expired(self.store,pid_alive=lambda _pid:False),['stage-0'])
   claim(self.store,'stage-1','scheduler-owner-b',[('supply:acc9',1)],worker_pid=99999)
+
+
+ def test_a_lapsed_but_unrecovered_fence_still_settles_and_a_recovered_one_keeps_evidence(self):
+  claimed=claim(self.store,'stage-0','scheduler-owner-a',[('platform:global',1)],lease_seconds=5,worker_pid=999)
+  self.now[0]=200
+  with self.assertRaisesRegex(CycleError,'fence_stale'):assert_current(self.store,'stage-0','scheduler-owner-a',claimed['fence'])
+  self.assertTrue(assert_owned(self.store,'stage-0','scheduler-owner-a',claimed['fence']))
+  recover_expired(self.store,pid_alive=lambda _pid:False)
+  with self.assertRaisesRegex(CycleError,'fence_stale'):assert_owned(self.store,'stage-0','scheduler-owner-a',claimed['fence'])
+  record_late_result(self.store,'stage-0','scheduler-owner-a',claimed['fence'],{'state':'completed','platformWrites':3})
+  record_late_result(self.store,'stage-0','scheduler-owner-a',claimed['fence'],{'state':'completed','platformWrites':3})
+  self.assertEqual(self.store.db.execute('SELECT count(*) FROM workflow_late_result').fetchone()[0],1)
+
+ def test_an_expired_write_capable_stage_is_never_requeued_on_its_own(self):
+  self.store.db.execute("UPDATE workflow_stage_run SET stage='taplink_prepare' WHERE stage_run_id='stage-1'")
+  claim(self.store,'stage-1','scheduler-owner-a',[('platform:global',1)],lease_seconds=5,worker_pid=999)
+  claim(self.store,'stage-0','scheduler-owner-b',[('kalodata:global',2)],lease_seconds=5,worker_pid=998)
+  self.now[0]=200
+  self.assertEqual(sorted(recover_expired(self.store,pid_alive=lambda _pid:False)),['stage-0','stage-1'])
+  rows=dict(self.store.db.execute("SELECT stage_run_id,state||':'||error_code FROM workflow_stage_run WHERE stage_run_id IN ('stage-0','stage-1')"))
+  self.assertEqual(rows,{'stage-0':'queued:recovery_claim_expired','stage-1':'needs_human:recovery_claim_expired_write_unknown'})
+  self.assertEqual(self.store.db.execute("SELECT state FROM workflow_run WHERE run_id='run-1'").fetchone()[0],'needs_human')
+  self.assertIn('"writeEvidence":"uncertain"',self.store.db.execute("SELECT counts_json FROM workflow_stage_run WHERE stage_run_id='stage-1'").fetchone()[0])
+  # Nothing is left holding the platform slot.
+  claim(self.store,'stage-2','scheduler-owner-c',[('platform:global',1)],worker_pid=997)
 
 if __name__=='__main__':unittest.main()

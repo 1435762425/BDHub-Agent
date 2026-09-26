@@ -56,6 +56,32 @@ def assert_current(store,stage_run_id,owner_id,fence):
  if not row or row[0]<store.clock():raise CycleError('workflow_stage_fence_stale')
  return True
 
+def assert_owned(store,stage_run_id,owner_id,fence):
+ """Settlement check: this owner's fence still holds the claim, even if its lease has lapsed.
+
+ A lapsed lease keeps its claim and slots until recover_expired removes them (only once the recorded
+ worker is dead), so an unrecovered fence proves nobody else has started this stage."""
+ _required(store)
+ if not store.db.execute('SELECT 1 FROM workflow_stage_claim WHERE stage_run_id=? AND owner_id=? AND fence=?',(stage_run_id,owner_id,fence)).fetchone():
+  raise CycleError('workflow_stage_fence_stale')
+ return True
+
+LATE_SQL=('CREATE TABLE IF NOT EXISTS workflow_late_result(stage_run_id TEXT NOT NULL,fence INTEGER NOT NULL,owner_id TEXT NOT NULL,'
+          'result_json TEXT NOT NULL,recorded_at REAL NOT NULL,PRIMARY KEY(stage_run_id,fence))')
+
+def record_late_result(store,stage_run_id,owner_id,fence,result):
+ """Keep a result whose claim was already recovered: evidence to reconcile, never a publication."""
+ import json
+ with store.tx():
+  store.db.execute(LATE_SQL)
+  store.db.execute('INSERT OR IGNORE INTO workflow_late_result VALUES(?,?,?,?,?)',
+                   (stage_run_id,fence,owner_id,json.dumps(result,ensure_ascii=False,sort_keys=True,default=str),store.clock()))
+
+def adopt_worker(store,stage_run_id,owner_id,fence,pid):
+ """Point the claim back at the supervising process once a child has exited."""
+ with store.tx():
+  store.db.execute('UPDATE workflow_stage_claim SET worker_pid=? WHERE stage_run_id=? AND owner_id=? AND fence=?',(pid,stage_run_id,owner_id,fence))
+
 def release(store,stage_run_id,owner_id,fence):
  _required(store)
  with store.tx():
@@ -69,9 +95,19 @@ def recover_expired(store,*,pid_alive=None):
  with store.tx():
   for row in list(store.db.execute('SELECT * FROM workflow_stage_claim WHERE lease_until<? ORDER BY lease_until,stage_run_id',(now,))):
    if row['worker_pid'] and alive(row['worker_pid']):continue
-   stage=store.db.execute('SELECT state FROM workflow_stage_run WHERE stage_run_id=?',(row['stage_run_id'],)).fetchone()
+   stage=store.db.execute('SELECT run_id,stage,state,counts_json FROM workflow_stage_run WHERE stage_run_id=?',(row['stage_run_id'],)).fetchone()
    if stage and stage['state']=='running':
-    store.db.execute("UPDATE workflow_stage_run SET state='queued',started_at=NULL,error_code='recovery_claim_expired' WHERE stage_run_id=?",(row['stage_run_id'],));recovered.append(row['stage_run_id'])
+    from lib.operations_workflow import WRITE_CAPABLE_STAGES
+    if stage['stage'] in WRITE_CAPABLE_STAGES:
+     # Its children may have written before the owner died and nothing proves zero: never re-run on its own.
+     import json
+     counts={**json.loads(stage['counts_json'] or '{}'),'writeEvidence':'uncertain'}
+     store.db.execute("UPDATE workflow_stage_run SET state='needs_human',finished_at=?,counts_json=?,error_code='recovery_claim_expired_write_unknown' WHERE stage_run_id=?",
+                      (now,json.dumps(counts,sort_keys=True,separators=(',',':')),row['stage_run_id']))
+     store.db.execute("UPDATE workflow_run SET state='needs_human',finished_at=?,error_code='recovery_claim_expired_write_unknown' WHERE run_id=? AND state IN ('queued','running','stop_requested')",(now,stage['run_id']))
+    else:
+     store.db.execute("UPDATE workflow_stage_run SET state='queued',started_at=NULL,error_code='recovery_claim_expired' WHERE stage_run_id=?",(row['stage_run_id'],))
+    recovered.append(row['stage_run_id'])
    store.db.execute('DELETE FROM workflow_resource_slot WHERE owner_stage_run_id=? AND fence=?',(row['stage_run_id'],row['fence']))
    store.db.execute('DELETE FROM workflow_stage_claim WHERE stage_run_id=? AND fence=?',(row['stage_run_id'],row['fence']))
   store.db.execute('DELETE FROM workflow_resource_slot WHERE NOT EXISTS (SELECT 1 FROM workflow_stage_claim c WHERE c.stage_run_id=workflow_resource_slot.owner_stage_run_id AND c.fence=workflow_resource_slot.fence)')
