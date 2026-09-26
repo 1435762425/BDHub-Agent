@@ -9,48 +9,60 @@ from lib.conversation_workbench import (complete_reviewed_human,confirm_manual_r
 from lib.cycle_auto_reply import AutoReplies
 from lib.second_cycle import CycleError,CycleStore,digest
 
+# One byte contract with the web bridge (apps/web/src/server/conversations/bridge.ts MAX_BODY_BYTES).
+MAX_INPUT_BYTES=32768
+
+def read_input():
+ raw=sys.stdin.buffer.read(MAX_INPUT_BYTES+1)
+ if len(raw)>MAX_INPUT_BYTES:raise CycleError('input_too_large')
+ return raw.decode('utf-8')
+
+def intent_outcome(store,market,cid,request_id):
+ """After a failed send: was an intent created and could it have been submitted?"""
+ if not isinstance(request_id,str) or not isinstance(cid,str):return {'intent':'absent'}
+ plan=store.db.execute("SELECT id FROM plan WHERE market=? AND institution='bjn-local-research'",(market,)).fetchone()
+ if not plan or not store.db.execute("SELECT 1 FROM sqlite_master WHERE name='service_reply'").fetchone():return {'intent':'absent'}
+ row=store.db.execute("SELECT id,state,started FROM service_reply WHERE plan_id=? AND cid=? AND request_ref=? "
+                      "AND kind IN ('manual','manual_card')",(plan[0],cid,request_id)).fetchone()
+ if not row:return {'intent':'absent'}
+ if row['state'] in ('ready','cancelled') and row['started'] is None:
+  return {'intent':'not_submitted','state':row['state'],'replyId':row['id']}
+ return {'intent':'unresolved','state':row['state'],'replyId':row['id']}
+
 def main():
- p=argparse.ArgumentParser();p.add_argument('action',choices=('list','detail','status','save-draft','complete-human','confirm-manual','resolve-manual','reject-creator','set-collaboration','send-text','send-card','reconcile-manual','translate'));p.add_argument('--market',required=True);p.add_argument('--view',default='human');p.add_argument('--query',default='');p.add_argument('--limit',type=int,default=30);p.add_argument('--offset',type=int,default=0);p.add_argument('--cid');a=p.parse_args()
+ p=argparse.ArgumentParser();p.add_argument('action',choices=('list','detail','status','save-draft','complete-human','confirm-manual','resolve-manual','reject-creator','set-collaboration','send-text','send-card','reconcile-manual','translate'));p.add_argument('--market',required=True);p.add_argument('--view',default='human');p.add_argument('--query',default='');p.add_argument('--limit',type=int,default=30);p.add_argument('--offset',type=int,default=0);p.add_argument('--cid');p.add_argument('--before');a=p.parse_args()
  try:
   from lib.market_registry import market as market_record
   market_record(ROOT,a.market)
   readonly=a.action not in ('save-draft','complete-human','confirm-manual','resolve-manual','reject-creator','set-collaboration','send-text','send-card','reconcile-manual')
   with CycleStore(ROOT/'var/second-cycle.sqlite',readonly=readonly) as store:
    if a.action=='list':result=list_conversations(ROOT,store,a.view,a.query,a.limit,a.offset,a.market)
-   elif a.action=='detail':result=conversation_detail(ROOT,store,a.cid,a.market)
+   elif a.action=='detail':result=conversation_detail(ROOT,store,a.cid,a.market,a.before)
    elif a.action=='status':result=workspace_status(ROOT,store,a.market)
    elif a.action=='reconcile-manual':
-    raw=sys.stdin.read(10001)
-    if len(raw.encode())>10000:raise CycleError('input_too_large')
+    raw=read_input()
     req=json.loads(raw);result=reconcile_manual_reply(store,a.cid,req.get('requestId'),a.market)
    elif a.action=='save-draft':
-    raw=sys.stdin.read(10001)
-    if len(raw.encode())>10000:raise CycleError('input_too_large')
+    raw=read_input()
     req=json.loads(raw);result=save_draft(store,a.cid,req.get('text'),req.get('expectedRevision'),a.market)
    elif a.action=='complete-human':
-    raw=sys.stdin.read(10001)
-    if len(raw.encode())>10000:raise CycleError('input_too_large')
+    raw=read_input()
     req=json.loads(raw);result=complete_reviewed_human(store,a.cid,req.get('turnId'),req.get('expectedControlRevision'),req.get('expectedPendingRevision'),req.get('note'),a.market)
    elif a.action=='confirm-manual':
-    raw=sys.stdin.read(10001)
-    if len(raw.encode())>10000:raise CycleError('input_too_large')
+    raw=read_input()
     req=json.loads(raw);result=confirm_manual_reply(store,a.cid,req.get('caseId'),req.get('turnId'),req.get('virtual'),req.get('expectedControlRevision'),req.get('expectedPendingRevision'),a.market)
    elif a.action=='resolve-manual':
-    raw=sys.stdin.read(10001)
-    if len(raw.encode())>10000:raise CycleError('input_too_large')
+    raw=read_input()
     req=json.loads(raw);result=resolve_manual(store,a.cid,req.get('caseId'),req.get('latestTurnId'),req.get('outcome'),req.get('expectedControlRevision'),req.get('expectedPendingRevision'),req.get('expectedStatusRevision'),req.get('requestId'),a.market)
    elif a.action=='reject-creator':
-    raw=sys.stdin.read(10001)
-    if len(raw.encode())>10000:raise CycleError('input_too_large')
+    raw=read_input()
     req=json.loads(raw);result=reject_creator(store,a.cid,req.get('expectedControlRevision'),req.get('requestId'),a.market)
    elif a.action=='set-collaboration':
-    raw=sys.stdin.read(10001)
-    if len(raw.encode())>10000:raise CycleError('input_too_large')
+    raw=read_input()
     req=json.loads(raw);result=set_collaboration(store,a.cid,req.get('status'),req.get('expectedStatusRevision'),req.get('expectedControlRevision'),req.get('requestId'),a.market)
    elif a.action in ('send-text','send-card'):
     if a.market!='it':raise CycleError('market_conversation_send_pending')
-    raw=sys.stdin.read(10001)
-    if len(raw.encode())>10000:raise CycleError('input_too_large')
+    raw=read_input()
     req=json.loads(raw);plan=store.db.execute("SELECT id FROM plan WHERE market=? AND institution='bjn-local-research'",(a.market,)).fetchone()
     if not plan:raise CycleError('plan_missing')
     turn=store.db.execute('SELECT plan_id,creator_id FROM inbound_turn WHERE plan_id=? AND cid=? ORDER BY coalesce(occurred_ms,observed_at*1000) DESC LIMIT 1',(plan[0],a.cid)).fetchone()
@@ -77,7 +89,7 @@ def main():
     else:new_dispatch=q['state']=='ready';state=run_reply(store,replies,q,root=ROOT)
     result={'state':state,'replyId':q['id'],'requestRef':q['request_ref'],'platformWrites':int(new_dispatch),'realSends':int(new_dispatch)}
    else:
-    raw=sys.stdin.read(10001);req=json.loads(raw);text=req.get('text');target=req.get('target')
+    raw=read_input();req=json.loads(raw);text=req.get('text');target=req.get('target')
     from lib.market_content import market_content
     content=None if target=='zh' else market_content(ROOT,target)
     if not isinstance(text,str) or not text.strip() or len(text)>4000 or target!='zh' and content is None:raise CycleError('translation_invalid')
@@ -89,5 +101,11 @@ def main():
     result={'translation':translated.strip(),'target':target,'platformWrites':0,'realSends':0}
   print(json.dumps(result,ensure_ascii=False));return 0
  except Exception as error:
-  print(json.dumps({'error':str(error) if isinstance(error,CycleError) else 'conversation_workbench_unavailable'},ensure_ascii=False));return 2
+  value={'error':str(error) if isinstance(error,CycleError) else 'conversation_workbench_unavailable'}
+  if a.action in ('send-text','send-card','reconcile-manual'):
+   try:
+    with CycleStore(ROOT/'var/second-cycle.sqlite',readonly=True) as check:
+     value.update(intent_outcome(check,a.market,a.cid,(req if 'req' in locals() and isinstance(req,dict) else {}).get('requestId')))
+   except Exception:value['intent']='unknown'
+  print(json.dumps(value,ensure_ascii=False));return 2
 if __name__=='__main__':raise SystemExit(main())

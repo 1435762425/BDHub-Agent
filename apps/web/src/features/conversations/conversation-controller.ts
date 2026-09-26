@@ -1,5 +1,5 @@
 import type {
-  CollaborationStatus, ConversationDetail, ConversationList, ConversationView, PendingManualReply,
+  CollaborationStatus, ConversationDetail, ConversationList, ConversationView, PendingManualReply, TimelineItem,
 } from "../../server/conversations/bridge.ts";
 
 export type DecisionTrace = {decisionId:string;input:{prompt:string;context:unknown};decision:unknown;state:string};
@@ -9,15 +9,36 @@ type Snapshot = {
   detail:ConversationDetail|null;draft:string;busy:boolean;error:string;
   translations:Record<string,string>;translationBusy:string|null;manualOutcome:ManualOutcome;
   trace:DecisionTrace|null;pendingManualReplies:PendingManualReply[];
+  olderTimeline:TimelineItem[];olderCursor:string|null;olderBusy:boolean;draftNotice:string;
 };
 type Fetcher = (input:string, init?:RequestInit) => Promise<Response>;
+/** One conversation's editor text: local edits are never replaced by a server read. */
+type DraftState = {text:string;dirty:boolean;serverRevision:number};
+/** A refused POST, with the backend's statement of whether any send intent exists. */
+export class RequestError extends Error {
+  status:number;body:Record<string,unknown>|null;
+  constructor(status:number, body:Record<string,unknown>|null) {super("request_failed");this.status=status;this.body=body;}
+  get intent() {return typeof this.body?.intent === "string" ? this.body.intent : "unknown";}
+  get code() {return typeof this.body?.error === "string" ? this.body.error : "";}
+}
+const refusal = (code:string) => ({
+  input_too_large:"文本超过长度上限，未发送；请缩短后再发。",
+  invalid_conversation_request:"内容不符合发送要求（为空或超长），未发送。",
+  manual_reply_context_changed:"达人状态已变化，未发送；请刷新后核对再发。",
+  manual_reply_invalid:"内容不符合发送要求，未发送。",
+  manual_card_stale:"商品卡材料已失效，未发送。",
+  manual_card_missing:"没有可发送的商品卡，未发送。",
+  market_conversation_send_pending:"当前市场人工发送尚未开放，未发送。",
+} as Record<string,string>)[code] ?? `发送未提交（${code || "原因未知"}），草稿已保留。`;
 
 /** Owns the page's asynchronous interaction state. Every response belongs to one selection. */
 export class ConversationController {
   private snapshot:Snapshot = {
     view:"human",query:"",list:null,selected:null,detail:null,draft:"",busy:false,error:"",
     translations:{},translationBusy:null,manualOutcome:"normal",trace:null,pendingManualReplies:[],
+    olderTimeline:[],olderCursor:null,olderBusy:false,draftNotice:"",
   };
+  private drafts = new Map<string, DraftState>();
   private listeners = new Set<() => void>();
   private selectionVersion = 0;
   private listVersion = 0;
@@ -56,13 +77,23 @@ export class ConversationController {
   private current(cid:string, version:number) {
     return !this.disposed && this.snapshot.selected === cid && this.selectionVersion === version;
   }
-  setDraft = (draft:string) => {this.draftVersion++;this.update({draft});};
+  setDraft = (draft:string) => {
+    this.draftVersion++;
+    const cid = this.snapshot.selected;
+    if(cid) {
+      const prior = this.drafts.get(cid);
+      this.drafts.set(cid,{text:draft,dirty:true,serverRevision:prior?.serverRevision ?? this.snapshot.detail?.draft.revision ?? 0});
+    }
+    this.update({draft});
+  };
   setManualOutcome = (manualOutcome:ManualOutcome) => this.update({manualOutcome});
   select = (cid:string|null) => {
     this.selectionVersion++;this.detailVersion++;this.draftVersion++;
     this.detailAbort?.abort();
-    this.update({selected:cid,detail:null,draft:"",translations:{},translationBusy:null,trace:null,
-      error:"",pendingManualReplies:cid ? this.pending.get(cid) ?? [] : []});
+    const kept = cid ? this.drafts.get(cid) : undefined;
+    this.update({selected:cid,detail:null,draft:kept?.dirty ? kept.text : "",translations:{},translationBusy:null,trace:null,
+      error:"",draftNotice:"",olderTimeline:[],olderCursor:null,olderBusy:false,
+      pendingManualReplies:cid ? this.pending.get(cid) ?? [] : []});
     if(cid)void this.loadDetail(cid);
   };
   setFilter = (view:ConversationView, query:string) => {
@@ -117,7 +148,31 @@ export class ConversationController {
     this.pending.set(cid,items);
     if(this.snapshot.selected === cid)this.update({pendingManualReplies:items});
   }
-  private async loadDetail(cid:string) {
+  /** Periodic refresh: queue plus the open conversation's facts; never the local draft. */
+  refresh = async () => {
+    const cid = this.snapshot.selected;
+    await this.loadList();
+    if(cid && this.snapshot.selected === cid && !this.snapshot.busy)await this.loadDetail(cid,true);
+  };
+  loadOlder = async () => {
+    const {selected:cid,olderCursor,olderBusy} = this.snapshot;
+    if(!cid || !olderCursor || olderBusy)return;
+    const selection = this.selectionVersion;
+    this.update({olderBusy:true});
+    try {
+      const params = new URLSearchParams({market:this.market,cid,before:olderCursor});
+      const response = await this.fetcher(`/api/conversations?${params}`,{cache:"no-store"});
+      if(!response.ok)throw Error();
+      const page:ConversationDetail = await response.json();
+      if(!this.current(cid,selection) || this.snapshot.olderCursor !== olderCursor)return;
+      if(page.conversationId !== cid)throw Error();
+      const seen = new Set([...this.snapshot.olderTimeline,...(this.snapshot.detail?.timeline ?? [])].map(item => item.id));
+      this.update({olderTimeline:[...page.timeline.filter(item => !seen.has(item.id)),...this.snapshot.olderTimeline],
+        olderCursor:page.timelineCursor});
+    } catch {if(this.current(cid,selection))this.update({error:"更早的消息暂时无法读取；当前消息和发送状态不受影响。"});}
+    finally {if(this.current(cid,selection))this.update({olderBusy:false});}
+  };
+  private async loadDetail(cid:string, refresh = false) {
     if(this.snapshot.selected !== cid)return;
     const version = ++this.detailVersion, selection = this.selectionVersion;
     this.detailAbort?.abort();
@@ -132,12 +187,27 @@ export class ConversationController {
       const known = this.pending.get(cid) ?? [];
       const requestIds = new Set(detail.pendingManualReplies.map(row => row.requestId));
       this.rememberPending(cid,[...detail.pendingManualReplies,...known.filter(row => !requestIds.has(row.requestId))]);
-      this.draftVersion++;
-      this.update({detail,draft:detail.draft.text,translations:{},trace:null,
-        manualOutcome:detail.creator.collaboration.status === "paid" ? "paid" :
-          detail.creator.collaboration.status === "rejected" ? "rejected" : "normal"});
+      const local = this.drafts.get(cid);
+      let draft = this.snapshot.draft, draftNotice = this.snapshot.draftNotice;
+      if(local?.dirty) {
+        // Unsaved text stays; a newer server copy is announced, never silently applied.
+        if(detail.draft.revision !== local.serverRevision)draftNotice = "另一个窗口保存了新草稿，本地未保存的内容已保留。";
+      } else {
+        draft = detail.draft.text;draftNotice = "";
+        this.drafts.set(cid,{text:draft,dirty:false,serverRevision:detail.draft.revision});
+        if(draft !== this.snapshot.draft)this.draftVersion++;
+      }
+      if(refresh) {
+        // The open page keeps its translations, trace, chosen outcome and loaded history.
+        this.update({detail,draft,draftNotice,olderCursor:this.snapshot.olderTimeline.length ? this.snapshot.olderCursor : detail.timelineCursor});
+      } else {
+        this.update({detail,draft,draftNotice,translations:{},trace:null,olderTimeline:[],olderCursor:detail.timelineCursor,
+          manualOutcome:detail.creator.collaboration.status === "paid" ? "paid" :
+            detail.creator.collaboration.status === "rejected" ? "rejected" : "normal"});
+      }
     } catch {
-      if(!abort.signal.aborted && this.current(cid,selection))this.update({error:"暂时无法读取会话内容。"});
+      if(!abort.signal.aborted && this.current(cid,selection))
+        this.update({error:refresh ? "会话内容暂时无法刷新，正在显示上次读取的内容。" : "暂时无法读取会话内容。"});
     }
   }
 
@@ -145,7 +215,11 @@ export class ConversationController {
     const response = await this.fetcher(`/api/conversations?market=${encodeURIComponent(this.market)}`,{
       method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({...body,market:this.market}),
     });
-    if(!response.ok)throw Error();
+    if(!response.ok) {
+      let value:Record<string,unknown>|null = null;
+      try {value = await response.json();} catch {value = null;}
+      throw new RequestError(response.status,value && typeof value === "object" ? value : null);
+    }
     return response.json();
   }
   private async change(body:Record<string,unknown>, error:string, after?:() => Promise<void>) {
@@ -159,9 +233,18 @@ export class ConversationController {
     finally {this.update({busy:false});}
   }
   saveDraft = async () => {
-    const {detail,draft} = this.snapshot;if(!detail)return;
-    await this.change({action:"save_draft",cid:detail.conversationId,text:draft,expectedRevision:detail.draft.revision},
-      "草稿状态已经变化，请刷新后重试。");
+    const {detail,draft,busy} = this.snapshot;if(!detail || busy)return;
+    const cid = detail.conversationId, selection = this.selectionVersion;
+    const local = this.drafts.get(cid);
+    this.update({busy:true,error:""});
+    try {
+      const saved = await this.post({action:"save_draft",cid,text:draft,
+        expectedRevision:local?.serverRevision ?? detail.draft.revision});
+      const current = this.current(cid,selection) ? this.snapshot.draft : this.drafts.get(cid)?.text ?? draft;
+      this.drafts.set(cid,{text:current,dirty:current !== draft,serverRevision:Number(saved.revision)});
+      if(this.current(cid,selection)) {this.update({draftNotice:""});await this.loadDetail(cid,true);}
+    } catch {if(this.current(cid,selection))this.update({error:"草稿没有保存：另一个窗口已保存新版本。本地内容已保留，请核对后再保存。"});}
+    finally {this.update({busy:false});}
   };
   translate = async () => {
     const {detail,draft,busy} = this.snapshot;if(!detail || !draft.trim() || busy)return;
@@ -176,7 +259,7 @@ export class ConversationController {
   private async send(kind:"manual"|"manual_card", episodeId?:string) {
     const {detail,draft,busy,pendingManualReplies} = this.snapshot;
     if(!detail || busy || pendingManualReplies.length || kind === "manual" && !draft.trim())return;
-    const cid = detail.conversationId, selection = this.selectionVersion;
+    const cid = detail.conversationId, selection = this.selectionVersion, sentText = draft;
     const requestId = `manual-${this.newId()}`;
     // Keep the original identity even when the HTTP response itself is lost.
     const intent:PendingManualReply = {id:null,kind,requestId,state:"unknown"};
@@ -186,31 +269,38 @@ export class ConversationController {
       const result = await this.post({action:kind === "manual" ? "send_text" : "send_card",cid,
         ...(kind === "manual" ? {text:draft} : {episodeId}),
         expectedControlRevision:detail.creator.revision,requestId});
-      await this.settleManual(cid,selection,requestId,result,kind === "manual");
-    } catch {
-      if(this.current(cid,selection))this.update({error:"人工发送尚未确认。原发送意图已保留，请核验原意图。"});
+      await this.settleManual(cid,selection,requestId,result,kind === "manual" ? sentText : null);
+    } catch(error) {
+      // Only a backend statement that no intent exists / none was submitted clears the pending row.
+      if(error instanceof RequestError && (error.intent === "absent" || error.intent === "not_submitted")) {
+        this.rememberPending(cid,(this.pending.get(cid) ?? []).filter(row => row.requestId !== requestId));
+        if(this.current(cid,selection))this.update({error:refusal(error.code)});
+      } else if(this.current(cid,selection))this.update({error:"人工发送尚未确认。原发送意图已保留，请核验原意图。"});
     } finally {this.update({busy:false});}
   }
   sendText = () => this.send("manual");
   sendCard = (episodeId:string) => this.send("manual_card",episodeId);
-  private async settleManual(cid:string, selection:number, requestId:string, result:Record<string,unknown>, text:boolean) {
+  private async settleManual(cid:string, selection:number, requestId:string, result:Record<string,unknown>, sentText:string|null) {
     if(result.requestRef !== requestId || typeof result.state !== "string")throw Error();
     if(result.state === "confirmed" || result.state === "cancelled") {
       this.rememberPending(cid,(this.pending.get(cid) ?? []).filter(row => row.requestId !== requestId));
       if(this.current(cid,selection)) {
         await this.loadDetail(cid);
         if(this.current(cid,selection)) {
-          if(text && result.state === "confirmed")this.setDraft("");
+          // Clear only the text that was sent; anything typed afterwards stays.
+          if(sentText !== null && result.state === "confirmed" && this.snapshot.draft === sentText)this.setDraft("");
           this.update({error:result.state === "confirmed" ? "原发送意图已确认送达。" : "原发送意图已取消，未重发。"});
         }
       }
       return;
     }
-    if(!["ready","inflight","accepted","unknown"].includes(result.state))throw Error();
+    if(!["ready","inflight","accepted","unknown","isolated"].includes(result.state))throw Error();
     this.rememberPending(cid,(this.pending.get(cid) ?? []).map(row => row.requestId !== requestId ? row : {
       ...row,id:typeof result.replyId === "string" ? result.replyId : row.id,state:result.state as PendingManualReply["state"],
     }));
-    if(this.current(cid,selection))this.update({error:"原发送意图尚未确认；核验只检查原回执，不会重新发送。"});
+    if(this.current(cid,selection))this.update({error:result.state === "isolated" ?
+      "原发送结果仍未知，已停止自动核验；可继续手动核验原消息，不会重新发送。" :
+      "原发送意图尚未确认；核验只检查原回执，不会重新发送。"});
   }
   reconcileManual = async (requestId:string) => {
     const {detail,busy,pendingManualReplies} = this.snapshot;
@@ -220,8 +310,30 @@ export class ConversationController {
     this.update({busy:true,error:""});
     try {
       const result = await this.post({action:"reconcile_manual",cid,requestId});
-      await this.settleManual(cid,selection,requestId,result,original.kind === "manual");
-    } catch {if(this.current(cid,selection))this.update({error:"原意图仍待核验，已保留原请求；不会生成新的发送。"});}
+      await this.settleManual(cid,selection,requestId,result,original.kind === "manual" ? this.snapshot.draft : null);
+    } catch(error) {
+      if(error instanceof RequestError && error.intent === "absent") {
+        this.rememberPending(cid,(this.pending.get(cid) ?? []).filter(row => row.requestId !== requestId));
+        if(this.current(cid,selection))this.update({error:"没有找到这条原发送意图，确认它没有发出；草稿已保留，可以重新发送。"});
+      } else if(this.current(cid,selection))this.update({error:"原意图仍待核验，已保留原请求；不会生成新的发送。"});
+    }
+    finally {this.update({busy:false});}
+  };
+  /** Read-only check of a held AI reply by its original request; never generates or sends. */
+  reconcileHeld = async (requestId:string) => {
+    const {detail,busy} = this.snapshot;
+    if(!detail || busy || !detail.heldReplies.some(row => row.requestId === requestId))return;
+    const cid = detail.conversationId, selection = this.selectionVersion;
+    this.update({busy:true,error:""});
+    try {
+      const result = await this.post({action:"reconcile_manual",cid,requestId});
+      if(result.requestRef !== requestId || typeof result.state !== "string")throw Error();
+      if(this.current(cid,selection)) {
+        await this.loadDetail(cid,true);
+        if(this.current(cid,selection))this.update({error:result.state === "confirmed" ?
+          "原回复已确认送达。" : "仍未找到原回复的送达证据；已保留原请求，不会重发。"});
+      }
+    } catch {if(this.current(cid,selection))this.update({error:"原回复暂时无法核验；已保留原请求，不会重发。"});}
     finally {this.update({busy:false});}
   };
   translateInbound = async (id:string, text:string) => {

@@ -142,7 +142,7 @@ test('default fetcher keeps the browser receiver so the queue loads without an i
   // Browsers throw "Illegal invocation" unless fetch runs on window or with no receiver at all.
   if(this!==undefined&&this!==globalThis)throw new TypeError("Failed to execute 'fetch' on 'Window': Illegal invocation");
   calls.push(String(url));
-  return Promise.resolve(response(queue([],0,{counts:{human:0,agent:48,waiting:0,completed:0,all:48}})));
+  return Promise.resolve(response(queue([],0,{counts:{human:0,technical:0,agent:48,waiting:0,completed:0,all:48}})));
  };
  try{
   const controller=new ConversationController('br');
@@ -151,4 +151,80 @@ test('default fetcher keeps the browser receiver so the queue loads without an i
   assert.equal(controller.getSnapshot().list.counts.all,48);
   assert.equal(calls[0],'/api/conversations?market=br&view=human&query=');
  }finally{globalThis.fetch=original;}
+});
+
+test('unsaved drafts survive switching conversations and every server re-read',async()=>{
+ let serverRevision=0;
+ const controller=new ConversationController('it',async url=>{
+  const cid=new URL(url,'http://local').searchParams.get('cid');
+  return response(detail(cid,{draft:{text:`server-${cid}-${serverRevision}`,revision:serverRevision}}));
+ });
+ controller.select('1');await flush();assert.equal(controller.getSnapshot().draft,'server-1-0');
+ controller.setDraft('typed for creator 1');
+ controller.select('2');await flush();assert.equal(controller.getSnapshot().draft,'server-2-0');
+ controller.select('1');await flush();
+ assert.equal(controller.getSnapshot().draft,'typed for creator 1');
+ serverRevision=1;await controller.refresh();
+ assert.equal(controller.getSnapshot().draft,'typed for creator 1');
+ assert.match(controller.getSnapshot().draftNotice,/另一个窗口/);
+});
+
+test('periodic refresh updates the open timeline without resetting translations or the draft',async()=>{
+ let timeline=[{id:'turn-1',direction:'inbound',kind:'text',text:'ciao',occurredAt:1,status:'received',source:'creator'}];
+ const controller=new ConversationController('it',async url=>{
+  const params=new URL(url,'http://local').searchParams;
+  return params.has('cid')?response(detail('1',{timeline:[...timeline]})):response(queue(['1']));
+ });
+ controller.select('1');await flush();controller.setDraft('half written');
+ timeline=[...timeline,{id:'turn-2',direction:'inbound',kind:'text',text:'nuova domanda',occurredAt:2,status:'received',source:'creator'}];
+ await controller.refresh();await flush();
+ assert.deepEqual(controller.getSnapshot().detail.timeline.map(row=>row.id),['turn-1','turn-2']);
+ assert.equal(controller.getSnapshot().draft,'half written');
+});
+
+test('a definite refusal clears the local intent but a lost or unknown reply keeps it',async()=>{
+ let mode='refused';const calls=[];
+ const controller=new ConversationController('it',async(url,init)=>{
+  if(init?.method!=='POST')return response(detail('1'));
+  calls.push(body(init));
+  if(mode==='refused')return Response.json({error:'input_too_large',intent:'absent'},{status:409});
+  return Response.json({error:'conversation_workbench_unavailable',intent:'unknown'},{status:503});
+ },()=>`id-${calls.length}`);
+ controller.select('1');await flush();controller.setDraft('中'.repeat(3500));
+ await controller.sendText();
+ assert.equal(controller.getSnapshot().pendingManualReplies.length,0);
+ assert.equal(controller.getSnapshot().draft,'中'.repeat(3500));
+ assert.match(controller.getSnapshot().error,/未发送/);
+ mode='unknown';await controller.sendText();
+ assert.equal(controller.getSnapshot().pendingManualReplies.length,1);
+ assert.equal(calls.length,2);
+});
+
+test('reconciling an intent the backend never created releases the editor',async()=>{
+ const controller=new ConversationController('it',async(url,init)=>{
+  if(init?.method!=='POST')return response(detail('1'));
+  const input=body(init);
+  if(input.action==='send_text')throw Error('response lost');
+  return Response.json({error:'manual_reconcile_intent_missing',intent:'absent'},{status:409});
+ },()=> 'never-created');
+ controller.select('1');await flush();controller.setDraft('text');await controller.sendText();
+ assert.equal(controller.getSnapshot().pendingManualReplies.length,1);
+ await controller.reconcileManual('manual-never-created');
+ assert.equal(controller.getSnapshot().pendingManualReplies.length,0);
+ assert.equal(controller.getSnapshot().draft,'text');
+});
+
+test('older history is paged in above the newest page without duplicates',async()=>{
+ const newest=[{id:'b',direction:'inbound',kind:'text',text:'2',occurredAt:2,status:'received',source:'creator'}];
+ const older=[{id:'a',direction:'inbound',kind:'text',text:'1',occurredAt:1,status:'received',source:'creator'},newest[0]];
+ const requested=[];
+ const controller=new ConversationController('it',async url=>{
+  const params=new URL(url,'http://local').searchParams;requested.push(params.get('before'));
+  return params.get('before')?response(detail('1',{timeline:older,timelineCursor:null,timelineHasOlder:false})):
+   response(detail('1',{timeline:newest,timelineCursor:'2|b',timelineHasOlder:true}));
+ });
+ controller.select('1');await flush();await controller.loadOlder();
+ assert.deepEqual(requested,[null,'2|b']);
+ assert.deepEqual(controller.getSnapshot().olderTimeline.map(row=>row.id),['a']);
+ assert.equal(controller.getSnapshot().olderCursor,null);
 });

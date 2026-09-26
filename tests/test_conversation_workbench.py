@@ -54,9 +54,52 @@ class ConversationWorkbenchTests(unittest.TestCase):
   self.assertEqual((result['state'],result['platformWrites'],result['realSends']),('confirmed',0,0))
   with self.assertRaisesRegex(CycleError,'manual_reconcile_intent_missing'):
    reconcile_manual_reply(self.store,'998',request_id,verify=verify)
-  with self.assertRaisesRegex(CycleError,'manual_reconcile_scope_invalid'):
+  # Another market can never reach IT's manual intent (and has no manual sends of its own).
+  with self.assertRaisesRegex(CycleError,'plan_missing|manual_reconcile_intent_missing'):
    reconcile_manual_reply(self.store,'999',request_id,market='br',verify=verify)
 
+ def test_isolated_replies_form_a_technical_queue_and_stay_read_only_verifiable(self):
+  self.store.db.execute("UPDATE relationship SET mode='auto' WHERE creator_id='creator-1'")
+  self.store.db.execute("UPDATE service_case SET state='closed'")
+  self.store.db.execute("UPDATE inbox_pending SET state='awaiting_classification'")
+  replies=AutoReplies(self.store);request_id='manual-isolated-0001'
+  frozen=replies.prepare_manual(self.plan,'creator-1','999','Ciao',1,request_id)
+  self.store.db.execute("UPDATE service_reply SET state='isolated',started=?,sender_account='acc6' WHERE id=?",(NOW,frozen['id']))
+  listed=list_conversations(self.root,self.store,'technical')
+  self.assertEqual((listed['total'],listed['counts']['technical'],listed['counts']['agent']),(1,1,0))
+  self.assertEqual((listed['items'][0]['humanReason'],listed['items'][0]['queueStatusLabel']),
+                   ('reply_isolated','回复送达未知，已停止自动跟进'))
+  detail=conversation_detail(self.root,self.store,'999')
+  self.assertEqual(detail['pendingManualReplies'][0]['state'],'isolated')
+  self.assertEqual(detail['technicalHold']['reason'],'reply_isolated')
+  reads=[]
+  result=reconcile_manual_reply(self.store,'999',request_id,verify=lambda store,current,reply:reads.append(reply['state']))
+  self.assertEqual((reads,result['state'],result['platformWrites']),(['isolated'],'isolated',0))
+ def test_held_ai_reply_is_listed_and_checked_only_by_its_original_request(self):
+  self.store.db.execute("UPDATE relationship SET mode='auto' WHERE creator_id='creator-1'")
+  replies=AutoReplies(self.store);request_ref='01234567-89ab-4cde-8fab-0123456789ab'
+  self.store.db.execute("""INSERT INTO service_reply(id,plan_id,creator_id,pending_revision,oec,cid,kind,case_id,text,context_hash,
+   state,request_ref,receipt,proof,created,started,control_revision,sender_account,sender_identity)
+   VALUES('agent-reply-aaaaaaaaaaaaaaaaaaaaaaaa',?,'creator-1',1,'123','999','agent_generated_v2',NULL,'Ciao!','h','unknown',?,NULL,NULL,?,?,1,'acc6','hash')""",
+   (self.plan,request_ref,NOW,NOW))
+  held=conversation_detail(self.root,self.store,'999')['heldReplies']
+  self.assertEqual([(r['state'],r['senderAccount'],r['deadlineAt']) for r in held],[('unknown','acc6',NOW+900)])
+  reads=[]
+  result=reconcile_manual_reply(self.store,'999',request_ref,verify=lambda store,current,reply:reads.append(reply['request_ref']))
+  self.assertEqual((reads,result['kind'],result['platformWrites'],result['realSends']),([request_ref],'agent_generated_v2',0,0))
+ def test_long_timeline_is_paged_newest_first_without_gaps_or_duplicates(self):
+  from lib.conversation_workbench import TIMELINE_PAGE
+  for n in range(TIMELINE_PAGE+40):
+   self.store.db.execute("INSERT INTO inbound_turn VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+    (f'turn-{n:024x}',self.plan,'creator-1','123','999',str(2000+n),f'{n:064x}','text',f'm{n}',int((NOW+n)*1000),0,NOW+n))
+  first=conversation_detail(self.root,self.store,'999')
+  self.assertEqual((len(first['timeline']),first['timelineHasOlder']),(TIMELINE_PAGE,True))
+  second=conversation_detail(self.root,self.store,'999',before=first['timelineCursor'])
+  ids=[r['id'] for r in second['timeline']]+[r['id'] for r in first['timeline']]
+  self.assertEqual(len(ids),len(set(ids)));self.assertEqual(len(ids),TIMELINE_PAGE+41)
+  self.assertFalse(second['timelineHasOlder']);self.assertIsNone(second['timelineCursor'])
+  with self.assertRaisesRegex(CycleError,'conversation_query_invalid'):
+   conversation_detail(self.root,self.store,'999',before='not-a-cursor')
  def test_manual_reconcile_does_not_dispatch_a_ready_intent(self):
   replies=AutoReplies(self.store);request_id='manual-audit-ready-001'
   frozen=replies.prepare_manual(self.plan,'creator-1','999','Ciao',1,request_id)
@@ -172,3 +215,29 @@ class ConversationWorkbenchTests(unittest.TestCase):
   self.assertTrue(reject_creator(self.store,'999',1,'manual-reject-request')['duplicate'])
 
 if __name__=='__main__':unittest.main()
+
+class SendOutcomeTests(unittest.TestCase):
+ setUp=ConversationWorkbenchTests.setUp;tearDown=ConversationWorkbenchTests.tearDown
+ def cli(self):
+  import importlib.util
+  spec=importlib.util.spec_from_file_location('conversation_workbench_cli',Path(__file__).resolve().parents[1]/'scripts/conversation-workbench.py')
+  module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module);return module
+ def test_a_failed_send_reports_whether_any_intent_could_have_been_submitted(self):
+  cli=self.cli()
+  self.assertEqual(cli.intent_outcome(self.store,'it','999','manual-never-created-1'),{'intent':'absent'})
+  frozen=AutoReplies(self.store).prepare_manual(self.plan,'creator-1','999','Ciao',1,'manual-ready-intent-1')
+  self.assertEqual(cli.intent_outcome(self.store,'it','999','manual-ready-intent-1')['intent'],'not_submitted')
+  self.store.db.execute("UPDATE service_reply SET state='inflight',started=? WHERE id=?",(NOW,frozen['id']))
+  self.assertEqual(cli.intent_outcome(self.store,'it','999','manual-ready-intent-1'),
+                   {'intent':'unresolved','state':'inflight','replyId':frozen['id']})
+ def test_the_cli_accepts_every_text_the_bridge_accepts(self):
+  import io,json as _json
+  cli=self.cli()
+  body=_json.dumps({'text':'中'*3500+'😀'*250,'expectedControlRevision':1,'requestId':'manual-size-0001'},ensure_ascii=False).encode()
+  self.assertLessEqual(len(body),cli.MAX_INPUT_BYTES)
+  original=sys.stdin
+  try:
+   sys.stdin=io.TextIOWrapper(io.BytesIO(body),encoding='utf-8');self.assertEqual(_json.loads(cli.read_input())['requestId'],'manual-size-0001')
+   sys.stdin=io.TextIOWrapper(io.BytesIO(b'x'*(cli.MAX_INPUT_BYTES+1)),encoding='utf-8')
+   with self.assertRaisesRegex(CycleError,'input_too_large'):cli.read_input()
+  finally:sys.stdin=original

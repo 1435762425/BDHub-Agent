@@ -4,15 +4,25 @@ import {projectRoot} from "../runtime/project-root.ts";
 import {isLocalRequest} from "../runtime/validation.ts";
 import {enabledMarket} from "../markets/registry.ts";
 
-export type ConversationView="human"|"agent"|"waiting"|"completed"|"all";
+export type ConversationView="human"|"technical"|"agent"|"waiting"|"completed"|"all";
+export const CONVERSATION_VIEWS:ConversationView[]=["human","technical","agent","waiting","completed","all"];
+/** Shared byte contract with scripts/conversation-workbench.py MAX_INPUT_BYTES. */
+export const MAX_BODY_BYTES=32768;
+/** "occurredAt|itemId" of the oldest item on a timeline page. */
+export const TIMELINE_CURSOR=/^\d+(?:\.\d+)?(?:e[-+]?\d+)?\|[^|]{1,120}$/;
 export type ConversationItem={conversationId:string|null;creatorId:string;oec:string;handle:string|null;state:Exclude<ConversationView,"all">;queueStatusLabel:string;humanReason:string|null;humanReasonLabel:string|null;latestText:string|null;latestMeaningZh:string|null;latestAt:number;waitingSeconds:number;unread:boolean;action:string|null;caseId:string|null};
 export type ConversationList={available:true;view:ConversationView;query:string;counts:Record<ConversationView,number>;total:number;offset:number;limit:number;nextOffset:number|null;items:ConversationItem[];platformWrites:0;realSends:0};
 export type TimelineItem={id:string;direction:"inbound"|"outbound";kind:string;text:string|null;occurredAt:number;status:string;source:string;pid?:string;listId?:string};
 export type ManualTemplate={id:string;name:string;category:string;body:string;revision:number;state:"active"|"archived"};
 export type CreatorMetrics={gmv:string|number|null;videoGmv:string|number|null;liveGmv:string|number|null;followers:number|null;unitsSold:number|null;avgVideoViews:number|null;observedAt:string|null;replyCount:number;showcaseCount:number};
 export type CollaborationStatus="normal"|"collaborated"|"paid"|"rejected";
-export type PendingManualReply={id:string|null;kind:"manual"|"manual_card";requestId:string;state:"ready"|"inflight"|"accepted"|"unknown"};
-export type ConversationDetail={available:true;conversationId:string;latestTurnId:string|null;creator:{creatorId:string;oec:string;handle:string|null;mode:string;rejected:boolean;unlocked:boolean;revision:number;collaboration:{status:CollaborationStatus;source:"manual"|"auto";revision:number;updatedAt:number}};timeline:TimelineItem[];episodes:Array<{episodeId:string;pid:string;listId:string;sentAt:number}>;case:{id:string;reason:string;reasonLabel:string;createdAt:number;revision:number;virtual:boolean;turnId:string|null;pendingRevision:number}|null;agentDecisions:Array<{decisionId:string;guideRevision:number;route:string|null;reasonZh:string|null;state:string;serviceReplyId:string|null;createdAt:number}>;metrics:CreatorMetrics;manualReply:{id:string;kind:"manual"|"manual_card";confirmedAt:number}|null;pendingManualReplies:PendingManualReply[];draft:{text:string;revision:number;updatedAt:number};manualTemplates:ManualTemplate[];platformWrites:0;realSends:0};
+export type ReplyIntentState="ready"|"inflight"|"accepted"|"unknown"|"isolated";
+export type PendingManualReply={id:string|null;kind:"manual"|"manual_card";requestId:string;state:ReplyIntentState};
+export type HeldReply={id:string;kind:string;requestId:string;state:"inflight"|"accepted"|"unknown"|"isolated";startedAt:number|null;senderAccount:string|null;isolationReason:string|null;deadlineAt:number|null};
+/** Whether a failed send could have reached the platform. Only absent/not_submitted may be cleared. */
+export type IntentOutcome="absent"|"not_submitted"|"unresolved"|"unknown";
+export class ConversationError extends Error{intent:IntentOutcome;code:string;state?:string;constructor(code:string,intent:IntentOutcome,state?:string){super(code);this.code=code;this.intent=intent;this.state=state;}}
+export type ConversationDetail={available:true;conversationId:string;latestTurnId:string|null;creator:{creatorId:string;oec:string;handle:string|null;mode:string;rejected:boolean;unlocked:boolean;revision:number;collaboration:{status:CollaborationStatus;source:"manual"|"auto";revision:number;updatedAt:number}};timeline:TimelineItem[];timelineHasOlder:boolean;timelineCursor:string|null;episodes:Array<{episodeId:string;pid:string;listId:string;sentAt:number}>;case:{id:string;reason:string;reasonLabel:string;createdAt:number;revision:number;virtual:boolean;turnId:string|null;pendingRevision:number}|null;agentDecisions:Array<{decisionId:string;guideRevision:number;route:string|null;reasonZh:string|null;state:string;serviceReplyId:string|null;createdAt:number}>;metrics:CreatorMetrics;manualReply:{id:string;kind:"manual"|"manual_card";confirmedAt:number}|null;pendingManualReplies:PendingManualReply[];heldReplies:HeldReply[];technicalHold:{reason:string;label:string}|null;draft:{text:string;revision:number;updatedAt:number};manualTemplates:ManualTemplate[];platformWrites:0;realSends:0};
 
 export type ConversationCommand=
  | {action:"save_draft";market:string;cid:string;text:string;expectedRevision:number}
@@ -31,7 +41,10 @@ function run(args:string[],stdin?:unknown,market="it"):Promise<unknown>{
  return new Promise((resolve,reject)=>{
   const child=execFile(join(root,".venv/bin/python"),[join(root,"scripts/conversation-workbench.py"),...args,"--market",market],
    {cwd:root,timeout:120000,maxBuffer:4*1024*1024,env:{...process.env,PYTHONDONTWRITEBYTECODE:"1"}},
-   (error,stdout)=>{try{const value=JSON.parse(stdout);if(error||value.error)throw Error();resolve(value);}catch{reject(Error("conversation_workbench_unavailable"));}});
+   (error,stdout)=>{let value:Record<string,unknown>|null=null;try{value=JSON.parse(stdout);}catch{value=null;}
+    if(!error&&value&&!value.error){resolve(value);return;}
+    const intent=value&&["absent","not_submitted","unresolved","unknown"].includes(String(value.intent))?value.intent as IntentOutcome:"unknown";
+    reject(new ConversationError(typeof value?.error==="string"?value.error.slice(0,120):"conversation_workbench_unavailable",intent,typeof value?.state==="string"?value.state:undefined));});
   if(stdin!==undefined)child.stdin?.end(JSON.stringify(stdin));
  });
 }
@@ -47,15 +60,15 @@ export function validateConversationList(raw:unknown):ConversationList{
  const value=raw as Record<string,unknown>;
  if(value.available!==true||value.platformWrites!==0||value.realSends!==0||!Array.isArray(value.items)||value.items.length>100)throw Error("invalid_conversation");
  const view=value.view as ConversationView;
- if(!["human","agent","waiting","completed","all"].includes(view))throw Error("invalid_conversation");
+ if(!CONVERSATION_VIEWS.includes(view))throw Error("invalid_conversation");
  const items:ConversationItem[]=value.items.map(rawItem=>{
   if(!rawItem||typeof rawItem!=="object"||Array.isArray(rawItem))throw Error("invalid_conversation");
   const row=rawItem as Record<string,unknown>,state=row.state;
-  if(!["human","agent","waiting","completed"].includes(String(state))||typeof row.unread!=="boolean")throw Error("invalid_conversation");
+  if(!CONVERSATION_VIEWS.includes(state as ConversationView)||state==="all"||typeof row.unread!=="boolean")throw Error("invalid_conversation");
   return {conversationId:text(row.conversationId,40,true),creatorId:identifier(row.creatorId,120),oec:identifier(row.oec,40),handle:text(row.handle,100,true),state:state as ConversationItem["state"],queueStatusLabel:identifier(row.queueStatusLabel,80),humanReason:text(row.humanReason,80,true),humanReasonLabel:text(row.humanReasonLabel,120,true),latestText:text(row.latestText,4000,true),latestMeaningZh:text(row.latestMeaningZh,500,true),latestAt:stamp(row.latestAt),waitingSeconds:number(row.waitingSeconds),unread:row.unread,action:text(row.action,40,true),caseId:text(row.caseId,80,true)};
  });
  const rawCounts=value.counts;
- if(!rawCounts||typeof rawCounts!=="object"||Array.isArray(rawCounts)||Object.keys(rawCounts).sort().join(",")!=="agent,all,completed,human,waiting")throw Error("invalid_conversation");
+ if(!rawCounts||typeof rawCounts!=="object"||Array.isArray(rawCounts)||Object.keys(rawCounts).sort().join(",")!==[...CONVERSATION_VIEWS].sort().join(","))throw Error("invalid_conversation");
  const counts=Object.fromEntries(Object.entries(rawCounts).map(([key,count])=>[key,number(count)])) as Record<ConversationView,number>;
  const total=number(value.total),offset=number(value.offset,5000),limit=number(value.limit,100),nextOffset=value.nextOffset==null?null:number(value.nextOffset,5100);
  if(limit<1||items.length>limit||total!==counts[view]||(nextOffset==null)!==(offset+items.length>=total))throw Error("invalid_conversation");
@@ -65,7 +78,7 @@ export function validateConversationList(raw:unknown):ConversationList{
 export function validateConversationDetail(raw:unknown):ConversationDetail{
  if(!raw||typeof raw!=="object"||Array.isArray(raw))throw Error("invalid_conversation");
  const value=raw as Record<string,unknown>;
- if(value.available!==true||value.platformWrites!==0||value.realSends!==0||!Array.isArray(value.timeline)||value.timeline.length>2000||!Array.isArray(value.episodes)||value.episodes.length>100||!Array.isArray(value.manualTemplates)||value.manualTemplates.length>500)throw Error("invalid_conversation");
+ if(value.available!==true||value.platformWrites!==0||value.realSends!==0||!Array.isArray(value.timeline)||value.timeline.length>2000||typeof value.timelineHasOlder!=="boolean"||(value.timelineCursor!=null&&!TIMELINE_CURSOR.test(String(value.timelineCursor)))||value.timelineHasOlder!==(value.timelineCursor!=null)||!Array.isArray(value.episodes)||value.episodes.length>100||!Array.isArray(value.manualTemplates)||value.manualTemplates.length>500)throw Error("invalid_conversation");
  const rawCreator=value.creator;
  if(!rawCreator||typeof rawCreator!=="object"||Array.isArray(rawCreator))throw Error("invalid_conversation");
  const creator=rawCreator as Record<string,unknown>;
@@ -93,12 +106,21 @@ export function validateConversationDetail(raw:unknown):ConversationDetail{
  const pendingManualReplies:PendingManualReply[]=value.pendingManualReplies.map(raw=>{
   if(!raw||typeof raw!=="object"||Array.isArray(raw))throw Error("invalid_conversation");
   const row=raw as Record<string,unknown>;
-  if(!["manual","manual_card"].includes(String(row.kind))||!["ready","inflight","accepted","unknown"].includes(String(row.state))||
+  if(!["manual","manual_card"].includes(String(row.kind))||!["ready","inflight","accepted","unknown","isolated"].includes(String(row.state))||
    typeof row.requestId!=="string"||!/^[A-Za-z0-9][A-Za-z0-9._:-]{7,119}$/.test(row.requestId))throw Error("invalid_conversation");
   return {id:identifier(row.id,80),kind:row.kind as PendingManualReply["kind"],requestId:row.requestId,state:row.state as PendingManualReply["state"]};
  });
+ if(!Array.isArray(value.heldReplies)||value.heldReplies.length>20)throw Error("invalid_conversation");
+ const heldReplies:HeldReply[]=value.heldReplies.map(raw=>{
+  if(!raw||typeof raw!=="object"||Array.isArray(raw))throw Error("invalid_conversation");
+  const row=raw as Record<string,unknown>;
+  if(!["inflight","accepted","unknown","isolated"].includes(String(row.state))||typeof row.requestId!=="string"||!/^[A-Za-z0-9][A-Za-z0-9._:-]{7,119}$/.test(row.requestId))throw Error("invalid_conversation");
+  return {id:identifier(row.id,80),kind:identifier(row.kind,40),requestId:row.requestId,state:row.state as HeldReply["state"],startedAt:row.startedAt==null?null:stamp(row.startedAt),senderAccount:text(row.senderAccount,40,true),isolationReason:text(row.isolationReason,80,true),deadlineAt:row.deadlineAt==null?null:stamp(row.deadlineAt)};
+ });
+ let technicalHold:ConversationDetail["technicalHold"]=null;
+ if(value.technicalHold!=null){if(typeof value.technicalHold!=="object"||Array.isArray(value.technicalHold))throw Error("invalid_conversation");const row=value.technicalHold as Record<string,unknown>;technicalHold={reason:identifier(row.reason,40),label:identifier(row.label,80)};}
  const collaborationRaw=creator.collaboration;if(!collaborationRaw||typeof collaborationRaw!=="object"||Array.isArray(collaborationRaw))throw Error("invalid_conversation");const collaboration=collaborationRaw as Record<string,unknown>;if(!["normal","collaborated","paid","rejected"].includes(String(collaboration.status))||(collaboration.source!=="manual"&&collaboration.source!=="auto"))throw Error("invalid_conversation");
- return {available:true,conversationId:identifier(value.conversationId,40),latestTurnId:value.latestTurnId==null?null:identifier(value.latestTurnId,40),creator:{creatorId:identifier(creator.creatorId,120),oec:identifier(creator.oec,40),handle:text(creator.handle,100,true),mode:identifier(creator.mode,30),rejected:creator.rejected,unlocked:creator.unlocked,revision:number(creator.revision),collaboration:{status:collaboration.status as CollaborationStatus,source:collaboration.source,revision:number(collaboration.revision),updatedAt:stamp(collaboration.updatedAt)}},timeline,episodes,case:caseValue,agentDecisions,metrics,manualReply,pendingManualReplies,draft,manualTemplates,platformWrites:0,realSends:0};
+ return {available:true,conversationId:identifier(value.conversationId,40),latestTurnId:value.latestTurnId==null?null:identifier(value.latestTurnId,40),creator:{creatorId:identifier(creator.creatorId,120),oec:identifier(creator.oec,40),handle:text(creator.handle,100,true),mode:identifier(creator.mode,30),rejected:creator.rejected,unlocked:creator.unlocked,revision:number(creator.revision),collaboration:{status:collaboration.status as CollaborationStatus,source:collaboration.source,revision:number(collaboration.revision),updatedAt:stamp(collaboration.updatedAt)}},timeline,timelineHasOlder:value.timelineHasOlder as boolean,timelineCursor:value.timelineCursor==null?null:String(value.timelineCursor),episodes,case:caseValue,agentDecisions,metrics,manualReply,pendingManualReplies,heldReplies,technicalHold,draft,manualTemplates,platformWrites:0,realSends:0};
 }
 
 export function validateConversationCommand(raw:unknown):ConversationCommand{
@@ -121,7 +143,7 @@ export function validateConversationCommand(raw:unknown):ConversationCommand{
 }
 
 export async function listConversations(view:ConversationView,query:string,limit:number,offset:number,market:string){return validateConversationList(await run(["list","--view",view,"--query",query,"--limit",String(limit),"--offset",String(offset)],undefined,market));}
-export async function readConversation(cid:string,market:string){return validateConversationDetail(await run(["detail","--cid",cid],undefined,market));}
+export async function readConversation(cid:string,market:string,before?:string){return validateConversationDetail(await run(["detail","--cid",cid,...(before?["--before",before]:[])],undefined,market));}
 export function saveConversationDraft(market:string,cid:string,textValue:string,expectedRevision:number){return run(["save-draft","--cid",cid],{text:textValue,expectedRevision},market);}
 export async function sendConversationText(market:string,cid:string,textValue:string,expectedControlRevision:number,requestId:string){return validateManualReplyResult(await run(["send-text","--cid",cid],{text:textValue,expectedControlRevision,requestId},market),requestId);}
 export function translateConversationText(market:string,textValue:string,target:string){return run(["translate"],{text:textValue,target},market);}
@@ -131,8 +153,8 @@ export async function reconcileManualReply(market:string,cid:string,requestId:st
 export function validateManualReplyResult(raw:unknown,requestId:string,readOnly=false){
  if(!raw||typeof raw!=="object"||Array.isArray(raw))throw Error("invalid_manual_reply_result");
  const value=raw as Record<string,unknown>;
- if(!["ready","inflight","accepted","unknown","confirmed","cancelled"].includes(String(value.state))||value.requestRef!==requestId||
-  typeof value.replyId!=="string"||!/^manual-(?:reply|card)-[a-f0-9]{24}$/.test(value.replyId)||
+ if(!["ready","inflight","accepted","unknown","isolated","confirmed","cancelled"].includes(String(value.state))||value.requestRef!==requestId||
+  typeof value.replyId!=="string"||!/^(?:manual-(?:reply|card)|agent-reply|auto-reply)-[a-f0-9]{24}$/.test(value.replyId)||
   ![0,1].includes(value.platformWrites as number)||![0,1].includes(value.realSends as number)||
   readOnly&&(value.platformWrites!==0||value.realSends!==0))throw Error("invalid_manual_reply_result");
  return {state:String(value.state),replyId:value.replyId,requestRef:requestId,platformWrites:Number(value.platformWrites),realSends:Number(value.realSends)};
@@ -143,7 +165,7 @@ export function resolveManual(market:string,cid:string,caseId:string,latestTurnI
 export function rejectConversationCreator(market:string,cid:string,expectedControlRevision:number,requestId:string){return run(["reject-creator","--cid",cid],{expectedControlRevision,requestId},market);}
 export function setConversationCollaboration(market:string,cid:string,status:CollaborationStatus,expectedStatusRevision:number,expectedControlRevision:number,requestId:string){return run(["set-collaboration","--cid",cid],{status,expectedStatusRevision,expectedControlRevision,requestId},market);}
 
-async function jsonBody(request:Request,maxBytes=20_000):Promise<unknown>{
+async function jsonBody(request:Request,maxBytes=MAX_BODY_BYTES):Promise<unknown>{
  if(request.headers.get("content-type")?.split(";")[0].trim()!=="application/json")throw Error("json_required");
  const reader=request.body?.getReader();if(!reader)throw Error("invalid_conversation_request");
  const decoder=new TextDecoder("utf-8",{fatal:true});let raw="",size=0;
@@ -162,21 +184,21 @@ const headers={"Cache-Control":"no-store","X-Content-Type-Options":"nosniff"};
 export function createConversationHandlers(operations:ConversationOperations=defaults){return {
  GET:async(request:Request)=>{
   if(!isLocalRequest(request,false))return Response.json({error:"local_origin_required"},{status:403,headers});
-  let query:{cid?:string;view?:ConversationView;text?:string;limit?:number;offset?:number;market:string};
-  try{const params=new URL(request.url).searchParams;const allowed=new Set(["view","query","limit","offset","cid","market"]);if([...params.keys()].some(key=>!allowed.has(key)||params.getAll(key).length!==1)||params.getAll("market").length!==1)throw Error();const selected=params.get("market")!;if(!enabledMarket(selected))throw Error();const cid=params.get("cid");if(cid!=null){if([...params.keys()].some(key=>!['cid','market'].includes(key))||!/^\d{1,40}$/.test(cid))throw Error();query={cid,market:selected};}else{const view=(params.get("view")??"human") as ConversationView;if(!["human","agent","waiting","completed","all"].includes(view))throw Error();const textValue=params.get("query")??"";if(textValue.length>100)throw Error();const bounded=(key:string,fallback:number,low:number,max:number)=>{const raw=params.get(key);if(raw==null)return fallback;if(!/^\d+$/.test(raw))throw Error();const value=Number(raw);if(!Number.isSafeInteger(value)||value<low||value>max)throw Error();return value;};query={view,text:textValue,limit:bounded("limit",30,1,100),offset:bounded("offset",0,0,5000),market:selected};}}
+  let query:{cid?:string;before?:string;view?:ConversationView;text?:string;limit?:number;offset?:number;market:string};
+  try{const params=new URL(request.url).searchParams;const allowed=new Set(["view","query","limit","offset","cid","market","before"]);if([...params.keys()].some(key=>!allowed.has(key)||params.getAll(key).length!==1)||params.getAll("market").length!==1)throw Error();const selected=params.get("market")!;if(!enabledMarket(selected))throw Error();const cid=params.get("cid");if(cid!=null){if([...params.keys()].some(key=>!['cid','market','before'].includes(key))||!/^\d{1,40}$/.test(cid))throw Error();const before=params.get("before");if(before!=null&&!TIMELINE_CURSOR.test(before))throw Error();query={cid,market:selected,...(before!=null?{before}:{})};}else{if(params.has("before"))throw Error();else{const view=(params.get("view")??"human") as ConversationView;if(!CONVERSATION_VIEWS.includes(view))throw Error();const textValue=params.get("query")??"";if(textValue.length>100)throw Error();const bounded=(key:string,fallback:number,low:number,max:number)=>{const raw=params.get(key);if(raw==null)return fallback;if(!/^\d+$/.test(raw))throw Error();const value=Number(raw);if(!Number.isSafeInteger(value)||value<low||value>max)throw Error();return value;};query={view,text:textValue,limit:bounded("limit",30,1,100),offset:bounded("offset",0,0,5000),market:selected};}}}
   catch{return Response.json({error:"invalid_conversation_query"},{status:400,headers});}
-  try{return Response.json(query.cid?await operations.detail(query.cid,query.market):await operations.list(query.view!,query.text!,query.limit!,query.offset!,query.market),{headers});}
+  try{return Response.json(query.cid?await operations.detail(query.cid,query.market,query.before):await operations.list(query.view!,query.text!,query.limit!,query.offset!,query.market),{headers});}
   catch{return Response.json({error:"conversation_workbench_unavailable"},{status:503,headers});}
  },
  POST:async(request:Request)=>{
   if(!isLocalRequest(request,true))return Response.json({error:"local_origin_required"},{status:403,headers});
   let command:ConversationCommand;let selected="";
   try{const url=new URL(request.url);if([...url.searchParams.keys()].some(key=>key!=="market")||url.searchParams.getAll("market").length!==1)throw Error();selected=url.searchParams.get("market")!;if(!enabledMarket(selected))throw Error();command=validateConversationCommand(await jsonBody(request));}
-  catch(error){const status=error instanceof Error&&error.message==="json_required"?415:400;return Response.json({error:status===415?"json_required":"invalid_conversation_request"},{status,headers});}
+  catch(error){const status=error instanceof Error&&error.message==="json_required"?415:400;return Response.json({error:status===415?"json_required":"invalid_conversation_request",intent:"absent"},{status,headers});}
   try{
-   if(command.market!==selected)return Response.json({error:"market_mismatch"},{status:409,headers});
-   const record=enabledMarket(selected)!;if(record.runtimeState==="planned")return Response.json({error:"market_runtime_unavailable"},{status:409,headers});
-   if(selected!=="it"&&(command.action==="send_text"||command.action==="send_card"))return Response.json({error:"market_conversation_send_pending"},{status:409,headers});
+   if(command.market!==selected)return Response.json({error:"market_mismatch",intent:"absent"},{status:409,headers});
+   const record=enabledMarket(selected)!;if(record.runtimeState==="planned")return Response.json({error:"market_runtime_unavailable",intent:"absent"},{status:409,headers});
+   if(selected!=="it"&&(command.action==="send_text"||command.action==="send_card"))return Response.json({error:"market_conversation_send_pending",intent:"absent"},{status:409,headers});
    const result=command.action==="translate"?await operations.translate(selected,command.text,command.target):
     command.action==="reconcile_manual"?await operations.reconcileManual(selected,command.cid,command.requestId):
     command.action==="save_draft"?await operations.saveDraft(selected,command.cid,command.text,command.expectedRevision):
@@ -188,6 +210,10 @@ export function createConversationHandlers(operations:ConversationOperations=def
     command.action==="reject_creator"?await operations.rejectCreator(selected,command.cid,command.expectedControlRevision,command.requestId):
     await operations.sendCard(selected,command.cid,command.episodeId,command.expectedControlRevision,command.requestId);
    return Response.json(result,{headers});
-  }catch{return Response.json({error:"conversation_workbench_unavailable"},{status:503,headers});}
+  }catch(error){
+   // A known CLI refusal carries whether the intent exists; anything else stays unknown.
+   if(error instanceof ConversationError&&error.intent!=="unknown")return Response.json({error:error.code,intent:error.intent,...(error.state?{state:error.state}:{})},{status:409,headers});
+   return Response.json({error:"conversation_workbench_unavailable",intent:"unknown"},{status:503,headers});
+  }
  }
 };}
