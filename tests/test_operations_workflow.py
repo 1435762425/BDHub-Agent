@@ -249,6 +249,22 @@ class OperationsWorkflowTests(unittest.TestCase):
                                     ("zero", "taplink_prepare"): "resumed",
                                     (None, "oecid"): "resumed"})
 
+    def test_taplink_maintenance_follows_the_saved_weekday_in_every_market(self):
+        from datetime import datetime
+        from unittest.mock import patch
+        import lib.operations_workflow as workflow
+        base = datetime.fromtimestamp(NOW, workflow.BEIJING)
+        monday = NOW - base.weekday() * 86400
+        states = {}
+        with patch.object(workflow, "maintenance_weekday", return_value=1):
+            for day, label in ((0, "monday"), (1, "tuesday")):
+                run = create_run(self.store, market="it", trigger_source="manual", scheduled_at=monday + day * 86400,
+                                 request_id=f"maintenance-day-{label}", sources=["campaign"])
+                states[label] = run["stages"][0]["state"]
+                with self.store.tx():
+                    self.store.db.execute("UPDATE workflow_run SET state='stopped' WHERE run_id=?", (run["runId"],))
+        self.assertEqual(states, {"monday": "skipped", "tuesday": "queued"})
+
 
 if __name__ == "__main__":
     unittest.main()

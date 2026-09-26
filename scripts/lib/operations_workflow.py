@@ -163,12 +163,18 @@ def save_setting(store, market, request_id, expected_revision, changes):
     return setting(store, market) | {"duplicate": False}
 
 
+def maintenance_weekday():
+    """The saved weekly TapLink maintenance day (0=Monday); the scheduler and pages read the same value."""
+    from lib.jobs import load
+    return load(ROOT)["jobs"]["taplink_clean"].get("weekday", 0)
+
+
 def applicable_sources(store, market="it", scheduled_at=None):
     current = setting(store, market)
     stamp = store.clock() if scheduled_at is None else float(scheduled_at)
-    monday = datetime.fromtimestamp(stamp, BEIJING).weekday() == 0
+    maintenance_day = datetime.fromtimestamp(stamp, BEIJING).weekday() == maintenance_weekday()
     sources = ["campaign"]
-    if monday and current["fullCatalogWeeklyEnabled"] and supports(ROOT, market, "fullManagedCatalog"):
+    if maintenance_day and current["fullCatalogWeeklyEnabled"] and supports(ROOT, market, "fullManagedCatalog"):
         sources.insert(0, "selected")
     return sources
 
@@ -209,13 +215,14 @@ def create_run(store, *, market="it", trigger_source="manual", scheduled_at=None
             "INSERT INTO workflow_run VALUES(?,?,?,?,?,?,'queued',?,NULL,NULL,NULL)",
             (run_id, market, trigger_source, stamp, encoded(sources), current["revision"], store.clock()),
         )
+        weekday = maintenance_weekday()
         for position, stage in enumerate(STAGES):
             state = ('skipped' if from_stage is not None and position<STAGES.index(from_stage) else
                      'skipped' if only_stage is not None and stage!=only_stage else
                      # Weekly link maintenance: full inventory for full-managed markets, a read-only
                      # binding check for the others (see SubprocessStageExecutor.execute).
                      "skipped" if stage == "taplink_clean" and
-                     datetime.fromtimestamp(stamp, BEIJING).weekday() != 0 else "waiting_upstream")
+                     datetime.fromtimestamp(stamp, BEIJING).weekday() != weekday else "waiting_upstream")
             finished = store.clock() if state == "skipped" else None
             store.db.execute(
                 "INSERT INTO workflow_stage_run(stage_run_id,run_id,stage,position,state,finished_at) "

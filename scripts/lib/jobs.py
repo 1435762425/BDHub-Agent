@@ -7,7 +7,7 @@ from pathlib import Path
 
 DEFAULTS = {'version': 'jobs-v3', 'jobs': {}}
 JOBS = (
-    {'id':'taplink_clean','name':'TapLink 清洗','group':'材料','description':'周一扫描平台卡；当前仅 IT 会删除平台明确失效且已回查的卡。','manual':'workflow','defaultAt':'04:30','cadence':'weekly','defaultWeekday':0},
+    {'id':'taplink_clean','name':'TapLink 清洗','group':'材料','description':'每周按所选星期维护：IT 扫描账号全部平台卡并删除明确失效且已回查的卡；其他市场只读核查当前绑定，明确失效只停用本地材料，不删除。','manual':'workflow','defaultAt':'04:30','cadence':'weekly','defaultWeekday':0},
     {'id':'full_catalog_update','name':'全托商品发现','group':'货盘','description':'首次及每 15 天按类目发现新合格 PID；周度材料维护复用累计候选。','manual':'workflow','defaultAt':'04:40','cadence':'weekly','defaultWeekday':0},
     {'id':'campaign_catalog_update','name':'Campaign 每两天更新','group':'货盘','description':'每 2 天 07:00 完整刷新 Campaign；每次重新判断失效、库存、佣金与期限。','manual':'workflow','defaultAt':'07:00','cadence':'daily'},
     {'id':'taplink_prepare','name':'TapLink 准备','group':'材料','description':'货盘发布后核验并创建缺失标准链接；unknown 只回查原意图。','manual':'workflow','defaultAt':'07:20','cadence':'daily'},
