@@ -12,6 +12,7 @@ export default function AppShell({children,currentMarket,markets}:{children:Reac
  const pathname=usePathname();
  const base=`/${currentMarket.key}`;
  const navigation:{href:string;label:string;icon:IconName;match:string}[]=[
+  {href:`${base}/console`,label:"总控制台",icon:"chart",match:`${base}/console`},
   {href:base,label:"运营首页",icon:"bolt",match:base},
   {href:`${base}/workspace/send`,label:"合作工作台",icon:"chat",match:`${base}/workspace`},
   {href:`${base}/conversations`,label:"会话",icon:"bell",match:`${base}/conversations`},
