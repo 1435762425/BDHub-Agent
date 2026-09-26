@@ -62,12 +62,6 @@ def main():
     if a.canary:
         if a.market not in {'br','my','uk'} or a.creates!=1:p.error('canary requires BR/MY/UK and --creates 1')
     steps=[];created=0;startedAt=time.time()
-    def step_aside():
-        # Every step is its own finished child: between two steps no platform call is in flight.
-        if steps:
-            if str(ROOT/'scripts') not in sys.path:sys.path.insert(0,str(ROOT/'scripts'))
-            from lib.workflow_yield import yield_platform
-            yield_platform(ROOT)
     def note(phase,pass_no=None):
         if progress is None:return
         last=next((s.get('result') for s in reversed(steps) if s.get('result')),None) or {}
@@ -81,21 +75,18 @@ def main():
         # 非全托的判定读的是**本地缓存 + 池子事实**，一次领完就能把所有未结行复判完；
         # 而且缺链的行合法地停在 missing（要等建链），用 pendingCount 当收敛条件会白跑满 --passes。
         for i in range(a.passes):
-            step_aside()
             r=run(['read',*route,'--limit','600','--lanes',str(a.lanes),'--qps',str(a.qps)],f'read-{i:02d}')
             steps.append(r);note('read',i+1)
             summary=(r.get('result') or {}).get('summary') or {};states=summary.get('states') or {}
             if r['exitCode']!=0 or not states.get('pending',0)+states.get('reading',0):break
     else:
         for i in range(a.passes):
-            step_aside()
             r=run(['read',*route,'--limit',str(a.limit),'--lanes',str(a.lanes),'--qps',str(a.qps)]+(['--pids',a.pids] if a.pids else []),f'read-{i:02d}')
             steps.append(r);note('read',i+1)
             if (r.get('result') or {}).get('summary',{}).get('pendingCount',1)==0:break
             if r['exitCode']!=0:break
     if a.creates:
         while True:
-            step_aside()
             r=run(['create',*route,*(['--canary'] if a.canary else []),*(['--pids',a.pids] if a.pids else []),'--max-creates',str(a.creates),'--lanes',str(a.lanes),'--qps',str(a.qps)],f'create-{len(steps):02d}')
             steps.append(r)
             made=(r.get('result') or {}).get('created',0)

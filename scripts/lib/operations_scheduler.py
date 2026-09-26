@@ -360,12 +360,10 @@ class SubprocessStageExecutor:
             wrapper=('import os,sys; fd=int(sys.argv[1]); ready=os.read(fd,1); os.close(fd); '
                      'os.execv(sys.argv[2],sys.argv[2:]) if ready==b"1" else os._exit(125)')
             try:
-                # The claim lets a long child step aside at its own safe boundaries (workflow_yield).
-                claim_env=json.dumps({'stageRunId':ticket['stageRunId'],'ownerId':ticket['ownerId'],'fence':ticket['fence']})
                 process=subprocess.Popen([command[0],'-c',wrapper,str(read_fd),*command],
                     cwd=str(self.root),stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.PIPE,
                     text=True,start_new_session=True,pass_fds=(read_fd,),
-                    env={**os.environ,'PYTHONDONTWRITEBYTECODE':'1','BDHUB_STAGE_CLAIM':claim_env})
+                    env={**os.environ,'PYTHONDONTWRITEBYTECODE':'1'})
             finally:os.close(read_fd)
             try:
                 with CycleStore(self.root/'var/second-cycle.sqlite') as claim_store:

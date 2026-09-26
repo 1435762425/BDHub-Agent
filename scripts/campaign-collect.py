@@ -99,16 +99,11 @@ def main():
     status = 'paused'
     error = None
     note('running', 0)
-    yielded = 0.0
     for index in range(args.passes):
         if stop is not None and stop.exists():
             status = 'stopped'
             break
         try:
-            if index:
-                # Between two saved passes: let another market's queued platform stage go first.
-                from lib.workflow_yield import yield_platform
-                yielded += yield_platform(ROOT)
             summary = run_sync(run_file, args.max_requests, args.market)
         except Exception as failure:                                  # noqa: BLE001 - 如实上报
             status = 'blocked'
@@ -140,7 +135,7 @@ def main():
     final = {'status': status, 'market': args.market, 'source': 'campaign', 'platformWrites': 0,
              'runFile': str(run_file.relative_to(ROOT)), 'steps': steps,
              'requests': _last(steps, 'requests'), 'offers': _last(steps, 'offers'),
-             'screening': screening, 'error': error, 'yieldedSeconds': yielded,
+             'screening': screening, 'error': error,
              'elapsedSeconds': round(time.time() - started_at, 1)}
     out.write_text(json.dumps(final, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
     note('done' if status == 'completed' else status, len(steps), _last(steps, 'requests'),
