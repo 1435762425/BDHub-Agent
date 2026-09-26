@@ -2,8 +2,12 @@
 import json
 
 
-def recorded_message_ids(db,plan,oec,cid):
-    tables={row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+def _tables(db):
+    return {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+
+
+def recorded_message_ids(db,plan,oec,cid,*,tables=None):
+    tables=_tables(db) if tables is None else tables
     ids=set()
     receipts=[]
     if {'cycle_delivery','cycle_delivery_part'}<=tables:
@@ -25,11 +29,13 @@ def recorded_message_ids(db,plan,oec,cid):
     return ids
 
 
-def outbound_messages(db,plan,cid,oec,*,before=None,limit=200):
-    """Project observed bodies; an observation never creates or confirms a send intent."""
-    tables={row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+def outbound_messages(db,plan,cid,oec,*,before=None,limit=200,tables=None):
+    """Project observed bodies; an observation never creates or confirms a send intent.
+
+    ``tables`` lets a caller that reads many conversations in one pass check the schema once."""
+    tables=_tables(db) if tables is None else tables
     if not {'inbox_event','inbox_content_head','inbox_content_version'}<=tables:return []
-    known=recorded_message_ids(db,plan,oec,cid)
+    known=recorded_message_ids(db,plan,oec,cid,tables=tables)
     rows=db.execute('''SELECT e.message_id,e.occurred_ms,e.observed_at,v.payload
       FROM inbox_event e JOIN inbox_content_head h USING(plan_id,cid,message_id)
       JOIN inbox_content_version v ON v.plan_id=h.plan_id AND v.cid=h.cid

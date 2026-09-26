@@ -3,7 +3,10 @@ from lib.second_cycle import CycleError,encoded
 SCHEMA='''CREATE TABLE IF NOT EXISTS inbox_checkpoint(plan_id TEXT NOT NULL,cid TEXT NOT NULL,oec TEXT NOT NULL,baseline_at REAL NOT NULL,checked_at REAL NOT NULL,state TEXT NOT NULL,PRIMARY KEY(plan_id,cid));
 CREATE TABLE IF NOT EXISTS inbox_event(plan_id TEXT NOT NULL,cid TEXT NOT NULL,message_id TEXT NOT NULL,oec TEXT NOT NULL,kind TEXT NOT NULL,occurred_ms INTEGER,payload TEXT NOT NULL,historical INTEGER NOT NULL,observed_at REAL NOT NULL,PRIMARY KEY(plan_id,cid,message_id));
 CREATE TABLE IF NOT EXISTS inbox_pending(plan_id TEXT NOT NULL,creator_id TEXT NOT NULL,revision INTEGER NOT NULL,due_at REAL NOT NULL,state TEXT NOT NULL,PRIMARY KEY(plan_id,creator_id));
-CREATE TABLE IF NOT EXISTS inbox_backfill(plan_id TEXT NOT NULL,cid TEXT NOT NULL,oec TEXT NOT NULL,account TEXT NOT NULL,im_id TEXT NOT NULL,cursor TEXT NOT NULL,event_rowid INTEGER NOT NULL,started_at REAL NOT NULL,rounds INTEGER NOT NULL,updated_at REAL NOT NULL,PRIMARY KEY(plan_id,cid));'''
+CREATE TABLE IF NOT EXISTS inbox_backfill(plan_id TEXT NOT NULL,cid TEXT NOT NULL,oec TEXT NOT NULL,account TEXT NOT NULL,im_id TEXT NOT NULL,cursor TEXT NOT NULL,event_rowid INTEGER NOT NULL,started_at REAL NOT NULL,rounds INTEGER NOT NULL,updated_at REAL NOT NULL,PRIMARY KEY(plan_id,cid));
+CREATE INDEX IF NOT EXISTS inbox_checkpoint_oec ON inbox_checkpoint(plan_id,oec,state);'''
+# Readers ask "does this creator's conversation have a gap?" by oec; without this index every
+# question scans the plan's checkpoints (G18).
 # A checkpoint whose newest messages were read but not yet joined to what was known before the read
 # began. Its events are stored but not answered, and later rounds resume from the saved native cursor.
 HOLD_STATES=('gap','backfilling')

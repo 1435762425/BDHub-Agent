@@ -246,3 +246,18 @@ test('older history is paged in above the newest page without duplicates',async(
  assert.deepEqual(controller.getSnapshot().olderTimeline.map(row=>row.id),['a']);
  assert.equal(controller.getSnapshot().olderCursor,null);
 });
+
+test('load more follows the queue cursor instead of an offset',async()=>{
+ const urls=[];
+ const controller=new ConversationController('it',async url=>{
+  const params=new URL(url,'http://local').searchParams;urls.push(params);
+  if(params.has('cid'))return response(detail(params.get('cid')));
+  if(params.has('after'))return response(queue(['2'],2,{offset:1,nextOffset:null,nextCursor:null}));
+  return response(queue(['1'],2,{nextOffset:1,nextCursor:'0~1.0~creator-1'}));
+ });
+ await controller.loadList();await controller.loadMore();
+ const more=urls.find(params=>params.has('after'));
+ assert.equal(more.get('after'),'0~1.0~creator-1');assert.equal(more.has('offset'),false);
+ assert.deepEqual(controller.getSnapshot().list.items.map(row=>row.creatorId),['creator-1','creator-2']);
+ assert.equal(controller.getSnapshot().list.nextCursor,null);
+});

@@ -54,13 +54,13 @@ def reconcile_outcome(store,market,cid,request_id):
  return {'intent':'not_submitted'} if state==TERMINAL else {'intent':'unresolved','state':state}
 
 def main():
- p=argparse.ArgumentParser();p.add_argument('action',choices=('list','detail','status','save-draft','complete-human','confirm-manual','resolve-manual','reject-creator','set-collaboration','send-text','send-card','reconcile-manual','translate'));p.add_argument('--market',required=True);p.add_argument('--view',default='human');p.add_argument('--query',default='');p.add_argument('--limit',type=int,default=30);p.add_argument('--offset',type=int,default=0);p.add_argument('--cid');p.add_argument('--before');a=p.parse_args()
+ p=argparse.ArgumentParser();p.add_argument('action',choices=('list','detail','status','save-draft','complete-human','confirm-manual','resolve-manual','reject-creator','set-collaboration','send-text','send-card','reconcile-manual','translate'));p.add_argument('--market',required=True);p.add_argument('--view',default='human');p.add_argument('--query',default='');p.add_argument('--limit',type=int,default=30);p.add_argument('--offset',type=int,default=0);p.add_argument('--after');p.add_argument('--cid');p.add_argument('--before');a=p.parse_args()
  try:
   from lib.market_registry import market as market_record
   market_record(ROOT,a.market)
   readonly=a.action not in ('save-draft','complete-human','confirm-manual','resolve-manual','reject-creator','set-collaboration','send-text','send-card','reconcile-manual')
   with CycleStore(ROOT/'var/second-cycle.sqlite',readonly=readonly) as store:
-   if a.action=='list':result=list_conversations(ROOT,store,a.view,a.query,a.limit,a.offset,a.market)
+   if a.action=='list':result=list_conversations(ROOT,store,a.view,a.query,a.limit,a.offset,a.market,a.after)
    elif a.action=='detail':result=conversation_detail(ROOT,store,a.cid,a.market,a.before)
    elif a.action=='status':result=workspace_status(ROOT,store,a.market)
    elif a.action=='reconcile-manual':

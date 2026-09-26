@@ -3,6 +3,7 @@ import {join} from "node:path";
 import {projectRoot} from "../runtime/project-root.ts";
 import {isLocalRequest} from "../runtime/validation.ts";
 import {enabledMarket} from "../markets/registry.ts";
+import {singleflight} from "../runtime/singleflight.ts";
 
 export type ConversationView="human"|"technical"|"agent"|"waiting"|"completed"|"all";
 export const CONVERSATION_VIEWS:ConversationView[]=["human","technical","agent","waiting","completed","all"];
@@ -11,7 +12,9 @@ export const MAX_BODY_BYTES=32768;
 /** "occurredAt|itemId" of the oldest item on a timeline page. */
 export const TIMELINE_CURSOR=/^\d+(?:\.\d+)?(?:e[-+]?\d+)?\|[^|]{1,120}$/;
 export type ConversationItem={conversationId:string|null;creatorId:string;oec:string;handle:string|null;state:Exclude<ConversationView,"all">;queueStatusLabel:string;humanReason:string|null;humanReasonLabel:string|null;latestText:string|null;latestMeaningZh:string|null;latestAt:number;waitingSeconds:number;unread:boolean;action:string|null;caseId:string|null};
-export type ConversationList={available:true;view:ConversationView;query:string;counts:Record<ConversationView,number>;total:number;offset:number;limit:number;nextOffset:number|null;items:ConversationItem[];platformWrites:0;realSends:0};
+export type ConversationList={available:true;view:ConversationView;query:string;counts:Record<ConversationView,number>;total:number;offset:number;limit:number;nextOffset:number|null;nextCursor:string|null;items:ConversationItem[];platformWrites:0;realSends:0};
+// Keyset position in the queue (state order ~ waiting-since ~ creator); walks past the 5000-row offset cap.
+export const LIST_CURSOR=/^[0-4]~(?:inf|\d+(?:\.\d+)?(?:e[+-]?\d+)?)~[A-Za-z0-9_.:-]{1,80}$/;
 export type TimelineItem={id:string;direction:"inbound"|"outbound";kind:string;text:string|null;occurredAt:number;status:string;source:string;pid?:string;listId?:string};
 export type ManualTemplate={id:string;name:string;category:string;body:string;revision:number;state:"active"|"archived"};
 export type CreatorMetrics={gmv:string|number|null;videoGmv:string|number|null;liveGmv:string|number|null;followers:number|null;unitsSold:number|null;avgVideoViews:number|null;observedAt:string|null;replyCount:number;showcaseCount:number};
@@ -70,9 +73,12 @@ export function validateConversationList(raw:unknown):ConversationList{
  const rawCounts=value.counts;
  if(!rawCounts||typeof rawCounts!=="object"||Array.isArray(rawCounts)||Object.keys(rawCounts).sort().join(",")!==[...CONVERSATION_VIEWS].sort().join(","))throw Error("invalid_conversation");
  const counts=Object.fromEntries(Object.entries(rawCounts).map(([key,count])=>[key,number(count)])) as Record<ConversationView,number>;
- const total=number(value.total),offset=number(value.offset,5000),limit=number(value.limit,100),nextOffset=value.nextOffset==null?null:number(value.nextOffset,5100);
- if(limit<1||items.length>limit||total!==counts[view]||(nextOffset==null)!==(offset+items.length>=total))throw Error("invalid_conversation");
- return {available:true,view,query:text(value.query,100)??"",counts,total,offset,limit,nextOffset,items,platformWrites:0,realSends:0};
+ const total=number(value.total),offset=number(value.offset,10_000_000),limit=number(value.limit,100),nextOffset=value.nextOffset==null?null:number(value.nextOffset,10_000_100);
+ // An older backend sends no cursor: the page then only offers offset paging.
+ const nextCursor=value.nextCursor==null?null:typeof value.nextCursor==="string"&&LIST_CURSOR.test(value.nextCursor)?value.nextCursor:null;
+ if(value.nextCursor!=null&&nextCursor==null)throw Error("invalid_conversation");
+ if(limit<1||items.length>limit||total!==counts[view]||(nextOffset==null)!==(offset+items.length>=total)||(nextCursor!=null&&nextOffset==null))throw Error("invalid_conversation");
+ return {available:true,view,query:text(value.query,100)??"",counts,total,offset,limit,nextOffset,nextCursor,items,platformWrites:0,realSends:0};
 }
 
 export function validateConversationDetail(raw:unknown):ConversationDetail{
@@ -142,7 +148,12 @@ export function validateConversationCommand(raw:unknown):ConversationCommand{
  throw Error("invalid_conversation_request");
 }
 
-export async function listConversations(view:ConversationView,query:string,limit:number,offset:number,market:string){return validateConversationList(await run(["list","--view",view,"--query",query,"--limit",String(limit),"--offset",String(offset)],undefined,market));}
+// Identical queue reads that arrive while one is running share it (every open tab polls, and each read
+// is a full read-only pass over the market's ledger); nothing is kept after the read settles.
+export function listConversations(view:ConversationView,query:string,limit:number,offset:number,market:string,after?:string):Promise<ConversationList>{
+ return singleflight(`conversations:${JSON.stringify([market,view,query,limit,offset,after??null])}`,
+  async()=>validateConversationList(await run(["list","--view",view,"--query",query,"--limit",String(limit),"--offset",String(offset),...(after?["--after",after]:[])],undefined,market)));
+}
 export async function readConversation(cid:string,market:string,before?:string){return validateConversationDetail(await run(["detail","--cid",cid,...(before?["--before",before]:[])],undefined,market));}
 export function saveConversationDraft(market:string,cid:string,textValue:string,expectedRevision:number){return run(["save-draft","--cid",cid],{text:textValue,expectedRevision},market);}
 export async function sendConversationText(market:string,cid:string,textValue:string,expectedControlRevision:number,requestId:string){return validateManualReplyResult(await run(["send-text","--cid",cid],{text:textValue,expectedControlRevision,requestId},market),requestId);}
@@ -184,10 +195,10 @@ const headers={"Cache-Control":"no-store","X-Content-Type-Options":"nosniff"};
 export function createConversationHandlers(operations:ConversationOperations=defaults){return {
  GET:async(request:Request)=>{
   if(!isLocalRequest(request,false))return Response.json({error:"local_origin_required"},{status:403,headers});
-  let query:{cid?:string;before?:string;view?:ConversationView;text?:string;limit?:number;offset?:number;market:string};
-  try{const params=new URL(request.url).searchParams;const allowed=new Set(["view","query","limit","offset","cid","market","before"]);if([...params.keys()].some(key=>!allowed.has(key)||params.getAll(key).length!==1)||params.getAll("market").length!==1)throw Error();const selected=params.get("market")!;if(!enabledMarket(selected))throw Error();const cid=params.get("cid");if(cid!=null){if([...params.keys()].some(key=>!['cid','market','before'].includes(key))||!/^\d{1,40}$/.test(cid))throw Error();const before=params.get("before");if(before!=null&&!TIMELINE_CURSOR.test(before))throw Error();query={cid,market:selected,...(before!=null?{before}:{})};}else{if(params.has("before"))throw Error();else{const view=(params.get("view")??"human") as ConversationView;if(!CONVERSATION_VIEWS.includes(view))throw Error();const textValue=params.get("query")??"";if(textValue.length>100)throw Error();const bounded=(key:string,fallback:number,low:number,max:number)=>{const raw=params.get(key);if(raw==null)return fallback;if(!/^\d+$/.test(raw))throw Error();const value=Number(raw);if(!Number.isSafeInteger(value)||value<low||value>max)throw Error();return value;};query={view,text:textValue,limit:bounded("limit",30,1,100),offset:bounded("offset",0,0,5000),market:selected};}}}
+  let query:{cid?:string;before?:string;view?:ConversationView;text?:string;limit?:number;offset?:number;after?:string;market:string};
+  try{const params=new URL(request.url).searchParams;const allowed=new Set(["view","query","limit","offset","after","cid","market","before"]);if([...params.keys()].some(key=>!allowed.has(key)||params.getAll(key).length!==1)||params.getAll("market").length!==1)throw Error();const selected=params.get("market")!;if(!enabledMarket(selected))throw Error();const cid=params.get("cid");if(cid!=null){if([...params.keys()].some(key=>!['cid','market','before'].includes(key))||!/^\d{1,40}$/.test(cid))throw Error();const before=params.get("before");if(before!=null&&!TIMELINE_CURSOR.test(before))throw Error();query={cid,market:selected,...(before!=null?{before}:{})};}else{if(params.has("before"))throw Error();else{const after=params.get("after");if(after!=null&&(!LIST_CURSOR.test(after)||params.has("offset")))throw Error();const view=(params.get("view")??"human") as ConversationView;if(!CONVERSATION_VIEWS.includes(view))throw Error();const textValue=params.get("query")??"";if(textValue.length>100)throw Error();const bounded=(key:string,fallback:number,low:number,max:number)=>{const raw=params.get(key);if(raw==null)return fallback;if(!/^\d+$/.test(raw))throw Error();const value=Number(raw);if(!Number.isSafeInteger(value)||value<low||value>max)throw Error();return value;};query={view,text:textValue,limit:bounded("limit",30,1,100),offset:bounded("offset",0,0,5000),...(after!=null?{after}:{}),market:selected};}}}
   catch{return Response.json({error:"invalid_conversation_query"},{status:400,headers});}
-  try{return Response.json(query.cid?await operations.detail(query.cid,query.market,query.before):await operations.list(query.view!,query.text!,query.limit!,query.offset!,query.market),{headers});}
+  try{return Response.json(query.cid?await operations.detail(query.cid,query.market,query.before):await operations.list(query.view!,query.text!,query.limit!,query.offset!,query.market,query.after),{headers});}
   catch{return Response.json({error:"conversation_workbench_unavailable"},{status:503,headers});}
  },
  POST:async(request:Request)=>{

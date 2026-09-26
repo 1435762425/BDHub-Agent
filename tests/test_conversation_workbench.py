@@ -117,8 +117,34 @@ class ConversationWorkbenchTests(unittest.TestCase):
   with patch.object(W,'_candidate_creators',everyone):
    reference=[list_conversations(self.root,self.store,view,limit=100) for view in views]
   current=[list_conversations(self.root,self.store,view,limit=100) for view in views]
-  self.assertEqual(current,reference)
+  strip=lambda pages:[{k:v for k,v in page.items() if k!='stats'} for page in pages]
+  self.assertEqual(strip(current),strip(reference))
   self.assertIn('creator-9',{row['creatorId'] for row in current[0]['items']})
+ def test_cursor_walks_the_whole_queue_in_order_without_the_offset_cap(self):
+  for n in range(230):
+   creator=f'creator-q{n:03d}';oec=str(5000+n)
+   self.store.db.execute("INSERT INTO relationship VALUES(?,?,?,'human',0,1,0,1)",(self.plan,creator,oec))
+   if n%2:
+    self.store.db.execute("INSERT INTO inbound_turn VALUES(?,?,?,?,?,?,?,?,?,?,0,?)",
+     (f'turn-q{n}',self.plan,creator,oec,str(8000+n),str(9000+n),'h','text','ciao',int((NOW-1000*n)*1000),NOW))
+  whole=list_conversations(self.root,self.store,'human',limit=100)
+  expected=[row['creatorId'] for row in whole['items']]
+  walked,after=[],None
+  while True:
+   page=list_conversations(self.root,self.store,'human',limit=100,after=after)
+   self.assertEqual(page['total'],whole['total'])
+   walked+=[row['creatorId'] for row in page['items']]
+   self.assertEqual(page['nextCursor'] is None,page['nextOffset'] is None)
+   if page['nextCursor'] is None:break
+   after=page['nextCursor']
+  self.assertEqual(len(walked),whole['total']);self.assertEqual(len(set(walked)),len(walked))
+  self.assertEqual(walked[:100],expected)
+  # Oldest wait first: the creator whose message is oldest leads the queue among dated rows.
+  self.assertEqual(walked[0],'creator-q229')
+  self.assertNotIn('_since',whole['items'][0]);self.assertGreater(whole['stats']['sqlStatements'],0)
+  for bad in ('1~x~creator',f"9~1.0~c",'1~1.0~'):
+   with self.assertRaisesRegex(CycleError,'conversation_query_invalid'):list_conversations(self.root,self.store,'human',after=bad)
+  with self.assertRaisesRegex(CycleError,'conversation_query_invalid'):list_conversations(self.root,self.store,'human',offset=10,after=whole['nextCursor'])
  def test_platform_messages_beyond_one_source_page_are_reachable(self):
   from lib.conversation_workbench import TIMELINE_PAGE
   total=TIMELINE_PAGE+101

@@ -55,34 +55,40 @@ def _insert_immutable(store, table, key_column, key, columns, values, fingerprin
     return True
 
 
-def backfill(store):
-    """Project existing local delivery/inbox evidence; no platform or model calls."""
+BACKFILL_CHUNK = 500
+
+
+def backfill(store, *, chunk=BACKFILL_CHUNK):
+    """Project new local delivery/inbox evidence; no platform or model calls.
+
+    Incremental and chunked (G18): each pass reads only source rows that have no projection yet (the unique
+    keys of outbound_episode, inbound_turn and turn_episode_link) and commits at most ``chunk`` rows per
+    transaction, so the shared ledger is never held for a scan of all markets' history.  Every step is
+    idempotent: an interrupted run leaves a prefix that the next call completes."""
     _tables(store)
     report = {'episodesAdded': 0, 'turnsAdded': 0, 'linksAdded': 0, 'caseLinksAdded': 0,
               'platformWrites': 0, 'modelCalls': 0}
-    with store.tx():
-        if store.db.execute("SELECT 1 FROM sqlite_master WHERE name='cycle_delivery'").fetchone():
-            rows = store.db.execute("""SELECT d.*,max(CASE WHEN p.state='confirmed' AND p.kind='card' THEN p.started END) sent_at
-              FROM cycle_delivery d JOIN cycle_delivery_part p ON p.delivery_id=d.id
-              WHERE EXISTS(SELECT 1 FROM cycle_delivery_part c WHERE c.delivery_id=d.id
-                AND c.kind='card' AND c.state='confirmed') GROUP BY d.id ORDER BY d.created""").fetchall()
-            for row in rows:
-                candidate = json.loads(row['snapshot'])
-                offer = candidate.get('offer') or {}
-                card = candidate.get('card') or {}
-                payload = {'deliveryId': row['id'], 'creatorId': row['creator_id'], 'oec': row['oec'],
-                           'pid': row['pid'], 'sourceId': row['source_id'],
-                           'offerKey': str(offer.get('offerKey') or ''),
-                           'listId': str(card.get('listId') or ''),
-                           'message': candidate.get('message')}
-                fingerprint = digest(payload)
-                episode_id = 'episode-' + digest([row['plan_id'], row['id']])[:24]
-                prior=store.db.execute('SELECT payload_json FROM outbound_episode WHERE episode_id=?',(episode_id,)).fetchone()
-                if prior:
-                    original=json.loads(prior['payload_json'])
-                    if any(original.get(key)!=payload.get(key) for key in payload):
-                        raise CycleError('reply_event_conflict')
-                else:
+    has = lambda name: store.db.execute("SELECT 1 FROM sqlite_master WHERE name=?", (name,)).fetchone()
+    if has('cycle_delivery'):
+        while True:
+            with store.tx():
+                rows = store.db.execute("""SELECT d.*,max(CASE WHEN p.state='confirmed' AND p.kind='card' THEN p.started END) sent_at
+                  FROM cycle_delivery d JOIN cycle_delivery_part p ON p.delivery_id=d.id
+                  WHERE EXISTS(SELECT 1 FROM cycle_delivery_part c WHERE c.delivery_id=d.id
+                    AND c.kind='card' AND c.state='confirmed')
+                    AND NOT EXISTS(SELECT 1 FROM outbound_episode e WHERE e.delivery_id=d.id)
+                  GROUP BY d.id ORDER BY d.created LIMIT ?""", (chunk,)).fetchall()
+                for row in rows:
+                    candidate = json.loads(row['snapshot'])
+                    offer = candidate.get('offer') or {}
+                    card = candidate.get('card') or {}
+                    payload = {'deliveryId': row['id'], 'creatorId': row['creator_id'], 'oec': row['oec'],
+                               'pid': row['pid'], 'sourceId': row['source_id'],
+                               'offerKey': str(offer.get('offerKey') or ''),
+                               'listId': str(card.get('listId') or ''),
+                               'message': candidate.get('message')}
+                    fingerprint = digest(payload)
+                    episode_id = 'episode-' + digest([row['plan_id'], row['id']])[:24]
                     report['episodesAdded'] += int(_insert_immutable(
                         store, 'outbound_episode', 'episode_id', episode_id,
                         ('episode_id','plan_id','creator_id','oec','delivery_id','pid','offer_key','list_id',
@@ -90,47 +96,64 @@ def backfill(store):
                         (episode_id,row['plan_id'],row['creator_id'],row['oec'],row['id'],row['pid'],
                          payload['offerKey'],payload['listId'],row['sent_at'] or row['created'],encoded(payload),fingerprint),
                         'snapshot_hash', fingerprint))
-        if store.db.execute("SELECT 1 FROM sqlite_master WHERE name='inbox_content_head'").fetchone():
-            rows = store.db.execute("""SELECT e.plan_id,e.cid,e.message_id,e.oec,e.occurred_ms,e.historical,
-              e.observed_at,h.hash,v.payload,r.creator_id
-              FROM inbox_event e JOIN inbox_content_head h USING(plan_id,cid,message_id)
-              JOIN inbox_content_version v ON v.plan_id=h.plan_id AND v.cid=h.cid
-                AND v.message_id=h.message_id AND v.hash=h.hash
-              JOIN relationship r ON r.plan_id=e.plan_id AND r.oec=e.oec
-              WHERE e.kind='creatorReplies' ORDER BY e.occurred_ms,e.message_id""").fetchall()
-            for row in rows:
-                content = json.loads(row['payload'])
-                turn_id = 'turn-' + digest([row['plan_id'],row['cid'],row['message_id'],row['hash']])[:24]
-                report['turnsAdded'] += int(_insert_immutable(
-                    store, 'inbound_turn', 'turn_id', turn_id,
-                    ('turn_id','plan_id','creator_id','oec','cid','message_id','content_hash','format','text',
-                     'occurred_ms','historical','observed_at'),
-                    (turn_id,row['plan_id'],row['creator_id'],row['oec'],row['cid'],row['message_id'],
-                     row['hash'],content.get('format'),content.get('text'),row['occurred_ms'],
-                     row['historical'],row['observed_at'])))
-        turns = store.db.execute('SELECT * FROM inbound_turn ORDER BY observed_at,turn_id').fetchall()
-        for turn in turns:
-            if store.db.execute('SELECT 1 FROM turn_episode_link WHERE turn_id=?', (turn['turn_id'],)).fetchone():
-                continue
-            moment = (turn['occurred_ms'] / 1000) if turn['occurred_ms'] else turn['observed_at']
-            has_parts=store.db.execute("SELECT 1 FROM sqlite_master WHERE name='cycle_delivery_part'").fetchone()
-            if has_parts:
-                episodes=store.db.execute("""SELECT e.*,coalesce(card.started,e.sent_at) anchor_at,card.started card_anchor FROM outbound_episode e
-                  LEFT JOIN cycle_delivery_part card ON card.delivery_id=e.delivery_id AND card.kind='card' AND card.state='confirmed'
-                  WHERE e.plan_id=? AND e.creator_id=? AND coalesce(card.started,e.sent_at)<=?
-                  ORDER BY anchor_at DESC,e.episode_id DESC LIMIT 3""",(turn['plan_id'],turn['creator_id'],moment)).fetchall()
-            else:
-                episodes=store.db.execute("SELECT *,sent_at anchor_at,NULL card_anchor FROM outbound_episode WHERE plan_id=? AND creator_id=? AND sent_at<=? ORDER BY sent_at DESC,episode_id DESC LIMIT 3",(turn['plan_id'],turn['creator_id'],moment)).fetchall()
-            for rank, episode in enumerate(episodes, 1):
-                delta = max(0, moment - episode['anchor_at'])
-                confidence = 'high' if len(episodes)==1 and delta<=30*86400 else 'medium' if rank==1 else 'low'
-                evidence = encoded({'policy':'nearest-preceding-outbound-v2','anchorKind':'confirmed_card' if episode['card_anchor'] is not None else 'legacy_episode','secondsAfter':round(delta,3),
-                                    'candidateCount':len(episodes)})
-                store.db.execute('INSERT INTO turn_episode_link VALUES(?,?,?,?,?)',
-                                 (turn['turn_id'],episode['episode_id'],rank,evidence,confidence))
-                report['linksAdded'] += 1
-        if store.db.execute("SELECT 1 FROM sqlite_master WHERE name='service_case'").fetchone():
-            for case in store.db.execute('SELECT * FROM service_case'):
+            if len(rows) < chunk:
+                break
+    if has('inbox_content_head'):
+        while True:
+            with store.tx():
+                rows = store.db.execute("""SELECT e.plan_id,e.cid,e.message_id,e.oec,e.occurred_ms,e.historical,
+                  e.observed_at,h.hash,v.payload,r.creator_id
+                  FROM inbox_event e JOIN inbox_content_head h USING(plan_id,cid,message_id)
+                  JOIN inbox_content_version v ON v.plan_id=h.plan_id AND v.cid=h.cid
+                    AND v.message_id=h.message_id AND v.hash=h.hash
+                  JOIN relationship r ON r.plan_id=e.plan_id AND r.oec=e.oec
+                  WHERE e.kind='creatorReplies' AND NOT EXISTS(SELECT 1 FROM inbound_turn t WHERE t.plan_id=e.plan_id
+                    AND t.cid=e.cid AND t.message_id=e.message_id AND t.content_hash=h.hash)
+                  ORDER BY e.occurred_ms,e.message_id LIMIT ?""", (chunk,)).fetchall()
+                for row in rows:
+                    content = json.loads(row['payload'])
+                    turn_id = 'turn-' + digest([row['plan_id'],row['cid'],row['message_id'],row['hash']])[:24]
+                    report['turnsAdded'] += int(_insert_immutable(
+                        store, 'inbound_turn', 'turn_id', turn_id,
+                        ('turn_id','plan_id','creator_id','oec','cid','message_id','content_hash','format','text',
+                         'occurred_ms','historical','observed_at'),
+                        (turn_id,row['plan_id'],row['creator_id'],row['oec'],row['cid'],row['message_id'],
+                         row['hash'],content.get('format'),content.get('text'),row['occurred_ms'],
+                         row['historical'],row['observed_at'])))
+            if len(rows) < chunk:
+                break
+    has_parts = has('cycle_delivery_part')
+    # Turns without any preceding episode stay unlinked, so walk them by key instead of re-querying.
+    after = (-1.0, '')
+    while True:
+        with store.tx():
+            turns = store.db.execute(
+                "SELECT * FROM inbound_turn t WHERE NOT EXISTS(SELECT 1 FROM turn_episode_link l WHERE l.turn_id=t.turn_id) "
+                "AND (t.observed_at>? OR (t.observed_at=? AND t.turn_id>?)) ORDER BY t.observed_at,t.turn_id LIMIT ?",
+                (after[0], after[0], after[1], chunk)).fetchall()
+            for turn in turns:
+                moment = (turn['occurred_ms'] / 1000) if turn['occurred_ms'] else turn['observed_at']
+                if has_parts:
+                    episodes=store.db.execute("""SELECT e.*,coalesce(card.started,e.sent_at) anchor_at,card.started card_anchor FROM outbound_episode e
+                      LEFT JOIN cycle_delivery_part card ON card.delivery_id=e.delivery_id AND card.kind='card' AND card.state='confirmed'
+                      WHERE e.plan_id=? AND e.creator_id=? AND coalesce(card.started,e.sent_at)<=?
+                      ORDER BY anchor_at DESC,e.episode_id DESC LIMIT 3""",(turn['plan_id'],turn['creator_id'],moment)).fetchall()
+                else:
+                    episodes=store.db.execute("SELECT *,sent_at anchor_at,NULL card_anchor FROM outbound_episode WHERE plan_id=? AND creator_id=? AND sent_at<=? ORDER BY sent_at DESC,episode_id DESC LIMIT 3",(turn['plan_id'],turn['creator_id'],moment)).fetchall()
+                for rank, episode in enumerate(episodes, 1):
+                    delta = max(0, moment - episode['anchor_at'])
+                    confidence = 'high' if len(episodes)==1 and delta<=30*86400 else 'medium' if rank==1 else 'low'
+                    evidence = encoded({'policy':'nearest-preceding-outbound-v2','anchorKind':'confirmed_card' if episode['card_anchor'] is not None else 'legacy_episode','secondsAfter':round(delta,3),
+                                        'candidateCount':len(episodes)})
+                    store.db.execute('INSERT INTO turn_episode_link VALUES(?,?,?,?,?)',
+                                     (turn['turn_id'],episode['episode_id'],rank,evidence,confidence))
+                    report['linksAdded'] += 1
+        if len(turns) < chunk:
+            break
+        after = (turns[-1]['observed_at'], turns[-1]['turn_id'])
+    if has('service_case'):
+        with store.tx():
+            for case in store.db.execute('SELECT * FROM service_case').fetchall():
                 assessment = store.db.execute('SELECT context_json FROM service_assessment WHERE plan_id=? '
                     'AND creator_id=? AND pending_revision=?',
                     (case['plan_id'],case['creator_id'],case['assessment_revision'])).fetchone()
@@ -138,7 +161,7 @@ def backfill(store):
                     continue
                 message_ids = {str(row.get('messageId')) for row in json.loads(assessment[0]) if row.get('messageId')}
                 for turn in store.db.execute('SELECT turn_id,message_id FROM inbound_turn WHERE plan_id=? '
-                                             'AND creator_id=?',(case['plan_id'],case['creator_id'])):
+                                             'AND creator_id=?',(case['plan_id'],case['creator_id'])).fetchall():
                     if turn['message_id'] in message_ids:
                         before = store.db.total_changes
                         store.db.execute('INSERT OR IGNORE INTO service_case_turn VALUES(?,?)',

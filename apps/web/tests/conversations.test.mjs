@@ -57,3 +57,18 @@ test('a known CLI refusal reaches the page as a definite 409 while other failure
  result=await api.POST(post(send));assert.equal(result.status,503);assert.equal((await result.json()).intent,'unknown');
  result=await api.POST(post({...send,text:'x'.repeat(4001)}));assert.equal(result.status,400);assert.equal((await result.json()).intent,'absent');
 });
+test('queue cursor pages past the offset cap and is validated on both sides',async()=>{
+ const cursor='2~1790000000.5~creator_ab';
+ const page={...listPayload,counts:{...listPayload.counts,human:9000,all:9000},total:9000,offset:6000,limit:30,nextOffset:6001,nextCursor:cursor};
+ assert.equal(validateConversationList(page).nextCursor,cursor);
+ assert.equal(validateConversationList({...page,nextCursor:undefined}).nextCursor,null);
+ assert.throws(()=>validateConversationList({...page,nextCursor:'1~;drop~x'}));
+ assert.throws(()=>validateConversationList({...page,nextOffset:null,offset:8999}));
+ const calls=[];const api=createConversationHandlers(operations({list:async(...args)=>{calls.push(args);return listPayload;}}));
+ const headers={host:'127.0.0.1:5198',origin:'http://127.0.0.1:5198'},base='http://127.0.0.1:5198/api/conversations?market=it&view=human';
+ assert.equal((await api.GET(new Request(`${base}&after=${encodeURIComponent(cursor)}`,{headers}))).status,200);
+ assert.deepEqual(calls[0],['human','',30,0,'it',cursor]);
+ assert.equal((await api.GET(new Request(`${base}&after=bad`,{headers}))).status,400);
+ assert.equal((await api.GET(new Request(`${base}&after=${encodeURIComponent(cursor)}&offset=30`,{headers}))).status,400);
+ assert.equal(calls.length,1);
+});

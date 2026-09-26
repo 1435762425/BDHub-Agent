@@ -127,16 +127,17 @@ export class ConversationController {
   loadMore = async () => {
     const initial = this.snapshot.list;
     if(initial?.nextOffset == null)return;
-    const version = this.listVersion, offset = initial.nextOffset;
+    // The cursor is a queue position, so a long queue is walked to its end; offsets stop at 5000.
+    const version = this.listVersion, offset = initial.nextOffset, cursor = initial.nextCursor ?? null;
     const {view,query} = this.snapshot;
     try {
-      const params = new URLSearchParams({market:this.market,view,query,offset:String(offset)});
+      const params = new URLSearchParams({market:this.market,view,query,...(cursor ? {after:cursor} : {offset:String(offset)})});
       const response = await this.fetcher(`/api/conversations?${params}`,{cache:"no-store"});
       if(!response.ok)throw Error();
       const more:ConversationList = await response.json();
       const current = this.snapshot.list;
-      if(this.disposed || version !== this.listVersion || current?.nextOffset !== offset)return;
-      if(more.view !== view || more.query !== query || more.offset !== offset)throw Error();
+      if(this.disposed || version !== this.listVersion || current?.nextOffset !== offset || (current.nextCursor ?? null) !== cursor)return;
+      if(more.view !== view || more.query !== query || (!cursor && more.offset !== offset))throw Error();
       const seen = new Set(current.items.map(row => row.creatorId));
       this.update({list:{...more,offset:0,items:[...current.items,...more.items.filter(row => !seen.has(row.creatorId))]}});
     } catch {

@@ -1,5 +1,5 @@
 """Market-scoped read model and local controls for the conversation workbench."""
-import json,re,sqlite3,time
+import json,math,re,sqlite3,time
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from contextlib import closing
@@ -28,8 +28,11 @@ SHOWCASE_TEXT='达人已将商品添加到橱窗'
 UNREAD_PENDING=('awaiting_content','awaiting_classification','review_partial','template_ready','policy_review',
  'facts_ready_for_review','needs_facts','human')
 
-def _human_label(db,plan,creator,reason):
- if db.execute("SELECT 1 FROM sqlite_master WHERE name='agent_reply_decision_v2'").fetchone():
+def _has(db,name,tables=None):
+ return name in tables if tables is not None else bool(db.execute("SELECT 1 FROM sqlite_master WHERE name=?",(name,)).fetchone())
+
+def _human_label(db,plan,creator,reason,tables=None):
+ if _has(db,'agent_reply_decision_v2',tables):
   row=db.execute("SELECT output_json FROM agent_reply_decision_v2 WHERE plan_id=? AND creator_id=? AND mode='production' AND state='ready' ORDER BY created_at DESC LIMIT 1",(plan,creator)).fetchone()
   if row:
    result=json.loads(row[0])
@@ -40,9 +43,9 @@ def _human_label(db,plan,creator,reason):
 AGENT_REPLY_KINDS=('agent_generated_v2','agent_request_detail_v2','agent_handoff_v2')
 UNRESOLVED_REPLY_STATES=('inflight','accepted','unknown','isolated')
 
-def _technical_hold(db,plan,rel):
+def _technical_hold(db,plan,rel,tables=None):
  """A technical (not commercial) reason automatic work on this creator is held, or None."""
- if db.execute("SELECT 1 FROM sqlite_master WHERE name='service_reply'").fetchone() and \
+ if _has(db,'service_reply',tables) and \
     db.execute("SELECT 1 FROM service_reply WHERE plan_id=? AND creator_id=? AND state='isolated'",(plan,rel['creator_id'])).fetchone():
   return 'reply_isolated','回复送达未知，已停止自动跟进'
  row=db.execute("SELECT state FROM inbox_checkpoint WHERE plan_id=? AND oec=? AND state IN ('gap','backfilling') LIMIT 1",
@@ -58,7 +61,7 @@ def _plan_id(store,market):
 def _latest_turn(db,plan,creator):
  return db.execute('SELECT * FROM inbound_turn WHERE plan_id=? AND creator_id=? ORDER BY coalesce(occurred_ms,observed_at*1000) DESC,message_id DESC LIMIT 1',(plan,creator)).fetchone()
 
-def _latest_external(db,plan,rel,latest):
+def _latest_external(db,plan,rel,latest,tables=None):
  """Conversation id and the newest agency-backend outbound message for this creator."""
  from lib.observed_messages import outbound_messages
  cid=latest['cid'] if latest else None
@@ -66,7 +69,7 @@ def _latest_external(db,plan,rel,latest):
   observed=db.execute("SELECT cid FROM inbox_event WHERE plan_id=? AND oec=? AND kind='ourMessages' "
                        "ORDER BY coalesce(occurred_ms,observed_at*1000) DESC LIMIT 1",(plan,rel['oec'])).fetchone()
   cid=observed[0] if observed else None
- external=outbound_messages(db,plan,cid,rel['oec'],limit=1) if cid else []
+ external=outbound_messages(db,plan,cid,rel['oec'],limit=1,tables=tables) if cid else []
  return cid,(external[-1] if external else None)
 
 def _turn_at(latest):
@@ -141,8 +144,8 @@ def _latest_decision(db,turn_id):
  if review:value['action']=review[0];value['reviewed']=True
  return value if value.get('action') else None
 
-def _latest_showcase(db,plan,oec):
- if not db.execute("SELECT 1 FROM sqlite_master WHERE name='inbox_event'").fetchone():return None
+def _latest_showcase(db,plan,oec,tables=None):
+ if not _has(db,'inbox_event',tables):return None
  return db.execute("""SELECT cid,message_id,occurred_ms,historical,observed_at FROM inbox_event
   WHERE plan_id=? AND oec=? AND kind='showcaseNotifications'
   ORDER BY coalesce(occurred_ms,observed_at*1000) DESC,message_id DESC LIMIT 1""",(plan,oec)).fetchone()
@@ -195,8 +198,30 @@ def _recorded_messages(db,plan,tables):
   for oec,cid,receipt,proof in db.execute('SELECT oec,cid,receipt,proof FROM service_reply WHERE plan_id=?',(plan,)):collect(oec,cid,receipt,proof)
  return found
 
-def list_conversations(root,store,view='human',query='',limit=30,offset=0,market='it'):
+LIST_ORDER={'human':0,'technical':1,'agent':2,'waiting':3,'completed':4}
+LIST_CURSOR=re.compile(r'([0-4])~(inf|\d+(?:\.\d+)?(?:e[+-]?\d+)?)~([A-Za-z0-9_.:-]{1,80})')
+
+def _list_key(row):
+ # Oldest wait first inside a queue; rows that are not waiting keep creator order. Stable across polls.
+ return (LIST_ORDER[row['state']],row['_since'] if row['_since'] is not None else math.inf,row['creatorId'])
+
+def _list_cursor(key):
+ return f"{key[0]}~{'inf' if key[1]==math.inf else repr(float(key[1]))}~{key[2]}"
+
+def list_conversations(root,store,view='human',query='',limit=30,offset=0,market='it',after=None):
+ """One queue page. ``after`` (the previous page's nextCursor) walks the whole queue without the offset cap."""
  if view not in ('human','technical','agent','waiting','completed','all') or type(limit) is not int or not 1<=limit<=100 or type(offset) is not int or offset<0 or offset>5000:raise CycleError('conversation_query_invalid')
+ cursor=None
+ if after is not None:
+  match=LIST_CURSOR.fullmatch(after) if isinstance(after,str) else None
+  if not match or offset:raise CycleError('conversation_query_invalid')
+  cursor=(int(match[1]),math.inf if match[2]=='inf' else float(match[2]),match[3])
+ started=time.perf_counter();statements=[0]
+ store.db.set_trace_callback(lambda _sql:statements.__setitem__(0,statements[0]+1))
+ try:return _list(root,store,view,query,limit,offset,market,cursor,started,statements)
+ finally:store.db.set_trace_callback(None)
+
+def _list(root,store,view,query,limit,offset,market,cursor,started,statements):
  handles=_handles(root,market);db=store.db;plan=db.execute("SELECT id FROM plan WHERE market=? AND institution='bjn-local-research'",(market,)).fetchone()
  if not plan:raise CycleError('plan_missing')
  plan=plan[0]
@@ -206,26 +231,30 @@ def list_conversations(root,store,view='human',query='',limit=30,offset=0,market
   runtime=json.loads((Path(root)/'var'/status_file).read_text(encoding='utf-8'))
   agent_failed=runtime.get('state')=='failed'
  except (OSError,ValueError,TypeError):agent_failed=False
- rows=[];candidates=_candidate_creators(db,plan)
+ rows=[];candidates=_candidate_creators(db,plan);scanned=0
+ # One schema read per call: the per-row helpers below would otherwise repeat it for every creator.
+ tables={r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type IN ('table','view')")}
+ has_v2='agent_reply_decision_v2' in tables
  from lib import model_service
  from lib.draft_provider import MODEL
  service_paused=model_service.paused(db,model_service.service_key('DeepSeek',MODEL),store.clock())
  for rel in db.execute('SELECT * FROM relationship WHERE plan_id=?',(plan,)):
+  scanned+=1
   if rel['creator_id'] not in candidates:continue
-  latest=_latest_turn(db,plan,rel['creator_id']);cid,external=_latest_external(db,plan,rel,latest);inbound_at=_turn_at(latest)
+  latest=_latest_turn(db,plan,rel['creator_id']);cid,external=_latest_external(db,plan,rel,latest,tables);inbound_at=_turn_at(latest)
   externally_answered=bool(external and external['occurredAt']>inbound_at)
   case=db.execute("SELECT * FROM service_case WHERE plan_id=? AND creator_id=? AND state='open' ORDER BY updated DESC LIMIT 1",(plan,rel['creator_id'])).fetchone()
   pending=db.execute('SELECT * FROM inbox_pending WHERE plan_id=? AND creator_id=?',(plan,rel['creator_id'])).fetchone()
-  reply=db.execute('SELECT state,kind,started,text FROM service_reply WHERE plan_id=? AND creator_id=? ORDER BY created DESC LIMIT 1',(plan,rel['creator_id'])).fetchone() if db.execute("SELECT 1 FROM sqlite_master WHERE name='service_reply'").fetchone() else None
-  showcase=_latest_showcase(db,plan,rel['oec'])
+  reply=db.execute('SELECT state,kind,started,text FROM service_reply WHERE plan_id=? AND creator_id=? ORDER BY created DESC LIMIT 1',(plan,rel['creator_id'])).fetchone() if 'service_reply' in tables else None
+  showcase=_latest_showcase(db,plan,rel['oec'],tables)
   decision=_latest_decision(db,latest['turn_id']) if latest else None;action=decision.get('action') if decision else None
-  v2=db.execute("SELECT output_json FROM agent_reply_decision_v2 WHERE plan_id=? AND turn_id=? AND mode='production' AND state='ready' ORDER BY created_at DESC LIMIT 1",(plan,latest['turn_id'])).fetchone() if latest and db.execute("SELECT 1 FROM sqlite_master WHERE name='agent_reply_decision_v2'").fetchone() else None
+  v2=db.execute("SELECT output_json FROM agent_reply_decision_v2 WHERE plan_id=? AND turn_id=? AND mode='production' AND state='ready' ORDER BY created_at DESC LIMIT 1",(plan,latest['turn_id'])).fetchone() if latest and has_v2 else None
   failed_model=False
-  if latest and not v2 and db.execute("SELECT 1 FROM sqlite_master WHERE name='agent_reply_decision_v2'").fetchone():
+  if latest and not v2 and has_v2:
    failed_model=db.execute("SELECT count(*) FROM agent_reply_decision_v2 WHERE plan_id=? AND turn_id=? "
                            "AND mode='production' AND state='unknown'",(plan,latest['turn_id'])).fetchone()[0]>=3
   meaning=(json.loads(v2[0]).get('meaningZh') if v2 else decision.get('meaningZh') if decision else None)
-  technical=_technical_hold(db,plan,rel)
+  technical=_technical_hold(db,plan,rel,tables)
   if case or rel['mode']=='human' or (action=='human' and pending and pending['state']!='resolved_by_human') or (pending and pending['state']=='human'):state='human'
   elif technical:state='technical'
   elif externally_answered:state='waiting'
@@ -265,17 +294,22 @@ def list_conversations(root,store,view='human',query='',limit=30,offset=0,market
   if external and external['occurredAt']>display_at:display_at=external['occurredAt'];display_text=external['text']
   rows.append({'conversationId':cid,'creatorId':rel['creator_id'],'oec':rel['oec'],'handle':handle,
    'state':state,'queueStatusLabel':status_label,'humanReason':reason,
-   'humanReasonLabel':technical[1] if state=='technical' else _human_label(db,plan,rel['creator_id'],reason),
+   'humanReasonLabel':technical[1] if state=='technical' else _human_label(db,plan,rel['creator_id'],reason,tables),
    'latestText':display_text,'latestMeaningZh':meaning if latest and display_text==latest['text'] else None,
    'latestAt':display_at,'waitingSeconds':max(0,int(store.clock()-(waiting_since or display_at))) if (waiting_since or display_at) and state in ('human','technical','agent') else 0,
    'unread':bool(not externally_answered and pending and pending['state'] in UNREAD_PENDING),
-   'action':action,'caseId':case['id'] if case else None})
- order={'human':0,'technical':1,'agent':2,'waiting':3,'completed':4}
- rows.sort(key=lambda r:(order[r['state']],-r['waitingSeconds'],r['creatorId']))
+   'action':action,'caseId':case['id'] if case else None,
+   '_since':(waiting_since or display_at) if (waiting_since or display_at) and state in ('human','technical','agent') else None})
+ rows.sort(key=_list_key)
  filtered=rows if view=='all' else [r for r in rows if r['state']==view]
- counts={key:sum(r['state']==key for r in rows) for key in order};counts['all']=len(rows)
+ counts={key:sum(r['state']==key for r in rows) for key in LIST_ORDER};counts['all']=len(rows)
+ if cursor is not None:offset=sum(1 for r in filtered if _list_key(r)<=cursor)
+ page=filtered[offset:offset+limit];more=offset+limit<len(filtered)
+ stats={'relationsScanned':scanned,'candidates':len(candidates),'rows':len(rows),'sqlStatements':statements[0],
+  'elapsedMs':round((time.perf_counter()-started)*1000,1)}
  return {'available':True,'view':view,'query':query,'counts':counts,'total':len(filtered),'offset':offset,'limit':limit,
-  'nextOffset':offset+limit if offset+limit<len(filtered) else None,'items':filtered[offset:offset+limit],
+  'nextOffset':offset+limit if more else None,'nextCursor':_list_cursor(_list_key(page[-1])) if more and page else None,
+  'items':[{k:v for k,v in r.items() if k!='_since'} for r in page],'stats':stats,
   'platformWrites':0,'realSends':0}
 
 TIMELINE_PAGE=300
