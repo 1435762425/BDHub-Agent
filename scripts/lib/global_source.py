@@ -263,7 +263,10 @@ class GlobalSources:
             unique=self.db.execute('SELECT count(*) FROM global_source_product_category WHERE run_id=? AND category_id=?',(id,str(category_id))).fetchone()[0]
             totals={row[0] for row in self.db.execute('SELECT DISTINCT reported_total FROM global_source_partition_page WHERE run_id=? AND category_id=?',(id,str(category_id)))}
             state='collecting' if data['has_more'] else 'completed';reason=None if data['has_more'] else 'endpoint_end'
-            if state=='completed' and (len(totals)>1 or unique!=data['total']):state='partial';reason='category_endpoint_total_mismatch'
+            # A listing that changes while it is paged (products delisted mid-read) moves its reported
+            # total; the category is still whole when the members held cover the final total.
+            if state=='completed' and len(totals)>1 and unique>=data['total']:reason='endpoint_end_total_drift'
+            elif state=='completed' and (len(totals)>1 or unique!=data['total']):state='partial';reason='category_endpoint_total_mismatch'
             self.db.execute('UPDATE global_source_partition SET next_page=?,reported_total=?,page_count=page_count+1,unique_count=?,state=?,updated=?,terminal_reason=? WHERE run_id=? AND category_id=?',
               (page+1,data['total'],unique,state,now,reason,id,str(category_id)))
             pages=self.db.execute('SELECT coalesce(sum(page_count),0) FROM global_source_partition WHERE run_id=?',(id,)).fetchone()[0]

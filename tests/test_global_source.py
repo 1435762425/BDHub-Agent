@@ -168,6 +168,23 @@ class SourceTests(unittest.TestCase):
   self.s.finish_session('badcat',True);result=self.s.status('badcat')
   self.assertEqual(result['state'],'partial');self.assertFalse(result['published'])
   self.assertEqual(result['activePublished']['id'],old)
+ def test_category_total_drift_completes_only_when_members_cover_the_final_total(self):
+  self.s.blocked('one','fixture_end')
+  self.s.start_partitioned('drift',self.scope,[{'category_id':'600001','name':'家纺布艺','is_leaf':False},
+                                              {'category_id':'600002','name':'玩具','is_leaf':False}])
+  self.s.next_partition('drift')
+  # Two products are delisted between the pages: the total falls from 5 to 3 but 4 members are held.
+  self.s.partition_page('drift','600001',1,page([1,2],True,5),request_payload=list_request(1,category_id='600001'))
+  self.s.partition_page('drift','600001',2,page([3,4],False,3),request_payload=list_request(2,5,'600001'))
+  first=self.s.db.execute("SELECT state,terminal_reason,unique_count,reported_total FROM global_source_partition WHERE run_id='drift' AND category_id='600001'").fetchone()
+  self.assertEqual(tuple(first),('completed','endpoint_end_total_drift',4,3))
+  self.assertEqual(self.s.next_partition('drift')['category_id'],'600002')
+  # Drift that leaves fewer members than the final total still stops the run as inconsistent.
+  self.s.partition_page('drift','600002',1,page([5],True,4),request_payload=list_request(1,category_id='600002'))
+  self.s.partition_page('drift','600002',2,page([6],False,3),request_payload=list_request(2,4,'600002'))
+  second=self.s.db.execute("SELECT state,terminal_reason FROM global_source_partition WHERE run_id='drift' AND category_id='600002'").fetchone()
+  self.assertEqual(tuple(second),('partial','category_endpoint_total_mismatch'))
+  self.assertEqual(self.s.status('drift')['state'],'partial')
  def test_partial_category_can_be_discarded_and_restarted_before_publication(self):
   self.s.blocked('one','fixture_end')
   self.s.start_partitioned('retrycat',self.scope,[{'category_id':'600001','name':'家居用品','is_leaf':False}])
