@@ -6,6 +6,6 @@ export default async function Page({params}:{params:Promise<{market:string;secti
  const {market,section}=await params;const current=enabledMarket(market);
  if(!current)notFound();
  if(section==="reply-evaluation")redirect(`/${market}/conversations/agent#reply-evaluation`);
- if(!["jobs","kalodata","accounts"].includes(section))notFound();
+ if(!["jobs","kalodata","accounts","evidence"].includes(section))notFound();
  return <OpsWorkspace market={market} section={section as OpsSection} fullManagedCatalog={current.capabilities.fullManagedCatalog}/>;
 }

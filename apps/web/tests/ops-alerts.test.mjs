@@ -13,3 +13,13 @@ test('alert route only answers plain local reads',async()=>{
  assert.equal((await GET(new Request('http://127.0.0.1:5198/api/ops-alerts?market=it',{headers:{host:'127.0.0.1:5198'}}))).status,400);
  assert.equal((await GET(new Request('http://127.0.0.1:5198/api/ops-alerts',{headers:{host:'evil.example'}}))).status,403);
 });
+test('runtime evidence is validated and absent evidence reads as unknown',()=>{
+ const evidence={head:'a'.repeat(40),processes:[{role:'scheduler',pid:12,sha:'b'.repeat(40),startedAt:1,current:false}],
+  scheduler:{running:true,checkedAt:2},modelService:{paused:true,nextAt:3,lastError:'provider_timeout'},
+  restoreDrill:{backup:'20260926T061807Z-pre',state:'restorable',finishedAt:4,blockers:[]}};
+ const value=validateOpsAlerts({...payload,evidence});
+ assert.equal(value.evidence.processes[0].current,false);assert.equal(value.evidence.restoreDrill.state,'restorable');
+ assert.equal(validateOpsAlerts(payload).evidence,null);
+ assert.throws(()=>validateOpsAlerts({...payload,evidence:{...evidence,head:'not a sha'}}),/invalid_ops_alerts/);
+ assert.throws(()=>validateOpsAlerts({...payload,evidence:{...evidence,processes:[{role:'x',pid:-1,sha:null,startedAt:null,current:true}]}}),/invalid_ops_alerts/);
+});
