@@ -1,11 +1,19 @@
 # BDHub-Agent 当前交接
 
-更新时间：2026-09-26 03:41（Asia/Shanghai）。本页只记录运行快照；规则见 [PROJECT](../PROJECT.md)，实现见 [TECHNICAL](../TECHNICAL.md)，后续方向见[项目审计与清理](../implementation/project-audit-20260924.md)。更早流水见[历史交接](../archive/handoff/codex-takeover-history-20260923.md)。
+文档更新时间：2026-09-26（Asia/Shanghai）；最近一次运行验收快照为 03:41，非本次实时巡检。规则见 [PROJECT](../PROJECT.md)，实现见 [TECHNICAL](../TECHNICAL.md)，后续方向见[项目审计与清理](../implementation/project-audit-20260924.md)。更早流水见[历史交接](../archive/handoff/codex-takeover-history-20260923.md)。
 
 
 
 
 
+
+## 2026-09-26：仓库文档与已发布代码同步
+
+- 本次只按 `d3bcc5a` 静态核对文档，未重新采样生产健康或业务数量；以下 03:41 及更早条目保留各自时点。历史条目的“未启用”“待实施”不覆盖后续发布记录。
+- 本机生产分支 `codex/v1-runtime-alignment`；GitHub 私有仓库 [1435762425/BDHub-Agent](https://github.com/1435762425/BDHub-Agent) 的正式分支为 `main`，同步前远端与本机同为 `d3bcc5a`。`pre-sdk-rollout-20260926` 和 `sdk-http-four-market-20260926` 已上传，保持原发布指向。
+- 修正 README 的 B 类市场范围、Web 测试环境旧说明，以及 Campaign/全托/二发/概览的过时实施标记；模块方案和 AI 审查新增当前状态表，旧源码行号明确为历史审查依据。
+- 未完成项明确保留：全托选入剩余 unresolved 分支、IT 供给 OECID 的 `_call` 计数/等待归一化、平台拒绝与额度的精确分型、AI 模型故障分类/unknown 隔离/新入站服务、长期记忆和统一账号恢复。没有因修改文档将目标当成已上线能力。
+- 本次没有修改代码、业务配置、指南、授权或本机 `var/`，没有操作业务进程或调用平台；仅文档链接/锚点与差异检查。私密配置、真实状态、身份文件和备份继续留在 Git 之外。
 
 ## 2026-09-26 凌晨：四市场 SDK 收信与原 HTTP 发信已切换
 

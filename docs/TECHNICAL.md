@@ -1,6 +1,6 @@
 # BDHub-Agent 技术文档
 
-当前实现合同，整理于 2026-09-24。产品规则见 [PROJECT.md](PROJECT.md)，运行快照见[当前交接](handoff/current.md)。本文保留模块入口、状态边界及恢复方法，实验数值与事故流水只链接证据。
+当前实现合同，按 2026-09-26 代码基线 `d3bcc5a` 核对。产品规则见 [PROJECT.md](PROJECT.md)，运行快照见[当前交接](handoff/current.md)。本文保留模块入口、状态边界及恢复方法，实验数值与事故流水只链接证据。
 
 ## 1. 架构与环境
 
@@ -123,7 +123,7 @@ IT 交接在写事务外读取并 materialize 当前 A/B 来源，短事务内�
 
 同市场同达人主动推品冷却统一 **72 小时**；池投影、领取前复检和最终平台写门禁必须同值，回复/橱窗不缩短。人工客服与新来信回复不套用主动推品冷却。`outreach_policy.py` 将已确认/部分送达的末次组件时间与同 plan/OEC 的平台我方外发观测时间取较晚值；逐写仅排除当前 delivery 在原 cid 已确认的 messageId。未知意图仍独立阻断，不靠冷却结束放行。
 
-每位领取冻结全部发送事实，逐次发卡/文字前复检停止、时间窗、身份维护、关系和当前材料。容量预检在建会话/发卡前，最终滚动 24 小时预留在短事务复核；已解锁关系、或 24 小时内已为同一达人预留过的，不再占新联系名额（`cycle_delivery.contact_capacity_available`）。本地上限 `NEW_CONTACT_LIMIT` 现为 None，改由平台机构额度决定；`cycle_platform_signal` 里同一北京日 outcome=rejected 的平台回执达到 `PLATFORM_REJECTION_HOLD`（1 次）时，同一闸门拒绝新联系到次日，发送 worker 进入 waiting_capacity（每 5 分钟复查）。IT 与 BR/MY/UK 两类发送都会结算已派发组件：明确拒收（状态 1–5）记 rejected，其它记 unknown 等回查；带响应的平台回执全部落账（`market_send_canary._record_send_failure`）。建会话返回非零码仍记为 unknown 并停发，待核验原意图；首次撞到平台额度后，按落账的原生码补明确分类。页面与状态接口的 capacity.limit/remaining 为 null 时显示“由平台机构额度决定”，告警条报当天平台拒绝次数。卡＋文字要求两个剩余消息槽；历史单卡确认而文字未尝试已触限，只结算未发送文字，保留 partial_delivery。冻结后 30 分钟过期的投递，发送 worker 每轮先用 `cancel_expired_unsubmitted` 结算，不迟发：建会话未开始、各组件未发出的记 cancelled；卡已确认、文字未开始的只取消文字，记 partial_delivery；可能已到达平台的（会话创建已开始、组件在途或 unknown）留给核验。二发未知由 `delivery_reconciliation.py` 在原执行器结束后只读核验：建会话最多 2 轮，每轮 180 秒、最多 101 页；卡片/文字各最多 3 轮，每轮 90 秒；相邻轮至少 300 秒，从首轮起 900 秒累计期限。请求前将次数、原 requestRef 和期限记入 `cycle_delivery_check`，重启/新窗口不清零。首次正常提交后的立即回读不计专项轮次。卡片仍保留“两次成功读取历史、间隔 ≥300 秒都缺失”的提前隔离证据；读取失败只记未完成，不冒充缺失。建会话列表有上限且不能关联原请求，找到同达人 CID 也不猜测成功或继续发卡文。
+每位领取冻结全部发送事实，逐次发卡/文字前复检停止、时间窗、身份维护、关系和当前材料。容量预检在建会话/发卡前，最终滚动 24 小时预留在短事务复核；已解锁关系、或 24 小时内已为同一达人预留过的，不再占新联系名额（`cycle_delivery.contact_capacity_available`）。本地上限 `NEW_CONTACT_LIMIT` 现为 None，改由平台机构额度决定；`cycle_platform_signal` 里同一北京日 outcome=rejected 的平台回执达到 `PLATFORM_REJECTION_HOLD`（1 次）时，同一闸门拒绝新联系到次日，发送 worker 进入 waiting_capacity（每 5 分钟复查）。IT 与 BR/MY/UK 两类发送都会结算已派发组件：明确拒收（状态 1–5）记 rejected，其它记 unknown 等回查；带响应的平台回执全部落账（`market_send_canary._record_send_failure`）。建会话返回非零码先保存原始失败/未知证据；201 沿原明确商业拒绝路径隔离，其余无可关联回执的结果进入下述有界核验，不永久停止整个市场。平台额度的原生码分类仍需继续收窄，不能把当前所有 rejected 信号都解释为已证实额度耗尽。页面与状态接口的 capacity.limit/remaining 为 null 时显示“由平台机构额度决定”，告警条报当天平台拒绝次数。卡＋文字要求两个剩余消息槽；历史单卡确认而文字未尝试已触限，只结算未发送文字，保留 partial_delivery。冻结后 30 分钟过期的投递，发送 worker 每轮先用 `cancel_expired_unsubmitted` 结算，不迟发：建会话未开始、各组件未发出的记 cancelled；卡已确认、文字未开始的只取消文字，记 partial_delivery；可能已到达平台的（会话创建已开始、组件在途或 unknown）留给核验。二发未知由 `delivery_reconciliation.py` 在原执行器结束后只读核验：建会话最多 2 轮，每轮 180 秒、最多 101 页；卡片/文字各最多 3 轮，每轮 90 秒；相邻轮至少 300 秒，从首轮起 900 秒累计期限。请求前将次数、原 requestRef 和期限记入 `cycle_delivery_check`，重启/新窗口不清零。首次正常提交后的立即回读不计专项轮次。卡片仍保留“两次成功读取历史、间隔 ≥300 秒都缺失”的提前隔离证据；读取失败只记未完成，不冒充缺失。建会话列表有上限且不能关联原请求，找到同达人 CID 也不猜测成功或继续发卡文。
 
 预算耗尽记 `quarantined_unknown`，保留原会话意图与卡文的真实状态；只阻断同市场/OEC 主动营销，不改关系为 human、不新增技术人工案件，不自动周期追查。原业务人工案件及拒联不清除。发送池独立展示“技术隔离”，不混入人工等待；原 unknown 组件不再占全市场派发槽或把状态接口误标为仍待核验。隔离后的精确迟到回执可幂等确认原组件，但不重开投递或补发从未提交组件；核验确认卡片和关闭未提交文字同事务完成。建会话业务码 201 保持明确商业拒绝的旧隔离/案件分类，额度状态 3 / check_code 100 / `im_limit_reached` 仍走额度暂停。
 
@@ -271,7 +271,20 @@ inbox 趋势和日明细使用同一账本，totals 等于每日求和，文字�
 
 `legacy_runtime.configure_vendored_bdhub()` 强制从本仓 vendor 加载协议，已加载其他源码则失败。旧目录在运行时只读提供尚未迁移的账号配置、保存凭据、签名 runtime 与 DeepSeek key 回退；IT 每次写入前还会只读检查旧系统写门禁目录和 PostgreSQL（`second_live_runtime.conflicts()`），旧库不可用时 IT 发送与回复报 `legacy_state_unavailable`。`scripts/vendor-runtime/manifest.json` 固定源码、必要资源与本地补丁 hash；`--check` 漂移非零退出，`--write` 在临时目录重建验证后交换。pure_http_runtime_manifest.json 属于运行闭包，不能按“非 Python”删除。细节见 [vendor README](../vendor/README.md)。
 
-## 6. 运行与验证
+## 6. 尚未完成的合同与验证边界
+
+- **全托选入：** `global_selection.Selection.skip_unknown` 仅对符合 receipt 条件且至少两次延迟缺失回读的原项记 skipped_unknown；活动失配另按两次间隔至少 300 秒处理。scheduler 仍将剩余 submitting/awaiting_verification/result_unknown/needs_review 作为 `global_selection_unresolved`，不能称所有单项未知都已脱离阶段阻断。
+- **IT 身份阶段回执：** 供给模式已路由 `market-identity.py`，但 `SubprocessStageExecutor._call` 对 `sliceComplete`/`newBindings` 的专门归一化只列 BR/MY/UK；IT 使用通用分支，绑定计数可能显示 0，`account_wait` 等等待也可能落为阶段失败。平台 Find 成功证据仍保留，这不证明四市场阶段计数/等待合同已经完全统一。
+- **发送额度：** `cycle_delivery.py` 仍按同一北京日第一次 rejected 回执拦截新联系；明确额度信号与其他拒绝分型、按实际恢复而非按次日解除仍待完善。
+- **AI 失败与未知：** `agent_reply_v2.generate` 已按 input_hash 限制三次；`reply_scope.retry_ready`/worker 保留退避，但错误分型、服务级退避、耗尽展示仍不完整。`cycle_auto_reply.reply_blocker` 对本市场 unknown 投递和 inflight/accepted/unknown 回复继续设市场级门禁；AI 回复尚未接入二发的有限核验隔离预算。
+- **二发隔离后的服务：** `quarantined_unknown` 已释放二发派发槽，但新来信的独立 AI 服务许可尚未按模块方案 §9.19 完整落实，不能由“不再阻塞二发”推导“新来信必然可自动回复”。
+- **上下文：** 全部当前未答消息范围、生产 live 模式和超长输入拦截已接入；长期提醒记忆、自动分段以及严格按历史指南/关系/事实回放尚未完成。
+- **账号恢复：** 收信/SDK 使用 `login_recovery.request_refresh` 的通讯账号代次请求，OECID 使用 scheduler 的 `_relogin_market_account` 并选择供给角色；定期维护共用原意图台账，尚未统一所有模块的认证错误入口和请求键。
+- **收信/吞吐：** SDK 初始化成功和周期续期已验证，HTTP 借用仍可能在续期交接时短暂等待；四市场自然新来信时延、正式二发窗口卡文吞吐和完整维护故障交错仍需实际业务样本。账号内 HTTP 预算当前按进程设置，尚无统一的账号总请求限速器。
+
+以上是代码边界，不更改已确认业务目标。后续任务与原审查发现见[模块方案](implementation/module-optimization-plan-20260925.md)和[AI 回复优化方案](architecture/ai-reply-optimization-20260925.md)。
+
+## 7. 运行与验证
 
 ```bash
 # 项目根目录
@@ -288,8 +301,8 @@ PYTHONDONTWRITEBYTECODE=1 .venv/bin/python scripts/check-docs.py
 # apps/web
 npm ci
 npm test
-npm run typecheck
 npm run build
+npm run typecheck
 npm run dev   # 开发；生产使用 npm run start，不能同时占用 5198
 ```
 

@@ -1,8 +1,10 @@
 # BDHub-Agent
 
-独立的 Agent 驱动达人经营系统。IT、BR、MY、UK 共用货盘、线索、身份、持续发送、收信和服务处理流程，各市场保留独立账号、语言、能力和台账边界；B 类视频线索、TapLink 清理和会话页人工发送等能力目前只在 IT 实现（见技术文档）。
+独立的 Agent 驱动达人经营系统。IT、BR、MY、UK 共用货盘、线索、身份、持续发送、收信和服务处理流程，各市场保留独立账号、语言、能力和台账边界；自动 A/B 线索均支持四市场；TapLink 清理、会话页人工发送和身份/画像页面操作仍仅支持 IT（见技术文档）。
 
 实际开关、进程和断点以[当前交接](docs/handoff/current.md)及本机台账为准。打开页面、预检、构建与重启不产生发送授权，也不改变已有开关。
+
+当前采用固定双账号分工：通讯账号负责 SDK 收信及原 HTTP 二发/AI 回复，供给账号负责 Campaign、商品、TapLink 和 OECID。全托支持 IT/UK 首次及每 15 天按类目发现，候选增量累积；A/B 持久队列每 7 天到期重查，发送按 4 A / 1 B 分配机会。具体例外与未完成范围见主文档。
 
 ## 当前入口
 
@@ -42,13 +44,13 @@ npm run typecheck
 Python 使用本项目自己的 3.13 虚拟环境；固定依赖见 `requirements.lock`：
 
 ```bash
-cd /Users/bjn00003/BDHub/BDHub-Agent
+cd <worktree>
 python3 -m venv .venv
 .venv/bin/python -m pip install -r requirements.lock
 PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m unittest discover -s tests
 ```
 
-按改动范围选择测试；真实发送、建链、选入和外部结果必须另行以持久意图和平台回执验收，不能由离线测试替代。
+文档变更运行 `PYTHONDONTWRITEBYTECODE=1 .venv/bin/python scripts/check-docs.py` 与 `git diff --check`。按改动范围选择测试；真实发送、建链、选入和外部结果必须另行以持久意图和平台回执验收，不能由离线测试替代。
 
 ## 本地配置与状态
 
@@ -61,3 +63,9 @@ chmod 600 config/kalodata-identity.json config/campaign-join.json
 ```
 
 缺少 `var/` 中的真实 SQLite 与证据文件时，只能进行离线开发；不得用演示数据冒充当前业务状态。
+
+## GitHub 与恢复
+
+代码仓库：[1435762425/BDHub-Agent](https://github.com/1435762425/BDHub-Agent)（私有），远端默认分支为 `main`；本机生产检出分支为 `codex/v1-runtime-alignment`。开发使用独立 `codex/` worktree，验证后合入，再显式推送正式分支到远端 `main`，不推送全部实验分支。
+
+SDK 切换前代码标签为 `pre-sdk-rollout-20260926`，已验收的 SDK/HTTP 版本标签为 `sdk-http-four-market-20260926`；标签固定对应发布时的代码，不随后续文档提交移动。GitHub 保存代码和文档，SQLite、身份材料和本机备份仍在 Git 之外。克隆代码不等于恢复可运行生产环境：还依赖真实状态、本机私密配置及只读旧项目运行依赖。回退须保留切换后新消息，按[上线与回退步骤](docs/implementation/sdk-http-rollout-20260926.md)操作。

@@ -26,20 +26,20 @@ npm run build
 npm run typecheck   # tsc 会读取 .next/types，删改路由后先 build
 ```
 
-这些测试验证页面/API 合同、本地状态机和故障恢复，不替代真实 TikTok/Kalodata 回执或业务验收。两个测试依赖本机环境：`campaign.test.mjs` 的状态读取用例会真实调用 `campaign-join.py` 读取 `var/`，`creator-profile-refresh.test.mjs` 要求仓库目录名以 `BDHub-Agent` 结尾；在 worktree 中这两项失败属预期。
+这些测试验证页面/API 合同、本地状态机和故障恢复，不替代真实 TikTok/Kalodata 回执或业务验收。`campaign.test.mjs` 使用静态回执测试纯解码器；`creator-profile-refresh.test.mjs` 按项目文件标记验证路径，不依赖生产库或固定目录名。在 worktree 中运行不应忽略这两项失败。
 
 ## 主要页面
 
 | 路由 | 当前用途 |
 | --- | --- |
-| `/{market}` | 运营首页：主链、异常、自动运营/全托周更/持续发送开关 |
+| `/{market}` | 运营首页：主链、异常、自动运营/全托商品发现/持续发送开关 |
 | `/{market}/workspace/send`、`/{market}/workspace/history` | A/B 发送池、模板审核、持续发送与原意图核验；最近统计与日明细（旧 `/workspace/inbox` 重定向到会话） |
 | `/{market}/conversations`、`…/conversations/templates`、`…/conversations/agent` | 三栏会话、人工/发送模板、Agent 指南与零写入试聊 |
 | `/{market}/catalog` | 全托/Campaign、筛分、标准 TapLink、A/B 线索与链接命名 |
 | `/{market}/creators` | 稳定达人身份、别名、画像与线索结果 |
 | `/{market}/ops/jobs`、`/{market}/ops/kalodata`、`/{market}/ops/accounts` | 作业时间、Kalodata 身份、账号分工与维护（旧 `/ops/*` 只重定向到 `/it/ops/*`） |
 
-IT、BR、MY、UK 复用市场页面；当前回复执行使用多轮 V2，旧五动作与固定模板评测不作为 V2 执行真值。页面清单和业务规则以项目主文档为准。
+IT、BR、MY、UK 复用市场页面；自动 A/B 读取和发送支持四市场，手动发送、身份/画像操作与 TapLink 清理仍有 IT 限制。通讯会话由 SDK owner 管理，页面二发和 AI 继续走原 HTTP 执行器；当前回复执行使用多轮 V2，旧五动作与固定模板评测不作为 V2 执行真值。页面清单和业务规则以项目主文档为准。
 
 浏览器演示、`/flow-demo`、本地模拟器、旧二发预演/实测和 matching/outreach-drafts 页面已退出生产构建；2026-09-24 又删除了页面不再调用的 reply-review、global-source、catalog-screen、cycle-service API。对应 SQLite 仍作为历史数据保留并继续备份。产品规则见 [项目文档](../../docs/PROJECT.md)，实现结构见 [技术文档](../../docs/TECHNICAL.md)，动态运行状态见 [当前交接](../../docs/handoff/current.md)。
 
@@ -50,4 +50,4 @@ IT、BR、MY、UK 复用市场页面；当前回复执行使用多轮 V2，旧�
 - `src/features/`：页面、查询 hooks、交互和状态展示；业务资格与幂等不由前端保证。
 - `tests/`：Node 合同测试。数量恒等式、未知结果、暂停和输入拒绝需要同时覆盖正向与反向案例。
 
-本机敏感身份在仓库根被忽略的 `config/kalodata-identity.json`、`config/campaign-join.json`、`config/typesafe.json`，运行数据在 `var/`；不得复制到前端 bundle、日志或 Git。
+本机敏感配置在仓库根被忽略的 `config/kalodata-identity.json`、`config/campaign-join.json`；历史 `config/typesafe.json` 已退出运行依赖，仍属私密文件。账号身份和运行数据在 `var/`；不得复制到前端 bundle、日志或 Git。

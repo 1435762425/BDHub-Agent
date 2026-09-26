@@ -1,6 +1,6 @@
 # 文档导航
 
-当前规则只在 [PROJECT.md](PROJECT.md)（产品）与 [TECHNICAL.md](TECHNICAL.md)（实现）维护。[AGENTS.md](../AGENTS.md) 规定执行边界，[当前交接](handoff/current.md) 记录带时间的运行快照。日期化报告只证明当时的范围和结果，不提供当前执行授权。
+当前规则只在 [PROJECT.md](PROJECT.md)（产品）与 [TECHNICAL.md](TECHNICAL.md)（实现）维护。[AGENTS.md](../AGENTS.md) 规定执行边界，[当前交接](handoff/current.md) 记录带时间的运行快照。日期化报告只证明当时的范围和结果，不提供当前执行授权。当前代码核对基线为 2026-09-26 的 `d3bcc5a`；模块方案与 AI 审查页顶部的实施表区分已完成、部分完成和剩余项，早期报告中的“待实施”不覆盖该表。
 
 ## 按问题阅读
 
@@ -10,9 +10,10 @@
 | 调度/B 类连续性与 Agent 执行修复 | [验证、加载与剩余范围](implementation/continuity-agent-runtime-20260925.md) |
 | 第一批只读运营面板交付 | [实现、验证与 Web 发布状态](implementation/readonly-operations-overview-20260925.md) |
 | 商品全生命周期 | [PID 生命周期](architecture/pid-lifecycle-v1.md)、[Campaign](architecture/non-full-managed-campaign-v1.md) |
+| 当前代码、GitHub 与回退 | [仓库说明](../README.md#github-与恢复)、[SDK/HTTP 上线及保留数据的回退](implementation/sdk-http-rollout-20260926.md) |
 | 工作流、市场与账号 | [自动运营设计](architecture/automated-operations-workflow-v1.md)、[市场接入标准](architecture/market-rollout-standard-v1.md)、[账号生命周期](architecture/dual-account-lifecycle.md) |
 | 身份与排序 | [稳定身份](architecture/creator-identity-and-rename.md)、[排序规则](PROJECT.md#43-发送位置) |
-| 会话与当前 Agent | [已确认 V2 场景与原设计](architecture/conversation-agent-upgrade-plan-20260923.md)、[AI 回复设计审查与优化方案](architecture/ai-reply-optimization-20260925.md)（Jev 已清理，技术优化分批推进） |
+| 会话与当前 Agent | [已确认 V2 场景与原设计](architecture/conversation-agent-upgrade-plan-20260923.md)、[AI 回复设计审查与优化方案](architecture/ai-reply-optimization-20260925.md)（已完成消息范围/原子准备；AI unknown 隔离、长期记忆等剩余项见顶部状态表） |
 | 四市场真实平台结果/限制 | [启动实测](implementation/four-market-launch-implementation-20260923.md)、[接入证据](implementation/br-my-uk-onboarding-20260921.md) |
 | OECID 成本与恢复 | [真实吞吐](implementation/identity-oecid-throughput-20260920.md)、[12 QPS 验收](implementation/identity-12qps-500-release.md) |
 | Kalodata 数据口径 | [GMV 实测](implementation/kalodata-gmv-live-probe-20260920.md)、[视频证据](implementation/kalodata-zero-sale-video-evidence-20260920.md) |
