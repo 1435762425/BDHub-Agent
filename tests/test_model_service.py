@@ -30,6 +30,21 @@ class ModelServiceEpochTests(unittest.TestCase):
   M.failed(self.store,probe,'provider_timeout');self.assertIsNone(self.state())
   self.assertEqual(M.acquire(self.store,self.key)['mode'],'closed')
 
+ def test_a_regranted_probe_is_the_only_one_that_decides(self):
+  for permit in [M.acquire(self.store,self.key) for _ in range(3)]:M.failed(self.store,permit,'provider_timeout')
+  self.now[0]=self.state()['nextAt']+1
+  first=M.acquire(self.store,self.key)
+  self.now[0]+=M.PROBE_LEASE_SECONDS+1  # the first probe hangs past its lease
+  second=M.acquire(self.store,self.key)
+  self.assertNotEqual(first['token'],second['token'])
+  M.succeeded(self.store,first);self.assertIsNotNone(self.state())   # late success of the stale probe: ignored
+  M.failed(self.store,first,'provider_timeout')
+  opened=self.state()['nextAt']
+  self.assertLess(opened,self.now[0])                                # nor did its failure extend the pause
+  M.failed(self.store,second,'provider_timeout')
+  self.assertGreater(self.state()['nextAt'],self.now[0])             # the current probe's failure reopens
+  self.now[0]=self.state()['nextAt']+1
+  third=M.acquire(self.store,self.key);M.succeeded(self.store,third);self.assertIsNone(self.state())
  def test_a_failed_probe_reopens_with_a_longer_pause(self):
   for permit in [M.acquire(self.store,self.key) for _ in range(3)]:M.failed(self.store,permit,'provider_timeout')
   first=self.state()['nextAt'];self.now[0]=first+1
