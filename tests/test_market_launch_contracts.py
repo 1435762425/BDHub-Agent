@@ -207,4 +207,25 @@ class MarketLaunchContracts(unittest.TestCase):
                    ('partial_delivery',[('card','confirmed'),('text','cancelled')]))
   self.assertEqual(self.store.db.execute('SELECT count(*) FROM cycle_delivery_check WHERE delivery_id=?',(did,)).fetchone()[0],1)
 
+ def test_a_card_refused_for_a_stale_offer_cancels_only_that_unsent_delivery(self):
+  from lib.market_send_canary import _settle_local_refusal
+  Deliveries(self.store);did='delivery-fixture-stale-offer'
+  self.store.db.execute("INSERT INTO cycle_delivery VALUES(?,?,?,?,?,?,?,?,?,'ready')",
+    (did,self.plan,'creator-y','102','123','source-2','{}',NOW-30,NOW+1800))
+  for kind in ('card','text'):
+   self.store.db.execute("INSERT INTO cycle_delivery_part(delivery_id,kind,request_ref,state) VALUES(?,?,?,'ready')",(did,kind,kind+'-ref-y'))
+  self.assertIsNone(_settle_local_refusal(self.store,did,'card',None))
+  self.assertIsNone(_settle_local_refusal(self.store,did,'card',CycleError('market_send_result_unknown')))
+  settled=_settle_local_refusal(self.store,did,'card',CycleError('offer_changed'))
+  self.assertEqual(settled,{'state':'cancelled','deliveryId':did,'stopReason':'offer_changed'})
+  self.assertEqual([row[0] for row in self.store.db.execute('SELECT state FROM cycle_delivery_part WHERE delivery_id=? ORDER BY kind',(did,))],['cancelled','cancelled'])
+  # A component that may have reached the platform is never cancelled this way.
+  started='delivery-fixture-started'
+  self.store.db.execute("INSERT INTO cycle_delivery VALUES(?,?,?,?,?,?,?,?,?,'running')",
+    (started,self.plan,'creator-z','103','123','source-3','{}',NOW-30,NOW+1800))
+  self.store.db.execute("INSERT INTO cycle_delivery_part(delivery_id,kind,request_ref,state,started) VALUES(?,?,'card-ref-z','inflight',?)",(started,'card',NOW-5))
+  self.store.db.execute("INSERT INTO cycle_delivery_part(delivery_id,kind,request_ref,state) VALUES(?,?,'text-ref-z','ready')",(started,'text'))
+  with self.assertRaisesRegex(CycleError,'delivery_cancel_not_safe'):
+   _settle_local_refusal(self.store,started,'card',CycleError('offer_changed'))
+
 if __name__=='__main__':unittest.main()

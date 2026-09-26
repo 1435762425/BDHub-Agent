@@ -136,6 +136,23 @@ def _preflight_or_close(store,session,plan,candidate,conversation,did):
     return None
 
 
+def _settle_local_refusal(store,did,kind,local):
+    """A known per-recipient exclusion refused before dispatch settles this delivery only (never the market).
+
+    ``local`` is set only while the refused component is provably unsubmitted. A stale frozen offer after a
+    catalog refresh (``offer_changed``) used to stop the whole market worker on every relaunch until the
+    delivery expired; now the unsent parts are cancelled and the worker goes on to the next candidate."""
+    from lib.continuous_send import PREFLIGHT_TERMINAL
+    if not local or str(local) not in PREFLIGHT_TERMINAL:
+        return None
+    reason=str(local)
+    if kind=='text':
+        Deliveries(store).cancel_pending_text(did,reason)
+        return {'state':'partial_delivery','deliveryId':did,'stopReason':reason}
+    Deliveries(store).cancel_unsubmitted(did,reason)
+    return {'state':'cancelled','deliveryId':did,'stopReason':reason}
+
+
 def _candidate(root,market,store,plan,initial,require_new_conversation=True):
  from lib.outreach_allocation import select
  from lib.cycle_delivery import capacity_for_candidate
@@ -301,12 +318,10 @@ def run(root,market,request_id,*,canary=True,page_control=False,reconcile_only=F
      except BaseException as error:
       _record_send_failure(store,did,kind,error)
       from lib.invitation_continuation import local_permit_error
-      from lib.continuous_send import PREFLIGHT_TERMINAL
       latest=next(p for p in Deliveries(store).get(did)['parts'] if p['kind']==kind)
       local=local_permit_error(error,latest)
-      if local and kind=='text' and str(local) in PREFLIGHT_TERMINAL:
-       Deliveries(store).cancel_pending_text(did,str(local))
-       return report|{'state':'partial_delivery','deliveryId':did,'stopReason':str(local)}
+      settled=_settle_local_refusal(store,did,kind,local)
+      if settled:return report|settled
       if local:raise local from None
       raise
     Deliveries(store).receipt(did,kind,receipt)

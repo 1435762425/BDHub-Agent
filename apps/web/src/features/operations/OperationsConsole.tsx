@@ -11,9 +11,10 @@ const time=(value:number|null)=>value?new Date(value*1000).toLocaleString("zh-CN
 const minutes=(since:number|null,now:number)=>since?`${Math.max(0,Math.round((now-since)/60))} 分钟`:"—";
 const STATE:Record<string,string>={completed:"已完成",quota_exhausted:"额度用尽，断点保留",failed:"失败",needs_human:"需核对",stopped:"已停止",
  skipped:"本轮跳过",running:"运行中",queued:"排队",sending:"发送中",waiting_window:"等待发送窗口",waiting_pool:"等待发送池",
- waiting_capacity:"等待可用额度",waiting_reconciliation:"待核验",outside_reply_window:"回复窗口外",disabled:"未启用",off:"关闭",idle:"空闲",paused:"暂停"};
+ waiting_capacity:"等待可用额度",waiting_reconciliation:"待核验",outside_reply_window:"回复窗口外",disabled:"未启用",off:"关闭",idle:"空闲",paused:"暂停",
+ attention:"已停止，需关注",first_send_requires_page_start:"首发需在页面启动",confirmed:"已确认",cancelled:"已取消",partial_delivery:"部分送达",waiting_account:"等待账号"};
 const label=(state:string|null)=>state?STATE[state]??"状态待核实":"—";
-const tone=(state:string|null)=>state==="failed"||state==="needs_human"||state==="waiting_reconciliation"?"warning":state==="running"||state==="sending"?"brand":state==="completed"?"success":"neutral";
+const tone=(state:string|null)=>state==="failed"||state==="needs_human"||state==="waiting_reconciliation"||state==="attention"?"warning":state==="running"||state==="sending"?"brand":state==="completed"?"success":"neutral";
 function resource(key:string){
  if(key==="platform:global")return "平台读取槽（四市场共用）";
  if(key==="kalodata:global")return "Kalodata 读取槽";
