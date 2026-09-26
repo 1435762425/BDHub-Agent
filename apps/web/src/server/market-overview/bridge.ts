@@ -9,7 +9,7 @@ export type Metric={key:string;label:string;value:number|null;unit:string;note:s
 export type OverviewPanel={id:string;title:string;available:boolean;reason:string|null;source:string;observedAt:number|null;metrics:Metric[];note?:string;rows?:Record<string,number>;handles?:Record<string,number>;labels?:Record<string,string>};
 // replyCreators/serviceReplies* are people and manual/AI splits; null from an older backend reads as "—".
 export type Day={date:string;cards:number;texts:number;creators:number;unconfirmed:number;replies:number;showcase:number;ourMessages:number;autoReplies:number;casesOpened:number;replyCreators:number|null;serviceRepliesManual:number|null;serviceRepliesAi:number|null};
-export type MarketOverview={schemaVersion:"bdhub.market-overview.v1";market:string;checkedAt:number;available:boolean;planState:string|null;panels:OverviewPanel[];waits:Array<{id:string;label:string;state:string;observedAt:number|null}>;waitsUnavailable?:boolean;activity:{available:boolean;days:Day[];totals:Record<string,number>};readOnly:true;platformWrites:0;realSends:0};
+export type MarketOverview={schemaVersion:"bdhub.market-overview.v1";market:string;checkedAt:number;available:boolean;planState:string|null;panels:OverviewPanel[];waits:Array<{id:string;label:string;state:string;observedAt:number|null}>;waitsUnavailable?:boolean;activity:{available:boolean;days:Day[];totals:Record<string,number|null>};readOnly:true;platformWrites:0;realSends:0};
 const fail=():never=>{throw Error("invalid_market_overview");};
 const object=(v:unknown)=>v&&typeof v==="object"&&!Array.isArray(v)?v as Record<string,unknown>:fail();
 const text=(v:unknown,max=300)=>typeof v==="string"&&v.length<=max?v:fail();
@@ -46,10 +46,11 @@ export function validateOverview(raw:unknown,market:string):MarketOverview{
  const activity=object(v.activity);if(!Array.isArray(activity.days)||activity.days.length>7)fail();
  const days=(activity.days as unknown[]).map(rawDay=>{const d=object(rawDay),date=text(d.date,10);if(!/^\d{4}-\d{2}-\d{2}$/.test(date)||new Date(date+"T00:00:00Z").toISOString().slice(0,10)!==date)fail();return {date,...Object.fromEntries(dayKeys.map(k=>[k,count(d[k])])),...Object.fromEntries(optionalDayKeys.map(k=>[k,d[k]==null?null:count(d[k])]))} as Day;});
  if(days.some((d,i)=>i>0&&d.date<=days[i-1].date))fail();
- const totals:Record<string,number>={};
+ const totals:Record<string,number|null>={};
  if(boolean(activity.available)){
   if(days.length!==7)fail();const source=object(activity.totals);
   for(const key of dayKeys){totals[key]=count(source[key]);if(totals[key]!==days.reduce((n,d)=>n+d[key],0))fail();}
+  for(const key of optionalDayKeys){const value=source[key];totals[key]=value==null||days.some(d=>d[key]==null)?null:count(value);if(totals[key]!=null&&totals[key]!==days.reduce((n,d)=>n+(d[key]??0),0))fail();}
  }else if(days.length)fail();
  return {schemaVersion:"bdhub.market-overview.v1",market,checkedAt:stamp(v.checkedAt)??fail(),available:boolean(v.available),planState:v.planState===null?null:text(v.planState,40),panels,
   waits:(v.waits as unknown[]).map(rawWait=>{const w=object(rawWait);return {id:text(w.id,60),label:text(w.label,100),state:text(w.state,80),observedAt:stamp(w.observedAt)};}),
