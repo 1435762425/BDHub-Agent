@@ -7,6 +7,14 @@
 
 
 
+## 2026-09-26：外部静态审查 R1–R10 修复合入生产
+
+- 依据用户提供的 `acad472` 只读审查（GPT 静态审查），逐项核对代码后在独立 worktree `../BDHub-Agent-review-20260926`（分支 `codex/review-fixes-20260926`）修复，用户确认后快进合入本机生产分支并推送 GitHub `main`。
+- 内容：阶段写入证据（`writeEvidence`，写入类阶段仅确认零写才自动重排）；IT OECID 有界切片归一化；OECID 等待绑定实际执行账号；TapLink 标准卡须平台有效/商品合格；AI 回复冻结原发送身份、最多 3 次只读核验（≥120 秒、900 秒预算）后按达人隔离；SDK 收信断点续读（`backfilling`）；全托 ≤3 个未决 PID 时只冻结该 PID、Campaign 继续；仅平台额度回执暂停当日新联系（同类非额度拒绝 3 次按系统性拒绝暂停）；BR/MY/UK 每周一只读 binding 检查（不删除）。参数按用户要求保持默认。
+- 验证：Python 全量 1,503、Web 180 通过，build/typecheck 通过。仅离线测试与只读 SQLite 查询；未调用平台、未写生产库、未改配置或授权。
+- 未重启任何常驻进程（scheduler、AI 回复 worker、SDK 会话 owner、发送 worker）：新拉起的子脚本立即使用新代码，常驻进程在下次正常重启后生效。`service_reply` 新列由新代码首次实例化 `AutoReplies` 时原地追加；`inbox_backfill` 由 `Inbox` 自建，均为 additive。
+- 已知生产影响：IT 选品台账现有 1 个 `result_unknown`，新 scheduler 生效后 IT catalog 会绕开该 PID 继续选入（产生新的选入写入）；旧的无写入证据失败写入阶段不再自动重排而转 needs_human；BR/MY/UK 周一新增只读平台读取。
+
 ## 2026-09-26：仓库文档与已发布代码同步
 
 - 本次只按 `d3bcc5a` 静态核对文档，未重新采样生产健康或业务数量；以下 03:41 及更早条目保留各自时点。历史条目的“未启用”“待实施”不覆盖后续发布记录。
