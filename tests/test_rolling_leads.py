@@ -204,6 +204,32 @@ class RollingLeads(unittest.TestCase):
    self.assertEqual(store.db.execute('SELECT state FROM workflow_run WHERE run_id=?',(old['runId'],)).fetchone()[0],'needs_human')
    self.assertEqual(queue.identity_hold(self.root,'it')['runId'],old['runId'])
 
+ def test_identity_hold_recovers_only_on_the_account_that_ran_the_failed_stage(self):
+  from lib.operations_workflow import create_run,start_stage,finish_stage
+  from lib.market_accounts import load_config
+  roles=load_config(self.root)['markets']['it']['roles']
+  def generation(store,account,at):
+   with store.tx():
+    store.db.execute("INSERT INTO account_identity_generation(generation_id,market,account,role,reason,capability_json,state,created_at,published_at) "
+                     "VALUES(?,?,?,?,?,?,?,?,?)",('generation-'+account+str(at),'it',account,'supply','test','{}','published',at,at))
+  with CycleStore(self.root/'var/second-cycle.sqlite',clock=lambda:NOW) as store:
+   failed=create_run(store,market='it',trigger_source='manual',scheduled_at=NOW-100,only_stage='oecid')
+   start_stage(store,failed['runId'],'oecid')
+   finish_stage(store,failed['runId'],'oecid',state='needs_human',error_code='identity_supply_capability_unverified',
+                identity_account=roles['supply'])
+   self.assertEqual(queue.identity_hold(self.root,'it')['account'],roles['supply'])
+   generation(store,roles['communications'],NOW+10)
+   self.assertIsNotNone(queue.identity_hold(self.root,'it'))
+   generation(store,roles['supply'],NOW+20)
+   self.assertIsNone(queue.identity_hold(self.root,'it'))
+   legacy=create_run(store,market='it',trigger_source='manual',scheduled_at=NOW+30,request_id='legacy-identity-0001',only_stage='oecid')
+   with store.tx():
+    store.db.execute("UPDATE workflow_stage_run SET state='needs_human',error_code='identity_failed',finished_at=? "
+                     "WHERE run_id=? AND stage='oecid'",(NOW+40,legacy['runId']))
+   # A legacy failure without the recorded account uses the resolver the stage executes with.
+   from lib.im_session_owner import identity_account
+   self.assertEqual(queue.identity_hold(self.root,'it')['account'],identity_account(self.root,'it'))
+
  def test_valid_negative_identity_is_reused_for_new_window_and_market_remains_separate(self):
   from lib.market_identity import reuse_judgments,pending
   from lib.lead_selection import publish_query

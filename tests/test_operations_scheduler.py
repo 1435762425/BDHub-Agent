@@ -90,7 +90,7 @@ class SchedulerFlow(unittest.TestCase):
             def execute(self,store,run,stage,jobs):
                 result=super().execute(store,run,stage,jobs)
                 if stage=='taplink_prepare':result.update(state='failed',complete=False,
-                                                          errorCode='temporary_failure')
+                                                          errorCode='temporary_failure',writeEvidence='zero')
                 return result
         executor=FailingExecutor()
         for offset in range(4):
@@ -119,6 +119,63 @@ class SchedulerFlow(unittest.TestCase):
         tick(self.root,now=failed['finishedAt']+3601,executor=executor)
         self.assertEqual(len(executor.calls),prior_calls)
         self.assertEqual(workflow_status(self.store)['current']['state'],'needs_human')
+
+    def _write_stage_fixture(self,runner,request_id):
+        from lib.operations_workflow import create_run
+        save_setting(self.store,'it',request_id+'-setting',0,
+                     {'automaticOperationsEnabled':True,'fullCatalogWeeklyEnabled':False})
+        run=create_run(self.store,market='it',trigger_source='schedule',scheduled_at=NOW,
+                       request_id=request_id,only_stage='taplink_prepare',sources=['campaign'])
+        class LinkExecutor(SubprocessStageExecutor):
+            def execute(self,store,run,stage,jobs):
+                self.stage_calls=getattr(self,'stage_calls',0)+1
+                first=self._call(['scripts/catalog-link-batch.py','--route','campaign','--creates','1'],'link-create-a')
+                if first['state']!='completed':return first
+                return self._call(['scripts/catalog-link-batch.py','--route','campaign','--creates','1'],'link-create-b')
+        return run,LinkExecutor(self.root,runner=runner)
+
+    def _stage_row(self,run_id):
+        row=self.store.db.execute("SELECT platform_writes,counts_json,state FROM workflow_stage_run WHERE run_id=? "
+                                  "AND stage='taplink_prepare'",(run_id,)).fetchone()
+        return row['state'],row['platform_writes'],json.loads(row['counts_json'])
+
+    def test_lost_stdout_keeps_report_writes_and_is_never_retried_as_zero(self):
+        class Result:
+            returncode=0;stdout='';stderr=''
+        def runner(command,**_kwargs):
+            Path(command[command.index('--report')+1]).write_text(json.dumps({'platformWrites':1}))
+            return Result()
+        run,executor=self._write_stage_fixture(runner,'lost-stdout-0001')
+        tick(self.root,now=NOW,executor=executor)
+        state,writes,counts=self._stage_row(run['runId'])
+        self.assertEqual((state,writes,counts['writeEvidence']),('failed',1,'uncertain'))
+        tick(self.root,now=workflow_status(self.store)['current']['finishedAt']+3601,executor=executor)
+        self.assertEqual(executor.stage_calls,1)
+        self.assertEqual(workflow_status(self.store)['current']['state'],'needs_human')
+
+    def test_timeout_after_an_earlier_write_keeps_that_write_and_stays_unknown(self):
+        class Result:
+            returncode=0;stderr='';stdout='{"state":"completed","platformWrites":2}\n'
+        def runner(command,**_kwargs):
+            if 'link-create-b' in command[command.index('--report')+1]:raise subprocess.TimeoutExpired(command,1)
+            return Result()
+        run,executor=self._write_stage_fixture(runner,'timeout-after-write-0001')
+        tick(self.root,now=NOW,executor=executor)
+        state,writes,counts=self._stage_row(run['runId'])
+        self.assertEqual((state,writes,counts['writeEvidence']),('failed',2,'uncertain'))
+        tick(self.root,now=workflow_status(self.store)['current']['finishedAt']+3601,executor=executor)
+        self.assertEqual(executor.stage_calls,1)
+
+    def test_child_reported_zero_write_failure_keeps_bounded_auto_retry(self):
+        class Result:
+            returncode=1;stderr='';stdout='{"state":"failed","error":"temporary_read_failure","platformWrites":0}\n'
+        run,executor=self._write_stage_fixture(lambda *_args,**_kwargs:Result(),'proven-zero-0001')
+        tick(self.root,now=NOW,executor=executor)
+        state,writes,counts=self._stage_row(run['runId'])
+        self.assertEqual((state,writes,counts['writeEvidence']),('failed',0,'zero'))
+        tick(self.root,now=workflow_status(self.store)['current']['finishedAt']+3601,executor=executor)
+        self.assertEqual(executor.stage_calls,2)
+        self.assertEqual(workflow_status(self.store)['current']['runId'],run['runId'])
 
     def test_two_ready_kalodata_markets_execute_together_but_no_more_than_policy_cap(self):
         from lib.operations_workflow import create_run,start_stage,finish_stage
@@ -459,6 +516,48 @@ class StageWiring(unittest.TestCase):
                              ['scripts/collect-global-opportunity.py','scripts/select-global-products.py','scripts/select-global-products.py',
                               'scripts/select-global-products.py','scripts/sync-cycle-catalog.py'])
 
+    def _selection_catalog(self,ledger_rows):
+        calls=[]
+        def answers(args,_label):
+            if args[0]=='scripts/collect-global-opportunity.py':payload={'state':'completed','published':True,'products':3}
+            elif args[0]=='scripts/sync-cycle-catalog.py':payload={'status':'completed','offers':2}
+            elif args[0]=='scripts/campaign-join.py':payload={'state':'completed','unresolved':[],'stoppedUnknown':[]}
+            elif args[0]=='scripts/campaign-collect.py':payload={'status':'completed','offers':5,'screening':{'recorded':True}}
+            elif args[1] in ('prepare','verify'):payload={'states':{'pending':3},'error':None}
+            elif sum(1 for a,_ in calls if a[:2]==['scripts/select-global-products.py','execute-fast'])==1:
+                return {'state':'failed','itemCount':0,'complete':False,'platformWrites':2,
+                        'errorCode':'parallel_selection_requires_review','payload':{'report':None}}
+            else:payload={'states':{'confirmed':2,'result_unknown':len(ledger_rows),'pending':0},'error':None}
+            return {'state':'completed','itemCount':3,'complete':True,'platformWrites':0,'payload':payload}
+        folder=tempfile.TemporaryDirectory();self.addCleanup(folder.cleanup)
+        root=Path(folder.name);(root/'var').mkdir();(root/'config').mkdir()
+        (root/'config/operations-policy.json').write_text((ROOT/'config/operations-policy.json').read_text())
+        with closing(sqlite3.connect(root/'var/global-selection-uk.sqlite')) as db,db:
+            db.execute('CREATE TABLE intake_item(run_id TEXT,pid TEXT,state TEXT,payload TEXT,updated REAL)')
+            db.executemany("INSERT INTO intake_item VALUES('run',?,'result_unknown',?,0)",ledger_rows)
+        executor=SubprocessStageExecutor(root)
+        executor._call=lambda args,label,timeout=14400:(calls.append((args,label)) or answers(args,label))
+        result=executor.execute(None,{'runId':'workflow-gap','market':'uk','applicableSources':['selected','campaign']},'catalog',{'jobs':{}})
+        return result,calls
+
+    def test_single_pid_selection_unknown_is_isolated_and_campaign_continues(self):
+        receipt=json.dumps({'receipt':{'http':200,'code':0,'ambiguous':True}})
+        result,calls=self._selection_catalog([('pid-unknown',receipt)])
+        self.assertEqual((result['state'],result['complete']),('completed',True))
+        self.assertEqual(result['scope']['selectionGap'],{'unresolvedPids':['pid-unknown'],'coverage':'partial_selection',
+            'reasons':['global_selection_unresolved','parallel_selection_requires_review']})
+        self.assertEqual(result['platformWrites'],2)
+        self.assertTrue(any(args[0]=='scripts/campaign-collect.py' for args,_ in calls))
+        self.assertTrue(any(args[0]=='scripts/sync-cycle-catalog.py' for args,_ in calls))
+
+    def test_account_login_failure_or_many_unknowns_still_stop_dependent_writes(self):
+        auth=json.dumps({'receipt':{'http':200,'code':16201010,'ambiguous':False}})
+        ambiguous=json.dumps({'receipt':{'http':200,'code':0,'ambiguous':True}})
+        for rows in ([('pid-auth',auth)],[(f'pid-{n}',ambiguous) for n in range(4)]):
+            result,calls=self._selection_catalog(rows)
+            self.assertEqual((result['state'],result['errorCode']),('failed','parallel_selection_requires_review'))
+            self.assertFalse(any(args[0] in ('scripts/campaign-collect.py','scripts/campaign-join.py') for args,_ in calls))
+
     def test_uk_weekly_maintenance_reuses_discovery_within_fifteen_days(self):
         def answers(args,_label):
             if args[0]=='scripts/collect-global-opportunity.py':payload={'state':'completed','published':True,'products':10000};writes=0
@@ -643,6 +742,37 @@ class StageWiring(unittest.TestCase):
         self.assertEqual(result['state'],'completed')
         other=executor._call(['scripts/catalog-link-batch.py'],'not-identity')
         self.assertEqual(other['state'],'failed')
+
+    def test_non_it_link_maintenance_is_a_read_only_binding_check(self):
+        calls=[]
+        executor=SubprocessStageExecutor(ROOT)
+        executor._call=lambda args,label,timeout=14400:(calls.append(args) or {'state':'completed','complete':True,'platformWrites':0,
+            'payload':{'summary':{'checked':4,'valid':3,'withdrawn':1,'unresolved':0}}})
+        result=executor.execute(None,{'runId':'workflow-br','market':'br','applicableSources':['campaign']},'taplink_clean',{'jobs':{}})
+        self.assertEqual(calls,[['scripts/catalog-clean.py','check-bindings','--market','br']])
+        self.assertEqual((result['state'],result['itemCount'],result['platformWrites']),('completed',4,0))
+        self.assertEqual(result['scope'],{'market':'br','mode':'binding_check_read_only','remoteDelete':'not_enabled'})
+
+    def test_it_bounded_identity_slice_uses_the_same_four_market_contract(self):
+        class Result:
+            returncode=0;stderr=''
+            def __init__(self,payload):self.stdout=json.dumps(payload)+'\n'
+        base={'sliceComplete':True,'platformWrites':0,'realSends':0,'coverage':'bounded_identity_slice'}
+        for market in ('it','br','my','uk'):
+            for payload,count in ((base|{'market':market,'newBindings':3},3),
+                                  (base|{'market':market,'newBindings':0,'stopped':'account_wait'},0),
+                                  (base|{'market':market,'newBindings':0,'stopped':'nothing_pending'},0)):
+                executor=SubprocessStageExecutor(ROOT,runner=lambda *_a,_p=payload,**_k:Result(_p))
+                result=executor._call(['scripts/market-identity.py','run','--market',market],'identity-contract')
+                self.assertEqual((market,result['state'],result['itemCount'],result['scope']),
+                                 (market,'completed',count,{'coverage':'bounded_identity_slice'}))
+        for payload in (base|{'market':'br','stopped':'account_wait'},
+                        base|{'market':'it','platformWrites':1,'stopped':'account_wait'},
+                        base|{'market':'it','realSends':1,'stopped':'account_wait'}):
+            executor=SubprocessStageExecutor(ROOT,runner=lambda *_a,_p=payload,**_k:Result(_p))
+            result=executor._call(['scripts/market-identity.py','run','--market','it'],'identity-contract')
+            self.assertNotEqual(result.get('scope'),{'coverage':'bounded_identity_slice'})
+            self.assertEqual(result['state'],'failed')
 
     def test_success_exit_without_valid_report_or_with_busy_lock_is_failure(self):
         class Result:

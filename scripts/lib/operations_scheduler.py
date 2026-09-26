@@ -87,6 +87,26 @@ def _child_error(stderr):
     return None
 
 
+def with_write_evidence(result,ledger):
+    """Classify one stage result as proven zero, known or uncertain platform writes.
+
+    Only a stage whose every released child returned a readable result can prove zero.
+    Lost stdout, timeouts and exceptions after a child was released stay uncertain,
+    and the largest write count seen in any report is kept.
+    """
+    result=dict(result)
+    writes=result.get('platformWrites',0)
+    writes=writes if type(writes) is int and writes>=0 else 0
+    uncertain=result.get('writeEvidence')=='uncertain'
+    if ledger is not None:
+        writes=max(writes,ledger['writes']);uncertain=uncertain or ledger['uncertain']
+    elif result.get('writeEvidence') not in ('zero','known','uncertain'):
+        uncertain=True  # Executors without a ledger cannot prove what their children wrote.
+    result['platformWrites']=writes
+    result['writeEvidence']='uncertain' if uncertain else 'known' if writes else 'zero'
+    return result
+
+
 def collecting_source_run(root,market,account):
     """Resume a frozen source read before starting another run with the same scope."""
     path=Path(root)/('var/global-source.sqlite' if market=='it' else f'var/global-source-{market}.sqlite')
@@ -138,6 +158,39 @@ def selection_auth_unknown(root,market):
                   AND coalesce(json_extract(payload,'$.receipt.ambiguous'),0)=0""").fetchone()
         return {'count':int(row[0]),'latestAttempt':row[1]} if row and row[0] else None
     except sqlite3.Error:return None
+
+
+SELECTION_UNRESOLVED_STATES=('submitting','awaiting_verification','result_unknown','needs_review')
+# Errors the fast selector raises for its own unresolved PIDs after readback; any other error,
+# or a login failure, still stops every new write that depends on the supply account.
+SELECTION_PID_ERRORS=frozenset({'parallel_selection_requires_review','parallel_readback_unconfirmed',
+                                'selection_receipt_requires_review','global_selection_unresolved'})
+# More unresolved PIDs than this is treated as a systemic fault, not a single-PID unknown.
+SELECTION_UNRESOLVED_TOLERANCE=3
+
+
+def selection_unresolved(root,market):
+    """PIDs whose original selection intent is still unresolved; they are never re-submitted."""
+    path=Path(root)/('var/global-selection.sqlite' if market=='it' else f'var/global-selection-{market}.sqlite')
+    if not path.exists():return None
+    try:
+        with closing(sqlite3.connect(path.resolve().as_uri()+'?mode=ro',uri=True)) as db:
+            marks=','.join('?'*len(SELECTION_UNRESOLVED_STATES))
+            return sorted({r[0] for r in db.execute(f'SELECT pid FROM intake_item WHERE state IN ({marks})',SELECTION_UNRESOLVED_STATES)})
+    except sqlite3.Error:return None
+
+
+def selection_gap(root,market,result):
+    """The frozen PID-level gap when this outcome may continue, else None (account/systemic stop)."""
+    payload=result.get('payload') or {}
+    code=payload.get('error') or (result.get('errorCode') if result['state']!='completed' else None)
+    if result['state'] not in ('completed','failed') or code not in (None,*SELECTION_PID_ERRORS):return None
+    if selection_auth_unknown(root,market):return None
+    pids=selection_unresolved(root,market)
+    reported=sum(int((payload.get('states') or {}).get(key) or 0) for key in SELECTION_UNRESOLVED_STATES)
+    # The ledger must name every unresolved PID the child reported; otherwise the scope is unknown.
+    if not pids or len(pids)<reported or len(pids)>SELECTION_UNRESOLVED_TOLERANCE:return None
+    return {'unresolvedPids':pids,'reason':code or 'global_selection_unresolved'}
 
 
 def scheduler_state(root):
@@ -233,7 +286,24 @@ class SubprocessStageExecutor:
     def __init__(self,root,runner=subprocess.run,clock=time.time):
         self.root=Path(root);self.runner=runner;self.clock=clock;self._claims=threading.local()
 
+    def _ledger(self):
+        """Per-stage write evidence across every child call; None outside a scheduled stage."""
+        return getattr(self._claims,'ledger',None)
+
     def _call(self,args,label,timeout=14400):
+        ledger=self._ledger();launched=ledger['launched'] if ledger is not None else 0
+        try:result=self._call_child(args,label,timeout)
+        except BaseException:
+            # A child released by this call may have written before the timeout/error: never zero.
+            if ledger is not None and ledger['launched']>launched:ledger['uncertain']=True
+            raise
+        if ledger is not None:
+            ledger['writes']+=result.get('platformWrites',0)
+            if result.get('writeEvidence')=='uncertain':ledger['uncertain']=True
+        return result
+
+    def _call_child(self,args,label,timeout):
+        ledger=self._ledger()
         stamp=time.strftime('%Y%m%d-%H%M%S')
         report=self.root/f'var/workflow-{label}-{stamp}-{digest(args)[:8]}.json'
         command=[str(self.root/'.venv/bin/python'),str(self.root/args[0]),*args[1:]]
@@ -259,6 +329,7 @@ class SubprocessStageExecutor:
                         if claim_store.db.execute('SELECT changes()').fetchone()[0]!=1:
                             raise CycleError('workflow_stage_fence_stale')
                 os.write(write_fd,b'1')
+                if ledger is not None:ledger['launched']+=1
                 try:stdout,stderr=process.communicate(timeout=timeout)
                 except subprocess.TimeoutExpired:
                     os.killpg(process.pid,signal.SIGTERM)
@@ -275,6 +346,7 @@ class SubprocessStageExecutor:
                 raise
             finally:os.close(write_fd)
         else:
+            if ledger is not None:ledger['launched']+=1
             child=self.runner(command,cwd=str(self.root),capture_output=True,text=True,timeout=timeout,
                               env={**os.environ,'PYTHONDONTWRITEBYTECODE':'1'})
         lines=[line for line in (child.stdout or '').splitlines() if line.strip()]
@@ -285,8 +357,10 @@ class SubprocessStageExecutor:
             try:evidence=json.loads(report.read_text(encoding='utf-8'))
             except (OSError,ValueError):evidence={}
         if not isinstance(payload,dict) or not payload:
-            return {'state':'failed','itemCount':0,'complete':False,'platformWrites':0,
-                    'errorCode':f'{label}_report_invalid','payload':{}}
+            # The child ran but its result is unreadable: keep report writes, never prove zero.
+            return {'state':'failed','itemCount':0,'complete':False,'platformWrites':_report_platform_writes(evidence),
+                    'errorCode':f'{label}_report_invalid','writeEvidence':'uncertain',
+                    'payload':{'report':str(report.relative_to(self.root)) if report.exists() else None}}
         if args[0]=='scripts/rolling-leads.py' and not child.returncode and payload.get('sliceComplete') is True:
             valid=payload.get('market') in ('it','br','my','uk') and payload.get('platformWrites')==0 and payload.get('realSends')==0
             if valid:
@@ -294,7 +368,7 @@ class SubprocessStageExecutor:
                 return {'state':'stopped' if paused else 'completed','itemCount':payload.get('completed',0),
                         'complete':not paused,'platformWrites':0,'payload':payload,'scope':{}}
         if args[0]=='scripts/market-identity.py' and not child.returncode and payload.get('sliceComplete') is True:
-            if '--market' in args and payload.get('market')==args[args.index('--market')+1] and payload.get('market') in ('br','my','uk') and payload.get('platformWrites')==0 and payload.get('realSends')==0:
+            if '--market' in args and payload.get('market')==args[args.index('--market')+1] and payload.get('market') in ('it','br','my','uk') and payload.get('platformWrites')==0 and payload.get('realSends')==0:
                 return {'state':'completed','complete':True,'itemCount':payload.get('newBindings',0),
                         'platformWrites':0,'payload':payload,'scope':{'coverage':'bounded_identity_slice'}}
         reported_state=str(evidence.get('state') or evidence.get('status') or payload.get('state') or payload.get('status') or '')
@@ -336,8 +410,14 @@ class SubprocessStageExecutor:
         market_flag=[] if market=='it' else ['--market',market]
         if stage=='taplink_clean':
             if market!='it':
-                return {'state':'skipped','itemCount':0,'complete':True,'platformWrites':0,
-                        'scope':{'market':market},'payload':{'reason':'market_taplink_cleanup_not_enabled'}}
+                # Inventory reconciliation and remote deletes stay IT-only; other markets get the
+                # read-only check of their own current bindings and local withdrawal of explicit invalids.
+                checked=self._call(['scripts/catalog-clean.py','check-bindings','--market',market],'taplink-binding-check')
+                if checked['state']!='completed':return checked
+                summary=(checked.get('payload') or {}).get('summary') or {}
+                return {'state':'completed','itemCount':int(summary.get('checked') or 0),'complete':True,'platformWrites':0,
+                        'scope':{'market':market,'mode':'binding_check_read_only','remoteDelete':'not_enabled'},
+                        'payload':checked.get('payload') or {}}
             total=0;writes=0;last={}
             for action in ('refresh','classify','delete'):
                 args=['scripts/catalog-clean.py',action,'--lanes','9','--qps','12'] if action=='refresh' else ['scripts/catalog-clean.py',action]
@@ -348,7 +428,7 @@ class SubprocessStageExecutor:
             return {'state':'completed','itemCount':total,'complete':True,'platformWrites':writes,
                     'scope':{'sources':sources},'payload':last.get('payload') or {}}
         if stage=='catalog':
-            outputs=[];count=0;writes=0
+            outputs=[];count=0;writes=0;selection_gaps=[]
             if 'selected' in sources:
                 frozen=accepted_partial_selection(self.root,market)
                 if frozen:
@@ -420,9 +500,12 @@ class SubprocessStageExecutor:
                     recovered_unresolved=sum(int(recovered_states.get(key) or 0) for key in
                       ('submitting','awaiting_verification','result_unknown','needs_review'))
                     if recovered['state']!='completed' or recovered_payload.get('error') or recovered_unresolved:
-                        return {**recovered,'state':'needs_human','complete':False,
-                                'errorCode':str(recovered_payload.get('error') or 'global_selection_unresolved')[:120],
-                                'platformWrites':writes}
+                        gap=selection_gap(self.root,market,recovered)
+                        if gap is None:
+                            return {**recovered,'state':'needs_human','complete':False,
+                                    'errorCode':str(recovered_payload.get('error') or recovered.get('errorCode') or 'global_selection_unresolved')[:120],
+                                    'platformWrites':writes}
+                        selection_gaps.append(gap)
                 if True:
                     for _ in range(40):
                         selected=self._call(['scripts/select-global-products.py','execute-fast',*market_flag,'--limit','300',
@@ -430,7 +513,11 @@ class SubprocessStageExecutor:
                           '--lanes','8','--qps','8','--group-size','100'],
                                             'global-selection')
                         outputs.append(selected);writes+=selected.get('platformWrites',0)
-                        if selected['state']!='completed':return selected|{'platformWrites':writes}
+                        if selected['state']!='completed':
+                            gap=selection_gap(self.root,market,selected)
+                            if gap is None:return selected|{'platformWrites':writes}
+                            # Only these PIDs wait on their original intent; the rest keep selecting.
+                            selection_gaps.append(gap);continue
                         payload=selected.get('payload') or {};states=payload.get('states') or {};error=payload.get('error')
                         auth=selection_auth_unknown(self.root,market)
                         if auth:
@@ -448,8 +535,11 @@ class SubprocessStageExecutor:
                         unresolved=sum(int(states.get(key) or 0) for key in
                           ('submitting','awaiting_verification','result_unknown','needs_review'))
                         if unresolved:
-                            return {**selected,'state':'needs_human','complete':False,
-                                    'errorCode':'global_selection_unresolved','platformWrites':writes}
+                            gap=selection_gap(self.root,market,selected)
+                            if gap is None:
+                                return {**selected,'state':'needs_human','complete':False,
+                                        'errorCode':'global_selection_unresolved','platformWrites':writes}
+                            selection_gaps.append(gap)
                         if not int(states.get('pending') or 0):break
                     else:
                         return {'state':'failed','itemCount':count,'complete':False,'platformWrites':writes,
@@ -510,8 +600,13 @@ class SubprocessStageExecutor:
                     'unresolved':membership.get('unresolved',[]),
                     'stoppedUnknown':membership.get('stoppedUnknown',[]),
                     'accountBlocked':(joined.get('payload') or {}).get('accountBlocked',False)}
+            scope={'sources':sources,'campaignApplications':campaign_scope if 'campaign' in sources else None}
+            if selection_gaps:
+                # Published with its coverage gap: unresolved PIDs are neither selected nor filtered.
+                scope['selectionGap']={'unresolvedPids':selection_gaps[-1]['unresolvedPids'],
+                                       'reasons':sorted({gap['reason'] for gap in selection_gaps}),'coverage':'partial_selection'}
             return {'state':'completed','itemCount':count,'complete':True,'platformWrites':writes,
-                    'scope':{'sources':sources,'campaignApplications':campaign_scope if 'campaign' in sources else None},'payload':{'sources':outputs}}
+                    'scope':scope,'payload':{'sources':outputs}}
         if stage=='taplink_prepare':
             writes=0;outputs=[];count=0
             for route in sources:
@@ -556,70 +651,74 @@ class SubprocessStageExecutor:
                              'bCompleted':payload['B'],'remaining':payload.get('queue')},'payload':payload}
         if stage=='oecid':
             from lib.im_session_owner import identity_account
-            from lib.market_accounts import load_config as account_config
-            identity_role='supply' if identity_account(self.root,market)==account_config(self.root)['markets'][market]['roles']['supply'] else 'communications'
-            if market=='it' and identity_role=='supply':
-                reconciled=self._call(['scripts/second-cycle-identities.py','reconcile'],'oecid-legacy-reconcile')
-                if reconciled['state']!='completed':return reconciled
-            if market!='it' or identity_role=='supply':
-                total=0;outputs=[];result=None;left=0;auth_recoveries=0
-                for _ in range(500):
-                    result=self._call(['scripts/market-identity.py','run','--market',market,'--limit','50'],'oecid')
-                    outputs.append(result)
-                    bounded=result.get('payload') or {}
-                    if result['state']=='completed' and bounded.get('sliceComplete'):
-                        if bounded.get('authRequired'):
-                            outputs.append(self._relogin_market_account(store,market,identity_role,run['runId'],'bounded-oecid-auth'))
-                        return result|{'scope':{'sources':sources,'coverage':'bounded_identity_slice',
-                            'queue':bounded.get('queue'),'blockedHandles':bounded.get('blockedHandles',0)}}
-                    if result['state']!='completed':
-                        if result.get('errorCode')=='market_identity_auth_required' and auth_recoveries<2:
-                            relogin=self._relogin_market_account(store,market,identity_role,run['runId'],
-                                                                f'oecid-{auth_recoveries}')
-                            if relogin['state']=='completed':auth_recoveries+=1;outputs.append(relogin);continue
-                        return result|{'itemCount':total,'scope':{'sources':sources,'pending':None,
-                                                                 'authRecoveries':auth_recoveries}}
-                    total+=int((result.get('payload') or {}).get('newBindings') or 0)
-                    pending=self._call(['scripts/market-identity.py','status','--market',market,'--limit','1'],'oecid-status')
-                    if pending['state']!='completed':return pending|{'itemCount':total,'scope':{'sources':sources,'pending':None}}
-                    left=len((pending.get('payload') or {}).get('items') or [])
-                    if not left:break
-                    if not int((result.get('payload') or {}).get('resolvedHandles') or 0) and not int((result.get('payload') or {}).get('unresolvedHandles') or 0):
-                        return {**result,'state':'needs_human','complete':False,'itemCount':total,
-                                'errorCode':'identity_queue_stalled','scope':{'sources':sources,'pending':left}}
-                else:return {'state':'failed','itemCount':total,'complete':False,'platformWrites':0,
-                            'errorCode':'identity_iteration_limit','scope':{'sources':sources,'pending':left},'payload':{}}
-                return {'state':'completed','itemCount':total,'complete':True,'platformWrites':0,
-                        'scope':{'sources':sources,'pending':0,'authRecoveries':auth_recoveries},
-                        'payload':{'passes':outputs}}
-            submitted=0
-            for _ in range(500):
-                handoff=self._call(['scripts/second-cycle-identities.py','submit'],'oecid-submit')
-                if handoff['state']!='completed':return handoff
-                batches=(handoff.get('payload') or {}).get('submittedBatches')
-                if not isinstance(batches,list):
-                    return {**handoff,'state':'failed','complete':False,'errorCode':'identity_handoff_invalid'}
-                submitted+=len(batches)
-                if not batches:break
-            else:
-                return {'state':'failed','itemCount':0,'complete':False,'platformWrites':0,
-                        'errorCode':'identity_handoff_limit','scope':{'sources':sources},'payload':{}}
-            reconciled=self._call(['scripts/second-cycle-identities.py','reconcile'],'oecid-reconcile')
-            if reconciled['state']!='completed':return reconciled
-            result=self._call(['scripts/identity-batch.py','--limit','200','--cohort-size','50','--rounds','4'],'oecid')
-            payload=result.get('payload') or {};pending=int(payload.get('pending') or 0)
-            if payload.get('sliceComplete') and (payload.get('accountWait') or {}).get('reason')=='auth_required':
-                self._relogin_market_account(store,market,identity_role,run['runId'],'bounded-oecid-auth')
-            result['itemCount']=int(payload.get('found') or 0) if payload.get('sliceComplete') else int(payload.get('claimed') or 0)
-            result['scope']={'sources':sources,'handoffBatches':submitted,'pending':pending,'coverage':payload.get('coverage'),'claimed':payload.get('claimed'),'notFound':payload.get('notFound'),'technicalIsolatedLeads':payload.get('technicalIsolatedLeads'),'stopReason':payload.get('stopReason'),'accountWait':payload.get('accountWait')}
-            if result['state']=='completed' and pending and not payload.get('sliceComplete'):
-                reason=str(payload.get('stopReason') or 'pending')
-                result.update(state='needs_human',complete=False,errorCode=('identity_'+reason)[:120])
-            return result
+            executing=identity_account(self.root,market)
+            return self._execute_oecid(store,run,market,sources,executing)|{'identityAccount':executing}
         if stage=='send_pool':
             result=self._call(['scripts/lead-pool.py','status','--limit','1','--market',market],'send-pool')
             result['itemCount']=int(((result.get('payload') or {}).get('counts') or {}).get('positions') or 0);return result
         raise CycleError('workflow_stage_invalid')
+
+    def _execute_oecid(self,store,run,market,sources,executing):
+        from lib.market_accounts import load_config as account_config
+        identity_role='supply' if executing==account_config(self.root)['markets'][market]['roles']['supply'] else 'communications'
+        if market=='it' and identity_role=='supply':
+            reconciled=self._call(['scripts/second-cycle-identities.py','reconcile'],'oecid-legacy-reconcile')
+            if reconciled['state']!='completed':return reconciled
+        if market!='it' or identity_role=='supply':
+            total=0;outputs=[];result=None;left=0;auth_recoveries=0
+            for _ in range(500):
+                result=self._call(['scripts/market-identity.py','run','--market',market,'--limit','50'],'oecid')
+                outputs.append(result)
+                bounded=result.get('payload') or {}
+                if result['state']=='completed' and bounded.get('sliceComplete'):
+                    if bounded.get('authRequired'):
+                        outputs.append(self._relogin_market_account(store,market,identity_role,run['runId'],'bounded-oecid-auth'))
+                    return result|{'scope':{'sources':sources,'coverage':'bounded_identity_slice',
+                        'queue':bounded.get('queue'),'blockedHandles':bounded.get('blockedHandles',0)}}
+                if result['state']!='completed':
+                    if result.get('errorCode')=='market_identity_auth_required' and auth_recoveries<2:
+                        relogin=self._relogin_market_account(store,market,identity_role,run['runId'],
+                                                            f'oecid-{auth_recoveries}')
+                        if relogin['state']=='completed':auth_recoveries+=1;outputs.append(relogin);continue
+                    return result|{'itemCount':total,'scope':{'sources':sources,'pending':None,
+                                                             'authRecoveries':auth_recoveries}}
+                total+=int((result.get('payload') or {}).get('newBindings') or 0)
+                pending=self._call(['scripts/market-identity.py','status','--market',market,'--limit','1'],'oecid-status')
+                if pending['state']!='completed':return pending|{'itemCount':total,'scope':{'sources':sources,'pending':None}}
+                left=len((pending.get('payload') or {}).get('items') or [])
+                if not left:break
+                if not int((result.get('payload') or {}).get('resolvedHandles') or 0) and not int((result.get('payload') or {}).get('unresolvedHandles') or 0):
+                    return {**result,'state':'needs_human','complete':False,'itemCount':total,
+                            'errorCode':'identity_queue_stalled','scope':{'sources':sources,'pending':left}}
+            else:return {'state':'failed','itemCount':total,'complete':False,'platformWrites':0,
+                        'errorCode':'identity_iteration_limit','scope':{'sources':sources,'pending':left},'payload':{}}
+            return {'state':'completed','itemCount':total,'complete':True,'platformWrites':0,
+                    'scope':{'sources':sources,'pending':0,'authRecoveries':auth_recoveries},
+                    'payload':{'passes':outputs}}
+        submitted=0
+        for _ in range(500):
+            handoff=self._call(['scripts/second-cycle-identities.py','submit'],'oecid-submit')
+            if handoff['state']!='completed':return handoff
+            batches=(handoff.get('payload') or {}).get('submittedBatches')
+            if not isinstance(batches,list):
+                return {**handoff,'state':'failed','complete':False,'errorCode':'identity_handoff_invalid'}
+            submitted+=len(batches)
+            if not batches:break
+        else:
+            return {'state':'failed','itemCount':0,'complete':False,'platformWrites':0,
+                    'errorCode':'identity_handoff_limit','scope':{'sources':sources},'payload':{}}
+        reconciled=self._call(['scripts/second-cycle-identities.py','reconcile'],'oecid-reconcile')
+        if reconciled['state']!='completed':return reconciled
+        result=self._call(['scripts/identity-batch.py','--limit','200','--cohort-size','50','--rounds','4'],'oecid')
+        payload=result.get('payload') or {};pending=int(payload.get('pending') or 0)
+        if payload.get('sliceComplete') and (payload.get('accountWait') or {}).get('reason')=='auth_required':
+            self._relogin_market_account(store,market,identity_role,run['runId'],'bounded-oecid-auth')
+        result['itemCount']=int(payload.get('found') or 0) if payload.get('sliceComplete') else int(payload.get('claimed') or 0)
+        result['scope']={'sources':sources,'handoffBatches':submitted,'pending':pending,'coverage':payload.get('coverage'),'claimed':payload.get('claimed'),'notFound':payload.get('notFound'),'technicalIsolatedLeads':payload.get('technicalIsolatedLeads'),'stopReason':payload.get('stopReason'),'accountWait':payload.get('accountWait')}
+        if result['state']=='completed' and pending and not payload.get('sliceComplete'):
+            reason=str(payload.get('stopReason') or 'pending')
+            result.update(state='needs_human',complete=False,errorCode=('identity_'+reason)[:120])
+        return result
 
 
 def _create_lead_continuation(root,store,market,stamp,blocked_run=None,from_stage='kalodata'):
@@ -750,11 +849,20 @@ def tick(root,*,now=None,executor=None,refill=False,clock=None,wait_seconds=30,s
 
         def execute_one(task,job_config):
             with CycleStore(database,**({'clock':clock} if clock else {})) as stage_store:
-                if isinstance(executor,SubprocessStageExecutor):
+                tracked=isinstance(executor,SubprocessStageExecutor)
+                if tracked:
                     executor._claims.ticket=task['ticket']|{'ownerId':owner_id}
-                try:return executor.execute(stage_store,task['run'],task['stage']['stage'],job_config)
+                    executor._claims.ledger={'launched':0,'writes':0,'uncertain':False}
+                try:
+                    try:result=executor.execute(stage_store,task['run'],task['stage']['stage'],job_config)
+                    except Exception as error:
+                        # Writes already reported by finished children stay in the ledger.
+                        result={'state':'failed','itemCount':0,'complete':False,'platformWrites':0,'scope':{},'payload':{},
+                                'errorCode':str(error) if isinstance(error,(CycleError,ValueError)) else type(error).__name__}
+                        if not tracked:result['writeEvidence']='uncertain'
+                    return with_write_evidence(result,executor._claims.ledger if tracked else None)
                 finally:
-                    if isinstance(executor,SubprocessStageExecutor):executor._claims.ticket=None
+                    if tracked:executor._claims.ticket=None;executor._claims.ledger=None
 
         with ThreadPoolExecutor(max_workers=14 if refill else len(tasks)) as pool:
             pending={}
@@ -778,13 +886,14 @@ def tick(root,*,now=None,executor=None,refill=False,clock=None,wait_seconds=30,s
                     task=pending.pop(future);run=task['run'];stage=task['stage']['stage'];ticket=task['ticket']
                     try:result=future.result()
                     except BaseException as error:
-                        result={'state':'failed','itemCount':0,'complete':False,'platformWrites':0,
+                        result={'state':'failed','itemCount':0,'complete':False,'platformWrites':0,'writeEvidence':'uncertain',
                                 'scope':{},'payload':{},'errorCode':str(error) if isinstance(error,(CycleError,ValueError)) else type(error).__name__}
                     try:
                         assert_current(store,ticket['stageRunId'],owner_id,ticket['fence'])
                         finish_stage(store,run['runId'],stage,state=result['state'],item_count=result.get('itemCount',0),
                           scope=result.get('scope'),payload=result.get('payload'),complete=result.get('complete',True),
                           platform_writes=result.get('platformWrites',0),error_code=result.get('errorCode'),
+                          write_evidence=result.get('writeEvidence'),identity_account=result.get('identityAccount'),
                           claim_ticket=ticket|{'ownerId':owner_id})
                         release(store,ticket['stageRunId'],owner_id,ticket['fence'])
                     except (CycleError,sqlite3.Error) as error:

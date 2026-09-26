@@ -230,6 +230,25 @@ class OperationsWorkflowTests(unittest.TestCase):
         self.assertEqual(status(self.store)["current"]["state"], "needs_human")
         self.assertEqual(status(self.store)["current"]["stages"][1]["state"], "failed")
 
+    def test_auto_retry_requires_recorded_zero_write_proof_for_write_capable_stages(self):
+        save_setting(self.store, "it", "enable-for-write-proof-0001", 0,
+                     {"automaticOperationsEnabled": True})
+        outcomes = {}
+        for evidence, stage in ((None, "taplink_prepare"), ("uncertain", "taplink_prepare"),
+                                ("zero", "taplink_prepare"), (None, "oecid")):
+            run = create_run(self.store, market="it", trigger_source="schedule", scheduled_at=NOW,
+                             request_id=f"write-proof-{stage}-{evidence}", only_stage=stage, sources=["campaign"])
+            start_stage(self.store, run["runId"], stage)
+            finish_stage(self.store, run["runId"], stage, state="failed", platform_writes=0,
+                         error_code="temporary_failure", write_evidence=evidence)
+            outcomes[(evidence, stage)] = retry_failed_stage(self.store, run["runId"], now=NOW + 7200)["state"]
+            with self.store.tx():
+                self.store.db.execute("UPDATE workflow_run SET state='stopped' WHERE run_id=?", (run["runId"],))
+        self.assertEqual(outcomes, {(None, "taplink_prepare"): "needs_human",
+                                    ("uncertain", "taplink_prepare"): "needs_human",
+                                    ("zero", "taplink_prepare"): "resumed",
+                                    (None, "oecid"): "resumed"})
+
 
 if __name__ == "__main__":
     unittest.main()

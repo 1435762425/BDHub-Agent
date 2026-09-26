@@ -31,6 +31,8 @@ STAGES = (
 )
 STAGE_TERMINAL = {"completed", "quota_exhausted", "needs_human", "failed", "stopped", "skipped"}
 STAGE_SUCCESS = {"completed", "quota_exhausted", "skipped"}
+# Stages whose children can POST to the platform (link delete/create, selection, Campaign join).
+WRITE_CAPABLE_STAGES = {"taplink_clean", "catalog", "taplink_prepare"}
 RUN_ACTIVE = {"queued", "running", "stop_requested"}
 REQUEST_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{7,119}")
 
@@ -210,10 +212,10 @@ def create_run(store, *, market="it", trigger_source="manual", scheduled_at=None
         for position, stage in enumerate(STAGES):
             state = ('skipped' if from_stage is not None and position<STAGES.index(from_stage) else
                      'skipped' if only_stage is not None and stage!=only_stage else
-                     "skipped" if stage == "taplink_clean" and not (
-                         datetime.fromtimestamp(stamp, BEIJING).weekday() == 0 and
-                         supports(ROOT, market, 'fullManagedCatalog')
-                     ) else "waiting_upstream")
+                     # Weekly link maintenance: full inventory for full-managed markets, a read-only
+                     # binding check for the others (see SubprocessStageExecutor.execute).
+                     "skipped" if stage == "taplink_clean" and
+                     datetime.fromtimestamp(stamp, BEIJING).weekday() != 0 else "waiting_upstream")
             finished = store.clock() if state == "skipped" else None
             store.db.execute(
                 "INSERT INTO workflow_stage_run(stage_run_id,run_id,stage,position,state,finished_at) "
@@ -252,7 +254,11 @@ def retry_failed_stage(store, run_id, *, now=None, delay=3600, max_retries=3):
             return {'state':'not_applicable'}
         stage=store.db.execute("SELECT * FROM workflow_stage_run WHERE run_id=? AND state='failed' ORDER BY position LIMIT 1",
                                (run_id,)).fetchone()
-        if not stage or stage['platform_writes'] or not stage['finished_at']:
+        evidence=json.loads(stage['counts_json'] or '{}').get('writeEvidence') if stage else None
+        # Write-capable stages retry only on a recorded zero-write proof; a legacy numeric 0
+        # or a lost/unknown child result is never read as zero.
+        if not stage or stage['platform_writes'] or not stage['finished_at'] or (
+                stage['stage'] in WRITE_CAPABLE_STAGES and evidence!='zero'):
             store.db.execute("UPDATE workflow_run SET state='needs_human',error_code='workflow_retry_requires_review' WHERE run_id=?",
                              (run_id,))
             return {'state':'needs_human','reason':'workflow_retry_requires_review'}
@@ -489,9 +495,12 @@ def update_checkpoint(store, run_id, stage, checkpoint_key, value, counts=None):
 
 
 def finish_stage(store, run_id, stage, *, state, item_count=0, scope=None, payload=None,
-                 complete=True, platform_writes=0, error_code=None, claim_ticket=None):
+                 complete=True, platform_writes=0, error_code=None, claim_ticket=None, write_evidence=None,
+                 identity_account=None):
     """Finish one stage and atomically publish its generation when its barrier is satisfied."""
     _required(store)
+    if write_evidence not in (None, "zero", "known", "uncertain"):
+        raise CycleError("workflow_stage_result_invalid")
     if stage not in STAGES or state not in STAGE_TERMINAL:
         raise CycleError("workflow_stage_state_invalid")
     if type(item_count) is not int or item_count < 0 or type(platform_writes) is not int or platform_writes < 0:
@@ -535,7 +544,10 @@ def finish_stage(store, run_id, stage, *, state, item_count=0, scope=None, paylo
             "UPDATE workflow_stage_run SET state=?,output_generation_id=?,platform_writes=?,counts_json=?,finished_at=?,"
             "error_code=? WHERE run_id=? AND stage=?",
             (state, generation_id, total_writes,
-             encoded({**json.loads(row['counts_json'] or '{}'),'items':item_count}),now,error_code,run_id,stage),
+             encoded({**json.loads(row['counts_json'] or '{}'),'items':item_count,
+                      **({'writeEvidence':write_evidence} if write_evidence else {}),
+                      **({'identityAccount':identity_account} if identity_account else {})}),
+             now,error_code,run_id,stage),
         )
         if state in STAGE_SUCCESS:
             _release_next(store, run_id)
