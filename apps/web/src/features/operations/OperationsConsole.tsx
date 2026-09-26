@@ -40,7 +40,7 @@ function Situation({row,labels,now}:{row:Row;labels:Record<string,string>;now:nu
  if(!row.setting.automaticOperationsEnabled&&!row.run)return <span className="text-gray-400">自动运营未开启</span>;
  if(!current)return <span className="text-gray-500">主链本轮已走完</span>;
  const stage=labels[current.stage]??current.stage;
- if(current.state==="running")return <span>正在{stage} · 已 {minutes(current.since,now)}</span>;
+ if(current.state==="running")return <span>{stage}进行中 · 已 {minutes(current.since,now)}</span>;
  if(!current.waitingKnown)return <span className="text-gray-500">{stage}排队，原因待核实</span>;
  const wait=current.waitingOn[0];
  return <span className="text-gray-500">{stage}排队{wait?`，等 ${wait.heldBy.map(h=>`${h.market.toUpperCase()} ${labels[h.stage]??h.stage}`).join("、")||resource(wait.resource)}`:"，下一次调度领取"}</span>;
