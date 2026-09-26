@@ -118,6 +118,7 @@ def main():
      attempt('market_send',lambda:launch(ROOT,market))
   if args.action=='save':
    commit={'requestId':body.get('requestId'),'committed':True,'duplicate':bool(saved.get('duplicate')),
+           'originalAvailable':saved.get('originalAvailable') is not False,
            'setting':{k:saved[k] for k in ('market','automaticOperationsEnabled','fullCatalogWeeklyEnabled','continuousSendEnabled','revision','updatedAt')},
            'launchErrors':launch_errors}
    if result is None:

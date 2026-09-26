@@ -82,6 +82,32 @@ def setting(store, market="it"):
     }
 
 
+RECEIPT_SQL = ("CREATE TABLE IF NOT EXISTS market_automation_receipt(request_id TEXT PRIMARY KEY,market TEXT NOT NULL,"
+               "payload_hash TEXT NOT NULL,committed_revision INTEGER NOT NULL,committed_at REAL NOT NULL,setting_json TEXT NOT NULL)")
+
+
+def _setting_receipt(store, market, request_id, payload):
+    """The original outcome of an already committed request, or None for a new request."""
+    prior = store.db.execute(
+        "SELECT market,payload_json,result_revision,created_at FROM market_automation_request WHERE request_id=?",
+        (request_id,),
+    ).fetchone()
+    if not prior:
+        return None
+    if prior["payload_json"] != payload or prior["market"] != market:
+        raise CycleError("workflow_request_conflict")
+    receipt = store.db.execute(
+        "SELECT setting_json FROM market_automation_receipt WHERE request_id=?", (request_id,),
+    ).fetchone() if store.db.execute(
+        "SELECT 1 FROM sqlite_master WHERE name='market_automation_receipt'").fetchone() else None
+    if receipt:
+        return json.loads(receipt[0]) | {"duplicate": True, "originalAvailable": True}
+    # Committed before receipts were kept: the revision is known, the committed values are not.
+    current = setting(store, market)
+    return current | {"revision": prior["result_revision"], "updatedAt": prior["created_at"],
+                      "duplicate": True, "originalAvailable": False}
+
+
 def save_setting(store, market, request_id, expected_revision, changes):
     """Save only the three home switches.  Replays are idempotent and never start a worker."""
     _required(store)
@@ -94,6 +120,11 @@ def save_setting(store, market, request_id, expected_revision, changes):
     }
     if not changes or set(changes) - allowed or any(type(value) is not bool for value in changes.values()):
         raise CycleError("workflow_setting_invalid")
+    payload = encoded({"market": market, "changes": changes})
+    # A replay returns its own immutable receipt; enable-time preconditions only guard new writes.
+    replay = _setting_receipt(store, market, request_id, payload)
+    if replay is not None:
+        return replay
     if changes.get("fullCatalogWeeklyEnabled") and not supports(ROOT, market, "fullManagedCatalog"):
         raise CycleError("full_catalog_not_supported")
     if changes.get("continuousSendEnabled") is True:
@@ -110,16 +141,11 @@ def save_setting(store, market, request_id, expected_revision, changes):
         required={'campaign','campaign_join','catalog_read','inbox_read','message_send','oecid_find','taplink'}
         if supports(ROOT,market,'fullManagedCatalog'):required.add('product_select')
         if not required<=verified:raise CycleError('market_automation_capabilities_pending')
-    payload = encoded({"market": market, "changes": changes})
     with store.tx():
-        prior = store.db.execute(
-            "SELECT payload_json,result_revision FROM market_automation_request WHERE request_id=?",
-            (request_id,),
-        ).fetchone()
-        if prior:
-            if prior["payload_json"] != payload:
-                raise CycleError("workflow_request_conflict")
-            return setting(store, market) | {"duplicate": True}
+        store.db.execute(RECEIPT_SQL)
+        replay = _setting_receipt(store, market, request_id, payload)
+        if replay is not None:
+            return replay
         current = setting(store, market)
         if current["revision"] != expected_revision:
             raise CycleError("workflow_revision_conflict")
@@ -160,7 +186,11 @@ def save_setting(store, market, request_id, expected_revision, changes):
                     (plan[0], int(changes["continuousSendEnabled"]), 0, 0, "16:30", "24:00",
                      "standard", control_revision, now),
                 )
-    return setting(store, market) | {"duplicate": False}
+        # The receipt is what this request committed, read inside its own transaction.
+        committed = setting(store, market)
+        store.db.execute("INSERT INTO market_automation_receipt VALUES(?,?,?,?,?,?)",
+                         (request_id, market, digest(payload), committed["revision"], now, encoded(committed)))
+    return committed | {"duplicate": False, "originalAvailable": True}
 
 
 def maintenance_weekday():

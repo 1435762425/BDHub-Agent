@@ -3,7 +3,7 @@ import {Button,Card,Field,Input,Notice,Pill,StatTile,Toggle} from "../bdhub/ui";
 import type {SendController} from "./useContinuousSend";
 import SendTemplateManager from "./SendTemplateManager";
 
-const labels:Record<string,string>={off:"关闭",stopped:"已停止",waiting_window:"等待窗口",waiting_pool:"等待发送池",waiting_account:"等待账号空闲",sending:"发送中",waiting_capacity:"当日额度用尽",waiting_platform_refusal:"平台拒绝该达人，继续发送",paused:"暂停",waiting_reconciliation:"待核验",first_send_requires_page_start:"等待页面启动"};
+const labels:Record<string,string>={off:"关闭",stopped:"已停止",waiting_window:"等待窗口",waiting_pool:"等待发送池",waiting_account:"等待账号空闲",sending:"发送中",waiting_capacity:"等待可用额度",waiting_platform_refusal:"平台拒绝该达人，继续发送",paused:"暂停",waiting_reconciliation:"待核验",first_send_requires_page_start:"等待页面启动"};
 const number=(value:number|null|undefined)=>value==null?"—":value.toLocaleString("zh-CN");
 
 export default function ContinuousSendPanel({market,controller}:{market:string;controller:SendController}){

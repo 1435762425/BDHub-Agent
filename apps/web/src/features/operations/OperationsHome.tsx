@@ -5,20 +5,24 @@ import {useCallback,useEffect,useRef,useState} from "react";
 import {Button,Card,Notice,PageHeading,Pill,Toggle} from "../bdhub/ui";
 import type {OperationsHome as State,OperationsStage,SaveCommit} from "../../server/operations-home/bridge";
 
-const stateLabel:Record<string,string>={disabled:"未启用",waiting_upstream:"等待上游",queued:"排队",running:"运行中",completed:"已完成",quota_exhausted:"额度耗尽",needs_human:"需人工",failed:"失败",skipped:"本轮跳过",off:"关闭",waiting_window:"等待窗口",sending:"发送中",waiting_capacity:"当日额度用尽",waiting_reconciliation:"待核验",paused:"暂停",stopped:"已停止",waiting_pool:"等待发送池",idle:"空闲"};
+const stateLabel:Record<string,string>={disabled:"未启用",waiting_upstream:"等待上游",queued:"排队",running:"运行中",completed:"已完成",quota_exhausted:"额度耗尽",needs_human:"需人工",failed:"失败",skipped:"本轮跳过",off:"关闭",waiting_window:"等待窗口",sending:"发送中",waiting_capacity:"等待可用额度",waiting_reconciliation:"待核验",paused:"暂停",stopped:"已停止",waiting_pool:"等待发送池",idle:"空闲"};
 const tone=(state:string)=>state==="completed"||state==="sending"?"success":state==="failed"||state==="needs_human"||state==="waiting_reconciliation"?"warning":state==="running"||state==="queued"?"brand":"neutral";
 const stamp=(value:number|null)=>value?new Date(value*1000).toLocaleString("zh-CN",{timeZone:"Asia/Shanghai",hour12:false}):"—";
 function StageCard({stage,index}:{stage:OperationsStage;index:number}){const total=stage.processed;return <article className="relative min-w-0 rounded-2xl border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-white/[0.025]"><div className="flex items-start justify-between gap-2"><div><p className="text-[11px] font-medium text-gray-400">{String(index+1).padStart(2,"0")}</p><h3 className="mt-1 text-sm font-semibold text-gray-800 dark:text-white">{stage.label}</h3></div><Pill tone={tone(stage.state)}>{stateLabel[stage.state]??stage.state}</Pill></div><p className="mt-4 text-2xl font-semibold tabular-nums">{["continuous_send","agent_reply"].includes(stage.id)||typeof stage.counts.items==="number"?stage.processed.toLocaleString():"—"}</p><p className="mt-1 text-xs text-gray-400">{typeof stage.counts.items==="number"||["continuous_send","agent_reply"].includes(stage.id)?"本轮处理":"处理数未记录"} · 平台写入 {stage.platformWrites}</p><div className="mt-4 space-y-1 text-[11px] leading-5 text-gray-500"><p>上次成功 {stamp(stage.lastSuccessAt)}</p><p className="truncate" title={stage.stopReason??undefined}>断点/原因 {stage.stopReason??(total?`${total.toLocaleString()} 项已记账`:"无异常")}</p></div>{index<6&&<span aria-hidden className="absolute -right-3 top-1/2 z-10 hidden size-6 -translate-y-1/2 items-center justify-center rounded-full border border-gray-200 bg-white text-gray-300 2xl:flex dark:border-gray-700 dark:bg-gray-900">→</span>}</article>}
 
 export default function OperationsHome({market,marketLabel,fullManagedCatalog,runtimeAvailable}:{market:string;marketLabel:string;fullManagedCatalog:boolean|null;runtimeAvailable:boolean}){
- const [data,setData]=useState<State|null>(null),[busy,setBusy]=useState<string|null>(null),[message,setMessage]=useState("");const requestIds=useRef(new Map<string,string>());
+ const [data,setData]=useState<State|null>(null),[busy,setBusy]=useState<string|null>(null),[message,setMessage]=useState("");// One frozen command per switch: a retry after an unknown result reuses the same id, value and base revision.
+ const requestIds=useRef(new Map<string,{requestId:string;value:boolean;expectedRevision:number}>());
+ // Reads are applied in order and never move the setting back behind a newer committed revision.
+ const readSeq=useRef(0),appliedSeq=useRef(0),knownRevision=useRef(0),marketRef=useRef(market);
+ if(marketRef.current!==market){marketRef.current=market;readSeq.current=0;appliedSeq.current=0;knownRevision.current=0;requestIds.current.clear();}
  // Freshness of what is shown: a failed read never leaves an unconditional "normal" on screen.
  const [readAt,setReadAt]=useState<number|null>(null),[readError,setReadError]=useState(false);
- const load=useCallback(async()=>{if(!runtimeAvailable)return;try{const response=await fetch(`/api/operations-home?market=${encodeURIComponent(market)}`,{cache:"no-store"});if(!response.ok)throw Error();setData(await response.json());setReadAt(Date.now()/1000);setReadError(false);}catch(error){setReadError(true);throw error;}},[market,runtimeAvailable]);
+ const load=useCallback(async()=>{if(!runtimeAvailable)return;const seq=++readSeq.current;try{const response=await fetch(`/api/operations-home?market=${encodeURIComponent(market)}`,{cache:"no-store"});if(!response.ok)throw Error();const value=await response.json() as State;if(market!==marketRef.current||seq<appliedSeq.current||value.market!==market||value.setting.revision<knownRevision.current)return;appliedSeq.current=seq;knownRevision.current=value.setting.revision;setData(value);setReadAt(Date.now()/1000);setReadError(false);}catch(error){if(seq>=appliedSeq.current)setReadError(true);throw error;}},[market,runtimeAvailable]);
  useEffect(()=>{if(!runtimeAvailable)return;let timer:ReturnType<typeof setTimeout>|undefined,inFlight=false,stopped=false;const poll=async()=>{if(stopped)return;if(document.visibilityState!=="visible"){timer=setTimeout(poll,60000);return;}if(inFlight){timer=setTimeout(poll,15000);return;}inFlight=true;try{await load();}catch{}finally{inFlight=false;if(!stopped)timer=setTimeout(poll,15000);}};const visible=()=>{if(document.visibilityState==="visible"&&!inFlight){if(timer)clearTimeout(timer);void poll();}};document.addEventListener("visibilitychange",visible);void poll();return()=>{stopped=true;if(timer)clearTimeout(timer);document.removeEventListener("visibilitychange",visible);};},[load,runtimeAvailable]);
- const toggle=async(key:"automaticOperationsEnabled"|"fullCatalogWeeklyEnabled"|"continuousSendEnabled",value:boolean)=>{if(!data)return;setBusy(key);setMessage("");const requestId=requestIds.current.get(key)??`home-${crypto.randomUUID()}`;requestIds.current.set(key,requestId);
+ const toggle=async(key:"automaticOperationsEnabled"|"fullCatalogWeeklyEnabled"|"continuousSendEnabled",value:boolean)=>{if(!data)return;setBusy(key);setMessage("");const frozen=requestIds.current.get(key);const command=frozen&&frozen.value===value?frozen:{requestId:`home-${crypto.randomUUID()}`,value,expectedRevision:data.setting.revision};requestIds.current.set(key,command);const requestId=command.requestId;
   let response:Response;
-  try{response=await fetch(`/api/operations-home?market=${encodeURIComponent(market)}`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"save",market,requestId,expectedRevision:data.setting.revision,changes:{[key]:value}})});}
+  try{response=await fetch(`/api/operations-home?market=${encodeURIComponent(market)}`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"save",market,requestId,expectedRevision:command.expectedRevision,changes:{[key]:command.value}})});}
   catch{setBusy(null);setMessage("保存结果未确认（网络中断）；正在重新读取实际设置，重试会沿用同一请求，不会重复变更。");void load().catch(()=>{});return;}
   try{
    if(response.status===409){requestIds.current.delete(key);setMessage("设置未保存：版本已在另一窗口变化，已重新读取当前设置。");await load().catch(()=>{});return;}
@@ -27,11 +31,14 @@ export default function OperationsHome({market,marketLabel,fullManagedCatalog,ru
    const value=await response.json() as (State&{commit:SaveCommit})|{committed:true;commit:SaveCommit};
    requestIds.current.delete(key);
    const commit=value.commit;
-   if("schemaVersion" in value){setData(value);setReadAt(Date.now()/1000);setReadError(false);}
-   else setData(current=>current?{...current,setting:commit.setting}:current);
+   // The page shows the current setting; the receipt below states what this request committed.
+   const current="schemaVersion" in value?value.setting:commit.setting;
+   if(current.revision>=knownRevision.current){knownRevision.current=current.revision;appliedSeq.current=readSeq.current;
+    if("schemaVersion" in value){setData(value);setReadAt(Date.now()/1000);setReadError(false);}
+    else setData(state=>state?{...state,setting:commit.setting}:state);}
    const notes=[commit.refreshFailed?"页面数据暂未刷新，稍后自动重读":commit.projectionStale?"概览缓存稍后刷新":"",
     ...commit.launchErrors.map(row=>`${row.worker} 未能启动（${row.error}），调度器会按已保存的开关继续尝试`)].filter(Boolean);
-   setMessage(`设置已保存（修订 ${commit.setting.revision}）${notes.length?`；${notes.join("；")}`:""}。不会恢复旧任务或结果未知意图。`);
+   setMessage(`${commit.duplicate?"这次提交此前已完成":"设置已保存"}（修订 ${commit.setting.revision}${commit.originalAvailable?"":"，原提交值未留存"}）${notes.length?`；${notes.join("；")}`:""}。不会恢复旧任务或结果未知意图。`);
    if(commit.refreshFailed)void load().catch(()=>{});
   }finally{setBusy(null);}};
  const workflow=async(action:"run"|"stop")=>{if(!data)return;setBusy(action);setMessage("");try{const body=action==="run"?{action,market,requestId:`workflow-${crypto.randomUUID()}`}:{action,market,runId:data.workflow.runId,expectedState:data.workflow.state};const response=await fetch(`/api/workflow?market=${encodeURIComponent(market)}`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});if(!response.ok)throw Error();setMessage(action==="run"?"已创建一次人工主链；后台只执行已启用的真实作业。":"已请求安全停止；在途请求先收口。 ");await load();}catch{setMessage("主链状态已变化，请刷新后核对。");}finally{setBusy(null);}};

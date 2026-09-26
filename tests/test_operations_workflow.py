@@ -265,6 +265,30 @@ class OperationsWorkflowTests(unittest.TestCase):
                     self.store.db.execute("UPDATE workflow_run SET state='stopped' WHERE run_id=?", (run["runId"],))
         self.assertEqual(states, {"monday": "skipped", "tuesday": "queued"})
 
+    def test_a_replayed_setting_request_returns_its_own_immutable_receipt(self):
+        first = save_setting(self.store, "it", "receipt-request-r", 0, {"fullCatalogWeeklyEnabled": True})
+        second = save_setting(self.store, "it", "receipt-request-s", 1, {"fullCatalogWeeklyEnabled": False})
+        replay = save_setting(self.store, "it", "receipt-request-r", 0, {"fullCatalogWeeklyEnabled": True})
+        self.assertEqual((first["revision"], second["revision"]), (1, 2))
+        self.assertEqual((replay["revision"], replay["fullCatalogWeeklyEnabled"], replay["duplicate"],
+                          replay["originalAvailable"]), (1, True, True, True))
+        with self.assertRaisesRegex(CycleError, "workflow_request_conflict"):
+            save_setting(self.store, "it", "receipt-request-r", 0, {"fullCatalogWeeklyEnabled": False})
+        count = self.store.db.execute("SELECT count(*) FROM market_automation_request").fetchone()[0]
+        self.assertEqual(count, 2)
+
+    def test_replay_is_not_blocked_by_enable_time_preconditions(self):
+        from unittest.mock import patch
+        import lib.operations_workflow as workflow
+        with patch("lib.template_library.require_send_template_approval", return_value=None):
+            save_setting(self.store, "it", "replay-precondition-1", 0, {"continuousSendEnabled": True})
+        with patch("lib.template_library.require_send_template_approval",
+                   side_effect=CycleError("send_template_approval_required")):
+            replay = save_setting(self.store, "it", "replay-precondition-1", 0, {"continuousSendEnabled": True})
+            with self.assertRaisesRegex(CycleError, "send_template_approval_required"):
+                save_setting(self.store, "it", "replay-precondition-2", 1, {"continuousSendEnabled": True})
+        self.assertEqual((replay["duplicate"], replay["continuousSendEnabled"]), (True, True))
+
 
 if __name__ == "__main__":
     unittest.main()
