@@ -21,6 +21,22 @@ def head_sha(root):
     except (OSError, subprocess.SubprocessError):return None
 
 
+RUNTIME_TREES = ('scripts', 'vendor')
+
+
+def code_id(root, sha):
+    """Identity of the code a commit runs: the git trees processes load from, not the commit itself.
+
+    A documentation-only commit changes HEAD but not this value, so it is not a version difference."""
+    if not sha:
+        return None
+    try:
+        trees = _git(root, 'rev-parse', *[f'{sha}:{path}' for path in RUNTIME_TREES]).split()
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return hashlib.sha256(' '.join(trees).encode()).hexdigest()[:16] if len(trees) == len(RUNTIME_TREES) else None
+
+
 def current_release(root):
     try:
         sha = _git(root, 'rev-parse', 'HEAD').strip()

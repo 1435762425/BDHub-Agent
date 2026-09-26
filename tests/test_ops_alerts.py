@@ -179,6 +179,18 @@ class RuntimeReleaseTests(unittest.TestCase):
         base["release"]["loaded"] = base["release"]["loaded"][:1]
         self.assertNotIn("runtime-version-mixed", {alert["id"] for alert in evaluate(base)})
 
+    def test_a_docs_only_commit_is_not_a_version_difference(self):
+        base = facts()
+        base["release"] = {"head": "b" * 40, "headCode": "tree-1",
+                           "loaded": [{"role": "scheduler", "sha": "a" * 40, "code": "tree-1"},
+                                      {"role": "agent-reply-it", "sha": "a" * 40, "code": "tree-0"}]}
+        alert = next(alert for alert in evaluate(base) if alert["id"] == "runtime-version-mixed")
+        self.assertIn("agent-reply-it", alert["detail"])
+        self.assertNotIn("scheduler", alert["detail"])
+        from lib.ops_alerts import evidence
+        rows = {row["role"]: row["current"] for row in evidence(base)["processes"]}
+        self.assertEqual(rows, {"scheduler": True, "agent-reply-it": False})
+
     def test_registration_records_the_loaded_commit_and_ignores_dead_processes(self):
         import json, os, tempfile
         from pathlib import Path

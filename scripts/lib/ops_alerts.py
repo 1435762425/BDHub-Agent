@@ -135,6 +135,27 @@ def _restore_drill(root):
             "finishedAt": _stamp(report.get("finishedAt")), "blockers": list(report.get("blockers") or [])[:5]}
 
 
+def _same_code(row, head, head_code):
+    if head_code and row.get("code"):
+        return row["code"] == head_code
+    return row.get("sha") == head
+
+
+def evidence(facts):
+    """Read-only runtime evidence for the page (G21/U3): what each process loaded, not only that it exists."""
+    release = facts.get("release") or {}
+    head, head_code = release.get("head"), release.get("headCode")
+    processes = [{"role": row.get("role"), "pid": row.get("pid"), "sha": row.get("sha"),
+                  "startedAt": _stamp(row.get("startedAt")), "current": bool(head) and _same_code(row, head, head_code)}
+                 for row in release.get("loaded") or [] if isinstance(row.get("role"), str)]
+    service = facts.get("modelService")
+    return {"head": head, "processes": processes,
+            "scheduler": {"running": facts["scheduler"]["running"], "checkedAt": facts["scheduler"]["checkedAt"]},
+            "modelService": {"paused": True, "nextAt": _stamp(service.get("nextAt")), "lastError": service.get("lastError")}
+                            if service else {"paused": False, "nextAt": None, "lastError": None},
+            "restoreDrill": facts.get("restoreDrill")}
+
+
 def gather(root, store):
     """Facts for ``evaluate``; a market whose ledgers cannot be read carries ``error`` instead."""
     from lib.account_identity import status as account_status
@@ -146,9 +167,14 @@ def gather(root, store):
     scheduler = scheduler_state(root)
     stop = stop_path(root)
     requested = (_stamp(_read_json(stop).get("requestedAt")) or stop.stat().st_mtime) if stop.exists() else None
-    from lib.runtime_release import head_sha, loaded
+    from lib.runtime_release import code_id, head_sha, loaded
+    head, live, codes = head_sha(root), loaded(root), {}
+    for row in live:
+        if row.get("sha") not in codes:
+            codes[row.get("sha")] = code_id(root, row.get("sha"))
+        row["code"] = codes[row.get("sha")]
     facts = {"now": store.clock(), "offsite": offsite_latest(root), "markets": [],
-             "release": {"head": head_sha(root), "loaded": loaded(root)},
+             "release": {"head": head, "headCode": code_id(root, head), "loaded": live},
              "modelService": _model_service(store), "restoreDrill": _restore_drill(root),
              "scheduler": {"running": bool(scheduler["running"]), "stopRequestedAt": requested,
                            "checkedAt": _stamp(scheduler.get("checkedAt"))}}
@@ -208,9 +234,10 @@ def evaluate(facts):
         add("model-service-paused", "warning", "AI 模型服务暂停",
             f"连续调用失败（{service.get('lastError') or '原因未记录'}），已暂停调用，下次尝试 {datetime.fromtimestamp(service['nextAt'], BEIJING).strftime('%H:%M')}；待答问题保留，暂停期间不消耗每位达人的尝试次数。")
     release = facts.get("release") or {}
-    head, live = release.get("head"), release.get("loaded") or []
-    # Only the commit is compared: pages legitimately rewrite tracked config files at runtime.
-    stale = sorted(row["role"] for row in live if head and row.get("sha") != head)
+    head, head_code, live = release.get("head"), release.get("headCode"), release.get("loaded") or []
+    # The loaded code trees are compared (a docs-only commit is not a version difference); the commit is
+    # the fallback when a tree cannot be resolved. Pages legitimately rewrite tracked config at runtime.
+    stale = sorted(row["role"] for row in live if head and not _same_code(row, head, head_code))
     if stale:
         add("runtime-version-mixed", "warning", f"{len(stale)} 个常驻进程运行的不是当前代码",
             f"{'、'.join(stale)} 载入的版本与仓库当前提交 {head[:7]} 不同；按发布流程安全重启后新代码才生效。")
