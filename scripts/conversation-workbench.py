@@ -120,6 +120,8 @@ def main():
     content=None if target=='zh' else market_content(ROOT,target)
     if not isinstance(text,str) or not text.strip() or len(text)>4000 or target!='zh' and content is None:raise CycleError('translation_invalid')
     from lib.draft_provider import call_model
+    from lib.model_service import guard
+    call_model=guard(ROOT,call_model)
     language='自然的简体中文' if target=='zh' else f"自然、礼貌、简洁的{content['languageLabel']}"
     response=call_model([{'role':'system','content':f'你是翻译。把用户消息翻成{language}，保留数字、链接、emoji和专有名词，不添加原文没有的信息。只返回JSON：{{"translation":"..."}}'},{'role':'user','content':text}],max_output_tokens=1000)
     translated=json.loads(response['content']).get('translation')

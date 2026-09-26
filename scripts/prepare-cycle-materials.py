@@ -61,6 +61,8 @@ def main():
   if store._plan(plan)['state']!='active':raise CycleError('plan_paused')
   if a.generate_names:
    from lib.draft_provider import call_model
+   from lib.model_service import guard
+   call_model=guard(ROOT,call_model)
    report['namePreparation']=materials.prepare_names(offers,call_model);report['modelCalls']=report['namePreparation']['modelCalls'];save()
   if a.check_cards and offers:
    from bdhub import scheduled_relogin

@@ -120,3 +120,31 @@ def paused(db, key, now):
     if not row or row['state'] != 'open':
         return None
     return {'nextAt': row['next_at'], 'lastError': row['last_error'], 'probing': now < row['probe_until']}
+
+
+def guard(root, call, *, provider='DeepSeek', model=None):
+    """Wrap any model call in the shared breaker (translation, product names, materials...).
+
+    The breaker is read and written through its own short-lived connection, so a caller holding a
+    read-only store or an open transaction is unaffected. A paused service raises
+    ``agent_model_service_paused`` before any request is made."""
+    from pathlib import Path
+    from lib.second_cycle import CycleStore
+    if model is None:
+        from lib.draft_provider import MODEL as model
+    key, database = service_key(provider, model), Path(root) / 'var/second-cycle.sqlite'
+
+    def guarded(*args, **kwargs):
+        with CycleStore(database) as store:
+            permit = acquire(store, key)
+        try:
+            result = call(*args, **kwargs)
+        except Exception as error:
+            code = getattr(error, 'code', None) or (str(error) if isinstance(error, CycleError) else type(error).__name__)
+            with CycleStore(database) as store:
+                failed(store, permit, code)
+            raise
+        with CycleStore(database) as store:
+            succeeded(store, permit)
+        return result
+    return guarded

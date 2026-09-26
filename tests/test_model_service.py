@@ -40,4 +40,21 @@ class ModelServiceEpochTests(unittest.TestCase):
   for _ in range(5):M.failed(self.store,M.acquire(self.store,self.key),'provider_input_invalid')
   self.assertIsNone(self.state())
 
+class GuardTests(unittest.TestCase):
+ def setUp(self):
+  self.tmp=tempfile.TemporaryDirectory();self.root=Path(self.tmp.name);(self.root/'var').mkdir()
+  CycleStore(self.root/'var/second-cycle.sqlite').close()
+ def tearDown(self):self.tmp.cleanup()
+ def test_other_model_callers_share_the_breaker_and_a_paused_service_is_not_called(self):
+  class Down(Exception):code='provider_timeout'
+  calls=[]
+  def broken(*_a,**_k):calls.append(1);raise Down()
+  guarded=M.guard(self.root,broken,model='m')
+  for _ in range(M.OPEN_AFTER):
+   with self.assertRaises(Down):guarded([])
+  with self.assertRaisesRegex(CycleError,'agent_model_service_paused'):guarded([])
+  self.assertEqual(len(calls),M.OPEN_AFTER)
+  ok=M.guard(self.root,lambda *_a,**_k:{'content':'{}'},model='other')
+  self.assertEqual(ok([]),{'content':'{}'})  # a different model is its own service
+
 if __name__=='__main__':unittest.main()

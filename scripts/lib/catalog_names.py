@@ -247,7 +247,8 @@ def prepare(root, limit=25, *, market='it', call=None, on_progress=None, all_mis
     from lib.second_cycle import CycleError, CycleStore
     if call is None:
         from lib.draft_provider import call_model
-        call = call_model
+        from lib.model_service import guard
+        call = guard(root, call_model)
     consecutive = 0
     with CycleStore(root / 'var/second-cycle.sqlite') as store:
         materials = Materials(store,market)
