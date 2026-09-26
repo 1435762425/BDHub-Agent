@@ -70,6 +70,35 @@ def run_existing(store,replies,reply,market,stage,authorized_now=None):
  from lib.market_agent_reply import run_reply as market_run_reply
  return market_run_reply(ROOT,store,replies,reply,market,pilot=stage=='pilot_running',
                          authorized_now=authorized_now is not None,stopped=lambda:STOP)
+def recover_unresolved(store,plan,market,stage):
+ """Bounded original-intent reads for submitted replies; exhausted ones are isolated (§9.18).
+
+ Returns a tick result while any reply still holds the market, or None once every unresolved
+ reply is isolated so other creators can continue.  Never generates or submits anything."""
+ rows=store.db.execute("""SELECT id FROM service_reply WHERE plan_id=?
+   AND state IN ('inflight','accepted','unknown')
+   AND (kind IN ('agent_generated_v2','agent_request_detail_v2','agent_handoff_v2') OR ?='it')
+   ORDER BY created""",(plan,market)).fetchall()
+ if not rows:return None
+ replies=AutoReplies(store);waiting=[];isolated=0
+ for row in rows:
+  step=replies.recovery_step(row['id'])
+  if step['action']=='isolate':replies.isolate(row['id']);isolated+=1;continue
+  if step['action']=='wait':waiting.append(step['nextAt']);continue
+  if step['action']!='check':continue
+  reply=replies.record_check(row['id'])
+  try:state=run_existing(store,replies,reply,market,stage)['state']
+  except CycleError as error:state=replies.get(row['id'])['state'];code=str(error)
+  except Exception as error:
+   # The read could not start or finish (send lock, account unavailable): no evidence, no spent check.
+   replies.refund_check(row['id'])
+   return {'state':'reply_check_deferred','error':type(error).__name__,'platformWrites':0,'realSends':0}
+  else:code=None
+  return {'state':'original_intent_rechecked','replyState':state,'attempt':step['attempt'],
+          **({'error':code} if code else {}),'isolated':isolated,'platformWrites':0,'realSends':0}
+ if waiting:
+  return {'state':'waiting_reply_check','nextAt':min(waiting),'isolated':isolated,'platformWrites':0,'realSends':0}
+ return None
 def pending_rows(store,plan,now,limit=20):
  if type(limit) is not int or not 1<=limit<=20:raise CycleError('agent_pending_limit_invalid')
  rows=store.db.execute("""SELECT p.* FROM inbox_pending p JOIN relationship r
@@ -79,6 +108,10 @@ def pending_rows(store,plan,now,limit=20):
    AND NOT EXISTS(SELECT 1 FROM service_case c WHERE c.plan_id=p.plan_id AND c.creator_id=p.creator_id AND c.state='open')
    ORDER BY p.due_at""",(plan,now))
  tables={row[0] for row in store.db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+ # A creator whose submitted reply is isolated keeps new inbound stored but gets no automatic reply.
+ isolated={r[0] for r in store.db.execute("SELECT creator_id FROM service_reply WHERE plan_id=? AND state='isolated'",(plan,))} \
+   if 'service_reply' in tables else set()
+ rows=[row for row in rows if row['creator_id'] not in isolated]
  result=[]
  scoped='service_message_resolution' in tables
  if scoped:
@@ -91,7 +124,7 @@ def pending_rows(store,plan,now,limit=20):
    if not scope:continue
    # Missing content, multiple CIDs and gaps cannot monopolize the runnable queue.
    if any(not r['contentHash'] for r in scope) or len({r['conversationId'] for r in scope})!=1:continue
-   if store.db.execute("SELECT 1 FROM inbox_checkpoint WHERE plan_id=? AND oec=(SELECT oec FROM relationship WHERE plan_id=? AND creator_id=?) AND state='gap'",(plan,plan,row['creator_id'])).fetchone():continue
+   if store.db.execute("SELECT 1 FROM inbox_checkpoint WHERE plan_id=? AND oec=(SELECT oec FROM relationship WHERE plan_id=? AND creator_id=?) AND state IN ('gap','backfilling')",(plan,plan,row['creator_id'])).fetchone():continue
    if not retry_ready(store,plan,row['creator_id'],freeze(scope),now,guide_revision):continue
    ordered.append((min(r['at'] for r in scope),row['creator_id'],dict(row)|{'scopeTurnId':scope[-1]['turnId']}))
   return [v[2] for v in sorted(ordered,key=lambda v:(v[0],v[1]))[:limit]]
@@ -116,15 +149,8 @@ def tick(authorized_now=None,market="it"):
   if not plan_row:raise CycleError('plan_missing')
   plan=plan_row[0];setting=agent_setting(store,plan);now=store.clock()
   stage=rollout_stage(store,plan,market)
-  unresolved=store.db.execute("""SELECT id FROM service_reply WHERE plan_id=?
-    AND state IN ('inflight','accepted','unknown')
-    AND (kind IN ('agent_generated_v2','agent_request_detail_v2','agent_handoff_v2') OR ?='it')
-    ORDER BY created LIMIT 1""",(plan,market)).fetchone()
-  if unresolved:
-   replies=AutoReplies(store)
-   result=run_existing(store,replies,replies.get(unresolved[0]),market,stage)
-   return {'state':'original_intent_rechecked','replyState':result['state'],
-           'platformWrites':0,'realSends':0}
+  recovered=recover_unresolved(store,plan,market,stage)
+  if recovered:return recovered
   if not setting['enabled']:return {'state':'disabled','platformWrites':0,'realSends':0}
   if send_dispatch_active(store,market):return {'state':'send_dispatch_active','platformWrites':0,'realSends':0}
   if stage in ('pilot_required','pilot_complete'):

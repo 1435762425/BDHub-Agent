@@ -46,6 +46,12 @@ def run_reply(store,replies,reply,*,root=ROOT,authorized_now=False,stopped=lambd
                                          (time.time()+60,reply['plan_id'],reply['creator_id'],reply['pending_revision']))
                     return 'facts_changed'
         binding=read_binding(report,stopped=stopped)
+        if recovering:
+            # The original sender binding (account, IM id, market, partner) must still be the reader.
+            if not reply.get('sender_identity'):raise CycleError('reply_original_sender_unknown')
+            if binding!=reply['sender_identity']:raise CycleError('reply_original_identity_changed')
+        from lib.market_accounts import load_config
+        sender={'account':load_config(root)['markets']['it']['roles']['communications'],'identity':binding}
         with live(binding,report,stopped=stopped,read_only=recovering) as runtime:
             conversation=runtime['reads'].conversation(reply['cid'],reply['oec'])
             if not recovering:
@@ -68,7 +74,7 @@ def run_reply(store,replies,reply,*,root=ROOT,authorized_now=False,stopped=lambd
                         raise CycleError('reply_scope_mismatch')
                     if not card and scope.get('textSha256')!=hashlib.sha256(reply['text'].encode()).hexdigest():
                         raise CycleError('reply_scope_mismatch')
-                    allowed=replies.begin(reply['id']);mark();return allowed
+                    allowed=replies.begin(reply['id'],sender);mark();return allowed
                 try:
                     with runtime['write_gate']() as mark:
                         receipt=(runtime['adapter'].send_card_once(conversation,card,reply['request_ref'],before_dispatch=permit)

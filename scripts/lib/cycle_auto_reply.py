@@ -11,13 +11,28 @@ CREATE TABLE IF NOT EXISTS service_reply_runtime(plan_id TEXT PRIMARY KEY,seen R
 ACK='Ricevuto, verifichiamo e ti aggiorniamo appena possibile.'
 SAMPLE='Per questa collaborazione ti proponiamo di promuovere di nuovo il prodotto: non inviamo un nuovo campione. Se lo hai ancora, puoi usarlo per un nuovo video o LIVE.'
 REPLACEMENT='Capito. Puoi contattare direttamente il negozio e chiedere se è possibile ricevere un altro campione o una sostituzione.'
+# Bounded read-only verification of one submitted reply whose delivery is unknown (§9.18). The inline
+# readback right after submission is not counted; the original message stays in the recent-20 readback
+# window for minutes, so a short spaced budget is enough before isolating only that reply/creator.
+REPLY_CHECK_MAX=3
+REPLY_CHECK_INTERVAL=120
+REPLY_CHECK_DEADLINE=900
+REPLY_COLUMNS=(('control_revision','INTEGER NOT NULL DEFAULT 0'),('sender_account','TEXT'),('sender_identity','TEXT'),
+               ('check_attempts','INTEGER NOT NULL DEFAULT 0'),('next_check_at','REAL NOT NULL DEFAULT 0'),
+               ('isolated_at','REAL'),('isolation_reason','TEXT'))
 
-def reply_blocker(db,plan):
- """Plan-wide reasons begin() refuses every automatic reply.  The Agent checks them before it calls the model, so a
- held market does not spend model calls and creators' retry attempts on replies it cannot send."""
+def reply_blocker(db,plan,creator=None):
+ """Reasons begin() refuses an automatic reply.  The Agent checks them before it calls the model, so a
+ held market does not spend model calls and creators' retry attempts on replies it cannot send.
+
+ A reply still inside its bounded verification holds the whole market; once isolated it only holds
+ its own creator."""
  if db.execute("SELECT 1 FROM cycle_delivery WHERE state='unknown' AND plan_id=?",(plan,)).fetchone():return 'delivery_unknown'
  if db.execute("SELECT 1 FROM service_reply WHERE plan_id=? AND state IN ('inflight','unknown','accepted')",(plan,)).fetchone():
   return 'reply_unknown'
+ if creator is not None and db.execute("SELECT 1 FROM service_reply WHERE plan_id=? AND creator_id=? AND state='isolated'",
+                                       (plan,creator)).fetchone():
+  return 'reply_isolated'
  return None
 
 
@@ -28,7 +43,9 @@ def _decision_wait_for(db,reply_id):
 class AutoReplies:
  def __init__(self,store):
   self.s=store;self.service=Service(store);store.db.executescript(SCHEMA)
-  if 'control_revision' not in {r[1] for r in store.db.execute('PRAGMA table_info(service_reply)')}:store.db.execute('ALTER TABLE service_reply ADD COLUMN control_revision INTEGER NOT NULL DEFAULT 0')
+  present={r[1] for r in store.db.execute('PRAGMA table_info(service_reply)')}
+  for name,kind in REPLY_COLUMNS:
+   if name not in present:store.db.execute(f'ALTER TABLE service_reply ADD COLUMN {name} {kind}')
  def enabled(self,plan):
   r=self.s.db.execute('SELECT enabled FROM service_reply_config WHERE plan_id=?',(plan,)).fetchone();return bool(r and r[0])
  def enable(self,plan,authorization):
@@ -46,7 +63,7 @@ class AutoReplies:
    context=self.service.context(plan,creator);current=[x for x in context if not x['historical']]
    if not current or any(x['content'] is None for x in current):return None
    decision=json.loads(a['decision']);category=decision['category'];case=None;kind='answer'
-   if self.s.db.execute("SELECT 1 FROM inbox_checkpoint WHERE plan_id=? AND oec=? AND state='gap'",(plan,r['oec'])).fetchone():return None
+   if self.s.db.execute("SELECT 1 FROM inbox_checkpoint WHERE plan_id=? AND oec=? AND state IN ('gap','backfilling')",(plan,r['oec'])).fetchone():return None
    if p['state']=='human':
     case=self.s.db.execute("SELECT * FROM service_case WHERE plan_id=? AND creator_id=? AND state='open'",(plan,creator)).fetchone()
     if not case or case['ack_state']=='confirmed':return None
@@ -149,7 +166,11 @@ class AutoReplies:
     (reply_id,plan,creator,pending_revision,rel['oec'],cid,kind,handoff_case_id,text.strip(),digest(context),
      str(uuid.uuid4()),self.s.clock(),rel['revision']))
    return self.get(reply_id)
- def begin(self,id):
+ def begin(self,id,sender=None):
+  """Move one ready reply to inflight and freeze the platform sender that will submit it."""
+  if sender is not None and (not isinstance(sender,dict) or not isinstance(sender.get('account'),str) or not sender['account']
+                             or not isinstance(sender.get('identity'),str) or not sender['identity']):
+   raise CycleError('reply_sender_invalid')
   with self.s.tx():
    q=self.get(id);p=self.s.db.execute('SELECT * FROM inbox_pending WHERE plan_id=? AND creator_id=?',(q['plan_id'],q['creator_id'])).fetchone();r=self.s.db.execute('SELECT * FROM relationship WHERE plan_id=? AND creator_id=?',(q['plan_id'],q['creator_id'])).fetchone()
    if q['state']!='ready':raise CycleError('reply_not_ready')
@@ -173,9 +194,10 @@ class AutoReplies:
    if q['case_id']:
     case=self.s.db.execute('SELECT * FROM service_case WHERE id=?',(q['case_id'],)).fetchone()
     if not case or case['state']!='open' or case['ack_state']=='confirmed':raise CycleError('handoff_changed')
-   blocker=reply_blocker(self.s.db,q['plan_id'])
+   blocker=reply_blocker(self.s.db,q['plan_id'],None if manual else q['creator_id'])
    if blocker:raise CycleError(blocker)
-   self.s.db.execute("UPDATE service_reply SET state='inflight',started=? WHERE id=?",(self.s.clock(),id))
+   self.s.db.execute("UPDATE service_reply SET state='inflight',started=?,sender_account=?,sender_identity=? WHERE id=?",
+                     (self.s.clock(),(sender or {}).get('account'),(sender or {}).get('identity'),id))
    return {'dispatchAllowed':True,'requestRef':q['request_ref'],'stage':'send_message',
            'componentKind':'card' if q['kind']=='manual_card' else 'text'}
  def accepted(self,id,receipt):
@@ -183,12 +205,41 @@ class AutoReplies:
    q=self.get(id)
    if q['state']!='inflight' or receipt['requestRef']!=q['request_ref']:raise CycleError('reply_receipt_mismatch')
    self.s.db.execute("UPDATE service_reply SET state='accepted',receipt=? WHERE id=?",(encoded(receipt),id))
- def unknown(self,id):self.s.db.execute("UPDATE service_reply SET state='unknown' WHERE id=? AND state IN ('inflight','accepted')",(id,))
+ def unknown(self,id):
+  self.s.db.execute("UPDATE service_reply SET state='unknown',next_check_at=max(next_check_at,?) WHERE id=? AND state IN ('inflight','accepted')",
+                    (self.s.clock()+REPLY_CHECK_INTERVAL,id))
+ def recovery_step(self,id):
+  """Next action for one unresolved reply: 'check' (read-only), 'wait' until nextAt, or 'isolate'."""
+  q=self.get(id)
+  if not q or q['state'] not in ('inflight','accepted','unknown'):return {'action':'none'}
+  now=self.s.clock();started=q['started'] if q['started'] is not None else q['created']
+  if q['check_attempts']>=REPLY_CHECK_MAX or now>=started+REPLY_CHECK_DEADLINE and q['check_attempts']>0:
+   return {'action':'isolate'}
+  if now<q['next_check_at']:return {'action':'wait','nextAt':q['next_check_at']}
+  return {'action':'check','attempt':q['check_attempts']+1}
+ def record_check(self,id):
+  """Spend one verification before the read, so a restart never resets the budget."""
+  with self.s.tx():
+   changed=self.s.db.execute("UPDATE service_reply SET check_attempts=check_attempts+1,next_check_at=? "
+                             "WHERE id=? AND state IN ('inflight','accepted','unknown') AND check_attempts<?",
+                             (self.s.clock()+REPLY_CHECK_INTERVAL,id,REPLY_CHECK_MAX)).rowcount
+  if changed!=1:raise CycleError('reply_check_budget_exhausted')
+  return self.get(id)
+ def refund_check(self,id):
+  """Return one verification whose read never started (lock busy, account unavailable)."""
+  self.s.db.execute("UPDATE service_reply SET check_attempts=check_attempts-1 WHERE id=? AND check_attempts>0 "
+                    "AND state IN ('inflight','accepted','unknown')",(id,))
+ def isolate(self,id,reason='reply_unknown_budget_exhausted'):
+  """Keep the real unknown and its evidence; only this reply's creator stops automatic work."""
+  with self.s.tx():
+   self.s.db.execute("UPDATE service_reply SET state='isolated',isolated_at=?,isolation_reason=? "
+                     "WHERE id=? AND state IN ('inflight','accepted','unknown')",(self.s.clock(),reason,id))
+  return self.get(id)
  def confirm(self,id,proof):
   with self.s.tx():
    q=self.get(id)
    if q['state']=='confirmed':return
-   if q['state'] not in ('inflight','accepted','unknown') or proof.get('status')!='confirmed' or proof.get('requestRef')!=q['request_ref'] or proof.get('conversationId')!=q['cid'] or not proof.get('messageId'):raise CycleError('reply_proof_invalid')
+   if q['state'] not in ('inflight','accepted','unknown','isolated') or proof.get('status')!='confirmed' or proof.get('requestRef')!=q['request_ref'] or proof.get('conversationId')!=q['cid'] or not proof.get('messageId'):raise CycleError('reply_proof_invalid')
    self.s.db.execute("UPDATE service_reply SET state='confirmed',proof=? WHERE id=?",(encoded(proof),id))
    if q['case_id']:self.s.db.execute("UPDATE service_case SET ack_state='confirmed' WHERE id=?",(q['case_id'],))
    elif q['kind'] in ('manual','manual_card'):pass

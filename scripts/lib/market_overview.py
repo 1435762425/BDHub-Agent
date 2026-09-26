@@ -189,6 +189,7 @@ def handling(db, plan, market, now):
     require_tables(db, 'cycle_delivery', 'service_reply', 'service_case')
     delivery = Counter({r[0]: r[1] for r in db.execute('SELECT state,count(*) FROM cycle_delivery WHERE plan_id=? GROUP BY state', (plan,))})
     replies = db.execute("SELECT count(*) FROM service_reply WHERE plan_id=? AND state IN ('inflight','accepted','unknown')", (plan,)).fetchone()[0]
+    isolated_replies = db.execute("SELECT count(*) FROM service_reply WHERE plan_id=? AND state='isolated'", (plan,)).fetchone()[0]
     cases = list(db.execute("SELECT reason,count(*) n FROM service_case WHERE plan_id=? AND state='open' GROUP BY reason", (plan,)))
     technical = sum(r['n'] for r in cases if r['reason'] in TECHNICAL_CASES)
     business = sum(r['n'] for r in cases if r['reason'] not in TECHNICAL_CASES)
@@ -198,10 +199,11 @@ def handling(db, plan, market, now):
     return {'metrics': [metric('deliveryUnknown', '投递结果未知', delivery['unknown'], '次'),
                         metric('quarantined', '已技术隔离投递', delivery['quarantined_unknown'], '次'),
                         metric('replyUnknown', '回复在途/待核验', replies, '条'),
+                        metric('replyIsolated', '回复核验耗尽已隔离', isolated_replies, '条', '仅暂停该达人的自动回复与主动推品；保留真实未知，不补发。'),
                         metric('legacyTechnicalCases', '历史技术人工案件', technical, '件', '现有人工锁仍保留；本页只分类展示，不结案、不解除阻断。'),
                         metric('humanCases', '业务及其他人工事项', business, '件'),
                         metric('accountNeedsHuman', '账号需人工处理', accounts, '项')],
-            'note': '按当前真实状态分类。技术隔离与原业务人工事项分列，不表示后续自动隔离方案已经上线。'}
+            'note': '按当前真实状态分类。技术隔离与原业务人工事项分列。'}
 
 
 def inbox(db, market, now):

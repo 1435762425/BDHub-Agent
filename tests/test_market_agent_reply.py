@@ -29,9 +29,12 @@ class Replies:
  def get(self,_id):
   row=self.store.db.execute("SELECT * FROM service_reply WHERE id='reply-1'").fetchone()
   return self.reply|dict(row)
- def begin(self,_id):raise CycleError('reply_context_changed')
+ def begin(self,_id,_sender=None):raise CycleError('reply_context_changed')
  def confirm(self,_id,_proof):self.store.db.execute("UPDATE service_reply SET state='confirmed' WHERE id='reply-1'")
  def unknown(self,_id):self.store.db.execute("UPDATE service_reply SET state='unknown' WHERE id='reply-1'")
+
+
+SENDER=SimpleNamespace(account_name='acc1',im_id='777')
 
 
 class MarketAgentReplyTests(unittest.TestCase):
@@ -51,7 +54,7 @@ class MarketAgentReplyTests(unittest.TestCase):
                     'componentKind':'text','requestRef':'request-1',
                     'textSha256':hashlib.sha256(b'Ciao').hexdigest()})
    self.fail('dispatch must not continue after changed context')
-  runtime={'session':session,'adapter':SimpleNamespace(send_once=send),'auth':object()}
+  runtime={'session':session,'adapter':SimpleNamespace(send_once=send),'auth':SENDER}
   @contextmanager
   def authenticated(*_args,**_kwargs):yield runtime
   @contextmanager
@@ -75,14 +78,14 @@ class MarketAgentReplyTests(unittest.TestCase):
 
  def test_unknown_reply_readback_uses_read_only_auth_and_no_write_gate(self):
   self.store.db.execute("UPDATE service_reply SET state='unknown' WHERE id='reply-1'")
-  self.reply['state']='unknown'
+  self.reply.update(state='unknown',sender_account='acc1',sender_identity='777')
   options={};conversation=SimpleNamespace(conversation_id='123')
   session=SimpleNamespace(conversation=lambda *_:conversation)
   adapter=SimpleNamespace(readback=lambda *_args,**_kwargs:{'status':'confirmed'})
   @contextmanager
   def authenticated(*_args,**kwargs):
    options.update(kwargs)
-   yield {'session':session,'adapter':None,'auth':object()}
+   yield {'session':session,'adapter':None,'auth':SENDER}
   with patch.object(M,'authenticated',authenticated), \
        patch.object(M,'write_gate',side_effect=AssertionError('write_gate_forbidden')), \
        patch('lib.italy_im_delivery.ItalyImDeliveryAdapter',return_value=adapter):
@@ -90,6 +93,23 @@ class MarketAgentReplyTests(unittest.TestCase):
   self.assertTrue(options['read_only'])
   self.assertEqual(result['state'],'confirmed')
   self.assertEqual((result['platformWrites'],result['realSends']),(0,0))
+
+ def test_recovery_never_reads_with_a_different_sender(self):
+  self.store.db.execute("UPDATE service_reply SET state='unknown' WHERE id='reply-1'")
+  opened=[]
+  @contextmanager
+  def authenticated(*_args,**_kwargs):
+   opened.append(True)
+   yield {'session':SimpleNamespace(conversation=lambda *_:None),'adapter':None,'auth':SENDER}
+  cases=(({'sender_account':None,'sender_identity':None},'reply_original_sender_unknown',False),
+         ({'sender_account':'acc2','sender_identity':'777'},'reply_original_account_changed',False),
+         ({'sender_account':'acc1','sender_identity':'999'},'reply_original_identity_changed',True))
+  for frozen,code,authenticated_once in cases:
+   opened.clear();self.reply.update(state='unknown',**frozen)
+   with patch.object(M,'authenticated',authenticated), \
+        patch('lib.italy_im_delivery.ItalyImDeliveryAdapter',side_effect=AssertionError('read_forbidden')):
+    with self.assertRaisesRegex(CycleError,code):M.run_reply(ROOT,self.store,self.replies,self.reply,'br')
+   self.assertEqual(bool(opened),authenticated_once)
 
 
 if __name__=='__main__':unittest.main()

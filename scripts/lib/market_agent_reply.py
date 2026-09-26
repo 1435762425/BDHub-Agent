@@ -26,10 +26,19 @@ def run_reply(root,store,replies,reply,market,*,pilot=False,authorized_now=False
  recovering=reply['state'] in ('inflight','accepted','unknown')
  if not recovering and not agent_setting(store,reply['plan_id'])['enabled']:
   raise CycleError('agent_reply_disabled')
+ if recovering:
+  # Only the frozen original sender may read back its own reply; never a replacement account.
+  from lib.market_accounts import load_config
+  if not reply.get('sender_account') or not reply.get('sender_identity'):raise CycleError('reply_original_sender_unknown')
+  if load_config(root)['markets'][market]['roles']['communications']!=reply['sender_account']:
+   raise CycleError('reply_original_account_changed')
  with authenticated(root,market,report,canary=pilot,read_only=recovering,
                     capability='agent_reply',stopped=stopped) as runtime:
   session=runtime['session'];adapter=runtime['adapter']
+  sender={'account':str(runtime['auth'].account_name),'identity':str(runtime['auth'].im_id)}
   if recovering:
+   if sender['account']!=reply['sender_account']:raise CycleError('reply_original_account_changed')
+   if sender['identity']!=reply['sender_identity']:raise CycleError('reply_original_identity_changed')
    from lib.italy_im_delivery import ItalyImDeliveryAdapter
    adapter=ItalyImDeliveryAdapter(runtime['auth'],session)
   conversation=session.conversation(reply['cid'],reply['oec'])
@@ -48,7 +57,7 @@ def run_reply(root,store,replies,reply,market,*,pilot=False,authorized_now=False
         scope.get('requestRef')!=reply['request_ref'] or \
         scope.get('textSha256')!=hashlib.sha256(reply['text'].encode()).hexdigest():
       raise CycleError('reply_scope_mismatch')
-     allowed=replies.begin(reply['id']);mark();report['platformWrites']+=1;return allowed
+     allowed=replies.begin(reply['id'],sender);mark();report['platformWrites']+=1;return allowed
     try:
      receipt=adapter.send_once(conversation,reply['text'],reply['request_ref'],before_dispatch=permit)
      replies.accepted(reply['id'],receipt)

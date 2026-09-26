@@ -158,7 +158,7 @@ class OverviewTests(unittest.TestCase):
             before=db.total_changes
             value=handling(db,'p','it',NOON)
             metrics={m['key']:m['value'] for m in value['metrics']}
-            self.assertEqual(metrics,{'deliveryUnknown':1,'quarantined':1,'replyUnknown':1,'legacyTechnicalCases':1,'humanCases':1,'accountNeedsHuman':1})
+            self.assertEqual(metrics,{'deliveryUnknown':1,'quarantined':1,'replyUnknown':1,'replyIsolated':0,'legacyTechnicalCases':1,'humanCases':1,'accountNeedsHuman':1})
             self.assertEqual(db.total_changes,before)
 
 

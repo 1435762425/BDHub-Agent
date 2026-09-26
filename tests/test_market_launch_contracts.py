@@ -140,7 +140,7 @@ class MarketLaunchContracts(unittest.TestCase):
   marks=[]
   class Replies:
    def get(self,_id):return reply
-   def begin(self,_id):reply['state']='inflight';return {'dispatchAllowed':True,'requestRef':reply['request_ref'],
+   def begin(self,_id,sender=None):reply.update(state='inflight',sender=sender);return {'dispatchAllowed':True,'requestRef':reply['request_ref'],
       'stage':'send_message','componentKind':'text'}
    def accepted(self,_id,receipt):reply['state']='accepted';reply['receipt']=json.dumps(receipt)
    def confirm(self,_id,proof):reply['state']='confirmed'
@@ -160,7 +160,8 @@ class MarketLaunchContracts(unittest.TestCase):
   @contextmanager
   def auth(_root,market,_report,*,canary,read_only,capability,stopped):
    self.assertEqual((market,canary,read_only,capability),('my',False,False,'agent_reply'))
-   yield {'session':Session(),'adapter':Adapter(),'auth':object(),'account':type('A',(),{'name':'acc8'})()}
+   yield {'session':Session(),'adapter':Adapter(),'auth':type('Auth',(),{'account_name':'acc8','im_id':'8001'})(),
+          'account':type('A',(),{'name':'acc8'})()}
   @contextmanager
   def gate(*_args,**_kwargs):yield lambda:marks.append('write')
   with patch('lib.market_agent_reply.authenticated',auth),patch('lib.market_agent_reply.write_gate',gate),\
@@ -168,6 +169,7 @@ class MarketLaunchContracts(unittest.TestCase):
    result=run_reply(self.root,self.store,Replies(),reply,'my',authorized_now=True)
   self.assertEqual((result['state'],result['platformWrites'],result['realSends'],marks),
                    ('confirmed',1,1,['write']))
+  self.assertEqual(reply['sender'],{'account':'acc8','identity':'8001'})
 
  def test_my_agent_requires_a_separate_first_send_page_event(self):
   save_agent_setting(self.store,self.plan,0,{key:value for key,value in

@@ -59,15 +59,23 @@ def last_contact_by_creator(db, plan_id=None, *, creator_id=None, current_delive
     return latest
 
 
+def _reply_isolated(db, plan):
+    """Creators whose own submitted reply was isolated after bounded verification (§9.18)."""
+    if not db.execute("SELECT 1 FROM sqlite_master WHERE name='service_reply'").fetchone():return set()
+    return {r[0] for r in db.execute("SELECT DISTINCT creator_id FROM service_reply WHERE plan_id=? AND state='isolated'",(plan,))}
+
+
 def isolated_creators(db, plan):
-    if not db.execute("SELECT 1 FROM sqlite_master WHERE name='cycle_delivery'").fetchone():return set()
-    if not db.execute("SELECT 1 FROM cycle_delivery WHERE state='quarantined_unknown' LIMIT 1").fetchone():return set()
-    return {r[0] for r in db.execute("""SELECT DISTINCT r.creator_id FROM relationship r JOIN plan p ON p.id=r.plan_id
+    replies=_reply_isolated(db,plan)
+    if not db.execute("SELECT 1 FROM sqlite_master WHERE name='cycle_delivery'").fetchone():return replies
+    if not db.execute("SELECT 1 FROM cycle_delivery WHERE state='quarantined_unknown' LIMIT 1").fetchone():return replies
+    return replies|{r[0] for r in db.execute("""SELECT DISTINCT r.creator_id FROM relationship r JOIN plan p ON p.id=r.plan_id
         JOIN plan old ON old.market=p.market JOIN cycle_delivery d ON d.plan_id=old.id AND d.oec=r.oec
         WHERE r.plan_id=? AND d.state='quarantined_unknown'""",(plan,))}
 
 
 def marketing_isolated(db, plan, creator, oec):
+    if creator in _reply_isolated(db,plan):return True
     if not db.execute("SELECT 1 FROM sqlite_master WHERE name='cycle_delivery'").fetchone():return False
     return bool(db.execute("""SELECT 1 FROM cycle_delivery d JOIN plan old ON old.id=d.plan_id
         JOIN plan p ON p.market=old.market WHERE p.id=? AND d.oec=? AND d.state='quarantined_unknown' LIMIT 1""",
