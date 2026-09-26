@@ -10,7 +10,7 @@
 
 | 范围 | 当前实现 | 剩余边界 / 代码入口 |
 | --- | --- | --- |
-| 只读运营概览与调度 | 三类概览、有界片段及长任务期间补领已接入；运行证据页（各进程载入代码、调度器心跳、模型暂停、恢复演练）只读展示，未知状态显示“状态待核实” | 全模块等待原因与允许动作合同（U2）尚未齐备；`market_overview.py`、`operations_scheduler.tick`、`ops_alerts.evidence` |
+| 只读运营概览与调度 | 三类概览、有界片段及长任务期间补领已接入；运行证据页与跨市场总控制台只读展示，市场按最久未领资源轮流；首页阶段指标带名称/单位/窗口，未知状态显示“状态待核实” | 全模块等待原因与允许动作合同（U2）尚未齐备；`market_overview.py`、`operations_scheduler.tick`、`ops_alerts.evidence` |
 | Campaign 加入 | 正常货盘先走，最多四轮/整批 300 秒核验，耗尽停止主动跟进 | 保留真实 unknown，不扩展其他来源的部分发布权限；`campaign_join.verify`、scheduler catalog 分支 |
 | 全托发现 | IT/UK 首次与每 15 天类目扫描，候选累积不覆盖，复用原选入意图 | 明确失败旧 PID 的再入队策略未定；`fullmanaged_candidates.py`、`promotion_assessment` |
 | 两路 TapLink / 选入 | Campaign 直接准备；全托先确认选入；建链 30/120 秒回查与部分选入未知跳过 | 剩余选入 unresolved/needs_review 仍可挡 catalog，非 IT 清理及维护重试合同未齐 |
