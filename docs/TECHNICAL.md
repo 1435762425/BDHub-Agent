@@ -59,7 +59,7 @@ Campaign 核验最多首次加 3 次补查，同市场整批共享 300 秒墙钟
 
 短名按 `cycle_product_name.locale` 校验，非 IT 不读 IT 缓存或截断标题；缺失停止创建。IT 准备顺序 seed/read → names → create，其他市场 seed → localized names → read → create。新建回读未知隔离该 PID，整批写完公共回读，再按 30/120 秒轮询两次；仍缺失只保留 unknown，不重复 POST。在 `step_create` 中，若实时 offer 在尝试创建前已不再合格（`product_no_longer_eligible`）或其商业事实变化（`commercial_facts_changed:*`），`retire_or_block` 会取代已准备的意图（`catalog_link_intent.state='superseded'`，回读记录原因与 0 次创建尝试）并退役 prepare 项（`retired`，不计入 summary 计数）；已尝试/unknown 的意图保留其回读路径；若退役失败则按原样阻断该项，错误中带 `retire_failed`。
 
-清理只删除整卡平台 invalid，内部期限/佣金门槛仅本地停用。`taplink_clean` 阶段目前只对 IT 执行，BR/MY/UK 整段跳过（`market_taplink_cleanup_not_enabled`），既不本地停用也不做只读扫描。删除收口后完整回读，仍存在记 failed_known，不自动重复 DELETE。发送端本地核对 binding/Offer/currentListId，不调用 fresh_card。
+清理只删除整卡平台 invalid，内部期限/佣金门槛仅本地停用。`taplink_clean` 每周一排期：IT 执行账号库存 refresh/classify/delete；BR/MY/UK 只运行 `catalog-clean.py check-bindings --market`，经本市场供给账号只读重读每个 active binding 自己的卡成员，仅在商品不在卡内、`product_status≠2`、被治理或非 8 类不可用时把该 binding 转 `waiting_refresh` 并记证据，读取失败保留原可信 binding；非 IT 不复用 IT 账号库存表，远端删除不开放。标准卡判定（`classify_pid`）要求名称/creator 佣金精确匹配且平台有效、商品合格；同形但平台报不可用的卡返回 `ineligible`，落 `review` 并阻止替代建链，同一卡已是 active binding 时转 `waiting_refresh`。删除收口后完整回读，仍存在记 failed_known，不自动重复 DELETE。发送端本地核对 binding/Offer/currentListId，不调用 fresh_card。
 
 ### 2.3 工作流与调度
 
@@ -68,7 +68,9 @@ Campaign 核验最多首次加 3 次补查，同市场整批共享 300 秒墙钟
 - 同市场按上游 generation 串行。TikTok 平台上的重型阶段（catalog、taplink_clean、taplink_prepare、oecid）额外占用全局槽 `platform:global`，容量 1（`workflow_dispatch.PLATFORM_PARALLEL_MARKETS`），所以同一时间只有一个市场在做平台重型读取，其余市场排队；Kalodata 用自己的 `kalodata:global` 两槽，可与另一市场的平台阶段并行。
 - `workflow_stage_claim/workflow_resource_slot` 短事务领取 owner/fence/300 秒 lease，执行每 30 秒续租；确认 owner 已退出才回收。子进程先登记真实 PID 再执行，父死子活仍占槽。
 - 锁占用、无效 CLI 输出、部分范围失败、pending、stuck 不能报 completed。外层平台写入数汇总内部 pass，item count 取最终 summary，不能把重复 pass 累加。
-- 仅零平台写入、无 unknown/unresolved/ambiguous、claim 已释放的失败阶段，才在原 run/上游 generation 间隔 ≥1 小时重排，最多三次；不重跑完成的上游，不依赖来源下一次到期。其余转 needs_human。
+- 仅零平台写入、无 unknown/unresolved/ambiguous、claim 已释放的失败阶段，才在原 run/上游 generation 间隔 ≥1 小时重排，最多三次；不重跑完成的上游，不依赖来源下一次到期。其余转 needs_human。可写平台的 taplink_clean/catalog/taplink_prepare 另需阶段 `counts.writeEvidence='zero'`：执行器按阶段累计每个子进程报告的写入，子进程已放行后 stdout 丢失/损坏、超时或异常记 `uncertain` 并保留报告中的写入数；旧记录没有该证据也不视为零写。只读阶段（kalodata/oecid/send_pool）维持原规则。
+- OECID 阶段在 `counts.identityAccount` 记录实际执行账号；`rolling_leads.identity_hold` 只用该账号（旧记录用同一 `identity_account` 解析）的新身份代次或更晚成功的 OECID 阶段解除等待。四市场 `market-identity.py` 有界切片（含 IT 的 `account_wait`/`nothing_pending`）走同一归一化，仍核对命令市场、零写入、零发送。
+- 全托选入：登录故障（16201010）、非 PID 级错误或未决 PID 超过 3 个仍 needs_human；否则只冻结台账中列出的未决 PID（原意图不重发），其余 PID 继续选入、Campaign 继续，catalog 代次 scope 带 `selectionGap`（未决 PID、原因、`partial_selection`）。
 - 恢复短名或 Kalodata 漏参预检需精确校验原错误、原阶段、零写入、当前证据和 claim，恢复事件写原 checkpoint；专用入口不得用于已实际执行的失败。
 - 常驻 scheduler 在长任务未完成时持续重读开关/到期/重试并补领空闲槽，最多每 30 秒检查；没有 future 完成也刷新 checkedAt/runningStages 和租约。--once 保持单批边界；停止后不再补领，已在执行的原阶段先收口。完成发布在事务内再次核对 owner/fence，迟到旧 owner 不得发布。长任务等待仍监督收信、发送、Agent 和账号维护，普通失败退避与 unknown 核验分开。
 
@@ -141,7 +143,7 @@ worker 在等待窗口、池或容量时常驻退避；同账号在途写串行�
 
 四市场当前采用 `market-accounts.json.imSessionMode=sdk_http`：每市场 `im-session-worker.py` 持通讯账号原 ProfileLease，负责浏览器 SDK 收信和现有 HTTP 会话的私有 IPC 借用。HTTP 已认证后即可服务原二发、AI 和回查；浏览器初始化不阻塞 HTTP。发送仍走原 HTTP 执行器、逐写门禁、原账号与 requestRef，SDK 不承担发送。
 
-`sdk_inbox.py` 将 onMessageReceive/onMessageUpsert 变为持久唤醒信号，先提交 schema v26 `im_receive_signal` 再清浏览器缓存；消息身份、市场、正文和编辑版本仍由原 HTTP proof/history 解析器核实，进入原 Inbox/Service/reply_events。已知相同文本与非文本回放不产生新待回复。回查优先处理到期通知，保留 30 秒分页发现和冷 checkpoint 补扫；游标跨会话续期保存。指定 messageId 最多补查 5 页，仍缺失保留信号退避，不清 gap 或伪造回执。进程内读取预算 2 QPS，不能当作账号所有消费者共享的全局限速。
+`sdk_inbox.py` 将 onMessageReceive/onMessageUpsert 变为持久唤醒信号，先提交 schema v26 `im_receive_signal` 再清浏览器缓存；消息身份、市场、正文和编辑版本仍由原 HTTP proof/history 解析器核实，进入原 Inbox/Service/reply_events。已知相同文本与非文本回放不产生新待回复。回查优先处理到期通知，保留 30 秒分页发现和冷 checkpoint 补扫；游标跨会话续期保存。每轮最多 5 页；已有 checkpoint 的会话未在预算内接上补读开始前已入库的消息（`inbox_event` rowid 水位）时，Inbox 记 `backfilling` 并在 `inbox_backfill` 保存原账号/IM/OEC 绑定的原生游标：期间消息入库但不生成待回复、暂停该达人营销，冷扫描优先该会话；下轮先读首页，接上本次补读已入库范围后从游标继续，直到覆盖证明成立才按 live 规则一次结算补读期间的新来信。换读取身份从首页重建链；旧 `gap` 保持原语义，不伪造回执。进程内读取预算 2 QPS，不能当作账号所有消费者共享的全局限速。
 
 SDK 当前平台枚举为 0 未初始化、1 初始化中、2 成功、3 失败；必须等 2 才挂接接收回调。会话约每 600 秒续期，退出/维护时先拒绝新借用，等原 HTTP 客户端收口后释放 ProfileLease。Unix socket 为同 UID、0600，凭据仅在内存和私有 IPC 中，客户端检查 epoch、身份代次和 headers 指纹；借用不产生发送授权。维护/登录失效沿用原账号恢复任务。启动/断线由原 scheduler 监督，存活与 SDK 初始化成功均不能替代新来信时延验收。
 
@@ -171,7 +173,7 @@ schema v25 追加处理证据，并在已有模块上建立 inbox 按市场/OEC/
 
 指南包含肯定合作但未观察到当前商品橱窗证据时的加橱窗提醒，要求已有真实卡、不重复已提醒内容，并按市场语言说明下一个视频/直播生效。上下文提供实际观察事实；“未观察到”不升级成“核实没有”。
 
-`run-agent-replies.py` 先回查 inflight/accepted/unknown，再处理新 turn；模型失败逐达人隔离，同输入最多三次。确定未提交而上下文过期的 ready 可审计终结，已提交只核验。IT 人工/Agent 共用 `reply_transport.py`，其他市场用 `market_agent_reply.py`，均冻结唯一 `service_reply` 正文/requestRef 再发送。Agent 生成第一份可发送回复后立即进入执行，不再批量积压 20 份草稿；有处理进展时短间隔继续，等待/错误/未知保持轮询退避。每次生成前重查停止、窗口与缓冲。
+`run-agent-replies.py` 先回查 inflight/accepted/unknown，再处理新 turn；`begin()` 在转 inflight 的同一事务冻结 `sender_account`/`sender_identity`（非 IT 为 IM id，IT 为 sender binding hash），恢复时通讯角色或身份与冻结值不同即拒绝读取，旧记录缺失时不以当前账号补。未知回复最多 3 次只读核验（间隔 ≥120 秒，提交起 900 秒后且至少核验一次即停止），计数在读取前持久化，读取未能开始（发送锁/账号不可用）退还；耗尽转 `isolated`，保留原正文/requestRef/证据，只暂停该达人的自动回复和主动推品（并入 `outreach_policy` 营销隔离），其他达人继续，精确迟到证据仍可幂等结算，商业 handoff 案件保留。模型失败逐达人隔离，同输入最多三次。确定未提交而上下文过期的 ready 可审计终结，已提交只核验。IT 人工/Agent 共用 `reply_transport.py`，其他市场用 `market_agent_reply.py`，均冻结唯一 `service_reply` 正文/requestRef 再发送。Agent 生成第一份可发送回复后立即进入执行，不再批量积压 20 份草稿；有处理进展时短间隔继续，等待/错误/未知保持轮询退避。每次生成前重查停止、窗口与缓冲。
 
 模型调用统一经 `draft_provider.py`：DeepSeek `https://api.deepseek.com/chat/completions`、模型 `deepseek-flash`，JSON object 输出、关闭 thinking，单次请求不重试，上限约 24,000 输入字节、1,200 输出 token、60 秒。密钥先读 `DEEPSEEK_API_KEY`，缺失时只读旧项目 `01-BDSystem-V2/config.yaml` 的 `reply.api_key`（绝对路径写死）。用途：Agent V2、会话翻译、商品短名和离线评测。Jev 可执行 adapter、配置样例和新分类入口已移除；`reply_events.py` 保留消息投影、DeepSeek V1 兼容及历史评测只读，不读取 TypeSafe 配置或执行 Jev。私密历史配置由原备份规则保护，不作为运行依赖。
 
@@ -273,10 +275,9 @@ inbox 趋势和日明细使用同一账本，totals 等于每日求和，文字�
 
 ## 6. 尚未完成的合同与验证边界
 
-- **全托选入：** `global_selection.Selection.skip_unknown` 仅对符合 receipt 条件且至少两次延迟缺失回读的原项记 skipped_unknown；活动失配另按两次间隔至少 300 秒处理。scheduler 仍将剩余 submitting/awaiting_verification/result_unknown/needs_review 作为 `global_selection_unresolved`，不能称所有单项未知都已脱离阶段阻断。
-- **IT 身份阶段回执：** 供给模式已路由 `market-identity.py`，但 `SubprocessStageExecutor._call` 对 `sliceComplete`/`newBindings` 的专门归一化只列 BR/MY/UK；IT 使用通用分支，绑定计数可能显示 0，`account_wait` 等等待也可能落为阶段失败。平台 Find 成功证据仍保留，这不证明四市场阶段计数/等待合同已经完全统一。
-- **发送额度：** `cycle_delivery.py` 仍按同一北京日第一次 rejected 回执拦截新联系；明确额度信号与其他拒绝分型、按实际恢复而非按次日解除仍待完善。
-- **AI 失败与未知：** `agent_reply_v2.generate` 已按 input_hash 限制三次；`reply_scope.retry_ready`/worker 保留退避，但错误分型、服务级退避、耗尽展示仍不完整。`cycle_auto_reply.reply_blocker` 对本市场 unknown 投递和 inflight/accepted/unknown 回复继续设市场级门禁；AI 回复尚未接入二发的有限核验隔离预算。
+- **全托选入：** 单 PID 未知已按 §3 缩小为 PID 级缺口；容忍上限 3 为工程保护值，尚无业务样本校准。`skip_unknown` 仍只对两次延迟缺失的原项生效。
+- **发送额度：** 只有平台额度回执（状态 3、检查码 100、`im_limit_reached`）暂停当日新联系；其他单次拒绝只结束该达人，同一非额度特征当日重复 3 次按系统性拒绝暂停并单列原因。按实际额度恢复而非按次日解除仍待完善。
+- **AI 失败与未知：** `agent_reply_v2.generate` 已按 input_hash 限制三次；`reply_scope.retry_ready`/worker 保留退避，但模型错误分型、服务级退避、耗尽展示仍不完整。回复送达未知在核验预算内仍设市场级门禁（最长约 15 分钟），隔离后只按达人阻断；核验参数为工程评估值，尚无真实 unknown 样本。
 - **二发隔离后的服务：** `quarantined_unknown` 已释放二发派发槽，但新来信的独立 AI 服务许可尚未按模块方案 §9.19 完整落实，不能由“不再阻塞二发”推导“新来信必然可自动回复”。
 - **上下文：** 全部当前未答消息范围、生产 live 模式和超长输入拦截已接入；长期提醒记忆、自动分段以及严格按历史指南/关系/事实回放尚未完成。
 - **账号恢复：** 收信/SDK 使用 `login_recovery.request_refresh` 的通讯账号代次请求，OECID 使用 scheduler 的 `_relogin_market_account` 并选择供给角色；定期维护共用原意图台账，尚未统一所有模块的认证错误入口和请求键。
