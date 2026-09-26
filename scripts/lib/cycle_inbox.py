@@ -41,11 +41,17 @@ class Inbox:
     if prev:
      overlap=True
      if prev[0]!=encoded(e):raise CycleError('event_conflict')
+   watermark=db.execute('SELECT coalesce(max(rowid),0) FROM inbox_event').fetchone()[0]
+   auto_hold=False
    if cp and cp['state']!='gap' and (backfill is not None or cp['state']=='backfilling'):
     # Coverage is proven by the resumable reader, not by one page; other readers only add facts.
     gap=False;holding=not (backfill is not None and backfill['coverage']=='complete')
+   elif cp and cp['state']=='tracking' and history['hasMore'] and not overlap:
+    # A single-page reader cannot join the stored range: hold with the pre-read watermark so the
+    # resumable reader can prove coverage later, instead of an unrecoverable gap.
+    gap=False;holding=True;auto_hold=True
    else:
-    gap=bool(cp and (cp['state']=='gap' or (history['hasMore'] and not overlap)));holding=False
+    gap=bool(cp and cp['state']=='gap');holding=False
    completing=bool(cp and cp['state']=='backfilling' and not holding)
    added=historical=live=showcase_live=0;unlock=False;interaction_events=[]
    for mid,e in unique.items():
@@ -77,6 +83,9 @@ class Inbox:
     db.execute("""INSERT INTO inbox_backfill VALUES(?,?,?,?,?,?,?,?,1,?) ON CONFLICT(plan_id,cid) DO UPDATE SET
       oec=excluded.oec,account=excluded.account,im_id=excluded.im_id,cursor=excluded.cursor,rounds=rounds+1,updated_at=excluded.updated_at""",
       (plan,cid,oec,backfill['account'],backfill['imId'],backfill['cursor'],backfill['watermark'],now,now))
+   if auto_hold:
+    # No reader identity: any resumable reader restarts from the newest page, keeping this watermark.
+    db.execute("INSERT OR IGNORE INTO inbox_backfill VALUES(?,?,?,'','','0',?,?,0,?)",(plan,cid,oec,watermark,now,now))
    if completing or backfill is not None and not holding:db.execute('DELETE FROM inbox_backfill WHERE plan_id=? AND cid=?',(plan,cid))
    if live:
     db.execute('UPDATE relationship SET inbox_until=?,revision=revision+1 WHERE plan_id=? AND creator_id=?',(max(rel['inbox_until'],now+REPLY_FREEZE_SECONDS),plan,rel['creator_id']))

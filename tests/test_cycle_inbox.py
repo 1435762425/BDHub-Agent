@@ -25,7 +25,7 @@ class InboxTests(unittest.TestCase):
  def test_late_history_does_not_trigger(self):
   self.ingest([]);self.now+=100;self.ingest([self.event(stamp=NOW-100)]);self.assertEqual(inbox_status(self.s,self.p)['pendingContent'],0)
  def test_gap_never_queues_auto_reply(self):
-  self.ingest([self.event()]);self.now+=100;r=self.ingest([self.event('2')],more=True);self.assertEqual(r['state'],'gap');self.assertEqual(r['liveReplies'],0);self.assertGreater(self.rel()['inbox_until'],0)
+  self.ingest([self.event()]);self.now+=100;r=self.ingest([self.event('2')],more=True);self.assertEqual(r['state'],'backfilling');self.assertEqual(r['liveReplies'],0);self.assertGreater(self.rel()['inbox_until'],0)
  def test_identity_and_event_conflict_atomic(self):
   e=self.event();self.ingest([e]);bad=dict(e,kind='ourMessages')
   with self.assertRaises(CycleError):self.ingest([bad,self.event('2')])

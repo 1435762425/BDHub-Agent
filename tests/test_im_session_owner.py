@@ -168,6 +168,31 @@ class BackfillTests(SignalTests):
   history=read_to_overlap(self.session(calls),SimpleNamespace(conversation_id='999',oec_id='123'),self.s,self.plan)
   self.assertNotIn('backfill',history)
 
+ def test_legacy_gap_recovers_only_with_evidence_and_never_answers_gap_history(self):
+  from lib.inbox_gap import diagnose,recover
+  self.incoming();self.s.db.execute('DELETE FROM inbox_pending');self.conversation_messages(121)
+  # Old code: the checkpoint became a gap and later events were stored as historical.
+  self.s.db.execute("UPDATE inbox_checkpoint SET state='gap' WHERE cid='999'")
+  for row in self.messages[:5]:
+   self.s.db.execute('INSERT INTO inbox_event VALUES(?,?,?,?,?,?,?,1,?)',(self.plan,'999',row['messageId'],'123',row['kind'],row['createTimeRaw'],json.dumps(row,sort_keys=True,separators=(',',':'),ensure_ascii=False),self.now))
+  report=diagnose(self.s,'my')
+  self.assertEqual((report['gaps'],report['items'][0]['recoverable'],report['items'][0]['historicalDuringGap']),(1,True,5))
+  self.assertEqual(recover(self.s,'my','999')['state'],'ready_to_recover')
+  self.assertEqual(self.state(),'gap')
+  self.assertEqual(recover(self.s,'my','999',confirm=True)['state'],'backfilling')
+  for _ in range(3):
+   calls=[];history,result=self.round(calls)
+   if history['backfill']['coverage']=='complete':break
+  self.assertEqual((self.state(),history['backfill']['coverage']),('tracking','complete'))
+  # 116 messages newly read below the gap follow the live rule; the 5 gap-era rows stay historical.
+  self.assertEqual(self.pending(),1)
+  self.assertEqual(self.s.db.execute("select count(*) from inbox_event where cid='999' and historical=1").fetchone()[0],5)
+ def test_gap_without_any_live_tracked_event_is_reported_not_recovered(self):
+  from lib.inbox_gap import recover
+  self.s.db.execute("UPDATE inbox_checkpoint SET state='gap' WHERE cid='999'")
+  result=recover(self.s,'my','999',confirm=True)
+  self.assertEqual((result['state'],result['missing']),('not_recoverable','no_live_tracked_event_before_gap'))
+  self.assertEqual(self.state(),'gap')
 
 class SdkReadinessTests(unittest.TestCase):
  def test_initializing_success_failed_and_missing_are_distinguished(self):
@@ -178,3 +203,4 @@ class SdkReadinessTests(unittest.TestCase):
   program="globalThis.window={}; const ready="+script+";const arm="+arm+";let subscriptions=0;const sdk={onMessageReceive:()=>subscriptions++,onMessageUpsert:()=>subscriptions++};"+"const values=[null,...[0,1,2,3].map(sdkStatus=>({sdkInstance:sdk,sdkStatus,isSDKLoading:false}))]; console.log(JSON.stringify(values.map(f=>{globalThis.fixture=f;return [ready(),arm().armed]})));"
   result=subprocess.run(['node','-e',program],capture_output=True,text=True,check=True)
   self.assertEqual(json.loads(result.stdout),[[False,0],[False,0],[False,0],[True,2],[False,0]])
+
