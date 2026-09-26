@@ -10,7 +10,7 @@ from zoneinfo import ZoneInfo
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
-from lib.operations_workflow import (create_run, finish_stage, resume_kalodata_preflight, retry_failed_stage,
+from lib.operations_workflow import (create_run, finish_stage, launch_setting, resume_kalodata_preflight, retry_failed_stage,
                                      resume_short_names, save_setting, setting, start_stage,
                                      status, update_checkpoint)  # noqa:E402
 from lib.schema_migrations import apply_database  # noqa:E402
@@ -50,6 +50,18 @@ class OperationsWorkflowTests(unittest.TestCase):
         with self.assertRaisesRegex(CycleError, "request_conflict"):
             save_setting(self.store, "it", "setting-request-0001", 1,
                          {"fullCatalogWeeklyEnabled": False})
+
+    def test_only_a_new_current_commit_may_start_workers(self):
+        on = save_setting(self.store, "it", "setting-request-on-01", 0, {"fullCatalogWeeklyEnabled": True})
+        self.assertEqual(launch_setting(self.store, "it", on)["revision"], 1)
+        # The "on" response is lost, the operator then switches it off; the old request is retried.
+        save_setting(self.store, "it", "setting-request-off-01", 1, {"fullCatalogWeeklyEnabled": False})
+        replay = save_setting(self.store, "it", "setting-request-on-01", 0, {"fullCatalogWeeklyEnabled": True})
+        self.assertTrue(replay["duplicate"] and replay["fullCatalogWeeklyEnabled"])
+        self.assertIsNone(launch_setting(self.store, "it", replay))
+        # A commit already superseded by a later one starts nothing either.
+        self.assertIsNone(launch_setting(self.store, "it", on))
+        self.assertFalse(setting(self.store)["fullCatalogWeeklyEnabled"])
 
     def test_monday_scope_and_complete_catalog_barrier(self):
         save_setting(self.store, "it", "setting-request-0002", 0,

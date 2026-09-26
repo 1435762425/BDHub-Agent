@@ -108,6 +108,18 @@ def _setting_receipt(store, market, request_id, payload):
                       "duplicate": True, "originalAvailable": False}
 
 
+def launch_setting(store, market, saved):
+    """The setting a save may start workers for, or None.
+
+    Only a new commit that is still the current revision may start anything: a replayed receipt reports
+    what was committed then, and a commit already superseded (for example by a later "off") must not
+    restart a scheduler that was deliberately stopped since."""
+    if saved.get("duplicate"):
+        return None
+    current = setting(store, market)
+    return current if current["revision"] == saved["revision"] else None
+
+
 def save_setting(store, market, request_id, expected_revision, changes):
     """Save only the three home switches.  Replays are idempotent and never start a worker."""
     _required(store)

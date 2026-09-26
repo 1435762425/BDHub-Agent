@@ -9,7 +9,7 @@ ROOT=Path(__file__).resolve().parents[1];sys.dont_write_bytecode=True;sys.path.i
 from lib.account_identity import status as account_status  # noqa:E402
 from lib.continuous_send import status as continuous_status  # noqa:E402
 from lib.jobs import status as jobs_status  # noqa:E402
-from lib.operations_workflow import save_setting,status as workflow_status  # noqa:E402
+from lib.operations_workflow import launch_setting,save_setting,status as workflow_status  # noqa:E402
 from lib.second_cycle import CycleError,CycleStore  # noqa:E402
 from lib.template_library import agent_setting,send_template_reviews  # noqa:E402
 
@@ -92,24 +92,27 @@ def home(store,market='it'):
 
 def main():
  parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('action',choices=('status','save'));parser.add_argument('--json');args=parser.parse_args()
- saved=None
+ saved=None;launchable=None
  try:
   body=json.loads(args.json or '{}');market=body.get('market','it')
   with CycleStore(ROOT/'var/second-cycle.sqlite',readonly=args.action=='status') as store:
-   if args.action=='save':saved=save_setting(store,market,body.get('requestId'),body.get('expectedRevision'),body.get('changes'))
+   if args.action=='save':
+    saved=save_setting(store,market,body.get('requestId'),body.get('expectedRevision'),body.get('changes'))
+    launchable=launch_setting(store,market,saved)
    try:result=home(store,market)
    except Exception as error:
     if saved is None:raise
     # The setting is committed: a failed re-read may not be reported as "not saved".
     result=None;refresh_error=str(error) if isinstance(error,CycleError) else type(error).__name__
   launch_errors=[]
-  if args.action=='save' and (saved['automaticOperationsEnabled'] or saved['continuousSendEnabled']):
+  # A replay or a superseded commit starts nothing and never clears the scheduler stop file.
+  if launchable and (launchable['automaticOperationsEnabled'] or launchable['continuousSendEnabled']):
    def attempt(name,action):
     try:action()
     except Exception as error:launch_errors.append({'worker':name,'error':str(error) if isinstance(error,(CycleError,ValueError)) else type(error).__name__})
    from lib.operations_scheduler import scheduler_state,start_scheduler
    attempt('scheduler',lambda:None if scheduler_state(ROOT)['running'] else start_scheduler(ROOT))
-   if saved['continuousSendEnabled']:
+   if launchable['continuousSendEnabled']:
     if market=='it':
      from lib.continuous_send import launch_worker
      attempt('continuous_send',lambda:launch_worker(ROOT))
