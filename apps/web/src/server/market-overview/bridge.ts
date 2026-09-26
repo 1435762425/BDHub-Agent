@@ -7,7 +7,8 @@ import {singleflight} from "../runtime/singleflight.ts";
 
 export type Metric={key:string;label:string;value:number|null;unit:string;note:string};
 export type OverviewPanel={id:string;title:string;available:boolean;reason:string|null;source:string;observedAt:number|null;metrics:Metric[];note?:string;rows?:Record<string,number>;handles?:Record<string,number>;labels?:Record<string,string>};
-export type Day={date:string;cards:number;texts:number;creators:number;unconfirmed:number;replies:number;showcase:number;ourMessages:number;autoReplies:number;casesOpened:number};
+// replyCreators/serviceReplies* are people and manual/AI splits; null from an older backend reads as "—".
+export type Day={date:string;cards:number;texts:number;creators:number;unconfirmed:number;replies:number;showcase:number;ourMessages:number;autoReplies:number;casesOpened:number;replyCreators:number|null;serviceRepliesManual:number|null;serviceRepliesAi:number|null};
 export type MarketOverview={schemaVersion:"bdhub.market-overview.v1";market:string;checkedAt:number;available:boolean;planState:string|null;panels:OverviewPanel[];waits:Array<{id:string;label:string;state:string;observedAt:number|null}>;waitsUnavailable?:boolean;activity:{available:boolean;days:Day[];totals:Record<string,number>};readOnly:true;platformWrites:0;realSends:0};
 const fail=():never=>{throw Error("invalid_market_overview");};
 const object=(v:unknown)=>v&&typeof v==="object"&&!Array.isArray(v)?v as Record<string,unknown>:fail();
@@ -17,6 +18,7 @@ const stamp=(v:unknown)=>v===null?null:typeof v==="number"&&Number.isFinite(v)&&
 const boolean=(v:unknown)=>typeof v==="boolean"?v:fail();
 const states=["resolved","notFound","queued","blocked","isolated","noRecord","conflict"];
 const dayKeys=["cards","texts","creators","unconfirmed","replies","showcase","ourMessages","autoReplies","casesOpened"] as const;
+const optionalDayKeys=["replyCreators","serviceRepliesManual","serviceRepliesAi"] as const;
 export function validateOverview(raw:unknown,market:string):MarketOverview{
  const v=object(raw);
  if(v.schemaVersion!=="bdhub.market-overview.v1"||v.market!==market||!operationalMarket(market)||v.readOnly!==true||v.platformWrites!==0||v.realSends!==0)fail();
@@ -42,7 +44,7 @@ export function validateOverview(raw:unknown,market:string):MarketOverview{
  const expected=["inventory","identity","video","pool","handling","inbox"];
  if(new Set(panels.map(p=>p.id)).size!==panels.length||panels.some(p=>!expected.includes(p.id))||v.available===true&&panels.length!==6)fail();
  const activity=object(v.activity);if(!Array.isArray(activity.days)||activity.days.length>7)fail();
- const days=(activity.days as unknown[]).map(rawDay=>{const d=object(rawDay),date=text(d.date,10);if(!/^\d{4}-\d{2}-\d{2}$/.test(date)||new Date(date+"T00:00:00Z").toISOString().slice(0,10)!==date)fail();return {date,...Object.fromEntries(dayKeys.map(k=>[k,count(d[k])]))} as Day;});
+ const days=(activity.days as unknown[]).map(rawDay=>{const d=object(rawDay),date=text(d.date,10);if(!/^\d{4}-\d{2}-\d{2}$/.test(date)||new Date(date+"T00:00:00Z").toISOString().slice(0,10)!==date)fail();return {date,...Object.fromEntries(dayKeys.map(k=>[k,count(d[k])])),...Object.fromEntries(optionalDayKeys.map(k=>[k,d[k]==null?null:count(d[k])]))} as Day;});
  if(days.some((d,i)=>i>0&&d.date<=days[i-1].date))fail();
  const totals:Record<string,number>={};
  if(boolean(activity.available)){

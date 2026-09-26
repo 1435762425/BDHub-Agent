@@ -224,5 +224,28 @@ class Daily(unittest.TestCase):
                 day_detail(folder, '2026-09-15', offset=5001)
 
 
+
+class PeopleAndReplySplit(unittest.TestCase):
+    def test_reply_creators_are_people_and_service_replies_split_manual_from_ai(self):
+        with tempfile.TemporaryDirectory() as folder:
+            var = Path(folder) / 'var';var.mkdir()
+            with closing(sqlite3.connect(var / 'second-cycle.sqlite')) as conn, conn:
+                conn.executescript("""
+                    CREATE TABLE plan(id TEXT,institution TEXT,market TEXT);INSERT INTO plan VALUES('p','bjn-local-research','it');
+                    CREATE TABLE cycle_delivery(id TEXT,plan_id TEXT,creator_id TEXT,oec TEXT,pid TEXT,snapshot TEXT,state TEXT);
+                    CREATE TABLE cycle_delivery_part(delivery_id TEXT,kind TEXT,state TEXT,started REAL);
+                    CREATE TABLE inbox_event(plan_id TEXT,cid TEXT,message_id TEXT,oec TEXT,kind TEXT,occurred_ms INTEGER,payload TEXT,historical INTEGER,observed_at REAL);
+                    CREATE TABLE service_reply(id TEXT,plan_id TEXT,creator_id TEXT,oec TEXT,text TEXT,state TEXT,started REAL,kind TEXT);
+                    CREATE TABLE service_case(id TEXT,plan_id TEXT,creator_id TEXT,reason TEXT,state TEXT,created REAL);""")
+                noon = int(at(15, 12) * 1000)
+                for message, oec, historical in (('m1', 'o1', 0), ('m2', 'o1', 0), ('m3', 'o2', 0), ('m4', 'o3', 1)):
+                    conn.execute("INSERT INTO inbox_event VALUES('p','c',?,?,'creatorReplies',?,'{}',?,0)", (message, oec, noon, historical))
+                for reply, kind, state in (('r1', 'manual', 'confirmed'), ('r2', 'manual_card', 'confirmed'),
+                                           ('r3', 'agent_generated_v2', 'confirmed'), ('r4', 'agent_generated_v2', 'unknown')):
+                    conn.execute("INSERT INTO service_reply VALUES(?,'p','c','o','t',?,?,?)", (reply, state, at(15, 13), kind))
+            day = daily(folder, market='it', count=1, now=NOON + 7200)['days'][-1]
+        self.assertEqual((day['replies'], day['replyCreators']), (3, 2))  # three messages from two people; history excluded
+        self.assertEqual((day['serviceRepliesManual'], day['serviceRepliesAi'], day['autoReplies']), (2, 1, 3))
+
 if __name__ == '__main__':
     unittest.main()

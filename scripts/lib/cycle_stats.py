@@ -47,7 +47,7 @@ def _one(conn, sql, args):
     return int(row[0] or 0) if row else 0
 
 
-def _day_row(conn, day, plan):
+def _day_row(conn, day, plan, reply_kind=True):
     start, end = day_bounds(day)
     # 毫秒边界：inbox_event 的 occurred_ms 是平台给的毫秒时间戳。
     start_ms, end_ms = int(start * 1000), int(end * 1000)
@@ -71,8 +71,16 @@ def _day_row(conn, day, plan):
                                'AND historical=0 AND occurred_ms>=? AND occurred_ms<?', (plan,start_ms, end_ms)),
         'ourMessages': _one(conn, "SELECT count(*) FROM inbox_event WHERE plan_id=? AND kind='ourMessages' "
                                   'AND historical=0 AND occurred_ms>=? AND occurred_ms<?', (plan,start_ms, end_ms)),
+        # Historical name: every confirmed service reply, manual ones included. The two fields below split it.
         'autoReplies': _one(conn, "SELECT count(*) FROM service_reply WHERE plan_id=? AND state='confirmed' "
                                   'AND started>=? AND started<?', (plan,start, end)),
+        'serviceRepliesManual': _one(conn, "SELECT count(*) FROM service_reply WHERE plan_id=? AND state='confirmed' "
+                                           "AND kind IN ('manual','manual_card') AND started>=? AND started<?", (plan,start, end)) if reply_kind else None,
+        'serviceRepliesAi': _one(conn, "SELECT count(*) FROM service_reply WHERE plan_id=? AND state='confirmed' "
+                                       "AND kind NOT IN ('manual','manual_card') AND started>=? AND started<?", (plan,start, end)) if reply_kind else None,
+        # People, not messages: creators (by OECID) who sent at least one new message that day.
+        'replyCreators': _one(conn, "SELECT count(DISTINCT oec) FROM inbox_event WHERE plan_id=? AND kind='creatorReplies' "
+                                    'AND historical=0 AND occurred_ms>=? AND occurred_ms<?', (plan,start_ms, end_ms)),
         'casesOpened': _one(conn, "SELECT count(*) FROM service_case WHERE plan_id=? AND created>=? AND created<?",
                             (plan,start, end)),
     }
@@ -194,7 +202,7 @@ def day_detail(root, day, *, market='it', offset=0, limit=50):
     args = (plan,start, end, plan,start_ms, end_ms, plan,start, end, plan,start, end, limit, offset)
     with closing(sqlite3.connect(path.resolve().as_uri() + '?mode=ro', uri=True)) as conn:
         conn.row_factory = sqlite3.Row
-        summary = _day_row(conn, day, plan)
+        summary = _day_row(conn, day, plan, 'kind' in {row[1] for row in conn.execute('PRAGMA table_info(service_reply)')})
         rows = conn.execute(sql, args).fetchall()
     handles = _current_handles(root, rows, market)
     total = sum(summary[key] for key in ('cards', 'unconfirmed', 'replies', 'showcase',
@@ -219,13 +227,15 @@ def daily(root, *, market='it', count=14, now=None):
         plan=conn.execute("SELECT id FROM plan WHERE institution='bjn-local-research' AND market=?",(market,)).fetchone()
         if not plan:return {'available':False,'market':market,'timezone':'Asia/Shanghai','days':[],'totals':{},'openCases':0}
         plan=plan[0]
-        rows = [_day_row(conn, day, plan) for day in _partition(now, count)]
+        reply_kind = 'kind' in {row[1] for row in conn.execute('PRAGMA table_info(service_reply)')}
+        rows = [_day_row(conn, day, plan, reply_kind) for day in _partition(now, count)]
         tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         open_cases = (_one(conn, "SELECT count(*) FROM service_case WHERE plan_id=? AND state='open'", (plan,))
                       if 'service_case' in tables else 0)
     totals = {}
     for key in ('cards', 'texts', 'creators', 'unconfirmed', 'replies', 'showcase', 'ourMessages',
-                'autoReplies', 'casesOpened'):
-        totals[key] = sum(row[key] for row in rows)
+                'autoReplies', 'serviceRepliesManual', 'serviceRepliesAi', 'replyCreators', 'casesOpened'):
+        values = [row[key] for row in rows]
+        totals[key] = None if any(value is None for value in values) else sum(values)
     return {'available': True, 'market':market,'timezone': 'Asia/Shanghai', 'now': now, 'days': rows,
             'totals': totals, 'openCases': open_cases}
