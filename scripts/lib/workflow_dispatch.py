@@ -32,9 +32,14 @@ def _queued(run):
  return next((row for row in run['stages'] if row['state']=='queued'),None)
 
 
-def _last_success(store,market,stage):
- row=store.db.execute('''SELECT max(s.finished_at) FROM workflow_stage_run s JOIN workflow_run r ON r.run_id=s.run_id
-  WHERE r.market=? AND s.stage=? AND s.state IN ('completed','quota_exhausted')''',(market,stage)).fetchone()
+def _last_served(store,market):
+ """When this market's workflow last obtained a stage claim (0 if never).
+
+ Markets take turns by how long they have gone without a grant (H14). Ordering by the stage's last
+ success let a stage that had never succeeded -- e.g. the first catalog/TapLink run of a newly
+ enabled market -- win every tie and hold the shared platform slot through its whole first run."""
+ row=store.db.execute('''SELECT max(s.started_at) FROM workflow_stage_run s JOIN workflow_run r ON r.run_id=s.run_id
+  WHERE r.market=?''',(market,)).fetchone()
  return row[0] if row and row[0] is not None else 0
 
 
@@ -44,14 +49,14 @@ def _prior_generation(run,stage):
 
 
 def claim_ready(store,root,runs,policy,owner_id,*,max_parallel=14,accounts=None,worker_pid=None,pid_alive=None,lease_seconds=300):
- """Reserve ready stages by oldest success, then existing checkpoint, then market."""
+ """Reserve ready stages: least recently served market first, then an existing checkpoint, then market."""
  if type(max_parallel) is not int or not 1<=max_parallel<=14:raise CycleError('workflow_parallel_limit_invalid')
  recovered=recover_expired(store,pid_alive=pid_alive)
  ready=[]
  for run in runs:
   if run['state'] not in ('queued','running'):continue
   stage=_queued(run)
-  if stage:ready.append((_last_success(store,run['market'],stage['stage']),
+  if stage:ready.append((_last_served(store,run['market']),
                          0 if stage.get('checkpoint') else 1,run['market'],run,stage))
  ready.sort(key=lambda row:row[:3]);claimed=[]
  for _,_,market,run,stage in ready:

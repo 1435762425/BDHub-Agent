@@ -64,17 +64,30 @@ class DispatchTests(unittest.TestCase):
   self.assertNotIn('br',{row['run']['market'] for row in selected['claimed']})
   self.assertEqual(self.store.db.execute("SELECT count(*) FROM workflow_resource_slot WHERE resource_key='kalodata:global'").fetchone()[0],2)
 
- def test_oldest_success_then_checkpoint_then_market_is_stable(self):
+ def test_checkpoint_then_market_breaks_ties_among_markets_never_served(self):
   runs=self.seed(checkpoint_market='de')
-  self.store.db.execute("INSERT INTO workflow_run(run_id,market,trigger_source,scheduled_at,applicable_sources_json,config_revision,state,started_at) VALUES('old-be','be','schedule',50,'[]',0,'completed',50)")
-  self.store.db.execute("INSERT INTO workflow_stage_run(stage_run_id,run_id,stage,position,state,finished_at) VALUES('old-stage-be','old-be','catalog',0,'completed',80)")
   selected=claim_ready(self.store,self.root,runs,self.policy,'scheduler-fair-order',max_parallel=2,accounts=self.accounts,worker_pid=111)
   self.assertEqual([row['run']['market'] for row in selected['claimed']],['de'])
   ticket=selected['claimed'][0]['ticket'];release(self.store,ticket['stageRunId'],ticket['ownerId'],ticket['fence'])
   for run in runs:  # the scheduler reloads runs each tick; the claimed stage is no longer queued
    if run['market']=='de':run['stages'][0]['state']='running'
   following=claim_ready(self.store,self.root,runs,self.policy,'scheduler-fair-order',max_parallel=2,accounts=self.accounts,worker_pid=111)
-  self.assertEqual([row['run']['market'] for row in following['claimed']],['br'])
+  self.assertEqual([row['run']['market'] for row in following['claimed']],['be'])
+
+ def test_a_newly_enabled_market_does_not_keep_the_platform_slot_from_others(self):
+  # MY just ran its first catalog; its next never-succeeded TapLink stage waits behind BR's OECID,
+  # which has waited longer since BR was last served.
+  for market,stage,served in (('br','oecid',60.0),('my','taplink_prepare',95.0)):
+   self.store.db.execute("INSERT INTO workflow_run(run_id,market,trigger_source,scheduled_at,applicable_sources_json,config_revision,state,started_at) VALUES(?,?,?,?,?,?,?,?)",
+                         (f'run-{market}',market,'schedule',50,'[]',0,'running',50))
+   self.store.db.execute("INSERT INTO workflow_stage_run(stage_run_id,run_id,stage,position,state,started_at,finished_at) VALUES(?,?,?,?,?,?,?)",
+                         (f'done-{market}',f'run-{market}','kalodata' if market=='br' else 'catalog',0,'completed',served,served+4))
+   self.store.db.execute('INSERT INTO workflow_stage_run(stage_run_id,run_id,stage,position,state) VALUES(?,?,?,?,?)',
+                         (f'stage-{market}',f'run-{market}',stage,1,'queued'))
+  runs=[{'runId':f'run-{m}','market':m,'state':'running','stages':[{'stageRunId':f'stage-{m}','stage':st,'position':1,'state':'queued','checkpoint':{},'outputGenerationId':None}]}
+        for m,st in (('my','taplink_prepare'),('br','oecid'))]
+  selected=claim_ready(self.store,self.root,runs,self.policy,'scheduler-turns',accounts=self.accounts,worker_pid=111)
+  self.assertEqual([row['run']['market'] for row in selected['claimed']],['br'])
 
  def test_market_and_shared_account_slots_are_explicit(self):
   self.assertEqual(resources(self.root,'my','catalog',self.policy,accounts=self.accounts),[('workflow:my',1),('supply:acc6',1),('platform:global',1)])
