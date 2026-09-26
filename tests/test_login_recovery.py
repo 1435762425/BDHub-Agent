@@ -153,6 +153,54 @@ class LoginRecoveryTests(unittest.TestCase):
         self.assertEqual(failed, {"state": "failed", "errorCode": "account_manual_verification_required"})
         self.assertEqual(len(self.intents()), 2)
 
+    def test_the_platform_slot_is_lent_to_other_markets_while_waiting_for_the_login(self):
+        from lib.operations_workflow import create_run
+        from lib.workflow_resources import claim
+        self.publish(1)
+        run = create_run(self.store, market="it", trigger_source="manual", scheduled_at=NOW,
+                         request_id="auth-wait-slot-run", only_stage="oecid", sources=["campaign"])
+        stage = next(row for row in run["stages"] if row["state"] == "queued")
+        ticket = claim(self.store, stage["stageRunId"], "scheduler-auth-owner",
+                       [("workflow:it", 1), ("communications:acc6", 1), ("platform:global", 1)], worker_pid=1)
+        executor = SubprocessStageExecutor(self.root)
+        executor._claims.ticket = ticket | {"ownerId": "scheduler-auth-owner"}
+        executor.sleep = lambda seconds: None
+        seen = []
+
+        def worker(args, label, timeout=14400):
+            holders = [row[0] for row in self.store.db.execute(
+                "SELECT owner_stage_run_id FROM workflow_resource_slot WHERE resource_key='platform:global'")]
+            seen.append(holders)
+            intent = self.store.db.execute("SELECT intent_id FROM account_maintenance_intent").fetchone()[0]
+            self.settle(intent, "completed")
+            self.publish(2)
+            return {"state": "completed"}
+
+        executor._call = worker
+        result = executor._relogin_market_account(self.store, "it", "communications", "run-1", "oecid-0")
+        self.assertEqual(result["state"], "completed")
+        self.assertEqual(seen, [[]])  # free for other markets during the wait
+        self.assertEqual([row[0] for row in self.store.db.execute(
+            "SELECT owner_stage_run_id FROM workflow_resource_slot WHERE resource_key='platform:global'")],
+            [stage["stageRunId"]])
+        # The account and market slots were never let go.
+        self.assertEqual(self.store.db.execute(
+            "SELECT count(*) FROM workflow_resource_slot WHERE owner_stage_run_id=?", (stage["stageRunId"],)).fetchone()[0], 3)
+
+    def test_a_stage_that_cannot_take_the_slot_back_stops_instead_of_reading_without_it(self):
+        from lib.workflow_resources import lend_slot, reclaim_slot, claim
+        from lib.operations_workflow import create_run
+        runs = [create_run(self.store, market=m, trigger_source="manual", scheduled_at=NOW,
+                           request_id=f"slot-reclaim-{m}", only_stage="oecid", sources=["campaign"]) for m in ("it",)]
+        stage = next(row for row in runs[0]["stages"] if row["state"] == "queued")
+        ticket = claim(self.store, stage["stageRunId"], "scheduler-slot-owner", [("platform:global", 1)], worker_pid=1)
+        self.assertTrue(lend_slot(self.store, stage["stageRunId"], "scheduler-slot-owner", ticket["fence"], "platform:global"))
+        self.store.db.execute("INSERT INTO workflow_resource_slot VALUES('platform:global',0,'other-stage',999,?,?)", (NOW + 300, NOW))
+        self.assertFalse(reclaim_slot(self.store, stage["stageRunId"], "scheduler-slot-owner", ticket["fence"], "platform:global", 1))
+        executor = SubprocessStageExecutor(self.root)
+        executor._claims.ticket = ticket | {"ownerId": "scheduler-slot-owner"}
+        self.assertFalse(executor._reclaim_platform_slot(self.store, lambda _s: None, wait_seconds=0))
+
     def test_it_auth_report_marks_only_the_lapsed_login(self):
         self.assertTrue(it_login_expired({"authReads": [{"code": 0}, {"code": AUTH_REQUIRED,
                                                                         "errorCode": "business_rejected"}]}))

@@ -460,17 +460,44 @@ class SubprocessStageExecutor:
         requested=request_recovery(store,self.root,market,role,source=f'scheduler:{reason}',spawn=lambda _root:None)
         if requested['state']=='not_requested':return {'state':'failed','errorCode':requested.get('reason') or 'auth_recovery_not_requested'}
         intent_id=requested['intentId'];sleep=getattr(self,'sleep',time.sleep);deadline=time.monotonic()+660;row=None
-        while intent_id:
-            row=store.db.execute('SELECT state,error_code FROM account_maintenance_intent WHERE intent_id=?',(intent_id,)).fetchone()
-            if row is None or row['state'] not in ('queued','draining','running'):break
-            if time.monotonic()>=deadline:return {'state':'failed','errorCode':'auth_recovery_wait_timeout'}
-            # Another account's maintenance may hold the global queue; the worker then claims nothing yet.
-            if row['state']=='queued':self._call(['scripts/account-maintenance-worker.py'],'global-selection-relogin',timeout=660)
-            sleep(5)
+        # Waiting for a login needs this account, not the shared platform read slot: lend that slot to
+        # other markets for the wait and take it back before any further platform read (H14).
+        lent=self._lend_platform_slot(store)
+        try:
+            while intent_id:
+                row=store.db.execute('SELECT state,error_code FROM account_maintenance_intent WHERE intent_id=?',(intent_id,)).fetchone()
+                if row is None or row['state'] not in ('queued','draining','running'):break
+                if time.monotonic()>=deadline:return {'state':'failed','errorCode':'auth_recovery_wait_timeout'}
+                # Another account's maintenance may hold the global queue; the worker then claims nothing yet.
+                if row['state']=='queued':self._call(['scripts/account-maintenance-worker.py'],'global-selection-relogin',timeout=660)
+                sleep(5)
+        finally:
+            if lent and not self._reclaim_platform_slot(store,sleep):
+                return {'state':'failed','errorCode':'platform_slot_reclaim_timeout'}
         current=current_generation(store,market,account)
         if not current or not prior or current['publishedAt']<=prior['publishedAt']:
             return {'state':'failed','errorCode':(row['error_code'] if row else None) or 'selection_relogin_not_published'}
         return {'state':'completed','generationId':current['generationId']}
+
+    def _lend_platform_slot(self,store):
+        ticket=getattr(self._claims,'ticket',None)
+        if not ticket or not ticket.get('ownerId'):return False
+        from lib.workflow_resources import lend_slot
+        try:return lend_slot(store,ticket['stageRunId'],ticket['ownerId'],ticket['fence'],'platform:global')
+        except CycleError:return False
+
+    def _reclaim_platform_slot(self,store,sleep,wait_seconds=3600):
+        """Wait for the shared slot to be free again; this stage never reads the platform without it."""
+        from lib.workflow_dispatch import PLATFORM_PARALLEL_MARKETS
+        from lib.workflow_resources import reclaim_slot
+        ticket=self._claims.ticket;deadline=time.monotonic()+wait_seconds
+        while True:
+            try:
+                if reclaim_slot(store,ticket['stageRunId'],ticket['ownerId'],ticket['fence'],'platform:global',PLATFORM_PARALLEL_MARKETS):
+                    return True
+            except CycleError:return False
+            if time.monotonic()>=deadline:return False
+            sleep(5)
 
     def _relogin_selection_account(self,store,market,run_id,auth):
         return self._relogin_market_account(store,market,'supply',run_id,auth.get('latestAttempt'))

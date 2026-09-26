@@ -82,6 +82,31 @@ def adopt_worker(store,stage_run_id,owner_id,fence,pid):
  with store.tx():
   store.db.execute('UPDATE workflow_stage_claim SET worker_pid=? WHERE stage_run_id=? AND owner_id=? AND fence=?',(pid,stage_run_id,owner_id,fence))
 
+def lend_slot(store,stage_run_id,owner_id,fence,key):
+ """Give one held slot back while this stage waits on something that does not need it (H14).
+
+ The claim, its fence and every other slot stay; returns True when a slot was actually lent."""
+ _required(store)
+ with store.tx():
+  if not store.db.execute('SELECT 1 FROM workflow_stage_claim WHERE stage_run_id=? AND owner_id=? AND fence=?',(stage_run_id,owner_id,fence)).fetchone():
+   raise CycleError('workflow_stage_fence_stale')
+  store.db.execute('DELETE FROM workflow_resource_slot WHERE owner_stage_run_id=? AND fence=? AND resource_key=?',(stage_run_id,fence,key))
+  return store.db.execute('SELECT changes()').fetchone()[0]>0
+
+def reclaim_slot(store,stage_run_id,owner_id,fence,key,slots):
+ """Take a lent slot back if one is free now; False means it is still occupied by another stage."""
+ _required(store)
+ with store.tx():
+  claim_row=store.db.execute('SELECT lease_until FROM workflow_stage_claim WHERE stage_run_id=? AND owner_id=? AND fence=?',(stage_run_id,owner_id,fence)).fetchone()
+  if not claim_row:raise CycleError('workflow_stage_fence_stale')
+  if store.db.execute('SELECT 1 FROM workflow_resource_slot WHERE owner_stage_run_id=? AND fence=? AND resource_key=?',(stage_run_id,fence,key)).fetchone():
+   return True
+  taken={row[0] for row in store.db.execute('SELECT slot_no FROM workflow_resource_slot WHERE resource_key=?',(key,))}
+  slot=next((number for number in range(slots) if number not in taken),None)
+  if slot is None:return False
+  store.db.execute('INSERT INTO workflow_resource_slot VALUES(?,?,?,?,?,?)',(key,slot,stage_run_id,fence,claim_row[0],store.clock()))
+  return True
+
 def release(store,stage_run_id,owner_id,fence):
  _required(store)
  with store.tx():
