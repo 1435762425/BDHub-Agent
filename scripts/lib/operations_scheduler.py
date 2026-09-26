@@ -68,6 +68,47 @@ def _report_platform_writes(payload):
     return max(direct,nested)
 
 
+FAILED_REPORT_STATES=frozenset({'blocked','failed','partial','needs_human','stopped'})
+
+
+def _explicit_writes(payload):
+    """True only when the report states its platform writes as a valid integer (directly or for every step)."""
+    if not isinstance(payload,dict):return False
+    value=payload.get('platformWrites')
+    if type(value) is int and value>=0:return True
+    steps=payload.get('steps')
+    if isinstance(steps,list) and steps:
+        return all(isinstance(step,dict) and isinstance(step.get('result'),dict) and
+                   type(step['result'].get('platformWrites')) is int and step['result']['platformWrites']>=0 for step in steps)
+    return False
+
+
+def _nested_failure(payload):
+    """The first failed inner step of a batch report, even when the batch itself exited 0."""
+    steps=payload.get('steps') if isinstance(payload,dict) else None
+    for step in steps if isinstance(steps,list) else []:
+        if not isinstance(step,dict):return 'nested_step_invalid'
+        result=step.get('result')
+        if step.get('exitCode') not in (0,None) or not isinstance(result,dict) or str(result.get('state') or '') in FAILED_REPORT_STATES:
+            label=str(step.get('label') or 'step')
+            return f"nested_{label}_{(result or {}).get('state') or 'exit_'+str(step.get('exitCode'))}"[:120]
+    return None
+
+
+def _zero_write_contract(args):
+    """Commands whose CLI contract performs no platform write; a missing count there proves zero."""
+    script=args[0];action=args[1] if len(args)>1 else None
+    if script in {'scripts/collect-global-opportunity.py','scripts/sync-cycle-catalog.py','scripts/campaign-collect.py',
+                  'scripts/catalog-names.py','scripts/market-identity.py','scripts/rolling-leads.py','scripts/lead-pool.py',
+                  'scripts/second-cycle-identities.py','scripts/identity-batch.py','scripts/account-maintenance-worker.py'}:
+        return True
+    if script=='scripts/select-global-products.py':return action in {'prepare','verify','status'}
+    if script=='scripts/campaign-join.py':return action=='status'
+    if script=='scripts/catalog-clean.py':return action in {'refresh','classify','check-bindings','status','verify'}
+    if script=='scripts/catalog-link-batch.py':return '--creates' in args and args[args.index('--creates')+1]=='0'
+    return False
+
+
 def _report_item_count(payload):
     """Extract the final durable queue size without summing repeated batch passes."""
     if not isinstance(payload,dict):return 0
@@ -373,18 +414,25 @@ class SubprocessStageExecutor:
                         'platformWrites':0,'payload':payload,'scope':{'coverage':'bounded_identity_slice'}}
         reported_state=str(evidence.get('state') or evidence.get('status') or payload.get('state') or payload.get('status') or '')
         writes=max(_report_platform_writes(evidence),_report_platform_writes(payload))
+        # A write-capable child that does not state its writes cannot prove zero.
+        uncertain='uncertain' in (payload.get('writeEvidence'),evidence.get('writeEvidence')) or not (
+            _explicit_writes(evidence) or _explicit_writes(payload) or _zero_write_contract(args))
+        evidence_flag={'writeEvidence':'uncertain'} if uncertain else {}
+        nested=_nested_failure(evidence) or _nested_failure(payload)
         items=max(_report_item_count(evidence),_report_item_count(payload))
         stopped=payload.get('stopped') or evidence.get('stopped')
         errors=payload.get('errors') or evidence.get('errors')
         invalid_stop=stopped not in (None,'queue_empty','nothing_missing','kalodata_daily_quota_exhausted') and not (args[0]=='scripts/market-identity.py' and stopped=='nothing_pending')
-        if child.returncode or reported_state in {'blocked','failed','partial','needs_human','stopped'} or \
+        if child.returncode or reported_state in FAILED_REPORT_STATES or nested or \
                 payload.get('error') or evidence.get('error') or invalid_stop or errors:
-            code=str(payload.get('error') or evidence.get('error') or
+            code=str(payload.get('error') or evidence.get('error') or nested or
                      (stopped if invalid_stop else None) or _child_error(child.stderr) or f'{label}_failed')
+            # Keep the child's progress (states/pending) so callers can decide termination.
+            progress={key:value for key,value in (payload|evidence).items() if key in ('states','summary','finalSummary')}
             return {'state':'needs_human' if reported_state=='needs_human' or 'maintenance' in code or 'auth' in code else 'failed',
-                    'itemCount':items,'complete':False,'platformWrites':writes,
-                    'errorCode':code[:120],'payload':{'report':str(report.relative_to(self.root)) if report.exists() else None}}
-        return {'state':'completed','itemCount':items,'complete':True,'platformWrites':writes,
+                    'itemCount':items,'complete':False,'platformWrites':writes,**evidence_flag,
+                    'errorCode':code[:120],'payload':{'report':str(report.relative_to(self.root)) if report.exists() else None,**progress}}
+        return {'state':'completed','itemCount':items,'complete':True,'platformWrites':writes,**evidence_flag,
                 'payload':evidence or payload,'scope':{}}
 
     def _relogin_market_account(self,store,market,role,run_id,reason):
@@ -507,6 +555,7 @@ class SubprocessStageExecutor:
                                     'platformWrites':writes}
                         selection_gaps.append(gap)
                 if True:
+                    last_pending=None
                     for _ in range(40):
                         selected=self._call(['scripts/select-global-products.py','execute-fast',*market_flag,'--limit','300',
                           '--native-listing','--reconcile-rejections','--skip-after-readback',
@@ -516,8 +565,19 @@ class SubprocessStageExecutor:
                         if selected['state']!='completed':
                             gap=selection_gap(self.root,market,selected)
                             if gap is None:return selected|{'platformWrites':writes}
-                            # Only these PIDs wait on their original intent; the rest keep selecting.
-                            selection_gaps.append(gap);continue
+                            # Only these PIDs wait on their original intent; the rest keep selecting,
+                            # as long as the child's own progress shows there is something left to do.
+                            selection_gaps.append(gap)
+                            fail_states=(selected.get('payload') or {}).get('states')
+                            left=fail_states.get('pending') if isinstance(fail_states,dict) else None
+                            if type(left) is not int or left<0:
+                                return {**selected,'state':'needs_human','complete':False,'platformWrites':writes,
+                                        'errorCode':'global_selection_progress_unknown'}
+                            if left==0:break
+                            if last_pending is not None and left>=last_pending:
+                                return {**selected,'state':'needs_human','complete':False,'platformWrites':writes,
+                                        'errorCode':'global_selection_no_progress'}
+                            last_pending=left;continue
                         payload=selected.get('payload') or {};states=payload.get('states') or {};error=payload.get('error')
                         auth=selection_auth_unknown(self.root,market)
                         if auth:

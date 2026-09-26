@@ -516,17 +516,19 @@ class StageWiring(unittest.TestCase):
                              ['scripts/collect-global-opportunity.py','scripts/select-global-products.py','scripts/select-global-products.py',
                               'scripts/select-global-products.py','scripts/sync-cycle-catalog.py'])
 
-    def _selection_catalog(self,ledger_rows):
+    def _selection_catalog(self,ledger_rows,failures=None):
         calls=[]
+        failures=failures if failures is not None else [{'report':None,'states':{'pending':2,'result_unknown':1}}]
         def answers(args,_label):
             if args[0]=='scripts/collect-global-opportunity.py':payload={'state':'completed','published':True,'products':3}
             elif args[0]=='scripts/sync-cycle-catalog.py':payload={'status':'completed','offers':2}
             elif args[0]=='scripts/campaign-join.py':payload={'state':'completed','unresolved':[],'stoppedUnknown':[]}
             elif args[0]=='scripts/campaign-collect.py':payload={'status':'completed','offers':5,'screening':{'recorded':True}}
             elif args[1] in ('prepare','verify'):payload={'states':{'pending':3},'error':None}
-            elif sum(1 for a,_ in calls if a[:2]==['scripts/select-global-products.py','execute-fast'])==1:
+            elif sum(1 for a,_ in calls if a[:2]==['scripts/select-global-products.py','execute-fast'])<=len(failures):
+                payload=failures[sum(1 for a,_ in calls if a[:2]==['scripts/select-global-products.py','execute-fast'])-1]
                 return {'state':'failed','itemCount':0,'complete':False,'platformWrites':2,
-                        'errorCode':'parallel_selection_requires_review','payload':{'report':None}}
+                        'errorCode':'parallel_selection_requires_review','payload':payload}
             else:payload={'states':{'confirmed':2,'result_unknown':len(ledger_rows),'pending':0},'error':None}
             return {'state':'completed','itemCount':3,'complete':True,'platformWrites':0,'payload':payload}
         folder=tempfile.TemporaryDirectory();self.addCleanup(folder.cleanup)
@@ -549,6 +551,19 @@ class StageWiring(unittest.TestCase):
         self.assertEqual(result['platformWrites'],2)
         self.assertTrue(any(args[0]=='scripts/campaign-collect.py' for args,_ in calls))
         self.assertTrue(any(args[0]=='scripts/sync-cycle-catalog.py' for args,_ in calls))
+
+    def test_tolerated_selection_failures_stop_on_their_own_progress(self):
+        receipt=json.dumps({'receipt':{'http':200,'code':0,'ambiguous':True}})
+        executes=lambda calls:sum(1 for a,_ in calls if a[:2]==['scripts/select-global-products.py','execute-fast'])
+        # Nothing left to select: a stable tolerated failure ends with the gap instead of 40 retries.
+        result,calls=self._selection_catalog([('pid-unknown',receipt)],[{'states':{'pending':0,'result_unknown':1}}]*40)
+        self.assertEqual((result['state'],executes(calls)),('completed',1))
+        self.assertEqual(result['scope']['selectionGap']['unresolvedPids'],['pid-unknown'])
+        # The same pending count twice is no progress; an unreadable count is unknown, never zero.
+        result,calls=self._selection_catalog([('pid-unknown',receipt)],[{'states':{'pending':5}}]*40)
+        self.assertEqual((result['state'],result['errorCode'],executes(calls)),('needs_human','global_selection_no_progress',2))
+        result,calls=self._selection_catalog([('pid-unknown',receipt)],[{'report':None}]*40)
+        self.assertEqual((result['state'],result['errorCode'],executes(calls)),('needs_human','global_selection_progress_unknown',1))
 
     def test_account_login_failure_or_many_unknowns_still_stop_dependent_writes(self):
         auth=json.dumps({'receipt':{'http':200,'code':16201010,'ambiguous':False}})
@@ -773,6 +788,52 @@ class StageWiring(unittest.TestCase):
             result=executor._call(['scripts/market-identity.py','run','--market','it'],'identity-contract')
             self.assertNotEqual(result.get('scope'),{'coverage':'bounded_identity_slice'})
             self.assertEqual(result['state'],'failed')
+
+    def test_a_write_capable_child_must_state_its_writes_to_prove_zero(self):
+        class Result:
+            stderr=''
+            def __init__(self,stdout,returncode=0):self.stdout=stdout;self.returncode=returncode
+        cases=((['scripts/catalog-link-batch.py','--route','campaign','--creates','200'],'{"state":"completed"}','uncertain'),
+               (['scripts/catalog-link-batch.py','--route','campaign','--creates','200'],'{"state":"completed","platformWrites":"3"}','uncertain'),
+               (['scripts/catalog-link-batch.py','--route','campaign','--creates','200'],'{"state":"completed","platformWrites":0}',None),
+               (['scripts/select-global-products.py','verify'],'{"states":{"pending":0}}',None),
+               (['scripts/campaign-join.py','join-all','--market','it','--confirm'],'{"state":"completed"}','uncertain'))
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder);(root/'var').mkdir()
+            for args,stdout,expected in cases:
+                result=SubprocessStageExecutor(root,runner=lambda *_a,_o=stdout,**_k:Result(_o))._call(args,'evidence-fixture')
+                self.assertEqual(result.get('writeEvidence'),expected,(args,stdout))
+
+    def test_a_failed_inner_batch_step_is_never_a_completed_stage(self):
+        class Result:
+            returncode=0;stdout='{"steps": 2}\n';stderr=''
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder);(root/'var').mkdir()
+            def runner(command,**_kwargs):
+                Path(command[command.index('--report')+1]).write_text(json.dumps({'steps':[
+                    {'label':'read-00','exitCode':0,'result':{'state':'completed','platformWrites':0}},
+                    {'label':'create-01','exitCode':0,'result':{'state':'blocked','platformWrites':1}}],
+                    'finalSummary':{'total':3}}))
+                return Result()
+            result=SubprocessStageExecutor(root,runner=runner)._call(
+                ['scripts/catalog-link-batch.py','--route','campaign','--creates','200'],'nested-failure-fixture')
+        self.assertEqual((result['state'],result['errorCode'],result['platformWrites']),
+                         ('failed','nested_create-01_blocked',1))
+
+    def test_batch_outcome_never_turns_a_missing_create_count_into_zero(self):
+        import importlib.util
+        spec=importlib.util.spec_from_file_location('catalog_link_batch',ROOT/'scripts/catalog-link-batch.py')
+        batch=importlib.util.module_from_spec(spec);spec.loader.exec_module(batch)
+        ok={'label':'create-01','exitCode':0,'result':{'state':'completed','platformWrites':2}}
+        read={'label':'read-00','exitCode':0,'result':{'state':'completed','platformWrites':0}}
+        self.assertEqual(batch.batch_outcome([read]),{'state':'completed','platformWrites':0,'writeEvidence':'zero'})
+        self.assertEqual(batch.batch_outcome([read,ok])['writeEvidence'],'known')
+        for broken in ({'label':'create-02','exitCode':0,'result':None},
+                       {'label':'create-02','exitCode':1,'result':{'state':'blocked','platformWrites':1}},
+                       {'label':'create-02','exitCode':0,'result':{'state':'blocked','platformWrites':1,'writeEvidence':'uncertain'}}):
+            outcome=batch.batch_outcome([read,ok,broken])
+            self.assertEqual((outcome['state'],outcome['writeEvidence']),('blocked','uncertain'),broken)
+            self.assertGreaterEqual(outcome['platformWrites'],2)
 
     def test_success_exit_without_valid_report_or_with_busy_lock_is_failure(self):
         class Result:

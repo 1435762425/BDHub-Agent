@@ -27,6 +27,23 @@ def publish(path,payload):
     temporary=path.with_suffix('.json.tmp')
     temporary.write_text(json.dumps(payload,ensure_ascii=False)+'\n',encoding='utf-8')
     temporary.replace(path)
+FAILED_STATES=('blocked','failed','needs_human','partial','stopped')
+def batch_outcome(steps):
+    """One explicit batch result: a failed step is never a completed batch, and a create step
+    without a readable, integer write count leaves the batch's writes uncertain (never zero)."""
+    writes=0;uncertain=False;failed=None
+    for step in steps:
+        result=step.get('result') if isinstance(step.get('result'),dict) else None
+        create=str(step.get('label','')).startswith('create')
+        value=result.get('platformWrites') if result else None
+        if type(value) is int and value>=0:writes+=value
+        elif create:uncertain=True
+        if result and result.get('writeEvidence')=='uncertain':uncertain=True
+        if step.get('exitCode')!=0 or result is None or str(result.get('state') or '') in FAILED_STATES:
+            if create and (step.get('exitCode')!=0 or result is None):uncertain=True
+            failed=failed or f"catalog_link_step_{step.get('label')}_{(result or {}).get('state') or 'exit_'+str(step.get('exitCode'))}"
+    return {'state':'blocked' if failed else 'completed',**({'error':failed[:120]} if failed else {}),
+            'platformWrites':writes,'writeEvidence':'uncertain' if uncertain else 'known' if writes else 'zero'}
 def main():
     p=argparse.ArgumentParser();p.add_argument('--pids');p.add_argument('--limit',type=int,default=15);p.add_argument('--passes',type=int,default=80);p.add_argument('--creates',type=int,default=0);p.add_argument('--seed',action='store_true')
     p.add_argument('--market',default='it');p.add_argument('--canary',action='store_true')
@@ -83,6 +100,7 @@ def main():
         publish(progress,{'startedAt':startedAt,'updatedAt':time.time(),'phase':'done','step':len(steps),
                           'pass':None,'passes':a.passes,'created':created,
                           'total':int(summary.get('total') or 0),'states':summary.get('states') or {}})
-    out.write_text(json.dumps({'steps':steps,'realSends':0,'finalSummary':summary},ensure_ascii=False,indent=2)+'\n')
-    print(json.dumps({'steps':len(steps),'finalSummary':summary},ensure_ascii=False))
+    outcome=batch_outcome(steps)
+    out.write_text(json.dumps({'steps':steps,'realSends':0,'finalSummary':summary,**outcome},ensure_ascii=False,indent=2)+'\n')
+    print(json.dumps({'steps':len(steps),'finalSummary':summary,**outcome},ensure_ascii=False))
 if __name__=='__main__':main()

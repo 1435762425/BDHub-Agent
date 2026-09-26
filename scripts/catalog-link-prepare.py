@@ -1077,6 +1077,8 @@ def main():
             # 报告文件根本不生成，于是"为什么没写成"就查不出来了（踩过一次）。
             report['create']={'error':f'{type(error).__name__}:{str(error)[:200]}','created':[],'blocked':[]}
             report['state']='blocked'
+            # A write may have been in flight when this raised: the count is a floor, not proof.
+            report['writeEvidence']='uncertain'
         report['platformWrites']=report.get('createWrites',0)
     elif a.action=='verify':
         report['verify']=step_verify(prep,report,limit=(a.items or None))
@@ -1085,5 +1087,5 @@ def main():
     output.write_text(json.dumps(report,ensure_ascii=False,indent=2)+'\n');prep.close()
     # The driver loops creation while anything is still being created, so the count has to be on
     # stdout. Without it the loop's exit condition was always true and one run meant one batch.
-    print(json.dumps({'action':a.action,'state':report['state'],'summary':report['summary'],'platformWrites':report['platformWrites'],'created':len((report.get('create') or {}).get('created') or [])},ensure_ascii=False))
+    print(json.dumps({'action':a.action,'state':report['state'],'summary':report['summary'],'platformWrites':report['platformWrites'],'created':len((report.get('create') or {}).get('created') or []),**({'writeEvidence':report['writeEvidence']} if report.get('writeEvidence') else {})},ensure_ascii=False))
 if __name__=='__main__':main()
