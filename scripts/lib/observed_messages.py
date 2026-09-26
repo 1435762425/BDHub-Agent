@@ -29,9 +29,11 @@ def recorded_message_ids(db,plan,oec,cid,*,tables=None):
     return ids
 
 
-def outbound_messages(db,plan,cid,oec,*,before=None,limit=200,tables=None):
+def outbound_messages(db,plan,cid,oec,*,before=None,before_id=None,limit=200,tables=None):
     """Project observed bodies; an observation never creates or confirms a send intent.
 
+    ``before``/``before_id`` is the caller's (occurredAt, id) page cursor: only items strictly older on
+    that composite key are returned, filtered before ``limit`` so equal timestamps cannot hide items.
     ``tables`` lets a caller that reads many conversations in one pass check the schema once."""
     tables=_tables(db) if tables is None else tables
     if not {'inbox_event','inbox_content_head','inbox_content_version'}<=tables:return []
@@ -46,7 +48,8 @@ def outbound_messages(db,plan,cid,oec,*,before=None,limit=200,tables=None):
     for row in rows:
         if str(row['message_id']) in known:continue
         stamp=row['occurred_ms']/1000 if row['occurred_ms'] else row['observed_at']
-        if before is not None and stamp>before:continue
+        if before is not None and (stamp>before or before_id is not None and stamp==before
+                                   and 'platform-'+str(row['message_id'])>=before_id):continue
         content=json.loads(row['payload']);plain=content.get('format')=='text'
         result.append({'id':'platform-'+str(row['message_id']),'messageId':str(row['message_id']),
                        'direction':'outbound','kind':'text' if plain else 'attachment_or_unsupported',

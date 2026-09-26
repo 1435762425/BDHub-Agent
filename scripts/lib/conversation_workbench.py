@@ -317,9 +317,11 @@ TIMELINE_PAGE=300
 def _timeline_cursor(item):return f"{item['occurredAt']!r}|{item['id']}"
 
 def _timeline_cursor_at(before):
- if before is None:return None
+ """(occurredAt, id) of a page cursor, or (None, None)."""
+ if before is None:return None,None
  if not isinstance(before,str) or before.count('|')!=1:raise CycleError('conversation_query_invalid')
- try:return float(before.split('|')[0])
+ raw_at,item_id=before.split('|')
+ try:return float(raw_at),item_id
  except ValueError:raise CycleError('conversation_query_invalid') from None
 
 def _timeline_page(timeline,before):
@@ -375,10 +377,10 @@ def conversation_detail(root,store,cid,market='it',before=None):
    card=json.loads(row['text']) if row['kind']=='manual_card' else None
    timeline.append({'id':row['id'],'direction':'outbound','kind':'product_card' if card else 'text','text':f"[商品卡 PID {card['pid']}]" if card else row['text'],'occurredAt':row['started'] or row['created'],'status':row['state'],'source':'human' if row['kind'] in ('manual','manual_card') else 'agent',**({'pid':card['pid'],'listId':card['listId']} if card else {})})
  from lib.observed_messages import outbound_messages
- # Push the page cursor into this source: the newest platform messages at or before it, with
- # headroom for equal timestamps, always include every platform item of the requested page.
- cursor_at=_timeline_cursor_at(before)
- timeline.extend(outbound_messages(db,plan,cid,rel['oec'],before=cursor_at,limit=TIMELINE_PAGE*2+1))
+ # The full (occurredAt, id) cursor is pushed into this capped source, so it returns the newest
+ # items strictly before the cursor: one page plus one proves whether anything older remains.
+ cursor_at,cursor_id=_timeline_cursor_at(before)
+ timeline.extend(outbound_messages(db,plan,cid,rel['oec'],before=cursor_at,before_id=cursor_id,limit=TIMELINE_PAGE+1))
  timeline.sort(key=lambda r:(r['occurredAt'],r['id']))
  timeline,timeline_older,timeline_cursor=_timeline_page(timeline,before)
  episodes=[{'episodeId':r['episode_id'],'pid':r['pid'],'listId':r['list_id'],'sentAt':r['sent_at']} for r in db.execute('SELECT * FROM outbound_episode WHERE plan_id=? AND creator_id=? ORDER BY sent_at DESC LIMIT 10',(plan,creator))]

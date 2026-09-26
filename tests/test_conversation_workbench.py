@@ -161,6 +161,24 @@ class ConversationWorkbenchTests(unittest.TestCase):
    before=page['timelineCursor']
   platform=[i for i in seen if i.startswith('platform-')]
   self.assertEqual(len(platform),total);self.assertEqual(len(seen),len(set(seen)))
+ def test_platform_messages_sharing_one_timestamp_are_all_reachable(self):
+  from lib.conversation_workbench import TIMELINE_PAGE
+  base=90000
+  for total in (TIMELINE_PAGE+1,601,602,1000):
+   self.store.db.execute("DELETE FROM inbox_event WHERE kind='ourMessages'")
+   for n in range(total):
+    mid=str(base+n)
+    self.store.db.execute("INSERT OR IGNORE INTO inbox_event VALUES(?,?,?,?,?,?,?,0,?)",
+     (self.plan,'999',mid,'123','ourMessages',int((NOW-500)*1000),json.dumps({'messageId':mid}),NOW))
+    Service(self.store).capture(self.plan,'999','123',[{'messageId':mid,'format':'text','text':f'p{n}','nativeType':'text','rawSha256':mid}])
+   seen=[];before=None
+   for _ in range(20):
+    page=conversation_detail(self.root,self.store,'999',before=before)
+    seen=[r['id'] for r in page['timeline']]+seen
+    if not page['timelineHasOlder']:break
+    before=page['timelineCursor']
+   platform=[i for i in seen if i.startswith('platform-')]
+   self.assertEqual((total,len(platform)),(total,total));self.assertEqual(len(seen),len(set(seen)))
  def test_manual_reconcile_does_not_dispatch_a_ready_intent(self):
   replies=AutoReplies(self.store);request_id='manual-audit-ready-001'
   frozen=replies.prepare_manual(self.plan,'creator-1','999','Ciao',1,request_id)
