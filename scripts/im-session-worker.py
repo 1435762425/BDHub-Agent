@@ -108,6 +108,8 @@ def main():
     with (ROOT/f'var/im-session-{a.market}.lock').open('a') as lock:
         try:fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
         except BlockingIOError:return 0
+        from lib.runtime_release import register
+        register(ROOT,f'im-session-{a.market}')
         while not stopped(a.market):
             publish(ROOT,a.market,{'pid':os.getpid(),'state':'starting','market':a.market,'checkedAt':time.time()})
             try:cycle(a.market)

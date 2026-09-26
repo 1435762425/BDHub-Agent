@@ -119,6 +119,12 @@ def _reason(error):
     return (str(error) or type(error).__name__)[:200]
 
 
+def _model_service(store):
+    from lib import model_service
+    from lib.draft_provider import MODEL
+    return model_service.paused(store.db, model_service.service_key("DeepSeek", MODEL), store.clock())
+
+
 def gather(root, store):
     """Facts for ``evaluate``; a market whose ledgers cannot be read carries ``error`` instead."""
     from lib.account_identity import status as account_status
@@ -130,7 +136,10 @@ def gather(root, store):
     scheduler = scheduler_state(root)
     stop = stop_path(root)
     requested = (_stamp(_read_json(stop).get("requestedAt")) or stop.stat().st_mtime) if stop.exists() else None
+    from lib.runtime_release import head_sha, loaded
     facts = {"now": store.clock(), "offsite": offsite_latest(root), "markets": [],
+             "release": {"head": head_sha(root), "loaded": loaded(root)},
+             "modelService": _model_service(store),
              "scheduler": {"running": bool(scheduler["running"]), "stopRequestedAt": requested,
                            "checkedAt": _stamp(scheduler.get("checkedAt"))}}
     try:
@@ -182,6 +191,17 @@ def evaluate(facts):
         add("scheduler-down", "critical", "调度器未运行",
             "没有停止请求，但调度器不在运行：收信、发送、AI 回复和账号维护都已中断。",
             since=scheduler["checkedAt"], href="/it/ops/jobs")
+    service = facts.get("modelService")
+    if service:
+        add("model-service-paused", "warning", "AI 模型服务暂停",
+            f"连续调用失败（{service.get('lastError') or '原因未记录'}），已暂停调用，下次尝试 {datetime.fromtimestamp(service['nextAt'], BEIJING).strftime('%H:%M')}；待答问题保留，暂停期间不消耗每位达人的尝试次数。")
+    release = facts.get("release") or {}
+    head, live = release.get("head"), release.get("loaded") or []
+    # Only the commit is compared: pages legitimately rewrite tracked config files at runtime.
+    stale = sorted(row["role"] for row in live if head and row.get("sha") != head)
+    if stale:
+        add("runtime-version-mixed", "warning", f"{len(stale)} 个常驻进程运行的不是当前代码",
+            f"{'、'.join(stale)} 载入的版本与仓库当前提交 {head[:7]} 不同；按发布流程安全重启后新代码才生效。")
     offsite = facts["offsite"]
     if not offsite:
         add("offsite-missing", "warning", "还没有 U 盘备份", "插上 U 盘后执行一次异机备份。")

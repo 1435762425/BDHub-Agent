@@ -166,3 +166,28 @@ class GatherTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RuntimeReleaseTests(unittest.TestCase):
+    def test_workers_on_an_older_commit_are_reported_and_current_ones_are_not(self):
+        base = facts()
+        base["release"] = {"head": "b" * 40, "loaded": [{"role": "scheduler", "sha": "b" * 40, "dirty": True},
+                                                        {"role": "agent-reply-it", "sha": "a" * 40}]}
+        alerts = {alert["id"]: alert for alert in evaluate(base)}
+        self.assertIn("agent-reply-it", alerts["runtime-version-mixed"]["detail"])
+        self.assertNotIn("scheduler", alerts["runtime-version-mixed"]["detail"])
+        base["release"]["loaded"] = base["release"]["loaded"][:1]
+        self.assertNotIn("runtime-version-mixed", {alert["id"] for alert in evaluate(base)})
+
+    def test_registration_records_the_loaded_commit_and_ignores_dead_processes(self):
+        import json, os, tempfile
+        from pathlib import Path
+        from unittest.mock import patch
+        from lib import runtime_release
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            with patch.object(runtime_release, "current_release", return_value={"sha": "c" * 40, "dirty": False, "contentDigest": None}):
+                value = runtime_release.register(root, "scheduler")
+            self.assertEqual((value["pid"], value["sha"]), (os.getpid(), "c" * 40))
+            (root / "var/runtime-loaded/agent-reply-br.json").write_text(json.dumps({"role": "agent-reply-br", "pid": 999999, "sha": "d"}))
+            self.assertEqual([row["role"] for row in runtime_release.loaded(root)], ["scheduler"])

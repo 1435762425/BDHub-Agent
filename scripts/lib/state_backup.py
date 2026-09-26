@@ -137,6 +137,25 @@ def _git_state(root):
         return {"commit": None, "dirty": None}
 
 
+SPACE_MARGIN_BYTES = 512 * 1024 * 1024
+
+
+def _require_space(root, databases, target):
+    """Refuse to start when the snapshot cannot fit: a disk-full failure mid-copy also starves the
+    live databases. The estimate is the measured size of every database and its WAL, plus 20% and a
+    fixed margin; nothing is ever deleted to make room."""
+    needed = 0
+    for name in databases:
+        for suffix in ("", "-wal"):
+            path = Path(root) / "var" / (name + suffix)
+            if path.exists():
+                needed += path.stat().st_size
+    needed = int(needed * 1.2) + SPACE_MARGIN_BYTES
+    free = shutil.disk_usage(target).free
+    if free < needed:
+        raise ValueError(f"state_backup_insufficient_space:{free // 2**20}MB_free<{needed // 2**20}MB_needed")
+
+
 def create_backup(root, *, output=None, label=None, clock=time.time):
     root = Path(root).resolve()
     state = inventory(root)
@@ -154,6 +173,7 @@ def create_backup(root, *, output=None, label=None, clock=time.time):
     if destination.exists() or destination.is_symlink():
         raise ValueError("state_backup_destination_exists")
     destination.parent.mkdir(parents=True, exist_ok=True)
+    _require_space(root, state["configured"], destination.parent)
     temporary = destination.parent / ("." + destination.name + ".tmp-" + uuid.uuid4().hex)
     temporary.mkdir(mode=0o700)
     try:

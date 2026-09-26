@@ -17,6 +17,9 @@ def stop(*_):
 def main():
     parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--worker',action='store_true');parser.add_argument('--once',action='store_true');args=parser.parse_args()
     signal.signal(signal.SIGTERM,stop);signal.signal(signal.SIGINT,stop)
+    if args.worker and not args.once:
+        from lib.runtime_release import register
+        register(ROOT,'scheduler')
     while not STOP and not stop_path(ROOT).exists():
         state=tick(ROOT,refill=args.worker and not args.once,stopped=lambda:STOP);print(json.dumps(state,ensure_ascii=False),flush=True)
         if args.once or not args.worker:break

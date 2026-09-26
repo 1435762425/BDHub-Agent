@@ -45,6 +45,8 @@ def main():
  lock=(ROOT/f'var/market-send-worker-{a.market}.lock').open('a')
  try:fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
  except BlockingIOError:raise SystemExit('market_send_worker_busy')
+ from lib.runtime_release import register
+ register(ROOT,f'market-send-{a.market}')
  while not STOP:
   waiting=None;sent=False
   with CycleStore(ROOT/'var/second-cycle.sqlite') as store:

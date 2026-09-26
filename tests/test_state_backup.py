@@ -81,6 +81,16 @@ class StateBackupTests(unittest.TestCase):
             self.assertEqual(db.execute("PRAGMA quick_check").fetchone()[0], "ok")
             self.assertGreaterEqual(db.execute("SELECT count(*) FROM fact").fetchone()[0], 6001)
 
+    def test_backup_refuses_to_start_without_room_and_leaves_nothing_behind(self):
+        from unittest.mock import patch
+        import shutil
+        usage = shutil.disk_usage(self.root)
+        with patch("lib.state_backup.shutil.disk_usage", return_value=usage._replace(free=1024)):
+            with self.assertRaisesRegex(ValueError, "state_backup_insufficient_space"):
+                create_backup(self.root, output=self.root / "full", clock=lambda: 125.0)
+        self.assertFalse((self.root / "full").exists())
+        self.assertEqual([p.name for p in self.root.iterdir() if p.name.startswith(".full")], [])
+
     def test_unregistered_database_refuses_backup(self):
         with closing(sqlite3.connect(self.root / "var/unregistered.sqlite")) as db, db:
             db.execute("CREATE TABLE fact(id)")

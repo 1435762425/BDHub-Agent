@@ -22,7 +22,11 @@ def main():
     signal.signal(signal.SIGTERM,stop);signal.signal(signal.SIGINT,stop)
     lock_path=ROOT/'var/continuous-send.lock';lock_path.parent.mkdir(parents=True,exist_ok=True)
     with lock_path.open('a') as lock,CycleStore(ROOT/'var/second-cycle.sqlite') as store:
-        fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB);plan=store.db.execute("SELECT id FROM plan WHERE institution='bjn-local-research' AND market='it'").fetchone()[0]
+        fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+        if not args.once:
+            from lib.runtime_release import register
+            register(ROOT,'continuous-send-it')
+        plan=store.db.execute("SELECT id FROM plan WHERE institution='bjn-local-research' AND market='it'").fetchone()[0]
         while not STOP:
             cfg=control(store,ROOT)
             if cfg['stopRequested'] or not (cfg['runRequested'] or cfg['automaticEnabled']):break
