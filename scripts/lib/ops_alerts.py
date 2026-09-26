@@ -125,6 +125,16 @@ def _model_service(store):
     return model_service.paused(store.db, model_service.service_key("DeepSeek", MODEL), store.clock())
 
 
+def _restore_drill(root):
+    """The latest offline restore drill report (G17), or None when no drill has run."""
+    reports = sorted((Path(root) / "var/backups/drills").glob("*.json"), key=lambda path: path.stat().st_mtime)
+    if not reports:
+        return None
+    report = _read_json(reports[-1])
+    return {"backup": Path(str(report.get("backup") or "")).name, "state": report.get("state"),
+            "finishedAt": _stamp(report.get("finishedAt")), "blockers": list(report.get("blockers") or [])[:5]}
+
+
 def gather(root, store):
     """Facts for ``evaluate``; a market whose ledgers cannot be read carries ``error`` instead."""
     from lib.account_identity import status as account_status
@@ -139,7 +149,7 @@ def gather(root, store):
     from lib.runtime_release import head_sha, loaded
     facts = {"now": store.clock(), "offsite": offsite_latest(root), "markets": [],
              "release": {"head": head_sha(root), "loaded": loaded(root)},
-             "modelService": _model_service(store),
+             "modelService": _model_service(store), "restoreDrill": _restore_drill(root),
              "scheduler": {"running": bool(scheduler["running"]), "stopRequestedAt": requested,
                            "checkedAt": _stamp(scheduler.get("checkedAt"))}}
     try:
@@ -166,6 +176,8 @@ def _recovery_note(recovery):
     state = recovery.get("state")
     if state in ("queued", "draining", "running"):
         return "；已自动发起账号刷新，等待结果"
+    if state == "waiting_active":
+        return "；账号维护进行中，等待其结果"
     if state == "completed":
         return "；账号已自动刷新，等下一轮收信确认"
     if state == "not_requested":
@@ -202,6 +214,11 @@ def evaluate(facts):
     if stale:
         add("runtime-version-mixed", "warning", f"{len(stale)} 个常驻进程运行的不是当前代码",
             f"{'、'.join(stale)} 载入的版本与仓库当前提交 {head[:7]} 不同；按发布流程安全重启后新代码才生效。")
+    drill = facts.get("restoreDrill")
+    if drill and drill.get("state") != "restorable":
+        add("restore-drill-blocked", "warning", "最近一次恢复演练未通过",
+            f"备份 {drill.get('backup')}：{'；'.join(drill.get('blockers') or []) or drill.get('state')}。演练只读，未改动任何数据；需核对备份组后重新演练。",
+            since=drill.get("finishedAt"))
     offsite = facts["offsite"]
     if not offsite:
         add("offsite-missing", "warning", "还没有 U 盘备份", "插上 U 盘后执行一次异机备份。")

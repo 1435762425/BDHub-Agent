@@ -191,3 +191,14 @@ class RuntimeReleaseTests(unittest.TestCase):
             self.assertEqual((value["pid"], value["sha"]), (os.getpid(), "c" * 40))
             (root / "var/runtime-loaded/agent-reply-br.json").write_text(json.dumps({"role": "agent-reply-br", "pid": 999999, "sha": "d"}))
             self.assertEqual([row["role"] for row in runtime_release.loaded(root)], ["scheduler"])
+
+
+class RestoreDrillAlertTests(unittest.TestCase):
+    def test_only_a_failed_latest_drill_is_reported(self):
+        base = facts()
+        base["restoreDrill"] = {"backup": "b1", "state": "restorable", "finishedAt": NOW, "blockers": []}
+        self.assertNotIn("restore-drill-blocked", {alert["id"] for alert in evaluate(base)})
+        base["restoreDrill"] = {"backup": "b1", "state": "blocked", "finishedAt": NOW,
+                                "blockers": ["reference:delivery_creator_identity:future_or_undated_missing"]}
+        alert = next(alert for alert in evaluate(base) if alert["id"] == "restore-drill-blocked")
+        self.assertIn("delivery_creator_identity", alert["detail"])
