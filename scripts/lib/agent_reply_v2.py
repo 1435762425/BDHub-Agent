@@ -350,7 +350,7 @@ def generate(root, store, plan, market, context, mode='simulation', call=None):
         raise CycleError('agent_decision_unresolved')
     from lib import model_service
     service=model_service.service_key('DeepSeek',MODEL)
-    model_service.acquire(store,service)  # A paused service is not called and costs no attempt.
+    permit=model_service.acquire(store,service)  # A paused service is not called and costs no attempt.
     decision_id = 'agent-decision-' + digest([plan, mode, input_hash, len(attempts)])[:24]
     with store.tx():
         store.db.execute('INSERT INTO agent_reply_decision_v2 '
@@ -376,9 +376,9 @@ def generate(root, store, plan, market, context, mode='simulation', call=None):
         state='input_blocked' if kind=='local_input_invalid' else 'not_sent' if not_sent else 'unknown'
         store.db.execute("UPDATE agent_reply_decision_v2 SET state=?,output_json=? WHERE decision_id=?",
                          (state,encoded({'error':str(code)[:80],'family':kind,'phase':'not_sent' if not_sent else 'called'}),decision_id))
-        model_service.failed(store,service,code)
+        model_service.failed(store,permit,code)
         raise CycleError('agent_decision_unresolved') from None
-    model_service.succeeded(store,service)
+    model_service.succeeded(store,permit)
     with store.tx():
         store.db.execute("UPDATE agent_reply_decision_v2 SET state='ready',output_json=? WHERE decision_id=?",
                          (encoded(raw), decision_id))

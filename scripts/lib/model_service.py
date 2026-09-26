@@ -41,48 +41,76 @@ def _row(db, key):
     return db.execute('SELECT * FROM agent_model_service WHERE service_key=?', (key,)).fetchone()
 
 
+def _schema(db):
+    db.execute(SCHEMA)
+    # Each open/close transition starts a new epoch; a call only affects the epoch it was admitted in.
+    if 'epoch' not in {row[1] for row in db.execute('PRAGMA table_info(agent_model_service)')}:
+        db.execute('ALTER TABLE agent_model_service ADD COLUMN epoch INTEGER NOT NULL DEFAULT 0')
+
+
 def acquire(store, key):
-    """Allow one call, or raise ``agent_model_service_paused`` without spending any attempt."""
+    """Admit one call and return its permit, or raise ``agent_model_service_paused`` (no attempt spent).
+
+    The permit records the breaker epoch: a result from an older epoch (a call admitted before the
+    breaker opened) can neither close a newer pause nor count toward it; only the probe of the
+    current open epoch decides whether the service is back."""
     now = store.clock()
     with store.tx():
-        store.db.execute(SCHEMA)
+        _schema(store.db)
         row = _row(store.db, key)
         if row is None or row['state'] == 'closed':
-            return 'closed'
+            return {'key': key, 'mode': 'closed', 'epoch': row['epoch'] if row else 0}
         if now < row['next_at'] or now < row['probe_until']:
             raise CycleError('agent_model_service_paused')
-        store.db.execute('UPDATE agent_model_service SET probe_until=?,updated_at=? WHERE service_key=?',
-                         (now + PROBE_LEASE_SECONDS, now, key))
-        return 'probe'
+        store.db.execute('UPDATE agent_model_service SET probe_until=?,updated_at=? WHERE service_key=? AND epoch=?',
+                         (now + PROBE_LEASE_SECONDS, now, key, row['epoch']))
+        return {'key': key, 'mode': 'probe', 'epoch': row['epoch']}
 
 
-def succeeded(store, key):
+def _permit(value):
+    # Older callers passed the bare key: treat it as a closed-state permit of epoch 0.
+    return value if isinstance(value, dict) else {'key': value, 'mode': 'closed', 'epoch': 0}
+
+
+def succeeded(store, permit):
+    permit = _permit(permit)
     with store.tx():
-        store.db.execute(SCHEMA)
+        _schema(store.db)
+        row = _row(store.db, permit['key'])
+        if row is None or row['epoch'] != permit['epoch']:
+            return  # A call from another epoch says nothing about the current state.
+        if row['state'] == 'open' and permit['mode'] != 'probe':
+            return
         store.db.execute("UPDATE agent_model_service SET state='closed',failures=0,opens=0,probe_until=0,last_error=NULL,"
-                         "updated_at=? WHERE service_key=?", (store.clock(), key))
+                         "epoch=epoch+?,updated_at=? WHERE service_key=?",
+                         (1 if row['state'] == 'open' else 0, store.clock(), permit['key']))
 
 
-def failed(store, key, code):
-    """Count a service-level failure; local input and invalid output do not concern the service."""
+def failed(store, permit, code):
+    """Count a service-level failure of the current epoch; local input and invalid output never count."""
+    permit = _permit(permit)
     if family(code) not in ('provider_config', 'provider_transient'):
         return
-    now = store.clock()
+    key, now = permit['key'], store.clock()
     with store.tx():
-        store.db.execute(SCHEMA)
+        _schema(store.db)
         row = _row(store.db, key)
+        epoch = row['epoch'] if row else 0
+        if epoch != permit['epoch'] or (row and row['state'] == 'open' and permit['mode'] != 'probe'):
+            return
         failures = (row['failures'] if row else 0) + 1
         opens = row['opens'] if row else 0
         probing = bool(row and row['state'] == 'open')
         if probing or failures >= OPEN_AFTER:
             pause = min(PAUSE_CAP_SECONDS, PAUSE_SECONDS * 2 ** opens)
-            values = ('open', failures, opens + 1, now + pause, 0, code, now)
+            values = ('open', failures, opens + 1, now + pause, 0, code, now, epoch + 1)
         else:
-            values = ('closed', failures, opens, 0, 0, code, now)
-        store.db.execute('INSERT INTO agent_model_service VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(service_key) DO UPDATE SET '
+            values = ('closed', failures, opens, 0, 0, code, now, epoch)
+        store.db.execute('INSERT INTO agent_model_service(service_key,state,failures,opens,next_at,probe_until,last_error,updated_at,epoch) '
+                         'VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(service_key) DO UPDATE SET '
                          'state=excluded.state,failures=excluded.failures,opens=excluded.opens,next_at=excluded.next_at,'
-                         'probe_until=excluded.probe_until,last_error=excluded.last_error,updated_at=excluded.updated_at',
-                         (key, *values))
+                         'probe_until=excluded.probe_until,last_error=excluded.last_error,updated_at=excluded.updated_at,'
+                         'epoch=excluded.epoch', (key, *values))
 
 
 def paused(db, key, now):
