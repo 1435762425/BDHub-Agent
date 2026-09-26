@@ -179,23 +179,28 @@ def _candidate_creators(db,plan):
    if creator not in creators and (str(oec),str(cid),str(message_id)) not in recorded:creators.add(creator)
  return creators
 
+# messageId of a stored receipt, extracted by SQLite: equivalent to json.loads(raw).get('messageId')
+# for an object (invalid JSON, non-objects and null ids give NULL) and an order of magnitude cheaper
+# than decoding every receipt in Python as delivery history grows (H11).
+_MESSAGE_ID="CASE WHEN json_valid({0}) THEN json_extract({0},'$.messageId') END"
+
 def _recorded_messages(db,plan,tables):
  """(oec, cid, messageId) of this application's own receipts, resolved as recorded_message_ids does."""
  found=set()
- def collect(oec,cid,*raws):
-  for raw in raws:
-   try:value=json.loads(raw) if raw else {}
-   except (ValueError,TypeError):continue
-   if isinstance(value,dict) and value.get('messageId') is not None:found.add((str(oec),str(cid or ''),str(value['messageId'])))
+ def collect(oec,cid,*ids):
+  for value in ids:
+   if value is not None:found.add((str(oec),str(cid or ''),str(value)))
  if {'cycle_delivery','cycle_delivery_part'}<=tables:
   intents=dict(db.execute('SELECT delivery_id,cid FROM cycle_conversation_intent')) if 'cycle_conversation_intent' in tables else {}
-  for receipt,confirmation,snapshot,delivery_id,oec in db.execute(
-    'SELECT p.receipt,p.confirmation,d.snapshot,d.id,d.oec FROM cycle_delivery_part p JOIN cycle_delivery d ON d.id=p.delivery_id WHERE d.plan_id=?',(plan,)):
-   try:cid=json.loads(snapshot).get('conversationId')
-   except (ValueError,TypeError,AttributeError):cid=None
-   collect(oec,cid or intents.get(delivery_id),receipt,confirmation)
+  for receipt_id,confirmation_id,snapshot_cid,delivery_id,oec in db.execute(
+    f"""SELECT {_MESSAGE_ID.format('p.receipt')},{_MESSAGE_ID.format('p.confirmation')},
+      CASE WHEN json_valid(d.snapshot) THEN json_extract(d.snapshot,'$.conversationId') END,d.id,d.oec
+      FROM cycle_delivery_part p JOIN cycle_delivery d ON d.id=p.delivery_id WHERE d.plan_id=?""",(plan,)):
+   collect(oec,snapshot_cid or intents.get(delivery_id),receipt_id,confirmation_id)
  if 'service_reply' in tables:
-  for oec,cid,receipt,proof in db.execute('SELECT oec,cid,receipt,proof FROM service_reply WHERE plan_id=?',(plan,)):collect(oec,cid,receipt,proof)
+  for oec,cid,receipt_id,proof_id in db.execute(
+    f"SELECT oec,cid,{_MESSAGE_ID.format('receipt')},{_MESSAGE_ID.format('proof')} FROM service_reply WHERE plan_id=?",(plan,)):
+   collect(oec,cid,receipt_id,proof_id)
  return found
 
 LIST_ORDER={'human':0,'technical':1,'agent':2,'waiting':3,'completed':4}

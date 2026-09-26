@@ -145,6 +145,23 @@ class ConversationWorkbenchTests(unittest.TestCase):
   for bad in ('1~x~creator',f"9~1.0~c",'1~1.0~'):
    with self.assertRaisesRegex(CycleError,'conversation_query_invalid'):list_conversations(self.root,self.store,'human',after=bad)
   with self.assertRaisesRegex(CycleError,'conversation_query_invalid'):list_conversations(self.root,self.store,'human',offset=10,after=whole['nextCursor'])
+ def test_recorded_receipts_read_by_sqlite_match_the_python_rules(self):
+  from lib.conversation_workbench import _recorded_messages
+  from lib.cycle_delivery import Deliveries
+  Deliveries(self.store)
+  rows=[('d-ok','{"conversationId":"501"}','{"messageId":"9001"}','{"messageId":9002}'),
+        ('d-bad','not json','{bad','{"messageId":null}'),
+        ('d-array','[1,2]','[{"messageId":"x"}]','"9003"'),
+        ('d-intent','{}','{"messageId":"9004"}',None)]
+  for delivery,snapshot,receipt,confirmation in rows:
+   self.store.db.execute("INSERT INTO cycle_delivery(id,plan_id,creator_id,oec,pid,source_id,snapshot,created,expires,state) VALUES(?,?,?,?,?,?,?,?,?,'confirmed')",
+    (delivery,self.plan,'creator-1','123','1','s-'+delivery,snapshot,NOW,NOW+1))
+   self.store.db.execute("INSERT INTO cycle_delivery_part(delivery_id,kind,request_ref,state,receipt,confirmation) VALUES(?,?,?,'confirmed',?,?)",
+    (delivery,'card','ref-'+delivery,receipt,confirmation))
+  self.store.db.execute("INSERT INTO cycle_conversation_intent(delivery_id,request_ref,state,cid) VALUES('d-intent','conv-ref','confirmed','777')")
+  tables={r[0] for r in self.store.db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+  self.assertEqual({row for row in _recorded_messages(self.store.db,self.plan,tables) if row[2].startswith('900')},
+                   {('123','501','9001'),('123','501','9002'),('123','777','9004')})
  def test_platform_messages_beyond_one_source_page_are_reachable(self):
   from lib.conversation_workbench import TIMELINE_PAGE
   total=TIMELINE_PAGE+101
