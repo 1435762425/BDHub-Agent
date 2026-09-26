@@ -27,10 +27,10 @@ function LastRun({run}:{run:LeadsRunState|null|undefined}){
     {label:"读取片段",value:n(last.fragments),detail:"每段最多 3 个请求后轮换"},
     {label:"网络请求",value:n(last.networkRequests),detail:"实际发出的只读请求；复用已保存页面不计"},
     {label:"出错的查询",value:n(last.errorCount),detail:last.errors.length?last.errors.join("、"):last.errorCode?`阶段错误：${last.errorCode}`:"无"},
-    ...(last.contribution?[{label:"新增达人×商品",value:last.contribution.newPairs.toLocaleString(),detail:`本段 ${last.contribution.publications} 次发布（A ${last.contribution.aPublications} · B ${last.contribution.bPublications}）里此前没有的组合；还需身份和资格检查才进入发送池`},
+    ...(last.contribution?[{label:"新增账号名×商品",value:last.contribution.newPairs.toLocaleString(),detail:`本段 ${last.contribution.publications} 次发布（A ${last.contribution.aPublications} · B ${last.contribution.bPublications}）里此前没有的组合；还需身份和资格检查才进入发送池`},
      {label:"刷新已有",value:last.contribution.refreshedPairs.toLocaleString(),detail:"已有组合换了新窗口，不算新增"},
-     {label:"全新达人",value:last.contribution.newCreators.toLocaleString(),detail:"该市场此前任何商品下都没出现过的达人"}]
-     :[{label:"新增达人×商品",value:"未记录",detail:"这段没有发布记录，或发生在开始记录之前"}])]}/>
+     {label:"首次出现账号名",value:last.contribution.newCreators.toLocaleString(),detail:"该市场此前任何商品下都没出现过的账号名；尚未核验 OECID，不等于新的稳定达人"}]
+     :[{label:"新增账号名×商品",value:"未记录",detail:"这段没有发布记录，或发生在开始记录之前"}])]}/>
    {!last.resultRecorded&&<p className="text-xs text-gray-400">这一段没有发布结果，计数未记录（不是 0）。</p>}</>
   :<p className="mt-2 text-xs text-gray-500">还没有已结束的抓取记录。</p>}
  </div>;
@@ -38,22 +38,23 @@ function LastRun({run}:{run:LeadsRunState|null|undefined}){
 
 /** The PID -> creator-lead queue. State is owned by the page so the funnel bar reads the same numbers. */
 export default function LeadsQueuePanel({controller}:{controller:LeadsQueueController}){
- const {data,busy,message,startRun,loaded}=controller;
+ const {data,busy,message,startRun,loaded,failed,lastSuccessfulAt}=controller;
+ const stale=failed&&data?<Notice tone="warning">刷新失败，以下是 {stamp(lastSuccessfulAt)} 的数据。</Notice>:null;
  const due=data?.nextDue?.[0];
  // "Already queried" has to exclude both never-asked products and the ones parked after repeated
  // failures, or the coverage bar would count work that never reached the platform as done.
  const queried=data?Math.max(0,data.scope-data.firstTime-data.stuck):0;
- if(data?.rolling){const queue=data.rolling,control=queue.control;return <Card title="A/B 持久读取队列" subtitle="先续断点，再给新／到期项机会；A/B 每次最多 3 个请求后轮换。每 7 天到期，不每天重扫。"><div className="space-y-4 p-5">{!queue.automaticEnabled&&<Notice tone="info">自动运营总开关当前关闭，队列与断点保留。手动推进本次流程不会开启持续任务。</Notice>}{queue.identityHold&&<Notice tone="info">身份阶段因原有故障等待恢复。已确认身份的线索继续使用，A/B 读取不被阻塞；原失败记录保留。</Notice>}<MetricTable rows={(["A","B"] as const).flatMap(kind=>{const q=queue.types[kind];return [
+ if(data?.rolling){const queue=data.rolling,control=queue.control;return <Card title="A/B 持久读取队列" subtitle="先续断点，再给新／到期项机会；A/B 每次最多 3 个请求后轮换。每 7 天到期，不每天重扫。"><div className="space-y-4 p-5">{stale}{!queue.automaticEnabled&&<Notice tone="info">自动运营总开关当前关闭，队列与断点保留。手动推进本次流程不会开启持续任务。</Notice>}{queue.identityHold&&<Notice tone="info">身份阶段因原有故障等待恢复。已确认身份的线索继续使用，A/B 读取不被阻塞；原失败记录保留。</Notice>}<MetricTable rows={(["A","B"] as const).flatMap(kind=>{const q=queue.types[kind];return [
  {label:`${kind} · 待首次查询`,value:q.first.toLocaleString(),detail:kind==="A"?"近 14 天，每 PID 最多 50 位正销量达人":"近 30 天，单视频至少 1,000 播放"},
  {label:`${kind} · 到期刷新`,value:q.refresh.toLocaleString(),detail:"旧到期任务与新任务按等待起点公平排序"},
  {label:`${kind} · 可续断点`,value:q.checkpoints.toLocaleString(),detail:`保持原窗口与页码；最早窗口截至 ${q.oldestWindowEnd??"—"}${q.staleCheckpoints?`，${q.staleCheckpoints} 项窗口已陈旧，完成后立即排新窗口`:""}`},
  {label:`${kind} · 技术隔离`,value:(q.states.isolated??0).toLocaleString(),detail:"保留错误，其他商品继续；不需人工逐项处理"},
  {label:`${kind} · 材料暂停`,value:(q.states.material_paused??0).toLocaleString(),detail:"没有有效材料时不消耗查询额度"},
  {label:`${kind} · 最早等待`,value:stamp(q.oldestReadyAt),detail:`队列共 ${q.total.toLocaleString()} 个 PID，当前可运行 ${q.runnable.toLocaleString()}`},
- ];})}/>{control?.state==="waiting_quota"?<Notice tone="info">该市场等待 Kalodata 额度。下次核对：{stamp(control.retry_at)}。继续原窗口和断点；其他市场独立运行。</Notice>:control?.state==="waiting_account"?<Notice tone="info">读取通道暂不可用，任务与断点保留。下次检查：{stamp(control.retry_at)}。</Notice>:null}<LastRun run={data.run}/>{queue.recentOutcomes&&<div className="rounded-xl border border-gray-200 p-4 text-sm dark:border-gray-800"><p className="font-medium">近 7 天发布的线索后来怎样</p><p className="mt-1 text-xs text-gray-500">每次发送只算到它发送时冻结的那条来源；回复指卡片发出后达人发来的新消息。观察窗口仍在进行，近期发布的数字会继续变化，不是因果转化，也不含成交金额。</p>
-  <MetricTable rows={(["A","B"] as const).map(kind=>{const o=queue.recentOutcomes![kind];return {label:`${kind} 类`,value:`${o.creatorsReplied.toLocaleString()} 位回复`,detail:`发布来源 ${o.publishedSources.toLocaleString()} · 被采用 ${o.deliveries.toLocaleString()} 次 · 确认发出 ${o.sentDeliveries.toLocaleString()} 次 · 触达 ${o.creatorsReached.toLocaleString()} 位${o.creatorsReached?`（回复率 ${(o.creatorsReplied/o.creatorsReached*100).toFixed(1)}%）`:""}`};})}/></div>}<Button size="sm" disabled={busy||Boolean(data.run?.running)||Boolean(data.run?.queued)} onClick={()=>void startRun()}>推进一段 A/B 查询</Button>{message&&<Notice tone="info">{message}</Notice>}</div></Card>;}
+ ];})}/>{control?.state==="waiting_quota"?<Notice tone="info">该市场等待 Kalodata 额度。下次核对：{stamp(control.retry_at)}。继续原窗口和断点；其他市场独立运行。</Notice>:control?.state==="waiting_account"?<Notice tone="info">读取通道暂不可用，任务与断点保留。下次检查：{stamp(control.retry_at)}。</Notice>:null}<LastRun run={data.run}/>{queue.recentOutcomes&&<details className="rounded-xl border border-gray-200 p-4 text-sm dark:border-gray-800"><summary className="cursor-pointer font-medium">近 7×24 小时发布的线索：后续观察 <span className="text-xs font-normal text-gray-400">{stamp(queue.recentOutcomes.since)} — {stamp(queue.recentOutcomes.asOf)}</span></summary><p className="mt-2 text-xs text-gray-500">每次投递只算到它当时冻结的那条来源；A、B 人数不能相加成独立达人。“已确认发卡”含只发出卡片、文字未发的投递，与“完整卡文触达”不是同一指标。来信达人指卡片最终确认、且卡片提交开始之后发来新消息的达人，并不证明晚于平台实际发卡。不是因果转化，也不含成交金额。</p>
+  <MetricTable rows={(["A","B"] as const).map(kind=>{const o=queue.recentOutcomes![kind];return {label:`${kind} 类`,value:`${o.creatorsReplied.toLocaleString()} 位来信`,detail:`发布来源 ${o.publishedSources.toLocaleString()} 条 · 被投递采用 ${o.deliveries.toLocaleString()} 次 · 已确认发卡 ${o.sentDeliveries.toLocaleString()} 次（含仅卡片） · 涉及达人 ${o.creatorsReached.toLocaleString()} 位`};})}/></details>}<Button size="sm" disabled={busy||Boolean(data.run?.running)||Boolean(data.run?.queued)} onClick={()=>void startRun()}>推进一段 A/B 查询</Button>{message&&<Notice tone="info">{message}</Notice>}</div></Card>;}
  return <Card title="达人线索查询队列"><div className="space-y-4 p-5">
-  {!data&&<p className="text-sm text-gray-500">{loaded?"暂时无法读取查询队列。":"读取中…"}</p>}
+  {stale}{!data&&<p className="text-sm text-gray-500">{loaded?"暂时无法读取查询队列。":"读取中…"}</p>}
   {data&&<>
   <MetricTable rows={[
    {label:"队列 PID（总数）",value:data.scope.toLocaleString(),detail:`合格 ${data.eligible.toLocaleString()} ∩ 有链接 ${data.linked.toLocaleString()}`},
