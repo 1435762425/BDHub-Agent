@@ -52,6 +52,6 @@ def recover(store,market,cid,*,confirm=False):
         cp,watermark,held=assess()  # Re-checked under the write lock.
         now=store.clock()
         store.db.execute("UPDATE inbox_checkpoint SET state='backfilling' WHERE plan_id=? AND cid=? AND state='gap'",(plan,cid))
-        store.db.execute("INSERT OR REPLACE INTO inbox_backfill VALUES(?,?,?,'','','0',?,?,0,?)",(plan,cid,cp['oec'],watermark,now,now))
+        store.db.execute("INSERT OR REPLACE INTO inbox_backfill(plan_id,cid,oec,account,im_id,cursor,event_rowid,started_at,rounds,updated_at) VALUES(?,?,?,'','','0',?,?,0,?)",(plan,cid,cp['oec'],watermark,now,now))
     return {'state':'backfilling','conversationId':cid,'watermark':watermark,'historicalDuringGap':held,
             'platformWrites':0,'realSends':0}

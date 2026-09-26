@@ -151,6 +151,11 @@ def read_to_overlap(session,conversation,store,plan,max_pages=5,required_ids=(),
     # A native cursor belongs to the reader that produced it; another reader restarts the chain.
     resume=int(saved['cursor']) if saved and saved['account']==sender.get('account') and \
         saved['im_id']==sender.get('imId') and saved['oec']==oec else None
+    # The saved cursor continues one unbroken chain whose newest message is segment_top. Reaching any
+    # other stored message proves nothing about the pages between (another reader may have stored it).
+    segment_top=(dict(saved).get('segment_top') if saved else None) if resume is not None else None
+    if segment_top is None:resume=None
+    top=None
     combined=None;events={};contents={};cursor=0;complete=False
     def known(message_id,pre=False):
         row=db.execute('SELECT rowid FROM inbox_event WHERE plan_id=? AND cid=? AND message_id=?',
@@ -159,13 +164,14 @@ def read_to_overlap(session,conversation,store,plan,max_pages=5,required_ids=(),
     for _ in range(max_pages):
         page=session.history_summary(conversation,include_events=True,include_contents=True,include_pagination=True,cursor=cursor)
         combined=page
+        if top is None and page['events']:top=page['events'][0]['messageId']
         for event in page['events']:events.setdefault(event['messageId'],event)
         for content in page.get('contents',[]):contents.setdefault(content['messageId'],content)
         joined=any(known(e['messageId'],pre=True) for e in page['events'])
         complete=complete or joined or not page['hasMore']
         if not page['hasMore'] or complete and set(required_ids)<=set(events):break
-        if not complete and resume is not None and any(known(e['messageId']) for e in page['events']):
-            next_cursor,resume=resume,None  # Joined this backfill's stored range: continue below it.
+        if not complete and resume is not None and any(e['messageId']==segment_top for e in page['events']):
+            next_cursor,resume=resume,None  # Read down to the saved chain's top: continue below it.
         else:next_cursor=int(page['nextCursor'])
         if next_cursor==cursor:break
         cursor=next_cursor
@@ -173,5 +179,5 @@ def read_to_overlap(session,conversation,store,plan,max_pages=5,required_ids=(),
     if tracked:
         if not complete:cursor=next_cursor
         result['backfill']={'coverage':'complete' if complete else 'partial','watermark':watermark,'cursor':str(cursor),
-                            'account':sender.get('account'),'imId':sender.get('imId'),'oec':oec}
+                            'account':sender.get('account'),'imId':sender.get('imId'),'oec':oec,'segmentTop':top}
     return result

@@ -193,6 +193,36 @@ class BackfillTests(SignalTests):
   result=recover(self.s,'my','999',confirm=True)
   self.assertEqual((result['state'],result['missing']),('not_recoverable','no_live_tracked_event_before_gap'))
   self.assertEqual(self.state(),'gap')
+ def test_messages_stored_by_another_reader_never_prove_the_gap_between_is_covered(self):
+  self.incoming();self.s.db.execute('DELETE FROM inbox_pending');self.conversation_messages(121)
+  def anchored(calls):
+   # Native cursors are absolute anchors: newer messages arriving later do not shift them.
+   def read(_conversation,**kw):
+    total=len(self.messages);cursor=kw['cursor'];calls.append(cursor)
+    start=0 if cursor==0 else total-cursor;rows=self.messages[start:start+20]
+    return {'identityVerified':True,'events':rows,'contents':[],'hasMore':start+20<total,'nextCursor':str(total-(start+20))}
+   return SimpleNamespace(history_summary=read)
+  def round_():
+   calls=[];self.now+=5
+   history=read_to_overlap(anchored(calls),SimpleNamespace(conversation_id='999',oec_id='123'),self.s,self.plan,sender=self.SENDER)
+   Inbox(self.s).ingest(self.plan,'999','123',history);return calls,history
+  calls,first=round_()
+  self.assertEqual(first['backfill']['coverage'],'partial')
+  # 60 newer messages arrive; a single-page reader stores the newest 20 of them first.
+  base=self.messages[0]['createTimeRaw']
+  newer=[{'conversationId':'999','oecId':'123','messageId':str(3000+n),'kind':'creatorReplies','messageType':1000,
+          'createTimeRaw':base+n} for n in range(60,0,-1)]
+  self.messages=newer+self.messages
+  Inbox(self.s).ingest(self.plan,'999','123',{'identityVerified':True,'hasMore':True,'events':self.messages[:20],'contents':[]})
+  read_ids=set()
+  for _ in range(6):
+   calls,history=round_();read_ids|={e['messageId'] for e in history['events']}
+   if history['backfill']['coverage']=='complete':break
+  self.assertEqual(history['backfill']['coverage'],'complete')
+  # Every message between the other reader's page and the saved chain was actually read.
+  self.assertTrue({m['messageId'] for m in newer[20:]}<=read_ids)
+  self.assertEqual(self.state(),'tracking')
+  self.assertEqual(self.s.db.execute("select count(*) from inbox_event where cid='999'").fetchone()[0],182)
 
 class SdkReadinessTests(unittest.TestCase):
  def test_initializing_success_failed_and_missing_are_distinguished(self):

@@ -11,7 +11,12 @@ KINDS={'ourMessages','creatorReplies','showcaseNotifications','otherOrUnknown'}
 REPLY_BATCH_SECONDS=0
 REPLY_FREEZE_SECONDS=172800
 class Inbox:
- def __init__(self,store):self.s=store;store.db.executescript(SCHEMA)
+ def __init__(self,store):
+  self.s=store;store.db.executescript(SCHEMA)
+  if 'segment_top' not in {r[1] for r in store.db.execute('PRAGMA table_info(inbox_backfill)')}:
+   with store.tx():  # Re-checked under the write lock: concurrent first starts add it once.
+    if 'segment_top' not in {r[1] for r in store.db.execute('PRAGMA table_info(inbox_backfill)')}:
+     store.db.execute('ALTER TABLE inbox_backfill ADD COLUMN segment_top TEXT')
  def ingest(self,plan,cid,oec,history):
   if history.get('identityVerified') is not True:raise CycleError('unverified_history')
   events=history.get('events');now=self.s.clock();backfill=history.get('backfill')
@@ -80,12 +85,15 @@ class Inbox:
    if holding and backfill is not None:
     if not all(isinstance(backfill.get(k),str) and backfill[k] for k in ('account','imId','cursor')) or backfill.get('oec')!=oec:
      raise CycleError('invalid_history')
-    db.execute("""INSERT INTO inbox_backfill VALUES(?,?,?,?,?,?,?,?,1,?) ON CONFLICT(plan_id,cid) DO UPDATE SET
-      oec=excluded.oec,account=excluded.account,im_id=excluded.im_id,cursor=excluded.cursor,rounds=rounds+1,updated_at=excluded.updated_at""",
-      (plan,cid,oec,backfill['account'],backfill['imId'],backfill['cursor'],backfill['watermark'],now,now))
+    # segment_top: newest message of the unbroken chain that ends at ``cursor``. A later round may
+    # jump to the cursor only after reading down to exactly this message.
+    db.execute("""INSERT INTO inbox_backfill(plan_id,cid,oec,account,im_id,cursor,event_rowid,started_at,rounds,updated_at,segment_top) VALUES(?,?,?,?,?,?,?,?,1,?,?) ON CONFLICT(plan_id,cid) DO UPDATE SET
+      oec=excluded.oec,account=excluded.account,im_id=excluded.im_id,cursor=excluded.cursor,segment_top=excluded.segment_top,
+      rounds=rounds+1,updated_at=excluded.updated_at""",
+      (plan,cid,oec,backfill['account'],backfill['imId'],backfill['cursor'],backfill['watermark'],now,now,backfill.get('segmentTop')))
    if auto_hold:
     # No reader identity: any resumable reader restarts from the newest page, keeping this watermark.
-    db.execute("INSERT OR IGNORE INTO inbox_backfill VALUES(?,?,?,'','','0',?,?,0,?)",(plan,cid,oec,watermark,now,now))
+    db.execute("INSERT OR IGNORE INTO inbox_backfill(plan_id,cid,oec,account,im_id,cursor,event_rowid,started_at,rounds,updated_at) VALUES(?,?,?,'','','0',?,?,0,?)",(plan,cid,oec,watermark,now,now))
    if completing or backfill is not None and not holding:db.execute('DELETE FROM inbox_backfill WHERE plan_id=? AND cid=?',(plan,cid))
    if live:
     db.execute('UPDATE relationship SET inbox_until=?,revision=revision+1 WHERE plan_id=? AND creator_id=?',(max(rel['inbox_until'],now+REPLY_FREEZE_SECONDS),plan,rel['creator_id']))
