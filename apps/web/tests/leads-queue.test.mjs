@@ -105,3 +105,11 @@ test('a queued Kalodata stage is not running and the last finished result surviv
  assert.equal(validateLeadsQueue({...payload,run:{running:false,lastFinished:unrecorded}},'it').run.lastFinished.completedQueries,null);
  assert.throws(()=>validateLeadsQueue({...payload,run:{running:false,lastFinished:{...last,aQueries:-1}}},'it'),/invalid_leads_queue/);
 });
+test('the last run carries what its publications added, and refuses a malformed contribution',()=>{
+ const last={runId:'workflow-1',stageRunId:'stage-1',state:'completed',errorCode:null,startedAt:1,finishedAt:2,resultRecorded:true,
+  completedQueries:7,aQueries:3,bQueries:4,fragments:8,networkRequests:11,sliceComplete:true,errorCount:0,errors:[],
+  contribution:{publications:5,newPairs:40,refreshedPairs:12,newCreators:9,aPublications:3,bPublications:2}};
+ assert.deepEqual(validateLeadsQueue({...payload,run:{running:false,lastFinished:last}},'it').run.lastFinished.contribution,last.contribution);
+ assert.equal(validateLeadsQueue({...payload,run:{running:false,lastFinished:{...last,contribution:null}}},'it').run.lastFinished.contribution,null);
+ assert.throws(()=>validateLeadsQueue({...payload,run:{running:false,lastFinished:{...last,contribution:{...last.contribution,newPairs:-1}}}},'it'),/invalid_leads_queue/);
+});

@@ -26,7 +26,11 @@ function LastRun({run}:{run:LeadsRunState|null|undefined}){
    <MetricTable rows={[{label:"完成的逻辑查询",value:n(last.completedQueries),detail:`A ${n(last.aQueries)} · B ${n(last.bQueries)}；同一 PID 的 A、B 各算一个查询`},
     {label:"读取片段",value:n(last.fragments),detail:"每段最多 3 个请求后轮换"},
     {label:"网络请求",value:n(last.networkRequests),detail:"实际发出的只读请求；复用已保存页面不计"},
-    {label:"出错的查询",value:n(last.errorCount),detail:last.errors.length?last.errors.join("、"):last.errorCode?`阶段错误：${last.errorCode}`:"无"}]}/>
+    {label:"出错的查询",value:n(last.errorCount),detail:last.errors.length?last.errors.join("、"):last.errorCode?`阶段错误：${last.errorCode}`:"无"},
+    ...(last.contribution?[{label:"新增达人×商品",value:last.contribution.newPairs.toLocaleString(),detail:`本段 ${last.contribution.publications} 次发布（A ${last.contribution.aPublications} · B ${last.contribution.bPublications}）里此前没有的组合；还需身份和资格检查才进入发送池`},
+     {label:"刷新已有",value:last.contribution.refreshedPairs.toLocaleString(),detail:"已有组合换了新窗口，不算新增"},
+     {label:"全新达人",value:last.contribution.newCreators.toLocaleString(),detail:"该市场此前任何商品下都没出现过的达人"}]
+     :[{label:"新增达人×商品",value:"未记录",detail:"这段没有发布记录，或发生在开始记录之前"}])]}/>
    {!last.resultRecorded&&<p className="text-xs text-gray-400">这一段没有发布结果，计数未记录（不是 0）。</p>}</>
   :<p className="mt-2 text-xs text-gray-500">还没有已结束的抓取记录。</p>}
  </div>;

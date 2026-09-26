@@ -92,6 +92,9 @@ def publish_query(root, *, plan_id, query_id, pid, edges, receipt_fingerprints,
                           old["policy_version"],old["selected_count"],old["receipt_fingerprint"])
                 if observed!=frozen:raise CycleError("lead_publication_conflict")
             else:
+                from lib.lead_contribution import record as record_contribution
+                record_contribution(db,publication_id='A:'+query_id,plan_id=plan_id,pid=pid,kind='A',
+                                    handles=[edge['sourceHandle'] for edge in selected],at=stamp)
                 canonical={}
                 for edge in sorted(checked,key=_order):
                     previous=canonical.get(edge['sourceId'])

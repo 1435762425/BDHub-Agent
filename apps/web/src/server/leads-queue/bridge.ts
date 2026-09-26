@@ -6,7 +6,9 @@ import {projectRoot} from "../runtime/project-root.ts";
 export type LeadsQueueConfig={version:string;refreshDays:number;leadsPerPid:number;windowDays:number;batchSize:number;maxAttempts:number};
 // The last finished Kalodata stage as recorded by its own terminal result; null counts mean "not recorded".
 export type LeadsLastFinished={runId:string;stageRunId:string;state:string;errorCode:string|null;startedAt:number|null;finishedAt:number|null;resultRecorded:boolean;
- completedQueries:number|null;aQueries:number|null;bQueries:number|null;fragments:number|null;networkRequests:number|null;sliceComplete:boolean|null;errorCount:number|null;errors:string[]};
+ completedQueries:number|null;aQueries:number|null;bQueries:number|null;fragments:number|null;networkRequests:number|null;sliceComplete:boolean|null;errorCount:number|null;errors:string[];
+ // What this stage's publications added (H13); null when nothing was recorded in its window.
+ contribution?:{publications:number;newPairs:number;refreshedPairs:number;newCreators:number;aPublications:number;bPublications:number}|null};
 export type LeadsRunState={running:boolean;queued?:boolean;lastFinished?:LeadsLastFinished|null;startedAt?:number;finishedAt?:number;batchSize?:number;dueQueue?:number;targets?:number;done?:number;leads?:number;networkRequests?:number;stopped?:string|null;errors?:{pid:string;code:string}[];platformWrites?:number};
 export type LeadsQueueNext={pid:string;units:number;title:string};
 export type LeadsQueueDue={pid:string;queriedAt:number;dueAt:number;leads:number|null;title:string};
@@ -68,7 +70,9 @@ function lastFinished(value:unknown):LeadsLastFinished|null{
  return {runId:text(v.runId),stageRunId:text(v.stageRunId),state:text(v.state),errorCode:v.errorCode==null?null:text(v.errorCode),
   startedAt:time(v.startedAt),finishedAt:time(v.finishedAt),resultRecorded:v.resultRecorded,completedQueries:maybe(v.completedQueries),
   aQueries:maybe(v.aQueries),bQueries:maybe(v.bQueries),fragments:maybe(v.fragments),networkRequests:maybe(v.networkRequests),
-  sliceComplete:typeof v.sliceComplete==="boolean"?v.sliceComplete:null,errorCount:maybe(v.errorCount),errors:(v.errors as unknown[]).map(text)};
+  sliceComplete:typeof v.sliceComplete==="boolean"?v.sliceComplete:null,errorCount:maybe(v.errorCount),errors:(v.errors as unknown[]).map(text),
+  ...("contribution" in v?{contribution:v.contribution==null?null:(()=>{const c=v.contribution as Record<string,unknown>;if(!c||typeof c!=="object")throw Error('invalid_leads_queue');
+   return {publications:count(c.publications),newPairs:count(c.newPairs),refreshedPairs:count(c.refreshedPairs),newCreators:count(c.newCreators),aPublications:count(c.aPublications),bPublications:count(c.bPublications)};})()}:{})};
 }
 
 function validateRun(value:unknown):LeadsRunState|null{

@@ -174,6 +174,11 @@ def _publish_current(store,report,generation_id):
         choice=(row['views'],released.isoformat(),row['videoId'])
         if key not in grouped or choice>grouped[key][0]:grouped[key]=(choice,row,released.isoformat())
     if not store.db.in_transaction:raise CycleError('video_publish_transaction_required')
+    plan=store.db.execute("SELECT id FROM plan WHERE market=? AND institution='bjn-local-research'",(report.get('market','it'),)).fetchone()
+    if plan:
+        from lib.lead_contribution import record as record_contribution
+        record_contribution(store.db,publication_id=f"B:{generation_id}:{report['pid']}",plan_id=plan[0],pid=report['pid'],kind='B',
+                            handles=[row['handle'] for _,row,_ in grouped.values()],at=report.get('observedAt') or store.clock())
     store.db.execute('DELETE FROM video_lead_current WHERE market=? AND pid=?',(report.get('market','it'),report['pid']))
     for creator_id,(_,row,released) in grouped.items():
         store.db.execute('INSERT INTO video_lead_current(generation_id,pid,kalodata_creator_id,handle,run_id,video_id,views,released_at,video_sale,observed_at,market) VALUES(?,?,?,?,?,?,?,?,?,?,?)',

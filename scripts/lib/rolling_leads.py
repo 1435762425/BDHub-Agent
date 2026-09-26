@@ -295,6 +295,7 @@ def last_finished_run(db,market):
 
     Counts come from the stage's published generation; a stage that published nothing (failed,
     stopped) reports ``resultRecorded: false`` and null counts rather than zeros."""
+    from lib.lead_contribution import between as contribution_between
     row=db.execute("""SELECT s.run_id,s.stage_run_id,s.state,s.error_code,s.started_at,s.finished_at,g.payload_json
       FROM workflow_stage_run s JOIN workflow_run r ON r.run_id=s.run_id
       LEFT JOIN workflow_generation g ON g.generation_id=s.output_generation_id
@@ -311,6 +312,8 @@ def last_finished_run(db,market):
             'fragments':number('fragments'),'networkRequests':number('networkRequests'),
             'sliceComplete':payload.get('sliceComplete') if payload and isinstance(payload.get('sliceComplete'),bool) else None,
             'errorCount':len(errors) if errors is not None else None,
+            # What this stage's publications added (null when nothing was recorded for its window).
+            'contribution':contribution_between(db,market,row['started_at'] or 0,row['finished_at']),
             'errors':[str(item.get('code') if isinstance(item,dict) else item)[:80] for item in (errors or [])[:3]]}
 
 
