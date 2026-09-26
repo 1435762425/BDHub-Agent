@@ -88,4 +88,6 @@ def retry_ready(store,plan,creator,scope,now,guide_revision):
         if context.get('replyScope')==scope and row['guide_revision']==guide_revision:attempts.append(row)
     if any(r['state']=='input_blocked' for r in attempts):return False
     if not attempts or any(r['state']=='ready' for r in attempts):return True
-    return len(attempts)<3 and now-attempts[0]['created_at']>=3600
+    called=[r for r in attempts if r['state']!='not_sent']  # A call never sent costs no attempt.
+    if not called:return True
+    return len(called)<3 and now-called[0]['created_at']>=3600

@@ -17,17 +17,41 @@ def read_input():
  if len(raw)>MAX_INPUT_BYTES:raise CycleError('input_too_large')
  return raw.decode('utf-8')
 
-def intent_outcome(store,market,cid,request_id):
- """After a failed send: was an intent created and could it have been submitted?"""
- if not isinstance(request_id,str) or not isinstance(cid,str):return {'intent':'absent'}
- plan=store.db.execute("SELECT id FROM plan WHERE market=? AND institution='bjn-local-research'",(market,)).fetchone()
- if not plan or not store.db.execute("SELECT 1 FROM sqlite_master WHERE name='service_reply'").fetchone():return {'intent':'absent'}
+def _plan_row(store,market):
+ return store.db.execute("SELECT id FROM plan WHERE market=? AND institution='bjn-local-research'",(market,)).fetchone()
+
+def send_outcome(store,market,cid,request_id):
+ """After this request's own send failed: close what can no longer be submitted, report the rest.
+
+ Only a state that is terminal and blocks any late execution is reported as not_submitted."""
+ from lib.manual_command import TERMINAL,close_unsubmitted
+ if not isinstance(request_id,str) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._:-]{7,119}',request_id) or \
+    not isinstance(cid,str) or not cid.isdigit():return {'intent':'absent'}
+ plan=_plan_row(store,market)
+ if not plan:return {'intent':'absent'}
  row=store.db.execute("SELECT id,state,started FROM service_reply WHERE plan_id=? AND cid=? AND request_ref=? "
-                      "AND kind IN ('manual','manual_card')",(plan[0],cid,request_id)).fetchone()
- if not row:return {'intent':'absent'}
- if row['state'] in ('ready','cancelled') and row['started'] is None:
-  return {'intent':'not_submitted','state':row['state'],'replyId':row['id']}
- return {'intent':'unresolved','state':row['state'],'replyId':row['id']}
+                      "AND kind IN ('manual','manual_card')",(plan[0],cid,request_id)).fetchone() \
+  if store.db.execute("SELECT 1 FROM sqlite_master WHERE name='service_reply'").fetchone() else None
+ if row:
+  if row['state']=='ready' and row['started'] is None:
+   with store.tx():
+    changed=store.db.execute("UPDATE service_reply SET state='cancelled',proof=? WHERE id=? AND state='ready' AND started IS NULL",
+                             (json.dumps({'status':'cancelled','reason':'send_request_failed','platformWrites':0}),row['id'])).rowcount
+   if changed:return {'intent':'not_submitted','state':'cancelled','replyId':row['id']}
+   row=store.db.execute('SELECT id,state,started FROM service_reply WHERE id=?',(row['id'],)).fetchone()
+  if row['state']=='cancelled' and row['started'] is None:return {'intent':'not_submitted','state':'cancelled','replyId':row['id']}
+  return {'intent':'unresolved','state':row['state'],'replyId':row['id']}
+ # No intent: this very request registered the command and is failing, so it may be closed now.
+ state=close_unsubmitted(store,plan[0],request_id,cid,require_stale=False)
+ return {'intent':'not_submitted'} if state==TERMINAL else {'intent':'unresolved','state':state}
+
+def reconcile_outcome(store,market,cid,request_id):
+ """A reconcile found no intent: a registered command may still be running and stays open."""
+ from lib.manual_command import TERMINAL,close_unsubmitted
+ plan=_plan_row(store,market)
+ if not plan or not isinstance(request_id,str) or not isinstance(cid,str):return {'intent':'unknown'}
+ state=close_unsubmitted(store,plan[0],request_id,cid,require_stale=True)
+ return {'intent':'not_submitted'} if state==TERMINAL else {'intent':'unresolved','state':state}
 
 def main():
  p=argparse.ArgumentParser();p.add_argument('action',choices=('list','detail','status','save-draft','complete-human','confirm-manual','resolve-manual','reject-creator','set-collaboration','send-text','send-card','reconcile-manual','translate'));p.add_argument('--market',required=True);p.add_argument('--view',default='human');p.add_argument('--query',default='');p.add_argument('--limit',type=int,default=30);p.add_argument('--offset',type=int,default=0);p.add_argument('--cid');p.add_argument('--before');a=p.parse_args()
@@ -68,6 +92,8 @@ def main():
     turn=store.db.execute('SELECT plan_id,creator_id FROM inbound_turn WHERE plan_id=? AND cid=? ORDER BY coalesce(occurred_ms,observed_at*1000) DESC LIMIT 1',(plan[0],a.cid)).fetchone()
     if not turn:raise CycleError('conversation_missing')
     replies=AutoReplies(store)
+    from lib.manual_command import claim
+    claim(store,turn['plan_id'],req.get('requestId'),a.cid,digest([a.action,req.get('text') if a.action=='send-text' else req.get('episodeId')]))
     if a.action=='send-text':q=replies.prepare_manual(turn['plan_id'],turn['creator_id'],a.cid,req.get('text'),req.get('expectedControlRevision'),req.get('requestId'))
     else:
      request_id=req.get('requestId')
@@ -104,8 +130,11 @@ def main():
   value={'error':str(error) if isinstance(error,CycleError) else 'conversation_workbench_unavailable'}
   if a.action in ('send-text','send-card','reconcile-manual'):
    try:
-    with CycleStore(ROOT/'var/second-cycle.sqlite',readonly=True) as check:
-     value.update(intent_outcome(check,a.market,a.cid,(req if 'req' in locals() and isinstance(req,dict) else {}).get('requestId')))
+    with CycleStore(ROOT/'var/second-cycle.sqlite') as check:
+     request_id=(req if 'req' in locals() and isinstance(req,dict) else {}).get('requestId')
+     if a.action=='reconcile-manual':
+      value.update(reconcile_outcome(check,a.market,a.cid,request_id) if value['error']=='manual_reconcile_intent_missing' else {'intent':'unknown'})
+     else:value.update(send_outcome(check,a.market,a.cid,request_id))
    except Exception:value['intent']='unknown'
   print(json.dumps(value,ensure_ascii=False));return 2
 if __name__=='__main__':raise SystemExit(main())

@@ -1,4 +1,4 @@
-import importlib.util,sys,unittest
+import importlib.util,json,sys,unittest
 from pathlib import Path
 from unittest.mock import patch
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'scripts'))
@@ -29,7 +29,7 @@ class AutoReplyTests(unittest.TestCase):
   self.assertEqual((row['state'],row['sender_account'],row['sender_identity']),('inflight','acc6','b'*64))
  def test_unknown_reply_is_read_boundedly_then_isolated_to_its_creator_only(self):
   q=self.unknown_reply();reads=[]
-  def read(_store,replies,reply,_market,_stage):
+  def read(_store,replies,reply,_market,_stage,**_kwargs):
    reads.append((reply['id'],reply['sender_account']));return {'state':replies.get(reply['id'])['state']}
   with patch.object(WORKER,'run_existing',side_effect=read):
    self.assertEqual(WORKER.recover_unresolved(self.s,self.p,'it','full')['state'],'waiting_reply_check')
@@ -59,7 +59,7 @@ class AutoReplyTests(unittest.TestCase):
   self.assertEqual(self.auto.get(q['id'])['state'],'confirmed')
  def test_refunded_reads_never_extend_the_market_hold_past_the_deadline(self):
   q=self.unknown_reply();reads=[]
-  def busy(*args):reads.append(args[2]['id']);raise BlockingIOError()
+  def busy(*args,**_kwargs):reads.append(args[2]['id']);raise BlockingIOError()
   with patch.object(WORKER,'run_existing',side_effect=busy):
    for _ in range(6):
     self.now+=REPLY_CHECK_INTERVAL+1
@@ -73,6 +73,20 @@ class AutoReplyTests(unittest.TestCase):
   self.assertEqual(self.auto.get(q['id'])['state'],'isolated')
   self.assertIsNone(reply_blocker(self.s.db,self.p))
   self.assertEqual(reply_blocker(self.s.db,self.p,self.creator),'reply_isolated')
+ def test_a_read_that_started_and_then_failed_is_a_spent_check(self):
+  q=self.unknown_reply()
+  def timed_out(*_args,read_started,**_kwargs):read_started();raise TimeoutError()
+  self.now+=REPLY_CHECK_INTERVAL+1
+  with patch.object(WORKER,'run_existing',side_effect=timed_out):
+   self.assertEqual(WORKER.recover_unresolved(self.s,self.p,'it','full')['state'],'reply_check_deferred')
+  self.assertEqual(self.auto.get(q['id'])['check_attempts'],1)
+  with patch.object(WORKER,'run_existing',side_effect=timed_out):
+   for _ in range(REPLY_CHECK_MAX-1):
+    self.now+=REPLY_CHECK_INTERVAL+1;WORKER.recover_unresolved(self.s,self.p,'it','full')
+  self.assertEqual(self.auto.get(q['id'])['check_attempts'],REPLY_CHECK_MAX)
+  self.now+=REPLY_CHECK_INTERVAL+1
+  self.assertIsNone(WORKER.recover_unresolved(self.s,self.p,'it','full'))
+  self.assertEqual(self.auto.get(q['id'])['state'],'isolated')
  def test_an_identity_refusal_counts_and_other_replies_are_still_visited(self):
   q=self.unknown_reply()
   self.now+=REPLY_CHECK_INTERVAL+1
@@ -87,6 +101,7 @@ class AutoReplyTests(unittest.TestCase):
   import tempfile
   folder=tempfile.TemporaryDirectory();self.addCleanup(folder.cleanup);path=Path(folder.name)/'legacy.sqlite'
   with sqlite3.connect(path) as db:
+   db.execute('PRAGMA journal_mode=WAL')  # Opening stores must not race to switch the journal mode.
    db.execute("CREATE TABLE service_reply(id TEXT PRIMARY KEY,plan_id TEXT NOT NULL,creator_id TEXT NOT NULL,pending_revision INTEGER NOT NULL,oec TEXT NOT NULL,cid TEXT NOT NULL,kind TEXT NOT NULL,case_id TEXT,text TEXT NOT NULL,context_hash TEXT NOT NULL,state TEXT NOT NULL,request_ref TEXT NOT NULL UNIQUE,receipt TEXT,proof TEXT,created REAL NOT NULL,started REAL)")
    db.execute("INSERT INTO service_reply VALUES('r','p','c',1,'o','1','manual',NULL,'t','h','unknown','req-legacy-001',NULL,NULL,1,1)")
   barrier=threading.Barrier(4);errors=[]
@@ -102,6 +117,31 @@ class AutoReplyTests(unittest.TestCase):
   self.assertEqual(sorted(c for c in columns if c in dict(REPLY_COLUMNS)),sorted(dict(REPLY_COLUMNS)))
   self.assertEqual(len(columns),len(set(columns)))
   self.assertEqual(row,('unknown','req-legacy-001'))
+ def observed(self,q,mid,text):
+  self.ingest([self.event(mid,kind='ourMessages')])
+  if text is not None:self.service.capture(self.p,'10',self.oec,[self.content(mid,text)])
+ def with_receipt(self,q,mid):
+  self.s.db.execute('UPDATE service_reply SET receipt=? WHERE id=?',(json.dumps({'requestRef':q['request_ref'],'messageId':mid}),q['id']))
+ def settle_case(self,isolated):
+  q=self.unknown_reply()
+  if isolated:self.auto.isolate(q['id'])
+  self.with_receipt(q,'71');self.now+=1;self.observed(q,'71',q['text'])
+  self.assertEqual(self.auto.settle_observed(self.p),[q['id']])
+  self.assertEqual(self.auto.settle_observed(self.p),[])
+  row=self.auto.get(q['id'])
+  self.assertEqual((row['state'],json.loads(row['proof'])['source']),('confirmed','passive_inbox'))
+ def test_exact_stored_evidence_settles_an_unknown_reply_once(self):self.settle_case(False)
+ def test_exact_stored_evidence_settles_an_isolated_reply_once(self):self.settle_case(True)
+ def test_inexact_stored_evidence_never_settles(self):
+  q=self.unknown_reply()
+  self.now+=1;self.observed(q,'81','Grazie!')            # a different body under the receipt id
+  self.with_receipt(q,'81');self.assertEqual(self.auto.settle_observed(self.p),[])
+  self.now+=1;self.observed(q,'82',None)                # right id, body not stored yet
+  self.with_receipt(q,'82');self.assertEqual(self.auto.settle_observed(self.p),[])
+  self.s.db.execute('UPDATE service_reply SET receipt=NULL WHERE id=?',(q['id'],))
+  self.now+=1;self.observed(q,'83',q['text'])           # same text but no platform receipt id
+  self.assertEqual(self.auto.settle_observed(self.p),[])
+  self.assertEqual(self.auto.get(q['id'])['state'],'unknown')
  def test_disabled_never_creates_reply(self):
   self.baseline();self.add('1','Il link non funziona');self.process();self.assertIsNone(self.auto.prepare(self.p,self.creator))
  def test_handoff_ack_once_and_case_keeps_human_control(self):

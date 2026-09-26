@@ -106,6 +106,8 @@ class AutoReplies:
    rel=self.s.db.execute('SELECT * FROM relationship WHERE plan_id=? AND creator_id=?',(plan,creator)).fetchone()
    cp=self.s.db.execute('SELECT oec FROM inbox_checkpoint WHERE plan_id=? AND cid=?',(plan,cid)).fetchone()
    if not rel or rel['revision']!=expected_control_revision or rel['mode']=='paused' or not cp or cp['oec']!=rel['oec']:raise CycleError('manual_reply_context_changed')
+   from lib.manual_command import hand_off
+   hand_off(self.s.db,plan,request_id)  # Same transaction as the intent: a closed command cannot create it.
    pending=self.s.db.execute('SELECT revision FROM inbox_pending WHERE plan_id=? AND creator_id=?',(plan,creator)).fetchone()
    context=self.service.context(plan,creator)
    self.s.db.execute("INSERT INTO service_reply(id,plan_id,creator_id,pending_revision,oec,cid,kind,case_id,text,context_hash,state,request_ref,receipt,proof,created,started,control_revision) VALUES(?,?,?,?,?,?,\'manual\',NULL,?,?,\'ready\',?,NULL,NULL,?,NULL,?)",(reply_id,plan,creator,pending[0] if pending else 0,rel['oec'],cid,text.strip(),digest(context),request_id,self.s.clock(),rel['revision']))
@@ -122,6 +124,8 @@ class AutoReplies:
     return old
    rel=self.s.db.execute('SELECT * FROM relationship WHERE plan_id=? AND creator_id=?',(plan,creator)).fetchone();cp=self.s.db.execute('SELECT oec FROM inbox_checkpoint WHERE plan_id=? AND cid=?',(plan,cid)).fetchone()
    if not rel or rel['revision']!=expected_control_revision or rel['mode']=='paused' or not cp or cp['oec']!=rel['oec']:raise CycleError('manual_reply_context_changed')
+   from lib.manual_command import hand_off
+   hand_off(self.s.db,plan,request_id)
    context=self.service.context(plan,creator)
    self.s.db.execute("INSERT INTO service_reply(id,plan_id,creator_id,pending_revision,oec,cid,kind,case_id,text,context_hash,state,request_ref,receipt,proof,created,started,control_revision) VALUES(?,?,?,?,?,?,\'manual_card\',NULL,?,?,\'ready\',?,NULL,NULL,?,NULL,?)",(reply_id,plan,creator,0,rel['oec'],cid,payload,digest(context),request_id,self.s.clock(),rel['revision']))
    return self.get(reply_id)
@@ -237,6 +241,34 @@ class AutoReplies:
   """Return one verification whose read never started (lock busy, account unavailable)."""
   self.s.db.execute("UPDATE service_reply SET check_attempts=check_attempts-1 WHERE id=? AND check_attempts>0 "
                     "AND state IN ('inflight','accepted','unknown')",(id,))
+ def settle_observed(self,plan):
+  """Confirm unresolved/isolated replies from exact evidence already stored by normal inbox reading.
+
+  Exact means: the platform's own accept receipt for this requestRef named a messageId, the inbox
+  stored an institution-sent message with that id in the same conversation and creator, and for
+  text the stored body equals the frozen text. No platform read, no check budget; anything less
+  (similar text, a thank-you, a missing body) leaves the reply as it is."""
+  if not self.s.db.execute("SELECT 1 FROM sqlite_master WHERE name='inbox_event'").fetchone():return []
+  settled=[]
+  for q in self.s.db.execute("SELECT * FROM service_reply WHERE plan_id=? AND state IN ('accepted','unknown','isolated') AND receipt IS NOT NULL",(plan,)).fetchall():
+   try:receipt=json.loads(q['receipt'])
+   except (TypeError,ValueError):continue
+   mid=receipt.get('messageId') if isinstance(receipt,dict) else None
+   if not mid or receipt.get('requestRef')!=q['request_ref']:continue
+   event=self.s.db.execute("SELECT 1 FROM inbox_event WHERE plan_id=? AND cid=? AND oec=? AND message_id=? AND kind='ourMessages'",
+                           (plan,q['cid'],q['oec'],str(mid))).fetchone()
+   if not event:continue
+   if q['kind']!='manual_card':
+    body=self.s.db.execute("""SELECT v.payload FROM inbox_content_head h JOIN inbox_content_version v ON v.plan_id=h.plan_id
+      AND v.cid=h.cid AND v.message_id=h.message_id AND v.hash=h.hash WHERE h.plan_id=? AND h.cid=? AND h.message_id=?""",
+      (plan,q['cid'],str(mid))).fetchone()
+    try:content=json.loads(body[0]) if body else None
+    except (TypeError,ValueError):content=None
+    if not isinstance(content,dict) or content.get('format')!='text' or content.get('text')!=q['text']:continue
+   self.confirm(q['id'],{'status':'confirmed','requestRef':q['request_ref'],'conversationId':q['cid'],'messageId':str(mid),
+                         'evidenceRef':f"inbox-event:{q['cid']}:{mid}",'source':'passive_inbox'})
+   settled.append(q['id'])
+  return settled
  def isolate(self,id,reason='reply_unknown_budget_exhausted'):
   """Keep the real unknown and its evidence; only this reply's creator stops automatic work."""
   with self.s.tx():

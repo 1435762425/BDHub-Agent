@@ -22,7 +22,7 @@ def refresh_card(candidate,*,stopped=lambda:False):
     return proof
 
 
-def run_reply(store,replies,reply,*,root=ROOT,authorized_now=False,stopped=lambda:False,
+def run_reply(store,replies,reply,*,root=ROOT,authorized_now=False,stopped=lambda:False,read_started=lambda:None,
               read_binding=read_sender_binding,live=live_runtime,refresh=None):
     """Send once if ready; otherwise read back only the original requestRef."""
     root=Path(root);report={};recovering=reply['state'] in ('inflight','accepted','unknown','isolated')
@@ -53,6 +53,7 @@ def run_reply(store,replies,reply,*,root=ROOT,authorized_now=False,stopped=lambd
         from lib.market_accounts import load_config
         sender={'account':load_config(root)['markets']['it']['roles']['communications'],'identity':binding}
         with live(binding,report,stopped=stopped,read_only=recovering) as runtime:
+            read_started()  # The first platform read of this attempt: a later failure is a spent check.
             conversation=runtime['reads'].conversation(reply['cid'],reply['oec'])
             if not recovering:
                 history=runtime['reads'].history_summary(conversation,include_contents=True)

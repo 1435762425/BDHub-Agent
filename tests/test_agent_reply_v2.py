@@ -41,6 +41,45 @@ class AgentReplyV2Tests(unittest.TestCase):
   self.assertIn('it-IT',calls[0][0]['content'])
   self.assertEqual(self.store.db.execute('SELECT count(*) FROM service_reply').fetchone()[0],0)
   self.assertEqual(self.store.db.execute('SELECT count(*) FROM service_case').fetchone()[0],0)
+ def clocked(self):
+  self.now=1790000000.0;store=CycleStore(self.path/'var/second-cycle.sqlite',clock=lambda:self.now)
+  self.addCleanup(store.close);return store
+ def test_shared_service_failures_pause_every_caller_without_spending_their_attempts(self):
+  from lib.draft_provider import DraftProviderError
+  from lib import model_service
+  store=self.clocked();calls=[]
+  def down(*_a,**_k):calls.append(1);raise DraftProviderError('provider_timeout',outcome='outcome_unknown')
+  contexts=[simulation_context('it','it-IT',[{'direction':'inbound','text':f'Domanda {n}'}]) for n in range(5)]
+  for context in contexts[:3]:
+   with self.assertRaisesRegex(CycleError,'agent_decision_unresolved'):generate(ROOT,store,self.plan,'it',context,call=down)
+  # Paused: the next creators are not called and get no attempt row at all.
+  for context in contexts[3:]:
+   with self.assertRaisesRegex(CycleError,'agent_model_service_paused'):generate(ROOT,store,self.plan,'it',context,call=down)
+  self.assertEqual(len(calls),3)
+  self.assertEqual(store.db.execute('SELECT count(*) FROM agent_reply_decision_v2').fetchone()[0],3)
+  # After the pause exactly one probe runs; its success closes the breaker for everyone.
+  self.now+=model_service.PAUSE_SECONDS+1
+  ok=lambda *_a,**_k:{'content':json.dumps(self.decision()),'usage':None}
+  generate(ROOT,store,self.plan,'it',contexts[3],call=ok)
+  generate(ROOT,store,self.plan,'it',contexts[4],call=ok)
+  self.assertIsNone(model_service.paused(store.db,model_service.service_key('DeepSeek',__import__('lib.draft_provider',fromlist=['MODEL']).MODEL),self.now))
+ def test_calls_never_sent_cost_no_attempt_and_local_input_problems_block_the_input(self):
+  from lib.draft_provider import DraftProviderError
+  from lib import model_service
+  store=self.clocked()
+  context=simulation_context('it','it-IT',[{'direction':'inbound','text':'Ciao'}])
+  def unconfigured(*_a,**_k):raise DraftProviderError('provider_not_configured')
+  for _ in range(model_service.OPEN_AFTER):
+   with self.assertRaisesRegex(CycleError,'agent_decision_unresolved'):generate(ROOT,store,self.plan,'it',context,call=unconfigured)
+  self.assertEqual({r[0] for r in store.db.execute('SELECT state FROM agent_reply_decision_v2')},{'not_sent'})
+  self.now+=model_service.PAUSE_SECONDS+1
+  result=generate(ROOT,store,self.plan,'it',context,call=lambda *_a,**_k:{'content':json.dumps(self.decision()),'usage':None})
+  self.assertFalse(result['cached'])  # Three never-sent calls did not exhaust this input.
+  other=simulation_context('it','it-IT',[{'direction':'inbound','text':'Altro'}])
+  def invalid(*_a,**_k):raise DraftProviderError('provider_input_invalid')
+  with self.assertRaisesRegex(CycleError,'agent_decision_unresolved'):generate(ROOT,store,self.plan,'it',other,call=invalid)
+  self.assertEqual(store.db.execute("SELECT count(*) FROM agent_reply_decision_v2 WHERE state='input_blocked'").fetchone()[0],1)
+  self.assertIsNone(model_service.paused(store.db,model_service.service_key('DeepSeek',__import__('lib.draft_provider',fromlist=['MODEL']).MODEL),self.now))
  def test_simulation_carries_a_previous_contact_wait(self):
   context=simulation_context('it','it-IT',[{'direction':'inbound','text':'Va bene'}],'contact')
   self.assertEqual(context['previousWaitFor'],'contact')

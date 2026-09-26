@@ -100,6 +100,41 @@ class ConversationWorkbenchTests(unittest.TestCase):
   self.assertFalse(second['timelineHasOlder']);self.assertIsNone(second['timelineCursor'])
   with self.assertRaisesRegex(CycleError,'conversation_query_invalid'):
    conversation_detail(self.root,self.store,'999',before='not-a-cursor')
+ def test_candidate_prefilter_is_a_superset_of_the_row_rule_when_receipt_cids_are_missing(self):
+  from unittest.mock import patch
+  from lib import conversation_workbench as W
+  from lib.cycle_delivery import Deliveries
+  Deliveries(self.store)
+  self.store.db.execute("INSERT INTO relationship VALUES(?,?,?,'auto',0,1,0,1)",(self.plan,'creator-9','909'))
+  # The only fact: an agency-backend message whose id also sits in an old receipt with no conversation id.
+  self.store.db.execute("INSERT INTO inbox_event VALUES(?,?,?,?,?,?,?,0,?)",
+   (self.plan,'990','7001','909','ourMessages',int(NOW*1000),json.dumps({'conversationId':'990','oecId':'909','messageId':'7001','kind':'ourMessages'}),NOW))
+  Service(self.store).capture(self.plan,'990','909',[{'messageId':'7001','format':'text','text':'Ciao dal negozio','nativeType':'text','rawSha256':'z'}])
+  self.store.db.execute("INSERT INTO cycle_delivery(id,plan_id,creator_id,oec,pid,source_id,snapshot,created,expires,state) VALUES('d9',?,'creator-9','909','1','s9','{}',?,?,'confirmed')",(self.plan,NOW,NOW+1))
+  self.store.db.execute("INSERT INTO cycle_delivery_part(delivery_id,kind,request_ref,state,receipt) VALUES('d9','card','req-d9','confirmed',?)",(json.dumps({'messageId':'7001'}),))
+  everyone=lambda db,plan:{r[0] for r in db.execute('SELECT creator_id FROM relationship WHERE plan_id=?',(plan,))}
+  views=('all','human','technical','agent','waiting','completed')
+  with patch.object(W,'_candidate_creators',everyone):
+   reference=[list_conversations(self.root,self.store,view,limit=100) for view in views]
+  current=[list_conversations(self.root,self.store,view,limit=100) for view in views]
+  self.assertEqual(current,reference)
+  self.assertIn('creator-9',{row['creatorId'] for row in current[0]['items']})
+ def test_platform_messages_beyond_one_source_page_are_reachable(self):
+  from lib.conversation_workbench import TIMELINE_PAGE
+  total=TIMELINE_PAGE+101
+  for n in range(total):
+   mid=str(90000+n)
+   self.store.db.execute("INSERT INTO inbox_event VALUES(?,?,?,?,?,?,?,0,?)",
+    (self.plan,'999',mid,'123','ourMessages',int((NOW-total+n)*1000),json.dumps({'messageId':mid}),NOW))
+   Service(self.store).capture(self.plan,'999','123',[{'messageId':mid,'format':'text','text':f'p{n}','nativeType':'text','rawSha256':mid}])
+  seen=[];before=None
+  for _ in range(10):
+   page=conversation_detail(self.root,self.store,'999',before=before)
+   seen=[r['id'] for r in page['timeline']]+seen
+   if not page['timelineHasOlder']:break
+   before=page['timelineCursor']
+  platform=[i for i in seen if i.startswith('platform-')]
+  self.assertEqual(len(platform),total);self.assertEqual(len(seen),len(set(seen)))
  def test_manual_reconcile_does_not_dispatch_a_ready_intent(self):
   replies=AutoReplies(self.store);request_id='manual-audit-ready-001'
   frozen=replies.prepare_manual(self.plan,'creator-1','999','Ciao',1,request_id)
@@ -222,14 +257,40 @@ class SendOutcomeTests(unittest.TestCase):
   import importlib.util
   spec=importlib.util.spec_from_file_location('conversation_workbench_cli',Path(__file__).resolve().parents[1]/'scripts/conversation-workbench.py')
   module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module);return module
- def test_a_failed_send_reports_whether_any_intent_could_have_been_submitted(self):
+ def test_a_failed_send_closes_only_what_can_no_longer_be_submitted(self):
   cli=self.cli()
-  self.assertEqual(cli.intent_outcome(self.store,'it','999','manual-never-created-1'),{'intent':'absent'})
+  from lib.manual_command import claim
+  # No intent: the failing request's own command is closed, and that id can never create one later.
+  claim(self.store,self.plan,'manual-never-created-1','999','h1')
+  self.assertEqual(cli.send_outcome(self.store,'it','999','manual-never-created-1'),{'intent':'not_submitted'})
+  with self.assertRaisesRegex(CycleError,'manual_command_closed'):
+   claim(self.store,self.plan,'manual-never-created-1','999','h1')
+  # A ready intent that never started is cancelled atomically before it is reported unsubmitted.
+  claim(self.store,self.plan,'manual-ready-intent-1','999','h2')
   frozen=AutoReplies(self.store).prepare_manual(self.plan,'creator-1','999','Ciao',1,'manual-ready-intent-1')
-  self.assertEqual(cli.intent_outcome(self.store,'it','999','manual-ready-intent-1')['intent'],'not_submitted')
-  self.store.db.execute("UPDATE service_reply SET state='inflight',started=? WHERE id=?",(NOW,frozen['id']))
-  self.assertEqual(cli.intent_outcome(self.store,'it','999','manual-ready-intent-1'),
-                   {'intent':'unresolved','state':'inflight','replyId':frozen['id']})
+  self.assertEqual(cli.send_outcome(self.store,'it','999','manual-ready-intent-1')['intent'],'not_submitted')
+  self.assertEqual(AutoReplies(self.store).get(frozen['id'])['state'],'cancelled')
+  # Once dispatch started the result is unresolved and nothing is closed.
+  claim(self.store,self.plan,'manual-started-1','999','h3')
+  started=AutoReplies(self.store).prepare_manual(self.plan,'creator-1','999','Ciao 2',1,'manual-started-1')
+  self.store.db.execute("UPDATE service_reply SET state='inflight',started=? WHERE id=?",(NOW,started['id']))
+  self.assertEqual(cli.send_outcome(self.store,'it','999','manual-started-1'),
+                   {'intent':'unresolved','state':'inflight','replyId':started['id']})
+ def test_reconcile_absence_keeps_a_live_command_open_and_fences_a_closed_one(self):
+  cli=self.cli()
+  from lib.manual_command import STALE_SECONDS,claim
+  # The original request registered and is still before its intent: not found is not "not sent".
+  claim(self.store,self.plan,'manual-in-flight-1','999','h')
+  self.assertEqual(cli.reconcile_outcome(self.store,'it','999','manual-in-flight-1'),{'intent':'unresolved','state':'received'})
+  self.store.db.execute("UPDATE manual_command SET updated_at=? WHERE request_id='manual-in-flight-1'",(NOW-STALE_SECONDS-1,))
+  self.assertEqual(cli.reconcile_outcome(self.store,'it','999','manual-in-flight-1'),{'intent':'not_submitted'})
+  # The original executor resuming afterwards can no longer create its intent.
+  with self.assertRaisesRegex(CycleError,'manual_command_closed'):
+   AutoReplies(self.store).prepare_manual(self.plan,'creator-1','999','Ciao',1,'manual-in-flight-1')
+  # An id the backend never saw is tombstoned, so its request is refused if it ever arrives.
+  self.assertEqual(cli.reconcile_outcome(self.store,'it','999','manual-unseen-0001'),{'intent':'not_submitted'})
+  with self.assertRaisesRegex(CycleError,'manual_command_closed'):
+   claim(self.store,self.plan,'manual-unseen-0001','999','h')
  def test_the_cli_accepts_every_text_the_bridge_accepts(self):
   import io,json as _json
   cli=self.cli()

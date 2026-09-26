@@ -310,12 +310,15 @@ export class ConversationController {
     this.update({busy:true,error:""});
     try {
       const result = await this.post({action:"reconcile_manual",cid,requestId});
-      await this.settleManual(cid,selection,requestId,result,original.kind === "manual" ? this.snapshot.draft : null);
+      // A later confirmation never clears the editor: it may hold text written after the original.
+      await this.settleManual(cid,selection,requestId,result,null);
     } catch(error) {
-      if(error instanceof RequestError && error.intent === "absent") {
+      // Only a closed command (it can never be submitted later) releases the editor. "Not found yet"
+      // may be an original request that is still on its way.
+      if(error instanceof RequestError && error.intent === "not_submitted") {
         this.rememberPending(cid,(this.pending.get(cid) ?? []).filter(row => row.requestId !== requestId));
-        if(this.current(cid,selection))this.update({error:"没有找到这条原发送意图，确认它没有发出；草稿已保留，可以重新发送。"});
-      } else if(this.current(cid,selection))this.update({error:"原意图仍待核验，已保留原请求；不会生成新的发送。"});
+        if(this.current(cid,selection))this.update({error:"原发送请求已确认关闭、不会再提交；草稿已保留，可以重新发送。"});
+      } else if(this.current(cid,selection))this.update({error:"原请求结果尚未查明，已保留原请求；稍后再核验，不会生成新的发送。"});
     }
     finally {this.update({busy:false});}
   };

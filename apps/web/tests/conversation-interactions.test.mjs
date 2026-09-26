@@ -87,7 +87,21 @@ test('unknown manual send preserves the draft and reconciles exactly one origina
  assert.deepEqual(calls.map(row=>row.action),['send_text','reconcile_manual','reconcile_manual']);
  assert.deepEqual(calls.slice(1),Array(2).fill({action:'reconcile_manual',cid:'1',requestId:'manual-same-original',market:'it'}));
  assert.equal(controller.getSnapshot().pendingManualReplies.length,0);
- assert.equal(controller.getSnapshot().draft,'');
+ // Confirming an earlier send does not clear the editor; the operator decides what to do with it.
+ assert.equal(controller.getSnapshot().draft,'frozen original text');
+});
+
+test('confirming an earlier unknown send keeps the new draft written afterwards',async()=>{
+ const controller=new ConversationController('it',async(url,init)=>{
+  if(init?.method!=='POST')return response(detail('1'));
+  const input=body(init);
+  return response({state:input.action==='reconcile_manual'?'confirmed':'unknown',replyId:'manual-reply-1',requestRef:input.requestId,platformWrites:0,realSends:0});
+ },()=> 'original-a');
+ controller.select('1');await flush();controller.setDraft('A: original reply');await controller.sendText();
+ controller.setDraft('B: later unsent draft');
+ await controller.reconcileManual('manual-original-a');
+ assert.equal(controller.getSnapshot().pendingManualReplies.length,0);
+ assert.equal(controller.getSnapshot().draft,'B: later unsent draft');
 });
 
 test('page reload recovers durable pending manual intent without creating another send',async()=>{
@@ -200,16 +214,20 @@ test('a definite refusal clears the local intent but a lost or unknown reply kee
  assert.equal(calls.length,2);
 });
 
-test('reconciling an intent the backend never created releases the editor',async()=>{
+test('an intent not found yet keeps the gate; only a closed command releases the editor',async()=>{
+ let outcome='unresolved';
  const controller=new ConversationController('it',async(url,init)=>{
   if(init?.method!=='POST')return response(detail('1'));
   const input=body(init);
   if(input.action==='send_text')throw Error('response lost');
-  return Response.json({error:'manual_reconcile_intent_missing',intent:'absent'},{status:409});
+  return Response.json({error:'manual_reconcile_intent_missing',intent:outcome},{status:409});
  },()=> 'never-created');
  controller.select('1');await flush();controller.setDraft('text');await controller.sendText();
- assert.equal(controller.getSnapshot().pendingManualReplies.length,1);
- await controller.reconcileManual('manual-never-created');
+ for(const pending of ['unresolved','absent','unknown']){
+  outcome=pending;await controller.reconcileManual('manual-never-created');
+  assert.equal(controller.getSnapshot().pendingManualReplies.length,1,pending);
+ }
+ outcome='not_submitted';await controller.reconcileManual('manual-never-created');
  assert.equal(controller.getSnapshot().pendingManualReplies.length,0);
  assert.equal(controller.getSnapshot().draft,'text');
 });

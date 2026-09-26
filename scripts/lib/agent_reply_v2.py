@@ -345,8 +345,12 @@ def generate(root, store, plan, market, context, mode='simulation', call=None):
     for row in active:
         store.db.execute("UPDATE agent_reply_decision_v2 SET state='unknown',output_json=? WHERE decision_id=?",
                          (encoded({'error':'model_request_stale'}),row['decision_id']))
-    if len(attempts)>=3:
+    # Only calls that reached (or may have reached) the model count toward the three per input.
+    if sum(row['state'] != 'not_sent' for row in attempts)>=3:
         raise CycleError('agent_decision_unresolved')
+    from lib import model_service
+    service=model_service.service_key('DeepSeek',MODEL)
+    model_service.acquire(store,service)  # A paused service is not called and costs no attempt.
     decision_id = 'agent-decision-' + digest([plan, mode, input_hash, len(attempts)])[:24]
     with store.tx():
         store.db.execute('INSERT INTO agent_reply_decision_v2 '
@@ -365,9 +369,16 @@ def generate(root, store, plan, market, context, mode='simulation', call=None):
         raw = validate_decision(json.loads(response['content']), context)
     except Exception as error:
         code=getattr(error,'code',str(error) if isinstance(error,CycleError) else type(error).__name__)
-        store.db.execute("UPDATE agent_reply_decision_v2 SET state='unknown',output_json=? WHERE decision_id=?",
-                         (encoded({'error':str(code)[:80]}),decision_id))
+        kind=model_service.family(code)
+        # request_not_sent: the model was never called, so the input keeps its attempt. A local input
+        # problem is deterministic and blocks this input instead of being resent unchanged.
+        not_sent=getattr(error,'outcome',None)=='request_not_sent'
+        state='input_blocked' if kind=='local_input_invalid' else 'not_sent' if not_sent else 'unknown'
+        store.db.execute("UPDATE agent_reply_decision_v2 SET state=?,output_json=? WHERE decision_id=?",
+                         (state,encoded({'error':str(code)[:80],'family':kind,'phase':'not_sent' if not_sent else 'called'}),decision_id))
+        model_service.failed(store,service,code)
         raise CycleError('agent_decision_unresolved') from None
+    model_service.succeeded(store,service)
     with store.tx():
         store.db.execute("UPDATE agent_reply_decision_v2 SET state='ready',output_json=? WHERE decision_id=?",
                          (encoded(raw), decision_id))

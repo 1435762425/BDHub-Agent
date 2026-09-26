@@ -55,21 +55,22 @@ def decision_retry_ready(store,plan,turn_id,now):
  attempts=store.db.execute("""SELECT state,created_at FROM agent_reply_decision_v2
    WHERE plan_id=? AND turn_id=? AND mode='production' ORDER BY created_at DESC""",
    (plan,turn_id)).fetchall()
+ attempts=[row for row in attempts if row['state']!='not_sent']  # Never-sent calls cost no attempt.
  if not attempts:return True
  if any(row['state']=='ready' for row in attempts):return True
  if len(attempts)>=3:return False
  return now-attempts[0]['created_at']>=3600
 
-def run_existing(store,replies,reply,market,stage,authorized_now=None):
+def run_existing(store,replies,reply,market,stage,authorized_now=None,read_started=lambda:None):
  recovering=reply['state'] in ('inflight','accepted','unknown','isolated')
  if market=='it':
   from lib.reply_transport import run_reply
-  state=run_reply(store,replies,reply,root=ROOT,authorized_now=authorized_now is not None,stopped=lambda:STOP)
+  state=run_reply(store,replies,reply,root=ROOT,authorized_now=authorized_now is not None,stopped=lambda:STOP,read_started=read_started)
   return {'state':state,'platformWrites':int(not recovering and state in ('confirmed','unknown')),
           'realSends':int(not recovering and state=='confirmed')}
  from lib.market_agent_reply import run_reply as market_run_reply
  return market_run_reply(ROOT,store,replies,reply,market,pilot=stage=='pilot_running',
-                         authorized_now=authorized_now is not None,stopped=lambda:STOP)
+                         authorized_now=authorized_now is not None,stopped=lambda:STOP,read_started=read_started)
 def recover_unresolved(store,plan,market,stage):
  """Bounded original-intent reads for submitted replies; exhausted ones are isolated (§9.18).
 
@@ -81,18 +82,24 @@ def recover_unresolved(store,plan,market,stage):
    ORDER BY created""",(plan,market)).fetchall()
  if not rows:return None
  replies=AutoReplies(store);waiting=[];isolated=0;deferred=[]
+ # Exact evidence already stored by normal inbox reading settles first, without a platform read.
+ if replies.settle_observed(plan):
+  rows=[row for row in rows if replies.get(row['id'])['state'] in ('inflight','accepted','unknown')]
+  if not rows:return None
  for row in rows:
   step=replies.recovery_step(row['id'])
   if step['action']=='isolate':replies.isolate(row['id']);isolated+=1;continue
   if step['action']=='wait':waiting.append(step['nextAt']);continue
   if step['action']!='check':continue
-  reply=replies.record_check(row['id'])
-  try:state=run_existing(store,replies,reply,market,stage)['state']
+  reply=replies.record_check(row['id']);started=[]
+  try:state=run_existing(store,replies,reply,market,stage,read_started=lambda:started.append(True))['state']
   except CycleError as error:state=replies.get(row['id'])['state'];code=str(error)
   except Exception as error:
-   # The read could not start or finish (send lock, account unavailable): no evidence, no spent
-   # check. The submission deadline still bounds the market hold; later replies are still visited.
-   replies.refund_check(row['id']);deferred.append(type(error).__name__)
+   # Only a read that never reached the platform (send lock, account unavailable) is refunded; a read
+   # that started and then failed is a spent check. The submission deadline bounds the market hold
+   # either way, and later replies are still visited.
+   if not started:replies.refund_check(row['id'])
+   deferred.append(type(error).__name__)
    waiting.append(min(store.clock()+REPLY_CHECK_INTERVAL,AutoReplies.deadline(reply)));continue
   else:code=None
   return {'state':'original_intent_rechecked','replyState':state,'attempt':step['attempt'],
@@ -151,6 +158,8 @@ def tick(authorized_now=None,market="it"):
   if not plan_row:raise CycleError('plan_missing')
   plan=plan_row[0];setting=agent_setting(store,plan);now=store.clock()
   stage=rollout_stage(store,plan,market)
+  if store.db.execute("SELECT 1 FROM service_reply WHERE plan_id=? AND state='isolated' LIMIT 1",(plan,)).fetchone():
+   AutoReplies(store).settle_observed(plan)  # Isolated replies are not re-read, only settled from stored evidence.
   recovered=recover_unresolved(store,plan,market,stage)
   if recovered:return recovered
   if not setting['enabled']:return {'state':'disabled','platformWrites':0,'realSends':0}
@@ -190,7 +199,9 @@ def tick(authorized_now=None,market="it"):
      context=production_context(ROOT,store,plan,market,turn['turn_id'],include_current_invitation=True,live=True)
      generated=generate(ROOT,store,plan,market,context,mode='production')
      applied=apply_production(store,plan,context,generated)
-    except CycleError:
+    except CycleError as error:
+     if str(error)=='agent_model_service_paused':
+      report['modelServicePaused']=True;break  # Nobody else is called while the shared service is paused.
      report['deferred']+=1;continue
     report['claimed']+=1
     report['noReply']+=int(applied['route']=='no_reply')
@@ -219,6 +230,9 @@ def main():
  if a.worker and a.authorized_now:p.error('--authorized-now cannot be used with --worker')
  with (ROOT/'var'/('agent-reply-worker.lock' if a.market=='it' else f'agent-reply-worker-{a.market}.lock')).open('a') as lock:
   fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+  if a.worker:
+   from lib.runtime_release import register
+   register(ROOT,f'agent-reply-{a.market}')
   while not STOP and not (a.stop and a.stop.exists()):
    try:result=tick(a.authorized_now,a.market)
    except Exception as e:result={'state':'failed','error':str(e) if isinstance(e,CycleError) else type(e).__name__,'platformWrites':0,'realSends':0}

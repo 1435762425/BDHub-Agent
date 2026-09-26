@@ -165,28 +165,35 @@ def _candidate_creators(db,plan):
    "ON c.plan_id=r.plan_id AND c.oec=r.oec WHERE r.plan_id=:plan AND c.state IN ('gap','backfilling')")
  creators={row[0] for row in db.execute(' UNION '.join(parts),{'plan':plan})}
  if {'inbox_event','inbox_content_head'}<=tables:
-  # Only an agency-backend message this application did not send itself can make a row
-  # (observed_messages.outbound_messages); platform message ids are globally unique.
-  recorded=_recorded_message_ids(db,plan,tables)
-  for creator,message_id in db.execute("""SELECT r.creator_id,e.message_id FROM relationship r
+  # Only an agency-backend message this application did not record for that same conversation can
+  # make a row (observed_messages.outbound_messages). The recorded set is keyed exactly like that
+  # rule, by (oec, cid, messageId), so this stays a superset of the per-row rule.
+  recorded=_recorded_messages(db,plan,tables)
+  for creator,oec,cid,message_id in db.execute("""SELECT r.creator_id,e.oec,e.cid,e.message_id FROM relationship r
     JOIN inbox_event e ON e.plan_id=r.plan_id AND e.oec=r.oec AND e.kind='ourMessages'
     JOIN inbox_content_head h ON h.plan_id=e.plan_id AND h.cid=e.cid AND h.message_id=e.message_id
     WHERE r.plan_id=?""",(plan,)):
-   if creator not in creators and str(message_id) not in recorded:creators.add(creator)
+   if creator not in creators and (str(oec),str(cid),str(message_id)) not in recorded:creators.add(creator)
  return creators
 
-def _recorded_message_ids(db,plan,tables):
- ids=set()
- def collect(*raws):
+def _recorded_messages(db,plan,tables):
+ """(oec, cid, messageId) of this application's own receipts, resolved as recorded_message_ids does."""
+ found=set()
+ def collect(oec,cid,*raws):
   for raw in raws:
    try:value=json.loads(raw) if raw else {}
    except (ValueError,TypeError):continue
-   if isinstance(value,dict) and value.get('messageId') is not None:ids.add(str(value['messageId']))
+   if isinstance(value,dict) and value.get('messageId') is not None:found.add((str(oec),str(cid or ''),str(value['messageId'])))
  if {'cycle_delivery','cycle_delivery_part'}<=tables:
-  for row in db.execute('SELECT p.receipt,p.confirmation FROM cycle_delivery_part p JOIN cycle_delivery d ON d.id=p.delivery_id WHERE d.plan_id=?',(plan,)):collect(*row)
+  intents=dict(db.execute('SELECT delivery_id,cid FROM cycle_conversation_intent')) if 'cycle_conversation_intent' in tables else {}
+  for receipt,confirmation,snapshot,delivery_id,oec in db.execute(
+    'SELECT p.receipt,p.confirmation,d.snapshot,d.id,d.oec FROM cycle_delivery_part p JOIN cycle_delivery d ON d.id=p.delivery_id WHERE d.plan_id=?',(plan,)):
+   try:cid=json.loads(snapshot).get('conversationId')
+   except (ValueError,TypeError,AttributeError):cid=None
+   collect(oec,cid or intents.get(delivery_id),receipt,confirmation)
  if 'service_reply' in tables:
-  for row in db.execute('SELECT receipt,proof FROM service_reply WHERE plan_id=?',(plan,)):collect(*row)
- return ids
+  for oec,cid,receipt,proof in db.execute('SELECT oec,cid,receipt,proof FROM service_reply WHERE plan_id=?',(plan,)):collect(oec,cid,receipt,proof)
+ return found
 
 def list_conversations(root,store,view='human',query='',limit=30,offset=0,market='it'):
  if view not in ('human','technical','agent','waiting','completed','all') or type(limit) is not int or not 1<=limit<=100 or type(offset) is not int or offset<0 or offset>5000:raise CycleError('conversation_query_invalid')
@@ -200,6 +207,9 @@ def list_conversations(root,store,view='human',query='',limit=30,offset=0,market
   agent_failed=runtime.get('state')=='failed'
  except (OSError,ValueError,TypeError):agent_failed=False
  rows=[];candidates=_candidate_creators(db,plan)
+ from lib import model_service
+ from lib.draft_provider import MODEL
+ service_paused=model_service.paused(db,model_service.service_key('DeepSeek',MODEL),store.clock())
  for rel in db.execute('SELECT * FROM relationship WHERE plan_id=?',(plan,)):
   if rel['creator_id'] not in candidates:continue
   latest=_latest_turn(db,plan,rel['creator_id']);cid,external=_latest_external(db,plan,rel,latest);inbound_at=_turn_at(latest)
@@ -244,6 +254,7 @@ def list_conversations(root,store,view='human',query='',limit=30,offset=0,market
                 '等待达人说明' if state=='waiting' else
                 'AI 已关闭' if state=='agent' and not setting['enabled'] else
                 '上下文过长，待答问题已保留' if state=='agent' and input_blocked else
+                '模型服务暂停，问题已保留' if state=='agent' and service_paused else
                 'AI 模型连续失败，需检查' if state=='agent' and failed_model else
                 'AI 运行异常' if state=='agent' and agent_failed else
                 '等待回复窗口' if state=='agent' and not(setting['replyStart']<=clock<setting['replyEnd']) else
@@ -270,6 +281,12 @@ def list_conversations(root,store,view='human',query='',limit=30,offset=0,market
 TIMELINE_PAGE=300
 
 def _timeline_cursor(item):return f"{item['occurredAt']!r}|{item['id']}"
+
+def _timeline_cursor_at(before):
+ if before is None:return None
+ if not isinstance(before,str) or before.count('|')!=1:raise CycleError('conversation_query_invalid')
+ try:return float(before.split('|')[0])
+ except ValueError:raise CycleError('conversation_query_invalid') from None
 
 def _timeline_page(timeline,before):
  """Newest page, or the page just older than ``before``; stable on (occurredAt,id)."""
@@ -324,7 +341,10 @@ def conversation_detail(root,store,cid,market='it',before=None):
    card=json.loads(row['text']) if row['kind']=='manual_card' else None
    timeline.append({'id':row['id'],'direction':'outbound','kind':'product_card' if card else 'text','text':f"[商品卡 PID {card['pid']}]" if card else row['text'],'occurredAt':row['started'] or row['created'],'status':row['state'],'source':'human' if row['kind'] in ('manual','manual_card') else 'agent',**({'pid':card['pid'],'listId':card['listId']} if card else {})})
  from lib.observed_messages import outbound_messages
- timeline.extend(outbound_messages(db,plan,cid,rel['oec']))
+ # Push the page cursor into this source: the newest platform messages at or before it, with
+ # headroom for equal timestamps, always include every platform item of the requested page.
+ cursor_at=_timeline_cursor_at(before)
+ timeline.extend(outbound_messages(db,plan,cid,rel['oec'],before=cursor_at,limit=TIMELINE_PAGE*2+1))
  timeline.sort(key=lambda r:(r['occurredAt'],r['id']))
  timeline,timeline_older,timeline_cursor=_timeline_page(timeline,before)
  episodes=[{'episodeId':r['episode_id'],'pid':r['pid'],'listId':r['list_id'],'sentAt':r['sent_at']} for r in db.execute('SELECT * FROM outbound_episode WHERE plan_id=? AND creator_id=? ORDER BY sent_at DESC LIMIT 10',(plan,creator))]
