@@ -7,6 +7,7 @@ time; a market whose ledger cannot be read is reported as unavailable, never as 
 from __future__ import annotations
 
 import json
+import sqlite3
 
 from lib.second_cycle import CycleError
 
@@ -40,18 +41,21 @@ def _current(root, db, market, run, holders, policy, accounts):
             claim = db.execute("SELECT created_at,heartbeat_at FROM workflow_stage_claim WHERE stage_run_id=?",
                                (stage["stage_run_id"],)).fetchone()
             return {"stage": stage["stage"], "state": "running", "since": claim["created_at"] if claim else stage["started_at"],
-                    "heartbeatAt": claim["heartbeat_at"] if claim else None, "waitingOn": []}
+                    "heartbeatAt": claim["heartbeat_at"] if claim else None, "waitingOn": [], "waitingKnown": True, "waitReason": None}
         if stage["state"] == "queued":
             waiting = []
             try:
                 needed = resources(root, market, stage["stage"], policy, accounts=accounts)
-            except (CycleError, KeyError, TypeError):
-                needed = []
+            except (CycleError, KeyError, TypeError) as error:
+                # Unknown requirements are not "nothing to wait for" (I05).
+                return {"stage": stage["stage"], "state": "queued", "since": None, "heartbeatAt": None, "waitingOn": [],
+                        "waitingKnown": False, "waitReason": str(error)[:80] or type(error).__name__}
             for key, slots in needed:
                 taken = [row for row in holders.get(key, []) if row["stageRunId"] != stage["stage_run_id"]]
                 if len(taken) >= slots:
                     waiting.append({"resource": key, "heldBy": [{k: row[k] for k in ("market", "stage", "since")} for row in taken]})
-            return {"stage": stage["stage"], "state": "queued", "since": None, "heartbeatAt": None, "waitingOn": waiting}
+            return {"stage": stage["stage"], "state": "queued", "since": None, "heartbeatAt": None, "waitingOn": waiting,
+                    "waitingKnown": True, "waitReason": None}
     return None
 
 
@@ -87,9 +91,20 @@ def _lanes(store, market):
             return None
         metric = row.get("metric") or {}
         return {"state": row.get("state"), "value": metric.get("value"), "label": metric.get("label"),
+                "unit": metric.get("unit"), "scope": metric.get("scope"),
                 "lastSuccessAt": row.get("lastSuccessAt"), "stopReason": row.get("stopReason")}
     return {"available": True, "observedAt": page.get("observationTime"),
             "continuousSend": lane("continuous_send"), "agentReply": lane("agent_reply")}
+
+
+def _human_queue(root, store, market):
+    """Creators in the conversation page's human queue, by the same classifier (I02); None if unreadable."""
+    from lib.conversation_workbench import list_conversations
+    try:
+        counts = list_conversations(root, store, "human", limit=1, market=market)["counts"]
+    except (CycleError, KeyError, TypeError, ValueError, sqlite3.Error):
+        return None
+    return {"human": counts.get("human"), "technical": counts.get("technical")}
 
 
 def console(root, store, *, markets=None, recent=15):
@@ -134,7 +149,9 @@ def console(root, store, *, markets=None, recent=15):
                 "needsReview": {"runId": attention["run_id"], "state": attention["state"], "errorCode": attention["error_code"],
                                 "at": attention["finished_at"]}
                                if attention and attention["state"] in ("needs_human", "failed") else None,
+                # Open service cases are counted apart from the human queue: they are different things.
                 "openHumanCases": human,
+                "humanQueue": _human_queue(root, store, market),
                 "lanes": _lanes(store, market)})
         except (CycleError, KeyError, TypeError, ValueError) as error:
             rows.append({"market": market, "available": False, "error": str(error)[:120]})

@@ -44,4 +44,24 @@ class OperationsConsoleTests(unittest.TestCase):
   self.assertEqual((mine['lastFinished']['stage'],mine['lastFinished']['items']),('catalog',12))
   self.assertEqual(after['recent'][0]['market'],'my')
 
+ def test_unknown_resource_needs_read_as_unknown_not_idle(self):
+  from unittest import mock
+  from lib import workflow_dispatch
+  create_run(self.store,market='br',trigger_source='manual',scheduled_at=NOW,request_id='console-br-unknown',only_stage='oecid',sources=['campaign'])
+  with mock.patch.object(workflow_dispatch,'resources',side_effect=KeyError('roles')):
+   value=console(self.root,self.store,markets=['br'])
+  current=value['markets'][0]['current']
+  self.assertEqual((current['state'],current['waitingKnown'],current['waitingOn']),('queued',False,[]))
+  self.assertIn('roles',current['waitReason'])
+ def test_human_queue_uses_the_conversation_classifier_not_open_cases(self):
+  plan=self.store.db.execute("SELECT id FROM plan WHERE market='br'").fetchone()[0]
+  from lib.cycle_inbox import Inbox;from lib.cycle_service import Service;from lib.cycle_auto_reply import AutoReplies
+  Inbox(self.store);Service(self.store);AutoReplies(self.store)
+  self.assertIsNotNone(console(self.root,self.store,markets=['br'])['markets'][0]['humanQueue'])
+  self.store.db.execute("INSERT INTO relationship VALUES(?,?,?,'human',0,1,0,1)",(plan,'creator-h','909'))
+  row={r['market']:r for r in console(self.root,self.store,markets=['br'])['markets']}['br']
+  self.assertEqual(row['humanQueue']['human'],1)
+  self.assertEqual(row['humanQueue']['human'],1)   # human mode without an open case still needs a person
+  self.assertIn(row['openHumanCases'],(0,None))
+
 if __name__=='__main__':unittest.main()
