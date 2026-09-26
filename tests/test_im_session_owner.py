@@ -116,6 +116,59 @@ class SignalTests(unittest.TestCase):
    self.assertEqual('2' in {e['messageId'] for e in combined['events']},limit==2)
   self.assertEqual(self.s.db.execute('select count(*) from inbox_event').fetchone()[0],1)
 
+class BackfillTests(SignalTests):
+ SENDER={'account':'acc8','imId':'5001'}
+ def conversation_messages(self,count):
+  # Newest first, like the native OLDER cursor: ids 1001.. are newer than the stored message '1'.
+  self.now+=10;base=self.now*1000
+  self.messages=[{'conversationId':'999','oecId':'123','messageId':str(1000+n),'kind':'creatorReplies','messageType':1000,
+                  'createTimeRaw':base+n} for n in range(count,0,-1)]
+  stored=self.s.db.execute("select payload from inbox_event where message_id='1'").fetchone()
+  self.messages.append(json.loads(stored[0]))
+ def session(self,calls):
+  def read(_conversation,**kw):
+   cursor=kw['cursor'];calls.append(cursor);rows=self.messages[cursor:cursor+20]
+   return {'identityVerified':True,'events':rows,'contents':[],'hasMore':cursor+20<len(self.messages),'nextCursor':str(cursor+20)}
+  return SimpleNamespace(history_summary=read)
+ def round(self,calls,sender=SENDER,required=()):
+  self.now+=5
+  history=read_to_overlap(self.session(calls),SimpleNamespace(conversation_id='999',oec_id='123'),self.s,self.plan,
+                          required_ids=required,sender=sender)
+  return history,Inbox(self.s).ingest(self.plan,'999','123',history)
+ def pending(self):return self.s.db.execute('select count(*) from inbox_pending').fetchone()[0]
+ def state(self):return self.s.db.execute("select state from inbox_checkpoint where cid='999'").fetchone()[0]
+ def test_backlog_beyond_the_page_budget_resumes_and_settles_once(self):
+  self.incoming();self.s.db.execute('DELETE FROM inbox_pending');self.conversation_messages(121)
+  calls=[];first,result=self.round(calls,required={'1005'})
+  self.assertEqual((calls,first['backfill']['coverage'],first['backfill']['cursor']),([0,20,40,60,80],'partial','100'))
+  self.assertEqual((result['liveReplies'],self.state(),self.pending()),(0,'backfilling',0))
+  # Replies stay held while the range is not joined to what was known before the read began.
+  self.assertTrue(self.s.db.execute("select 1 from relationship where inbox_until>0").fetchone())
+  # A restart only reopens the store: the next round re-reads the newest page, then resumes at 100.
+  self.s.close();self.s=CycleStore(self.root/'var/second-cycle.sqlite',lambda:self.now)
+  calls=[];second,result=self.round(calls)
+  self.assertEqual((calls,second['backfill']['coverage']),([0,100,120],'complete'))
+  self.assertEqual((self.state(),self.pending()),('tracking',1))
+  self.assertEqual(result['liveReplies'],121)
+  self.assertEqual(self.s.db.execute("select count(*) from inbox_event where cid='999'").fetchone()[0],122)
+  self.assertIsNone(self.s.db.execute('select 1 from inbox_backfill').fetchone())
+  calls=[];third,result=self.round(calls)
+  self.assertEqual((calls,result['liveReplies'],result['added']),([0],0,0))
+ def test_a_different_reader_restarts_the_chain_and_other_ingest_cannot_end_the_hold(self):
+  self.incoming();self.s.db.execute('DELETE FROM inbox_pending');self.conversation_messages(121)
+  calls=[];self.round(calls)
+  newest={'identityVerified':True,'hasMore':True,'events':self.messages[:20],'contents':[]}
+  Inbox(self.s).ingest(self.plan,'999','123',newest)
+  self.assertEqual((self.state(),self.pending()),('backfilling',0))
+  calls=[];history,_=self.round(calls,sender={'account':'acc8','imId':'other'})
+  self.assertEqual(calls,[0,20,40,60,80]);self.assertEqual(history['backfill']['coverage'],'partial')
+  self.assertEqual(self.state(),'backfilling')
+ def test_untracked_reads_keep_the_existing_contract(self):
+  self.incoming();self.conversation_messages(3);calls=[]
+  history=read_to_overlap(self.session(calls),SimpleNamespace(conversation_id='999',oec_id='123'),self.s,self.plan)
+  self.assertNotIn('backfill',history)
+
+
 class SdkReadinessTests(unittest.TestCase):
  def test_initializing_success_failed_and_missing_are_distinguished(self):
   import subprocess

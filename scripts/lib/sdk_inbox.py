@@ -98,13 +98,14 @@ class Receiver:
                             with self.lock:target=self.pending.popitem(last=False) if self.pending else None
                         if not target:
                             if not cold and now>=next_cold:
-                                cold.extend((r['cid'],r['oec']) for r in store.db.execute('SELECT cid,oec FROM inbox_checkpoint WHERE plan_id=? ORDER BY checked_at LIMIT 10',(self.plan,)));next_cold=now+10
+                                cold.extend((r['cid'],r['oec']) for r in store.db.execute("SELECT cid,oec FROM inbox_checkpoint WHERE plan_id=? ORDER BY state='backfilling' DESC,checked_at LIMIT 10",(self.plan,)));next_cold=now+10
                             if cold:target=(cold.popleft(),None)
                         if not target:time.sleep(.2);continue
                         (cid,oec),signal_at=target
                         conversation=session.conversation(cid,oec)
                         requested=time.time();required={r[0] for r in store.db.execute('SELECT message_id FROM im_receive_signal WHERE market=? AND account=? AND cid=? AND done=0 AND next_at<=?',(self.market,self.auth.account_name,cid,requested+10))}
-                        history=read_to_overlap(session,conversation,store,self.plan,required_ids=required)
+                        history=read_to_overlap(session,conversation,store,self.plan,required_ids=required,
+                                                sender={'account':str(self.auth.account_name),'imId':str(self.auth.im_id)})
                         result=inbox.ingest(self.plan,cid,oec,history);captured=service.capture(self.plan,cid,oec,history.get('contents',[]));needs_projection=needs_projection or result['added']>0 or captured>0
                         for event in history.get('events',[]):
                             store.db.execute('UPDATE im_receive_signal SET done=1 WHERE market=? AND account=? AND cid=? AND message_id=? AND observed<=?',(self.market,self.auth.account_name,cid,event['messageId'],requested))
@@ -130,16 +131,47 @@ class Receiver:
         if self.thread:self.thread.join()
 
 
-def read_to_overlap(session,conversation,store,plan,max_pages=5,required_ids=()):
-    combined=None;events={};contents={};cursor=0
+def read_to_overlap(session,conversation,store,plan,max_pages=5,required_ids=(),sender=None):
+    """Read newest-first until the chain joins what was known before this backfill began.
+
+    Each call keeps its page budget.  A conversation that already has a checkpoint and does not
+    reach that proof within the budget returns ``backfill.coverage='partial'`` with the next native
+    cursor, bound to the reading account/IM identity; Inbox stores it and holds replies.  A later
+    call re-reads the newest page, and once that joins messages already stored during the backfill
+    it resumes from the saved cursor instead of re-scanning the same recent range.
+    """
+    cid=conversation.conversation_id;oec=getattr(conversation,'oec_id',None)
+    db=store.db
+    cp=db.execute('SELECT state FROM inbox_checkpoint WHERE plan_id=? AND cid=?',(plan,cid)).fetchone()
+    tracked=bool(cp and cp['state'] in ('tracking','backfilling') and sender)
+    saved=db.execute('SELECT * FROM inbox_backfill WHERE plan_id=? AND cid=?',(plan,cid)).fetchone() \
+        if tracked and db.execute("SELECT 1 FROM sqlite_master WHERE name='inbox_backfill'").fetchone() else None
+    # Messages stored before the backfill began (rowid watermark) are the only coverage proof.
+    watermark=int(saved['event_rowid']) if saved else db.execute('SELECT coalesce(max(rowid),0) FROM inbox_event').fetchone()[0]
+    # A native cursor belongs to the reader that produced it; another reader restarts the chain.
+    resume=int(saved['cursor']) if saved and saved['account']==sender.get('account') and \
+        saved['im_id']==sender.get('imId') and saved['oec']==oec else None
+    combined=None;events={};contents={};cursor=0;complete=False
+    def known(message_id,pre=False):
+        row=db.execute('SELECT rowid FROM inbox_event WHERE plan_id=? AND cid=? AND message_id=?',
+                       (plan,cid,message_id)).fetchone()
+        return bool(row) and (not pre or row[0]<=watermark)
     for _ in range(max_pages):
         page=session.history_summary(conversation,include_events=True,include_contents=True,include_pagination=True,cursor=cursor)
         combined=page
         for event in page['events']:events.setdefault(event['messageId'],event)
         for content in page.get('contents',[]):contents.setdefault(content['messageId'],content)
-        overlap=any(store.db.execute('SELECT 1 FROM inbox_event WHERE plan_id=? AND cid=? AND message_id=?',(plan,conversation.conversation_id,e['messageId'])).fetchone() for e in page['events'])
-        if not page['hasMore'] or overlap and set(required_ids)<=set(events):break
-        next_cursor=int(page['nextCursor'])
+        joined=any(known(e['messageId'],pre=True) for e in page['events'])
+        complete=complete or joined or not page['hasMore']
+        if not page['hasMore'] or complete and set(required_ids)<=set(events):break
+        if not complete and resume is not None and any(known(e['messageId']) for e in page['events']):
+            next_cursor,resume=resume,None  # Joined this backfill's stored range: continue below it.
+        else:next_cursor=int(page['nextCursor'])
         if next_cursor==cursor:break
         cursor=next_cursor
-    return {**combined,'events':list(events.values()),'contents':list(contents.values())}
+    result={**combined,'events':list(events.values()),'contents':list(contents.values())}
+    if tracked:
+        if not complete:cursor=next_cursor
+        result['backfill']={'coverage':'complete' if complete else 'partial','watermark':watermark,'cursor':str(cursor),
+                            'account':sender.get('account'),'imId':sender.get('imId'),'oec':oec}
+    return result
