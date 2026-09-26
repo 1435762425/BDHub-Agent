@@ -1,11 +1,16 @@
 # BDHub-Agent 当前交接
 
-文档更新时间：2026-09-26（Asia/Shanghai）。下面各节按时间倒序，每节只代表该时刻的核验；最新一节即当前生产状态的最近记录，不是实时巡检。规则见 [PROJECT](../PROJECT.md)，实现见 [TECHNICAL](../TECHNICAL.md)，后续方向见[项目审计与清理](../implementation/project-audit-20260924.md)。更早流水见[历史交接](../archive/handoff/codex-takeover-history-20260923.md)。
+文档更新时间：2026-09-27（Asia/Shanghai）。下面各节按时间倒序，每节只代表该时刻的核验；最新一节即当前生产状态的最近记录，不是实时巡检。规则见 [PROJECT](../PROJECT.md)，实现见 [TECHNICAL](../TECHNICAL.md)，后续方向见[项目审计与清理](../implementation/project-audit-20260924.md)。更早流水见[历史交接](../archive/handoff/codex-takeover-history-20260923.md)。
 
 
 
 
 
+
+## 2026-09-27 00:20：告警分组与总览运行详情（仅 Web）
+
+- worktree `../BDHub-Agent-pm2-20260927`（分支 `codex/pm-followups-20260927`）实现后合入并推送 `main`（`d629488`）。告警条按“系统问题 / 需要人工处理 / 正常等待与提示”分组，等待类（平台拒绝已自动暂停、未知发送已隔离、收信人工停止、生产暂停）不计入紧急数；选品隔离与 AI 首轮完成需人决定，归人工。经营总览“最近运行”可展开只读详情（起止、耗时、项数、写入证据、原因代码、运行编号）。达人页累计指标改名“累计有回复/累计加橱窗”；不支持全托管的市场货盘默认打开 Campaign。
+- 只发布 Web：构建 `4OockedwlUJBitQxK7-v8` 逐文件校验 286 个文件后切换，旧构建 `vKiVYIncz227GBM9PFInC` 在 `var/web-releases/followups-*/previous`；根路径 307，四市场 20 项页面及概览、总控、告警接口均 200。scheduler 与常驻 worker 未重启，无运行版本混用告警。
 
 ## 2026-09-26 23:30：审计 I01–I08 修复与经营总览上线
 
