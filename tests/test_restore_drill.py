@@ -34,13 +34,13 @@ class RestoreDrillTests(unittest.TestCase):
             CREATE TABLE plan(id TEXT PRIMARY KEY,market TEXT);
             CREATE TABLE relationship(plan_id TEXT,creator_id TEXT);
             CREATE TABLE cycle_delivery(id TEXT PRIMARY KEY,plan_id TEXT,creator_id TEXT,created REAL);
-            CREATE TABLE cycle_delivery_part(delivery_id TEXT,state TEXT);
+            CREATE TABLE cycle_delivery_part(delivery_id TEXT,kind TEXT,state TEXT);
             CREATE TABLE agent_schema_migration(version INTEGER,name TEXT,checksum TEXT,applied_at REAL);
             CREATE TABLE account_identity_generation(generation_id TEXT,market TEXT,account TEXT,state TEXT,published_at REAL);
             INSERT INTO plan VALUES('plan-it','it');
             INSERT INTO relationship VALUES('plan-it','creator_a');
             INSERT INTO cycle_delivery VALUES('delivery-a','plan-it','creator_a',1.0);
-            INSERT INTO cycle_delivery_part VALUES('delivery-a','unknown');
+            INSERT INTO cycle_delivery_part VALUES('delivery-a','card','unknown');
             INSERT INTO agent_schema_migration VALUES(26,'current','x',1.0);
             INSERT INTO account_identity_generation VALUES('generation-1','it','acc6','published',1.0);
         """)
@@ -132,6 +132,33 @@ class RestoreDrillTests(unittest.TestCase):
         report = self.drill(self.backup())
         self.assertIn("identity_generation_missing:it", report["blockers"])
         self.assertEqual(report["identityDependencies"][0]["unresolved"], {"cycle_delivery_part": 1})
+
+
+    def test_each_unresolved_intent_is_checked_against_its_own_frozen_identity(self):
+        self.sql("second-cycle.sqlite", """
+            CREATE TABLE service_reply(id TEXT,plan_id TEXT,state TEXT,sender_account TEXT,sender_identity TEXT);
+            INSERT INTO service_reply VALUES('reply-ok','plan-it','unknown','acc6','111');
+            INSERT INTO service_reply VALUES('reply-old','plan-it','isolated','acc3','222');
+            INSERT INTO service_reply VALUES('reply-bare','plan-it','accepted',NULL,NULL);
+            INSERT INTO service_reply VALUES('reply-done','plan-it','confirmed','acc3','333');
+        """)
+        report = self.drill(self.backup())
+        status = {row["intent"]: row["status"] for row in report["intentDependencies"]}
+        self.assertEqual(status["delivery-a:card"], "identity_not_frozen")
+        self.assertEqual(status["reply-ok"], "account_generation_present")
+        self.assertEqual(status["reply-old"], "account_generation_missing")
+        self.assertEqual(status["reply-bare"], "identity_not_frozen")
+        self.assertNotIn("reply-done", status)
+        # Today's configured account (acc6) having a generation does not cover an intent frozen to acc3.
+        self.assertIn("frozen_identity_missing:it:acc3", report["blockers"])
+        self.assertEqual(report["layers"]["originalIntentDependenciesChecked"], "partial")
+        self.assertFalse(report["layers"]["businessResumeProven"])
+
+    def test_delivery_components_without_a_frozen_sender_stay_unverified(self):
+        report = self.drill(self.backup())
+        self.assertEqual(report["state"], "restorable")
+        self.assertIn("intent_identity_unverified:1", report["warnings"])
+        self.assertEqual(report["intentDependencies"][0]["status"], "identity_not_frozen")
 
 
 if __name__ == "__main__":

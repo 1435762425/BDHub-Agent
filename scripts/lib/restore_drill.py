@@ -168,6 +168,44 @@ def _identity_dependencies(restored, manifest_entries, accounts):
     return out
 
 
+def _intent_dependencies(restored, manifest_entries):
+    """Per unresolved intent: is the identity it was frozen to still resolvable from this backup (H09)?
+
+    An AI/manual reply freezes its sender account and IM identity: it needs a published generation of
+    that exact account (not merely of today's configured account). A delivery component records no
+    frozen sender, so its original identity cannot be proven from the ledger and stays ``unverified``."""
+    if "second-cycle.sqlite" not in manifest_entries:
+        return []
+    rows = []
+    with _open(restored / "second-cycle.sqlite") as db:
+        generations = set()
+        if _table_exists(db, "account_identity_generation"):
+            generations = {(market, account) for market, account in db.execute(
+                "SELECT market,account FROM account_identity_generation WHERE state='published'")}
+        if _table_exists(db, "service_reply"):
+            columns = {row[1] for row in db.execute("PRAGMA table_info(service_reply)")}
+            frozen = "sender_account" in columns and "sender_identity" in columns
+            for row in db.execute("SELECT r.id,r.state,p.market" + (",r.sender_account,r.sender_identity" if frozen else ",NULL,NULL")
+                                  + " FROM service_reply r JOIN plan p ON p.id=r.plan_id "
+                                    "WHERE r.state IN ('inflight','accepted','unknown','isolated') ORDER BY r.id"):
+                intent, state, market, account, identity = row
+                status = ("identity_not_frozen" if not account or not identity else
+                          "account_generation_present" if (market, account) in generations else "account_generation_missing")
+                rows.append({"kind": "service_reply", "intent": intent, "state": state, "market": market,
+                             "frozenAccount": account, "frozenIdentity": bool(identity), "status": status})
+        for table, sql in (
+                ("cycle_delivery_part", "SELECT x.delivery_id||':'||x.kind,x.state,p.market FROM cycle_delivery_part x JOIN cycle_delivery d "
+                 "ON d.id=x.delivery_id JOIN plan p ON p.id=d.plan_id WHERE x.state IN ('inflight','accepted','unknown') ORDER BY 1"),
+                ("cycle_conversation_intent", "SELECT c.delivery_id,c.state,p.market FROM cycle_conversation_intent c JOIN cycle_delivery d "
+                 "ON d.id=c.delivery_id JOIN plan p ON p.id=d.plan_id WHERE c.state IN ('inflight','accepted','unknown') ORDER BY 1")):
+            if not _table_exists(db, table):
+                continue
+            for intent, state, market in db.execute(sql):
+                rows.append({"kind": table, "intent": intent, "state": state, "market": market,
+                             "frozenAccount": None, "frozenIdentity": False, "status": "identity_not_frozen"})
+    return rows
+
+
 def run_drill(backup, *, databases=None, accounts=None, work_dir=None, keep=False, clock=time.time):
     """Restore ``backup`` (optionally a subset of its databases) into an isolated directory and check it."""
     started = float(clock())
@@ -202,22 +240,39 @@ def run_drill(backup, *, databases=None, accounts=None, work_dir=None, keep=Fals
         references = [row for row in (_check_reference(ref, restored, entries) for ref in _references()) if row]
         schema = _schema(restored, entries)
         identities = _identity_dependencies(restored, entries, accounts or {})
+        intents = _intent_dependencies(restored, entries)
     except (OSError, ValueError, sqlite3.Error) as error:
         report.update(state="blocked", blockers=[f"restore_failed:{error}"], finishedAt=float(clock()))
         return report
     finally:
         if not keep and not work_dir:
             shutil.rmtree(parent, ignore_errors=True)
-    report.update(references=references, schema=schema, identityDependencies=identities)
+    report.update(references=references, schema=schema, identityDependencies=identities,
+                  intentDependencies=intents[:200], intentDependencyCount=len(intents))
     report["blockers"] = (
         [f"reference:{row['id']}:{row.get('reason') or 'future_or_undated_missing'}" for row in references
          if row["state"] == "blocked"]
         + [f"schema_newer_than_code:{row['database']}" for row in schema if row["state"] == "blocked"]
-        + [f"identity_generation_missing:{row['market']}" for row in identities if row["state"] == "blocked"])
+        + [f"identity_generation_missing:{row['market']}" for row in identities if row["state"] == "blocked"]
+        + sorted({f"frozen_identity_missing:{row['market']}:{row['frozenAccount']}" for row in intents
+                  if row["status"] == "account_generation_missing"}))
     report["warnings"] = (
         [f"historical_orphans:{row['id']}:{row['historicalOrphans']}" for row in references if row.get("historicalOrphans")]
         + [f"migration_required:{row['database']}" for row in schema if row["state"] == "migration_required"])
+    unverified = sum(row["status"] == "identity_not_frozen" for row in intents)
+    if unverified:
+        report["warnings"].append(f"intent_identity_unverified:{unverified}")
     report["state"] = "blocked" if report["blockers"] else "restorable"
+    # What each layer proves (H09). "restorable" means the data restores and is consistent; resuming
+    # business also needs the external identity files and every original intent's frozen identity.
+    report["layers"] = {
+        "snapshotValid": True,
+        "schemaCompatible": not any(row["state"] == "blocked" for row in schema),
+        "declaredReferencesChecked": not any(row["state"] == "blocked" for row in references),
+        "originalIntentDependenciesChecked": "complete" if not intents or not unverified and not any(
+            row["status"] == "account_generation_missing" for row in intents) else "partial",
+        "externalIdentityAvailability": "external_required",
+        "businessResumeProven": False}
     report["restoredTo"] = str(target) if keep or work_dir else None
     report["finishedAt"] = float(clock())
     return report
