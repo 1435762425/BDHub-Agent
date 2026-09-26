@@ -399,5 +399,33 @@ class BothChannels(unittest.TestCase):
             self.assertEqual(products['1729474628908391280']['units'], 999)
 
 
+class ReadOnlyStatus(unittest.TestCase):
+    """Status and plan never create, migrate or write the ledger (H06)."""
+
+    def test_status_reads_without_creating_or_changing_the_ledger(self):
+        import hashlib
+        with tempfile.TemporaryDirectory() as folder:
+            fixture(folder, eligible=['1729000000000000001'], linked={'1729000000000000001': 'active'})
+            ledger = Path(folder) / 'var/kalodata-leads.sqlite'
+            status(folder, market='it', now=NOW)
+            self.assertFalse(ledger.exists())
+            Ledger(folder).close()  # an explicit writer creates it
+            before = hashlib.sha256(ledger.read_bytes()).hexdigest()
+            plan(folder, market='it', now=NOW)
+            self.assertEqual(hashlib.sha256(ledger.read_bytes()).hexdigest(), before)
+            self.assertFalse(Path(str(ledger) + '-wal').exists())
+
+    def test_an_old_ledger_is_reported_not_upgraded(self):
+        with tempfile.TemporaryDirectory() as folder:
+            fixture(folder)
+            ledger = Path(folder) / 'var/kalodata-leads.sqlite'
+            with closing(sqlite3.connect(ledger)) as conn, conn:
+                conn.execute('CREATE TABLE leads_query(pid TEXT PRIMARY KEY,queried_at REAL,state TEXT,window_end TEXT,leads INTEGER,note TEXT)')
+            with self.assertRaisesRegex(ValueError, 'leads_ledger_migration_required'):
+                Ledger(folder, readonly=True)
+            with closing(sqlite3.connect(ledger)) as conn:
+                self.assertEqual([row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")], ['leads_query'])
+
+
 if __name__ == '__main__':
     unittest.main()

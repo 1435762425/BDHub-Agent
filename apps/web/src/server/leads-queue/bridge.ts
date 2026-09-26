@@ -4,7 +4,10 @@ import {projectRoot} from "../runtime/project-root.ts";
 
 /** Queue shape for PID -> creator-lead queries. Numbers only; the platform is not contacted. */
 export type LeadsQueueConfig={version:string;refreshDays:number;leadsPerPid:number;windowDays:number;batchSize:number;maxAttempts:number};
-export type LeadsRunState={running:boolean;startedAt?:number;finishedAt?:number;batchSize?:number;dueQueue?:number;targets?:number;done?:number;leads?:number;networkRequests?:number;stopped?:string|null;errors?:{pid:string;code:string}[];platformWrites?:number};
+// The last finished Kalodata stage as recorded by its own terminal result; null counts mean "not recorded".
+export type LeadsLastFinished={runId:string;stageRunId:string;state:string;errorCode:string|null;startedAt:number|null;finishedAt:number|null;resultRecorded:boolean;
+ completedQueries:number|null;aQueries:number|null;bQueries:number|null;fragments:number|null;networkRequests:number|null;sliceComplete:boolean|null;errorCount:number|null;errors:string[]};
+export type LeadsRunState={running:boolean;queued?:boolean;lastFinished?:LeadsLastFinished|null;startedAt?:number;finishedAt?:number;batchSize?:number;dueQueue?:number;targets?:number;done?:number;leads?:number;networkRequests?:number;stopped?:string|null;errors?:{pid:string;code:string}[];platformWrites?:number};
 export type LeadsQueueNext={pid:string;units:number;title:string};
 export type LeadsQueueDue={pid:string;queriedAt:number;dueAt:number;leads:number|null;title:string};
 // ``taken`` is the batch: the top ``batchSize`` of the due queue. ``shortfall`` is how far the
@@ -54,6 +57,20 @@ function count(value:unknown):number{
  return value;
 }
 
+function lastFinished(value:unknown):LeadsLastFinished|null{
+ if(value==null)return null;
+ if(typeof value!=="object"||Array.isArray(value))throw Error('invalid_leads_queue');
+ const v=value as Record<string,unknown>;
+ const text=(raw:unknown)=>{if(typeof raw!=="string"||!raw||raw.length>120)throw Error('invalid_leads_queue');return raw;};
+ const maybe=(raw:unknown)=>raw==null?null:count(raw);
+ const time=(raw:unknown)=>typeof raw==="number"&&Number.isFinite(raw)?raw:null;
+ if(typeof v.resultRecorded!=="boolean"||!Array.isArray(v.errors)||v.errors.length>3)throw Error('invalid_leads_queue');
+ return {runId:text(v.runId),stageRunId:text(v.stageRunId),state:text(v.state),errorCode:v.errorCode==null?null:text(v.errorCode),
+  startedAt:time(v.startedAt),finishedAt:time(v.finishedAt),resultRecorded:v.resultRecorded,completedQueries:maybe(v.completedQueries),
+  aQueries:maybe(v.aQueries),bQueries:maybe(v.bQueries),fragments:maybe(v.fragments),networkRequests:maybe(v.networkRequests),
+  sliceComplete:typeof v.sliceComplete==="boolean"?v.sliceComplete:null,errorCount:maybe(v.errorCount),errors:(v.errors as unknown[]).map(text)};
+}
+
 function validateRun(value:unknown):LeadsRunState|null{
  if(value==null)return null;
  if(typeof value!=="object"||Array.isArray(value))throw Error('invalid_leads_queue');
@@ -64,6 +81,9 @@ function validateRun(value:unknown):LeadsRunState|null{
   batchSize:optional(v.batchSize),dueQueue:optional(v.dueQueue),targets:optional(v.targets),
   done:optional(v.done),leads:optional(v.leads),networkRequests:optional(v.networkRequests),
   stopped:v.stopped==null?null:String(v.stopped),
+  ...(typeof v.queued==="boolean"?{queued:v.queued}:{}),
+  ...("lastFinished" in v?{lastFinished:lastFinished(v.lastFinished)}:{}),
+  ...(Array.isArray(v.errors)?{errors:(v.errors as unknown[]).slice(0,20).map(item=>{const row=(item&&typeof item==="object"?item:{}) as Record<string,unknown>;return {pid:String(row.pid??""),code:String(row.code??"")};})}:{}),
   // A read-only batch must never report a platform write. If it ever does, refuse the payload.
   platformWrites:(()=>{if(v.platformWrites!==undefined&&v.platformWrites!==0)throw Error('invalid_leads_queue');return 0;})()};
 }

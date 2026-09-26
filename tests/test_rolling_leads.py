@@ -30,6 +30,27 @@ class RollingLeads(unittest.TestCase):
  def row(self,market,pid,kind):
   with CycleStore(self.root/'var/second-cycle.sqlite',readonly=True) as store:
    return dict(store.db.execute('SELECT * FROM lead_query_task WHERE market=? AND pid=? AND kind=?',(market,pid,kind)).fetchone())
+ def test_last_finished_kalodata_stage_reports_its_own_result_and_unrecorded_as_null(self):
+  from lib.operations_workflow import create_run,finish_stage
+  from lib.workflow_resources import claim
+  with CycleStore(self.root/'var/second-cycle.sqlite',clock=lambda:NOW) as store:
+   self.assertIsNone(queue.last_finished_run(store.db,'it'))
+   run=create_run(store,market='it',trigger_source='manual',scheduled_at=NOW,request_id='kalodata-last-run',only_stage='kalodata',sources=['campaign'])
+   stage=next(row for row in run['stages'] if row['state']=='queued')
+   self.assertEqual(stage['stage'],'kalodata')
+   claim(store,stage['stageRunId'],'scheduler-test-owner',[('kalodata:global',2)])
+   finish_stage(store,run['runId'],'kalodata',state='completed',item_count=7,
+                payload={'A':3,'B':4,'completed':7,'fragments':8,'networkRequests':11,'sliceComplete':True,'errors':[{'code':'kalodata_video_read_failed'}]})
+   last=queue.last_finished_run(store.db,'it')
+  self.assertEqual((last['state'],last['completedQueries'],last['aQueries'],last['bQueries'],last['networkRequests'],last['errors']),
+                   ('completed',7,3,4,11,['kalodata_video_read_failed']))
+  with CycleStore(self.root/'var/second-cycle.sqlite',clock=lambda:NOW+10) as store:
+   run=create_run(store,market='it',trigger_source='manual',scheduled_at=NOW+10,request_id='kalodata-last-run-2',only_stage='kalodata',sources=['campaign'])
+   stage=next(row for row in run['stages'] if row['state']=='queued')
+   claim(store,stage['stageRunId'],'scheduler-test-owner',[('kalodata:global',2)])
+   finish_stage(store,run['runId'],'kalodata',state='failed',error_code='kalodata_video_read_failed')
+   failed=queue.last_finished_run(store.db,'it')
+  self.assertEqual((failed['state'],failed['resultRecorded'],failed['completedQueries']),('failed',False,None))
  def test_tasks_are_unique_and_a_b_rotate_across_restarts(self):
   scope=self.scope(*PIDS[:2]);queue.sync(self.root,'it',at=NOW,scope=scope)
   queue.sync(self.root,'it',at=NOW+1,scope=scope)

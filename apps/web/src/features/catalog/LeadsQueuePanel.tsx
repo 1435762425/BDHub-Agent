@@ -15,6 +15,23 @@ function runLine(run:LeadsRunState){
  return `上一批：完成 ${done} 个，取得线索 ${leads} 条，只读请求 ${requests} 次。${run.stopped?(STOP[run.stopped]??`停在 ${run.stopped}。`):"正常结束。"}`;
 }
 
+const FINISHED:Record<string,string>={completed:"已完成",quota_exhausted:"额度用尽，断点保留",failed:"失败",needs_human:"需核对",stopped:"已停止"};
+const n=(value:number|null)=>value==null?"未记录":value.toLocaleString();
+// What the scheduler is doing with Kalodata now, and what its last finished stage recorded (H05).
+function LastRun({run}:{run:LeadsRunState|null|undefined}){
+ const last=run?.lastFinished;
+ const now=run?.running?<Pill tone="brand">正在读取</Pill>:run?.queued?<Pill tone="neutral">已排队，等待 Kalodata 资源</Pill>:<Pill tone="neutral">当前没有运行</Pill>;
+ return <div className="rounded-xl border border-gray-200 p-4 text-sm dark:border-gray-800"><div className="flex flex-wrap items-center justify-between gap-2"><p className="font-medium">最近一次抓取</p>{now}</div>
+  {last?<><p className="mt-2 text-xs text-gray-500">{FINISHED[last.state]??"状态待核实"} · 结束于 {stamp(last.finishedAt)}{last.sliceComplete?" · 本段预算用完即结束，不代表全队列已抓完":""}</p>
+   <MetricTable rows={[{label:"完成的逻辑查询",value:n(last.completedQueries),detail:`A ${n(last.aQueries)} · B ${n(last.bQueries)}；同一 PID 的 A、B 各算一个查询`},
+    {label:"读取片段",value:n(last.fragments),detail:"每段最多 3 个请求后轮换"},
+    {label:"网络请求",value:n(last.networkRequests),detail:"实际发出的只读请求；复用已保存页面不计"},
+    {label:"出错的查询",value:n(last.errorCount),detail:last.errors.length?last.errors.join("、"):last.errorCode?`阶段错误：${last.errorCode}`:"无"}]}/>
+   {!last.resultRecorded&&<p className="text-xs text-gray-400">这一段没有发布结果，计数未记录（不是 0）。</p>}</>
+  :<p className="mt-2 text-xs text-gray-500">还没有已结束的抓取记录。</p>}
+ </div>;
+}
+
 /** The PID -> creator-lead queue. State is owned by the page so the funnel bar reads the same numbers. */
 export default function LeadsQueuePanel({controller}:{controller:LeadsQueueController}){
  const {data,busy,message,startRun,loaded}=controller;
@@ -29,7 +46,7 @@ export default function LeadsQueuePanel({controller}:{controller:LeadsQueueContr
  {label:`${kind} · 技术隔离`,value:(q.states.isolated??0).toLocaleString(),detail:"保留错误，其他商品继续；不需人工逐项处理"},
  {label:`${kind} · 材料暂停`,value:(q.states.material_paused??0).toLocaleString(),detail:"没有有效材料时不消耗查询额度"},
  {label:`${kind} · 最早等待`,value:stamp(q.oldestReadyAt),detail:`队列共 ${q.total.toLocaleString()} 个 PID，当前可运行 ${q.runnable.toLocaleString()}`},
- ];})}/>{control?.state==="waiting_quota"?<Notice tone="info">该市场等待 Kalodata 额度。下次核对：{stamp(control.retry_at)}。继续原窗口和断点；其他市场独立运行。</Notice>:control?.state==="waiting_account"?<Notice tone="info">读取通道暂不可用，任务与断点保留。下次检查：{stamp(control.retry_at)}。</Notice>:null}<Button size="sm" disabled={busy||Boolean(data.run?.running)} onClick={()=>void startRun()}>推进一段 A/B 查询</Button>{message&&<Notice tone="info">{message}</Notice>}</div></Card>;}
+ ];})}/>{control?.state==="waiting_quota"?<Notice tone="info">该市场等待 Kalodata 额度。下次核对：{stamp(control.retry_at)}。继续原窗口和断点；其他市场独立运行。</Notice>:control?.state==="waiting_account"?<Notice tone="info">读取通道暂不可用，任务与断点保留。下次检查：{stamp(control.retry_at)}。</Notice>:null}<LastRun run={data.run}/><Button size="sm" disabled={busy||Boolean(data.run?.running)||Boolean(data.run?.queued)} onClick={()=>void startRun()}>推进一段 A/B 查询</Button>{message&&<Notice tone="info">{message}</Notice>}</div></Card>;}
  return <Card title="达人线索查询队列"><div className="space-y-4 p-5">
   {!data&&<p className="text-sm text-gray-500">{loaded?"暂时无法读取查询队列。":"读取中…"}</p>}
   {data&&<>

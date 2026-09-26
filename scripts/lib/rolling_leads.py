@@ -285,7 +285,33 @@ def status(root,market,*,at=None):
             for row in summary.values():row['runnable']=0
         enabled=automatic_enabled(root,market) if m else False
         hold=identity_hold(root,market) if m and (Path(root)/'config/market-accounts.json').exists() else None
-        return {'automaticEnabled':enabled,'identityHold':hold,'activeRun':dict(active) if active else None,'available':True,'market':market,'types':summary,'control':dict(m) if m else None,'platformWrites':0}
+        return {'automaticEnabled':enabled,'identityHold':hold,'activeRun':dict(active) if active else None,
+                'lastFinishedRun':last_finished_run(store.db,market),
+                'available':True,'market':market,'types':summary,'control':dict(m) if m else None,'platformWrites':0}
+
+
+def last_finished_run(db,market):
+    """What the most recent finished Kalodata stage did, from its own terminal record (H05).
+
+    Counts come from the stage's published generation; a stage that published nothing (failed,
+    stopped) reports ``resultRecorded: false`` and null counts rather than zeros."""
+    row=db.execute("""SELECT s.run_id,s.stage_run_id,s.state,s.error_code,s.started_at,s.finished_at,g.payload_json
+      FROM workflow_stage_run s JOIN workflow_run r ON r.run_id=s.run_id
+      LEFT JOIN workflow_generation g ON g.generation_id=s.output_generation_id
+      WHERE r.market=? AND s.stage='kalodata' AND s.finished_at IS NOT NULL AND s.state NOT IN ('skipped','waiting_upstream')
+      ORDER BY s.finished_at DESC LIMIT 1""",(market,)).fetchone()
+    if not row:return None
+    try:payload=(json.loads(row['payload_json']) or {}).get('payload') or {} if row['payload_json'] else None
+    except (TypeError,ValueError):payload=None
+    number=lambda key:payload.get(key) if payload and type(payload.get(key)) is int else None
+    errors=payload.get('errors') if payload and isinstance(payload.get('errors'),list) else None
+    return {'runId':row['run_id'],'stageRunId':row['stage_run_id'],'state':row['state'],'errorCode':row['error_code'],
+            'startedAt':row['started_at'],'finishedAt':row['finished_at'],'resultRecorded':payload is not None,
+            'completedQueries':number('completed'),'aQueries':number('A'),'bQueries':number('B'),
+            'fragments':number('fragments'),'networkRequests':number('networkRequests'),
+            'sliceComplete':payload.get('sliceComplete') if payload and isinstance(payload.get('sliceComplete'),bool) else None,
+            'errorCount':len(errors) if errors is not None else None,
+            'errors':[str(item.get('code') if isinstance(item,dict) else item)[:80] for item in (errors or [])[:3]]}
 
 
 def read_a(root,task,requester,*,max_requests=FRAGMENT_REQUESTS,clock=time.time):

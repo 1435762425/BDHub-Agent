@@ -95,9 +95,25 @@ def save_config(root, raw):
 class Ledger:
     """Per-PID record of when we last asked Kalodata and what came back."""
 
-    def __init__(self, root, market='it'):
+    TABLES = frozenset({'leads_query', 'leads_attempt', 'leads_page', 'leads_page_scope', 'leads_page_legacy_history'})
+
+    def __init__(self, root, market='it', *, readonly=False):
         self.market=market
         self.path = Path(root) / ('var/kalodata-leads.sqlite' if market=='it' else f'var/kalodata-leads-{market}.sqlite')
+        if readonly:
+            # Status reads never create, migrate or lock the ledger (H06): a market that has never
+            # queried reads as an empty in-memory ledger; an old schema is reported, not upgraded.
+            if not self.path.exists():
+                self.db = sqlite3.connect(':memory:')
+                self.db.row_factory = sqlite3.Row
+                self.db.executescript(SCHEMA)
+                return
+            self.db = sqlite3.connect(self.path.resolve().as_uri() + '?mode=ro', uri=True, timeout=15)
+            self.db.row_factory = sqlite3.Row
+            if not self.TABLES <= {row[0] for row in self.db.execute("SELECT name FROM sqlite_master WHERE type='table'")}:
+                self.db.close()
+                raise ValueError('leads_ledger_migration_required')
+            return
         # The ledger owns its home: a workspace that has never queried anything still reads.
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.db = sqlite3.connect(self.path, timeout=15)
@@ -310,7 +326,7 @@ def build(root, *, market='it', config=None, now=None, ledger=None):
     config = config or load(root)
     now = time.time() if now is None else now
     own = ledger is None
-    ledger = ledger or Ledger(root,market)
+    ledger = ledger or Ledger(root,market,readonly=True)
     try:
         products = eligible_products(root,market)
         linked = linked_products(root,market)
@@ -455,4 +471,8 @@ def status(root=None, *, market='it', config=None, now=None, batch_size=None):
             'batchFirst': sum(1 for row in taken if row['kind'] == 'first'),
             'batchRefresh': sum(1 for row in taken if row['kind'] == 'due'),
             'shortfall': max(0, size - len(taken)), 'padded': False,
-            'run': ({'running':bool(rolling.get('activeRun')),'startedAt':(rolling.get('activeRun') or {}).get('started_at')} if rolling and rolling.get('control') else run_state(root,market=market))}
+            # A queued Kalodata stage has not taken a resource yet: it is waiting, not running (H05).
+            'run': ({'running':(rolling.get('activeRun') or {}).get('state')=='running',
+                     'queued':(rolling.get('activeRun') or {}).get('state')=='queued',
+                     'startedAt':(rolling.get('activeRun') or {}).get('started_at'),
+                     'lastFinished':rolling.get('lastFinishedRun')} if rolling and rolling.get('control') else run_state(root,market=market))}

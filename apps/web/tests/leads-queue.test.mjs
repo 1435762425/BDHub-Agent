@@ -95,3 +95,13 @@ test('rolling queue keeps A/B states, quota pause and automatic authorization se
  assert.equal(actual.control.retry_at,1000);
  assert.throws(()=>validateLeadsQueue({...payload,rolling:{...rolling,types:{A:{...a,total:4},B:b}}},'it'),/invalid_leads_queue/);
 });
+test('a queued Kalodata stage is not running and the last finished result survives the round trip',()=>{
+ const last={runId:'workflow-1',stageRunId:'stage-1',state:'completed',errorCode:null,startedAt:1,finishedAt:2,resultRecorded:true,
+  completedQueries:7,aQueries:3,bQueries:4,fragments:8,networkRequests:11,sliceComplete:true,errorCount:1,errors:['kalodata_video_read_failed']};
+ const run=validateLeadsQueue({...payload,run:{running:false,queued:true,startedAt:1,lastFinished:last,errors:[{pid:'1',code:'x'}]}},'it').run;
+ assert.equal(run.running,false);assert.equal(run.queued,true);
+ assert.deepEqual(run.lastFinished,last);assert.deepEqual(run.errors,[{pid:'1',code:'x'}]);
+ const unrecorded={...last,state:'failed',resultRecorded:false,completedQueries:null,aQueries:null,bQueries:null,fragments:null,networkRequests:null,sliceComplete:null,errorCount:null,errors:[]};
+ assert.equal(validateLeadsQueue({...payload,run:{running:false,lastFinished:unrecorded}},'it').run.lastFinished.completedQueries,null);
+ assert.throws(()=>validateLeadsQueue({...payload,run:{running:false,lastFinished:{...last,aQueries:-1}}},'it'),/invalid_leads_queue/);
+});
