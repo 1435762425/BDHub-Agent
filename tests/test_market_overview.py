@@ -150,11 +150,13 @@ class OverviewTests(unittest.TestCase):
             db.row_factory=sqlite3.Row
             db.executescript('''CREATE TABLE cycle_delivery(plan_id,state);
               CREATE TABLE service_reply(plan_id,state); CREATE TABLE service_case(plan_id,reason,state);
-              CREATE TABLE account_maintenance_intent(market,state);''')
+              CREATE TABLE account_maintenance_intent(market,account,state,created_at);''')
             db.executemany('INSERT INTO cycle_delivery VALUES(?,?)', [('p','unknown'),('p','quarantined_unknown'),('other','unknown')])
             db.execute("INSERT INTO service_reply VALUES('p','unknown')")
             db.executemany('INSERT INTO service_case VALUES(?,?,?)', [('p','card_result_unknown','open'),('p','paid_quote','open'),('p','card_result_unknown','resolved')])
-            db.executemany('INSERT INTO account_maintenance_intent VALUES(?,?)', [('it','needs_human'),('br','needs_human')])
+            # acc6 needed a person once but a later maintenance superseded it; only acc9 is still open.
+            db.executemany('INSERT INTO account_maintenance_intent VALUES(?,?,?,?)', [('it','acc9','needs_human',1),('br','acc1','needs_human',1),
+                ('it','acc6','needs_human',1),('it','acc6','completed',2)])
             before=db.total_changes
             value=handling(db,'p','it',NOON)
             metrics={m['key']:m['value'] for m in value['metrics']}

@@ -207,7 +207,10 @@ def handling(db, plan, market, now):
     business = sum(r['n'] for r in cases if r['reason'] not in TECHNICAL_CASES)
     accounts = None
     if 'account_maintenance_intent' in tables(db):
-        accounts = db.execute("SELECT count(*) FROM account_maintenance_intent WHERE market=? AND state='needs_human'", (market,)).fetchone()[0]
+        # Same rule as the account queue: a needs_human intent is settled once a newer one exists for that account.
+        accounts = db.execute("""SELECT count(*) FROM account_maintenance_intent i WHERE i.market=? AND i.state='needs_human'
+            AND NOT EXISTS (SELECT 1 FROM account_maintenance_intent newer WHERE newer.market=i.market
+            AND newer.account=i.account AND newer.created_at>i.created_at)""", (market,)).fetchone()[0]
     return {'metrics': [metric('deliveryUnknown', '投递结果未知', delivery['unknown'], '次'),
                         metric('quarantined', '已技术隔离投递', delivery['quarantined_unknown'], '次'),
                         metric('replyUnknown', '回复在途/待核验', replies, '条'),
