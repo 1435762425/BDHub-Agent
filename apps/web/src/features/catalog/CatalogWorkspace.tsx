@@ -111,7 +111,8 @@ function FullManagedPanel({definition}:{definition:MarketSummary}){
 function Unavailable({title}:{title:string}){return <Card title={title}><EmptyState title="当前市场运行能力尚未验收" description="页面结构已统一；真实账号、locale 或写能力确认前保持关闭，并且不读取其它市场数据。"/></Card>;}
 
 export default function CatalogWorkspace({definition}:{definition:MarketSummary}){
- const [tab,setTab]=useState<Tab>("full"),runtimeAvailable=definition.runtimeState!=="planned";
+ // Markets without full-managed goods open on the Campaign catalog they actually use.
+ const [tab,setTab]=useState<Tab>(definition.capabilities.fullManagedCatalog===false?"campaign":"full"),runtimeAvailable=definition.runtimeState!=="planned";
  const tabs=[{value:"full",label:"全托商品"},{value:"campaign",label:"非全托商品"},{value:"leads",label:"达人线索"},{value:"naming",label:"新建链接命名"}];
  return <div className="space-y-5"><PageHeading title="货盘" description="全托、Campaign、TapLink、Kalodata/OECID 与发送池使用同一市场隔离合同。" action={<Pill tone={runtimeAvailable?"brand":"warning"}>{definition.label} · {definition.shortLabel}</Pill>}/><Tabs items={tabs} value={tab} onChange={value=>setTab(value as Tab)}/>{tab==="full"?<FullManagedPanel definition={definition}/>:tab==="campaign"?(runtimeAvailable?<CampaignPanel market={definition.key} onOpenLeads={()=>setTab("leads")}/>:<Unavailable title="非全托商品"/>):tab==="leads"?(runtimeAvailable?<LeadsPanel market={definition.key}/>:<Unavailable title="达人线索"/>):(runtimeAvailable&&definition.contentReady?<LinkNamingPanel market={definition.key}/>:<Unavailable title="新建链接命名"/>)}</div>;
 }
