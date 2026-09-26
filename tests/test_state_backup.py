@@ -52,6 +52,35 @@ class StateBackupTests(unittest.TestCase):
                              ["original-a.sqlite", "committed-in-wal"])
         self.assertNotIn(secret, (self.root / "portable/manifest.json").read_text(encoding="utf-8"))
 
+    def test_backup_completes_while_another_process_keeps_writing(self):
+        import threading, time
+        path = self.root / "var/a.sqlite"
+        with closing(sqlite3.connect(path)) as db:
+            db.execute("PRAGMA journal_mode=WAL")
+            with db:
+                db.executemany("INSERT INTO fact(value) VALUES(?)", [("x" * 2000,)] * 6000)
+        stop = threading.Event()
+        def writer():
+            with closing(sqlite3.connect(path, timeout=30)) as db:
+                while not stop.is_set():
+                    with db:
+                        db.execute("INSERT INTO fact(value) VALUES('live')")
+                    time.sleep(0.002)
+        thread = threading.Thread(target=writer)
+        thread.start()
+        try:
+            before = time.time()
+            result = create_backup(self.root, output=self.root / "live", clock=lambda: 124.0)
+            elapsed = time.time() - before
+        finally:
+            stop.set()
+            thread.join()
+        self.assertTrue(result["valid"])
+        self.assertLess(elapsed, 30)
+        with closing(sqlite3.connect(self.root / "live/a.sqlite")) as db:
+            self.assertEqual(db.execute("PRAGMA quick_check").fetchone()[0], "ok")
+            self.assertGreaterEqual(db.execute("SELECT count(*) FROM fact").fetchone()[0], 6001)
+
     def test_unregistered_database_refuses_backup(self):
         with closing(sqlite3.connect(self.root / "var/unregistered.sqlite")) as db, db:
             db.execute("CREATE TABLE fact(id)")

@@ -115,7 +115,10 @@ def _snapshot_database(source, destination):
     with closing(sqlite3.connect(source.resolve().as_uri() + "?mode=ro", uri=True, timeout=30)) as reader:
         reader.execute("PRAGMA query_only=ON")
         with closing(sqlite3.connect(destination, timeout=30)) as writer:
-            reader.backup(writer, pages=2048, sleep=0.01)
+            # One step under one read transaction: a consistent WAL snapshot that live writers
+            # cannot restart. Paged steps restart on every foreign commit and never finish on a
+            # busy production database.
+            reader.backup(writer, pages=-1)
     destination.chmod(0o600)
     inspected = _inspect_database(destination)
     return {"name": destination.name, "size": destination.stat().st_size,
