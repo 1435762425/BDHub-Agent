@@ -114,7 +114,11 @@ class MarketLaunchContracts(unittest.TestCase):
   (self.root/'.venv/bin').mkdir(parents=True)
   (self.root/'.venv/bin/python').symlink_to(sys.executable)
   (self.root/'scripts').mkdir()
-  (self.root/'scripts/probe.py').write_text('import json; print(json.dumps({"state":"completed"}))\n')
+  (self.root/'scripts/probe.py').write_text(
+   'import json,os,sqlite3\n'
+   'db=sqlite3.connect("var/second-cycle.sqlite")\n'
+   'pid=db.execute("SELECT worker_pid FROM workflow_stage_claim").fetchone()[0]\n'
+   'print(json.dumps({"state":"completed","registered":pid,"self":os.getpid()}))\n')
   run=create_run(self.store,market='my',trigger_source='manual',scheduled_at=NOW,
                  request_id='stage-child-registration-001',sources=['campaign'])
   stage=next(row for row in run['stages'] if row['state']=='queued')
@@ -124,9 +128,12 @@ class MarketLaunchContracts(unittest.TestCase):
   executor._claims.ticket=ticket|{'ownerId':'scheduler-test-001'}
   result=executor._call(['scripts/probe.py'],'child-registration',timeout=20)
   self.assertEqual(result['state'],'completed')
-  child=self.store.db.execute('SELECT worker_pid FROM workflow_stage_claim WHERE stage_run_id=?',
+  # While it ran, the claim named the child itself; once it exited, the supervisor again.
+  self.assertEqual(result['payload']['registered'],result['payload']['self'])
+  self.assertNotEqual(result['payload']['self'],os.getpid())
+  after=self.store.db.execute('SELECT worker_pid FROM workflow_stage_claim WHERE stage_run_id=?',
                               (stage['stageRunId'],)).fetchone()[0]
-  self.assertNotEqual(child,os.getpid())
+  self.assertEqual(after,os.getpid())
 
  def test_market_agent_dispatches_one_frozen_text_and_checks_original_receipt(self):
   from lib.market_agent_reply import _window_open,run_reply
