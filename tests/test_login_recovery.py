@@ -8,7 +8,9 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
 from lib.account_identity import current_generation, publish_generation  # noqa: E402
-from lib.login_recovery import AUTH_REQUIRED, it_login_expired, request_refresh  # noqa: E402
+from lib.login_recovery import (AUTH_REQUIRED, _legacy_request_id, auth_family, it_login_expired,  # noqa: E402
+                                request_recovery, request_refresh)
+from lib.operations_scheduler import SubprocessStageExecutor  # noqa: E402
 from lib.market_im_runtime import _read  # noqa: E402
 from lib.schema_migrations import apply_database  # noqa: E402
 from lib.second_cycle import CycleStore  # noqa: E402
@@ -32,12 +34,12 @@ class LoginRecoveryTests(unittest.TestCase):
         self.store.close()
         self.temp.cleanup()
 
-    def publish(self, n):
-        publish_generation(self.store, market="it", account="acc6", role="communications", reason="relogin",
+    def publish(self, n, account="acc6", role="communications"):
+        publish_generation(self.store, market="it", account=account, role=role, reason="relogin",
                            identity={"browserRef": f"browser:{n}", "httpRef": f"http:{n}", "imRef": f"im:{n}",
                                      "institutionFingerprint": "i" * 64},
                            capabilities={"http": {"state": "verified"}, "im": {"state": "verified"}}, now=NOW + n)
-        return current_generation(self.store, "it", "acc6")["generationId"]
+        return current_generation(self.store, "it", account)["generationId"]
 
     def refresh(self):
         return request_refresh(self.store, self.root, "it", spawn=self.spawned.append)
@@ -76,10 +78,80 @@ class LoginRecoveryTests(unittest.TestCase):
         self.store.db.execute("INSERT INTO account_maintenance_intent VALUES(?,?,?,?,?,?,'running',?,NULL,?,NULL,NULL,'{}',NULL,?)",
                               ("maintenance-other", "maintenance-other-request", "it", "acc6", "communications", "refresh",
                                None, NOW, NOW))
-        self.assertEqual(self.refresh(), {"state": "not_requested", "reason": "account_maintenance_active"})
+        # Another maintenance of the same account is the chain: join it instead of queueing a second login.
+        waiting = self.refresh()
+        self.assertEqual((waiting["state"], waiting["intentId"]), ("waiting_active", "maintenance-other"))
         (self.root / "config/market-accounts.json").write_text("{}")
         self.assertEqual(self.refresh()["state"], "not_requested")
         self.assertEqual(self.spawned, [])
+
+    def intents(self):
+        return list(self.store.db.execute("SELECT request_id,account,operation FROM account_maintenance_intent"))
+
+    def test_every_reporter_of_one_lapse_joins_one_refresh_chain(self):
+        self.publish(1)
+        first = request_recovery(self.store, self.root, "it", "communications", source="sdk", spawn=self.spawned.append)
+        joined = [self.refresh(),
+                  request_recovery(self.store, self.root, "it", "communications", source="scheduler:oecid-0",
+                                   spawn=self.spawned.append)]
+        self.assertEqual({row["intentId"] for row in joined}, {first["intentId"]})
+        self.assertTrue(all(row["duplicate"] for row in joined))
+        self.assertEqual([(row["account"], row["operation"]) for row in self.intents()], [("acc6", "refresh")])
+        self.assertEqual(len(self.spawned), 1)
+
+    def test_a_lapse_handled_under_the_old_inbox_id_stays_handled(self):
+        generation = self.publish(1)
+        self.store.db.execute("INSERT INTO account_maintenance_intent VALUES(?,?,?,?,?,?,'needs_human',?,NULL,?,NULL,NULL,'{}',?,?)",
+                              ("maintenance-legacy", _legacy_request_id("it", "acc6", generation), "it", "acc6",
+                               "communications", "refresh", generation, NOW, "account_login_timeout", NOW))
+        held = self.refresh()
+        self.assertEqual((held["intentId"], held["state"], held["duplicate"]), ("maintenance-legacy", "needs_human", True))
+        self.assertEqual(len(self.intents()), 1)
+
+    def test_the_failed_account_recovers_without_touching_the_other_role(self):
+        self.publish(1)
+        self.publish(1, account="acc9", role="supply")
+        supply = request_recovery(self.store, self.root, "it", "supply", source="scheduler:selection",
+                                  spawn=self.spawned.append)
+        self.assertEqual((supply["account"], supply["state"]), ("acc9", "queued"))
+        self.assertEqual([row["account"] for row in self.intents()], ["acc9"])
+
+    def test_only_a_lapsed_login_is_an_auth_failure(self):
+        self.assertEqual(auth_family(platform_code=AUTH_REQUIRED), "auth_expired")
+        self.assertEqual(auth_family("sdk_login_required"), "auth_expired")
+        self.assertEqual(auth_family("market_identity_auth_required"), "auth_expired")
+        for code in ("provider_timeout", "ReadTimeout", "business_rejected", "quota_exhausted",
+                     "market_identity_blocked", "ProfileBusyError", None):
+            self.assertIsNone(auth_family(code, platform_code=98000001), code)
+
+    def test_scheduler_waits_for_the_shared_chain_and_needs_a_newer_generation(self):
+        self.publish(1)
+        shared = self.refresh()
+        executor = SubprocessStageExecutor(self.root)
+        workers = []
+
+        def worker(args, label, timeout=14400):
+            workers.append(args[0])
+            self.settle(shared["intentId"], "completed")
+            self.publish(2)
+            return {"state": "completed"}
+
+        executor._call = worker
+        executor.sleep = lambda seconds: None
+        result = executor._relogin_market_account(self.store, "it", "communications", "run-1", "oecid-0")
+        self.assertEqual(result["state"], "completed")
+        self.assertEqual(workers, ["scripts/account-maintenance-worker.py"])
+        self.assertEqual(len(self.intents()), 1)
+        # The recovered generation fails in turn: a new chain, still a refresh first.
+        self.settle(shared["intentId"], "completed")
+        executor._call = lambda args, label, timeout=14400: {"state": "completed"}
+        pending = executor._relogin_market_account
+        requested = request_recovery(self.store, self.root, "it", "communications", source="sdk", spawn=self.spawned.append)
+        self.assertNotEqual(requested["intentId"], shared["intentId"])
+        self.settle(requested["intentId"], "needs_human", "account_manual_verification_required")
+        failed = pending(self.store, "it", "communications", "run-2", "oecid-0")
+        self.assertEqual(failed, {"state": "failed", "errorCode": "account_manual_verification_required"})
+        self.assertEqual(len(self.intents()), 2)
 
     def test_it_auth_report_marks_only_the_lapsed_login(self):
         self.assertTrue(it_login_expired({"authReads": [{"code": 0}, {"code": AUTH_REQUIRED,

@@ -117,7 +117,8 @@ def main():
                 code=getattr(error,'code',None) or (str(error) if isinstance(error,ValueError) else type(error).__name__)
                 print(json.dumps({'event':'session_error','market':a.market,'error':code,'at':time.time()}),flush=True)
                 publish(ROOT,a.market,{'pid':os.getpid(),'state':'waiting_account' if code=='ProfileBusyError' else 'attention','error':code,'checkedAt':time.time(),'market':a.market})
-                if getattr(error,'platform_code',None)==16201010 or code=='sdk_login_required':
+                from lib.login_recovery import auth_family
+                if auth_family(code,getattr(error,'platform_code',None)):
                     from lib.second_cycle import CycleStore
                     from lib.login_recovery import request_refresh
                     with CycleStore(ROOT/'var/second-cycle.sqlite') as store:request_refresh(store,ROOT,a.market)

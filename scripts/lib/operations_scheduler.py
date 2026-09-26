@@ -436,18 +436,28 @@ class SubprocessStageExecutor:
                 'payload':evidence or payload,'scope':{}}
 
     def _relogin_market_account(self,store,market,role,run_id,reason):
+        """Recover the failed account through the single auth entry and wait for that one chain to finish.
+
+        Concurrent reporters of the same lapse (inbox, SDK, another stage) join the same intent; this stage
+        succeeds only when a generation newer than the one that failed has been published."""
         if store is None:return {'state':'failed','errorCode':'selection_relogin_store_missing'}
-        from lib.account_identity import current_generation,request_maintenance
+        from lib.account_identity import current_generation
+        from lib.login_recovery import request_recovery
         from lib.market_accounts import load_config
         account=load_config(self.root)['markets'][market]['roles'][role];prior=current_generation(store,market,account)
-        request_id=f'{role}-auth-{market}-'+digest([run_id,reason,(prior or {}).get('generationId')])[:24]
-        try:request_maintenance(store,self.root,market=market,account=account,operation='relogin',request_id=request_id)
-        except CycleError as error:
-            if str(error)!='account_maintenance_active':return {'state':'failed','errorCode':str(error)}
-        worker=self._call(['scripts/account-maintenance-worker.py'],'global-selection-relogin',timeout=660)
+        requested=request_recovery(store,self.root,market,role,source=f'scheduler:{reason}',spawn=lambda _root:None)
+        if requested['state']=='not_requested':return {'state':'failed','errorCode':requested.get('reason') or 'auth_recovery_not_requested'}
+        intent_id=requested['intentId'];sleep=getattr(self,'sleep',time.sleep);deadline=time.monotonic()+660;row=None
+        while intent_id:
+            row=store.db.execute('SELECT state,error_code FROM account_maintenance_intent WHERE intent_id=?',(intent_id,)).fetchone()
+            if row is None or row['state'] not in ('queued','draining','running'):break
+            if time.monotonic()>=deadline:return {'state':'failed','errorCode':'auth_recovery_wait_timeout'}
+            # Another account's maintenance may hold the global queue; the worker then claims nothing yet.
+            if row['state']=='queued':self._call(['scripts/account-maintenance-worker.py'],'global-selection-relogin',timeout=660)
+            sleep(5)
         current=current_generation(store,market,account)
-        if worker['state']!='completed' or not current or not prior or current['publishedAt']<=prior['publishedAt']:
-            return {'state':'failed','errorCode':worker.get('errorCode') or 'selection_relogin_not_published'}
+        if not current or not prior or current['publishedAt']<=prior['publishedAt']:
+            return {'state':'failed','errorCode':(row['error_code'] if row else None) or 'selection_relogin_not_published'}
         return {'state':'completed','generationId':current['generationId']}
 
     def _relogin_selection_account(self,store,market,run_id,auth):
