@@ -45,8 +45,11 @@ def clean_categories(rows):
     return result
 
 def normalize_page(data):
-    """The category endpoint omits products for an explicit zero-result terminal page."""
-    if isinstance(data,dict) and data.get('total')==0 and data.get('has_more') is False and data.get('products') is None:
+    """The category endpoint omits products on an explicit terminal page that has no rows left.
+
+    That is a zero-result category, or a tail page whose last members were delisted mid-read; the
+    category's own completeness checks then judge the totals."""
+    if isinstance(data,dict) and type(data.get('total')) is int and data.get('has_more') is False and data.get('products') is None:
         return {**data,'products':[]}
     return data
 
@@ -397,6 +400,20 @@ class GlobalSources:
             self.db.execute("INSERT INTO global_source_attempt(run_id,page,at,code) VALUES(?,?,?,'partition_signature_retry')",(id,partition['next_page'],self.clock()))
             self.db.execute("UPDATE global_source_partition SET state='collecting',terminal_reason=NULL,updated=? WHERE run_id=? AND category_id=?",(self.clock(),id,partition['category_id']))
             self.db.execute("UPDATE global_source_run SET state='collecting',terminal_reason=NULL,updated=? WHERE id=?",(self.clock(),id))
+    def retry_invalid_page(self,id,max_attempts=2):
+        """Request the same category page again after a response this version could not read."""
+        with self.tx():
+            run=self.get(id)
+            partition=self.db.execute("SELECT * FROM global_source_partition WHERE run_id=? AND state='blocked' ORDER BY position LIMIT 1",(id,)).fetchone()
+            if run['state']!='blocked' or not partition or partition['terminal_reason']!='page_shape_invalid':
+                raise GlobalSourceError('invalid_page_retry_invalid')
+            attempts=self.db.execute("SELECT count(*) FROM global_source_attempt WHERE run_id=? AND page=? AND code='invalid_page_retry'",(id,partition['next_page'])).fetchone()[0]
+            if attempts>=max_attempts:raise GlobalSourceError('invalid_page_retry_limit')
+            now=self.clock()
+            self.db.execute("INSERT INTO global_source_attempt(run_id,page,at,code) VALUES(?,?,?,'invalid_page_retry')",(id,partition['next_page'],now))
+            self.db.execute("UPDATE global_source_partition SET state='collecting',terminal_reason=NULL,updated=? WHERE run_id=? AND category_id=?",(now,id,partition['category_id']))
+            self.db.execute("UPDATE global_source_run SET state='collecting',terminal_reason=NULL,updated=? WHERE id=?",(now,id))
+            return partition['category_id']
     def resume_partition_after_relogin(self,id,proof,published_at):
         with self.tx():
             run=self.get(id);part=self.db.execute("SELECT * FROM global_source_partition WHERE run_id=? AND state='blocked' ORDER BY position LIMIT 1",(id,)).fetchone()

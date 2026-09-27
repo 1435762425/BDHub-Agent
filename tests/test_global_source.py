@@ -185,6 +185,37 @@ class SourceTests(unittest.TestCase):
   second=self.s.db.execute("SELECT state,terminal_reason FROM global_source_partition WHERE run_id='drift' AND category_id='600002'").fetchone()
   self.assertEqual(tuple(second),('partial','category_endpoint_total_mismatch'))
   self.assertEqual(self.s.status('drift')['state'],'partial')
+ def test_null_tail_page_ends_a_category_and_its_totals_decide_completeness(self):
+  self.s.blocked('one','fixture_end')
+  self.s.start_partitioned('tail',self.scope,[{'category_id':'600001','name':'家居装修','is_leaf':False},
+                                             {'category_id':'600002','name':'玩具','is_leaf':False}]);self.s.next_partition('tail')
+  # The last member was delisted before the tail page: the endpoint ends with no product list.
+  self.s.partition_page('tail','600001',1,page([1,2],True,3),request_payload=list_request(1,category_id='600001'))
+  self.s.partition_page('tail','600001',2,{'products':None,'has_more':False,'total':2},request_payload=list_request(2,3,'600001'))
+  first=self.s.db.execute("SELECT state,terminal_reason FROM global_source_partition WHERE run_id='tail' AND category_id='600001'").fetchone()
+  self.assertEqual(tuple(first),('completed','endpoint_end_total_drift'))
+  self.s.next_partition('tail')
+  self.s.partition_page('tail','600002',1,page([3],True,2),request_payload=list_request(1,category_id='600002'))
+  # A list still announcing more rows is never an ending.
+  with self.assertRaisesRegex(GlobalSourceError,'page_shape_invalid'):
+   self.s.partition_page('tail','600002',2,{'products':None,'has_more':True,'total':2},request_payload=list_request(2,2,'600002'))
+  # An empty tail that leaves the total unmet stays incomplete.
+  self.s.partition_page('tail','600002',2,{'products':None,'has_more':False,'total':2},request_payload=list_request(2,2,'600002'))
+  self.assertEqual(self.s.status('tail')['state'],'partial')
+ def test_page_blocked_as_unreadable_can_be_requested_again_a_bounded_number_of_times(self):
+  self.s.blocked('one','fixture_end')
+  self.s.start_partitioned('unread',self.scope,[{'category_id':'600001','name':'家居装修','is_leaf':False}]);self.s.next_partition('unread')
+  self.s.partition_page('unread','600001',1,page([1,2],True,3),request_payload=list_request(1,category_id='600001'))
+  self.s.blocked('unread','source_remote_rejected')
+  with self.assertRaisesRegex(GlobalSourceError,'invalid_page_retry_invalid'):self.s.retry_invalid_page('unread')
+  with self.s.tx():
+   self.s.db.execute("UPDATE global_source_partition SET terminal_reason='page_shape_invalid' WHERE run_id='unread'")
+   self.s.db.execute("UPDATE global_source_run SET terminal_reason='page_shape_invalid' WHERE id='unread'")
+  for _ in range(2):
+   self.assertEqual(self.s.retry_invalid_page('unread'),'600001')
+   self.assertEqual((self.s.status('unread')['state'],self.s.next_partition('unread')['next_page']),('collecting',2))
+   self.s.blocked('unread','page_shape_invalid')
+  with self.assertRaisesRegex(GlobalSourceError,'invalid_page_retry_limit'):self.s.retry_invalid_page('unread')
  def test_partial_category_can_be_discarded_and_restarted_before_publication(self):
   self.s.blocked('one','fixture_end')
   self.s.start_partitioned('retrycat',self.scope,[{'category_id':'600001','name':'家居用品','is_leaf':False}])

@@ -12,7 +12,7 @@ def stop(*_):
  global STOP;STOP=True
 
 def main():
- p=argparse.ArgumentParser();p.add_argument('--market',default='it');p.add_argument('--run-id');p.add_argument('--pages',type=int,default=15);p.add_argument('--worker',action='store_true');p.add_argument('--by-category',action='store_true');p.add_argument('--retry-boundary-tail',action='store_true');p.add_argument('--retry-partial-category',action='store_true');p.add_argument('--repair-partial-category',action='store_true');p.add_argument('--repair-partial-query',action='store_true');p.add_argument('--accept-stable-duplicates',action='store_true');p.add_argument('--accept-stable-query-duplicates',action='store_true');p.add_argument('--accept-partial-snapshot',action='store_true');p.add_argument('--resume-after-relogin',action='store_true');p.add_argument('--status',action='store_true');p.add_argument('--offset',type=int,default=0);p.add_argument('--query',default='');p.add_argument('--audit-store',type=Path);a=p.parse_args()
+ p=argparse.ArgumentParser();p.add_argument('--market',default='it');p.add_argument('--run-id');p.add_argument('--pages',type=int,default=15);p.add_argument('--worker',action='store_true');p.add_argument('--by-category',action='store_true');p.add_argument('--retry-boundary-tail',action='store_true');p.add_argument('--retry-partial-category',action='store_true');p.add_argument('--repair-partial-category',action='store_true');p.add_argument('--repair-partial-query',action='store_true');p.add_argument('--accept-stable-duplicates',action='store_true');p.add_argument('--accept-stable-query-duplicates',action='store_true');p.add_argument('--accept-partial-snapshot',action='store_true');p.add_argument('--resume-after-relogin',action='store_true');p.add_argument('--retry-invalid-page',action='store_true');p.add_argument('--status',action='store_true');p.add_argument('--offset',type=int,default=0);p.add_argument('--query',default='');p.add_argument('--audit-store',type=Path);a=p.parse_args()
  from lib.market_registry import supports
  if not supports(ROOT,a.market,'fullManagedCatalog'):p.error('market has no full-managed catalog')
  a.run_id=a.run_id or f'{a.market}-global-{time.strftime("%Y%m%d")}'
@@ -59,6 +59,9 @@ def main():
     previous=json.loads(runtime_path.read_text())
     if previous.get('status',{}).get('id')!=a.run_id:raise GlobalSourceError('boundary_run_mismatch')
     s.retry_boundary_tail(a.run_id,previous.get('lastResponse',{}))
+   if a.retry_invalid_page:
+    if not a.by_category:raise GlobalSourceError('invalid_page_retry_invalid')
+    s.retry_invalid_page(a.run_id)
    if a.retry_partial_category:
     if not a.by_category:raise GlobalSourceError('partial_partition_retry_invalid')
     s.retry_partial_partition(a.run_id)
