@@ -18,7 +18,7 @@ class DispatchTests(unittest.TestCase):
   with CycleStore(self.root/'var/second-cycle.sqlite',lambda:self.now[0]) as store:store.plan('bjn-local-research','it')
   apply_database(self.root,'second-cycle',clock=lambda:self.now[0]);self.store=CycleStore(self.root/'var/second-cycle.sqlite',lambda:self.now[0])
   self.accounts={market:{'roles':{'supply':f'acc{i+1}','communications':f'acc{i+21}'}} for i,market in enumerate(MARKETS)}
-  self.policy={'kalodataMaxParallelMarkets':2}
+  self.policy={'kalodataMaxParallelMarkets':2,'platformMaxParallelMarkets':1}
  def tearDown(self):self.store.close();self.temp.cleanup()
 
  def seed(self,stage='catalog',*,checkpoint_market=None,blocked_market=None):
@@ -45,6 +45,13 @@ class DispatchTests(unittest.TestCase):
     waiting=claim_ready(self.store,self.root,runs,self.policy,'scheduler-14-markets',accounts=self.accounts,worker_pid=111)
     self.assertEqual(waiting['claimed'],[])
 
+ def test_platform_pool_of_two_lets_two_markets_read_while_the_rest_queue(self):
+  runs=self.seed('oecid');policy={**self.policy,'platformMaxParallelMarkets':2}
+  selected=claim_ready(self.store,self.root,runs,policy,'scheduler-two-markets',accounts=self.accounts,worker_pid=111)
+  self.assertEqual(len(selected['claimed']),2)
+  self.assertEqual(len({row['run']['market'] for row in selected['claimed']}),2)
+  self.assertEqual(self.store.db.execute("SELECT count(*) FROM workflow_resource_slot WHERE resource_key='platform:global'").fetchone()[0],2)
+  self.assertEqual(claim_ready(self.store,self.root,runs,policy,'scheduler-two-markets',accounts=self.accounts,worker_pid=111)['claimed'],[])
  def test_kalodata_runs_beside_another_markets_platform_stage(self):
   runs=[]
   for market,stage in (('it','catalog'),('br','oecid'),('uk','kalodata')):

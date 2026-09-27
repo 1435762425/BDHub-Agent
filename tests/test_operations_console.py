@@ -1,4 +1,4 @@
-import sys,tempfile,unittest
+import json,sys,tempfile,unittest
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1];sys.path.insert(0,str(ROOT/'scripts'))
 from lib.operations_console import console  # noqa:E402
@@ -14,6 +14,8 @@ class OperationsConsoleTests(unittest.TestCase):
   self.tmp=tempfile.TemporaryDirectory();self.root=Path(self.tmp.name);(self.root/'var').mkdir();(self.root/'config').mkdir()
   for name in ('markets.json','market-accounts.json','operations-policy.json'):
    (self.root/'config'/name).write_bytes((ROOT/'config'/name).read_bytes())
+  policy=json.loads((self.root/'config/operations-policy.json').read_text());policy['platformMaxParallelMarkets']=1
+  (self.root/'config/operations-policy.json').write_text(json.dumps(policy))
   with CycleStore(self.root/'var/second-cycle.sqlite',lambda:NOW) as store:
    for market in ('br','my'):store.plan('bjn-local-research',market)
   apply_database(self.root,'second-cycle',clock=lambda:NOW)
@@ -25,7 +27,7 @@ class OperationsConsoleTests(unittest.TestCase):
   my=create_run(self.store,market='my',trigger_source='manual',scheduled_at=NOW,request_id='console-my-run',only_stage='catalog',sources=['campaign'])
   create_run(self.store,market='br',trigger_source='manual',scheduled_at=NOW,request_id='console-br-run',only_stage='oecid',sources=['campaign'])
   runs=[status(self.store,m)['current'] for m in ('my','br')]
-  claimed=claim_ready(self.store,self.root,[runs[0]],{'kalodataMaxParallelMarkets':2},'scheduler-console-test',worker_pid=1)
+  claimed=claim_ready(self.store,self.root,[runs[0]],{'kalodataMaxParallelMarkets':2,'platformMaxParallelMarkets':1},'scheduler-console-test',worker_pid=1)
   self.assertEqual(len(claimed['claimed']),1)
   value=console(self.root,self.store,markets=['br','my'])
   rows={row['market']:row for row in value['markets']}

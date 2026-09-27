@@ -488,12 +488,14 @@ class SubprocessStageExecutor:
 
     def _reclaim_platform_slot(self,store,sleep,wait_seconds=3600):
         """Wait for the shared slot to be free again; this stage never reads the platform without it."""
-        from lib.workflow_dispatch import PLATFORM_PARALLEL_MARKETS
+        from lib.operations_policy import load_policy
         from lib.workflow_resources import reclaim_slot
+        try:capacity=load_policy(self.root)['platformMaxParallelMarkets']
+        except ValueError:capacity=1
         ticket=self._claims.ticket;deadline=time.monotonic()+wait_seconds
         while True:
             try:
-                if reclaim_slot(store,ticket['stageRunId'],ticket['ownerId'],ticket['fence'],'platform:global',PLATFORM_PARALLEL_MARKETS):
+                if reclaim_slot(store,ticket['stageRunId'],ticket['ownerId'],ticket['fence'],'platform:global',capacity):
                     return True
             except CycleError:return False
             if time.monotonic()>=deadline:return False

@@ -37,7 +37,8 @@ class SchedulerFlow(unittest.TestCase):
     def setUp(self):
         self.temp=tempfile.TemporaryDirectory();self.root=Path(self.temp.name)
         (self.root/'var').mkdir();(self.root/'config').mkdir()
-        (self.root/'config/operations-policy.json').write_text((ROOT/'config/operations-policy.json').read_text())
+        # One market at a time on the platform unless a test widens the pool itself.
+        (self.root/'config/operations-policy.json').write_text(json.dumps({**json.loads((ROOT/'config/operations-policy.json').read_text()),'platformMaxParallelMarkets':1}))
         (self.root/'config/markets.json').write_text((ROOT/'config/markets.json').read_text())
         accounts=json.loads((ROOT/'config/market-accounts.json').read_text())
         for pair in accounts['markets'].values():pair.update(imSessionMode='http_polling',identityAccountRole='communications')

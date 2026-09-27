@@ -18,6 +18,7 @@ DEFAULTS = {
     "campaignRefreshDays": 2,
     "fullManagedCategoryRefreshDays": 15,
     "kalodataMaxParallelMarkets": 2,
+    "platformMaxParallelMarkets": 1,
     "sendTemplateApprovalMinimum": 10,
 }
 
@@ -33,6 +34,7 @@ def load_policy(root):
         "campaignRefreshDays": (1, 14),
         "fullManagedCategoryRefreshDays": (7, 90),
         "kalodataMaxParallelMarkets": (1, 2),
+        "platformMaxParallelMarkets": (1, 2),
         "sendTemplateApprovalMinimum": (10, 50),
     }
     for key, (low, high) in bounds.items():

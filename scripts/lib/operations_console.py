@@ -122,7 +122,7 @@ def console(root, store, *, markets=None, recent=15):
     try:
         policy = load_policy(root)
     except (OSError, ValueError, CycleError):
-        policy = {"kalodataMaxParallelMarkets": 2}
+        policy = {"kalodataMaxParallelMarkets": 2, "platformMaxParallelMarkets": 1}
     holders = _holders(db)
     rows = []
     for market in markets:

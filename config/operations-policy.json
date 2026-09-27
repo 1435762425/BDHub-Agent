@@ -3,5 +3,6 @@
   "campaignRefreshDays": 2,
   "fullManagedCategoryRefreshDays": 15,
   "kalodataMaxParallelMarkets": 2,
+  "platformMaxParallelMarkets": 2,
   "sendTemplateApprovalMinimum": 10
 }
