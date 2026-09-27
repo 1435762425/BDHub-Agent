@@ -7,6 +7,12 @@
 
 
 
+## 2026-09-27 17:15：平台重型阶段并行上限可配置并设为 2
+
+- 用户确认：`a34b5be` 把 `platform:global` 容量从代码常量改为 `operations-policy.json.platformMaxParallelMarkets`（1–2），生产设为 2；账号槽不变（同一账号不并用），借槽取回按同一容量。依据：09-27 IT/UK 两路类目读取与 OECID 同时访问平台约 1 小时、全程验证 0、拒绝 0。
+- 17:01 在线备份 `var/backups/state/20260927T090100Z-pre-platform-pool-20260927`（33 库，valid，restorable）；`20260927T021433Z-pre-window-drift-20260927` 移入废纸篓，保留 11:32、14:49、17:01 三份。因策略文件新增键会被旧代码拒绝，本次先停 scheduler 与全部 worker，再合入并启动（scheduler `14762`，13/13 载入 `a34b5be`），控制七表哈希不变，requestRef 27,968 唯一，`quick_check=ok`，四会话 owner ready。
+- 流程缺口：停 worker 时 MY 发送 worker 正在“打开会话”（`cycle_conversation_intent` inflight，卡片/文本仍 ready，按 part 检查为 0），投递 `delivery-bce1857557319cc0c327c43ab8f98015` 转 unknown，MY 二发暂停；重启后按原账号原请求核验 1,000 会话未匹配，17:14 结为 `quarantined_unknown`，未重发，MY 随即恢复发送。此后停发送 worker 前同时等待会话意图 inflight 清零。
+
 ## 2026-09-27 16:35：英国全托类目读取完成
 
 - 英国 `uk-global-20260927-291b2d832f2b4c516f26` 30/30 类完成，96,460 商品（09-21 部分快照 64,089），已发布为 head。特殊完成：女装和内衣 `endpoint_end_window_rank_drift_2`、美妆个护 `endpoint_end_rank_drift_5`、时尚配饰 `endpoint_end_rank_drift_1`、家居装修 `endpoint_end_total_drift`、运动与户外/五金工具 `endpoint_end_reconciled`。按现门槛合格 10,355，新增合格候选 2,360（均未在池），待 09-28 04:30 UK 货盘阶段选入。
