@@ -229,18 +229,33 @@ class SourceTests(unittest.TestCase):
    # The listing re-ranked: the same members come back in another order and nothing new appears.
    self.s.repair_partition_page('window','600001',number,page(list(reversed(rows[number-1])),number<667,10000),list_request(number,10000,'600001'),scope['attempt'])
   accepted=self.s.accept_stable_duplicate_rows('window')
-  self.assertEqual((accepted['duplicateRows'],accepted['reason']),(1,'endpoint_end_window_rank_drift_1'))
+  self.assertEqual((accepted['duplicateRows'],accepted['reason']),(1,'endpoint_end_rank_drift_1'))
   self.assertEqual(self.s.status('window')['state'],'collecting');self.assertEqual(self.s.next_partition('window')['category_id'],'600002')
- def test_reranked_duplicates_below_the_window_stay_incomplete(self):
+ def test_reranked_small_category_needs_repair_of_every_duplicate_page_and_a_bounded_gap(self):
   self.s.blocked('one','fixture_end')
-  self.s.start_partitioned('small',self.scope,[{'category_id':'600001','name':'家居用品','is_leaf':False}]);self.s.next_partition('small')
+  self.s.start_partitioned('small',self.scope,[{'category_id':'600001','name':'美妆个护','is_leaf':False}]);self.s.next_partition('small')
   self.s.partition_page('small','600001',1,page([1,2],True,3),request_payload=list_request(1,category_id='600001'))
   self.s.partition_page('small','600001',2,page([2],False,3),request_payload=list_request(2,3,'600001'))
+  # No repair yet: the gap is unexplained.
+  with self.assertRaisesRegex(GlobalSourceError,'stable_duplicate_evidence_missing'):self.s.accept_stable_duplicate_rows('small')
   scope=self.s.partial_repair_scope('small')
   for number in scope['pages']:
    self.s.repair_partition_page('small','600001',number,page([2,1] if number==1 else [1],number<2,3),list_request(number,3,'600001'),scope['attempt'])
-  with self.assertRaisesRegex(GlobalSourceError,'stable_duplicate_evidence_missing'):self.s.accept_stable_duplicate_rows('small')
-  self.assertEqual(self.s.status('small')['state'],'partial')
+  accepted=self.s.accept_stable_duplicate_rows('small')
+  self.assertEqual((accepted['duplicateRows'],accepted['reason']),(1,'endpoint_end_rank_drift_1'))
+  self.assertEqual(self.s.status('small')['state'],'completed')
+ def test_rank_drift_gap_above_the_limit_stays_incomplete(self):
+  self.s.blocked('one','fixture_end')
+  self.s.start_partitioned('wide',self.scope,[{'category_id':'600001','name':'家居用品','is_leaf':False}]);self.s.next_partition('wide')
+  # 30 rows with 6 repeated members: the gap exceeds max(5,total/1000).
+  sequence=list(range(1,25));rows=[sequence[0:15],sequence[9:24]]
+  self.s.partition_page('wide','600001',1,page(rows[0],True,30),request_payload=list_request(1,category_id='600001'))
+  self.s.partition_page('wide','600001',2,page(rows[1],False,30),request_payload=list_request(2,30,'600001'))
+  scope=self.s.partial_repair_scope('wide')
+  for number in [n for n in scope['pages'] if n<=2]:
+   self.s.repair_partition_page('wide','600001',number,page(list(reversed(rows[number-1])),number<2,30),list_request(number,30,'600001'),scope['attempt'])
+  with self.assertRaisesRegex(GlobalSourceError,'stable_duplicate_evidence_missing'):self.s.accept_stable_duplicate_rows('wide')
+  self.assertEqual(self.s.status('wide')['state'],'partial')
  def test_verified_relogin_resumes_the_exact_blocked_category_page(self):
   self.s.blocked('one','fixture_end')
   self.s.start_partitioned('relogin',self.scope,[{'category_id':'600001','name':'家居用品','is_leaf':False}]);self.s.next_partition('relogin')

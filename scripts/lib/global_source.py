@@ -129,9 +129,6 @@ def validate_source_scope(scope):
     if not available:raise GlobalSourceError('unsupported_source_scope')
     return scope
 
-CATEGORY_WINDOW=10000
-
-
 class GlobalSources:
     def __init__(self,path,*,clock=time.time,readonly=False):
         self.path=path
@@ -487,13 +484,13 @@ class GlobalSources:
                     if repair and repair[0]==pids_hash and repair[1]==0:stable+=duplicate_rows
             reason=f'endpoint_end_stable_duplicate_rows_{duplicates}'
             if stable!=duplicates:
-                # A category larger than the 10,000-row listing window re-ranks while it is paged, so
-                # its duplicate pages never replay exactly. Accept the bounded gap once the latest
-                # repair re-read every duplicate page and found no missing member.
-                repaired={row[0] for row in self.db.execute('SELECT page FROM global_source_partition_repair_page WHERE run_id=? AND category_id=? AND attempt=?',(id,part['category_id'],latest))}
-                if part['reported_total']!=CATEGORY_WINDOW or latest is None or repair_summary[1]!=0 or not {row[0] for row in duplicate_pages}<=repaired:
+                # A listing that re-ranks while it is paged never replays its duplicate pages exactly.
+                # Accept the bounded gap once repair has re-read every duplicate page and still
+                # could not close it.
+                repaired={row[0] for row in self.db.execute('SELECT page FROM global_source_partition_repair_page WHERE run_id=? AND category_id=?',(id,part['category_id']))}
+                if not {row[0] for row in duplicate_pages}<=repaired:
                     raise GlobalSourceError('stable_duplicate_evidence_missing')
-                reason=f'endpoint_end_window_rank_drift_{duplicates}'
+                reason=f'endpoint_end_rank_drift_{duplicates}'
             now=self.clock()
             self.db.execute('UPDATE global_source_partition SET state=\'completed\',terminal_reason=?,updated=? WHERE run_id=? AND category_id=?',(reason,now,id,part['category_id']))
             pages=self.db.execute('SELECT coalesce(sum(page_count),0) FROM global_source_partition WHERE run_id=?',(id,)).fetchone()[0]
