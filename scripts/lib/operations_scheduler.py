@@ -237,6 +237,60 @@ def selection_gap(root,market,result):
     return {'unresolvedPids':pids,'reason':code or 'global_selection_unresolved'}
 
 
+# Interruptions by the platform's own verification: the PIDs already selected continue downstream and
+# the rest wait for the next selection pass.
+SELECTION_VERIFICATION_ERRORS=frozenset({'commerce_verification_required','commerce_verification_timeout'})
+# How soon an unfinished selection (PIDs never submitted yet) is due again.
+SELECTION_BACKLOG_RETRY_SECONDS=3*3600
+
+
+def selection_pause(root,market,result):
+    """Pause (not stop) a selection the platform interrupted; None when it must stop for a person.
+
+    A login fault, an unknown error or unreadable progress still stops every write that depends on
+    the supply account. Unresolved PIDs keep their original intents and are never resubmitted here."""
+    payload=result.get('payload') or {}
+    code=str(payload.get('error') or result.get('errorCode') or 'global_selection_unresolved')
+    if code not in SELECTION_VERIFICATION_ERRORS|SELECTION_PID_ERRORS or selection_auth_unknown(root,market):return None
+    states=payload.get('states')
+    if not isinstance(states,dict) or type(states.get('pending',0)) is not int:return None
+    receipts=selection_unresolved_receipts(root,market)
+    reported=sum(int(states.get(key) or 0) for key in SELECTION_UNRESOLVED_STATES)
+    # The ledger must name every unresolved PID the child reported; otherwise the scope is unknown.
+    if receipts is None or len(receipts)<reported:return None
+    # Every unresolved PID must be a verification challenge or a clean acceptance awaiting readback;
+    # an ambiguous or unexplained receipt still stops the account's writes.
+    for receipt in receipts.values():
+        challenged=receipt.get('http')==200 and receipt.get('code')==10000 and receipt.get('verification') is True
+        accepted=receipt.get('http')==200 and receipt.get('code')==0 and receipt.get('verification') is False
+        if receipt.get('ambiguous') is not False or not (challenged or accepted):return None
+    return {'reason':code,'pending':int(states.get('pending') or 0),'unresolvedPids':sorted(receipts)}
+
+
+def selection_unresolved_receipts(root,market):
+    """pid -> receipt of every unresolved selection intent; None when the ledger cannot be read."""
+    path=Path(root)/('var/global-selection.sqlite' if market=='it' else f'var/global-selection-{market}.sqlite')
+    if not path.exists():return None
+    try:
+        with closing(sqlite3.connect(path.resolve().as_uri()+'?mode=ro',uri=True)) as db:
+            marks=','.join('?'*len(SELECTION_UNRESOLVED_STATES))
+            rows=db.execute(f'SELECT pid,payload FROM intake_item WHERE state IN ({marks})',SELECTION_UNRESOLVED_STATES).fetchall()
+        return {pid:(json.loads(payload or '{}').get('receipt') or {}) for pid,payload in rows}
+    except (sqlite3.Error,ValueError):return None
+
+
+def selection_backlog(root,market):
+    """PIDs of the current selection batch that were never submitted."""
+    path=Path(root)/('var/global-selection.sqlite' if market=='it' else f'var/global-selection-{market}.sqlite')
+    if not path.exists():return 0
+    try:
+        with closing(sqlite3.connect(path.resolve().as_uri()+'?mode=ro',uri=True)) as db:
+            return int(db.execute("""SELECT count(*) FROM intake_run_member m JOIN intake_item i
+              ON i.run_id=m.owner_run_id AND i.pid=m.pid
+              WHERE m.run_id=(SELECT id FROM intake_run ORDER BY created DESC LIMIT 1) AND i.state='pending'""").fetchone()[0])
+    except sqlite3.Error:return 0
+
+
 def scheduler_state(root):
     run=_read(run_path(root),{});pid=run.get('pid');alive=pid_alive(pid)
     progress=_read(status_path(root),{})
@@ -319,6 +373,8 @@ def _scheduled_sources(root,store,market,stamp,automation,policy):
         mode=full_catalog_collection_mode(root,market,stamp,policy=policy)
         discovery_due=mode['nextDiscoveryAt']
         selected_due=min(selected_due,discovery_due)
+        if last_selected is not None and selection_backlog(root,market):
+            selected_due=min(selected_due,last_selected+SELECTION_BACKLOG_RETRY_SECONDS)
         due_times['selectedDiscovery']=discovery_due
         due_times['selected']=selected_due
         if stamp>=selected_due:sources.insert(0,'selected')
@@ -527,7 +583,7 @@ class SubprocessStageExecutor:
             return {'state':'completed','itemCount':total,'complete':True,'platformWrites':writes,
                     'scope':{'sources':sources},'payload':last.get('payload') or {}}
         if stage=='catalog':
-            outputs=[];count=0;writes=0;selection_gaps=[]
+            outputs=[];count=0;writes=0;selection_gaps=[];paused=None
             if 'selected' in sources:
                 frozen=accepted_partial_selection(self.root,market)
                 if frozen:
@@ -600,12 +656,13 @@ class SubprocessStageExecutor:
                       ('submitting','awaiting_verification','result_unknown','needs_review'))
                     if recovered['state']!='completed' or recovered_payload.get('error') or recovered_unresolved:
                         gap=selection_gap(self.root,market,recovered)
-                        if gap is None:
+                        if gap is None:paused=selection_pause(self.root,market,recovered)
+                        if gap is None and paused is None:
                             return {**recovered,'state':'needs_human','complete':False,
                                     'errorCode':str(recovered_payload.get('error') or recovered.get('errorCode') or 'global_selection_unresolved')[:120],
                                     'platformWrites':writes}
-                        selection_gaps.append(gap)
-                if True:
+                        if gap:selection_gaps.append(gap)
+                if paused is None:
                     last_pending=None
                     for _ in range(40):
                         selected=self._call(['scripts/select-global-products.py','execute-fast',*market_flag,'--limit','300',
@@ -615,7 +672,10 @@ class SubprocessStageExecutor:
                         outputs.append(selected);writes+=selected.get('platformWrites',0)
                         if selected['state']!='completed':
                             gap=selection_gap(self.root,market,selected)
-                            if gap is None:return selected|{'platformWrites':writes}
+                            if gap is None:
+                                paused=selection_pause(self.root,market,selected)
+                                if paused is None:return selected|{'platformWrites':writes}
+                                break
                             # Only these PIDs wait on their original intent; the rest keep selecting,
                             # as long as the child's own progress shows there is something left to do.
                             selection_gaps.append(gap)
@@ -641,15 +701,21 @@ class SubprocessStageExecutor:
                             outputs.append(selected);writes+=selected.get('platformWrites',0)
                             payload=selected.get('payload') or {};states=payload.get('states') or {};error=payload.get('error')
                         if error:
-                            return {**selected,'state':'needs_human','complete':False,
-                                    'errorCode':str(error)[:120],'platformWrites':writes}
+                            paused=selection_pause(self.root,market,selected)
+                            if paused is None:
+                                return {**selected,'state':'needs_human','complete':False,
+                                        'errorCode':str(error)[:120],'platformWrites':writes}
+                            break
                         unresolved=sum(int(states.get(key) or 0) for key in
                           ('submitting','awaiting_verification','result_unknown','needs_review'))
                         if unresolved:
                             gap=selection_gap(self.root,market,selected)
                             if gap is None:
-                                return {**selected,'state':'needs_human','complete':False,
-                                        'errorCode':'global_selection_unresolved','platformWrites':writes}
+                                paused=selection_pause(self.root,market,selected)
+                                if paused is None:
+                                    return {**selected,'state':'needs_human','complete':False,
+                                            'errorCode':'global_selection_unresolved','platformWrites':writes}
+                                break
                             selection_gaps.append(gap)
                         if not int(states.get('pending') or 0):break
                     else:
@@ -716,6 +782,9 @@ class SubprocessStageExecutor:
                 # Published with its coverage gap: unresolved PIDs are neither selected nor filtered.
                 scope['selectionGap']={'unresolvedPids':selection_gaps[-1]['unresolvedPids'],
                                        'reasons':sorted({gap['reason'] for gap in selection_gaps}),'coverage':'partial_selection'}
+            if paused:
+                # Selection resumes on its own once due again; what is selected already goes on now.
+                scope['selectionPaused']=paused
             return {'state':'completed','itemCount':count,'complete':True,'platformWrites':writes,
                     'scope':scope,'payload':{'sources':outputs}}
         if stage=='taplink_prepare':

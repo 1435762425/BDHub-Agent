@@ -608,6 +608,50 @@ class StageWiring(unittest.TestCase):
             self.assertEqual((result['state'],result['errorCode']),('failed','parallel_selection_requires_review'))
             self.assertFalse(any(args[0] in ('scripts/campaign-collect.py','scripts/campaign-join.py') for args,_ in calls))
 
+    def test_platform_verification_pauses_selection_and_selected_pids_go_on(self):
+        challenged=json.dumps({'receipt':{'http':200,'code':10000,'verification':True,'ambiguous':False}})
+        accepted=json.dumps({'receipt':{'http':200,'code':0,'verification':False,'ambiguous':False}})
+        rows=[(f'pid-{n}',challenged) for n in range(4)]+[('pid-late',accepted)]
+        # More unresolved PIDs than the tolerance, but every one is a verification challenge or a clean
+        # acceptance awaiting readback: selection pauses and the selected catalog and Campaign go on.
+        result,calls=self._selection_catalog(rows,[{'states':{'pending':7,'result_unknown':5}}])
+        self.assertEqual((result['state'],result['complete']),('completed',True))
+        self.assertEqual(result['scope']['selectionPaused'],{'reason':'parallel_selection_requires_review','pending':7,
+            'unresolvedPids':['pid-0','pid-1','pid-2','pid-3','pid-late']})
+        self.assertTrue(any(args[0]=='scripts/sync-cycle-catalog.py' for args,_ in calls))
+        self.assertTrue(any(args[0]=='scripts/campaign-collect.py' for args,_ in calls))
+        # A failed verification ends this pass the same way.
+        result,calls=self._selection_catalog([],[{'states':{'pending':7},'error':'commerce_verification_required'}])
+        self.assertEqual((result['state'],result['scope']['selectionPaused']['reason']),('completed','commerce_verification_required'))
+        # One ambiguous receipt among them still stops every dependent write.
+        ambiguous=json.dumps({'receipt':{'http':200,'code':0,'verification':False,'ambiguous':True}})
+        result,calls=self._selection_catalog(rows+[('pid-x',ambiguous)],[{'states':{'pending':7,'result_unknown':6}}])
+        self.assertEqual(result['state'],'failed')
+        self.assertFalse(any(args[0]=='scripts/campaign-collect.py' for args,_ in calls))
+
+    def test_unsubmitted_selection_backlog_is_due_again_within_hours(self):
+        import lib.operations_scheduler as scheduler
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder);(root/'var').mkdir()
+            with closing(sqlite3.connect(root/'var/global-selection-uk.sqlite')) as db,db:
+                db.executescript("""CREATE TABLE intake_run(id TEXT,rules TEXT,source_run TEXT,created REAL);
+                  CREATE TABLE intake_item(run_id TEXT,pid TEXT,state TEXT,payload TEXT,updated REAL);
+                  CREATE TABLE intake_run_member(run_id TEXT,pid TEXT,owner_run_id TEXT);
+                  INSERT INTO intake_run VALUES('old','{}','s',1),('new','{}','s',2);
+                  INSERT INTO intake_item VALUES('old','a','pending','{}',1),('old','b','confirmed','{}',1);
+                  INSERT INTO intake_run_member VALUES('new','a','old'),('new','b','old');""")
+            self.assertEqual(scheduler.selection_backlog(root,'uk'),1)
+            self.assertEqual(scheduler.selection_backlog(root,'it'),0)
+            jobs={'jobs':{'campaign_catalog_update':{'at':'07:00'},'taplink_clean':{'at':'04:30','weekday':0}}}
+            def due(backlog):
+                with patch('lib.jobs.load',return_value=jobs),patch('lib.market_registry.supports',return_value=True),\
+                     patch.object(scheduler,'_source_success',return_value=NOW-3600),\
+                     patch.object(scheduler,'selection_backlog',return_value=backlog),\
+                     patch('lib.operations_policy.full_catalog_collection_mode',return_value={'nextDiscoveryAt':NOW+30*86400}):
+                    return scheduler._scheduled_sources(root,None,'uk',NOW,{'fullCatalogWeeklyEnabled':True},{'campaignRefreshDays':2})[1]['selected']
+            self.assertEqual(due(5),NOW-3600+scheduler.SELECTION_BACKLOG_RETRY_SECONDS)
+            self.assertGreater(due(0),NOW+86400)
+
     def test_uk_weekly_maintenance_reuses_discovery_within_fifteen_days(self):
         def answers(args,_label):
             if args[0]=='scripts/collect-global-opportunity.py':payload={'state':'completed','published':True,'products':10000};writes=0
