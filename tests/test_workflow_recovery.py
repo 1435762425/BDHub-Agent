@@ -57,9 +57,12 @@ class WorkflowRecoveryTests(unittest.TestCase):
     def make_run(self,request,*,needs_human,writes):
         run=create_run(self.store,market='it',trigger_source='schedule',scheduled_at=NOW,
                        request_id=request,sources=['selected'])
-        rid=run['runId'];start_stage(self.store,rid,'taplink_clean')
-        prior=finish_stage(self.store,rid,'taplink_clean',state='completed')
-        start_stage(self.store,rid,'catalog',input_generation_id=prior['outputGenerationId'])
+        rid=run['runId'];upstream=None
+        # A same-day duplicate skips link maintenance once the original has cleaned.
+        if run['stages'][0]['state']=='queued':
+            start_stage(self.store,rid,'taplink_clean')
+            upstream=finish_stage(self.store,rid,'taplink_clean',state='completed')['outputGenerationId']
+        start_stage(self.store,rid,'catalog',input_generation_id=upstream)
         finish_stage(self.store,rid,'catalog',state='needs_human' if needs_human else 'failed',
                      platform_writes=writes,complete=False,
                      error_code='parallel_selection_requires_review' if needs_human else 'global_catalog_not_published')
