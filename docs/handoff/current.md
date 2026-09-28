@@ -7,6 +7,11 @@
 
 
 
+## 2026-09-28 20:45：选入认证拒绝认可刷新代次
+
+- UK 18:30 run：验证拦截项按 `--reconcile-rejections` 重提后新增 96（confirmed 9,805），4 个两次拦截按规则 `skipped_unknown`（不再提交），剩 854 待选；1 个 18:22 `16201010` 原意图因规则只认 relogin 代次，而调度自动恢复做的是 refresh，run 转 needs_human。用户确认两项：20:40 经账号页接口为 acc4 再次重登（`uk-acc4-relogin-20260928-selection-auth`，完成、收信重连）；`67d70bb` 选入认证拒绝在尝试后有 relogin 或 refresh 代次发布即可按原 PID 重提一次。
+- 20:42 在线备份 `20260928T124246Z-pre-auth-refresh-20260928`（valid，restorable），`20260928T090500Z-pre-subcampaign-20260928` 移入废纸篓；完整重启（在途清零后停 worker），scheduler `17948`，13/13 载入 `67d70bb`，控制七表哈希不变，requestRef 39,872 唯一，`quick_check=ok`，四会话 owner ready。UK 下一轮 21:24 到期。
+
 ## 2026-09-28 18:35：英国 acc4 重登、选入推进与维护日只清理一次
 
 - 用户确认后经账号页接口为 UK acc4 发起重登（`uk-acc4-relogin-20260928-login-expired`），17:53 用保存凭据自动完成、收信重连。只读复核：115 个隔离项全部恢复 confirmed、99 个未知中 92 个 confirmed（总佣金一致）；7 个为选入时平台验证拦截且回读不在池。14:04 原 run 自动续跑货盘：新增选入 1,192（confirmed 9,709），剩 924 待选；又有 30 个验证拦截未入池、1 个瞬时 `16201010`（随即只读探测 acc4 正常），超容忍转 needs_human。验证拦截且确证不在池的，下一轮货盘按既有 `--reconcile-rejections` 重提一次。
