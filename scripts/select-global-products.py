@@ -3,7 +3,7 @@
 import argparse,fcntl,json,signal,sys,time
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1];sys.dont_write_bytecode=True;sys.path.insert(0,str(ROOT/'scripts'))
-from lib.global_selection import OTHER_CAMPAIGN_MIN_DELAY,READBACK_DELAYS,Selection,assess,promotion_assessment,prioritized_selection_batch,selection_campaign,selected_rows,settle_readback
+from lib.global_selection import OTHER_CAMPAIGN_MIN_DELAY,READBACK_DELAYS,Selection,assess,matching_selection_evidence,promotion_assessment,prioritized_selection_batch,readback_row,selection_campaign,selected_rows,settle_readback
 from lib.global_source import clean_product
 from lib.global_source_transport import opportunity_selector
 STOP=False
@@ -11,8 +11,9 @@ def stop(*_):
     global STOP
     STOP=True
 def main():
-    p=argparse.ArgumentParser();p.add_argument('action',choices=['prepare','execute','execute-fast','execute-serial','verify','skip-unknown','status']);p.add_argument('--market',default='it');p.add_argument('--limit',type=int,default=600);p.add_argument('--native-listing',action='store_true');p.add_argument('--reconcile-rejections',action='store_true');p.add_argument('--confirm-skip-unknown',action='store_true');p.add_argument('--skip-after-readback',action='store_true');p.add_argument('--canary',action='store_true');p.add_argument('--lanes',type=int,default=8);p.add_argument('--qps',type=int,default=8);p.add_argument('--group-size',type=int,default=40);a=p.parse_args()
+    p=argparse.ArgumentParser();p.add_argument('action',choices=['prepare','execute','execute-fast','execute-serial','verify','skip-unknown','restore-isolated','status']);p.add_argument('--market',default='it');p.add_argument('--limit',type=int,default=600);p.add_argument('--native-listing',action='store_true');p.add_argument('--reconcile-rejections',action='store_true');p.add_argument('--confirm-skip-unknown',action='store_true');p.add_argument('--confirm-restore-isolated',action='store_true');p.add_argument('--skip-after-readback',action='store_true');p.add_argument('--canary',action='store_true');p.add_argument('--lanes',type=int,default=8);p.add_argument('--qps',type=int,default=8);p.add_argument('--group-size',type=int,default=40);a=p.parse_args()
     if not 1<=a.limit<=600:p.error('limit 1..600')
+    if a.action=='restore-isolated' and not a.confirm_restore_isolated:p.error('restore-isolated requires --confirm-restore-isolated')
     if not 1<=a.lanes<=8 or not 1<=a.qps<=8:p.error('lanes/qps 1..8')
     if not 1<=a.group_size<=100:p.error('group-size 1..100')
     from lib.market_registry import supports
@@ -44,6 +45,22 @@ def main():
         current=None
         try:
             with opportunity_selector(report,scope,market=a.market,canary=a.canary,stopped=lambda:STOP) as t:
+                if a.action=='restore-isolated':
+                    # Operator-approved: re-read isolated intents and settle those the selected pool now
+                    # proves under the same total commission. Nothing is submitted again.
+                    isolated=[i for i in ledger.items(id) if i['state']=='isolated_unverified'][:a.limit];restored=[]
+                    for offset in range(0,len(isolated),15):
+                        chunk=isolated[offset:offset+15];rows={}
+                        for r in selected_rows(t,[i['pid'] for i in chunk]):
+                            row=readback_row(r);rows.setdefault(row['pid'],[]).append(row)
+                        for i in chunk:
+                            evidence=matching_selection_evidence({**i,'state':'result_unknown'},rows.get(i['pid'],[]))
+                            if not evidence:continue
+                            ledger.update(i,'confirmed',selectionEvidence=evidence,verifiedAt=time.time(),
+                                          restoredFromIsolation={'isolation':i['payload'].get('isolation'),'at':time.time()})
+                            restored.append(i['pid'])
+                        save()
+                    report['restored']=restored;report['isolatedChecked']=len(isolated);return
                 if a.action in ('execute','execute-fast'):
                     from lib.global_selection_fast import run
                     retried=[]
@@ -73,7 +90,7 @@ def main():
                     rows=selected_rows(t,[i['pid'] for i in items]);matched={}
                     for r in rows:
                         if str((r.get('campaign_info') or {}).get('crs_campaign_type')) in ('8','9'):
-                            pid=str(r['campaign_product']['product_id']);matched.setdefault(pid,[]).append({'pid':pid,'campaignId':str(r['campaign_info']['campaign_id']),'type':r['campaign_info']['crs_campaign_type']})
+                            row=readback_row(r);matched.setdefault(row['pid'],[]).append(row)
                     for i in items:
                         if settle_readback(ledger,i,matched.get(i['pid'],[]))=='other_campaign':other_waiting.append(i)
                     return matched

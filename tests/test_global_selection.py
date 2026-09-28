@@ -32,6 +32,24 @@ class SelectionTests(unittest.TestCase):
   self.assertEqual(matching_selection_evidence(item,observed),[observed[1]])
   self.assertEqual(matching_selection_evidence(item,observed[:1]),[])
   self.assertEqual(matching_selection_evidence({'pid':'p','state':'pending','payload':{}},observed),observed)
+ def test_platform_assigned_campaign_settles_only_at_the_submitted_total_commission(self):
+  item={'pid':'p','state':'result_unknown','payload':{'campaign':{'campaign':{'campaign_id':'listing'},'freshProduct':{'commission_rate':'1300'}}}}
+  rehomed={'pid':'p','campaignId':'assigned','type':9,'totalPercent':'13'}
+  self.assertEqual(matching_selection_evidence(item,[rehomed]),[{**rehomed,'platformAssignedCampaign':True}])
+  # Another total, a non full-managed campaign, or an intent without a recorded total never settle.
+  self.assertEqual(matching_selection_evidence(item,[{**rehomed,'totalPercent':'12'}]),[])
+  self.assertEqual(matching_selection_evidence(item,[{**rehomed,'type':1}]),[])
+  self.assertEqual(matching_selection_evidence(item,[{**rehomed,'totalPercent':None}]),[])
+  bare={'pid':'p','state':'result_unknown','payload':{'campaign':{'campaign':{'campaign_id':'listing'}}}}
+  self.assertEqual(matching_selection_evidence(bare,[rehomed]),[])
+  # The detail route records the total on the campaign itself.
+  detail={'pid':'p','state':'awaiting_verification','payload':{'campaign':{'campaign':{'campaign_id':'x','commission':'1300'}}}}
+  self.assertEqual(len(matching_selection_evidence(detail,[rehomed])),1)
+ def test_readback_row_carries_the_total_commission(self):
+  from lib.global_selection import readback_row
+  row=readback_row({'campaign_product':{'product_id':'1'*19,'total_commission_percent':'13'},'campaign_info':{'campaign_id':'9'*19,'crs_campaign_type':9}})
+  self.assertEqual(row,{'pid':'1'*19,'campaignId':'9'*19,'type':9,'totalPercent':'13'})
+  self.assertEqual(readback_row({'campaign_product':{'product_id':'1','partner_commission_percent':11},'campaign_info':{'campaign_id':'2'}})['totalPercent'],'11')
  def test_attempt_never_resubmitted(self):
   with tempfile.TemporaryDirectory() as d:
    root=Path(d);(root/'var').mkdir();s=Selection(root)

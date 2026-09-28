@@ -2,7 +2,7 @@
 from concurrent.futures import ThreadPoolExecutor,wait,FIRST_COMPLETED
 from threading import Lock
 import time
-from lib.global_selection import READBACK_DELAYS,promotion_assessment,choose_campaign,selected_rows,settle_readback
+from lib.global_selection import READBACK_DELAYS,promotion_assessment,choose_campaign,readback_row,selected_rows,settle_readback
 from lib.global_source import clean_product
 from lib.global_source_transport import DETAIL
 
@@ -65,7 +65,7 @@ def run(ledger,id,t,scope,items,report,save,stopped,*,width=8,qps=8,native_listi
         start=time.monotonic();rows=selected_rows(t,[i['pid'] for i in pending]);matches={}
         for r in rows:
             if str((r.get('campaign_info') or {}).get('crs_campaign_type')) in ('8','9'):
-                pid=str(r['campaign_product']['product_id']);matches.setdefault(pid,[]).append({'pid':pid,'campaignId':str(r['campaign_info']['campaign_id']),'type':r['campaign_info']['crs_campaign_type']})
+                row=readback_row(r);matches.setdefault(row['pid'],[]).append(row)
         for i in pending:settle_readback(ledger,i,matches.get(i['pid'],[]))
         stage('readback',time.monotonic()-start,len(pending));refresh_speed();save()
     def read_offer(lane,item):

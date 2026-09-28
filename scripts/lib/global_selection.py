@@ -159,13 +159,43 @@ def selected_rows(t,pids):
         if not data['items'] or len(rows)>total:raise ValueError('selected_incomplete')
     raise ValueError('selected_page_limit')
 
+def readback_row(r):
+    """One full-managed row of the selected pool, with the total commission it carries."""
+    product=r.get('campaign_product') or {};campaign=r.get('campaign_info') or {}
+    total=product.get('total_commission_percent')
+    if total is None:total=product.get('partner_commission_percent')
+    return {'pid':str(product.get('product_id')),'campaignId':str(campaign.get('campaign_id')),
+            'type':campaign.get('crs_campaign_type'),'totalPercent':None if total is None else str(total)}
+
+def frozen_total_percent(item):
+    """Total commission the intent was submitted at, in percent; None when not recorded."""
+    frozen=(item.get('payload') or {}).get('campaign') or {}
+    if not isinstance(frozen,dict):return None
+    basis=(frozen.get('freshProduct') or {}).get('commission_rate')
+    if basis is None:basis=(frozen.get('campaign') or {}).get('commission')
+    try:return Decimal(str(basis))/100 if basis is not None else None
+    except InvalidOperation:return None
+
 def matching_selection_evidence(item, observed):
-    """Only the frozen campaign can settle a submitted selection intent."""
+    """Readback rows that settle a submitted selection intent.
+
+    The frozen campaign settles it. Full-managed selection is also re-homed by the platform under a
+    campaign it creates (2026-09-28, verified on 8,900+ earlier selections): such a row settles the
+    intent only when it carries the same total commission the intent was submitted at."""
     if item['state']=='pending':return observed
     frozen=(item.get('payload') or {}).get('campaign') or {}
     campaign=(frozen.get('campaign') or {}) if isinstance(frozen,dict) else {}
     cid=str(campaign.get('campaign_id') or '')
-    return [row for row in observed if row['campaignId']==cid] if cid else []
+    exact=[row for row in observed if row['campaignId']==cid] if cid else []
+    if exact:return exact
+    total=frozen_total_percent(item)
+    if total is None:return []
+    matched=[]
+    for row in observed:
+        try:same=row.get('totalPercent') is not None and Decimal(str(row['totalPercent']))==total
+        except InvalidOperation:same=False
+        if same and str(row.get('type')) in ('8','9'):matched.append({**row,'platformAssignedCampaign':True})
+    return matched
 
 def settle_readback(ledger,item,observed,*,at=None):
     """One readback outcome for a submitted intent: settled, isolated, other_campaign, absent or unchanged."""
