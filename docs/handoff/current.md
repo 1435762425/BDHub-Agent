@@ -7,6 +7,11 @@
 
 
 
+## 2026-09-28 18:35：英国 acc4 重登、选入推进与维护日只清理一次
+
+- 用户确认后经账号页接口为 UK acc4 发起重登（`uk-acc4-relogin-20260928-login-expired`），17:53 用保存凭据自动完成、收信重连。只读复核：115 个隔离项全部恢复 confirmed、99 个未知中 92 个 confirmed（总佣金一致）；7 个为选入时平台验证拦截且回读不在池。14:04 原 run 自动续跑货盘：新增选入 1,192（confirmed 9,709），剩 924 待选；又有 30 个验证拦截未入池、1 个瞬时 `16201010`（随即只读探测 acc4 正常），超容忍转 needs_human。验证拦截且确证不在池的，下一轮货盘按既有 `--reconcile-rejections` 重提一次。
+- 用户确认：`02336e0`+`2eef343` 维护日同一市场已有一次成功 `taplink_clean` 后，当天后续 run 跳过清理（此前 UK 当天 4 次重跑各约 3 小时）。18:24 在线备份 `20260928T102458Z-pre-clean-once-20260928`（valid，restorable），`20260927T090100Z-pre-platform-pool-20260927` 移入废纸篓；完整重启（在途含会话意图清零后才停 worker），scheduler `1894`，13/13 载入 `2eef343`，控制七表哈希不变，requestRef 37,400 唯一，`quick_check=ok`。随后 UK 新 run 清理 skipped、直接进入货盘。
+
 ## 2026-09-28 17:20：全托选入认可平台子活动，英国 acc4 登录失效
 
 - 09-28 04:30 起 IT/UK 选入：平台把选入商品挂到其新建的全托子活动（活动号与列表不同），09-24 起的“只认冻结活动”规则把 IT 新 8 个、UK 207 个判为活动失配/未知（UK 超容忍 3 个转 needs_human，当天 4 次重跑各先跑约 3 小时 TapLink 清理）。核对历史 8,900+ 次确认选入：活动号全部不同、总佣金全部相同（公开佣金 15 个被调为 10%）。用户确认：`b67e6f6`+`92fca92` 回读在已选池、全托子活动（type 8/9）且总佣金（基点）与提交时一致即 confirmed（`platformAssignedCampaign`），新增 `select-global-products.py restore-isolated --confirm-restore-isolated` 只读复核隔离项。
