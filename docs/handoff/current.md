@@ -7,6 +7,12 @@
 
 
 
+## 2026-09-28 23:45：选入被平台验证打断时暂停、已选商品继续下游
+
+- UK 21:29 run 选入遇平台验证未通过（`commerce_verification_required`）停在 needs_human，已选商品卡在货盘阶段无法进入建链。用户确认只做 B（不降并发）：`2f4f649` 选入被平台验证中断（验证失败/超时，或未决 PID 全部为验证拦截或已明确受理待回读）时暂停选入而非停阶段，已选 PID 继续同步、建链与下游，scope 记 `selectionPaused`；台账仍有未提交 PID 时 selected 来源在上次完成后 3 小时再到期。登录故障、模糊回执、台账不可读或不全仍 needs_human。
+- 22:29 UK run（旧代码）已把选入跑完：confirmed 10,653（当日 +2,343）、pending 0、未决 0、按规则 skipped 30；23:44 货盘阶段完成，进入 TapLink 建链。
+- 22:47 在线备份 `20260928T144722Z-pre-selection-pause-20260928`（valid，restorable），`20260928T091458Z-pre-basis-points-20260928` 移入废纸篓；scheduler 等 UK 货盘阶段收口后于 23:44 退出，在途清零后重启（scheduler `37203`，13/13 载入 `2f4f649`），控制七表哈希不变，requestRef 40,216 唯一，`quick_check=ok`，四会话 owner ready。
+
 ## 2026-09-28 20:45：选入认证拒绝认可刷新代次
 
 - UK 18:30 run：验证拦截项按 `--reconcile-rejections` 重提后新增 96（confirmed 9,805），4 个两次拦截按规则 `skipped_unknown`（不再提交），剩 854 待选；1 个 18:22 `16201010` 原意图因规则只认 relogin 代次，而调度自动恢复做的是 refresh，run 转 needs_human。用户确认两项：20:40 经账号页接口为 acc4 再次重登（`uk-acc4-relogin-20260928-selection-auth`，完成、收信重连）；`67d70bb` 选入认证拒绝在尝试后有 relogin 或 refresh 代次发布即可按原 PID 重提一次。
