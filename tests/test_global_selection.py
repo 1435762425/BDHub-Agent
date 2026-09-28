@@ -51,6 +51,23 @@ class SelectionTests(unittest.TestCase):
   row=readback_row({'campaign_product':{'product_id':'1'*19,'total_commission_percent':'1500','plan_commission_percent':'900'},'campaign_info':{'campaign_id':'9'*19,'crs_campaign_type':9,'commission':None}})
   self.assertEqual(row,{'pid':'1'*19,'campaignId':'9'*19,'type':9,'totalBasis':'1500'})
   self.assertEqual(readback_row({'campaign_product':{'product_id':'1','partner_commission_percent':1100},'campaign_info':{'campaign_id':'2'}})['totalBasis'],'1100')
+ def test_a_refresh_or_relogin_after_the_attempt_proves_the_login_again(self):
+  from lib.global_selection import latest_relogin_after
+  with tempfile.TemporaryDirectory() as d:
+   root=Path(d);(root/'var').mkdir();(root/'config').mkdir()
+   with closing(sqlite3.connect(root/'var/second-cycle.sqlite')) as db,db:
+    db.execute('CREATE TABLE account_identity_generation(market,account,state,reason,published_at)')
+    db.executemany('INSERT INTO account_identity_generation VALUES(?,?,?,?,?)',
+                   [('uk','acc4','published','capability',300),('uk','acc11','published','relogin',300),('uk','acc4','published','refresh',50)])
+   class Ledger:pass
+   ledger=Ledger();ledger.root=root;ledger.market='uk';item={'payload':{'attemptedAt':100}}
+   from unittest.mock import patch
+   with patch('lib.market_accounts.load_config',return_value={'markets':{'uk':{'roles':{'supply':'acc4','communications':'acc11'}}}}):
+    # Neither a capability check, another account's relogin nor an earlier refresh counts.
+    self.assertIsNone(latest_relogin_after(ledger,item))
+    with closing(sqlite3.connect(root/'var/second-cycle.sqlite')) as db,db:
+     db.execute("INSERT INTO account_identity_generation VALUES('uk','acc4','published','refresh',200)")
+    self.assertEqual(latest_relogin_after(ledger,item),200)
  def test_attempt_never_resubmitted(self):
   with tempfile.TemporaryDirectory() as d:
    root=Path(d);(root/'var').mkdir();s=Selection(root)

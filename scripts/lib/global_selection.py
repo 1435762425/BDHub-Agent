@@ -252,6 +252,10 @@ def retryable_verification_rejection(item,present,fresh):
             and len(item['payload'].get('priorAttempts',[]))<2)
 
 def latest_relogin_after(ledger,item):
+    """When the supply account last proved a working login after this attempt.
+
+    A published relogin or refresh generation both re-establish and verify the saved login; the
+    scheduler's own recovery for a selection auth rejection runs a refresh."""
     attempted=item['payload'].get('attemptedAt')
     if not isinstance(attempted,(int,float)):return None
     cycle=ledger.root/'var/second-cycle.sqlite'
@@ -261,7 +265,7 @@ def latest_relogin_after(ledger,item):
     except (FileNotFoundError,KeyError):return None
     try:
         with closing(sqlite3.connect(cycle.resolve().as_uri()+'?mode=ro',uri=True)) as db:
-            row=db.execute("SELECT max(published_at) FROM account_identity_generation WHERE market=? AND account=? AND state='published' AND reason='relogin'",
+            row=db.execute("SELECT max(published_at) FROM account_identity_generation WHERE market=? AND account=? AND state='published' AND reason IN ('relogin','refresh')",
                            (ledger.market,account)).fetchone()
     except sqlite3.Error:return None
     return row[0] if row and isinstance(row[0],(int,float)) and row[0]>attempted else None
