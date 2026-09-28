@@ -258,13 +258,21 @@ def create_run(store, *, market="it", trigger_source="manual", scheduled_at=None
             (run_id, market, trigger_source, stamp, encoded(sources), current["revision"], store.clock()),
         )
         weekday = maintenance_weekday()
+        local = datetime.fromtimestamp(stamp, BEIJING)
+        # One maintenance pass per maintenance day: a run retried later that day (e.g. after a
+        # catalog failure) must not re-check thousands of unchanged links before reaching it.
+        day_start = local.replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
+        cleaned_today = store.db.execute(
+            "SELECT 1 FROM workflow_stage_run s JOIN workflow_run r ON r.run_id=s.run_id WHERE r.market=? "
+            "AND s.stage='taplink_clean' AND s.state='completed' AND s.finished_at>=? LIMIT 1",
+            (market, day_start)).fetchone() is not None
         for position, stage in enumerate(STAGES):
             state = ('skipped' if from_stage is not None and position<STAGES.index(from_stage) else
                      'skipped' if only_stage is not None and stage!=only_stage else
                      # Weekly link maintenance: full inventory for full-managed markets, a read-only
                      # binding check for the others (see SubprocessStageExecutor.execute).
-                     "skipped" if stage == "taplink_clean" and
-                     datetime.fromtimestamp(stamp, BEIJING).weekday() != weekday else "waiting_upstream")
+                     "skipped" if stage == "taplink_clean" and (local.weekday() != weekday or cleaned_today)
+                     else "waiting_upstream")
             finished = store.clock() if state == "skipped" else None
             store.db.execute(
                 "INSERT INTO workflow_stage_run(stage_run_id,run_id,stage,position,state,finished_at) "

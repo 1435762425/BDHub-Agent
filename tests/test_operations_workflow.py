@@ -277,6 +277,28 @@ class OperationsWorkflowTests(unittest.TestCase):
                     self.store.db.execute("UPDATE workflow_run SET state='stopped' WHERE run_id=?", (run["runId"],))
         self.assertEqual(states, {"monday": "skipped", "tuesday": "queued"})
 
+    def test_link_maintenance_runs_once_per_maintenance_day(self):
+        from unittest.mock import patch
+        import lib.operations_workflow as workflow
+        base = datetime.fromtimestamp(NOW, workflow.BEIJING)
+        monday = NOW - base.weekday() * 86400 - base.hour * 3600 + 4 * 3600
+        states = []
+        def run_at(stamp, label, outcome=None):
+            run = create_run(self.store, market="uk", trigger_source="manual", scheduled_at=stamp,
+                             request_id=f"maintenance-once-{label}", sources=["campaign"])
+            clean = run["stages"][0];states.append((label, clean["state"]))
+            with self.store.tx():
+                if outcome:
+                    self.store.db.execute("UPDATE workflow_stage_run SET state=?,finished_at=? WHERE stage_run_id=?",
+                                          (outcome, stamp + 600, clean["stageRunId"]))
+                self.store.db.execute("UPDATE workflow_run SET state='stopped' WHERE run_id=?", (run["runId"],))
+        with patch.object(workflow, "maintenance_weekday", return_value=0):
+            run_at(monday, "first", "failed")          # a failed pass does not count
+            run_at(monday + 3600, "retry", "completed")
+            run_at(monday + 4 * 3600, "same-day")      # already cleaned today
+            run_at(monday + 7 * 86400, "next-week")
+        self.assertEqual(states, [("first", "queued"), ("retry", "queued"), ("same-day", "skipped"), ("next-week", "queued")])
+
     def test_a_replayed_setting_request_returns_its_own_immutable_receipt(self):
         first = save_setting(self.store, "it", "receipt-request-r", 0, {"fullCatalogWeeklyEnabled": True})
         second = save_setting(self.store, "it", "receipt-request-s", 1, {"fullCatalogWeeklyEnabled": False})
