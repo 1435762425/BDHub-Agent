@@ -1,11 +1,19 @@
 # BDHub-Agent 当前交接
 
-文档更新时间：2026-09-27（Asia/Shanghai）。下面各节按时间倒序，每节只代表该时刻的核验；最新一节即当前生产状态的最近记录，不是实时巡检。规则见 [PROJECT](../PROJECT.md)，实现见 [TECHNICAL](../TECHNICAL.md)，后续方向见[项目审计与清理](../implementation/project-audit-20260924.md)。更早流水见[历史交接](../archive/handoff/codex-takeover-history-20260923.md)。
+文档更新时间：2026-09-28（Asia/Shanghai）。下面各节按时间倒序，每节只代表该时刻的核验；最新一节即当前生产状态的最近记录，不是实时巡检。规则见 [PROJECT](../PROJECT.md)，实现见 [TECHNICAL](../TECHNICAL.md)，后续方向见[项目审计与清理](../implementation/project-audit-20260924.md)。更早流水见[历史交接](../archive/handoff/codex-takeover-history-20260923.md)。
 
 
 
 
 
+
+## 2026-09-28 17:20：全托选入认可平台子活动，英国 acc4 登录失效
+
+- 09-28 04:30 起 IT/UK 选入：平台把选入商品挂到其新建的全托子活动（活动号与列表不同），09-24 起的“只认冻结活动”规则把 IT 新 8 个、UK 207 个判为活动失配/未知（UK 超容忍 3 个转 needs_human，当天 4 次重跑各先跑约 3 小时 TapLink 清理）。核对历史 8,900+ 次确认选入：活动号全部不同、总佣金全部相同（公开佣金 15 个被调为 10%）。用户确认：`b67e6f6`+`92fca92` 回读在已选池、全托子活动（type 8/9）且总佣金（基点）与提交时一致即 confirmed（`platformAssignedCampaign`），新增 `select-global-products.py restore-isolated --confirm-restore-isolated` 只读复核隔离项。
+- 两次完整重启（scheduler `92434`，13/13 载入 `92fca92`；备份 `20260928T090500Z-pre-subcampaign-20260928`、`20260928T091458Z-pre-basis-points-20260928`，旧备份移入废纸篓，保留 3 份），控制七表哈希不变，requestRef 35,620 唯一，`quick_check=ok`。第一次停 worker 时 UK 一条投递文本已 accepted（有 messageId）未确认，重启后按原 messageId 确认，无重发；此后停 worker 前等在途（含会话意图）清零，不为零则不停。
+- IT 10 个隔离项（今日 8 + 09-23 用户选择隔离的 2 个）只读复核总佣金 15% 等一致，恢复为 confirmed（保留 `restoredFromIsolation`），零平台写入；待下次货盘/建链阶段进入 TapLink。
+- UK 供给账号 acc4 自 14:04 后登录失效：已选池读取返回 code `16201010`，16:59 货盘阶段 `taplink_remote_read_failed`；UK 214 个待复核与 2,143 个待选入、TapLink、OECID 均依赖 acc4，需重登后继续。UK 收发信（acc11）不受影响。
+- 48h 巡检：四市场 SDK 收信正常（接收延迟中位 2–3 秒，部分经 HTTP 回补），AI 回复正常；BR 1,485 个 PID 的 A/B 线索已全部查完、按 7 天周期 10-02 再查，主链滚动因无到期工作暂停（09-29 07:00 Campaign 刷新）；MY 09-26 货盘 `nested_step_exit_None` 已于当晚修复后正常。
 
 ## 2026-09-27 17:15：平台重型阶段并行上限可配置并设为 2
 
