@@ -1,11 +1,17 @@
 # BDHub-Agent 当前交接
 
-文档更新时间：2026-09-28（Asia/Shanghai）。下面各节按时间倒序，每节只代表该时刻的核验；最新一节即当前生产状态的最近记录，不是实时巡检。规则见 [PROJECT](../PROJECT.md)，实现见 [TECHNICAL](../TECHNICAL.md)，后续方向见[项目审计与清理](../implementation/project-audit-20260924.md)。更早流水见[历史交接](../archive/handoff/codex-takeover-history-20260923.md)。
+文档更新时间：2026-09-29（Asia/Shanghai）。下面各节按时间倒序，每节只代表该时刻的核验；最新一节即当前生产状态的最近记录，不是实时巡检。规则见 [PROJECT](../PROJECT.md)，实现见 [TECHNICAL](../TECHNICAL.md)，后续方向见[项目审计与清理](../implementation/project-audit-20260924.md)。更早流水见[历史交接](../archive/handoff/codex-takeover-history-20260923.md)。
 
 
 
 
 
+
+## 2026-09-29 21:30：审查 b798911 修复上线，意大利持续发送故障修复
+
+- 依据 `BDHub-Agent_审查_b798911.md`：用户确认按建议推进，R02 保留"原意图首次后最多重放 2 次"只改文档，R03 维持既有"未决 ≤3 冻结、其余继续"不改，R04 只加覆盖标记。`42c0c9c`（R01 回读须总佣金一致含同活动号、缺值不确认；R05 类目重读后旧补洞不作证据；R06 读不懂页重试额度按类目；R07 调低平台槽容量不超配；R08 历史恢复用同一判定；R09 status/restore-isolated 不再 prepare；R10 台账不可读为未知并告警；R12 人工告警按会话分类器计达人；R14 策略读不到时等待原因待核实；R04 `coverageVerified/coverageDrift`），`ae247ae`（R11 总览仅全部市场读到才显示无事项、回复分项缺失不按 0 相加；R13 线索队列坏响应结束加载；各市场自己的数据时间与选入暂停说明），`37b4288`（新增只读 `scripts/ops-restart-check.py`）。
+- 故障：09-29 约 16:29 起 IT 持续发送进程每次启动报 `review_limit` 退出（ready 517 + queued 2,199 超过复检单次 2,000 上限），重启 1,377 次零发送，上次成功为 09-28 22:40；告警未覆盖（状态文件停在等待窗口）。`37b4288` 发送与 IT 批量发送只取池顶 2,000 个位置复检。重启后 21:24 恢复发送。UK/BR/MY 发送路径不受影响。
+- 部署：21:21 在线备份 `20260929T132106Z-pre-audit-b798911`（valid，restorable），`20260928T102458Z-pre-clean-once-20260928` 移入废纸篓。首次用 `ops-restart-check.py`：preflight 基线（requestRef 44,974、13 进程）→ 停 scheduler 后 drained 通过（在途含会话意图为 0）→ 停 worker 后 `--workers-stopped` 通过 → 重启（scheduler `18258`）→ postflight 全部通过（控制摘要不变、基线 requestRef 映射未替换且唯一、quick_check、13 进程载入 `37b4288`、角色一致、四会话 ready）。Web 构建 `0Bv92chKmTQx2swXcBYB8` 逐文件校验 286 个文件后切换，旧构建在 `var/web-releases/audit-b798911-*/previous`；页面与接口均 200，告警人工数与总控一致。
 
 ## 2026-09-28 23:45：选入被平台验证打断时暂停、已选商品继续下游
 
