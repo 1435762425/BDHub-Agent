@@ -160,6 +160,9 @@ def publish_runtime(store,plan,state,*,delivery=None,stop_reason=None,confirmed_
     return _runtime(store,plan)
 
 
+REVIEW_POSITIONS=2000
+
+
 def _identities(root):
     return sqlite3.connect((Path(root)/'var/creator-identities.sqlite').resolve().as_uri()+'?mode=ro',uri=True)
 
@@ -170,7 +173,9 @@ def _candidate(root,store,plan,control_value,*,limit=200):
     state=pool(root,now=store.clock(),limit=None,cache_eligible_seconds=30)
     pools=state.get('pools') or {}
     slots=list(pools.get('ready') or [])+list(pools.get('queued') or [])
-    positions=list(dict.fromkeys((r['creatorId'],r['pid']) for r in slots))
+    # Sending walks the pool from its top; the re-check takes at most REVIEW_POSITIONS a call, so a
+    # queue that grows past it must not stop the worker (2026-09-29: IT ready+queued 2,716).
+    positions=list(dict.fromkeys((r['creatorId'],r['pid']) for r in slots))[:REVIEW_POSITIONS]
     if not positions:return None,state
     with closing(_identities(root)) as ids:
         people={}

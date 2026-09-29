@@ -104,6 +104,22 @@ class ContinuousSendTests(unittest.TestCase):
 
     @patch('lib.continuous_send._local_card',return_value=None)
     @patch('lib.cycle_delivery.capacity_for_candidate',return_value=True)
+    def test_a_pool_larger_than_one_review_is_checked_from_its_top(self,*_):
+        original_pool,original_choose=continuous.pool,continuous.choose_candidates
+        seen=[]
+        try:
+            ready=[{'creatorId':f'r{n}','pid':str(1729480061238089000+n)} for n in range(600)]
+            queued=[{'creatorId':f'q{n}','pid':str(1729480061238099000+n)} for n in range(2200)]
+            continuous.pool=lambda *_args,**_kwargs:{'available':True,'layers':{'ready':600,'queued':2200},'pools':{'ready':ready,'queued':queued}}
+            continuous.choose_candidates=lambda _s,_p,_i,limit,positions:(seen.append((limit,positions)) or ([],[]))
+            continuous._candidate(self.root,self.store,self.plan,control(self.store,self.root))
+            limit,positions=seen[0]
+            self.assertEqual((limit,len(positions)),(continuous.REVIEW_POSITIONS,continuous.REVIEW_POSITIONS))
+            self.assertEqual(positions[0],('r0',ready[0]['pid']));self.assertEqual(positions[600],('q0',queued[0]['pid']))
+        finally:continuous.pool,continuous.choose_candidates=original_pool,original_choose
+
+    @patch('lib.continuous_send._local_card',return_value=None)
+    @patch('lib.cycle_delivery.capacity_for_candidate',return_value=True)
     def test_candidate_skips_every_existing_immutable_delivery(self,*_):
         original_pool,original_choose=continuous.pool,continuous.choose_candidates
         try:

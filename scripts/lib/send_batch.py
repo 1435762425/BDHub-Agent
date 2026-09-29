@@ -233,7 +233,8 @@ def _preview(root, *, count=500, widen=False, window=None, template='standard', 
                  'capacity': None, 'window': window_state(window, stamp), 'widen': bool(widen),
                  'previewHash': None, 'authorization': None}, [])
     slots = [row for row in state['pools'].get('ready', [])]
-    positions = [(row['creatorId'], row['pid']) for row in slots]
+    # One re-check takes at most 2,000 positions (cycle_review); the ready layer is read from its top.
+    positions = [(row['creatorId'], row['pid']) for row in slots][:2000]
     with _store(root) as store:
         plan = _plan(store)
         template_spec=resolve_send_template(store,template)

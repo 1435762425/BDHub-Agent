@@ -325,3 +325,5 @@ npm run dev   # 开发；生产使用 npm run start，不能同时占用 5198
 迁移/回填前先 `state-backup.py create --label <label>` 并 verify（单库变更可只做该库 online backup，保存 hash/quick_check 回执）；apply 仅按明确范围升级既有库。`migrate-lead-receipts.py` 缺 schema 拒绝运行，不在 worker 启动时隐式升级；backfill-current-bindings/leads 的 check 只读，apply 只本地投影，无平台调用。只读检查直接 SQLite 时使用 mode=ro。
 
 交付分别报告：合同测试、类型/构建、本机 API、只读真实数据、平台回执、业务结果。不把历史测试数、旧吞吐或存活进程当当前验收。结构改进与历史实测限制见[项目审计与清理](implementation/project-audit-20260924.md)。
+
+**重启检查（只读）：** `scripts/ops-restart-check.py preflight|drained|postflight --release-id <id>` 只读各库、只写 `var/releases/<id>/restart-<phase>.json`。preflight 记录控制七表摘要、`(delivery, kind, request_ref)` 映射摘要（按基线 rowid）、在途（投递部件、服务回复、打开会话意图）与存活进程；drained 要求 scheduler 已停、无阶段 claim、在途为零（`--workers-stopped` 另要求无常驻进程）；postflight 比对控制摘要、基线 requestRef 映射未被替换且全表唯一、`quick_check`、无未提交运行代码、全部存活进程载入 HEAD 代码且角色与基线一致、四个会话 owner 在 120 秒内 ready。通过 0、失败 1、读不到 2；它不停止或启动任何进程，不清除 unknown/gap/requestRef。
