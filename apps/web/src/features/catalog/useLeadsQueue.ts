@@ -27,7 +27,9 @@ export function useLeadsQueue(market:string):LeadsQueueController{
   // the operator's unsaved edits to the settings must survive a failed poll.
   for(let attempt=0;attempt<3;attempt+=1){
    const r=await fetch(`/api/leads-queue?market=${encodeURIComponent(market)}`,{cache:"no-store"}).catch(()=>null);
-   if(r?.ok){adopt(await r.json() as LeadsQueueState);return;}
+   // A body that does not parse, or is not a queue state, is a failed read like any other (R13).
+   const value=r?.ok?await r.json().catch(()=>null) as LeadsQueueState|null:null;
+   if(value&&typeof value==="object"&&"config" in value){adopt(value);return;}
    await new Promise(resolve=>setTimeout(resolve,400));
   }
   // A read that failed ends "loading" and is shown as such; the last good data stays, marked stale.

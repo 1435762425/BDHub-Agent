@@ -31,6 +31,23 @@ class OperationsConsoleTests(unittest.TestCase):
   rows={row['market']:row for row in console(self.root,self.store,markets=['br','my'])['markets']}
   self.assertEqual((rows['br']['current']['state'],rows['br']['current']['waitingKnown']),('queued',False))
 
+ def test_a_paused_selection_is_shown_only_while_pids_still_wait(self):
+  from contextlib import closing
+  import sqlite3
+  from lib.operations_console import _selection_paused
+  from lib.operations_scheduler import SELECTION_BACKLOG_RETRY_SECONDS
+  self.store.db.execute("INSERT INTO workflow_generation(generation_id,run_id,stage,market,scope_fingerprint,state,item_count,payload_json,created_at) VALUES('g1','r1','catalog','my','x','published',0,?,?)",
+                        (json.dumps({'scope':{'selectionPaused':{'reason':'commerce_verification_required','pending':9}}}),NOW))
+  self.assertIsNone(_selection_paused(self.root,self.store.db,'my'))  # no ledger: nothing waits
+  with closing(sqlite3.connect(self.root/'var/global-selection-my.sqlite')) as db,db:
+   db.executescript("""CREATE TABLE intake_run(id TEXT,rules TEXT,source_run TEXT,created REAL);
+     CREATE TABLE intake_item(run_id TEXT,pid TEXT,state TEXT,payload TEXT,updated REAL);
+     CREATE TABLE intake_run_member(run_id TEXT,pid TEXT,owner_run_id TEXT);
+     INSERT INTO intake_run VALUES('b','{}','s',1);INSERT INTO intake_item VALUES('b','a','pending','{}',1);
+     INSERT INTO intake_run_member VALUES('b','a','b');""")
+  self.assertEqual(_selection_paused(self.root,self.store.db,'my'),{'reason':'commerce_verification_required','pending':1,
+                   'pausedAt':NOW,'retryAt':NOW+SELECTION_BACKLOG_RETRY_SECONDS})
+
  def test_a_queued_stage_names_the_resource_and_who_holds_it(self):
   from lib.operations_workflow import status
   my=create_run(self.store,market='my',trigger_source='manual',scheduled_at=NOW,request_id='console-my-run',only_stage='catalog',sources=['campaign'])

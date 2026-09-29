@@ -97,6 +97,24 @@ def _lanes(store, market):
             "continuousSend": lane("continuous_send"), "agentReply": lane("agent_reply")}
 
 
+def _selection_paused(root, db, market):
+    """The newest catalog pass paused its full-managed selection and PIDs are still waiting; None otherwise."""
+    from lib.operations_scheduler import SELECTION_BACKLOG_RETRY_SECONDS, selection_backlog
+    row = db.execute("SELECT payload_json,created_at FROM workflow_generation WHERE market=? AND stage='catalog' "
+                     "ORDER BY created_at DESC LIMIT 1", (market,)).fetchone()
+    try:
+        paused = ((json.loads(row["payload_json"] or "{}").get("scope") or {}).get("selectionPaused")) if row else None
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(paused, dict):
+        return None
+    backlog = selection_backlog(root, market)
+    if backlog == 0:
+        return None
+    return {"reason": str(paused.get("reason") or "")[:80], "pending": backlog,
+            "pausedAt": row["created_at"], "retryAt": row["created_at"] + SELECTION_BACKLOG_RETRY_SECONDS}
+
+
 def _human_queue(root, store, market):
     """Creators in the conversation page's human queue, by the same classifier (I02); None if unreadable."""
     from lib.conversation_workbench import list_conversations
@@ -153,6 +171,7 @@ def console(root, store, *, markets=None, recent=15):
                 # Open service cases are counted apart from the human queue: they are different things.
                 "openHumanCases": human,
                 "humanQueue": _human_queue(root, store, market),
+                "selectionPaused": _selection_paused(root, db, market),
                 "lanes": _lanes(store, market)})
         except (CycleError, KeyError, TypeError, ValueError) as error:
             rows.append({"market": market, "available": False, "error": str(error)[:120]})

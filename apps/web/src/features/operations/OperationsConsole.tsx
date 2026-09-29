@@ -95,6 +95,8 @@ export default function OperationsConsole(){
   if(row.lanes.continuousSend?.state==="attention")items.push({key:`${row.market}-send`,text:"持续发送已停止，需关注",href:`/${row.market}/workspace/send`});
   if(row.needsReview)items.push({key:`${row.market}-review`,text:`主链需核对：${row.needsReview.errorCode??label(row.needsReview.state)}`,href:`/${row.market}/ops/jobs`,since:row.needsReview.at});
   return items.map(item=>({...item,market:row.market}));});
+ // "Nothing to do" is only said when every market's queue and overview were actually read (R11).
+ const unchecked=(data?.markets??[]).filter(row=>!row.available||!row.humanQueue||!overviews[row.market]||overviewFailed.includes(row.market)).map(row=>row.market.toUpperCase());
  const unread=rows.map(row=>({market:row.market,count:metric(overviews[row.market],"inbox","unread"),oldest:metric(overviews[row.market],"inbox","oldestMinutes")}));
  return <div className="space-y-5">
   <PageHeading title="经营总览" description="全部市场 · 北京时间今日 00:00 起 · 只读，不启动任何作业" action={data?<div className="flex flex-wrap gap-2"><Pill tone={data.scheduler.running?"success":"warning"}>{data.scheduler.running?"调度器在运行":"调度器未运行"}</Pill><Pill tone="neutral">数据截至 {time(data.checkedAt)}</Pill></div>:undefined}/>
@@ -106,21 +108,23 @@ export default function OperationsConsole(){
     <div className="overflow-x-auto"><table className="w-full min-w-[900px] text-left text-sm"><thead className="text-xs text-gray-400"><tr>
      <th className="px-5 py-3 font-medium">市场</th><th className="px-3 py-3 font-medium">完整卡文触达</th><th className="px-3 py-3 font-medium">收到来信</th><th className="px-3 py-3 font-medium">来信达人</th><th className="px-3 py-3 font-medium">已确认回复</th><th className="px-3 py-3 font-medium">人工队列</th><th className="px-3 py-3 font-medium">当前可发</th><th className="px-3 py-3 font-medium">当前状况</th></tr></thead>
      <tbody className="divide-y divide-gray-100 dark:divide-gray-800">{data.markets.map(row=>{const o=overviews[row.market],day=today(o);return <tr key={row.market} className="align-top">
-      <td className="px-5 py-4"><Link href={`/${row.market}`} className="font-semibold text-brand-500">{row.market.toUpperCase()}</Link><p className="text-xs text-gray-400">{MARKET_NAME[row.market]??""}</p></td>
+      <td className="px-5 py-4"><Link href={`/${row.market}`} className="font-semibold text-brand-500">{row.market.toUpperCase()}</Link><p className="text-xs text-gray-400">{MARKET_NAME[row.market]??""}</p>{o&&<p className={`text-[11px] ${overviewFailed.includes(row.market)?"text-warning-600":"text-gray-400"}`}>{overviewFailed.includes(row.market)?"上次数据 ":"数据 "}{time(o.checkedAt)}</p>}</td>
       {row.available?<>
        <td className="px-3 py-4 tabular-nums">{num(day?.creators,"位")}</td>
        <td className="px-3 py-4 tabular-nums">{num(day?.replies,"条")}</td>
        <td className="px-3 py-4 tabular-nums">{num(day?.replyCreators,"位")}</td>
-       <td className="px-3 py-4 tabular-nums">{day?.serviceRepliesAi==null&&day?.serviceRepliesManual==null?num(day?.autoReplies,"条"):<>{num((day?.serviceRepliesAi??0)+(day?.serviceRepliesManual??0),"条")}<p className="text-xs text-gray-400">AI {day?.serviceRepliesAi??"—"} · 人工 {day?.serviceRepliesManual??"—"}</p></>}</td>
+       <td className="px-3 py-4 tabular-nums">{day?.serviceRepliesAi!=null&&day?.serviceRepliesManual!=null?<>{num(day.serviceRepliesAi+day.serviceRepliesManual,"条")}<p className="text-xs text-gray-400">AI {day.serviceRepliesAi} · 人工 {day.serviceRepliesManual}</p></>:<>{num(day?.autoReplies,"条")}{(day?.serviceRepliesAi!=null||day?.serviceRepliesManual!=null)&&<p className="text-xs text-gray-400">AI {day?.serviceRepliesAi??"—"} · 人工 {day?.serviceRepliesManual??"—"}</p>}</>}</td>
        <td className="px-3 py-4 tabular-nums">{row.humanQueue?<Link href={`/${row.market}/conversations`} className="text-brand-500">{num(row.humanQueue.human,"位")}</Link>:"—"}</td>
        <td className="px-3 py-4 tabular-nums">{num(metric(o,"pool","ready"),"位")}</td>
-       <td className="space-y-1 px-3 py-4 text-xs"><Situation row={row} labels={labels} now={now}/><LaneLine name="发送" lane={row.lanes.continuousSend}/><LaneLine name="AI 回复" lane={row.lanes.agentReply}/></td>
+       <td className="space-y-1 px-3 py-4 text-xs"><Situation row={row} labels={labels} now={now}/>{row.selectionPaused&&<p className="text-gray-500">全托选入暂停（平台验证）：已选的已进入下游，剩 {row.selectionPaused.pending??"—"} 个约 {time(row.selectionPaused.retryAt)} 再选</p>}<LaneLine name="发送" lane={row.lanes.continuousSend}/><LaneLine name="AI 回复" lane={row.lanes.agentReply}/></td>
       </>:<td colSpan={7} className="px-3 py-4 text-xs text-warning-600">该市场台账读取失败，状态待核实（{row.error}）</td>}
      </tr>;})}</tbody></table></div>
    </Card>
    <div className="grid gap-5 xl:grid-cols-2">
     <Card title="需要我处理" subtitle="只列需要人决定或操作的事项；正常等待不在这里">
-     <div className="divide-y divide-gray-100 px-5 dark:divide-gray-800">{todo.length?todo.map(item=><Link key={item.key} href={item.href} className="flex items-center justify-between gap-3 py-3 text-sm hover:text-brand-500"><span><span className="mr-2 font-semibold">{item.market.toUpperCase()}</span>{item.text}</span><span className="text-xs text-gray-400">{item.since?time(item.since):""} 处理 →</span></Link>):<p className="py-6 text-sm text-gray-400">{rows.length?"当前没有需要人工处理的事项。":"—"}</p>}</div>
+     <div className="divide-y divide-gray-100 px-5 dark:divide-gray-800">{todo.map(item=><Link key={item.key} href={item.href} className="flex items-center justify-between gap-3 py-3 text-sm hover:text-brand-500"><span><span className="mr-2 font-semibold">{item.market.toUpperCase()}</span>{item.text}</span><span className="text-xs text-gray-400">{item.since?time(item.since):""} 处理 →</span></Link>)}
+      {unchecked.length>0?<p className="py-3 text-sm text-warning-600">{unchecked.join("、")} 的待办状态待核实（本次没读全），{todo.length?"以上只是已读到的事项。":"不能判断为没有事项。"}</p>:
+       !todo.length&&<p className="py-6 text-sm text-gray-400">当前没有需要人工处理的事项。</p>}</div>
      <div className="border-t border-gray-100 px-5 py-3 text-xs text-gray-500 dark:border-gray-800">未处理达人来信：{unread.map(u=>`${u.market.toUpperCase()} ${u.count==null?"—":`${u.count} 个会话${u.oldest?`（最早已等 ${Math.round(u.oldest/60)} 小时）`:""}`}`).join("；")}</div>
     </Card>
     <Card title="供给是否够用" subtitle="当前快照；各层数字不能相加成达人总数">

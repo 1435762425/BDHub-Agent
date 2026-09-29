@@ -15,6 +15,8 @@ export type ConsoleMarket={market:string;available:true;setting:{automaticOperat
  needsReview:{runId:string;state:string;errorCode:string|null;at:number|null}|null;openHumanCases:number|null;
  // The conversation page's own human queue (I02); open cases are a different count.
  humanQueue:{human:number|null;technical:number|null}|null;
+ // A full-managed selection the platform's verification paused; the selected PIDs went on downstream.
+ selectionPaused?:{reason:string|null;pending:number|null;pausedAt:number|null;retryAt:number|null}|null;
  lanes:{available:boolean;observedAt:number|null;continuousSend:Lane|null;agentReply:Lane|null}}|{market:string;available:false;error:string};
 export type OperationsConsole={schemaVersion:"bdhub.operations-console.v1";checkedAt:number;markets:ConsoleMarket[];
  resources:(Holder&{resource:string;heartbeatAt:number|null})[];recent:FinishedStage[];scheduler:{running:boolean;checkedAt:number|null};
@@ -52,6 +54,7 @@ export function validateOperationsConsole(raw:unknown):OperationsConsole{
    setting:{automaticOperationsEnabled:flag(setting.automaticOperationsEnabled),continuousSendEnabled:flag(setting.continuousSendEnabled),fullCatalogWeeklyEnabled:flag(setting.fullCatalogWeeklyEnabled)},
    run,current,lastFinished:m.lastFinished==null?null:finished(m.lastFinished),needsReview:review,openHumanCases:count(m.openHumanCases),
    humanQueue:m.humanQueue==null?null:(()=>{const h=object(m.humanQueue);return {human:count(h.human),technical:count(h.technical)};})(),
+   selectionPaused:m.selectionPaused==null?null:(()=>{const p=object(m.selectionPaused);return {reason:maybeText(p.reason,80),pending:p.pending==null?null:count(p.pending),pausedAt:time(p.pausedAt),retryAt:time(p.retryAt)};})(),
    lanes:{available:flag(lanes.available),observedAt:time(lanes.observedAt),continuousSend:lane(lanes.continuousSend),agentReply:lane(lanes.agentReply)}};});
  const scheduler=object(v.scheduler),labels=object(v.stageLabels);
  return {schemaVersion:"bdhub.operations-console.v1",checkedAt:time(v.checkedAt)??fail(),markets,

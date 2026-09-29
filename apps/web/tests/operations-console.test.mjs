@@ -28,3 +28,10 @@ test('human queue and unknown waits survive validation and old payloads still re
  assert.equal(old.markets[0].humanQueue,null);assert.equal(old.markets[0].current.waitingKnown,true);
  assert.throws(()=>validateOperationsConsole({...payload,markets:[{...withQueue,humanQueue:{human:-1,technical:0}}]}),/invalid_operations_console/);
 });
+test('a paused full-managed selection survives validation; absent reads as not paused',()=>{
+ const paused={...market,selectionPaused:{reason:'commerce_verification_required',pending:12,pausedAt:1000,retryAt:11800}};
+ const value=validateOperationsConsole({...payload,markets:[paused]});
+ assert.deepEqual(value.markets[0].selectionPaused,{reason:'commerce_verification_required',pending:12,pausedAt:1000,retryAt:11800});
+ assert.equal(validateOperationsConsole(payload).markets[0].selectionPaused,null);
+ assert.throws(()=>validateOperationsConsole({...payload,markets:[{...paused,selectionPaused:{pending:-1}}]}),/invalid_operations_console/);
+});
