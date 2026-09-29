@@ -27,6 +27,17 @@ class WorkflowResourceTests(unittest.TestCase):
   c=claim(self.store,'stage-2','scheduler-owner-c',[('kalodata:global',2),('supply:acc3',1)],worker_pid=12)
   self.assertTrue(assert_current(self.store,'stage-2','scheduler-owner-c',c['fence']))
 
+ def test_a_lowered_capacity_counts_slots_still_held_beyond_it(self):
+  from lib.workflow_resources import lend_slot,reclaim_slot
+  claim(self.store,'stage-0','scheduler-owner-a',[('platform:global',2)],worker_pid=10)
+  b=claim(self.store,'stage-1','scheduler-owner-b',[('platform:global',2)],worker_pid=11)
+  release(self.store,'stage-0','scheduler-owner-a',self.store.db.execute("SELECT fence FROM workflow_stage_claim WHERE stage_run_id='stage-0'").fetchone()[0])
+  # Capacity is now 1 while slot 1 is still held: slot 0 is free by number but the pool is full.
+  with self.assertRaisesRegex(CycleError,'resource_busy'):
+   claim(self.store,'stage-2','scheduler-owner-c',[('platform:global',1)],worker_pid=12)
+  self.assertTrue(lend_slot(self.store,'stage-1','scheduler-owner-b',b['fence'],'platform:global'))
+  claim(self.store,'stage-2','scheduler-owner-c',[('platform:global',1)],worker_pid=12)
+  self.assertFalse(reclaim_slot(self.store,'stage-1','scheduler-owner-b',b['fence'],'platform:global',1))
  def test_heartbeat_fence_and_dead_owner_recovery(self):
   claimed=claim(self.store,'stage-0','scheduler-owner-a',[('communications:acc6',1)],lease_seconds=5,worker_pid=999)
   self.now[0]=103;self.assertEqual(heartbeat(self.store,'stage-0','scheduler-owner-a',claimed['fence'],lease_seconds=5),108)

@@ -642,6 +642,13 @@ class StageWiring(unittest.TestCase):
                   INSERT INTO intake_run_member VALUES('new','a','old'),('new','b','old');""")
             self.assertEqual(scheduler.selection_backlog(root,'uk'),1)
             self.assertEqual(scheduler.selection_backlog(root,'it'),0)
+            # A member whose owning intent is missing, or an unreadable ledger, is unknown - never zero.
+            with closing(sqlite3.connect(root/'var/global-selection-uk.sqlite')) as db,db:
+                db.execute("INSERT INTO intake_run_member VALUES('new','c','gone')")
+            self.assertIsNone(scheduler.selection_backlog(root,'uk'))
+            (root/'var/global-selection-it.sqlite').write_text('not sqlite')
+            (root/'var/global-selection.sqlite').write_bytes(b'not a database')
+            self.assertIsNone(scheduler.selection_backlog(root,'it'))
             jobs={'jobs':{'campaign_catalog_update':{'at':'07:00'},'taplink_clean':{'at':'04:30','weekday':0}}}
             def due(backlog):
                 with patch('lib.jobs.load',return_value=jobs),patch('lib.market_registry.supports',return_value=True),\
@@ -650,6 +657,7 @@ class StageWiring(unittest.TestCase):
                      patch('lib.operations_policy.full_catalog_collection_mode',return_value={'nextDiscoveryAt':NOW+30*86400}):
                     return scheduler._scheduled_sources(root,None,'uk',NOW,{'fullCatalogWeeklyEnabled':True},{'campaignRefreshDays':2})[1]['selected']
             self.assertEqual(due(5),NOW-3600+scheduler.SELECTION_BACKLOG_RETRY_SECONDS)
+            self.assertEqual(due(None),NOW-3600+scheduler.SELECTION_BACKLOG_RETRY_SECONDS)
             self.assertGreater(due(0),NOW+86400)
 
     def test_uk_weekly_maintenance_reuses_discovery_within_fifteen_days(self):

@@ -55,10 +55,11 @@ def _selection_isolated(root, market, now):
             return db.execute("SELECT count(*) FROM intake_item WHERE state='isolated_unverified' "
                               "AND json_extract(payload,'$.isolation.at')>=?", (now - 7 * 86400,)).fetchone()[0]
     except sqlite3.Error:
-        return 0
+        return None
 
 
 def _market_facts(root, store, market, accounts):
+    from lib.operations_console import _human_queue
     from lib.agent_reply_v2 import rollout_stage
     from lib.conversation_workbench import unread_backlog
     from lib.operations_workflow import setting as market_setting
@@ -102,6 +103,8 @@ def _market_facts(root, store, market, accounts):
         "stages": stages,
         "unknown": deliveries.get("unknown", empty), "quarantined": deliveries.get("quarantined_unknown", empty),
         "humanCases": {"count": cases[0], "oldestAt": _stamp(cases[1])},
+        # The conversation page's own human queue (creators), the same count the console shows.
+        "humanQueue": _human_queue(root, store, market),
         "platformRejections": {"count": rejected[0], "oldestAt": _stamp(rejected[1]), "hold": rejection_hold},
         "unread": unread_backlog(store, market),
         "agent": {"enabled": bool(agent["enabled"]), "rolloutStage": rollout_stage(store, plan, market),
@@ -312,13 +315,21 @@ def evaluate(facts):
                       }.get(hold, "非额度拒绝只结束对应达人，继续发送；同类拒绝再重复会暂停新联系。")
             add(f"{key}-platform-rejected", "warning", f"{name} 平台今天拒绝发送 {rejections['count']} 次",
                 detail, market=key, since=rejections["oldestAt"], href=f"{base}/workspace/send")
-        isolated = market.get("selectionIsolated") or 0
+        isolated = market.get("selectionIsolated")
+        if isolated is None:
+            add(f"{key}-selection-ledger-unreadable", "warning", f"{name} 选品台账读取失败",
+                "隔离与待选数量待核实；不按 0 处理。", market=key, href=f"{base}/ops/jobs")
         if isolated:
             add(f"{key}-selection-isolated", "warning", f"{name} {isolated} 个选品因活动不符已隔离",
                 "证据已保留，本轮不建链接；核对实际活动后再决定是否恢复。", market=key, href=f"{base}/ops/jobs")
-        if market["humanCases"]["count"]:
-            add(f"{key}-human", "warning", f"{name} {market['humanCases']['count']} 条人工会话待处理",
-                "在会话页处理后关闭。", market=key, since=market["humanCases"]["oldestAt"], href=f"{base}/conversations")
+        queue = (market.get("humanQueue") or {}).get("human")
+        if queue:
+            add(f"{key}-human", "warning", f"{name} {queue} 位达人在人工队列",
+                "在会话页处理后关闭。", market=key, href=f"{base}/conversations")
+        elif queue is None and market["humanCases"]["count"]:
+            add(f"{key}-human", "warning", f"{name} {market['humanCases']['count']} 条未关闭人工工单",
+                "人工队列暂时读不到，先按未关闭工单提示；在会话页核对。", market=key,
+                since=market["humanCases"]["oldestAt"], href=f"{base}/conversations")
         agent, unread = market["agent"], market["unread"]
         if unread["unread"]:
             waited = now - unread["oldestAt"] if unread["oldestAt"] else 0

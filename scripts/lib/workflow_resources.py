@@ -32,7 +32,8 @@ def claim(store,stage_run_id,owner_id,resources,*,lease_seconds=60,worker_pid=No
   for key,slots in normalized:
    # An expired lease remains occupied until recovery confirms the owner is dead.
    taken={row[0] for row in store.db.execute('SELECT slot_no FROM workflow_resource_slot WHERE resource_key=?',(key,))}
-   slot=next((number for number in range(slots) if number not in taken),None)
+   # After the capacity is lowered, slots numbered beyond it still count until their owners release them.
+   slot=next((number for number in range(slots) if number not in taken),None) if len(taken)<slots else None
    if slot is None:raise CycleError('workflow_resource_busy')
    allocations.append((key,slot))
   store.db.execute('INSERT INTO workflow_claim_sequence(created_at) VALUES(?)',(now,));fence=store.db.execute('SELECT last_insert_rowid()').fetchone()[0];lease=now+lease_seconds
@@ -102,7 +103,7 @@ def reclaim_slot(store,stage_run_id,owner_id,fence,key,slots):
   if store.db.execute('SELECT 1 FROM workflow_resource_slot WHERE owner_stage_run_id=? AND fence=? AND resource_key=?',(stage_run_id,fence,key)).fetchone():
    return True
   taken={row[0] for row in store.db.execute('SELECT slot_no FROM workflow_resource_slot WHERE resource_key=?',(key,))}
-  slot=next((number for number in range(slots) if number not in taken),None)
+  slot=next((number for number in range(slots) if number not in taken),None) if len(taken)<slots else None
   if slot is None:return False
   store.db.execute('INSERT INTO workflow_resource_slot VALUES(?,?,?,?,?,?)',(key,slot,stage_run_id,fence,claim_row[0],store.clock()))
   return True

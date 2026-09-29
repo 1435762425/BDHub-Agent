@@ -23,7 +23,8 @@ def market(key="br", **changes):
              "inbox": {"checkedAt": NOW - 60, "lastSuccessAt": NOW - 60, "errorCode": None, "failureStage": None,
                        "stopRequested": False},
              "stages": [], "unknown": {"count": 0, "oldestAt": None}, "quarantined": {"count": 0, "oldestAt": None},
-             "humanCases": {"count": 0, "oldestAt": None}, "unread": {"unread": 0, "oldestAt": None},
+             "humanCases": {"count": 0, "oldestAt": None}, "humanQueue": {"human": 0, "technical": 0},
+             "selectionIsolated": 0, "unread": {"unread": 0, "oldestAt": None},
              "platformRejections": {"count": 0, "oldestAt": None},
              "agent": {"enabled": True, "rolloutStage": "pilot_running", "runtimeState": "outside_reply_window",
                        "replyWindow": ["15:00", "16:00"]},
@@ -136,10 +137,21 @@ class EvaluateTests(unittest.TestCase):
         self.assertEqual(alerts[0]["title"], "BR 2 个选品因活动不符已隔离")
         self.assertEqual(alerts[0]["href"], "/br/ops/jobs")
         self.assertEqual(evaluate(facts(market("br", selectionIsolated=0))), [])
+        # An unreadable ledger is reported, never read as zero isolated selections.
+        self.assertEqual(levels(evaluate(facts(market("br", selectionIsolated=None)))),
+                         {"br-selection-ledger-unreadable": "warning"})
+
+    def test_human_alert_counts_the_conversation_human_queue(self):
+        alerts = evaluate(facts(market("br", humanQueue={"human": 3}, humanCases={"count": 1, "oldestAt": NOW - HOUR})))
+        self.assertEqual(alerts[0]["title"], "BR 3 位达人在人工队列")
+        # Open cases alone are no human queue; they only stand in, named as cases, when the queue is unreadable.
+        self.assertEqual(evaluate(facts(market("br", humanQueue={"human": 0}, humanCases={"count": 2, "oldestAt": NOW}))), [])
+        alerts = evaluate(facts(market("br", humanQueue=None, humanCases={"count": 2, "oldestAt": NOW})))
+        self.assertEqual(alerts[0]["title"], "BR 2 条未关闭人工工单")
 
     def test_unreadable_market_is_reported_and_others_still_checked(self):
         alerts = evaluate(facts({"market": "uk", "error": "plan_missing"},
-                                market("br", humanCases={"count": 2, "oldestAt": NOW - HOUR})))
+                                market("br", humanQueue={"human": 2})))
         self.assertEqual(levels(alerts), {"uk-read-failed": "warning", "br-human": "warning"})
 
 

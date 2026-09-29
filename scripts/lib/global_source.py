@@ -44,6 +44,8 @@ def clean_categories(rows):
         seen.add(category_id);result.append({'categoryId':category_id,'name':name.strip(),'isLeaf':leaf})
     return result
 
+DRIFT_REASONS=('endpoint_end_total_drift','endpoint_end_rank_drift_','endpoint_end_window_rank_drift_')
+
 def normalize_page(data):
     """The category endpoint omits products on an explicit terminal page that has no rows left.
 
@@ -407,10 +409,11 @@ class GlobalSources:
             partition=self.db.execute("SELECT * FROM global_source_partition WHERE run_id=? AND state='blocked' ORDER BY position LIMIT 1",(id,)).fetchone()
             if run['state']!='blocked' or not partition or partition['terminal_reason']!='page_shape_invalid':
                 raise GlobalSourceError('invalid_page_retry_invalid')
-            attempts=self.db.execute("SELECT count(*) FROM global_source_attempt WHERE run_id=? AND page=? AND code='invalid_page_retry'",(id,partition['next_page'])).fetchone()[0]
+            code='invalid_page_retry_'+str(partition['category_id'])
+            attempts=self.db.execute("SELECT count(*) FROM global_source_attempt WHERE run_id=? AND page=? AND code=?",(id,partition['next_page'],code)).fetchone()[0]
             if attempts>=max_attempts:raise GlobalSourceError('invalid_page_retry_limit')
             now=self.clock()
-            self.db.execute("INSERT INTO global_source_attempt(run_id,page,at,code) VALUES(?,?,?,'invalid_page_retry')",(id,partition['next_page'],now))
+            self.db.execute("INSERT INTO global_source_attempt(run_id,page,at,code) VALUES(?,?,?,?)",(id,partition['next_page'],now,code))
             self.db.execute("UPDATE global_source_partition SET state='collecting',terminal_reason=NULL,updated=? WHERE run_id=? AND category_id=?",(now,id,partition['category_id']))
             self.db.execute("UPDATE global_source_run SET state='collecting',terminal_reason=NULL,updated=? WHERE id=?",(now,id))
             return partition['category_id']
@@ -437,6 +440,8 @@ class GlobalSources:
             self.db.execute('DELETE FROM global_source_product_category WHERE run_id=? AND category_id=?',(id,category_id))
             self.db.execute('DELETE FROM global_source_product WHERE run_id=? AND NOT EXISTS (SELECT 1 FROM global_source_product_category c WHERE c.run_id=global_source_product.run_id AND c.pid=global_source_product.pid)',(id,))
             now=self.clock();self.db.execute("UPDATE global_source_partition SET state='queued',next_page=1,reported_total=NULL,page_count=0,unique_count=0,updated=?,terminal_reason=NULL WHERE run_id=? AND category_id=?",(now,id,category_id))
+            # Repairs read before this rescan stay as history but no longer describe the category's pages.
+            self.db.execute("INSERT INTO global_source_attempt(run_id,page,at,code) VALUES(?,0,?,?)",(id,now,'partition_rescan_'+str(category_id)))
             pages=self.db.execute('SELECT coalesce(sum(page_count),0) FROM global_source_partition WHERE run_id=?',(id,)).fetchone()[0]
             self.db.execute("UPDATE global_source_run SET state='collecting',next_page=?,reported_total=NULL,updated=?,terminal_reason=NULL WHERE id=?",(pages+1,now,id))
             return category_id
@@ -492,19 +497,20 @@ class GlobalSources:
             if rows!=part['reported_total'] or not 1<=duplicates<=limit:raise GlobalSourceError('stable_duplicate_evidence_missing')
             duplicate_pages=self.db.execute('SELECT page,pids_hash,count-category_new_count FROM global_source_partition_page WHERE run_id=? AND category_id=? AND category_new_count<count',(id,part['category_id'])).fetchall()
             if not duplicate_pages:raise GlobalSourceError('stable_duplicate_evidence_missing')
-            latest=self.db.execute('SELECT max(attempt) FROM global_source_partition_repair_page WHERE run_id=? AND category_id=?',(id,part['category_id'])).fetchone()[0]
-            repair_summary=self.db.execute('SELECT count(*),coalesce(sum(new_count),0) FROM global_source_partition_repair_page WHERE run_id=? AND category_id=? AND attempt=?',(id,part['category_id'],latest)).fetchone()
+            since=self.db.execute("SELECT coalesce(max(at),0) FROM global_source_attempt WHERE run_id=? AND code=?",(id,'partition_rescan_'+str(part['category_id']))).fetchone()[0]
+            latest=self.db.execute('SELECT max(attempt) FROM global_source_partition_repair_page WHERE run_id=? AND category_id=? AND observed>=?',(id,part['category_id'],since)).fetchone()[0]
+            repair_summary=self.db.execute('SELECT count(*),coalesce(sum(new_count),0) FROM global_source_partition_repair_page WHERE run_id=? AND category_id=? AND attempt=? AND observed>=?',(id,part['category_id'],latest,since)).fetchone()
             stable=duplicates if repair_summary[0]==part['page_count'] and repair_summary[1]==0 else 0
             if not stable:
                 for page,pids_hash,duplicate_rows in duplicate_pages:
-                    repair=self.db.execute('SELECT pids_hash,new_count FROM global_source_partition_repair_page WHERE run_id=? AND category_id=? AND page=? ORDER BY attempt DESC LIMIT 1',(id,part['category_id'],page)).fetchone()
+                    repair=self.db.execute('SELECT pids_hash,new_count FROM global_source_partition_repair_page WHERE run_id=? AND category_id=? AND page=? AND observed>=? ORDER BY attempt DESC LIMIT 1',(id,part['category_id'],page,since)).fetchone()
                     if repair and repair[0]==pids_hash and repair[1]==0:stable+=duplicate_rows
             reason=f'endpoint_end_stable_duplicate_rows_{duplicates}'
             if stable!=duplicates:
                 # A listing that re-ranks while it is paged never replays its duplicate pages exactly.
                 # Accept the bounded gap once repair has re-read every duplicate page and still
                 # could not close it.
-                repaired={row[0] for row in self.db.execute('SELECT page FROM global_source_partition_repair_page WHERE run_id=? AND category_id=?',(id,part['category_id']))}
+                repaired={row[0] for row in self.db.execute('SELECT page FROM global_source_partition_repair_page WHERE run_id=? AND category_id=? AND observed>=?',(id,part['category_id'],since))}
                 if not {row[0] for row in duplicate_pages}<=repaired:
                     raise GlobalSourceError('stable_duplicate_evidence_missing')
                 reason=f'endpoint_end_rank_drift_{duplicates}'
@@ -699,6 +705,10 @@ class GlobalSources:
         stable_duplicates=(sum(max(0,(row['reported_total'] or 0)-row['unique_count']) for row in partitions if row['state']=='completed')
                            if partitioned else int((r['terminal_reason'] or '').rsplit('_',1)[-1])
                            if (r['terminal_reason'] or '').startswith('endpoint_end_stable_duplicate_rows_') else 0)
+        # Drift and re-ranking close a category by bounded rules; they do not prove every live PID was read.
+        drift=[{'categoryId':row['category_id'],'name':row['category_name'],'reason':row['terminal_reason'],
+                'uniqueCount':row['unique_count'],'reportedTotal':row['reported_total']}
+               for row in partitions if row['state']=='completed' and (row['terminal_reason'] or '').startswith(DRIFT_REASONS)]
         coverage=('operator_accepted_partial' if r['state']=='accepted_partial' else
                   ('category_l1_endpoint_and_totals' if partitioned else
                    'current_query_endpoint_stable_duplicates' if stable_duplicates else 'current_query_endpoint_and_total')
@@ -714,4 +724,5 @@ class GlobalSources:
             'updatedAt':r['updated'],'elapsedSeconds':max(0,r['updated']-r['created']),
             'operatorAcceptance':dict(acceptance) if acceptance else None,
             'coverageOverlay':r['scope'].get('coverageOverlay'),
+            'coverageVerified':None if not partitioned or r['state']!='completed' else not drift,'coverageDrift':drift,
             'listingOnly':True,'stockVerified':False,'stockRequired':False,'executionAllowed':False,'sample':[{'pid':x['pid'],'title':json.loads(x['payload']).get('title'),'listedSelected':json.loads(x['payload']).get('fs_is_selected')} for x in self.db.execute('SELECT pid,payload FROM global_source_product WHERE run_id=? ORDER BY first_page,pid LIMIT 6',(id,))]}

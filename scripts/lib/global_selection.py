@@ -181,23 +181,23 @@ def frozen_total_basis(item):
 def matching_selection_evidence(item, observed):
     """Readback rows that settle a submitted selection intent.
 
-    The frozen campaign settles it. Full-managed selection is also re-homed by the platform under a
-    campaign it creates (2026-09-28, verified on 8,900+ earlier selections): such a row settles the
-    intent only when it carries the same total commission the intent was submitted at."""
+    A row settles it only at the total commission the intent was submitted at: under the frozen
+    campaign, or under a full-managed campaign the platform created for it (2026-09-28, verified on
+    8,900+ earlier selections). A missing or unreadable total on either side never settles."""
     if item['state']=='pending':return observed
     frozen=(item.get('payload') or {}).get('campaign') or {}
     campaign=(frozen.get('campaign') or {}) if isinstance(frozen,dict) else {}
     cid=str(campaign.get('campaign_id') or '')
-    exact=[row for row in observed if row['campaignId']==cid] if cid else []
-    if exact:return exact
     total=frozen_total_basis(item)
-    if total is None:return []
-    matched=[]
+    if total is None or not total.is_finite():return []
+    exact=[];assigned=[]
     for row in observed:
-        try:same=row.get('totalBasis') is not None and Decimal(str(row['totalBasis']))==total
-        except InvalidOperation:same=False
-        if same and str(row.get('type')) in ('8','9'):matched.append({**row,'platformAssignedCampaign':True})
-    return matched
+        try:basis=Decimal(str(row['totalBasis'])) if row.get('totalBasis') is not None else None
+        except InvalidOperation:basis=None
+        if basis is None or not basis.is_finite() or basis!=total:continue
+        if cid and str(row.get('campaignId'))==cid:exact.append(row)
+        elif str(row.get('type')) in ('8','9'):assigned.append({**row,'platformAssignedCampaign':True})
+    return exact or assigned
 
 def settle_readback(ledger,item,observed,*,at=None):
     """One readback outcome for a submitted intent: settled, isolated, other_campaign, absent or unchanged."""

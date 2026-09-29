@@ -216,6 +216,35 @@ class SourceTests(unittest.TestCase):
    self.assertEqual((self.s.status('unread')['state'],self.s.next_partition('unread')['next_page']),('collecting',2))
    self.s.blocked('unread','page_shape_invalid')
   with self.assertRaisesRegex(GlobalSourceError,'invalid_page_retry_limit'):self.s.retry_invalid_page('unread')
+ def test_repairs_from_before_a_rescan_do_not_prove_the_new_scan(self):
+  self.s.blocked('one','fixture_end')
+  self.s.start_partitioned('rescan',self.scope,[{'category_id':'600001','name':'美妆个护','is_leaf':False}]);self.s.next_partition('rescan')
+  def scan():
+   self.s.partition_page('rescan','600001',1,page([1,2],True,3),request_payload=list_request(1,category_id='600001'))
+   self.s.partition_page('rescan','600001',2,page([2],False,3),request_payload=list_request(2,3,'600001'))
+  scan();scope=self.s.partial_repair_scope('rescan')
+  for number in scope['pages']:
+   self.s.repair_partition_page('rescan','600001',number,page([2,1] if number==1 else [1],number<2,3),list_request(number,3,'600001'),scope['attempt'])
+  self.now+=10;self.s.retry_partial_partition('rescan');self.s.next_partition('rescan');self.now+=10;scan()
+  # The same duplicate page again, but only the earlier scan re-read it.
+  with self.assertRaisesRegex(GlobalSourceError,'stable_duplicate_evidence_missing'):self.s.accept_stable_duplicate_rows('rescan')
+  scope=self.s.partial_repair_scope('rescan')
+  for number in scope['pages']:
+   self.s.repair_partition_page('rescan','600001',number,page([2,1] if number==1 else [1],number<2,3),list_request(number,3,'600001'),scope['attempt'])
+  self.assertEqual(self.s.accept_stable_duplicate_rows('rescan')['reason'],'endpoint_end_rank_drift_1')
+  status=self.s.status('rescan')
+  self.assertEqual((status['state'],status['coverageVerified']),('completed',False))
+  self.assertEqual(status['coverageDrift'][0]['reason'],'endpoint_end_rank_drift_1')
+ def test_unreadable_page_retries_are_counted_per_category(self):
+  self.s.blocked('one','fixture_end')
+  self.s.start_partitioned('twocat',self.scope,[{'category_id':'600001','name':'A','is_leaf':False},{'category_id':'600002','name':'B','is_leaf':False}])
+  self.s.next_partition('twocat')
+  for _ in range(2):
+   self.s.blocked('twocat','page_shape_invalid');self.s.retry_invalid_page('twocat')
+  self.s.partition_page('twocat','600001',1,page([1],False,1),request_payload=list_request(1,category_id='600001'))
+  self.s.next_partition('twocat');self.s.blocked('twocat','page_shape_invalid')
+  self.assertEqual(self.s.retry_invalid_page('twocat'),'600002')
+  self.assertTrue(self.s.status('twocat')['state'] in ('collecting',))
  def test_partial_category_can_be_discarded_and_restarted_before_publication(self):
   self.s.blocked('one','fixture_end')
   self.s.start_partitioned('retrycat',self.scope,[{'category_id':'600001','name':'家居用品','is_leaf':False}])

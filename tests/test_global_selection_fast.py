@@ -27,7 +27,7 @@ class FastTests(unittest.TestCase):
     def fork_lane(self,pace):return self
     def copy_session_from(self,other):pass
     def _params(self):return {}
-    def selected_page(self,page,pids):return {'total':len(sent&set(pids)),'items':[{'campaign_product':{'product_id':p},'campaign_info':{'campaign_id':'1234567890123456789','crs_campaign_type':9}} for p in pids if p in sent]}
+    def selected_page(self,page,pids):return {'total':len(sent&set(pids)),'items':[{'campaign_product':{'product_id':p,'total_commission_percent':'1200'},'campaign_info':{'campaign_id':'1234567890123456789','crs_campaign_type':9}} for p in pids if p in sent]}
     def opportunity_page(self,page,global_only,pids):return {'has_more':False,'products':[{'product_id':p,'sales':'300 已售','product_rating':4,'commission_rate':'1200','open_collab_rate':'1000','fs_is_selected':False} for p in pids]}
     def _xhr(self,**kwargs):return SimpleNamespace(has_turing=False,payload={'data':{'product_campaign_detail':[{'campaign':{'campaign_id':'1234567890123456789','crs_campaign_type':9,'promotion_start_time':'1000','promotion_end_time':'9999999999999','commission':'1200'},'open_collab_rate':'1000'}]}})
     def require_read(self,r):return r.payload

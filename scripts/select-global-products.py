@@ -24,7 +24,16 @@ def main():
     from lib.market_accounts import load_config
     account=load_config(ROOT)['markets'][a.market]['roles']['supply']
     with (ROOT/f'var/global-selection{suffix}.lock').open('a') as lock:
-        fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB);ledger=Selection(ROOT,a.market);id=ledger.prepare();report={'id':id,'action':a.action,'market':a.market,'account':account,'scope':f'{a.market.upper()} {account.upper()} select only','realSends':0,'linkCreates':0,'platformWrites':0,'started':time.time()}
+        fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB);ledger=Selection(ROOT,a.market)
+        # Reading status or re-checking isolated intents stays on the existing batch; only the
+        # prepare/execute/verify actions may prepare candidates from a newly published source.
+        if a.action in ('status','restore-isolated'):
+            latest=ledger.db.execute('SELECT id FROM intake_run ORDER BY created DESC LIMIT 1').fetchone()
+            if not latest:
+                print(json.dumps({'id':None,'states':{},'error':'selection_batch_missing'}));ledger.db.close();return
+            id=latest[0]
+        else:id=ledger.prepare()
+        report={'id':id,'action':a.action,'market':a.market,'account':account,'scope':f'{a.market.upper()} {account.upper()} select only','realSends':0,'linkCreates':0,'platformWrites':0,'started':time.time()}
         path=ROOT/f'var/global-selection-status{suffix}.json'
         def save():
             report.update(states=ledger.status(id),elapsedSeconds=round(time.time()-report['started'],2));tmp=path.with_suffix('.tmp');tmp.write_text(json.dumps(report,ensure_ascii=False,indent=2));tmp.replace(path)

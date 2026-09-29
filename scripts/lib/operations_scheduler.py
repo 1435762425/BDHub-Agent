@@ -280,15 +280,18 @@ def selection_unresolved_receipts(root,market):
 
 
 def selection_backlog(root,market):
-    """PIDs of the current selection batch that were never submitted."""
+    """PIDs of the current selection batch that were never submitted; None when that is unknown.
+
+    No ledger yet is zero. An unreadable ledger, or a member whose owning intent is missing, is unknown."""
     path=Path(root)/('var/global-selection.sqlite' if market=='it' else f'var/global-selection-{market}.sqlite')
     if not path.exists():return 0
     try:
         with closing(sqlite3.connect(path.resolve().as_uri()+'?mode=ro',uri=True)) as db:
-            return int(db.execute("""SELECT count(*) FROM intake_run_member m JOIN intake_item i
-              ON i.run_id=m.owner_run_id AND i.pid=m.pid
-              WHERE m.run_id=(SELECT id FROM intake_run ORDER BY created DESC LIMIT 1) AND i.state='pending'""").fetchone()[0])
-    except sqlite3.Error:return 0
+            row=db.execute("""SELECT count(*),sum(i.pid IS NULL),coalesce(sum(i.state='pending'),0) FROM intake_run_member m
+              LEFT JOIN intake_item i ON i.run_id=m.owner_run_id AND i.pid=m.pid
+              WHERE m.run_id=(SELECT id FROM intake_run ORDER BY created DESC LIMIT 1)""").fetchone()
+    except sqlite3.Error:return None
+    return None if row[1] else int(row[2])
 
 
 def scheduler_state(root):
@@ -373,7 +376,9 @@ def _scheduled_sources(root,store,market,stamp,automation,policy):
         mode=full_catalog_collection_mode(root,market,stamp,policy=policy)
         discovery_due=mode['nextDiscoveryAt']
         selected_due=min(selected_due,discovery_due)
-        if last_selected is not None and selection_backlog(root,market):
+        backlog=selection_backlog(root,market)
+        # An unknown backlog is checked by the selection pass itself, so it is due as soon as a known one.
+        if last_selected is not None and (backlog is None or backlog):
             selected_due=min(selected_due,last_selected+SELECTION_BACKLOG_RETRY_SECONDS)
         due_times['selectedDiscovery']=discovery_due
         due_times['selected']=selected_due

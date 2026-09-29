@@ -22,6 +22,15 @@ class OperationsConsoleTests(unittest.TestCase):
   self.store=CycleStore(self.root/'var/second-cycle.sqlite',lambda:NOW)
  def tearDown(self):self.store.close();self.tmp.cleanup()
 
+ def test_an_unreadable_policy_makes_platform_waits_unknown_not_a_guessed_capacity(self):
+  create_run(self.store,market='my',trigger_source='manual',scheduled_at=NOW,request_id='console-my-policy',only_stage='catalog',sources=['campaign'])
+  create_run(self.store,market='br',trigger_source='manual',scheduled_at=NOW,request_id='console-br-policy',only_stage='oecid',sources=['campaign'])
+  from lib.operations_workflow import status
+  claim_ready(self.store,self.root,[status(self.store,'my')['current']],{'kalodataMaxParallelMarkets':2,'platformMaxParallelMarkets':1},'scheduler-console-test',worker_pid=1)
+  (self.root/'config/operations-policy.json').write_text('{broken')
+  rows={row['market']:row for row in console(self.root,self.store,markets=['br','my'])['markets']}
+  self.assertEqual((rows['br']['current']['state'],rows['br']['current']['waitingKnown']),('queued',False))
+
  def test_a_queued_stage_names_the_resource_and_who_holds_it(self):
   from lib.operations_workflow import status
   my=create_run(self.store,market='my',trigger_source='manual',scheduled_at=NOW,request_id='console-my-run',only_stage='catalog',sources=['campaign'])

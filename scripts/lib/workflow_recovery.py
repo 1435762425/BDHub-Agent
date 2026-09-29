@@ -8,6 +8,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from lib.global_screen import fingerprint,load as screen_rules
+from lib.global_selection import matching_selection_evidence
 from lib.second_cycle import CycleError,digest,encoded
 from lib.operations_policy import selected_source_run_id
 from lib.operations_workflow import STAGE_SUCCESS,_request_id,run_payload
@@ -116,7 +117,10 @@ def selected_catalog_evidence(store,root,market,run_id,duplicate_run_id,isolate_
                 raise CycleError('workflow_selection_unresolved')
             cid=str(((payload.get('campaign') or {}).get('campaign') or {}).get('campaign_id') or '')
             observed=sorted({str(e.get('campaignId')) for e in payload.get('selectionEvidence') or []})
-            if state=='confirmed' and (not cid or cid not in observed):
+            # A confirmation settled on the frozen campaign, or on the platform's own full-managed
+            # campaign at the submitted total commission, is the same verified receipt.
+            if state=='confirmed' and (not cid or cid not in observed) and not matching_selection_evidence(
+                    {'state':'result_unknown','payload':payload},list(payload.get('selectionEvidence') or [])):
                 if item['pid'] not in isolate:raise CycleError('workflow_selection_receipt_unverified')
                 state=ISOLATED
             if state==ISOLATED:

@@ -122,7 +122,8 @@ def console(root, store, *, markets=None, recent=15):
     try:
         policy = load_policy(root)
     except (OSError, ValueError, CycleError):
-        policy = {"kalodataMaxParallelMarkets": 2, "platformMaxParallelMarkets": 1}
+        # Unknown capacity: waits that depend on it read "reason to be checked" (I05), never a guessed default.
+        policy = None
     holders = _holders(db)
     rows = []
     for market in markets:

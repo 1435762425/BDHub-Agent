@@ -94,6 +94,19 @@ class WorkflowRecoveryTests(unittest.TestCase):
                 resume_selected_catalog(self.store,self.root,'it',self.original,self.duplicate,'recovery-request-001')
             self.assertEqual(self.store.db.execute('SELECT count(*) FROM workflow_checkpoint').fetchone()[0],0)
 
+    def test_a_confirmation_on_the_platforms_own_campaign_at_the_same_total_is_verified(self):
+        rehomed={'campaign':{'campaign':{'campaign_id':'123'},'freshProduct':{'commission_rate':'1500'}},
+                 'selectionEvidence':[{'pid':'1','campaignId':'456','type':9,'totalBasis':'1500','platformAssignedCampaign':True}]}
+        with closing(sqlite3.connect(self.selection_path)) as db,db:
+            db.execute("UPDATE intake_item SET payload=? WHERE pid='1'",(encoded(rehomed),))
+        proof=selected_catalog_evidence(self.store,self.root,'it',self.original,self.duplicate)
+        self.assertEqual(proof['selectionStates'],{'confirmed':1,'skipped_unknown':1})
+        rehomed['selectionEvidence'][0]['totalBasis']='1200'
+        with closing(sqlite3.connect(self.selection_path)) as db,db:
+            db.execute("UPDATE intake_item SET payload=? WHERE pid='1'",(encoded(rehomed),))
+        with self.assertRaisesRegex(CycleError,'workflow_selection_receipt_unverified'):
+            selected_catalog_evidence(self.store,self.root,'it',self.original,self.duplicate)
+
     def test_isolated_unverified_selection_resumes_without_reaching_link_preparation(self):
         mismatch={'campaign':{'campaign':{'campaign_id':'123'}},'selectionEvidence':[{'campaignId':'456'}]}
         with closing(sqlite3.connect(self.selection_path)) as db,db:

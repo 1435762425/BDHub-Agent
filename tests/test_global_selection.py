@@ -27,11 +27,19 @@ class SelectionTests(unittest.TestCase):
   items=[{'pid':'1','state':'pending'},{'pid':'2','state':'pending'}]
   self.assertEqual([row['pid'] for row in prioritized_selection_batch(items,retried,2)],['1','2'])
  def test_submitted_intent_only_accepts_its_frozen_campaign(self):
-  observed=[{'pid':'p','campaignId':'other','type':8},{'pid':'p','campaignId':'original','type':8}]
-  item={'pid':'p','state':'result_unknown','payload':{'campaign':{'campaign':{'campaign_id':'original'}}}}
+  observed=[{'pid':'p','campaignId':'other','type':1,'totalBasis':'1300'},{'pid':'p','campaignId':'original','type':8,'totalBasis':'1300'}]
+  item={'pid':'p','state':'result_unknown','payload':{'campaign':{'campaign':{'campaign_id':'original'},'freshProduct':{'commission_rate':'1300'}}}}
   self.assertEqual(matching_selection_evidence(item,observed),[observed[1]])
   self.assertEqual(matching_selection_evidence(item,observed[:1]),[])
   self.assertEqual(matching_selection_evidence({'pid':'p','state':'pending','payload':{}},observed),observed)
+ def test_the_frozen_campaign_also_needs_the_submitted_total_commission(self):
+  item={'pid':'p','state':'result_unknown','payload':{'campaign':{'campaign':{'campaign_id':'original'},'freshProduct':{'commission_rate':'1500'}}}}
+  same={'pid':'p','campaignId':'original','type':9}
+  for basis in ('1200',None,'x','NaN','Infinity'):
+   self.assertEqual(matching_selection_evidence(item,[{**same,'totalBasis':basis}]),[],basis)
+  self.assertEqual(matching_selection_evidence(item,[{**same,'totalBasis':'1500'}]),[{**same,'totalBasis':'1500'}])
+  unrecorded={'pid':'p','state':'result_unknown','payload':{'campaign':{'campaign':{'campaign_id':'original'}}}}
+  self.assertEqual(matching_selection_evidence(unrecorded,[{**same,'totalBasis':'1500'}]),[])
  def test_platform_assigned_campaign_settles_only_at_the_submitted_total_commission(self):
   item={'pid':'p','state':'result_unknown','payload':{'campaign':{'campaign':{'campaign_id':'listing'},'freshProduct':{'commission_rate':'1300'}}}}
   rehomed={'pid':'p','campaignId':'assigned','type':9,'totalBasis':'1300'}
@@ -153,11 +161,11 @@ class SelectionTests(unittest.TestCase):
   with tempfile.TemporaryDirectory() as d:
    root=Path(d);(root/'var').mkdir();ledger=Selection(root)
    try:
-    with ledger.db:ledger.db.execute('INSERT INTO intake_item VALUES(?,?,?,?,?)',('r','p','result_unknown',json.dumps({'campaign':{'campaign':{'campaign_id':'7'*19}}}),1))
+    with ledger.db:ledger.db.execute('INSERT INTO intake_item VALUES(?,?,?,?,?)',('r','p','result_unknown',json.dumps({'campaign':{'campaign':{'campaign_id':'7'*19,'commission':'1200'}}}),1))
     item=ledger.items('r')[0]
-    self.assertEqual(settle_readback(ledger,item,[{'pid':'p','campaignId':'other','type':8}]),'other_campaign')
+    self.assertEqual(settle_readback(ledger,item,[{'pid':'p','campaignId':'other','type':8,'totalBasis':'1100'}]),'other_campaign')
     self.assertEqual(item['state'],'result_unknown')
-    self.assertEqual(settle_readback(ledger,item,[{'pid':'p','campaignId':'7'*19,'type':8}]),'settled')
+    self.assertEqual(settle_readback(ledger,item,[{'pid':'p','campaignId':'7'*19,'type':8,'totalBasis':'1200'}]),'settled')
     self.assertEqual(item['state'],'confirmed')
    finally:ledger.db.close()
  def test_settle_readback_marks_a_pending_item_seen_under_any_campaign(self):
