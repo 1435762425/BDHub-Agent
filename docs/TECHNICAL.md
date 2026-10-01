@@ -145,7 +145,7 @@ worker 在等待窗口、池或容量时常驻退避；同账号在途写串行�
 
 `sdk_inbox.py` 将 onMessageReceive/onMessageUpsert 变为持久唤醒信号，先提交 schema v26 `im_receive_signal` 再清浏览器缓存；消息身份、市场、正文和编辑版本仍由原 HTTP proof/history 解析器核实，进入原 Inbox/Service/reply_events。已知相同文本与非文本回放不产生新待回复。回查优先处理到期通知，保留 30 秒分页发现和冷 checkpoint 补扫；游标跨会话续期保存。每轮最多 5 页；已有 checkpoint 的会话未在预算内接上补读开始前已入库的消息（`inbox_event` rowid 水位）时，Inbox 记 `backfilling` 并在 `inbox_backfill` 保存原账号/IM/OEC 绑定的原生游标：期间消息入库但不生成待回复、暂停该达人营销，冷扫描优先该会话；下轮先读首页，接上本次补读已入库范围后从游标继续，直到覆盖证明成立才按 live 规则一次结算补读期间的新来信。换读取身份从首页重建链。续读只在本轮从首页连续读到保存链的顶端消息（`inbox_backfill.segment_top`）时跳到保存游标；其他入口存入的消息只是事实，不证明其间区间已读。其他单页读取入口（HTTP 轮询、回复前读取）遇到读不到重叠时同样转 `backfilling` 并记录读取前水位，不再产生新的 `gap`。存量 `gap` 用 `scripts/inbox-gap.py diagnose` 只读列出，`recover --cid --confirm` 仅在存在 gap 前最后一条 live 事件（作为水位）时转入补读；gap 期间已记为历史的事件保持历史，不改写为待回复；缺少水位证据时报告 `not_recoverable`。进程内读取预算 2 QPS，不能当作账号所有消费者共享的全局限速。
 
-SDK 当前平台枚举为 0 未初始化、1 初始化中、2 成功、3 失败；必须等 2 才挂接接收回调。会话约每 600 秒续期，退出/维护时先拒绝新借用，等原 HTTP 客户端收口后释放 ProfileLease。Unix socket 为同 UID、0600，凭据仅在内存和私有 IPC 中，客户端检查 epoch、身份代次和 headers 指纹；借用不产生发送授权。维护/登录失效沿用原账号恢复任务。启动/断线由原 scheduler 监督，存活与 SDK 初始化成功均不能替代新来信时延验收。
+SDK 当前平台枚举为 0 未初始化、1 初始化中、2 成功、3 失败；必须等 2 才挂接接收回调。欧洲站登录失效时不跳转登录页，页面留在 IM、SDK 停在 0，而页面自身的 partner 接口返回 16201010（正常页面全为 0）；`login_recovery.page_login_lapsed` 据此让会话 owner 报 `sdk_login_required` 进入统一恢复链，不再只报 `sdk_not_ready`。会话约每 600 秒续期，退出/维护时先拒绝新借用，等原 HTTP 客户端收口后释放 ProfileLease。Unix socket 为同 UID、0600，凭据仅在内存和私有 IPC 中，客户端检查 epoch、身份代次和 headers 指纹；借用不产生发送授权。维护/登录失效沿用原账号恢复任务。启动/断线由原 scheduler 监督，存活与 SDK 初始化成功均不能替代新来信时延验收。
 
 缺省或显式 `http_polling` 时，`cycle_inbox.py`、`poll-cycle-inbox.py`、`poll-market-inbox.py` 负责最近会话发现与旧 checkpoint 公平补扫；`inbox_event/inbox_content*` 保存事件和正文。新会话精确匹配本市场关系后落库；冷 checkpoint 也重新校验 plan，合作状态不能回退 IT。
 
@@ -259,9 +259,9 @@ inbox 趋势和日明细使用同一账本，totals 等于每日求和，文字�
 
 通信/货盘固定为 IT ACC6/ACC9、BR ACC1/ACC2、MY ACC8/ACC5、UK ACC11/ACC4。`market-accounts.json` 定角色，`account_runtime_setting` 和已发布 generation 定当前能力；不继承旧项目停用状态。
 
-能力验收发布使用 `reason=capability`，不推迟原 browser/HTTP/IM 身份的维护时钟；`identity_baseline` 找同一组引用的最近非能力发布作为基线。
+能力验收发布使用 `reason=capability`，不推迟维护时钟；`identity_baseline` 取该账号最近一次真实登录（`relogin`，或导入的 `baseline`）的发布时间。`refresh` 只用无头浏览器重读现有登录，不延长平台登录：实测登录在真实登录后约 72 小时 6–11 分钟失效（acc8、acc1 在 refresh 后仍按上次重登时间过期）。
 
-账号 72 小时串行维护：可见浏览器读取既有保存凭据，候选 browser/HTTP/IM 联合验证后发布项目内新代次，失败保留上一代。重登不自动把未验收能力变 verified。同市场/账号/机构的新身份可继承已验证能力，新的 failed/blocked 观察优先。
+账号定期串行维护：`next_due` 取登录失效（真实登录 +72 小时）前至少 30 分钟（`LOGIN_MARGIN_SECONDS`）的最后一个角色时段（通讯 14:30、供给 14:40），由 `request_scheduled_maintenance` 登记 `relogin`；在时段后才完成的登录因此约 48 小时重登一次。此前按 +72 小时再往后取时段，维护总落在失效之后，欧洲站通讯账号因此每轮断收信 14–21 小时（10-01 IT/UK 复现）。可见浏览器读取既有保存凭据，候选 browser/HTTP/IM 联合验证后发布项目内新代次，失败保留上一代。重登不自动把未验收能力变 verified。同市场/账号/机构的新身份可继承已验证能力，新的 failed/blocked 观察优先。
 
 | 配置 | 权威用途 |
 | --- | --- |

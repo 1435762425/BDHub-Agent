@@ -9,7 +9,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 from lib.account_identity import current_generation, publish_generation  # noqa: E402
 from lib.login_recovery import (AUTH_REQUIRED, _legacy_request_id, auth_family, it_login_expired,  # noqa: E402
-                                request_recovery, request_refresh)
+                                page_login_lapsed, request_recovery, request_refresh)
 from lib.operations_scheduler import SubprocessStageExecutor  # noqa: E402
 from lib.market_im_runtime import _read  # noqa: E402
 from lib.schema_migrations import apply_database  # noqa: E402
@@ -123,6 +123,25 @@ class LoginRecoveryTests(unittest.TestCase):
         for code in ("provider_timeout", "ReadTimeout", "business_rejected", "quota_exhausted",
                      "market_identity_blocked", "ProfileBusyError", None):
             self.assertIsNone(auth_family(code, platform_code=98000001), code)
+
+    def test_an_sdk_page_reports_a_lapsed_login_only_from_its_portal_calls(self):
+        portal = "partner.eu.tiktokshop.com"
+        url = f"https://{portal}/api/v1/affiliate/partner/info"
+        body = lambda code: (lambda: {"code": code, "message": ""})  # noqa: E731
+        self.assertTrue(page_login_lapsed(url, "xhr", portal, body(AUTH_REQUIRED)))
+        self.assertTrue(page_login_lapsed(url, "fetch", portal, body(AUTH_REQUIRED)))
+        self.assertFalse(page_login_lapsed(url, "xhr", portal, body(0)))
+        self.assertFalse(page_login_lapsed(url, "document", portal, body(AUTH_REQUIRED)))
+        self.assertFalse(page_login_lapsed("https://partner.tiktokshop.com/api/v1/affiliate/partner/info",
+                                           "xhr", portal, body(AUTH_REQUIRED)))
+        self.assertFalse(page_login_lapsed(f"https://{portal}/partner/im", "xhr", portal, body(AUTH_REQUIRED)))
+        self.assertFalse(page_login_lapsed(url, "xhr", portal, lambda: [AUTH_REQUIRED]))
+
+        def unreadable():
+            raise ValueError("not json")
+        self.assertFalse(page_login_lapsed(url, "xhr", portal, unreadable))
+        # The worker raises this code, which joins the one recovery chain.
+        self.assertEqual(auth_family("sdk_login_required"), "auth_expired")
 
     def test_scheduler_waits_for_the_shared_chain_and_needs_a_newer_generation(self):
         self.publish(1)

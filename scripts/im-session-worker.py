@@ -23,6 +23,7 @@ def cycle(market):
     from bdhub.hub.markets import im_page
     from playwright.sync_api import sync_playwright
     from lib.market_accounts import load_config
+    from lib.login_recovery import page_login_lapsed
     account_name=load_config(ROOT)['markets'][market]['roles']['communications']
     if maintenance_pending(ROOT,account_name):raise ValueError('account_maintenance_pending')
     report={};closing=threading.Event();receiver=None
@@ -52,17 +53,21 @@ def cycle(market):
                     if path.endswith('/message/send') or '/conversation/create' in path:r.abort()
                     else:r.continue_()
                 context.route('**/*',route)
-                page=context.pages[0] if context.pages else context.new_page();matches=[]
+                page=context.pages[0] if context.pages else context.new_page();matches=[];lapsed=[]
+                portal=urlsplit(im_page(market)).netloc
                 def observe(response):
-                    if urlsplit(response.url).path.endswith('/im/id/get'):
+                    parts=urlsplit(response.url)
+                    if parts.path.endswith('/im/id/get'):
                         try:
                             data=response.json();data=data.get('data') if isinstance(data.get('data'),dict) else data
                             matches.append(str(data.get('im_id'))==runtime['auth'].im_id)
                         except Exception:pass
+                    if page_login_lapsed(response.url,response.request.resource_type,portal,response.json):lapsed.append(parts.path)
                 page.on('response',observe);page.goto(im_page(market),wait_until='domcontentloaded',timeout=60000)
                 if 'login' in page.url.lower():raise ValueError('sdk_login_required')
                 for _ in range(240):
                     if stopped(market):return
+                    if lapsed:raise ValueError('sdk_login_required')
                     if receiver.done.is_set():raise ValueError('sdk_http_reader_stopped')
                     if not current():raise ValueError('im_owner_identity_changed')
                     if page.evaluate(ready_script(_FIND_API)):break
@@ -74,6 +79,7 @@ def cycle(market):
                 print(json.dumps({'event':'session_ready','market':market,'epoch':owner.epoch,'at':time.time()}),flush=True)
                 next_status=0;unready_since=None
                 while not stopped(market) and time.monotonic()-started<600 and current():
+                    if lapsed:raise ValueError('sdk_login_required')
                     if receiver.done.is_set():raise ValueError('sdk_http_reader_stopped')
                     ready=bool(page.evaluate(ready_script(_FIND_API)))
                     armed=page.evaluate(arm_script(_FIND_API)) if ready else {'armed':0}

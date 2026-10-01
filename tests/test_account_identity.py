@@ -9,9 +9,10 @@ from zoneinfo import ZoneInfo
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
-from lib.account_identity import (apply_bootstrap, claim_next, current_generation, execute_claimed,
-                                  carry_verified_capabilities, next_due, promote_capabilities, publish_generation, request_maintenance, set_enabled,
-                                  project_runtime_readiness, status)  # noqa:E402
+from lib.account_identity import (INTERVAL_SECONDS, LOGIN_MARGIN_SECONDS, apply_bootstrap, assignments, claim_next,
+                                  current_generation, execute_claimed, carry_verified_capabilities, identity_baseline,
+                                  next_due, promote_capabilities, publish_generation, request_maintenance,
+                                  request_scheduled_maintenance, set_enabled, project_runtime_readiness, status)  # noqa:E402
 from lib.schema_migrations import apply_database  # noqa:E402
 from lib.second_cycle import CycleStore  # noqa:E402
 
@@ -229,17 +230,66 @@ class AccountIdentityTests(unittest.TestCase):
                               "account-setting-request", 0)
         self.assertFalse(changed["enabled"])
         self.assertEqual(status(self.store, self.root)["intervalHours"], 72)
-        base = datetime(2026, 9, 17, 14, 20, tzinfo=ZoneInfo("Asia/Shanghai")).timestamp()
         zone = ZoneInfo("Asia/Shanghai")
-        communication = datetime.fromtimestamp(next_due(base, "communications", NOW), zone)
-        supply = datetime.fromtimestamp(next_due(base, "supply", NOW), zone)
-        self.assertEqual((communication.hour, communication.minute), (14, 30))
-        self.assertEqual((supply.hour, supply.minute), (14, 40))
+        login = datetime(2026, 9, 17, 16, 0, tzinfo=zone).timestamp()
+        self.assertEqual(datetime.fromtimestamp(next_due(login, "communications", NOW), zone),
+                         datetime(2026, 9, 20, 14, 30, tzinfo=zone))
+        self.assertEqual(datetime.fromtimestamp(next_due(login, "supply", NOW), zone),
+                         datetime(2026, 9, 20, 14, 40, tzinfo=zone))
         rows = {row["account"]: row for row in status(self.store, self.root)["accounts"]}
         self.assertEqual(rows["acc6"]["responsibilities"],
                          ["inbox_read", "message_send", "agent_reply", "oecid_find", "creator_profile"])
         self.assertEqual(rows["acc9"]["responsibilities"],
                          ["catalog_read", "campaign", "product_select", "taplink"])
+
+    def test_maintenance_slot_is_always_before_the_login_lapses(self):
+        zone = ZoneInfo("Asia/Shanghai")
+        # A login made just after its slot (the usual scheduled re-login) is renewed two days later, not on
+        # the day after it lapsed.
+        after_slot = datetime(2026, 9, 28, 14, 33, tzinfo=zone).timestamp()
+        self.assertEqual(datetime.fromtimestamp(next_due(after_slot, "communications", NOW), zone),
+                         datetime(2026, 9, 30, 14, 30, tzinfo=zone))
+        start = datetime(2026, 9, 17, 0, 0, tzinfo=zone).timestamp()
+        for minutes in range(0, 24 * 60, 7):
+            login = start + minutes * 60
+            for role in ("communications", "supply"):
+                due = next_due(login, role, NOW)
+                self.assertLessEqual(due, login + INTERVAL_SECONDS - LOGIN_MARGIN_SECONDS)
+                self.assertGreater(due, login + INTERVAL_SECONDS - LOGIN_MARGIN_SECONDS - 86400)
+        unknown = datetime.fromtimestamp(next_due(None, "communications", NOW), zone)
+        self.assertEqual(unknown, datetime(2026, 9, 21, 14, 30, tzinfo=zone))
+
+    def test_only_a_real_login_sets_the_maintenance_baseline(self):
+        identity = lambda n: {"browserRef": f"browser:{n}", "httpRef": f"http:{n}", "imRef": f"im:{n}",
+                              "institutionFingerprint": "i" * 64}
+        login = publish_generation(self.store, market="it", account="acc6", role="communications", reason="relogin",
+                                   identity=identity(1), capabilities={"http": {"state": "verified"}})
+        self.store.clock = lambda: NOW + 3600
+        refreshed = publish_generation(self.store, market="it", account="acc6", role="communications",
+                                       reason="refresh", identity=identity(2),
+                                       capabilities={"http": {"state": "verified"}})
+        self.assertEqual(identity_baseline(self.store, refreshed), login["publishedAt"])
+        self.store.clock = lambda: NOW + 7200
+        again = publish_generation(self.store, market="it", account="acc6", role="communications", reason="relogin",
+                                   identity=identity(3), capabilities={"http": {"state": "verified"}})
+        self.assertEqual(identity_baseline(self.store, again), NOW + 7200)
+
+    def test_scheduled_maintenance_logs_in_again_before_the_lapse(self):
+        zone = ZoneInfo("Asia/Shanghai")
+        login = datetime(2026, 9, 17, 16, 0, tzinfo=zone).timestamp()
+        publish_generation(self.store, market="it", account="acc6", role="communications", reason="relogin",
+                           identity={"browserRef": "b", "httpRef": "h", "imRef": "i", "institutionFingerprint": "i" * 64},
+                           capabilities={"http": {"state": "verified"}}, now=login)
+        row = next(item for item in assignments(self.root) if item["account"] == "acc6")
+        due = datetime(2026, 9, 20, 14, 30, tzinfo=zone).timestamp()
+        self.assertIsNone(request_scheduled_maintenance(self.store, self.root, row, due - 1))
+        intent = request_scheduled_maintenance(self.store, self.root, row, due + 60)
+        self.assertEqual((intent["operation"], intent["scheduledAt"], intent["requestId"]),
+                         ("relogin", due, f"scheduled-acc6-{int(due)}"))
+        self.assertLess(intent["scheduledAt"], login + INTERVAL_SECONDS)
+        repeated = request_scheduled_maintenance(self.store, self.root, row, due + 120)
+        self.assertEqual(repeated["intentId"], intent["intentId"])
+        self.assertEqual(len(status(self.store, self.root)["queue"]), 1)
 
 
 if __name__ == "__main__":

@@ -1211,7 +1211,7 @@ def _background(root,store,jobs,automation,stamp,maintenance_enabled=None):
                 try:launch_market_sender(root,market)
                 except OSError:pass
     if (automation['automaticOperationsEnabled'] if maintenance_enabled is None else maintenance_enabled):
-        from lib.account_identity import assignments,current_generation,next_due,identity_baseline,request_maintenance,recover_abandoned,status as account_status
+        from lib.account_identity import assignments,current_generation,request_maintenance,request_scheduled_maintenance,recover_abandoned,status as account_status
         abandoned=recover_abandoned(store,now=stamp)
         for intent_id in abandoned:
             prior=store.db.execute('SELECT * FROM account_maintenance_intent WHERE intent_id=?',(intent_id,)).fetchone()
@@ -1223,14 +1223,7 @@ def _background(root,store,jobs,automation,stamp,maintenance_enabled=None):
                                 operation=prior['operation'],request_id=request_id,scheduled_at=stamp+300)
         try:rows=assignments(root)
         except (OSError,ValueError):rows=[]
-        for row in rows:
-            generation=current_generation(store,row['market'],row['account'])
-            due=next_due(identity_baseline(store,generation),row['role'],stamp)
-            if stamp<due:continue
-            request_id=f"scheduled-{row['account']}-{int(due)}"
-            try:request_maintenance(store,root,market=row['market'],account=row['account'],operation='refresh',request_id=request_id,scheduled_at=due)
-            except CycleError as error:
-                if str(error) not in ('account_maintenance_active',):raise
+        for row in rows:request_scheduled_maintenance(store,root,row,stamp)
         queue=account_status(store,root)['queue'] if rows else []
         if any(item['state']=='queued' and item['scheduledAt']<=stamp for item in queue) and \
            not any(item['state'] in ('draining','running') for item in queue):

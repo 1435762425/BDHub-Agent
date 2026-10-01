@@ -12,6 +12,7 @@ import os
 import sqlite3
 import subprocess
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from lib.account_identity import current_generation, intent_payload, request_maintenance
 from lib.market_accounts import load_config
@@ -28,6 +29,21 @@ def auth_family(code=None, platform_code=None):
     if platform_code == AUTH_REQUIRED or code in AUTH_CODES:
         return AUTH_EXPIRED
     return None
+
+
+def page_login_lapsed(url, resource_type, portal, read_json):
+    """A partner-portal XHR of an SDK page answering AUTH_REQUIRED: the login behind that page has lapsed.
+
+    The EU portal does not redirect a lapsed login; it keeps the page, leaves the SDK uninitialised and answers
+    the page's own partner calls with AUTH_REQUIRED, where a healthy page gets 0."""
+    parts = urlsplit(url)
+    if parts.netloc != portal or not parts.path.startswith("/api/") or resource_type not in ("xhr", "fetch"):
+        return False
+    try:
+        body = read_json()
+    except Exception:
+        return False
+    return isinstance(body, dict) and body.get("code") == AUTH_REQUIRED
 
 
 def it_login_expired(report):

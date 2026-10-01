@@ -29,6 +29,9 @@ ROLE_RESPONSIBILITIES = {
     "supply": ("catalog_read", "campaign", "product_select", "taplink"),
 }
 INTERVAL_SECONDS = 72 * 3600
+# A platform login lapses about INTERVAL_SECONDS after it was made (observed 72 h + 6..11 min); scheduled
+# maintenance logs in again at the last role slot that still leaves this much room before that.
+LOGIN_MARGIN_SECONDS = 30 * 60
 TERMINAL = {"completed", "failed_known", "needs_human", "cancelled"}
 START_REQUIRED_CAPABILITIES = frozenset({
     "browser_session", "partner_http", "institution_market", "im_identity",
@@ -180,10 +183,14 @@ def current_generation(store, market, account):
 
 
 def identity_baseline(store,generation):
-    """Capability-only publications cannot postpone the credential maintenance deadline."""
+    """When the platform login behind the current identity was made.
+
+    Only a real login (``relogin``, or the imported ``baseline``) starts the login lifetime: a ``refresh``
+    re-reads the existing login headlessly and capability publications change nothing, so neither can
+    postpone the maintenance deadline."""
     if not generation:return None
-    row=store.db.execute("SELECT max(published_at) FROM account_identity_generation WHERE account=? AND market=? AND state='published' AND reason<>'capability' AND browser_ref=? AND http_ref=? AND im_ref=?",
-        (generation['account'],generation['market'],generation['browserRef'],generation['httpRef'],generation['imRef'])).fetchone()
+    row=store.db.execute("SELECT max(published_at) FROM account_identity_generation WHERE account=? AND market=? AND state='published' AND reason IN ('relogin','baseline')",
+        (generation['account'],generation['market'])).fetchone()
     return row[0] if row and row[0] is not None else generation['publishedAt']
 
 
@@ -316,17 +323,41 @@ def apply_bootstrap(store, root, evidence):
     return proposal | {"applied": applied}
 
 
-def next_due(last_success, role, now):
+def next_due(last_login, role, now):
+    """The last role slot that is still LOGIN_MARGIN_SECONDS before the login made at ``last_login`` lapses.
+
+    Rounding past the lapse left the account logged out until the next day's slot; a login made just after
+    its slot is therefore renewed two days later.  Without a known login, the next slot from ``now``."""
     if role not in ROLE_SLOT:
         raise CycleError("account_role_invalid")
-    local = datetime.fromtimestamp(float(now), BEIJING)
-    base = datetime.fromtimestamp(float(last_success), BEIJING) + timedelta(seconds=INTERVAL_SECONDS) \
-        if last_success is not None else local
     hour, minute = ROLE_SLOT[role]
-    slot = base.replace(hour=hour, minute=minute, second=0, microsecond=0)
-    if slot < base:
-        slot += timedelta(days=1)
-    return slot.timestamp()
+    if last_login is None:
+        local = datetime.fromtimestamp(float(now), BEIJING)
+        slot = local.replace(hour=hour, minute=minute, second=0, microsecond=0)
+        return (slot + timedelta(days=1) if slot < local else slot).timestamp()
+    latest = datetime.fromtimestamp(float(last_login), BEIJING) + \
+        timedelta(seconds=INTERVAL_SECONDS - LOGIN_MARGIN_SECONDS)
+    slot = latest.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    return (slot - timedelta(days=1) if slot > latest else slot).timestamp()
+
+
+def request_scheduled_maintenance(store, root, assignment, now):
+    """Queue the periodic maintenance of one assignment once its slot is due; None while it is not.
+
+    The slot falls before the login lapses, when a refresh would only re-read the same login, so the
+    periodic maintenance logs in again."""
+    generation = current_generation(store, assignment["market"], assignment["account"])
+    due = next_due(identity_baseline(store, generation), assignment["role"], now)
+    if now < due:
+        return None
+    try:
+        return request_maintenance(store, root, market=assignment["market"], account=assignment["account"],
+                                   operation="relogin", request_id=f"scheduled-{assignment['account']}-{int(due)}",
+                                   scheduled_at=due)
+    except CycleError as error:
+        if str(error) != "account_maintenance_active":
+            raise
+        return None
 
 
 def request_maintenance(store, root, *, market, account, operation, request_id, scheduled_at=None):
