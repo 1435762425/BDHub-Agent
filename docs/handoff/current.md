@@ -1,11 +1,22 @@
 # BDHub-Agent 当前交接
 
-文档更新时间：2026-09-29（Asia/Shanghai）。下面各节按时间倒序，每节只代表该时刻的核验；最新一节即当前生产状态的最近记录，不是实时巡检。规则见 [PROJECT](../PROJECT.md)，实现见 [TECHNICAL](../TECHNICAL.md)，后续方向见[项目审计与清理](../implementation/project-audit-20260924.md)。更早流水见[历史交接](../archive/handoff/codex-takeover-history-20260923.md)。
+文档更新时间：2026-10-01（Asia/Shanghai）。下面各节按时间倒序，每节只代表该时刻的核验；最新一节即当前生产状态的最近记录，不是实时巡检。规则见 [PROJECT](../PROJECT.md)，实现见 [TECHNICAL](../TECHNICAL.md)，后续方向见[项目审计与清理](../implementation/project-audit-20260924.md)。更早流水见[历史交接](../archive/handoff/codex-takeover-history-20260923.md)。
 
 
 
 
+## 2026-10-01 17:25：系统自动更新重启、IT/UK 收信中断修复上线
 
+- 15:31 macOS 自动安装 27.0.1 并重启（scheduler 当时在 OECID 阶段），项目进程全停。15:48 preflight（在途 0、unknown 0）后重挂 Web 与 scheduler。UK 会话状态文件记的 PID 3205 被重启后的 Chrome 复用，`process_liveness.pid_alive` 只看 PID 存在，scheduler 一直不拉起 UK；确认该 PID 非本项目后清除记录才恢复。该缺陷未修，scheduler 自身 PID 记录有同样隐患。
+- IT/UK 收信中断原因：通讯账号 acc6/acc11 的平台登录在真实重登后约 72 小时失效（9-28 14:31/14:34 → 10-01 14:31 起），欧洲站不跳转登录页、SDK 停在 0、HTTP 照常可用，worker 只报 `sdk_not_ready` 不触发恢复；定期维护又按 +72 小时向后取次日时段（10-02 14:30）。同样情况 9-27/28 已发生过（IT 断约 21 小时、UK 约 14 小时）。`refresh` 只重读现有登录不续期（acc8、acc1 refresh 后仍按上次重登过期）。16:08 手动登记 refresh，二者转重登，16:13/16:16 会话就绪。
+- `0305044`：维护基线只认真实登录；定期维护取失效前至少 30 分钟的最后一个角色时段并登记 `relogin`（稳态约 48 小时一次）；会话页面 partner 接口返回 16201010 时报 `sdk_login_required` 进入统一恢复链（实测失效 profile 返回 16201010，正常账号约 105 次调用全为 0）。Python 全量 1,614 项通过。
+- 上线：在线备份 `20261001T092003Z-pre-login-expiry-20261001`（33 库，valid），`20260928T124246Z-pre-auth-refresh-20260928` 移入废纸篓。preflight → SIGTERM scheduler（空闲，17:21 退出）drained 通过 → SIGTERM 11 个 worker，`--workers-stopped` 通过 → 快进合入 → scheduler `22168` → postflight 全部通过（含角色一致、四会话 ready）。新规则随即补登已过或临近失效的供给账号 acc2/acc5/acc4（17:22 重登完成）；下次维护：通讯 10-03（acc1、acc8）/10-04（acc6、acc11）14:30，供给 10-03（acc9）/10-04（acc2、acc5、acc4）14:40。自动安装 macOS 更新仍开启，需用户在系统设置关闭。
+
+## 2026-10-01 11:00：磁盘写满停机、开机恢复与空间清理
+
+- 原因：macOS 自动下载系统更新 27.0.1（约 9.6G，`AutomaticDownload`/`AutomaticallyInstallMacOSUpdates` 均开）。04:39 开始下载时余量约 11G，04:47 写满，scheduler（当时空闲）与四个 im-session 报 `disk is full`/`Errno 28` 退出，04:51 更新准备失败释放空间；此后无调度，09:50 关机重启。10:35 系统再次下载并于 10:47 完成，余量由 20G 降至约 6.6G。项目告警不检查磁盘余量；Web 与 scheduler 开机不自启。自动安装可能再次在空闲时重启机器，需用户在系统设置关闭或择时手动更新。
+- 恢复：`ops-restart-check.py preflight --release-id boot-20261001` 通过（在途 0、unknown 投递 0、requestRef 49,910 唯一、无存活进程）；`launchctl submit` 重挂 `io.bdhub.agent.web`（构建 `0Bv92chKmTQx2swXcBYB8` 未重建，日志 `var/web.log`），`start_scheduler`（`3184`）按原授权拉起 13 个常驻进程；postflight 除"角色与基线一致"（基线为开机后 0 进程）外全部通过。
+- 清理（未停业务，余量 6.6G→12.4G）：移除 19 个提交已在 HEAD 的 worktree（分支保留；未提交的文档草稿归档在 `../BDHub-Agent-backups/worktree-archive-20261001/`），保留未合入的 `sdk-probe`；9 月中旬一次性快照库 8 个与较旧 Web 构建 13 个归档到 `../BDHub-Agent-backups/var-archive-20261001/`（哈希与 `quick_check` 校验后删除，Web 构建保留最近 3 个）；`state-retention` 只执行文件类候选（17 个旧身份代次、24 个采集 JSON、9,386 个阶段日志）到 `../BDHub-Agent-backups/retention/20261001T025222Z/`，两个大日志因仍有写入者跳过。货盘快照与来源轮次的库内删行留待 worker 空闲窗口；当前身份 profile 内浏览器缓存（每代约 0.5G）未动。
 
 ## 2026-09-29 21:30：审查 b798911 修复上线，意大利持续发送故障修复
 
