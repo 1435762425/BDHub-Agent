@@ -7,10 +7,11 @@
 
 ## 2026-10-01 17:25：系统自动更新重启、IT/UK 收信中断修复上线
 
-- 15:31 macOS 自动安装 27.0.1 并重启（scheduler 当时在 OECID 阶段），项目进程全停。15:48 preflight（在途 0、unknown 0）后重挂 Web 与 scheduler。UK 会话状态文件记的 PID 3205 被重启后的 Chrome 复用，`process_liveness.pid_alive` 只看 PID 存在，scheduler 一直不拉起 UK；确认该 PID 非本项目后清除记录才恢复。该缺陷未修，scheduler 自身 PID 记录有同样隐患。
+- 15:31 macOS 自动安装 27.0.1 并重启（scheduler 当时在 OECID 阶段），项目进程全停。15:48 preflight（在途 0、unknown 0）后重挂 Web 与 scheduler。UK 会话状态文件记的 PID 3205 被重启后的 Chrome 复用，`process_liveness.pid_alive` 只看 PID 存在，scheduler 一直不拉起 UK；确认该 PID 非本项目后清除记录才恢复（17:32 已由 `c7461c7` 修复，见本节末条）。
 - IT/UK 收信中断原因：通讯账号 acc6/acc11 的平台登录在真实重登后约 72 小时失效（9-28 14:31/14:34 → 10-01 14:31 起），欧洲站不跳转登录页、SDK 停在 0、HTTP 照常可用，worker 只报 `sdk_not_ready` 不触发恢复；定期维护又按 +72 小时向后取次日时段（10-02 14:30）。同样情况 9-27/28 已发生过（IT 断约 21 小时、UK 约 14 小时）。`refresh` 只重读现有登录不续期（acc8、acc1 refresh 后仍按上次重登过期）。16:08 手动登记 refresh，二者转重登，16:13/16:16 会话就绪。
 - `0305044`：维护基线只认真实登录；定期维护取失效前至少 30 分钟的最后一个角色时段并登记 `relogin`（稳态约 48 小时一次）；会话页面 partner 接口返回 16201010 时报 `sdk_login_required` 进入统一恢复链（实测失效 profile 返回 16201010，正常账号约 105 次调用全为 0）。Python 全量 1,614 项通过。
 - 上线：在线备份 `20261001T092003Z-pre-login-expiry-20261001`（33 库，valid），`20260928T124246Z-pre-auth-refresh-20260928` 移入废纸篓。preflight → SIGTERM scheduler（空闲，17:21 退出）drained 通过 → SIGTERM 11 个 worker，`--workers-stopped` 通过 → 快进合入 → scheduler `22168` → postflight 全部通过（含角色一致、四会话 ready）。新规则随即补登已过或临近失效的供给账号 acc2/acc5/acc4（17:22 重登完成）；下次维护：通讯 10-03（acc1、acc8）/10-04（acc6、acc11）14:30，供给 10-03（acc9）/10-04（acc2、acc5、acc4）14:40。自动安装 macOS 更新仍开启，需用户在系统设置关闭。
+- `c7461c7`：记录里的 pid 若被启动时间晚于记录写入时间的进程占用即不算存活（`process_liveness.record_alive`；状态文件取 `checkedAt`/`startedAt`，阶段租约取 `heartbeat_at`，维护意图取 `started_at`），覆盖 scheduler、会话、发送、AI、收信、作业、运行登记全部调用方。上线前对 33 条生产记录比对新旧判断无差异；Python 全量 1,618 项通过。17:31 同流程重启（preflight → scheduler 空闲退出 drained → 11 个 worker 退出 `--workers-stopped` → 快进合入 → scheduler `25287` → postflight 全部通过），一分钟后各角色均单进程、无运行告警。未另做备份（无库结构变更，17:20 备份为最近恢复点）。
 
 ## 2026-10-01 11:00：磁盘写满停机、开机恢复与空间清理
 
