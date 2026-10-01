@@ -987,7 +987,7 @@ class Spawn:
 class SchedulerControl(unittest.TestCase):
     def test_start_and_stop_touch_only_local_scheduler_files(self):
         with tempfile.TemporaryDirectory() as folder:
-            root=Path(folder);started=start_scheduler(root,clock=lambda:100,spawn=Spawn())
+            root=Path(folder);started=start_scheduler(root,spawn=Spawn())
             self.assertTrue(started['running']);self.assertFalse(started['stopping'])
             self.assertTrue(stop_scheduler(root)['stopping'])
             with self.assertRaisesRegex(ValueError,'already_running'):start_scheduler(root,spawn=Spawn())

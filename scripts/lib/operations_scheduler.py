@@ -16,7 +16,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from lib.operations_workflow import create_run,finish_stage,retry_failed_stage,status as workflow_status
-from lib.process_liveness import pid_alive
+from lib.process_liveness import record_alive
 from lib.second_cycle import CycleError, CycleStore, digest, encoded
 from lib.workflow_dispatch import claim_ready
 from lib.workflow_resources import heartbeat,record_late_result,release
@@ -295,7 +295,7 @@ def selection_backlog(root,market):
 
 
 def scheduler_state(root):
-    run=_read(run_path(root),{});pid=run.get('pid');alive=pid_alive(pid)
+    run=_read(run_path(root),{});pid=run.get('pid');alive=record_alive(run)
     progress=_read(status_path(root),{})
     return {'running':alive,'stopping':alive and stop_path(root).exists(),'pid':pid if type(pid) is int else None,
       'startedAt':run.get('startedAt'),'phase':progress.get('stage'),'cycle':progress.get('runId'),
@@ -1171,8 +1171,7 @@ def _background(root,store,jobs,automation,stamp,maintenance_enabled=None):
             not sender_control['stopRequested'] and
             (current['continuousSendEnabled'] or sender_control['automaticEnabled'] or sender_control['runRequested'])):
             inbox_state=_read(Path(root)/f'var/market-inbox-{market}.json',{})
-            inbox_pid=inbox_state.get('pid')
-            inbox_alive=pid_alive(inbox_pid)
+            inbox_alive=record_alive(inbox_state)
             if sdk_enabled(root,market):
                 try:launch_session(root,market)
                 except OSError:pass
@@ -1189,8 +1188,7 @@ def _background(root,store,jobs,automation,stamp,maintenance_enabled=None):
                 except OSError:pass
         if agent_enabled:
             reply_state=_read(Path(root)/f'var/agent-reply-status-{market}.json',{})
-            reply_pid=reply_state.get('pid')
-            reply_alive=pid_alive(reply_pid)
+            reply_alive=record_alive(reply_state)
             if not reply_alive:
                 log=Path(root)/f'var/agent-reply-{market}.log'
                 try:

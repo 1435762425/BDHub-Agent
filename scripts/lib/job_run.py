@@ -301,8 +301,8 @@ def state(root, name, *, clock=time.time):
     if not isinstance(payload, dict):
         return None
     pid = payload.get('pid')
-    from lib.process_liveness import pid_alive
-    alive = pid_alive(pid)
+    from lib.process_liveness import record_alive
+    alive = record_alive(payload)
     return payload | {'running': alive, 'stopping': stop_path(root, name).exists(),
                       'progress': read_progress(root, name)}
 

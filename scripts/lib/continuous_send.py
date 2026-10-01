@@ -442,6 +442,6 @@ def launch_worker(root):
 def worker_state(root):
     try:value=json.loads((Path(root)/'var/continuous-send-worker.json').read_text(encoding='utf-8'))
     except (OSError,ValueError):value={}
-    from lib.process_liveness import pid_alive
-    pid=value.get('pid');running=pid_alive(pid)
+    from lib.process_liveness import record_alive
+    pid=value.get('pid');running=record_alive(value)
     return {'pid':pid if type(pid) is int else None,'running':running,'startedAt':value.get('startedAt')}

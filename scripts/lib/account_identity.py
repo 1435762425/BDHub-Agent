@@ -38,9 +38,9 @@ START_REQUIRED_CAPABILITIES = frozenset({
 })
 
 
-def _worker_alive(pid):
+def _worker_alive(pid, recorded_at=None):
     from lib.process_liveness import pid_alive
-    return pid_alive(pid)
+    return pid_alive(pid, recorded_at)
 
 
 def _required(store):
@@ -414,7 +414,7 @@ def recover_abandoned(store, *, now=None):
         for current in active:
             checkpoint=json.loads(current['checkpoint_json'] or '{}')
             worker_pid=checkpoint.get('workerPid')
-            abandoned=(worker_pid is not None and not _worker_alive(worker_pid)) or (
+            abandoned=(worker_pid is not None and not _worker_alive(worker_pid,current['started_at'])) or (
                 worker_pid is None and current['started_at'] is not None and current['started_at']<stamp-60)
             if not abandoned:continue
             store.db.execute("UPDATE account_maintenance_intent SET state='failed_known',finished_at=?,error_code=?,checkpoint_json=? WHERE intent_id=?",

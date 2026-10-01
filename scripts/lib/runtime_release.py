@@ -87,13 +87,13 @@ def register(root, role):
 
 def loaded(root):
     """Live registrations only (a dead pid's record is history, not a running version)."""
-    from lib.process_liveness import pid_alive
+    from lib.process_liveness import record_alive
     rows = []
     for path in sorted(directory(root).glob('*.json')):
         try:
             value = json.loads(path.read_text(encoding='utf-8'))
         except (OSError, ValueError):
             continue
-        if isinstance(value, dict) and pid_alive(value.get('pid')):
+        if isinstance(value, dict) and record_alive(value):
             rows.append(value)
     return rows

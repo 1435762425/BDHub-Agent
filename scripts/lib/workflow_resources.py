@@ -117,10 +117,11 @@ def release(store,stage_run_id,owner_id,fence):
   store.db.execute('DELETE FROM workflow_stage_claim WHERE stage_run_id=? AND owner_id=? AND fence=?',(stage_run_id,owner_id,fence))
 
 def recover_expired(store,*,pid_alive=None):
- _required(store);now=store.clock();alive=pid_alive or (lambda pid:_pid_alive(pid));recovered=[]
+ _required(store);now=store.clock();recovered=[]
  with store.tx():
   for row in list(store.db.execute('SELECT * FROM workflow_stage_claim WHERE lease_until<? ORDER BY lease_until,stage_run_id',(now,))):
-   if row['worker_pid'] and alive(row['worker_pid']):continue
+   # The owner heartbeats while it lives; a process that took its pid later started after that.
+   if row['worker_pid'] and (pid_alive(row['worker_pid']) if pid_alive else _pid_alive(row['worker_pid'],row['heartbeat_at'])):continue
    stage=store.db.execute('SELECT run_id,stage,state,counts_json FROM workflow_stage_run WHERE stage_run_id=?',(row['stage_run_id'],)).fetchone()
    if stage and stage['state']=='running':
     from lib.operations_workflow import WRITE_CAPABLE_STAGES
@@ -139,6 +140,6 @@ def recover_expired(store,*,pid_alive=None):
   store.db.execute('DELETE FROM workflow_resource_slot WHERE NOT EXISTS (SELECT 1 FROM workflow_stage_claim c WHERE c.stage_run_id=workflow_resource_slot.owner_stage_run_id AND c.fence=workflow_resource_slot.fence)')
  return recovered
 
-def _pid_alive(pid):
+def _pid_alive(pid,recorded_at=None):
  from lib.process_liveness import pid_alive
- return pid_alive(pid)
+ return pid_alive(pid,recorded_at)

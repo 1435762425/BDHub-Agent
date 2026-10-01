@@ -135,7 +135,7 @@ IT/BR/MY/UK 的正式发送与核验共用每市场 `delivery-executor-<market>.
 
 非 IT 与 IT 一样，对明确的单达人预检排除收口完全未提交的卡文，保留原历史分类和会话回执，其他达人继续。已确认会话但卡文未开始的过期投递也可本地取消；会话 inflight/received 或组件在途/unknown 仍拒绝取消，只核验原意图。修复与原 UK 证据见[预检收口报告](implementation/uk-preflight-ai-simulation-20260926.md)。
 
-worker 在等待窗口、池或容量时常驻退避；同账号在途写串行，僵尸进程不算存活。账号认证可短复用同进程/身份指纹/代次，逐位和逐写复检不省略。单账号串行是当前正式路径；30 人/分钟未由代码配置证明。
+worker 在等待窗口、池或容量时常驻退避；同账号在途写串行，僵尸进程不算存活；记录里的 pid 若被启动时间晚于记录写入时间（`checkedAt`/`startedAt`，租约用 `heartbeat_at`，维护意图用 `started_at`）的进程占用，也不算存活（`process_liveness.record_alive`），防止重启后 PID 被其他程序复用时 scheduler 不再拉起 worker。账号认证可短复用同进程/身份指纹/代次，逐位和逐写复检不省略。单账号串行是当前正式路径；30 人/分钟未由代码配置证明。
 
 `invitation_continuation.py` 只为原正式投递的卡确认、文字从未提交状态记录继续凭证。Inbox/Service 在原入站事务内，将精确 CID/messageId、冻结 controlRevision → beforeRevision → afterRevision、inboxUntil/unlocked 写入 `cycle_delivery_check(kind=invitation_inbox_revision)`；中间暂停/接管等版本变化不能跳过。逐写重查关系、同 CID tracking、当前 pending、人工案件及所有原有授权/账号/材料/容量/窗口门禁，仅原文字可忽略已证明的入站变化，新领取不适用。非 IT 续发核对冻结 senderAccount/senderImId；明确终止只取消未提交文字、保留已确认卡为 partial_delivery，其他达人继续。schema v24 幂等确保原核验表和 `(delivery_id,kind,checked)` 索引，不回填业务行。当前凭证要求摄取入站时卡已经确认；入站先入库、卡后确认的顺序未放宽。
 

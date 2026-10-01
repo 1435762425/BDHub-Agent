@@ -1,5 +1,6 @@
 """Catalogue job launcher: what it refuses, what it records, and how it reports liveness."""
 import json
+import time
 import os
 import sys
 import tempfile
@@ -144,7 +145,7 @@ class Launch(unittest.TestCase):
             var = Path(folder) / 'var'
             var.mkdir(parents=True, exist_ok=True)
             (var / 'job-selection.json').write_text(
-                json.dumps({'name': 'selection', 'pid': os.getpid(), 'startedAt': 1.0}), encoding='utf-8')
+                json.dumps({'name': 'selection', 'pid': os.getpid(), 'startedAt': time.time()}), encoding='utf-8')
             self.assertTrue(state(folder, 'selection')['running'])
 
     def test_status_covers_both_jobs_even_before_anything_ran(self):
@@ -296,7 +297,7 @@ class Progress(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             (Path(folder) / 'var').mkdir(parents=True, exist_ok=True)
             (Path(folder) / 'var/job-identity.json').write_text(json.dumps(
-                {'name': 'identity', 'pid': os.getpid(), 'startedAt': 1.0}), encoding='utf-8')
+                {'name': 'identity', 'pid': os.getpid(), 'startedAt': time.time()}), encoding='utf-8')
             self.assertFalse(state(folder, 'identity')['stopping'])
             request_stop(folder, 'identity')
             self.assertTrue(stop_path(folder, 'identity').exists())

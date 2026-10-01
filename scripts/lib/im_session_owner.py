@@ -142,11 +142,11 @@ def borrow(root,market,account,*,stopped=lambda:False):
     finally:close()
 
 def state(root,market):
-    from lib.process_liveness import pid_alive
+    from lib.process_liveness import record_alive
     _,path=paths(root,market)
     try:value=json.loads(path.read_text())
     except (OSError,ValueError):value={}
-    return value|{'running':pid_alive(value.get('pid'))}
+    return value|{'running':record_alive(value)}
 
 def launch(root,market):
     import subprocess
