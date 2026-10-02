@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from decimal import Decimal
+import sys
 import hashlib
 import json
 from pathlib import Path
@@ -205,7 +206,7 @@ def launch(job_id, action, *, store=None):
         job.update(state="queued", action=action, previous_state=previous, error="")
         repository.save(job)
         try:
-            process = subprocess.Popen([str(config.ROOT / ".venv/bin/python"), "-m", "bdhub.send.taplink.worker",
+            process = subprocess.Popen([sys.executable, "-m", "bdhub.send.taplink.worker",
                                         "--job-id", job_id], cwd=config.ROOT, stdin=subprocess.DEVNULL,
                                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
             job["worker_pid"] = process.pid

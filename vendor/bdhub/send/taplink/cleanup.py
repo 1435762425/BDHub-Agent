@@ -1,5 +1,6 @@
 """历史 Product List TapLink 扫描与清理；只删除重新确认完全失效的列表。"""
 from datetime import datetime, timedelta, timezone
+import sys
 import hashlib
 import json
 import os
@@ -237,7 +238,7 @@ def launch(job_id, action, *, selected=None, store=None):
         job.update(state="queued", action=action, error="")
         repository.save(job)
         try:
-            process = subprocess.Popen([str(config.ROOT / ".venv/bin/python"), "-m", "bdhub.send.taplink.cleanup_worker", "--job-id", job_id],
+            process = subprocess.Popen([sys.executable, "-m", "bdhub.send.taplink.cleanup_worker", "--job-id", job_id],
                                        cwd=config.ROOT, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
             job["worker_pid"] = process.pid
             repository.save(job)

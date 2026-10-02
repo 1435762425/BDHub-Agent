@@ -4,7 +4,7 @@
   "upstreamRevision": "72dc12a71e566702232a279aac23fd547addea12",
   "patch": {
     "file": "local.patch",
-    "sha256": "9dd747706236610bd24b7930d73cdbb036bde004fe62a0febe7f75d7091652ce"
+    "sha256": "722432d34aced452381fec9efb75465f09586faef913d1fd11e8b93701b96910"
   },
   "files": [
     {
@@ -59,7 +59,7 @@
       "path": "bdhub/config.py",
       "source": "upstream",
       "upstreamSha256": "4dad3f6c8252e612dad499c6ab0cfddaa8eac618054850a9007a7badc14a537c",
-      "sha256": "4dad3f6c8252e612dad499c6ab0cfddaa8eac618054850a9007a7badc14a537c"
+      "sha256": "a77516a96905b8c836383cce9726a87dffa14d678b07f8fc6a6aaf0dbdb20b43"
     },
     {
       "path": "bdhub/enrich/__init__.py",
@@ -191,7 +191,7 @@
       "path": "bdhub/hub/markets.py",
       "source": "upstream",
       "upstreamSha256": "6be5341d74ec0aa68f3df0b234527a4802d898c8a632bdd0dc7096bec02113b5",
-      "sha256": "ded21588070f65f74fa96fd8f1fc951c458ccb50c240337b1d8de6cd2f414883"
+      "sha256": "28c0cc45df89499ede9dcf6ec18c20c834ce51feb5d40a83e4edee77096ba4d5"
     },
     {
       "path": "bdhub/hub/migration_runner.py",
@@ -767,13 +767,13 @@
       "path": "bdhub/research/commerce_selected.py",
       "source": "upstream",
       "upstreamSha256": "e9c3625404e74539e31f7f379c31cc4201365c02a06828b223c5fb9e1ca1d886",
-      "sha256": "e9c3625404e74539e31f7f379c31cc4201365c02a06828b223c5fb9e1ca1d886"
+      "sha256": "df01b531461661aea5f5ae5f34cd7191ca77d02566d882d8c2fbb4547b4c7f11"
     },
     {
       "path": "bdhub/research/commerce_selection.py",
       "source": "upstream",
       "upstreamSha256": "334de21ca7aec7d5a7f6762d3473508f865e9130924ec6c599890fc643f469d8",
-      "sha256": "334de21ca7aec7d5a7f6762d3473508f865e9130924ec6c599890fc643f469d8"
+      "sha256": "3a029f4050bdb9854aefa97ff686847374da95096cf14226a3e8a0c3af9ecfa8"
     },
     {
       "path": "bdhub/research/commerce_selection_lanes.py",
@@ -797,7 +797,7 @@
       "path": "bdhub/research/commerce_verification.py",
       "source": "upstream",
       "upstreamSha256": "8841eca07a2a4cea769f7637d5a1a3bb459be9a1f06b161c75c6353d1f142257",
-      "sha256": "8841eca07a2a4cea769f7637d5a1a3bb459be9a1f06b161c75c6353d1f142257"
+      "sha256": "07fa76cf27de9ae7a8f9ecfa7fb9d668c3b21caaf483a5e88af4cdbd30379ca7"
     },
     {
       "path": "bdhub/research/kalodata.py",
@@ -815,7 +815,7 @@
       "path": "bdhub/research/outreach_ai.py",
       "source": "upstream",
       "upstreamSha256": "2d98a3d0c7f36c636ba4fc41709639ed8f857f00bf8e0144ff2c83d13c273932",
-      "sha256": "2d98a3d0c7f36c636ba4fc41709639ed8f857f00bf8e0144ff2c83d13c273932"
+      "sha256": "05238b59e934ecc7862a435cacde0d2a7ef05b65bed26feb0b349baad65e888b"
     },
     {
       "path": "bdhub/research/product_exploration.py",
@@ -971,13 +971,13 @@
       "path": "bdhub/send/taplink/batches.py",
       "source": "upstream",
       "upstreamSha256": "9d3cc933b5c0092bf754a33d3a7b00456266a3f80d2ba4f83fd1abd84a25d981",
-      "sha256": "9d3cc933b5c0092bf754a33d3a7b00456266a3f80d2ba4f83fd1abd84a25d981"
+      "sha256": "9bfe1384d79a4d9ab6335e8be5569bf34419ff9a927a9f26005b85af2e70c5f8"
     },
     {
       "path": "bdhub/send/taplink/cleanup.py",
       "source": "upstream",
       "upstreamSha256": "9ae7b9445a6028f2c0644a9851efc5b3013d0f9f81dfd8eb87725720bc4727ff",
-      "sha256": "9ae7b9445a6028f2c0644a9851efc5b3013d0f9f81dfd8eb87725720bc4727ff"
+      "sha256": "f8047fec623515812c2f1fa49f75aa600e61c42a8c7220655fbdc1cdf02a630f"
     },
     {
       "path": "bdhub/send/taplink/protocol.py",
@@ -989,13 +989,13 @@
       "path": "bdhub/send/taplink/rule_batches.py",
       "source": "upstream",
       "upstreamSha256": "b8748b74f79381a9e959aae6b0b6fbb6a9ae49fbdfb5d074f79fc3150e9a7300",
-      "sha256": "b8748b74f79381a9e959aae6b0b6fbb6a9ae49fbdfb5d074f79fc3150e9a7300"
+      "sha256": "f2e61bacce54384eeda3026f806a48491f8d212d69d5ecf823070b187d518628"
     },
     {
       "path": "bdhub/send/taplink/service.py",
       "source": "upstream",
       "upstreamSha256": "5781ac08abb824cb4c7abb9e2d44021c760c1c464049df4826d14049e8302a9f",
-      "sha256": "5781ac08abb824cb4c7abb9e2d44021c760c1c464049df4826d14049e8302a9f"
+      "sha256": "9c58848ed44d1f2ef8c8abe8a86db512a4f6b43557a8672d51e092e1c8cade1e"
     },
     {
       "path": "bdhub/send/taplink/transport.py",

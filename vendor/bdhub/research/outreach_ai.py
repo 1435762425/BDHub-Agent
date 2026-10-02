@@ -183,7 +183,7 @@ def launch_plan(market: str, request_key: str, *, product_limit: int = 10, creat
         repository.create(request)
         atomic_json(repository.directory(request["run_id"]) / "catalog.json", source)
         try:
-            subprocess.Popen([str(config.ROOT / ".venv/bin/python"), "-m", "bdhub.research.outreach_ai_worker", "--run-id", request["run_id"]], cwd=config.ROOT, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+            subprocess.Popen([sys.executable, "-m", "bdhub.research.outreach_ai_worker", "--run-id", request["run_id"]], cwd=config.ROOT, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
         except Exception:
             repository.save(request["run_id"], {"state": "failed", "phase": "queued", "error": "AI 进程未能启动。", "first": {"products": [], "leads": []}, "second": {"products": [], "leads": []}})
             raise

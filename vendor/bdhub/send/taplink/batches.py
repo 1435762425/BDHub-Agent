@@ -1,5 +1,6 @@
 """批量建链共用单商品意图；一次确认，逐 PID 留存真实结果。"""
 from datetime import datetime, timezone
+import sys
 import hashlib
 import json
 import os
@@ -86,7 +87,7 @@ def launch(batch_id, action, *, store=None):
         batch.update(state="queued", action=action, error="")
         repository.save(batch)
         try:
-            process = subprocess.Popen([str(config.ROOT / ".venv/bin/python"), "-m", "bdhub.send.taplink.batch_worker", "--batch-id", batch_id],
+            process = subprocess.Popen([sys.executable, "-m", "bdhub.send.taplink.batch_worker", "--batch-id", batch_id],
                                        cwd=config.ROOT, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
             batch["worker_pid"] = process.pid
             repository.save(batch)

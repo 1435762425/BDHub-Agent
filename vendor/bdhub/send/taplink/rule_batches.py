@@ -1,5 +1,6 @@
 """规则驱动的一键建链；使用筛选后货盘，执行前检查已有链接。"""
 from datetime import datetime, timezone
+import sys
 import hashlib
 import json
 import os
@@ -94,7 +95,7 @@ def start_batch(body, *, store=None, source=None, rules=None, dispatch=True):
         repository.save(batch)
         if dispatch:
             try:
-                process = subprocess.Popen([str(config.ROOT / ".venv/bin/python"), "-m", "bdhub.send.taplink.batch_worker", "--batch-id", batch["job_id"]],
+                process = subprocess.Popen([sys.executable, "-m", "bdhub.send.taplink.batch_worker", "--batch-id", batch["job_id"]],
                     cwd=config.ROOT, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
                 batch["worker_pid"] = process.pid
                 repository.save(batch)

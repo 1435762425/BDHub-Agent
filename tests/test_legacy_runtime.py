@@ -21,6 +21,26 @@ class VendoredLegacyRuntime(unittest.TestCase):
         self.assertTrue(Path(bdhub.__file__).resolve().is_relative_to(ROOT / "vendor"))
         self.assertEqual(config.ROOT, (ROOT / "private-data").resolve())
 
+    def test_protocol_child_started_in_the_private_root_loads_the_vendored_package_and_root(self):
+        import json, subprocess
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            import shutil
+            shutil.copytree(ROOT / "vendor/bdhub", root / "vendor/bdhub",
+                            ignore=shutil.ignore_patterns("__pycache__"))
+            (root / "private-data").mkdir()
+            probe = ("import json,subprocess,sys\nsys.path.insert(0,sys.argv[1])\n"
+                     "from lib.legacy_runtime import configure_vendored_bdhub\n"
+                     "config=configure_vendored_bdhub(root=sys.argv[2])\n"
+                     "child=subprocess.run([sys.executable,'-c','import bdhub,bdhub.config as c,json;"
+                     "print(json.dumps([bdhub.__file__,str(c.ROOT)]))'],cwd=config.ROOT,capture_output=True,text=True)\n"
+                     "print(child.stdout.strip() or child.stderr.strip())")
+            result = subprocess.run([sys.executable, "-c", probe, str(ROOT / "scripts"), str(root)],
+                                    capture_output=True, text=True, check=True)
+            package, config_root = json.loads(result.stdout.strip().splitlines()[-1])
+            self.assertTrue(Path(package).resolve().is_relative_to((root / "vendor").resolve()))
+            self.assertEqual(Path(config_root), (root / "private-data").resolve())
+
     def test_private_root_redirected_outside_the_project_is_refused(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory) / "project"; outside = Path(directory) / "elsewhere"

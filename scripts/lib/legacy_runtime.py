@@ -9,6 +9,7 @@ from contextlib import closing
 from datetime import datetime, timedelta
 from pathlib import Path
 import json
+import os
 import re
 import sqlite3
 import sys
@@ -216,5 +217,11 @@ def configure_vendored_bdhub(*, root=ROOT):
     # Vendored functions that call config.load() without an explicit path read the project's own
     # private config and accounts.
     config.ROOT = private
+    # Protocol child processes (``python -m bdhub...``) start from the config root, where neither the
+    # vendored package nor a virtualenv lives: hand them both through the environment.
+    os.environ["BDHUB_CONFIG_ROOT"] = str(private)
+    paths = [entry for entry in os.environ.get("PYTHONPATH", "").split(os.pathsep) if entry]
+    if not any(_same_path(entry, vendor) for entry in paths):
+        os.environ["PYTHONPATH"] = os.pathsep.join([str(vendor), *paths])
     _install_project_account_overlay(config, root)
     return config

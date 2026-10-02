@@ -8,7 +8,10 @@ import json
 import re
 import yaml
 
-ROOT = Path(__file__).resolve().parent.parent  # 项目根：01-BDSystem
+import os
+# A host project that relocates the config root passes it to child processes through the environment.
+ROOT = Path(os.environ["BDHUB_CONFIG_ROOT"]).resolve() if os.environ.get("BDHUB_CONFIG_ROOT") \
+    else Path(__file__).resolve().parent.parent  # 项目根：01-BDSystem
 
 
 @dataclass(frozen=True)

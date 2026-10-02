@@ -1,6 +1,7 @@
 """先用确定规则选合作方案，再由 AI 评估商品；不选入、不建链、不找达人。"""
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
+import sys
 import hashlib
 import json
 import os
@@ -110,7 +111,7 @@ def start(body, *, store=None, dispatch=True):
         repository.save(job)
         if dispatch:
             try:
-                proc=subprocess.Popen([str(config.ROOT/'.venv/bin/python'),'-m','bdhub.research.commerce_worker','assess',job['job_id']],
+                proc=subprocess.Popen([sys.executable,'-m','bdhub.research.commerce_worker','assess',job['job_id']],
                                       cwd=config.ROOT,stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,start_new_session=True)
                 job['worker_pid']=proc.pid; repository.save(job)
             except OSError:

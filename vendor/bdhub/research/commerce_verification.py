@@ -26,7 +26,7 @@ def verify_session(transport, verification_header):
     identity.update(cookie_header='; '.join(f'{k}={v}' for k, v in cookies.items()), fp=transport.fp,
                     api_host=meta.host, page_url=meta.warmup, aid=meta.aid,
                     user_language=meta.user_language, signer_region=meta.signer_region)
-    process = subprocess.Popen([str(config.ROOT/'.venv/bin/python'), '-m', __name__], cwd=config.ROOT,
+    process = subprocess.Popen([sys.executable, '-m', __name__], cwd=config.ROOT,
         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, start_new_session=True)
     try:
         stdout, _ = process.communicate(json.dumps({'identity':identity, 'verification':verification_header}), timeout=90)

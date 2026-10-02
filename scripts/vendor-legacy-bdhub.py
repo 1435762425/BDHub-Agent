@@ -21,7 +21,7 @@ import sys
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_LEGACY = ROOT.parent / "01-BDSystem-V2"
+DEFAULT_LEGACY = ROOT.parent / "BDHub" / "01-BDSystem-V2"
 DEFAULT_OUT = ROOT / "vendor"
 DEFAULT_MANIFEST = ROOT / "scripts/vendor-runtime/manifest.json"
 RESOURCE_PATH = "bdhub/enrich/pure_http_runtime_manifest.json"

@@ -8,7 +8,7 @@
 
 - 初始协议导入来自旧仓库提交 `7cdc180ebd73a3040a788440a131c73f0c17ce1a`。
 - 当前重建基线、169 个源码/资源文件的上游及目标 SHA-256 见 [manifest.json](../scripts/vendor-runtime/manifest.json)；目录检查不再只比较文件名。
-- 四个文件的本地差异见 [local.patch](../scripts/vendor-runtime/local.patch)。为避免隐式导入旧发送器，历史生成的空 `__init__.py` 在清单中单独声明。
+- 本地差异（市场能力、Campaign/类目参数，以及子进程沿用宿主解释器和 `BDHUB_CONFIG_ROOT`）见 [local.patch](../scripts/vendor-runtime/local.patch)。为避免隐式导入旧发送器，历史生成的空 `__init__.py` 在清单中单独声明。
 - `bdhub/enrich/pure_http_runtime_manifest.json` 是必须随包保存的协议资源；实际签名运行环境、身份、Cookie、数据库和 `config.yaml` 不进 git，放在 `private-data/`。工具只允许 `.py` 和这一项明确资源，不能扩大为复制所有 JSON。
 - `config.example.yaml` 是无凭据模板，不是当前真实配置。
 

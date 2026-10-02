@@ -3,6 +3,7 @@ from copy import deepcopy
 from collections import Counter
 from contextlib import contextmanager
 from decimal import Decimal
+import sys
 import hashlib
 import json
 import os
@@ -126,7 +127,7 @@ def start_intake(body,*,store=None,pool=None,dispatch=True):
              'request_key':key,'fingerprint':fingerprint,'error':'','fast_intake':True,'items':[{'pid':pid,'product':available[pid], 'state':'pending','error':''} for pid in pids]}
         repository.save(job)
         if dispatch:
-            proc=subprocess.Popen([str(config.ROOT/'.venv/bin/python'),'-m','bdhub.research.commerce_worker','intake',job['job_id']],
+            proc=subprocess.Popen([sys.executable,'-m','bdhub.research.commerce_worker','intake',job['job_id']],
                 cwd=config.ROOT,stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,start_new_session=True)
             job['worker_pid']=proc.pid;repository.save(job)
     return job
@@ -248,7 +249,7 @@ def resume_pending(job_id,*,store=None,dispatch=True):
         (repository.root/f'{job_id}.stop').unlink(missing_ok=True)
         job.update(state='queued',fast_intake=True,error='');repository.save(job)
         if dispatch:
-            proc=subprocess.Popen([str(config.ROOT/'.venv/bin/python'),'-m','bdhub.research.commerce_worker','intake',job_id],
+            proc=subprocess.Popen([sys.executable,'-m','bdhub.research.commerce_worker','intake',job_id],
                 cwd=config.ROOT,stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,start_new_session=True)
             job['worker_pid']=proc.pid;repository.save(job)
     return job

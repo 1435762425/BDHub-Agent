@@ -1,3 +1,17 @@
+--- a/bdhub/config.py
++++ b/bdhub/config.py
+@@ -8,7 +8,10 @@
+ import re
+ import yaml
+ 
+-ROOT = Path(__file__).resolve().parent.parent  # 项目根：01-BDSystem
++import os
++# A host project that relocates the config root passes it to child processes through the environment.
++ROOT = Path(os.environ["BDHUB_CONFIG_ROOT"]).resolve() if os.environ.get("BDHUB_CONFIG_ROOT") \
++    else Path(__file__).resolve().parent.parent  # 项目根：01-BDSystem
+ 
+ 
+ @dataclass(frozen=True)
 --- a/bdhub/hub/file_intents.py
 +++ b/bdhub/hub/file_intents.py
 @@ -63,3 +63,4 @@
@@ -71,6 +85,63 @@
          ),
          im_find_aid="360019",
          affiliate_partner_id="8652354317985613569",
+@@ -302,7 +325,8 @@
+         capabilities=MarketCapabilities(
+             find="enabled", profile="enabled", pure_http="enabled",
+             relation="enabled", contact="enabled",
+-            im="enabled", campaign="unsupported", share_link="unsupported",
++            # 2026-10-02 ACC12 project login: IM card search and Campaign list reads verified.
++            im="enabled", product_search="enabled", campaign="pending", share_link="unsupported",
+         ),
+         im_find_aid="360019",
+         affiliate_partner_id="8680177412768696065",
+--- a/bdhub/research/commerce_selected.py
++++ b/bdhub/research/commerce_selected.py
+@@ -3,6 +3,7 @@
+ from collections import Counter
+ from contextlib import contextmanager
+ from decimal import Decimal
++import sys
+ import hashlib
+ import json
+ import os
+@@ -126,7 +127,7 @@
+              'request_key':key,'fingerprint':fingerprint,'error':'','fast_intake':True,'items':[{'pid':pid,'product':available[pid], 'state':'pending','error':''} for pid in pids]}
+         repository.save(job)
+         if dispatch:
+-            proc=subprocess.Popen([str(config.ROOT/'.venv/bin/python'),'-m','bdhub.research.commerce_worker','intake',job['job_id']],
++            proc=subprocess.Popen([sys.executable,'-m','bdhub.research.commerce_worker','intake',job['job_id']],
+                 cwd=config.ROOT,stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,start_new_session=True)
+             job['worker_pid']=proc.pid;repository.save(job)
+     return job
+@@ -248,7 +249,7 @@
+         (repository.root/f'{job_id}.stop').unlink(missing_ok=True)
+         job.update(state='queued',fast_intake=True,error='');repository.save(job)
+         if dispatch:
+-            proc=subprocess.Popen([str(config.ROOT/'.venv/bin/python'),'-m','bdhub.research.commerce_worker','intake',job_id],
++            proc=subprocess.Popen([sys.executable,'-m','bdhub.research.commerce_worker','intake',job_id],
+                 cwd=config.ROOT,stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,start_new_session=True)
+             job['worker_pid']=proc.pid;repository.save(job)
+     return job
+--- a/bdhub/research/commerce_selection.py
++++ b/bdhub/research/commerce_selection.py
+@@ -1,6 +1,7 @@
+ """先用确定规则选合作方案，再由 AI 评估商品；不选入、不建链、不找达人。"""
+ from datetime import date, datetime, timedelta, timezone
+ from decimal import Decimal
++import sys
+ import hashlib
+ import json
+ import os
+@@ -110,7 +111,7 @@
+         repository.save(job)
+         if dispatch:
+             try:
+-                proc=subprocess.Popen([str(config.ROOT/'.venv/bin/python'),'-m','bdhub.research.commerce_worker','assess',job['job_id']],
++                proc=subprocess.Popen([sys.executable,'-m','bdhub.research.commerce_worker','assess',job['job_id']],
+                                       cwd=config.ROOT,stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,start_new_session=True)
+                 job['worker_pid']=proc.pid; repository.save(job)
+             except OSError:
 --- a/bdhub/research/commerce_transport.py
 +++ b/bdhub/research/commerce_transport.py
 @@ -7,14 +7,14 @@
@@ -143,3 +214,98 @@
              self._solve_verification(self._verification_header)
              kwargs = kwargs | {'params':kwargs['params'] | {'fp':self.fp}}
              result = super()._xhr(**kwargs)
+--- a/bdhub/research/commerce_verification.py
++++ b/bdhub/research/commerce_verification.py
+@@ -26,7 +26,7 @@
+     identity.update(cookie_header='; '.join(f'{k}={v}' for k, v in cookies.items()), fp=transport.fp,
+                     api_host=meta.host, page_url=meta.warmup, aid=meta.aid,
+                     user_language=meta.user_language, signer_region=meta.signer_region)
+-    process = subprocess.Popen([str(config.ROOT/'.venv/bin/python'), '-m', __name__], cwd=config.ROOT,
++    process = subprocess.Popen([sys.executable, '-m', __name__], cwd=config.ROOT,
+         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, start_new_session=True)
+     try:
+         stdout, _ = process.communicate(json.dumps({'identity':identity, 'verification':verification_header}), timeout=90)
+--- a/bdhub/research/outreach_ai.py
++++ b/bdhub/research/outreach_ai.py
+@@ -183,7 +183,7 @@
+         repository.create(request)
+         atomic_json(repository.directory(request["run_id"]) / "catalog.json", source)
+         try:
+-            subprocess.Popen([str(config.ROOT / ".venv/bin/python"), "-m", "bdhub.research.outreach_ai_worker", "--run-id", request["run_id"]], cwd=config.ROOT, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
++            subprocess.Popen([sys.executable, "-m", "bdhub.research.outreach_ai_worker", "--run-id", request["run_id"]], cwd=config.ROOT, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+         except Exception:
+             repository.save(request["run_id"], {"state": "failed", "phase": "queued", "error": "AI 进程未能启动。", "first": {"products": [], "leads": []}, "second": {"products": [], "leads": []}})
+             raise
+--- a/bdhub/send/taplink/batches.py
++++ b/bdhub/send/taplink/batches.py
+@@ -1,5 +1,6 @@
+ """批量建链共用单商品意图；一次确认，逐 PID 留存真实结果。"""
+ from datetime import datetime, timezone
++import sys
+ import hashlib
+ import json
+ import os
+@@ -86,7 +87,7 @@
+         batch.update(state="queued", action=action, error="")
+         repository.save(batch)
+         try:
+-            process = subprocess.Popen([str(config.ROOT / ".venv/bin/python"), "-m", "bdhub.send.taplink.batch_worker", "--batch-id", batch_id],
++            process = subprocess.Popen([sys.executable, "-m", "bdhub.send.taplink.batch_worker", "--batch-id", batch_id],
+                                        cwd=config.ROOT, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+             batch["worker_pid"] = process.pid
+             repository.save(batch)
+--- a/bdhub/send/taplink/cleanup.py
++++ b/bdhub/send/taplink/cleanup.py
+@@ -1,5 +1,6 @@
+ """历史 Product List TapLink 扫描与清理；只删除重新确认完全失效的列表。"""
+ from datetime import datetime, timedelta, timezone
++import sys
+ import hashlib
+ import json
+ import os
+@@ -237,7 +238,7 @@
+         job.update(state="queued", action=action, error="")
+         repository.save(job)
+         try:
+-            process = subprocess.Popen([str(config.ROOT / ".venv/bin/python"), "-m", "bdhub.send.taplink.cleanup_worker", "--job-id", job_id],
++            process = subprocess.Popen([sys.executable, "-m", "bdhub.send.taplink.cleanup_worker", "--job-id", job_id],
+                                        cwd=config.ROOT, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+             job["worker_pid"] = process.pid
+             repository.save(job)
+--- a/bdhub/send/taplink/rule_batches.py
++++ b/bdhub/send/taplink/rule_batches.py
+@@ -1,5 +1,6 @@
+ """规则驱动的一键建链；使用筛选后货盘，执行前检查已有链接。"""
+ from datetime import datetime, timezone
++import sys
+ import hashlib
+ import json
+ import os
+@@ -94,7 +95,7 @@
+         repository.save(batch)
+         if dispatch:
+             try:
+-                process = subprocess.Popen([str(config.ROOT / ".venv/bin/python"), "-m", "bdhub.send.taplink.batch_worker", "--batch-id", batch["job_id"]],
++                process = subprocess.Popen([sys.executable, "-m", "bdhub.send.taplink.batch_worker", "--batch-id", batch["job_id"]],
+                     cwd=config.ROOT, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+                 batch["worker_pid"] = process.pid
+                 repository.save(batch)
+--- a/bdhub/send/taplink/service.py
++++ b/bdhub/send/taplink/service.py
+@@ -3,6 +3,7 @@
+ 
+ from datetime import datetime, timezone
+ from decimal import Decimal
++import sys
+ import hashlib
+ import json
+ from pathlib import Path
+@@ -205,7 +206,7 @@
+         job.update(state="queued", action=action, previous_state=previous, error="")
+         repository.save(job)
+         try:
+-            process = subprocess.Popen([str(config.ROOT / ".venv/bin/python"), "-m", "bdhub.send.taplink.worker",
++            process = subprocess.Popen([sys.executable, "-m", "bdhub.send.taplink.worker",
+                                         "--job-id", job_id], cwd=config.ROOT, stdin=subprocess.DEVNULL,
+                                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+             job["worker_pid"] = process.pid
