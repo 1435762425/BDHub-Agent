@@ -1,9 +1,16 @@
 # BDHub-Agent 当前交接
 
-文档更新时间：2026-10-02（Asia/Shanghai）。下面各节按时间倒序，每节只代表该时刻的核验；最新一节即当前生产状态的最近记录，不是实时巡检。规则见 [PROJECT](../PROJECT.md)，实现见 [TECHNICAL](../TECHNICAL.md)，后续方向见[项目审计与清理](../implementation/project-audit-20260924.md)。更早流水见[历史交接](../archive/handoff/codex-takeover-history-20260923.md)。
+文档更新时间：2026-10-03（Asia/Shanghai）。下面各节按时间倒序，每节只代表该时刻的核验；最新一节即当前生产状态的最近记录，不是实时巡检。规则见 [PROJECT](../PROJECT.md)，实现见 [TECHNICAL](../TECHNICAL.md)，后续方向见[项目审计与清理](../implementation/project-audit-20260924.md)。更早流水见[历史交接](../archive/handoff/codex-takeover-history-20260923.md)。
 
 
 
+
+## 2026-10-03 04:20：德国货盘铺开完成，法国接入到首次登录前
+
+- DE 全托：新批次类目读取完成并发布（28 类、46,013 商品；女装 `endpoint_end_stable_duplicate_rows_1`、运动与户外 `endpoint_end_total_drift`），筛出 3,309；用户确认后选入 canary（PID `1729480004826732625`，写 1、经平台验证后 confirmed，`product_select` verified），批量选入 3,304 confirmed、5 `skipped_unknown`；已选同步 3,304 offer，德语短名 3,304（模型 661 次），建 TapLink 写 3,304、全部 ready。
+- DE Campaign：718 ready（另 5 个短名模型调用 unknown 被锁、1 个读取不完整）。DE 可发送达人 182（仅首批 91 PID 跑过 Kalodata/OECID）；其余线索与 438 个待身份 handle 留给开启自动运营后按日常节奏处理，未一次性消耗 Kalodata 共享额度。DE 自动运营/持续发送/AI 回复开关仍全关，收信不运行。
+- FR：合作伙伴信息只读查得地区 17（14 为西班牙，以商品标题语言区分），`e6bc2b4` 协议层加入 FR（EU 形态，Campaign/加入 pending）、欧洲 IM 地区加 17、注册表 `paused`、ACC16 通讯/ACC17 供给、fr-FR 内容（审阅稿 `implementation/fr-content-review-20261003.md`）。04:10 按流程上线（postflight 通过），`onboard-markets` 建 FR plan。FR 数据库尚未生成，生成后需把 `campaign-join-fr`、`campaign-screen-fr`、`kalodata-leads-fr` 加入 `config/state-backup.json`，否则备份清单不就绪。
+- 待用户：FR ACC16/ACC17 首次重登（邮箱验证码）；FR 16 条法语模板审批；DE 是否开启 AI 回复/持续发送/自动运营。
 
 ## 2026-10-02 23:00：德国首发完成，Campaign 货盘铺开，全托读取进行中
 
