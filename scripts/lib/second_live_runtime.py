@@ -2,13 +2,12 @@
 
 The outer CLI must impose a whole-process deadline. Auth/IM use their proven
 environment-proxy route; card reads retain their separately proven direct route.
-Only the new system shares this sender FIFO. Read-only legacy conflict checks
-are snapshots, never a claim of atomic coordination with the old project.
+Only the new system shares this sender FIFO; the old project's send state is
+not consulted (it has not sent for IT since 2026-09-08).
 """
 from __future__ import annotations
 
 from contextlib import contextmanager, redirect_stdout, redirect_stderr, nullcontext
-import fcntl
 import hashlib
 import importlib.util
 import io
@@ -17,7 +16,6 @@ import math
 import os
 from pathlib import Path
 import re
-import stat
 import sys
 import time
 
@@ -30,14 +28,12 @@ from lib.second_card_binding import refresh_card_binding
 ROOT = Path(__file__).resolve().parents[2]
 VAR = ROOT / "var"
 LEGACY = Path("/Users/bjn00003/BDHub/01-BDSystem-V2")
-LEGACY_GATE_DIRECTORY = LEGACY / "data/runtime/im-http-write-gates"
 _AUTH_CACHE = {}
 _AUTH_CACHE_SECONDS = 60
 SAFE_CODES = frozenset({"live_sender_binding_required", "live_sender_binding_mismatch", "live_sender_invalid",
     "live_runtime_unavailable", "live_runtime_closed", "live_stopped", "live_maintenance_due",
     "live_guard_busy", "live_guard_invalid", "live_identity_changed", "live_interval_invalid",
-    "live_var_invalid", "legacy_gate_busy", "legacy_gate_unknown", "legacy_gate_invalid",
-    "legacy_recent_dispatch", "legacy_send_conflict", "legacy_state_unavailable", "live_gate_failed",
+    "live_var_invalid", "live_gate_failed",
     "live_mark_reused", "live_market_send_unavailable", "live_read_only"})
 
 
@@ -189,126 +185,6 @@ def read_sender_binding(report, *, stopped=lambda: False):
         return binding
 
 
-def _pid_alive(pid):
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-    except OSError:
-        raise SecondLiveRuntimeError("legacy_gate_unknown") from None
-    return True
-
-
-def check_legacy_gate(sender_id, *, interval, directory=LEGACY_GATE_DIRECTORY, wall_time=time.time, pid_alive=_pid_alive):
-    """Inspect the same-sender old FIFO without writing/cleaning it or its leases."""
-    _numeric(sender_id)
-    path = Path(directory) / (hashlib.sha256(sender_id.encode()).hexdigest() + ".lock")
-    try:
-        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
-    except FileNotFoundError:
-        return {"state": "absent", "active": False}
-    except OSError:
-        raise SecondLiveRuntimeError("legacy_gate_invalid") from None
-    with os.fdopen(descriptor, "rb") as handle:
-        if not stat.S_ISREG(os.fstat(handle.fileno()).st_mode):
-            raise SecondLiveRuntimeError("legacy_gate_invalid")
-        try:
-            fcntl.flock(handle, fcntl.LOCK_SH | fcntl.LOCK_NB)
-        except BlockingIOError:
-            raise SecondLiveRuntimeError("legacy_gate_busy") from None
-        try:
-            raw = handle.read(65537)
-            if len(raw) > 65536:
-                raise ValueError()
-            state = json.loads(raw) if raw else {"last_dispatch": 0.0, "queue": []}
-            if not isinstance(state, dict) or not isinstance(state.get("queue", []), list):
-                raise ValueError()
-            queue = state.get("queue", [])
-            if len(queue) > 64:
-                raise ValueError()
-            last = state.get("last_dispatch")
-            if isinstance(last, bool) or not isinstance(last, (int, float)) or not math.isfinite(last) or last < 0 or last > wall_time() + 60:
-                raise ValueError()
-            dead_waiters = 0
-            for entry in queue:
-                if (not isinstance(entry, dict) or type(entry.get("pid")) is not int or entry["pid"] <= 0
-                        or type(entry.get("active")) is not bool or not isinstance(entry.get("token"), str) or not entry["token"]):
-                    raise ValueError()
-                if entry["active"]:
-                    raise SecondLiveRuntimeError("legacy_gate_busy" if pid_alive(entry["pid"]) else "legacy_gate_unknown")
-                if pid_alive(entry["pid"]):
-                    raise SecondLiveRuntimeError("legacy_gate_busy")
-                dead_waiters += 1
-            if last and wall_time() < last + interval:
-                raise SecondLiveRuntimeError("legacy_recent_dispatch")
-            return {"state": "idle", "active": False, "deadInactiveWaiters": dead_waiters}
-        except SecondLiveRuntimeError:
-            raise
-        except (TypeError, ValueError, OSError, OverflowError):
-            raise SecondLiveRuntimeError("legacy_gate_invalid") from None
-        finally:
-            fcntl.flock(handle, fcntl.LOCK_UN)
-
-
-# Source: legacy schema send_task/reply_outbox/im_delivery_intent and send_tasks.py.
-# A paused parent does not make an unresolved child send safe.
-LEGACY_CONFLICT_SQL = """
-SELECT
- EXISTS (SELECT 1 FROM send_task WHERE bd_market = 'it' AND status = 'running') AS task_enabled,
- EXISTS (SELECT 1 FROM reply_outbox WHERE bd_market = 'it' AND status IN ('queued','unknown')) AS outbox_pending,
- EXISTS (SELECT 1 FROM im_delivery_intent WHERE bd_market = 'it' AND status IN ('sending','unknown')) AS delivery_pending,
- EXISTS (SELECT 1 FROM send_task_component c
-         JOIN send_task_lead l ON l.lead_id = c.lead_id
-         JOIN send_task t ON t.task_id = l.task_id
-         WHERE t.bd_market = 'it' AND c.status IN ('sending','unknown')) AS component_pending,
- EXISTS (SELECT 1 FROM send_component_attempt a
-         JOIN send_task_component c ON c.component_id = a.component_id
-         JOIN send_task_lead l ON l.lead_id = c.lead_id
-         JOIN send_task t ON t.task_id = l.task_id
-         WHERE t.bd_market = 'it' AND (a.status = 'sending' OR (a.status = 'unknown'
-           AND COALESCE(a.transport_snapshot #>> '{manual_resolution,resolution}', '')
-               NOT IN ('confirmed_sent','confirmed_not_sent')))) AS attempt_pending
-"""
-
-
-@contextmanager
-def _legacy_connection():
-    """Independent read-only PostgreSQL connection; no legacy store/init/migration."""
-    _legacy_imports()
-    from bdhub import config
-    from sqlalchemy import create_engine
-    from sqlalchemy.engine import make_url
-    from sqlalchemy.pool import NullPool
-    with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
-        url = make_url(config.load().db_url)
-    if url.get_backend_name() != "postgresql" or url.host not in {"localhost", "127.0.0.1", "::1"}:
-        raise SecondLiveRuntimeError("legacy_state_unavailable")
-    engine = create_engine(url, poolclass=NullPool, connect_args={"connect_timeout": 5,
-        "options": "-c default_transaction_read_only=on -c statement_timeout=5000 -c lock_timeout=1000"})
-    try:
-        with engine.connect() as connection:
-            connection.exec_driver_sql("SET TRANSACTION READ ONLY")
-            yield connection
-    finally:
-        engine.dispose()
-
-
-def check_legacy_send_state(report, *, connection_factory=None):
-    try:
-        with (connection_factory or _legacy_connection)() as connection:
-            row = dict(connection.exec_driver_sql(LEGACY_CONFLICT_SQL).mappings().one())
-        if set(row) != {"task_enabled", "outbox_pending", "delivery_pending", "component_pending", "attempt_pending"} or any(type(value) is not bool for value in row.values()):
-            raise ValueError()
-    except Exception:
-        raise SecondLiveRuntimeError("legacy_state_unavailable") from None
-    report.setdefault("legacyConflictChecks", []).append(row)
-    if any(row.values()):
-        raise SecondLiveRuntimeError("legacy_send_conflict")
-    return row
-
-
 def _new_gate_directory(var_dir):
     try:
         directory = Path(var_dir).resolve()
@@ -349,32 +225,25 @@ def live_runtime(expected_sender_binding_hash, report, *, var_dir=VAR, stopped=l
             available()
             if sender_binding_sha256(auth) != expected_sender_binding_hash:
                 raise SecondLiveRuntimeError("live_sender_binding_mismatch")
-        def conflicts():
-            check()
-            gate_state = check_legacy_gate(auth.im_id, interval=policy.im_send_interval_seconds)
-            report["legacyWriteGate"] = gate_state
-            check_legacy_send_state(report)
-        if not read_only:conflicts()
         report.update(senderBindingHash=binding, senderWriteIntervalSeconds=interval,
-            writeGateScope="new_system_sender_only", crossProjectAtomicCoordination=False,
-            legacyGateWrites=0, legacyServicesStopped=0)
+            writeGateScope="new_system_sender_only")
         @contextmanager
         def write_gate():
             if read_only:raise SecondLiveRuntimeError("live_read_only")
-            conflicts()
+            check()
             try:
                 manager = _shared_gate(auth.im_id, interval=interval, stopped=lambda: closed or stopped(), directory=gate_directory)
                 mark = manager.__enter__()
             except Exception:
                 raise SecondLiveRuntimeError("live_gate_failed") from None
             try:
-                conflicts()
+                check()
                 marked = False
                 def mark_once():
                     nonlocal marked
                     if marked:
                         raise SecondLiveRuntimeError("live_mark_reused")
-                    conflicts()
+                    check()
                     mark()
                     marked = True
                 yield mark_once
