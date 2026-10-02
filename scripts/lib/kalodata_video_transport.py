@@ -14,10 +14,10 @@ from lib.second_cycle import CycleError
 
 
 class VideoProvider:
- def __init__(self,root,legacy,pid,start,end,market='it'):
-  self.root=Path(root);self.legacy=Path(legacy);self.pid=pid;self.start=start;self.end=end;self.market=market
+ def __init__(self,root,pid,start,end,market='it'):
+  self.root=Path(root);self.pid=pid;self.start=start;self.end=end;self.market=market
  def __enter__(self):
-  configure_vendored_bdhub(root=self.root,legacy_root=self.legacy)
+  configure_vendored_bdhub(root=self.root)
   from bdhub import config
   from curl_cffi import requests
   path=config.load().kalodata.project_dir/'product_top50/collect.py'
@@ -64,8 +64,8 @@ class VideoProvider:
 
 
 @contextmanager
-def live_provider(root,legacy,pid,start,end,market='it'):
- lock_path=Path(legacy)/'data/research/kalodata/.browser.lock'
+def live_provider(root,pid,start,end,market='it'):
+ lock_path=Path(root)/'private-data/data/research/kalodata/.browser.lock'
  with lock_path.open('rb') as lock:
   fcntl.flock(lock,fcntl.LOCK_SH|fcntl.LOCK_NB)
-  with VideoProvider(root,legacy,pid,start,end,market) as provider:yield provider
+  with VideoProvider(root,pid,start,end,market) as provider:yield provider

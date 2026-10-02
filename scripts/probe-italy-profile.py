@@ -26,7 +26,6 @@ from contextlib import closing, contextmanager, redirect_stdout, redirect_stderr
 from datetime import datetime, timezone
 
 ROOT = Path(__file__).resolve().parents[1]
-LEGACY = Path("/Users/bjn00003/BDHub/01-BDSystem-V2")
 VAR = ROOT / "var"
 sys.path.insert(0, str(ROOT / "scripts"))
 from lib.legacy_runtime import configure_vendored_bdhub
@@ -167,7 +166,7 @@ def network_child(account_name: str, target_file: Path, output: Path, market: st
     signal.setitimer(signal.ITIMER_REAL, 175)
     os.umask(0o077)
     sys.dont_write_bytecode = True
-    configure_vendored_bdhub(root=ROOT, legacy_root=LEGACY)
+    configure_vendored_bdhub(root=ROOT)
     scratch = output / "temporary"
     scratch.mkdir(parents=True, exist_ok=True)
     tempfile.tempdir = str(scratch)

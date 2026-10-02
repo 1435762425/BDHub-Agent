@@ -73,7 +73,7 @@ def catalog_scope(root,account,market='it'):
         scope=json.loads((Path(root)/'var/cycle-catalog-it-20260913/selected.json').read_text())['scope']
     else:
         from lib.legacy_runtime import configure_vendored_bdhub
-        configure_vendored_bdhub(root=Path(root),legacy_root=Path(root).parent/'01-BDSystem-V2')
+        configure_vendored_bdhub(root=Path(root))
         from bdhub.hub.markets import identity_for
         from bdhub.send.taplink.transport import account_for
         from lib.second_cycle import digest

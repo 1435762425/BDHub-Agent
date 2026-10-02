@@ -4,7 +4,7 @@ from datetime import datetime,timezone
 from pathlib import Path
 import hashlib,sys,time
 from lib.legacy_runtime import configure_vendored_bdhub
-ROOT=Path(__file__).resolve().parents[2];LEGACY=ROOT.parent/'01-BDSystem-V2'
+ROOT=Path(__file__).resolve().parents[2]
 LIST='/api/v1/affiliate/partner/product/opportunity_product/list'
 DETAIL='/api/v1/affiliate/partner/product/opportunity_product/campaign_detail'
 SELECTED='/api/v1/affiliate/partner/product/pick_up/list'
@@ -167,7 +167,7 @@ def _opportunity_transport(report,*,market='it',stopped=lambda:False,extra_read_
     # campaign+source in pages), used to avoid one search per PID. It never writes.
     if not set(extra_read_endpoints)<=ALLOWED_EXTRA_READS:raise ValueError('source_read_endpoint_forbidden')
     sys.dont_write_bytecode=True
-    configure_vendored_bdhub(root=ROOT,legacy_root=LEGACY)
+    configure_vendored_bdhub(root=ROOT)
     from bdhub import scheduled_relogin
     from bdhub.hub.markets import identity_for
     from bdhub.send.taplink.transport import account_for

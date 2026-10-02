@@ -2,10 +2,10 @@
 """Read-only IT catalog extraction into new local state; no creation or sending."""
 import argparse,json,os,sys,time
 from pathlib import Path
-ROOT=Path(__file__).resolve().parents[1];LEGACY=ROOT.parent/'01-BDSystem-V2'
+ROOT=Path(__file__).resolve().parents[1]
 sys.dont_write_bytecode=True;sys.path.insert(0,str(ROOT/'scripts'))
 from lib.legacy_runtime import configure_vendored_bdhub
-configure_vendored_bdhub(root=ROOT,legacy_root=LEGACY)
+configure_vendored_bdhub(root=ROOT)
 from lib.second_cycle import CycleStore,CycleError,digest
 from lib.cycle_catalog import new_state,step,CAMPAIGNS,PRODUCTS,SELECTED,commission_rule,commission_calculator
 from lib.global_source_transport import opportunity_reader,is_account_busy

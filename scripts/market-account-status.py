@@ -18,7 +18,7 @@ def status():
     except (OSError,ValueError,sqlite3.Error):
         identity_control=None
     from lib.legacy_runtime import configure_vendored_bdhub
-    configure_vendored_bdhub(root=ROOT,legacy_root=ROOT.parent/'01-BDSystem-V2')
+    configure_vendored_bdhub(root=ROOT)
     from bdhub import config,scheduled_relogin
     from bdhub.enrich.profile_lease import ProfileLease
     accounts={a.name:a for a in config.load_accounts(config.load())};result=[]

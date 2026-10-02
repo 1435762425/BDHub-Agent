@@ -1,6 +1,6 @@
 # BDHub 协议层
 
-生产入口通过 `scripts/lib/legacy_runtime.py` 强制从本目录加载 `bdhub`，不再把旧仓库作为 Python import root。旧仓库仍是部分只读账号配置、保存凭据和签名 runtime 的来源；项目身份代次发布后，账号 profile/headers 由新项目台账覆盖。完整实现见[技术文档](../docs/TECHNICAL.md)。
+生产入口通过 `scripts/lib/legacy_runtime.py` 强制从本目录加载 `bdhub`，协议层的配置与数据根目录是本项目 `private-data/`（账号登记、私有配置、签名运行环境），运行时不读取原始项目；项目身份代次发布后，账号 profile/headers 由本项目台账覆盖。完整实现见[技术文档](../docs/TECHNICAL.md)。
 
 此副本包含已审核的本地修改，不能直接覆盖回旧源码。MY 市场、BR/UK Campaign 能力和 UK 类目参数等差异已经保存在版本化补丁中。
 
@@ -9,7 +9,7 @@
 - 初始协议导入来自旧仓库提交 `7cdc180ebd73a3040a788440a131c73f0c17ce1a`。
 - 当前重建基线、169 个源码/资源文件的上游及目标 SHA-256 见 [manifest.json](../scripts/vendor-runtime/manifest.json)；目录检查不再只比较文件名。
 - 四个文件的本地差异见 [local.patch](../scripts/vendor-runtime/local.patch)。为避免隐式导入旧发送器，历史生成的空 `__init__.py` 在清单中单独声明。
-- `bdhub/enrich/pure_http_runtime_manifest.json` 是必须随包保存的协议资源；实际签名 runtime、身份、Cookie、数据库和 `config.yaml` 不属于复制范围。工具只允许 `.py` 和这一项明确资源，不能扩大为复制所有 JSON。
+- `bdhub/enrich/pure_http_runtime_manifest.json` 是必须随包保存的协议资源；实际签名运行环境、身份、Cookie、数据库和 `config.yaml` 不进 git，放在 `private-data/`。工具只允许 `.py` 和这一项明确资源，不能扩大为复制所有 JSON。
 - `config.example.yaml` 是无凭据模板，不是当前真实配置。
 
 ## 检查与重建

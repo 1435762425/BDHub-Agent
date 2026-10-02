@@ -27,7 +27,7 @@ def main():
  if not output.is_relative_to((ROOT/'var').resolve()):parser.error('output must be under var')
  pair=load_config(ROOT)['markets'].get(args.market)
  if not pair:parser.error('market assignment missing')
- configure_vendored_bdhub(root=ROOT,legacy_root=ROOT.parent/'01-BDSystem-V2')
+ configure_vendored_bdhub(root=ROOT)
  from bdhub import config
  from bdhub.enrich.profile_lease import ProfileLease
  accounts={row.name:row for row in config.load_accounts(config.load())}

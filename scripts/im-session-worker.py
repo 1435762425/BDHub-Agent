@@ -18,7 +18,7 @@ def stopped(market):
 
 def cycle(market):
     from lib.legacy_runtime import configure_vendored_bdhub
-    configure_vendored_bdhub(root=ROOT,legacy_root=ROOT.parent/'01-BDSystem-V2')
+    configure_vendored_bdhub(root=ROOT)
     from bdhub.imbase.transport import _FIND_API
     from bdhub.hub.markets import im_page
     from playwright.sync_api import sync_playwright

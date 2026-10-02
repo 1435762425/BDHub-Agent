@@ -10,36 +10,32 @@ from zoneinfo import ZoneInfo
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
-from lib.legacy_runtime import (configure_vendored_bdhub, project_account_enabled, project_identity_maintenance_due,
-                                project_identity_paths)  # noqa: E402
+from lib.legacy_runtime import (configure_vendored_bdhub, private_root, project_account_enabled,
+                                project_identity_maintenance_due, project_identity_paths)  # noqa: E402
 
 
 class VendoredLegacyRuntime(unittest.TestCase):
-    def test_protocol_source_is_vendored_while_config_root_remains_explicit(self):
-        with tempfile.TemporaryDirectory() as directory:
-            legacy = Path(directory) / "legacy-state"
-            config = configure_vendored_bdhub(root=ROOT)
-            previous = config.ROOT
-            try:
-                config = configure_vendored_bdhub(root=ROOT, legacy_root=legacy)
-                import bdhub
-                self.assertTrue(Path(bdhub.__file__).resolve().is_relative_to(ROOT / "vendor"))
-                self.assertEqual(config.ROOT, legacy.resolve())
-                self.assertFalse(any(Path(entry).resolve() == legacy.resolve() for entry in sys.path if entry))
-            finally:
-                config.ROOT = previous
+    def test_protocol_source_is_vendored_and_config_root_is_the_project_private_root(self):
+        config = configure_vendored_bdhub(root=ROOT)
+        import bdhub
+        self.assertTrue(Path(bdhub.__file__).resolve().is_relative_to(ROOT / "vendor"))
+        self.assertEqual(config.ROOT, (ROOT / "private-data").resolve())
 
-    def test_active_python_never_adds_the_legacy_source_tree_to_sys_path(self):
-        forbidden = ("sys.path.insert(0,str(LEGACY", "sys.path.insert(0, str(LEGACY",
-                     "sys.path.insert(0,str(ROOT.parent/'01-BDSystem-V2'",
-                     'sys.path.insert(0, legacy)')
-        offenders = []
-        for path in (ROOT / "scripts").rglob("*.py"):
-            if path.name == "vendor-legacy-bdhub.py":
-                continue
-            text = path.read_text(encoding="utf-8")
-            if any(value in text for value in forbidden):
-                offenders.append(str(path.relative_to(ROOT)))
+    def test_private_root_redirected_outside_the_project_is_refused(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "project"; outside = Path(directory) / "elsewhere"
+            root.mkdir(); outside.mkdir()
+            (root / "private-data").symlink_to(outside)
+            with self.assertRaisesRegex(RuntimeError, "private_root_outside_project"):
+                private_root(root)
+
+    def test_runtime_code_never_references_the_original_project(self):
+        # Offline tools that exist to read the original source tree are the only exceptions.
+        allowed = {"vendor-legacy-bdhub.py", "audit-tiktok-interface-sources.py", "audit-tiktok-web-bundle.py"}
+        offenders = [str(path.relative_to(ROOT)) for path in (ROOT / "scripts").rglob("*.py")
+                     if path.name not in allowed and "01-BDSystem-V2" in path.read_text(encoding="utf-8")]
+        offenders += [str(path.relative_to(ROOT)) for path in (ROOT / "apps/web/src").rglob("*.ts*")
+                      if "01-BDSystem-V2" in path.read_text(encoding="utf-8")]
         self.assertEqual(offenders, [])
 
     def test_project_identity_paths_only_resolve_a_complete_published_generation(self):

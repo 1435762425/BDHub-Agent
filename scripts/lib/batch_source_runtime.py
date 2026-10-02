@@ -11,13 +11,13 @@ from lib.legacy_runtime import configure_vendored_bdhub
 
 @contextmanager
 def kalodata_provider(root,market='it'):
- legacy=root.parent/'01-BDSystem-V2';sys.dont_write_bytecode=True
- configure_vendored_bdhub(root=root,legacy_root=legacy)
+ sys.dont_write_bytecode=True
+ configure_vendored_bdhub(root=root)
  spec=importlib.util.spec_from_file_location('batch_kalodata_http',root/'scripts/second-cycle-worker.py')
  mod=importlib.util.module_from_spec(spec);spec.loader.exec_module(mod)
- with (legacy/'data/research/kalodata/.browser.lock').open('rb') as lock:
+ with (Path(root)/'private-data/data/research/kalodata/.browser.lock').open('rb') as lock:
   # Project sessions are read-only and each owns its own HTTP client.  A shared lock permits the
-  # bounded two-market scheduler while remaining incompatible with the legacy exclusive reader.
+  # bounded two-market scheduler while remaining incompatible with the exclusive single reader.
   fcntl.flock(lock,fcntl.LOCK_SH|fcntl.LOCK_NB)
   with mod.HttpProvider(market) as provider:yield provider
 

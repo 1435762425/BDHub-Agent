@@ -20,7 +20,7 @@ from urllib.parse import urlsplit
 
 MODEL = "deepseek-flash"
 ENDPOINT = "https://api.deepseek.com/chat/completions"
-LEGACY_CONFIG = Path("/Users/bjn00003/BDHub/01-BDSystem-V2/config.yaml")
+PROJECT_CONFIG = Path(__file__).resolve().parents[2] / "private-data/config.yaml"
 MAX_INPUT_BYTES = 24_000
 MAX_OUTPUT_TOKENS = 1_200
 MAX_RESPONSE_BYTES = 256 * 1024
@@ -109,10 +109,10 @@ def _key(value):
     return value
 
 
-def _load_legacy_config():
+def _load_project_config():
     try:
         import yaml
-        return yaml.safe_load(LEGACY_CONFIG.read_text(encoding="utf-8")) or {}
+        return yaml.safe_load(PROJECT_CONFIG.read_text(encoding="utf-8")) or {}
     except FileNotFoundError:
         raise DraftProviderError("provider_not_configured") from None
     except Exception:
@@ -125,7 +125,7 @@ def resolve_credential(*, environ=None, config_loader=None):
     if environment.get("DEEPSEEK_API_KEY"):
         return _key(environment["DEEPSEEK_API_KEY"])
     try:
-        document = (config_loader or _load_legacy_config)()
+        document = (config_loader or _load_project_config)()
         reply = document.get("reply") if isinstance(document, dict) else None
         if not isinstance(reply, dict):
             raise DraftProviderError("provider_not_configured")

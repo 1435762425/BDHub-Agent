@@ -49,7 +49,7 @@ def authenticated(root,market,report,*,canary=False,read_only=False,capability='
   required='inbox_read' if read_only else capability
   if (generation or {}).get('capabilities',{}).get(required,{}).get('state')!='verified':
    raise ValueError('market_send_capability_unverified')
- configure_vendored_bdhub(root=root,legacy_root=root.parent/'01-BDSystem-V2')
+ configure_vendored_bdhub(root=root)
  from bdhub.enrich.profile_lease import ProfileBusyError,ProfileLease
  from bdhub.hub.markets import identity_for
  from bdhub.research.commerce_transport import CommerceTransport
@@ -152,7 +152,7 @@ def authenticated(root,market,report,*,canary=False,read_only=False,capability='
 
 @contextmanager
 def write_gate(root,auth,interval=0.75,stopped=lambda:False):
- configure_vendored_bdhub(root=root,legacy_root=Path(root).parent/'01-BDSystem-V2')
+ configure_vendored_bdhub(root=root)
  from bdhub.send.http_write_gate import shared_write_gate
  directory=Path(root)/'var/im-http-write-gates';directory.mkdir(parents=True,exist_ok=True)
  manager=shared_write_gate(auth.im_id,interval=interval,stopped=stopped,directory=directory)

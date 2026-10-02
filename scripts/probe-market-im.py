@@ -32,7 +32,7 @@ def main():
  if not pair:parser.error('market assignment missing')
  account_name=pair['roles']['communications'];report={'market':args.market,'account':account_name,
   'platformWrites':0,'realSends':0,'conversationCount':None,'imHttpReady':False}
- configure_vendored_bdhub(root=ROOT,legacy_root=ROOT.parent/'01-BDSystem-V2')
+ configure_vendored_bdhub(root=ROOT)
  from bdhub.enrich.profile_lease import ProfileLease
  from bdhub.hub.markets import identity_for
  from bdhub.research.commerce_transport import CommerceTransport

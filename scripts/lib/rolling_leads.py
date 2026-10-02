@@ -415,7 +415,7 @@ def run(root,market,*,fragments=STAGE_FRAGMENTS,kind=None,provider_factory=None,
                     context=kalodata_provider(root,market)
                 else:
                     from lib.kalodata_video_transport import live_provider
-                    context=live_provider(root,root.parent/'01-BDSystem-V2',task['pid'],task['window_start'],task['window_end'],market)
+                    context=live_provider(root,task['pid'],task['window_start'],task['window_end'],market)
                 with context as provider:
                     initialized=True
                     def request(path,payload):

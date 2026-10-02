@@ -3,10 +3,10 @@
 import argparse,fcntl,hashlib,importlib.util,json,os,sys,time
 from pathlib import Path
 from decimal import Decimal
-ROOT=Path(__file__).resolve().parents[1];LEGACY=ROOT.parent/'01-BDSystem-V2'
+ROOT=Path(__file__).resolve().parents[1]
 sys.dont_write_bytecode=True;sys.path.insert(0,str(ROOT/'scripts'))
 from lib.legacy_runtime import configure_vendored_bdhub
-configure_vendored_bdhub(root=ROOT,legacy_root=LEGACY)
+configure_vendored_bdhub(root=ROOT)
 from lib.second_cycle import CycleStore,CycleError,digest,encoded
 from lib.cycle_materials import Materials,render
 from lib.product_stock_policy import require_stock,unavailable_allowed

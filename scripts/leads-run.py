@@ -27,7 +27,6 @@ from datetime import date, timedelta
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-LEGACY = ROOT.parent / '01-BDSystem-V2'
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(ROOT / 'scripts'))
 
@@ -36,7 +35,7 @@ from lib.lead_selection import publish_query  # noqa: E402
 from lib.leads_queue import Ledger, config_path, load, plan  # noqa: E402
 from lib.second_cycle import CycleError, digest, encoded  # noqa: E402
 
-BROWSER_LOCK = LEGACY / 'data/research/kalodata/.browser.lock'
+BROWSER_LOCK = ROOT / 'private-data/data/research/kalodata/.browser.lock'
 PAYLOAD_KEYS = ('id', 'handle', 'nickname', 'sale', 'revenue', 'video_revenue', 'live_revenue', 'followers')
 STOP_CODES = ('kalodata_daily_quota_exhausted', 'kalodata_auth_required')
 

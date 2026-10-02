@@ -28,7 +28,6 @@ from datetime import date, timedelta
 from functools import lru_cache
 from pathlib import Path
 
-LEGACY = Path(__file__).resolve().parents[2].parent / '01-BDSystem-V2'
 LOGIN_DIR_NAME = 'Kalodata登录器独立版'
 FALLBACK_GRABBER = Path('/Users/bjn00003/kaladatagrab/乘丰 对标查找')
 DEFAULTS = {'version': 'kalodata-identity-v1', 'activationCode': '', 'canaryPid': ''}
@@ -58,7 +57,7 @@ def grabber():
         return Path(override).expanduser()
     try:
         from lib.legacy_runtime import configure_vendored_bdhub
-        configure_vendored_bdhub(root=root_of(),legacy_root=LEGACY)
+        configure_vendored_bdhub(root=root_of())
         from bdhub import config
         return resolve_grabber(config.load().kalodata.project_dir)
     except Exception:

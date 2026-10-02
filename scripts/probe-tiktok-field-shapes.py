@@ -12,7 +12,6 @@ import sys
 import time
 
 ROOT=Path(__file__).resolve().parents[1]
-LEGACY=ROOT.parent/'01-BDSystem-V2'
 sys.path.insert(0,str(ROOT/'scripts'))
 from lib.legacy_runtime import configure_vendored_bdhub
 READS={
@@ -42,7 +41,7 @@ def field_shapes(value):
 
 def run(output, markets=('mx','it','br'), only=None):
     sys.dont_write_bytecode=True
-    configure_vendored_bdhub(root=ROOT,legacy_root=LEGACY)
+    configure_vendored_bdhub(root=ROOT)
     import requests
     from bdhub import scheduled_relogin
     from bdhub.enrich.identity_store import load_identity

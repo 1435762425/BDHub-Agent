@@ -1,8 +1,8 @@
-"""Load the frozen BDHub protocol layer from this repository, never from the sibling source tree.
+"""Load the frozen BDHub protocol layer from this repository and give it a project-owned data root.
 
-The old repository remains the read-only home of account configuration and runtime identity files
-until those credentials are explicitly migrated.  Only ``bdhub`` Python source comes from
-``vendor/``.  This keeps protocol code versioned with BDHub-Agent without copying secrets.
+``bdhub`` Python source comes from ``vendor/``; its config root (``config.yaml``, ``secrets/``,
+signer runtime and the files it writes under ``data/``) is ``private-data/`` inside this project.
+The original project is never an import, config or data root.
 """
 from dataclasses import replace
 from contextlib import closing
@@ -17,7 +17,7 @@ from zoneinfo import ZoneInfo
 
 ROOT = Path(__file__).resolve().parents[2]
 VENDOR_ROOT = ROOT / "vendor"
-LEGACY_ROOT = ROOT.parent / "01-BDSystem-V2"
+PRIVATE_ROOT_NAME = "private-data"
 _PROJECT_REF = re.compile(r"^project-(browser|http|im):([a-f0-9]{32})$")
 _BEIJING = ZoneInfo("Asia/Shanghai")
 _ROLE_SLOT = {"communications": (14, 30), "supply": (14, 40)}
@@ -185,16 +185,23 @@ def _install_project_account_overlay(config, root):
         scheduled_relogin.maintenance_due = maintenance_due_with_project_identity
 
 
-def configure_vendored_bdhub(*, root=ROOT, legacy_root=LEGACY_ROOT):
-    """Return vendored ``bdhub.config`` with its default config root pointed at legacy read-only data."""
+def private_root(root=ROOT):
+    """The project-owned config/data root; refuses anything outside the project (e.g. a symlink)."""
+    root = Path(root).resolve()
+    private = (root / PRIVATE_ROOT_NAME).resolve()
+    if private.parent != root:
+        raise RuntimeError("private_root_outside_project")
+    return private
+
+
+def configure_vendored_bdhub(*, root=ROOT):
+    """Return vendored ``bdhub.config`` with its config root pointed at ``private-data/``."""
     root = Path(root).resolve()
     vendor = root / "vendor"
-    legacy = Path(legacy_root).resolve()
+    private = private_root(root)
     if not (vendor / "bdhub/__init__.py").is_file():
         raise RuntimeError("vendored_bdhub_missing")
-    # Never let an inherited cwd/PYTHONPATH win over the frozen source.  The legacy path may remain
-    # a data/config root, but it must not remain an import root.
-    sys.path[:] = [entry for entry in sys.path if not _same_path(entry, legacy)]
+    # Never let an inherited cwd/PYTHONPATH win over the frozen source.
     if not any(_same_path(entry, vendor) for entry in sys.path):
         sys.path.insert(0, str(vendor))
     loaded = sys.modules.get("bdhub")
@@ -206,8 +213,8 @@ def configure_vendored_bdhub(*, root=ROOT, legacy_root=LEGACY_ROOT):
     import bdhub
     if not Path(bdhub.__file__).resolve().is_relative_to(vendor):
         raise RuntimeError("nonvendored_bdhub_loaded")
-    # Vendored functions that call config.load() without an explicit path continue reading the
-    # existing account configuration.  No file is copied or modified.
-    config.ROOT = legacy
+    # Vendored functions that call config.load() without an explicit path read the project's own
+    # private config and accounts.
+    config.ROOT = private
     _install_project_account_overlay(config, root)
     return config

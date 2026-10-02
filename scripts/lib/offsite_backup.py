@@ -30,7 +30,7 @@ import zlib
 from lib.state_backup import create_backup, inventory
 
 CIPHER = ("-aes-256-cbc", "-pbkdf2", "-iter", "200000")
-SECRET_CONFIGS = ("config/kalodata-identity.json", "config/campaign-join.json", "config/typesafe.json")
+SECRET_CONFIGS = ("config/kalodata-identity.json", "config/campaign-join.json", "config/typesafe.json", "private-data")
 FOLDER = "BDHub-Agent-offsite"
 ARCHIVE = "backup.tar.gz.enc"
 MANIFEST = "manifest.json"

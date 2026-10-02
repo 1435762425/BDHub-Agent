@@ -3,10 +3,10 @@
 import argparse,fcntl,hashlib,importlib.util,json,os,sys,time
 from pathlib import Path
 from datetime import date,timedelta
-ROOT=Path(__file__).resolve().parents[1];LEGACY=ROOT.parent/'01-BDSystem-V2'
+ROOT=Path(__file__).resolve().parents[1]
 sys.dont_write_bytecode=True;sys.path.insert(0,str(ROOT/'scripts'))
 from lib.legacy_runtime import configure_vendored_bdhub
-configure_vendored_bdhub(root=ROOT,legacy_root=LEGACY)
+configure_vendored_bdhub(root=ROOT)
 from lib.second_cycle import CycleStore,CycleError
 from lib.cycle_kalodata import KalodataWorker,PATH,quota_exhausted
 
@@ -57,8 +57,8 @@ def main():
  def save():a.report.write_text(json.dumps(report,ensure_ascii=False,indent=2)+'\n')
  save()
  try:
-  # Same advisory lock as the old Kalodata reader, opened without creating/writing it.
-  with (LEGACY/'data/research/kalodata/.browser.lock').open('rb') as lock:
+  # The project's Kalodata browser lock, shared by every Kalodata reader in this project.
+  with (ROOT/'private-data/data/research/kalodata/.browser.lock').open('rb') as lock:
    fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
    with CycleStore(ROOT/'var/second-cycle.sqlite') as store:
     plan=store.db.execute("SELECT id FROM plan WHERE institution='bjn-local-research' AND market=?",(a.market,)).fetchone()

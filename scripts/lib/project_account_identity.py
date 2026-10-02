@@ -39,7 +39,7 @@ def _utc_now():
 
 
 def _safe_account(root, name):
-    config = configure_vendored_bdhub(root=root, legacy_root=Path(root).parent / "01-BDSystem-V2")
+    config = configure_vendored_bdhub(root=root)
     cfg = config.load()
     account = next((row for row in config.load_accounts(cfg) if row.name == name), None)
     if account is None:
@@ -259,7 +259,7 @@ class ProjectAccountIdentityAdapter:
         # The communication/catalog workers use the same lease, so an in-flight operation
         # finishes before the identity generation can change.
         from lib.legacy_runtime import configure_vendored_bdhub
-        configure_vendored_bdhub(root=self.root,legacy_root=self.root.parent/'01-BDSystem-V2')
+        configure_vendored_bdhub(root=self.root)
         from bdhub.enrich.profile_lease import ProfileLease,ProfileBusyError
         current=project_identity_paths(self.root,account)
         if current is None:return None

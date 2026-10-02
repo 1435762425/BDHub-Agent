@@ -17,7 +17,6 @@ from contextlib import redirect_stdout, redirect_stderr
 from uuid import uuid4
 
 ROOT = Path(__file__).resolve().parents[1]
-LEGACY = Path("/Users/bjn00003/BDHub/01-BDSystem-V2")
 VAR = ROOT / "var"
 sys.path.insert(0, str(ROOT / "scripts"))
 from lib.italy_im_auth import ItalyImAuthError, ImProbeDeadline, PARTNER_HOST, authenticate_it
@@ -36,7 +35,7 @@ def write_report(path, value):
 
 def load_runtime():
     sys.dont_write_bytecode = True
-    configure_vendored_bdhub(root=ROOT, legacy_root=LEGACY)
+    configure_vendored_bdhub(root=ROOT)
     from bdhub import config, scheduled_relogin
     from bdhub.account_policy import resolve_account_policy
     from bdhub.enrich.identity_store import load_identity

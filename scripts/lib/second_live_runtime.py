@@ -27,7 +27,6 @@ from lib.second_card_binding import refresh_card_binding
 
 ROOT = Path(__file__).resolve().parents[2]
 VAR = ROOT / "var"
-LEGACY = Path("/Users/bjn00003/BDHub/01-BDSystem-V2")
 _AUTH_CACHE = {}
 _AUTH_CACHE_SECONDS = 60
 SAFE_CODES = frozenset({"live_sender_binding_required", "live_sender_binding_mismatch", "live_sender_invalid",
@@ -45,7 +44,7 @@ class SecondLiveRuntimeError(RuntimeError):
 
 def _legacy_imports():
     sys.dont_write_bytecode = True
-    configure_vendored_bdhub(root=ROOT, legacy_root=LEGACY)
+    configure_vendored_bdhub(root=ROOT)
 
 
 def _load_runtime():
