@@ -319,7 +319,7 @@ npm run typecheck
 npm run dev   # 开发；生产使用 npm run start，不能同时占用 5198
 ```
 
-本工作目录就是生产：scheduler 按路径拉起子脚本，`io.bdhub.agent.web`（`launchctl submit`）在 `apps/web` 运行 `next start`。开发与验证在 `/Users/bjn00003/BDHub/` 下的独立 git worktree 进行（代码按 `ROOT.parent/'01-BDSystem-V2'` 定位旧项目；`.venv` 可软链生产 venv），不在生产目录 build 或 dev，也不要同时起第二个 5198。`tsc` 会读取 `.next/types`，删改路由后先 build 再 typecheck。部署前核对 PID/cwd/worker 依赖，替换后回读 API；源码变更不自动重启持久 worker 或改授权。状态查询使用 CLI status/check，不用 run-agent-replies 等执行入口探测状态。手动作业优先页面/job-run，不绕过同名作业锁另开底层 CLI。
+本工作目录就是生产：scheduler 按路径拉起子脚本，`io.bdhub.agent.web`（`launchctl submit`）在 `apps/web` 运行 `next start`。开发与验证在 `/Users/bjn00003/` 下的独立 git worktree（`BDHub-Agent-<主题>`）进行（`.venv`、`apps/web/node_modules` 可软链生产目录，提交前移除软链），备份目录为同级的 `BDHub-Agent-backups`，不在生产目录 build 或 dev，也不要同时起第二个 5198。`tsc` 会读取 `.next/types`，删改路由后先 build 再 typecheck。部署前核对 PID/cwd/worker 依赖，替换后回读 API；源码变更不自动重启持久 worker 或改授权。状态查询使用 CLI status/check，不用 run-agent-replies 等执行入口探测状态。手动作业优先页面/job-run，不绕过同名作业锁另开底层 CLI。
 
 历史补扫：`inbox-history.py --market <market> --cid <cid> --oec <oec>` 默认只读本地状态，显式 `--read --max-pages 5 --page-size 20` 才做平台只读与历史写入；单会话锁和暂停文件约束执行，断点未完可重跑同一命令。
 

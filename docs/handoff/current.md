@@ -5,6 +5,11 @@
 
 
 
+## 2026-10-02 15:40：本项目移出原始项目所在目录
+
+- 用户确认两个项目分文件夹存放。15:38 经带检查的脚本迁移：preflight → scheduler 空闲退出 drained → 10 个 worker 退出 `--workers-stopped` → 移除 Web 任务 → 确认无进程引用旧路径 → `BDHub/BDHub-Agent` → `/Users/bjn00003/BDHub-Agent`，`BDHub-Agent-backups`、`BDHub-Agent-sdk-probe-20260926` 同级迁出 → `git worktree repair`（含 `.claude/worktrees/dreamy-hamilton-df1cba`）→ `.venv` 启动脚本与 `pyvenv.cfg` 路径改写 → `launchctl submit` 在新路径重挂 `io.bdhub.agent.web` → scheduler `86551` → postflight 全部通过 → 页面与接口 200。停机约 1 分 30 秒；无库结构变更，未另做备份。
+- `/Users/bjn00003/BDHub/` 现在只放原始项目及其备份/归档（`01-BDSystem-V2`、`backups`、`deploy-backups`、`_archive`、`outputs`），原始项目未动。工作目录仍在旧路径的历史 Claude 会话无法继续使用，需在新路径重新打开。
+
 ## 2026-10-02 15:25：新项目独立运行，账号由本项目自己登记
 
 - 用户确认：原始项目（`01-BDSystem-V2`）与本项目作为两个独立项目并存，原始项目保持不变、账号自管；同一 TikTok 账号只归一个项目，本项目 acc1/2/4/5/6/8/9/11，原始项目 acc3/7/10（其账号维护自 09-21 起未再碰本项目 8 个账号，今天 14:27 仍在维护 acc7）。
