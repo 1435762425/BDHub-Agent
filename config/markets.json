@@ -44,7 +44,7 @@
     },
     "de": {
       "enabled": true,
-      "runtimeState": "paused",
+      "runtimeState": "ready",
       "contentReady": true,
       "label": "德国",
       "shortLabel": "DE",

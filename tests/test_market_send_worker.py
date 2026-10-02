@@ -24,5 +24,15 @@ class MarketSendWorkerTests(unittest.TestCase):
         self.assertEqual(MODULE.next_delay(sent=False,waiting='waiting_pool',interval=30),30)
         self.assertEqual(MODULE.next_delay(sent=False,waiting='waiting_capacity',interval=30),300)
 
+    def test_an_unverified_market_sends_one_page_started_canary_then_stops(self):
+        unverified={'capabilities':{'message_send':{'state':'not_tested'}}}
+        verified={'capabilities':{'message_send':{'state':'verified'}}}
+        self.assertTrue(MODULE.first_send_canary(None))
+        self.assertTrue(MODULE.first_send_canary(unverified))
+        self.assertFalse(MODULE.first_send_canary(verified))
+        self.assertTrue(MODULE.stops_after(canary=True,sent=True))
+        self.assertFalse(MODULE.stops_after(canary=True,sent=False))
+        self.assertFalse(MODULE.stops_after(canary=False,sent=True))
+
 
 if __name__=='__main__':unittest.main()

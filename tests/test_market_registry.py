@@ -18,7 +18,7 @@ class MarketRegistryTests(unittest.TestCase):
   registry=load_registry(ROOT);accounts=load_config(ROOT)
   self.assertEqual(enabled_market_keys(ROOT),('be','br','de','it','jp','my','mx','nl','ph','sg','th','uk','us','vn'))
   self.assertEqual(set(operational_market_keys(ROOT)),{'it','br','de','my','uk'})
-  self.assertEqual(registry['markets']['de']['runtimeState'],'paused')
+  self.assertEqual(registry['markets']['de']['runtimeState'],'ready')
   self.assertEqual(set(accounts['markets']),set(operational_market_keys(ROOT)))
   assigned=[]
   for key,pair in accounts['markets'].items():

@@ -41,7 +41,8 @@ def authenticated(root,market,report,*,canary=False,read_only=False,capability='
  root=Path(root);pair=load_config(root)['markets'][market];account_name=pair['roles']['communications']
  if capability not in ('message_send','agent_reply'):raise ValueError('market_im_capability_invalid')
  if canary:
-  if market not in {'br','my','uk'}:raise ValueError('market_send_canary_unavailable')
+  from lib.market_registry import market_path_keys
+  if market not in market_path_keys(root):raise ValueError('market_send_canary_unavailable')
  else:
   from lib.account_identity import current_generation
   from lib.second_cycle import CycleStore

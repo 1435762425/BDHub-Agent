@@ -8,7 +8,7 @@
 | --- | --- | --- |
 | Belgium | `be` | planned |
 | Brazil | `br` | production enabled; Campaign only |
-| Germany | `de` | paused; ACC12/ACC13 logged in and verified, de-DE content ready, capabilities pending |
+| Germany | `de` | ready (switches off); Campaign join, TapLink and OECID find verified; first send pending page start |
 | Italy | `it` | production enabled; Campaign + plain weekly full-managed |
 | Japan | `jp` | planned |
 | Malaysia | `my` | production enabled; Campaign only |

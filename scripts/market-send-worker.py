@@ -39,6 +39,14 @@ def next_delay(*,sent,waiting,interval,inbox_waiting_now=False):
  return 3 if sent and inbox_waiting_now else 0.25 if sent else 3 if waiting=='waiting_account' else \
   300 if waiting in ('waiting_capacity','waiting_reconciliation') else interval
 
+def first_send_canary(generation):
+ """Until its first card+text is confirmed a market sends only as a single page-started canary."""
+ return (generation or {}).get('capabilities',{}).get('message_send',{}).get('state')!='verified'
+
+def stops_after(*,canary,sent):
+ """The page authorised one first send; continuing after it is a new decision."""
+ return bool(canary and sent)
+
 def main():
  p=argparse.ArgumentParser(description=__doc__);p.add_argument('--market',required=True,choices=market_path_keys(ROOT));p.add_argument('--once',action='store_true');p.add_argument('--interval',type=int,default=30);a=p.parse_args()
  if not 5<=a.interval<=300:p.error('interval 5..300')
@@ -58,7 +66,7 @@ def main():
    from lib.market_accounts import load_config
    account=load_config(ROOT)['markets'][a.market]['roles']['communications']
    generation=current_generation(store,a.market,account)
-   canary=a.market=='my' and (generation or {}).get('capabilities',{}).get('message_send',{}).get('state')!='verified'
+   canary=first_send_canary(generation)
   if send['stopRequested'] or not (control['continuousSendEnabled'] or send['automaticEnabled'] or send['runRequested']):
    write(a.market,{'running':False,'state':'off','pid':os.getpid(),'checkedAt':time.time()});break
   window=window_state(send['window'],time.time())
@@ -75,6 +83,13 @@ def main():
     sent=result.get('state')=='confirmed' and result.get('realSends',0)>0
     write(a.market,{'running':True,'state':result.get('state') or result.get('stopped') or 'idle','pid':os.getpid(),
                     'checkedAt':time.time(),'runDurationMs':round((time.monotonic()-started)*1000,1),'result':result})
+    if stops_after(canary=canary,sent=sent):
+     from lib.market_send_control import mutate
+     with CycleStore(ROOT/'var/second-cycle.sqlite') as store:
+      mutate(store,ROOT,a.market,action='stop',request_id=f"market-canary-stop-{result.get('deliveryId') or request}"[:120],
+             expected_revision=send_control(store,a.market)['revision'])
+     write(a.market,{'running':False,'state':'canary_confirmed','pid':os.getpid(),'checkedAt':time.time(),'result':result})
+     break
    except Exception as error:
     code=getattr(error,'code',None) or (str(error) if isinstance(error,ValueError) else type(error).__name__);waiting=expected_wait_state(code)
     if waiting:write(a.market,{'running':True,'state':waiting,'pid':os.getpid(),'checkedAt':time.time(),'reason':code})

@@ -44,7 +44,8 @@ def mutate(store,root,market,*,action,request_id,expected_revision,changes=None)
  if definition['runtimeState']!='ready':raise CycleError('market_runtime_unavailable')
  if action not in ('save','start','stop') or not isinstance(request_id,str) or not REQUEST_ID.fullmatch(request_id) or type(expected_revision) is not int or expected_revision<0:raise CycleError('continuous_send_request_invalid')
  changes=changes or {};allowed={'automaticEnabled','window','template'}
- if market not in ('br','my','uk') and (action=='start' or changes.get('automaticEnabled') is True):
+ from lib.market_registry import market_path_keys
+ if market not in market_path_keys(root) and (action=='start' or changes.get('automaticEnabled') is True):
   raise CycleError('market_send_runtime_unavailable')
  if action=='save':
   if not changes or set(changes)-allowed:raise CycleError('continuous_send_setting_invalid')
