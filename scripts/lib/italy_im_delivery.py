@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 import hashlib
 import json
 import re
@@ -23,7 +24,16 @@ SEND_PATH = "/v1/message/send"
 CARD_CONTENT = "[商品列表]"
 CARD_TITLE_KEY = "ttspc_im_communication_list_preview_message_title3"
 CARD_ORIGIN = PARTNER_HOST + "/api/v1/affiliate/partner/im/product_list/list"
-CARD_SENDERS=frozenset({('it','acc6'),('br','acc1'),('my','acc8'),('uk','acc11')})
+def card_sender(market, account_name):
+    """Only a market's assigned communications account may send its product cards."""
+    from lib.market_accounts import load_config
+    try:
+        pair = load_config(Path(__file__).resolve().parents[2])["markets"].get(market)
+    except (OSError, ValueError, KeyError, TypeError):
+        return False
+    return bool(pair) and pair["roles"]["communications"] == account_name
+
+
 SAFE_CODES = frozenset({"it_delivery_auth_invalid", "it_delivery_session_mismatch", "it_delivery_input_invalid",
     "it_delivery_conversation_unverified", "it_delivery_dispatch_not_allowed", "it_delivery_duplicate_dispatch",
     "it_delivery_stopped", "it_delivery_maintenance_due", "it_delivery_auth_expired", "it_delivery_create_unknown",
@@ -111,7 +121,7 @@ def card_binding_sha256(card: ItalyVerifiedProductCard | dict) -> str:
 
 def _verified_card(card):
     try:
-        if not isinstance(card, ItalyVerifiedProductCard) or (card.market,card.account_name) not in CARD_SENDERS or card.verified is not True:
+        if not isinstance(card, ItalyVerifiedProductCard) or not card_sender(card.market,card.account_name) or card.verified is not True:
             raise ValueError()
         _id(card.product_id);_id(card.list_id)
         if card.campaign_id != "0":_id(card.campaign_id)
@@ -151,7 +161,7 @@ def _native(auth):
         market=str(context.get('market') or 'it')
         account_name=str(context.get('account') or auth.account_name)
         market_region=str(context.get('market_region') or '')
-        if (market,account_name) not in CARD_SENDERS or account_name!=auth.account_name or not market_region.isdigit():
+        if not card_sender(market,account_name) or account_name!=auth.account_name or not market_region.isdigit():
             raise ValueError()
         endpoint = urlsplit(auth.token.get("api_url", ""))
         expected_host=str(context.get('im_host') or (IM_HOST if market_region in EU_IM_REGIONS else SG_IM_HOST))

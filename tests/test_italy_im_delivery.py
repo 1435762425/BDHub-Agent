@@ -107,6 +107,15 @@ def allow(scope):
     return {**scope, "dispatchAllowed": True}
 
 
+class CardSenderTests(unittest.TestCase):
+    def test_only_a_markets_assigned_communications_account_sends_cards(self):
+        from lib.italy_im_delivery import card_sender
+        for market, account in (('it', 'acc6'), ('br', 'acc1'), ('my', 'acc8'), ('uk', 'acc11'), ('de', 'acc12')):
+            self.assertTrue(card_sender(market, account), market)
+        for market, account in (('de', 'acc13'), ('it', 'acc9'), ('uk', 'acc4'), ('fr', 'acc16'), ('it', 'acc12')):
+            self.assertFalse(card_sender(market, account), (market, account))
+
+
 class ItalyImDeliveryTests(unittest.TestCase):
     def test_br_packet_uses_br_identity_host_and_shop_region(self):
         row={"market_region":16,"market_id":"199","type_list":[{"type":1,"partner_id":"111"},{"type":4,"partner_id":"144"}]}
