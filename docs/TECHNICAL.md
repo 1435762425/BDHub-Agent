@@ -93,7 +93,7 @@ B 全窗口读取完成后，将回执/head/current/job 同事务发布；单条
 身份映射后的 `project_current_offers` 按本次涉及的 source ID 增量计算，未变化不写，最多 100 项一段短事务；计算移到写锁外，提交时核对原 catalog head。重复绑定后的中断可补投影，不重查身份或重写原回执；B 使用独立视频证据，不覆盖旧正销量 opportunity。全量 catalog 更新仍可重算完整投影，历史 source 事实不删除。
 `creator_discovery.py/discovery_cohort.py` 执行精确 Find，`identity_queue.py/identity-batch.py` 聚合去重身份，`profile_refresh.py` 独立刷新画像。resolved/unresolved 复用证据，blocked 保留原断点。`IdentityBridge` 只交接当前 head 的 source edge，固定索引顺序避免历史全表 JSON 扫描；OECID 发布不能等待或伪装 Profile 成功。BR/MY/UK 的 OECID 由 scheduler 调 `market-identity.py`（`lib/market_identity.py`）：每 3 个 handle 拉起一次 `probe-italy-profile.py`，证据写入 `var/market-identity-{market}-*` 目录（目前不清理）。页面的身份队列、精确发现与画像刷新接口只支持 IT。
 
-四市场 `identityAccountRole=supply` 时，OECID 走对应供给账号：IT acc9、BR acc2、MY acc5、UK acc4，先要求该账号已发布 `oecid_find=verified`。IT 先结算旧 cohort/outbox 的原报告，再使用 `market-identity.py` 的有界每批 3 人、每轮最多 50 人路径；原 acc6 的 12 QPS 验收不转授 acc9。旧 started 按原账号读取报告，当前批次也按冻结账号消费；handle 预算、有效身份和未匹配结论跨角色切换保留，账号故障只等待当前所选账号。workflow 的 OECID 资源槽绑定供给账号，与同账号货盘任务互斥。下面的 IT cohort 描述适用于兼容模式与旧任务恢复。
+四市场 `identityAccountRole=supply` 时，OECID 走对应供给账号：BR acc2、MY acc5，IT/UK 单账号市场即其唯一账号（acc6/acc11），先要求该账号已发布 `oecid_find=verified`。IT 先结算旧 cohort/outbox 的原报告，再使用 `market-identity.py` 的有界每批 3 人、每轮最多 50 人路径；原 acc6 的 12 QPS 验收不转授 acc9。旧 started 按原账号读取报告，当前批次也按冻结账号消费；handle 预算、有效身份和未匹配结论跨角色切换保留，账号故障只等待当前所选账号。workflow 的 OECID 资源槽绑定供给账号，与同账号货盘任务互斥。下面的 IT cohort 描述适用于兼容模式与旧任务恢复。
 
 Find lanes 共用原账号 QPS 和滑块验证合同；IT 沿用已发布的 Find cohort 策略，其他市场沿用每 3 个 handle 的 probe。有效 unresolved 与已验证身份按同市场规范化 handle 复用，不因新 PID、A/B 或窗口重查；Profile 后续失败不丢弃已确认 Find。IT 的 `identity_only` 成功证据可交接为可用身份，原画像失败记录保留。
 
@@ -258,7 +258,7 @@ inbox 趋势和日明细使用同一账本，totals 等于每日求和，文字�
 
 ## 5. 账号、配置与 vendor
 
-通信/货盘固定为 IT ACC6/ACC9、BR ACC1/ACC2、MY ACC8/ACC5、UK ACC11/ACC4。`market-accounts.json` 定角色，`account_runtime_setting` 和已发布 generation 定当前能力；不继承原始项目停用状态。账号登录记录（名称、市场、partner_id、用户名、密码及账号策略字段）只在本项目 `private-data/secrets/accounts.json`，经账号页“账号登记”或 `scripts/account-registry.py list|add|update`（`lib/account_registry.py`）读写：密码经 stdin 传入、只写不回显，文件原子替换、权限 0600；登记不等于分配，新账号分配到市场角色后才能首次重登与能力验证。
+通信/货盘固定为 BR ACC1/ACC2、MY ACC8/ACC5；IT ACC6、UK ACC11 为单账号市场（`accounts` 只列一个，两个角色指向同一账号，`markets.json` 同样），acc9、acc4 已释放。单账号市场按通讯角色只登记一次维护，职责为两角色之和；OECID 路由按 `identityAccountRole` 取角色，不再按账号是否等于供给账号推断。`market-accounts.json` 定角色，`account_runtime_setting` 和已发布 generation 定当前能力；不继承原始项目停用状态。账号登录记录（名称、市场、partner_id、用户名、密码及账号策略字段）只在本项目 `private-data/secrets/accounts.json`，经账号页“账号登记”或 `scripts/account-registry.py list|add|update`（`lib/account_registry.py`）读写：密码经 stdin 传入、只写不回显，文件原子替换、权限 0600；登记不等于分配，新账号分配到市场角色后才能首次重登与能力验证。
 
 能力验收发布使用 `reason=capability`，不推迟维护时钟；`identity_baseline` 取该账号最近一次真实登录（`relogin`，或导入的 `baseline`）的发布时间。`refresh` 只用无头浏览器重读现有登录，不延长平台登录：实测登录在真实登录后约 72 小时 6–11 分钟失效（acc8、acc1 在 refresh 后仍按上次重登时间过期）。
 

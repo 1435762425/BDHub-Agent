@@ -228,6 +228,12 @@ class RollingLeads(unittest.TestCase):
  def test_identity_hold_recovers_only_on_the_account_that_ran_the_failed_stage(self):
   from lib.operations_workflow import create_run,start_stage,finish_stage
   from lib.market_accounts import load_config
+  # The hold contract needs distinct accounts; pin an IT pair independent of the live assignment.
+  for name,key in (('market-accounts.json','roles'),('markets.json','accounts')):
+   value=json.loads((self.root/'config'/name).read_text());it=value['markets']['it']
+   it[key]={'communications':'acc6','supply':'acc9'}
+   if name=='market-accounts.json':it['accounts']=['acc6','acc9']
+   (self.root/'config'/name).write_text(json.dumps(value))
   roles=load_config(self.root)['markets']['it']['roles']
   def generation(store,account,at):
    with store.tx():

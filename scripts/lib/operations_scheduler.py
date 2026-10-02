@@ -845,7 +845,10 @@ class SubprocessStageExecutor:
 
     def _execute_oecid(self,store,run,market,sources,executing):
         from lib.market_accounts import load_config as account_config
-        identity_role='supply' if executing==account_config(self.root)['markets'][market]['roles']['supply'] else 'communications'
+        pair=account_config(self.root)['markets'][market];configured=pair.get('identityAccountRole','communications')
+        # A one-account market holds both roles; the configured identity role decides which route runs.
+        identity_role=configured if executing==pair['roles'][configured] else \
+            'supply' if executing==pair['roles']['supply'] else 'communications'
         if market=='it' and identity_role=='supply':
             reconciled=self._call(['scripts/second-cycle-identities.py','reconcile'],'oecid-legacy-reconcile')
             if reconciled['state']!='completed':return reconciled

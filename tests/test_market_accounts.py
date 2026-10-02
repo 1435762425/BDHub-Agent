@@ -5,10 +5,24 @@ from lib.market_accounts import validate_config,maintenance_plan,route_proposal,
 ROOT=Path(__file__).resolve().parents[1]
 class AccountPolicyTests(unittest.TestCase):
  def config(self):return json.loads((ROOT/'config/market-accounts.json').read_text())
+ def pair_config(self):
+  # Two-account contracts are exercised on an IT pair independent of the live assignment.
+  c=self.config();c['markets']['it'].update(accounts=['acc6','acc9'],roles={'communications':'acc6','supply':'acc9'});return c
  def test_pair_cannot_share_accounts_between_markets(self):
-  c=self.config();self.assertEqual(validate_config(c)['markets']['it']['accounts'],['acc6','acc9'])
+  c=self.config();self.assertEqual(validate_config(c)['markets']['it']['accounts'],['acc6'])
   c['markets']['mx']=copy.deepcopy(c['markets']['it'])
   with self.assertRaises(ValueError):validate_config(c)
+ def test_one_account_market_serves_both_roles_and_is_maintained_once(self):
+  c=self.config();self.assertEqual(c['markets']['it']['roles'],{'communications':'acc6','supply':'acc6'})
+  for accounts,roles in ((['acc6','acc6'],{'communications':'acc6','supply':'acc6'}),
+                         (['acc6'],{'communications':'acc6','supply':'acc9'}),([],{'communications':None,'supply':None})):
+   bad=self.config();bad['markets']['it']['accounts']=accounts;bad['markets']['it']['roles']=roles
+   with self.assertRaises(ValueError):validate_config(bad)
+  from lib.account_identity import assignments
+  rows=[row for row in assignments(ROOT) if row['market'] in ('it','uk')]
+  self.assertEqual([(row['account'],row['role']) for row in rows],[('acc6','communications'),('acc11','communications')])
+  self.assertIn('taplink',rows[0]['responsibilities'])
+  self.assertEqual(len([row for row in assignments(ROOT) if row['market']=='br']),2)
  def test_maintenance_authority_mismatch_and_unimplemented_switch_rejected(self):
   c=self.config();c['lifecycle']['enableNewMaintenanceWorker']=False
   with self.assertRaises(ValueError):validate_config(c)
@@ -29,7 +43,7 @@ class AccountPolicyTests(unittest.TestCase):
    changed=copy.deepcopy(c);changed['lifecycle'][key]=value
    with self.assertRaises(ValueError):validate_config(changed)
  def test_routing_obeys_capability_pause_and_unknown_affinity(self):
-  pair=self.config()['markets']['it'];states={'acc6':{'health':'healthy','busy':False,'capabilities':{'send':'verified'}},'acc9':{'health':'healthy','busy':False,'capabilities':{'catalog_read':'verified'}}}
+  pair=self.pair_config()['markets']['it'];states={'acc6':{'health':'healthy','busy':False,'capabilities':{'send':'verified'}},'acc9':{'health':'healthy','busy':False,'capabilities':{'catalog_read':'verified'}}}
   self.assertEqual(route_proposal(pair,'catalog_read',states)['account'],'acc9')
   self.assertEqual(route_proposal(pair,'send',states,paused=True)['state'],'paused')
   self.assertEqual(route_proposal(pair,'send',states|{'acc6':{'busy':True}})['state'],'waiting_verified_account')
@@ -38,7 +52,7 @@ class AccountPolicyTests(unittest.TestCase):
   self.assertFalse(route_proposal(pair,'catalog_read',states)['execute'])
  def test_read_evidence_cannot_be_reused_for_another_market_or_sequential_guards(self):
   with tempfile.TemporaryDirectory() as d:
-   root=Path(d);(root/'var').mkdir();pair=self.config()['markets']['it'];pair['validationEvidence']='var/proof.json'
+   root=Path(d);(root/'var').mkdir();pair=self.pair_config()['markets']['it'];pair['validationEvidence']='var/proof.json'
    report={'passed':True,'sameInstitution':True,'sameMarket':True,'independentGuardsOverlapSeconds':2,'accounts':[{'account':a,'market':'it','state':'passed_readonly','identityFileUnchanged':True,'startedAt':1,'capabilities':{}} for a in pair['accounts']]}
    path=root/'var/proof.json';path.write_text(json.dumps(report))
    self.assertEqual(evidence_summary(root,pair)['state'],'verified_readonly')
@@ -47,7 +61,7 @@ class AccountPolicyTests(unittest.TestCase):
    self.assertEqual(evidence_summary(root,pair)['state'],'not_verified')
  def test_catalog_routing_requires_evidence_and_preserves_pinned_actor(self):
   with tempfile.TemporaryDirectory() as d:
-   root=Path(d);(root/'config').mkdir();(root/'var').mkdir();cfg=self.config();pair=cfg['markets']['it'];pair['validationEvidence']='var/proof.json'
+   root=Path(d);(root/'config').mkdir();(root/'var').mkdir();cfg=self.pair_config();pair=cfg['markets']['it'];pair['validationEvidence']='var/proof.json'
    (root/'config/market-accounts.json').write_text(json.dumps(cfg))
    with self.assertRaises(ValueError):catalog_read_account(root)
    proof={'passed':True,'sameInstitution':True,'sameMarket':True,'independentGuardsOverlapSeconds':1,'accounts':[{'account':a,'market':'it','state':'passed_readonly','identityFileUnchanged':True,'startedAt':1,'capabilities':{'catalog_read':'verified'}} for a in pair['accounts']]}

@@ -74,8 +74,12 @@ def _assignments(root):
         markets = json.loads((Path(root) / "config/market-accounts.json").read_text(encoding="utf-8"))["markets"]
     except (OSError, ValueError, KeyError, TypeError):
         return {}
-    return {name: {"market": market, "role": role}
-            for market, pair in markets.items() for role, name in (pair.get("roles") or {}).items()}
+    assigned = {}
+    for market, pair in markets.items():
+        for role, name in (pair.get("roles") or {}).items():
+            # A single-account market lists its account under communications first.
+            assigned.setdefault(name, {"market": market, "role": role})
+    return assigned
 
 
 def listing(root):

@@ -63,6 +63,13 @@ def assignments(root):
     config = load_config(root)
     rows = []
     for market, pair in config["markets"].items():
+        if len(pair["accounts"]) == 1:
+            # One account serves both roles: it is maintained once, under its communications role.
+            rows.append({"market": market, "account": pair["accounts"][0], "role": "communications",
+                         "responsibilities": list(dict.fromkeys(ROLE_RESPONSIBILITIES["communications"]
+                                                                + ROLE_RESPONSIBILITIES["supply"])),
+                         "credentialAuthority": pair["credentialAuthority"]})
+            continue
         for role in ("communications", "supply"):
             rows.append({"market": market, "account": pair["roles"][role], "role": role,
                          "responsibilities": list(ROLE_RESPONSIBILITIES[role]),

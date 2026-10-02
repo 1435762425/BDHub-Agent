@@ -55,7 +55,7 @@ def validate_registry(value):
         values=tuple(accounts.values())
         if row["runtimeState"]=="planned":
             if values!=(None,None):raise ValueError("planned_market_accounts_must_be_empty")
-        elif any(not isinstance(account,str) or not re.fullmatch(r"acc[1-9][0-9]*",account) for account in values) or len(set(values))!=2:
+        elif any(not isinstance(account,str) or not re.fullmatch(r"acc[1-9][0-9]*",account) for account in values):
             raise ValueError("operational_market_accounts_invalid")
         if row["runtimeState"]!="planned" and (capabilities["fullManagedCatalog"] is None or not row["contentReady"]):
             raise ValueError("operational_market_contract_incomplete")

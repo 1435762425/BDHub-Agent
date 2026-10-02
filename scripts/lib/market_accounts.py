@@ -8,7 +8,7 @@ def validate_config(value):
     used=set()
     for market,pair in value['markets'].items():
         accounts=pair.get('accounts');roles=pair.get('roles') or {}
-        if not re.fullmatch(r'[a-z]{2}',market) or not isinstance(accounts,list) or len(accounts)!=2 or len(set(accounts))!=2:raise ValueError('market_requires_two_distinct_accounts')
+        if not re.fullmatch(r'[a-z]{2}',market) or not isinstance(accounts,list) or len(accounts) not in (1,2) or len(set(accounts))!=len(accounts):raise ValueError('market_requires_one_or_two_distinct_accounts')
         if any(not isinstance(a,str) or not re.fullmatch(r'acc[1-9][0-9]*',a) or a in used for a in accounts):raise ValueError('account_assigned_to_multiple_markets_or_invalid')
         if set(roles)!= {'communications','supply'} or set(roles.values())!=set(accounts):raise ValueError('account_role_assignment_invalid')
         authority=pair.get('credentialAuthority');executor=pair.get('maintenanceExecutor')

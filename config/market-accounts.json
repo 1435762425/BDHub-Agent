@@ -3,12 +3,11 @@
   "markets": {
     "it": {
       "accounts": [
-        "acc6",
-        "acc9"
+        "acc6"
       ],
       "roles": {
         "communications": "acc6",
-        "supply": "acc9"
+        "supply": "acc6"
       },
       "assignmentState": "catalog_reads_enabled",
       "validationEvidence": "var/italy-account-pair-project-20260921-v2.json",
@@ -71,12 +70,11 @@
     },
     "uk": {
       "accounts": [
-        "acc11",
-        "acc4"
+        "acc11"
       ],
       "roles": {
         "communications": "acc11",
-        "supply": "acc4"
+        "supply": "acc11"
       },
       "assignmentState": "catalog_reads_enabled",
       "validationEvidence": "var/uk-account-pair-project.json",

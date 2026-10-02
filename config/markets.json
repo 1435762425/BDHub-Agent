@@ -75,7 +75,7 @@
       "templateLanguage": "it",
       "accounts": {
         "communications": "acc6",
-        "supply": "acc9"
+        "supply": "acc6"
       },
       "capabilities": {
         "campaignCatalog": true,
@@ -235,7 +235,7 @@
       "templateLanguage": "en",
       "accounts": {
         "communications": "acc11",
-        "supply": "acc4"
+        "supply": "acc11"
       },
       "capabilities": {
         "campaignCatalog": true,
