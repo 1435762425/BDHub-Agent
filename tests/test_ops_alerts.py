@@ -10,6 +10,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 from lib.cycle_inbox import Inbox  # noqa: E402
 from lib.cycle_service import Service  # noqa: E402
+from lib.market_registry import operational_market_keys  # noqa: E402
 from lib.ops_alerts import evaluate, gather  # noqa: E402
 from lib.schema_migrations import apply_database  # noqa: E402
 from lib.second_cycle import CycleStore  # noqa: E402
@@ -163,7 +164,7 @@ class GatherTests(unittest.TestCase):
             shutil.copytree(ROOT / "config", root / "config")
             path = root / "var/second-cycle.sqlite"
             with CycleStore(path, lambda: NOW) as store:
-                for key in ("it", "br", "my", "uk"):
+                for key in operational_market_keys(root):
                     store.plan("bjn-local-research", key)
             apply_database(root, "second-cycle", clock=lambda: NOW)
             with CycleStore(path, lambda: NOW) as store:

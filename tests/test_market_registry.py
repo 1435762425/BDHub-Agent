@@ -17,13 +17,24 @@ class MarketRegistryTests(unittest.TestCase):
  def test_visible_markets_share_one_registry_and_runtime_pairs_stay_bounded(self):
   registry=load_registry(ROOT);accounts=load_config(ROOT)
   self.assertEqual(enabled_market_keys(ROOT),('be','br','de','it','jp','my','mx','nl','ph','sg','th','uk','us','vn'))
-  self.assertEqual(set(operational_market_keys(ROOT)),{'it','br','my','uk'})
+  self.assertEqual(set(operational_market_keys(ROOT)),{'it','br','de','my','uk'})
+  self.assertEqual(registry['markets']['de']['runtimeState'],'paused')
   self.assertEqual(set(accounts['markets']),set(operational_market_keys(ROOT)))
   assigned=[]
   for key,pair in accounts['markets'].items():
    self.assertEqual(set(pair['roles'].values()),set(pair['accounts']))
    assigned.extend(pair['accounts'])
   self.assertEqual(len(assigned),len(set(assigned)))
+
+ def test_paused_market_holds_accounts_before_content_and_capabilities(self):
+  import copy,json
+  from lib.market_registry import validate_registry
+  base=json.loads((ROOT/'config/markets.json').read_text())
+  validate_registry(base)
+  ready=copy.deepcopy(base);ready['markets']['de']['runtimeState']='ready'
+  with self.assertRaises(ValueError):validate_registry(ready)
+  empty=copy.deepcopy(base);empty['markets']['de']['accounts']={'communications':None,'supply':None}
+  with self.assertRaises(ValueError):validate_registry(empty)
 
  def test_only_it_and_uk_expose_full_managed_catalog(self):
   self.assertTrue(supports(ROOT,'it','fullManagedCatalog'))

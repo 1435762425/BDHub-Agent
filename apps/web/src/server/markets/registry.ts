@@ -20,7 +20,8 @@ export function readMarketRegistry():MarketRegistry{
   const text=(name:string)=>{const current=row[name];if(typeof current!=="string"||!current||current.length>80)throw Error("market_registry_invalid");return current;};
   const nullableText=(name:string)=>row[name]===null?null:text(name),account=(name:string)=>accounts[name]===null?null:typeof accounts[name]==="string"&&ACCOUNT.test(accounts[name] as string)?accounts[name] as string:(()=>{throw Error("market_registry_invalid")})();
   const communications=account("communications"),supply=account("supply"),operational=row.runtimeState!=="planned";
-  if(operational&&(!communications||!supply||cap.fullManagedCatalog===null||!row.contentReady))throw Error("market_registry_invalid");
+  if(operational&&(!communications||!supply))throw Error("market_registry_invalid");
+  if(row.runtimeState==="ready"&&(cap.fullManagedCatalog===null||!row.contentReady))throw Error("market_registry_invalid");
   if(!operational&&(communications!==null||supply!==null))throw Error("market_registry_invalid");
   const locale=nullableText("locale"),currency=nullableText("currency"),timeZone=nullableText("timeZone"),templateLanguage=nullableText("templateLanguage");
   if(row.contentReady&&(!locale||!templateLanguage))throw Error("market_registry_invalid");

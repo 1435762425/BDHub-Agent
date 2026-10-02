@@ -8,7 +8,7 @@
 | --- | --- | --- |
 | Belgium | `be` | planned |
 | Brazil | `br` | production enabled; Campaign only |
-| Germany | `de` | planned |
+| Germany | `de` | paused; accounts assigned (ACC12/ACC13), capabilities pending |
 | Italy | `it` | production enabled; Campaign + plain weekly full-managed |
 | Japan | `jp` | planned |
 | Malaysia | `my` | production enabled; Campaign only |

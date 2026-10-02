@@ -47,6 +47,27 @@
       "imSessionMode": "sdk_http",
       "identityAccountRole": "supply"
     },
+    "de": {
+      "accounts": [
+        "acc12",
+        "acc13"
+      ],
+      "roles": {
+        "communications": "acc12",
+        "supply": "acc13"
+      },
+      "assignmentState": "pending",
+      "validationEvidence": "var/germany-account-pair-project.json",
+      "credentialAuthority": "project_owned",
+      "maintenanceExecutor": "agent_identity_generation",
+      "automaticRoleSwitchEnabled": false,
+      "catalogCapabilities": {
+        "campaign": true,
+        "fullManaged": null
+      },
+      "imSessionMode": "sdk_http",
+      "identityAccountRole": "supply"
+    },
     "my": {
       "accounts": [
         "acc8",

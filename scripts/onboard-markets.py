@@ -10,7 +10,7 @@ sys.dont_write_bytecode=True
 sys.path.insert(0,str(ROOT/'scripts'))
 
 from lib.market_accounts import load_config  # noqa:E402
-from lib.market_registry import enabled_market_keys,market  # noqa:E402
+from lib.market_registry import market,operational_market_keys  # noqa:E402
 from lib.second_cycle import CycleError,CycleStore,digest  # noqa:E402
 
 INSTITUTION='bjn-local-research'
@@ -21,7 +21,7 @@ def expected_rows():
  return [{'market':key,'planId':'cycle-'+digest([INSTITUTION,key])[:24],
           'label':market(ROOT,key)['label'],'accounts':accounts[key]['roles'],
           'fullManagedCatalog':market(ROOT,key)['capabilities']['fullManagedCatalog']}
-         for key in enabled_market_keys(ROOT)]
+         for key in operational_market_keys(ROOT)]
 
 
 def main():

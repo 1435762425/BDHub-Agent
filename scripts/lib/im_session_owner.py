@@ -3,7 +3,7 @@
 Borrowing authentication does not authorize a send. Existing dispatch permits, request ledgers,
 market write gates, and original-account reconciliation remain authoritative.
 """
-import json,os,socket,socketserver,stat,threading,time,uuid
+import json,os,re,socket,socketserver,stat,threading,time,uuid
 from contextlib import contextmanager
 from dataclasses import asdict
 from pathlib import Path
@@ -34,7 +34,7 @@ def maintenance_pending(root,account):
         return bool(db.execute("SELECT 1 FROM account_maintenance_intent WHERE account=? AND state IN ('queued','draining','running')",(account,)).fetchone())
 
 def paths(root,market):
-    if market not in ('it','br','my','uk'):raise ValueError('im_session_market_invalid')
+    if not isinstance(market,str) or not re.fullmatch(r'[a-z]{2}',market):raise ValueError('im_session_market_invalid')
     base=Path(root)/'var'
     return base/f'im-session-{market}.sock',base/f'im-session-{market}.json'
 

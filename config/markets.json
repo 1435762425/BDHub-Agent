@@ -44,7 +44,7 @@
     },
     "de": {
       "enabled": true,
-      "runtimeState": "planned",
+      "runtimeState": "paused",
       "contentReady": false,
       "label": "德国",
       "shortLabel": "DE",
@@ -54,8 +54,8 @@
       "platformRegion": "18",
       "templateLanguage": "de",
       "accounts": {
-        "communications": null,
-        "supply": null
+        "communications": "acc12",
+        "supply": "acc13"
       },
       "capabilities": {
         "campaignCatalog": true,
