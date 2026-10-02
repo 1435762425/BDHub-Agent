@@ -93,7 +93,7 @@ export default function MarketAccountsPage({market,embedded=false}:{market:strin
           </div>
           <MaintenanceNotice row={row}/>
           <div className="flex flex-wrap gap-2"><Button size="sm" variant="outline" disabled={busy!==null||activeStates.has(row.maintenanceIntent?.state??"")} onClick={()=>void mutate(row,"refresh")}>立即刷新身份</Button><Button size="sm" variant="outline" disabled={busy!==null||activeStates.has(row.maintenanceIntent?.state??"")} onClick={()=>void mutate(row,"relogin")}>立即重登</Button></div>
-          <p className="text-[11px] leading-5 text-gray-400">立即重登会打开可见浏览器并自动填写只读读取的已保存账号密码；新 profile、HTTP 与 IM 身份只写入 BDHub-Agent 的 var 目录，全部验证通过后才原子切换。</p>
+          <p className="text-[11px] leading-5 text-gray-400">立即重登会打开可见浏览器并自动填写本项目账号登记中的账号密码；新 profile、HTTP 与 IM 身份只写入 BDHub-Agent 的 var 目录，全部验证通过后才原子切换。</p>
         </div>
       </Card>;})}
     </div>)}

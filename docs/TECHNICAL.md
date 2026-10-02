@@ -175,7 +175,7 @@ schema v25 追加处理证据，并在已有模块上建立 inbox 按市场/OEC/
 
 `run-agent-replies.py` 先回查 inflight/accepted/unknown，再处理新 turn；`begin()` 在转 inflight 的同一事务冻结 `sender_account`/`sender_identity`（非 IT 为 IM id，IT 为 sender binding hash），恢复时通讯角色或身份与冻结值不同即拒绝读取，旧记录缺失时不以当前账号补。未知回复最多 3 次只读核验（间隔 ≥120 秒），计数在读取前持久化，读取未能开始（发送锁/账号不可用）退还次数但不延长期限：提交起 900 秒截止，与读取是否完成无关，一轮内一条回复被推迟时继续检查其他回复；`service_reply` 新列在 `BEGIN IMMEDIATE` 内复查后追加，多进程首次启动每列只加一次；只有读取尚未访问平台（传输层 `read_started` 回调未触发）的失败才退还次数；正常收信已存下与平台受理回执同一 messageId、同会话/OEC 且正文逐字相同的我方消息时，`settle_observed` 本地幂等结算 accepted/unknown/isolated 回复（不做平台读取、不耗预算，回执无 messageId 的仍保持未知）；耗尽转 `isolated`，保留原正文/requestRef/证据，只暂停该达人的自动回复和主动推品（并入 `outreach_policy` 营销隔离），其他达人继续，精确迟到证据仍可幂等结算，商业 handoff 案件保留。模型失败逐达人隔离，同输入最多三次。确定未提交而上下文过期的 ready 可审计终结，已提交只核验。IT 人工/Agent 共用 `reply_transport.py`，其他市场用 `market_agent_reply.py`，均冻结唯一 `service_reply` 正文/requestRef 再发送。Agent 生成第一份可发送回复后立即进入执行，不再批量积压 20 份草稿；有处理进展时短间隔继续，等待/错误/未知保持轮询退避。每次生成前重查停止、窗口与缓冲。
 
-模型调用统一经 `draft_provider.py`：DeepSeek `https://api.deepseek.com/chat/completions`、模型 `deepseek-flash`，JSON object 输出、关闭 thinking，单次请求不重试，上限约 24,000 输入字节、1,200 输出 token、60 秒。密钥先读 `DEEPSEEK_API_KEY`，缺失时只读旧项目 `01-BDSystem-V2/config.yaml` 的 `reply.api_key`（绝对路径写死）。用途：Agent V2、会话翻译、商品短名和离线评测。Jev 可执行 adapter、配置样例和新分类入口已移除；`reply_events.py` 保留消息投影、DeepSeek V1 兼容及历史评测只读，不读取 TypeSafe 配置或执行 Jev。私密历史配置由原备份规则保护，不作为运行依赖。
+模型调用统一经 `draft_provider.py`：DeepSeek `https://api.deepseek.com/chat/completions`、模型 `deepseek-flash`，JSON object 输出、关闭 thinking，单次请求不重试，上限约 24,000 输入字节、1,200 输出 token、60 秒。密钥先读 `DEEPSEEK_API_KEY`，缺失时读本项目 `private-data/config.yaml` 的 `reply.api_key`。用途：Agent V2、会话翻译、商品短名和离线评测。Jev 可执行 adapter、配置样例和新分类入口已移除；`reply_events.py` 保留消息投影、DeepSeek V1 兼容及历史评测只读，不读取 TypeSafe 配置或执行 Jev。私密历史配置由原备份规则保护，不作为运行依赖。
 
 运营在机构后台于目标入站之后已回复时，旧 turn 暂停自动回答；不擅自结案，下一条达人来信重新进入处理。prepare 与逐写前校验最新 turn、pending/control revision、人工案件及平台外发。澄清/联系方式确认送达进入 waiting_clarification/waiting_contact，礼貌回复未提供资料仍保持等待。handoff 的 case、控制锁、唯一确认意图和 decision 关联在同一事务落账；准备失败整体回滚，人工接管后 AI 停止。普通生成回复的意图与 decision 关联也原子保存。
 
@@ -211,7 +211,7 @@ IT 使用无后缀文件名，其他市场加 `-{market}` 后缀。`state-backup
 
 `state-backup.py` 按 `config/state-backup.json` 显式清单执行 SQLite online backup（每库在单个读事务内一步复制，业务 worker 持续写入时也能完成一致快照，无需停机；开始前按各库及 WAL 实测体积×1.2＋512MB 检查剩余空间，不足即拒绝，不删除旧备份腾空间），保存 hash、quick_check、schema；新业务库未入清单则失败。备份目录/文件为 0700/0600，敏感配置独立管理。restore 只接受空目标并生成回执；跨机器切换需排空写 worker 后最终备份，多库备份不声称跨库单事务。`retention-plan` 校验现存备份并只生成保留建议（默认 7 天全部、30 天每日、84 天每周，每种库清单至少 3 份）；迁移标签、损坏和不明文件保留，无删除操作。`drill --backup <目录> [--database …]`（`lib/restore_drill.py`）是离线恢复演练：把备份恢复到新建的临时目录，所有副本只读打开，不启动进程、不联网、平台写入 0，结束后删除副本（`--keep` 保留）。它检查备份本身与恢复路径；声明的跨库引用（关系/投递达人→creator_identity，建链准备→Campaign 筛选或全托来源 run，全托选入→来源 run），父库复制开始后才写入的子行缺父记录判为复制时差并阻断，更早的只算历史孤儿警告；库 schema 新于代码时阻断；未决发送意图所在市场须有已发布身份代次（身份文件本不在备份内，列为外部依赖）。部分库演练缺父库时阻断。演练还逐条核对未决意图：AI/人工回复冻结了发送账号与 IM 身份，备份中该账号须有已发布代次（与当天配置账号无关），缺失即阻断；二发投递组件没有冻结发送身份，只能记为 `identity_not_frozen` 警告。报告 `layers` 分层说明快照、schema、跨库引用、原意图依赖（complete/partial）和外部身份文件（external_required）各自证明到哪一步，`businessResumeProven` 始终为 false。报告写在 `var/backups/drills/`，不放进备份目录；最近一次未通过时告警条提示。
 
-`offsite-backup.py` 把代码、当前状态和本机专有配置加密写到外接盘。每次先按 `state-backup.json` 做一份全量 online backup 到临时目录，连同 `git bundle --all`、未提交改动补丁、`../BDHub-Agent-backups/` 下的归档（git 离线包与密钥目录除外）和 3 个被忽略的敏感配置打成 tar.gz，经 openssl AES-256-CBC（PBKDF2 20 万次）直接写入 `<盘>/BDHub-Agent-offsite/<UTC 时间>/`；刷到设备后解密回读，核对明文 hash 与成员，最后写 manifest 表示完成，失败则删除本次目录。盘上只动这个文件夹，保留最近 3 份。密钥 `../BDHub-Agent-backups/offsite/offsite.key` 只在本机，须另存一份到密码管理器，丢失则副本无法解开。账号浏览器身份、`var/` 运行文件和旧项目 `01-BDSystem-V2`（账号配置、保存凭据、签名 runtime）不在副本内，换机恢复仍需旧项目。`plan` 只读，`run --confirm` 写入，`verify` 从盘上重读最新一份；`auto` 供插盘触发，只处理已有该文件夹的卷，先校验最新一份，超过 20 小时或校验失败才写新的，并发系统通知。每次写入成功后，在本机 `offsite/latest.json` 记下这份副本，告警条据此判断备份是否过期。
+`offsite-backup.py` 把代码、当前状态和本机专有配置加密写到外接盘。每次先按 `state-backup.json` 做一份全量 online backup 到临时目录，连同 `git bundle --all`、未提交改动补丁、`../BDHub-Agent-backups/` 下的归档（git 离线包与密钥目录除外）、3 个被忽略的敏感配置和 `private-data/` 打成 tar.gz，经 openssl AES-256-CBC（PBKDF2 20 万次）直接写入 `<盘>/BDHub-Agent-offsite/<UTC 时间>/`；刷到设备后解密回读，核对明文 hash 与成员，最后写 manifest 表示完成，失败则删除本次目录。盘上只动这个文件夹，保留最近 3 份。密钥 `../BDHub-Agent-backups/offsite/offsite.key` 只在本机，须另存一份到密码管理器，丢失则副本无法解开。账号浏览器身份与 `var/` 运行文件不在副本内，换机后按账号页重登重建；恢复不依赖原始项目。`plan` 只读，`run --confirm` 写入，`verify` 从盘上重读最新一份；`auto` 供插盘触发，只处理已有该文件夹的卷，先校验最新一份，超过 20 小时或校验失败才写新的，并发系统通知。每次写入成功后，在本机 `offsite/latest.json` 记下这份副本，告警条据此判断备份是否过期。
 
 **账号认证恢复（单一入口）：** 所有发现登录失效的地方——SDK 会话 owner、HTTP 收信、全托选入、OECID——都用 `login_recovery.auth_family` 判定（平台码 16201010、`sdk_login_required`、`market_identity_auth_required`；超时、额度、业务拒绝不算），再调用 `login_recovery.request_recovery`。一条恢复链的键是市场/账号/身份代次/错误族，报告来源和角色不进键，所以并发报告者都汇入同一个 `account_maintenance_intent`；旧的 `inbox-login-*` 请求号仍被识别为同一代次已处理。意图一律从 `refresh` 开始，刷新失败时维护 worker 在同一意图内改为可见重登。全托选入中收到明确 16201010 的原意图，须在尝试之后该供给账号发布过 `relogin` 或 `refresh` 代次（两者都验证了登录可用）才允许按原 PID 重提一次（此前只认 relogin，导致自动 refresh 恢复后仍需人工）。失败或需验证的意图留给人处理，只有新发布的代次才能再发起。同账号已有其他维护在进行时返回 `waiting_active`，不排第二个登录。scheduler 的阶段恢复（`_relogin_market_account`）加入这条链并等待其结束，只有发布了比故障代次更新的身份才算恢复；角色取实际执行的账号，不按简称换号。
 
@@ -249,6 +249,7 @@ AI 模型调用按错误分型：本地输入无效记 `input_blocked`，请求�
 | `/api/template-library`、`/api/agent-replies` | 模板、市场窗口、指南、试聊、调用记录 |
 | `/api/inbox` | worker（启停仅 IT）、水位、按北京日统计与分页明细 |
 | `/api/jobs`、`/api/market-accounts`、`/api/market-catalog` | 共享供给时间、市场账号与货盘能力 |
+| `/api/account-registry` | 账号登记（新增、改登录信息；不回显密码） |
 | `/api/ops-alerts` | 跨市场告警条（只读，无参数） |
 
 会话详情请求绑定 market/cid/请求代次，迟到结果不能覆盖新选择；刷新替换当前队列页，追加才合并。unknown 人工回复保留原 requestId/正文供核验；只有确认终态才清理草稿。轮询不得覆盖未保存设置；市场 Agent 时间独立保存，不写共享 jobs。resolve_manual 校验最新 turn/case/pending/control/合作状态 revision，幂等且平台写入 0。
@@ -257,11 +258,11 @@ inbox 趋势和日明细使用同一账本，totals 等于每日求和，文字�
 
 ## 5. 账号、配置与 vendor
 
-通信/货盘固定为 IT ACC6/ACC9、BR ACC1/ACC2、MY ACC8/ACC5、UK ACC11/ACC4。`market-accounts.json` 定角色，`account_runtime_setting` 和已发布 generation 定当前能力；不继承旧项目停用状态。
+通信/货盘固定为 IT ACC6/ACC9、BR ACC1/ACC2、MY ACC8/ACC5、UK ACC11/ACC4。`market-accounts.json` 定角色，`account_runtime_setting` 和已发布 generation 定当前能力；不继承原始项目停用状态。账号登录记录（名称、市场、partner_id、用户名、密码及账号策略字段）只在本项目 `private-data/secrets/accounts.json`，经账号页“账号登记”或 `scripts/account-registry.py list|add|update`（`lib/account_registry.py`）读写：密码经 stdin 传入、只写不回显，文件原子替换、权限 0600；登记不等于分配，新账号分配到市场角色后才能首次重登与能力验证。
 
 能力验收发布使用 `reason=capability`，不推迟维护时钟；`identity_baseline` 取该账号最近一次真实登录（`relogin`，或导入的 `baseline`）的发布时间。`refresh` 只用无头浏览器重读现有登录，不延长平台登录：实测登录在真实登录后约 72 小时 6–11 分钟失效（acc8、acc1 在 refresh 后仍按上次重登时间过期）。
 
-账号定期串行维护：`next_due` 取登录失效（真实登录 +72 小时）前至少 30 分钟（`LOGIN_MARGIN_SECONDS`）的最后一个角色时段（通讯 14:30、供给 14:40），由 `request_scheduled_maintenance` 登记 `relogin`；在时段后才完成的登录因此约 48 小时重登一次。此前按 +72 小时再往后取时段，维护总落在失效之后，欧洲站通讯账号因此每轮断收信 14–21 小时（10-01 IT/UK 复现）。可见浏览器读取既有保存凭据，候选 browser/HTTP/IM 联合验证后发布项目内新代次，失败保留上一代。重登不自动把未验收能力变 verified。同市场/账号/机构的新身份可继承已验证能力，新的 failed/blocked 观察优先。
+账号定期串行维护：`next_due` 取登录失效（真实登录 +72 小时）前至少 30 分钟（`LOGIN_MARGIN_SECONDS`）的最后一个角色时段（通讯 14:30、供给 14:40），由 `request_scheduled_maintenance` 登记 `relogin`；在时段后才完成的登录因此约 48 小时重登一次。此前按 +72 小时再往后取时段，维护总落在失效之后，欧洲站通讯账号因此每轮断收信 14–21 小时（10-01 IT/UK 复现）。可见浏览器读取本项目登记的账号密码，候选 browser/HTTP/IM 联合验证后发布项目内新代次，失败保留上一代。重登不自动把未验收能力变 verified。同市场/账号/机构的新身份可继承已验证能力，新的 failed/blocked 观察优先。
 
 | 配置 | 权威用途 |
 | --- | --- |
@@ -279,7 +280,7 @@ inbox 趋势和日明细使用同一账本，totals 等于每日求和，文字�
 
 页面保存会改写受 git 跟踪的 `config/*.json`（`jobs.py`、`job_run.py`、`leads_queue.py`、`link_naming.py`、`send_batch.py`），提交前需区分运营设置变化与代码改动。
 
-`legacy_runtime.configure_vendored_bdhub()` 强制从本仓 vendor 加载协议，已加载其他源码则失败。旧目录在运行时只读提供尚未迁移的账号配置、保存凭据、签名 runtime 与 DeepSeek key 回退；IT 发送与回复不读旧系统 PostgreSQL 或其写门禁目录（旧系统 2026-09-08 后未再为 IT 发信），只用本项目 `var/im-http-write-gates/` 的同发送者 FIFO 控制节奏；若再从旧系统给 IT 发信，两边互不知情。`scripts/vendor-runtime/manifest.json` 固定源码、必要资源与本地补丁 hash；`--check` 漂移非零退出，`--write` 在临时目录重建验证后交换。pure_http_runtime_manifest.json 属于运行闭包，不能按“非 Python”删除。细节见 [vendor README](../vendor/README.md)。
+`legacy_runtime.configure_vendored_bdhub()` 强制从本仓 vendor 加载协议，已加载其他源码则失败；协议层的配置与数据根目录是本项目 `private-data/`（`private_root()`，解析到项目外即拒绝）：`config.yaml`、`secrets/accounts.json`、签名运行环境 `data/runtime/attachment-analysis/code10000-http-20260805/`（含 `pydeps`）、Kalodata 浏览器锁 `data/research/kalodata/.browser.lock`，以及协议层写出的运行状态。运行代码不引用原始项目路径（`test_legacy_runtime` 扫描 scripts 与 Web 源码；只读原始源码的离线工具 `vendor-legacy-bdhub.py`、`audit-tiktok-*` 例外）。IT 发送与回复只用本项目 `var/im-http-write-gates/` 的同发送者 FIFO 控制节奏；若再从原始项目给 IT 发信，两边互不知情。`scripts/vendor-runtime/manifest.json` 固定源码、必要资源与本地补丁 hash；`--check` 漂移非零退出，`--write` 在临时目录重建验证后交换。pure_http_runtime_manifest.json 属于运行闭包，不能按“非 Python”删除。细节见 [vendor README](../vendor/README.md)。
 
 ## 6. 尚未完成的合同与验证边界
 
