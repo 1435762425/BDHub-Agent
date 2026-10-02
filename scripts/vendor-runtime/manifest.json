@@ -4,7 +4,7 @@
   "upstreamRevision": "72dc12a71e566702232a279aac23fd547addea12",
   "patch": {
     "file": "local.patch",
-    "sha256": "722432d34aced452381fec9efb75465f09586faef913d1fd11e8b93701b96910"
+    "sha256": "2f464d53fa8c1c55abc2fa845e12d3d9833917838397d39d82c215dcf2983b7e"
   },
   "files": [
     {
@@ -191,7 +191,7 @@
       "path": "bdhub/hub/markets.py",
       "source": "upstream",
       "upstreamSha256": "6be5341d74ec0aa68f3df0b234527a4802d898c8a632bdd0dc7096bec02113b5",
-      "sha256": "28c0cc45df89499ede9dcf6ec18c20c834ce51feb5d40a83e4edee77096ba4d5"
+      "sha256": "a19906a1e8a442e73b3b68e0406263d7bbafe0f74d0d175397b1f543f970614f"
     },
     {
       "path": "bdhub/hub/migration_runner.py",

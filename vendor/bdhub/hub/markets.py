@@ -325,8 +325,10 @@ MARKETS: dict[str, Market] = {
         capabilities=MarketCapabilities(
             find="enabled", profile="enabled", pure_http="enabled",
             relation="enabled", contact="enabled",
-            # 2026-10-02 ACC12 project login: IM card search and Campaign list reads verified.
-            im="enabled", product_search="enabled", campaign="pending", share_link="unsupported",
+            # 2026-10-02 ACC12/ACC13 project logins: IM card search and Campaign list reads verified;
+            # ACC13 Campaign join canary (Deedlite, var/de-campaign-join-canary-20261002.json) read back joined.
+            im="enabled", product_search="enabled", campaign="enabled", share_link="unsupported",
+            campaign_join="enabled",
         ),
         im_find_aid="360019",
         affiliate_partner_id="8680177412768696065",

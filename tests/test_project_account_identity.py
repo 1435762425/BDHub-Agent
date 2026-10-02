@@ -54,6 +54,8 @@ class ValidationErrorCodeTests(unittest.TestCase):
         configure_vendored_bdhub(root=ROOT)
         from bdhub.hub.markets import MARKETS
         self.assertEqual(MARKETS["de"].capabilities.status("product_search"), "enabled")
+        # The Campaign join canary on 2026-10-02 opened batch joins for Germany.
+        self.assertEqual(MARKETS["de"].capabilities.status("campaign_join"), "enabled")
 
 
 if __name__ == "__main__":
