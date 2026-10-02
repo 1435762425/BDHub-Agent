@@ -57,6 +57,16 @@ class ValidationErrorCodeTests(unittest.TestCase):
         # The Campaign join canary on 2026-10-02 opened batch joins for Germany.
         self.assertEqual(MARKETS["de"].capabilities.status("campaign_join"), "enabled")
 
+    def test_france_is_market_region_17_with_campaign_writes_still_pending(self):
+        from lib.legacy_runtime import configure_vendored_bdhub
+        configure_vendored_bdhub(root=ROOT)
+        from bdhub.hub.markets import MARKETS
+        france = MARKETS["fr"]
+        self.assertEqual((france.im_market, france.im_market_partner_id, france.signer_region),
+                         ("17", "8683739727707539216", "eu"))
+        self.assertEqual(france.capabilities.status("product_search"), "enabled")
+        self.assertEqual(france.capabilities.status("campaign_join"), "pending")
+
 
 if __name__ == "__main__":
     unittest.main()

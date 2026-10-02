@@ -19,6 +19,23 @@
          rows = [json.loads(p.read_text()) for p in self.root.glob(f"{self.prefix}_*.json")]
          return sorted((r for r in rows if r["market"] == market), key=lambda r: r["created_at"], reverse=True)
 +
+--- a/bdhub/hub/im_markets.py
++++ b/bdhub/hub/im_markets.py
+@@ -158,6 +158,14 @@
+         "8680177412768696065",
+         listener_verified=True,
+     ),
++    "fr": _market(
++        "fr",
++        "法国",
++        "17",
++        _PORTAL_EU,
++        _PORTAL_EU,
++        "8683699487047190289",
++    ),
+     "mx": _market(
+         "mx",
+         "墨西哥",
 --- a/bdhub/hub/market_catalog.py
 +++ b/bdhub/hub/market_catalog.py
 @@ -46,6 +46,16 @@
@@ -38,6 +55,23 @@
      ),
      "uk": DashboardMarket(
          key="uk",
+@@ -97,6 +107,16 @@
+         rollout_group="priority-2",
+         rollout_order=60,
+     ),
++    "fr": DashboardMarket(
++        key="fr",
++        label="法国",
++        short_label="FR",
++        currency="EUR",
++        locale="fr-FR",
++        template_lang="fr",
++        rollout_group="priority-2",
++        rollout_order=70,
++    ),
+ }
+ 
+ 
 --- a/bdhub/hub/markets.py
 +++ b/bdhub/hub/markets.py
 @@ -182,11 +182,34 @@
@@ -85,7 +119,7 @@
          ),
          im_find_aid="360019",
          affiliate_partner_id="8652354317985613569",
-@@ -302,7 +325,10 @@
+@@ -302,11 +325,40 @@
          capabilities=MarketCapabilities(
              find="enabled", profile="enabled", pure_http="enabled",
              relation="enabled", contact="enabled",
@@ -97,6 +131,36 @@
          ),
          im_find_aid="360019",
          affiliate_partner_id="8680177412768696065",
+         pw_profile_suffix="_de",
++        signer_region="eu",
++    ),
++    # France: market region 17 and partner ids read from the agency's partner info on 2026-10-03;
++    # its opportunity list returned French listings. Protocol shape as Germany (EU portal and signer);
++    # Campaign and joins stay pending until the project's own canaries.
++    "fr": Market(
++        key="fr", label="法国",
++        host="https://partner.eu.tiktokshop.com",
++        aid="360019", user_language="zh-CN",
++        default_partner_id="8683699487047190289",
++        warmup="https://partner.eu.tiktokshop.com/affiliate-cmp/creator?market=17",
++        home="https://partner.eu.tiktokshop.com/home",
++        canary="__CANARY_REQUIRED__",
++        profile_tbl=creator_profile, miss_tbl=miss_log,
++        profile_name="creator_profile", miss_name="miss_log",
++        im_market="17", shop_id="8683699487047190289",
++        im_market_partner_id="8683739727707539216",
++        template_lang="fr", accounts=[],
++        capabilities=MarketCapabilities(
++            find="enabled", profile="enabled", pure_http="enabled",
++            relation="enabled", contact="enabled",
++            im="enabled", product_search="enabled", campaign="pending", share_link="unsupported",
++        ),
++        im_find_aid="360019",
++        affiliate_partner_id="8683699487047190289",
++        pw_profile_suffix="_fr",
+         signer_region="eu",
+     ),
+ }
 --- a/bdhub/research/commerce_selected.py
 +++ b/bdhub/research/commerce_selected.py
 @@ -3,6 +3,7 @@

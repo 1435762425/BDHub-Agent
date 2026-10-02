@@ -335,6 +335,32 @@ MARKETS: dict[str, Market] = {
         pw_profile_suffix="_de",
         signer_region="eu",
     ),
+    # France: market region 17 and partner ids read from the agency's partner info on 2026-10-03;
+    # its opportunity list returned French listings. Protocol shape as Germany (EU portal and signer);
+    # Campaign and joins stay pending until the project's own canaries.
+    "fr": Market(
+        key="fr", label="法国",
+        host="https://partner.eu.tiktokshop.com",
+        aid="360019", user_language="zh-CN",
+        default_partner_id="8683699487047190289",
+        warmup="https://partner.eu.tiktokshop.com/affiliate-cmp/creator?market=17",
+        home="https://partner.eu.tiktokshop.com/home",
+        canary="__CANARY_REQUIRED__",
+        profile_tbl=creator_profile, miss_tbl=miss_log,
+        profile_name="creator_profile", miss_name="miss_log",
+        im_market="17", shop_id="8683699487047190289",
+        im_market_partner_id="8683739727707539216",
+        template_lang="fr", accounts=[],
+        capabilities=MarketCapabilities(
+            find="enabled", profile="enabled", pure_http="enabled",
+            relation="enabled", contact="enabled",
+            im="enabled", product_search="enabled", campaign="pending", share_link="unsupported",
+        ),
+        im_find_aid="360019",
+        affiliate_partner_id="8683699487047190289",
+        pw_profile_suffix="_fr",
+        signer_region="eu",
+    ),
 }
 
 

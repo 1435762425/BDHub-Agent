@@ -6,12 +6,12 @@ import {readMarketRegistry} from "../src/server/markets/registry.ts";
 const root=new URL("../src/",import.meta.url);
 const read=path=>readFileSync(new URL(path,root),"utf8");
 
-test("fourteen markets resolve the same eleven route contracts",()=>{
+test("fifteen markets resolve the same eleven route contracts",()=>{
  const keys=readMarketRegistry().markets.map(row=>row.key);
- assert.deepEqual(keys,["be","br","de","it","jp","my","mx","nl","ph","sg","th","uk","us","vn"]);
+ assert.deepEqual(keys,["be","br","de","fr","it","jp","my","mx","nl","ph","sg","th","uk","us","vn"]);
  const suffixes=["","/workspace/send","/workspace/history","/conversations","/conversations/templates","/conversations/agent","/catalog","/creators","/ops/kalodata","/ops/jobs","/ops/accounts"];
  const routes=keys.flatMap(market=>suffixes.map(suffix=>`/${market}${suffix}`));
- assert.equal(routes.length,154);assert.equal(new Set(routes).size,154);
+ assert.equal(routes.length,165);assert.equal(new Set(routes).size,165);
 });
 
 test("market routes use one workspace tree and keep every tab in place",()=>{

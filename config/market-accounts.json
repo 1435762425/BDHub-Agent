@@ -68,6 +68,27 @@
       "imSessionMode": "sdk_http",
       "identityAccountRole": "supply"
     },
+    "fr": {
+      "accounts": [
+        "acc16",
+        "acc17"
+      ],
+      "roles": {
+        "communications": "acc16",
+        "supply": "acc17"
+      },
+      "assignmentState": "pending",
+      "validationEvidence": "var/france-account-pair-project.json",
+      "credentialAuthority": "project_owned",
+      "maintenanceExecutor": "agent_identity_generation",
+      "automaticRoleSwitchEnabled": false,
+      "catalogCapabilities": {
+        "campaign": true,
+        "fullManaged": null
+      },
+      "imSessionMode": "sdk_http",
+      "identityAccountRole": "supply"
+    },
     "my": {
       "accounts": [
         "acc8",

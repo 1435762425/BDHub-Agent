@@ -158,6 +158,14 @@ IM_MARKETS: dict[str, ImMarket] = {
         "8680177412768696065",
         listener_verified=True,
     ),
+    "fr": _market(
+        "fr",
+        "法国",
+        "17",
+        _PORTAL_EU,
+        _PORTAL_EU,
+        "8683699487047190289",
+    ),
     "mx": _market(
         "mx",
         "墨西哥",

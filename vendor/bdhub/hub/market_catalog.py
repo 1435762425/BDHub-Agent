@@ -107,6 +107,16 @@ MARKET_CATALOG: dict[str, DashboardMarket] = {
         rollout_group="priority-2",
         rollout_order=60,
     ),
+    "fr": DashboardMarket(
+        key="fr",
+        label="法国",
+        short_label="FR",
+        currency="EUR",
+        locale="fr-FR",
+        template_lang="fr",
+        rollout_group="priority-2",
+        rollout_order=70,
+    ),
 }
 
 

@@ -20,7 +20,7 @@ from lib.italy_im_auth import ImProbeDeadline, PARTNER_HOST
 
 IM_HOST = "oec-im-tt-i18n.tiktokglobalshopv.com"
 SG_IM_HOST = "oec-im-tt-sg.tiktokglobalshopv.com"
-EU_IM_REGIONS = frozenset({"3", "8", "18", "22", "23"})
+EU_IM_REGIONS = frozenset({"3", "8", "17", "18", "22", "23"})
 PATHS = {203: "/v2/message/get_by_user_init", 608: "/v2/conversation/get_info", 301: "/v1/message/get_by_conversation"}
 SAFE_CODES = frozenset({"im_auth_context_invalid", "im_endpoint_unapproved", "im_cookie_forbidden", "im_command_forbidden",
     "im_input_invalid", "im_runtime_unavailable", "im_auth_expired", "maintenance_due", "stopped", "im_transport_error",
