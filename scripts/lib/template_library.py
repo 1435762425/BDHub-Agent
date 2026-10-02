@@ -62,36 +62,67 @@ def send_templates(store,include_archived=False,market='it'):
  return rows
 
 
-def _review_fingerprint(store,root,template_id):
- from lib.market_content import load_content
- from lib.market_registry import load_registry
- content=load_content(root);bundle={}
- # Only markets that can send are part of an approval: content added for a paused market must not
- # void the approvals of markets that are already sending.
- ready={key for key,row in load_registry(root)['markets'].items() if row['runtimeState']=='ready'}
- for market,row in content['markets'].items():
-  if market not in ready:continue
-  template=row['sendTemplates'][template_id]
-  bundle[market]={'text':template['text'],'translationZh':template['translationZh'],'state':'active'}
- saved=store.db.execute('''SELECT t.state,r.body_it FROM send_message_template t
+# Markets whose approvals were recorded on one shared row before reviews became per market.
+LEGACY_REVIEW_MARKETS=('it','br','my','uk')
+
+
+def _saved_it_template(db,template_id):
+ if not db.execute("SELECT 1 FROM sqlite_master WHERE name='send_message_template'").fetchone():return None
+ return db.execute('''SELECT t.state,r.body_it FROM send_message_template t
    JOIN send_message_template_revision r ON r.template_id=t.template_id AND r.revision=t.current_revision
-   WHERE t.template_id=?''',(template_id,)).fetchone() if store.db.execute(
-    "SELECT 1 FROM sqlite_master WHERE name='send_message_template'").fetchone() else None
- if saved:
-  bundle['it']['text']=saved['body_it'];bundle['it']['state']=saved['state']
- return digest({'templateId':template_id,'markets':bundle})
+   WHERE t.template_id=?''',(template_id,)).fetchone()
+
+
+def _market_entry(db,content,market,template_id):
+ template=content['markets'][market]['sendTemplates'][template_id]
+ entry={'text':template['text'],'translationZh':template['translationZh'],'state':'active'}
+ saved=_saved_it_template(db,template_id) if market=='it' else None
+ if saved:entry.update(text=saved['body_it'],state=saved['state'])
+ return entry
+
+
+def _review_fingerprint(db,content,market,template_id):
+ """An approval covers one market's own copy of a template, so no other market's edit can void it."""
+ return digest({'templateId':template_id,'market':market,**_market_entry(db,content,market,template_id)})
+
+
+def backfill_market_reviews(db,root,now):
+ """Carry each still-current shared approval over to the legacy markets it covered (migration 27)."""
+ rows=list(db.execute('SELECT * FROM send_template_review')) if db.execute(
+  "SELECT 1 FROM sqlite_master WHERE name='send_template_review'").fetchone() else []
+ if not rows:return 0
+ from lib.market_content import load_content
+ content=load_content(root);carried=0
+ markets=[market for market in LEGACY_REVIEW_MARKETS if market in content['markets']]
+ for row in rows:
+  template_id=row['template_id']
+  if template_id not in SEND_IDS:continue
+  bundle={market:_market_entry(db,content,market,template_id) for market in markets}
+  if row['content_fingerprint']!=digest({'templateId':template_id,'markets':bundle}):continue
+  for market in markets:
+   fingerprint=_review_fingerprint(db,content,market,template_id)
+   db.execute('INSERT OR IGNORE INTO send_template_market_review VALUES(?,?,?,?,?,?)',
+              (market,template_id,fingerprint,row['state'],1,now))
+   db.execute('INSERT OR IGNORE INTO send_template_market_review_event VALUES(?,?,?,?,?,?,?,?)',
+              (f'migration-27:{market}:{template_id}',market,template_id,fingerprint,row['state'],0,1,now))
+   carried+=1
+ return carried
 
 
 def send_template_reviews(store,root,market='it'):
- if not store.db.execute("SELECT 1 FROM sqlite_master WHERE name='send_template_review'").fetchone():
+ if not store.db.execute("SELECT 1 FROM sqlite_master WHERE name='send_template_market_review'").fetchone():
   raise CycleError('send_template_review_schema_required')
- rows={row['template_id']:row for row in store.db.execute('SELECT * FROM send_template_review')}
+ from lib.market_content import load_content
+ content=load_content(root)
+ if market not in content['markets']:raise CycleError('market_content_unavailable')
+ rows={row['template_id']:row for row in store.db.execute(
+  'SELECT * FROM send_template_market_review WHERE market=?',(market,))}
  active_ids=({row['id'] for row in send_templates(store,market='it') if row['builtIn']}
              if market=='it' else set(SEND_IDS))
  items=[]
  for template_id in SEND_IDS:
   if template_id not in active_ids:continue
-  fingerprint=_review_fingerprint(store,root,template_id);row=rows.get(template_id)
+  fingerprint=_review_fingerprint(store.db,content,market,template_id);row=rows.get(template_id)
   current=bool(row and row['content_fingerprint']==fingerprint)
   state=row['state'] if current else 'pending'
   items.append({'templateId':template_id,'state':state,'revision':row['revision'] if row else 0,
@@ -102,29 +133,34 @@ def send_template_reviews(store,root,market='it'):
          'items':items}
 
 
-def review_send_template(store,root,request_id,template_id,state,expected_revision):
+def review_send_template(store,root,request_id,template_id,state,expected_revision,market='it'):
  if not isinstance(request_id,str) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._:-]{7,119}',request_id) or \
     template_id not in SEND_IDS or state not in ('approved','rejected') or \
-    type(expected_revision) is not int or expected_revision<0:
+    type(expected_revision) is not int or expected_revision<0 or not isinstance(market,str):
   raise CycleError('send_template_review_invalid')
- fingerprint=_review_fingerprint(store,root,template_id);payload=encoded([template_id,fingerprint,state])
+ from lib.market_content import load_content
+ content=load_content(root)
+ if market not in content['markets']:raise CycleError('market_content_unavailable')
+ fingerprint=_review_fingerprint(store.db,content,market,template_id)
+ payload=encoded([market,template_id,fingerprint,state])
  with store.tx():
-  prior=store.db.execute('SELECT * FROM send_template_review_event WHERE request_id=?',(request_id,)).fetchone()
+  prior=store.db.execute('SELECT * FROM send_template_market_review_event WHERE request_id=?',(request_id,)).fetchone()
   if prior:
-   if encoded([prior['template_id'],prior['content_fingerprint'],prior['state']])!=payload:
+   if encoded([prior['market'],prior['template_id'],prior['content_fingerprint'],prior['state']])!=payload:
     raise CycleError('send_template_review_request_conflict')
-   return send_template_reviews(store,root)
-  current=store.db.execute('SELECT * FROM send_template_review WHERE template_id=?',(template_id,)).fetchone()
+   return send_template_reviews(store,root,market)
+  current=store.db.execute('SELECT * FROM send_template_market_review WHERE market=? AND template_id=?',
+                           (market,template_id)).fetchone()
   revision=current['revision'] if current else 0
   if revision!=expected_revision:raise CycleError('send_template_review_conflict')
   revision+=1;now=store.clock()
-  store.db.execute('''INSERT INTO send_template_review VALUES(?,?,?,?,?)
-   ON CONFLICT(template_id) DO UPDATE SET content_fingerprint=excluded.content_fingerprint,
+  store.db.execute('''INSERT INTO send_template_market_review VALUES(?,?,?,?,?,?)
+   ON CONFLICT(market,template_id) DO UPDATE SET content_fingerprint=excluded.content_fingerprint,
    state=excluded.state,revision=excluded.revision,updated_at=excluded.updated_at''',
-   (template_id,fingerprint,state,revision,now))
-  store.db.execute('INSERT INTO send_template_review_event VALUES(?,?,?,?,?,?,?)',
-   (request_id,template_id,fingerprint,state,expected_revision,revision,now))
- return send_template_reviews(store,root)
+   (market,template_id,fingerprint,state,revision,now))
+  store.db.execute('INSERT INTO send_template_market_review_event VALUES(?,?,?,?,?,?,?,?)',
+   (request_id,market,template_id,fingerprint,state,expected_revision,revision,now))
+ return send_template_reviews(store,root,market)
 
 
 def require_send_template_approval(store,root,market='it'):

@@ -119,6 +119,8 @@ IT 交接在写事务外读取并 materialize 当前 A/B 来源，短事务内�
 
 `outreach_allocation.py` 在四市场正式持续发送与 market canary 的既有候选入口分配 4 A / 1 B 领取份额；schema v23 追加 `outreach_rotation` 和 `outreach_allocation`。轮转按 market 持久化、跨日连续；按北京时间冻结日记账，market×日期×OEC 唯一，不按 PID、组件或核验轮数计数。新 delivery、两条组件和份额行在同一事务提交；游标过期、资格/容量拒绝或并发同达人领取全部回滚，不消耗份额。已有冻结和在途意图不回填、不改写分类。
 
+二发模板审批按市场独立（schema v27 `send_template_market_review`，主键 market×template）：指纹只含该市场自己的正文与中文对照（IT 取已保存正文），一个市场改文案只让该市场的对应模板回到 pending，新市场的模板从 pending 开始；达到 `sendTemplateApprovalMinimum` 才能启动发送。v27 迁移把旧的共享审批中仍与 IT/BR/MY/UK 当前正文一致的项逐市场转存（`migration-27:*` 事件），旧表 `send_template_review` 只作历史。
+
 领取器同时检查 ready 与同达人其他 queued 位置，完成材料、模板与本地容量检查后择优；同人有有效 A 位置归 A，全部 A 位置不合格时才可使用 B。A/B 各自维持原数值排序，一类无合格候选时另一类补位，记录实际类别/偏好类别/原因，游标正常前进、不积累欠额。机构额度已耗尽时先筛选已解锁或已有预留的达人，避免逐人检查无用材料；最终逐写许可照旧。已冻结但后续历史/平台预检取消仍属于一次安排，不当成确认送达，也不退份额后再凑成功比例。
 
 发送池独立展示今日已安排、A/B 安排与补位、各投递结果。卡已确认后的同 CID、同 market/OEC、72 小时内回复及加橱窗按达人去重观察，排除旧消息、未知时间和其他会话；这不是因果归因，也不是已成熟的转化率。页面当前展示今日领取 cohort，原始台账保留供历史核对。IT 候选来源读取从当前 A head 固定连接到 selection/index/edge，避免展开扫描全历史来源；保持 B 的独立视频证据。交付和生产实证见[80/20 发送报告](implementation/outreach-share-20260925.md)。

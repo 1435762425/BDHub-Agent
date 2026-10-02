@@ -1164,6 +1164,34 @@ def _reply_scope_backfill(db):
     for table,required,sql in indexes:
         if table in tables and required<=columns(table):db.execute('CREATE INDEX IF NOT EXISTS '+sql)
 
+SECOND_CYCLE_MARKET_TEMPLATE_REVIEW = Migration(27, "send_template_market_review_v1", """
+CREATE TABLE IF NOT EXISTS send_template_market_review(
+  market TEXT NOT NULL,
+  template_id TEXT NOT NULL,
+  content_fingerprint TEXT NOT NULL,
+  state TEXT NOT NULL,
+  revision INTEGER NOT NULL,
+  updated_at REAL NOT NULL,
+  PRIMARY KEY(market,template_id)
+);
+CREATE TABLE IF NOT EXISTS send_template_market_review_event(
+  request_id TEXT PRIMARY KEY,
+  market TEXT NOT NULL,
+  template_id TEXT NOT NULL,
+  content_fingerprint TEXT NOT NULL,
+  state TEXT NOT NULL,
+  expected_revision INTEGER NOT NULL,
+  result_revision INTEGER NOT NULL,
+  created_at REAL NOT NULL
+);
+CREATE TRIGGER IF NOT EXISTS send_template_market_review_event_no_update
+BEFORE UPDATE ON send_template_market_review_event
+BEGIN SELECT RAISE(ABORT,'send template review event is append only'); END;
+CREATE TRIGGER IF NOT EXISTS send_template_market_review_event_no_delete
+BEFORE DELETE ON send_template_market_review_event
+BEGIN SELECT RAISE(ABORT,'send template review event is append only'); END;
+""")
+
 SECOND_CYCLE_SDK_SIGNALS = Migration(26,"sdk_receive_durable_signal_v1", """
 CREATE TABLE im_receive_signal(
  market TEXT NOT NULL,account TEXT NOT NULL,cid TEXT NOT NULL,oec TEXT NOT NULL,message_id TEXT NOT NULL,
@@ -1194,7 +1222,8 @@ DATABASES = {
                                                 SECOND_CYCLE_AGENT_CONVERSATION,
                                                 SECOND_CYCLE_INBOX_HISTORY,
                                                 SECOND_CYCLE_INBOX_HISTORY_DEFERRED,
-                                                SECOND_CYCLE_ROLLING_LEADS, SECOND_CYCLE_IDENTITY_RETRY, SECOND_CYCLE_OUTREACH_SHARE, SECOND_CYCLE_INVITATION_INBOX, SECOND_CYCLE_REPLY_SCOPE, SECOND_CYCLE_SDK_SIGNALS)),
+                                                SECOND_CYCLE_ROLLING_LEADS, SECOND_CYCLE_IDENTITY_RETRY, SECOND_CYCLE_OUTREACH_SHARE, SECOND_CYCLE_INVITATION_INBOX, SECOND_CYCLE_REPLY_SCOPE, SECOND_CYCLE_SDK_SIGNALS,
+                                                SECOND_CYCLE_MARKET_TEMPLATE_REVIEW)),
 }
 
 REGISTRY_SQL = """
@@ -1297,6 +1326,9 @@ def apply_database(root, key, *, clock=time.time):
                 if key=="second-cycle" and migration.version==21:
                     from lib.video_identity import backfill_current
                     backfill_current(db)
+                if key=="second-cycle" and migration.version==27:
+                    from lib.template_library import backfill_market_reviews
+                    backfill_market_reviews(db, root, clock())
                 if key=="second-cycle" and migration.version==15:
                     _backfill_market_templates(db)
                 db.execute("INSERT INTO agent_schema_migration(version,name,checksum,applied_at) VALUES(?,?,?,?)",

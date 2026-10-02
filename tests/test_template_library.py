@@ -110,19 +110,46 @@ class TemplateLibraryTests(unittest.TestCase):
   self.assertEqual(changed['items'][0]['state'],'pending')
   self.assertEqual(changed['approved'],0)
 
- def test_content_of_a_paused_market_does_not_void_sending_markets_approvals(self):
+ def test_each_market_approves_only_its_own_copy(self):
   import json,shutil
   shutil.copytree(ROOT/'config',self.root/'config')
-  status=send_template_reviews(self.store,self.root,'br');row=status['items'][0]
-  review_send_template(self.store,self.root,'review-standard-br','standard','approved',row['revision'])
+  row=send_template_reviews(self.store,self.root,'br')['items'][0]
+  review_send_template(self.store,self.root,'review-standard-br','standard','approved',row['revision'],'br')
+  self.assertEqual(send_template_reviews(self.store,self.root,'de')['items'][0]['state'],'pending')
   registry=json.loads((self.root/'config/markets.json').read_text())
   content=json.loads((self.root/'config/market-content.json').read_text())
-  self.assertEqual(registry['markets']['de']['runtimeState'],'paused')
   content['markets']['de']['sendTemplates']['standard']['text']+=' Bis bald!'
+  registry['markets']['de']['runtimeState']='ready'
   (self.root/'config/market-content.json').write_text(json.dumps(content,ensure_ascii=False))
-  self.assertEqual(send_template_reviews(self.store,self.root,'br')['items'][0]['state'],'approved')
-  registry['markets']['de']['runtimeState']='ready';registry['markets']['de']['capabilities']['fullManagedCatalog']=False
   (self.root/'config/markets.json').write_text(json.dumps(registry,ensure_ascii=False))
+  self.assertEqual(send_template_reviews(self.store,self.root,'br')['items'][0]['state'],'approved')
+  review_send_template(self.store,self.root,'review-standard-de','standard','approved',0,'de')
+  self.assertEqual(send_template_reviews(self.store,self.root,'de')['items'][0]['state'],'approved')
+  content['markets']['br']['sendTemplates']['standard']['text']+=' Até logo!'
+  (self.root/'config/market-content.json').write_text(json.dumps(content,ensure_ascii=False))
   self.assertEqual(send_template_reviews(self.store,self.root,'br')['items'][0]['state'],'pending')
+  self.assertEqual(send_template_reviews(self.store,self.root,'de')['items'][0]['state'],'approved')
+
+ def test_shared_approvals_carry_over_to_the_legacy_markets_once(self):
+  import shutil
+  from lib.market_content import load_content
+  from lib.second_cycle import digest
+  from lib.template_library import LEGACY_REVIEW_MARKETS,_market_entry,backfill_market_reviews
+  shutil.copytree(ROOT/'config',self.root/'config')
+  content=load_content(self.root);db=self.store.db
+  current={market:_market_entry(db,content,market,'standard') for market in LEGACY_REVIEW_MARKETS}
+  stale={**current,'br':{**current['br'],'text':'outdated'}}
+  with self.store.tx():
+   db.execute('INSERT INTO send_template_review VALUES(?,?,?,?,?)',
+              ('standard',digest({'templateId':'standard','markets':current}),'approved',3,NOW))
+   db.execute('INSERT INTO send_template_review VALUES(?,?,?,?,?)',
+              ('brief',digest({'templateId':'brief','markets':stale}),'approved',1,NOW))
+   carried=backfill_market_reviews(db,self.root,NOW)
+   self.assertEqual(backfill_market_reviews(db,self.root,NOW),carried)
+  self.assertEqual(carried,len(LEGACY_REVIEW_MARKETS))
+  for market in LEGACY_REVIEW_MARKETS:
+   states={row['templateId']:row['state'] for row in send_template_reviews(self.store,self.root,market)['items']}
+   self.assertEqual((states.get('standard'),states.get('brief')),('approved','pending'))
+  self.assertEqual(send_template_reviews(self.store,self.root,'de')['items'][0]['state'],'pending')
 
 if __name__=='__main__':unittest.main()

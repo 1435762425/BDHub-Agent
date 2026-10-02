@@ -73,7 +73,7 @@ class ContinuousSendTests(unittest.TestCase):
 
     def test_start_is_blocked_until_ten_semantic_templates_are_approved(self):
         with self.store.tx():
-            self.store.db.execute('DELETE FROM send_template_review')
+            self.store.db.execute('DELETE FROM send_template_market_review')
         with self.assertRaisesRegex(Exception,'template_approval_required'):
             mutate_control(self.store,self.root,action='start',request_id='continuous-start-blocked',expected_revision=0)
 

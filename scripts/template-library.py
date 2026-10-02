@@ -48,7 +48,7 @@ def main():
     if set(req)!={'action','market'}:raise CycleError('invalid_input')
    elif action=='review_send':
     if set(req)!={'action','market','requestId','templateId','state','expectedRevision'}:raise CycleError('invalid_input')
-    review_send_template(store,ROOT,req['requestId'],req['templateId'],req['state'],req['expectedRevision'])
+    review_send_template(store,ROOT,req['requestId'],req['templateId'],req['state'],req['expectedRevision'],market)
    elif action=='create_send':
     if set(req)!={'action','market','requestId','name','bodyIt'}:raise CycleError('invalid_input')
     create_send_template(store,req['requestId'],req['name'],req['bodyIt'])
