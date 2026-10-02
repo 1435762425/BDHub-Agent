@@ -9,6 +9,7 @@
 
 - 用户经账号页登记 acc12–acc17（DE acc12/13、TH acc14/15、FR acc16/17，partner_id 同机构），密码由用户输入。`5c1a076`：DE 改为 `paused` 并分配 ACC12（通讯）/ACC13（供给）；`paused` 允许内容与能力未验收，发送等业务入口仍只认 `ready`。
 - 上线：preflight（在途 0、unknown 0、requestRef 52,578 唯一）→ scheduler 空闲退出 drained 通过 → 10 个 worker 退出 `--workers-stopped` 通过 → 快进合入 → Web 构建逐文件校验 291 个文件后切换（先关闭内置浏览器标签，避免旧进程挂起）→ scheduler `13944` → postflight 全部通过。`onboard-markets.py apply --confirmed` 建 DE plan；DE 账号接口返回 acc12/acc13、无身份代次，巡检无 DE 读取错误。
+- 18:28 acc12 首次重登：登录成功但每次候选验证都被协议层 DE `product_search=pending` 拒绝，异常被吞、可见浏览器等满 10 分钟后 `account_login_timeout`。只读复验（跳过该门）：机构、IM 身份、商品卡、Campaign 读取均通过。`899f72f` 启用 DE `product_search`、`campaign` 改 pending；验证失败改记 `account_validation_failed:<原因>`，能力门错误立即结束。同流程重启（scheduler `20538`，postflight 全部通过）。
 - 下一步：用户在 `/de/ops/accounts` 为 acc12、acc13 发起首次重登（可见浏览器，邮箱验证码由用户输入），验证机构与能力；随后补德语内容、Kalodata 区域与逐能力 canary。TH/FR 尚无协议层市场定义。
 
 ## 2026-10-02 17:50：IT/UK 改为单账号，释放 acc9、acc4
