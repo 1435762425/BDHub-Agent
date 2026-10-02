@@ -19,7 +19,7 @@ from lib.second_cycle import CycleError  # noqa:E402
 class MarketContentTests(unittest.TestCase):
  def test_every_enabled_market_has_its_exact_language_and_distinct_send_copy(self):
   content=load_content(ROOT);expected={
-   'it':('it','it-IT'),'br':('pt','pt-BR'),'my':('ms','ms-MY'),'uk':('en','en-GB')}
+   'it':('it','it-IT'),'br':('pt','pt-BR'),'de':('de','de-DE'),'my':('ms','ms-MY'),'uk':('en','en-GB')}
   self.assertEqual(set(content['markets']),set(expected))
   for market,(language,locale) in expected.items():
    row=content['markets'][market]

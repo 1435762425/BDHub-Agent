@@ -6,6 +6,7 @@ from urllib.parse import urlsplit
 ROOT=Path(__file__).resolve().parents[1];sys.dont_write_bytecode=True;sys.path.insert(0,str(ROOT/'scripts'))
 from lib.im_session_owner import OwnerState,serve,publish,enabled,maintenance_pending
 from lib.market_im_runtime import authenticated
+from lib.market_registry import operational_market_keys
 from lib.sdk_inbox import Receiver,arm_script,ready_script,DRAIN,ACK
 from lib.legacy_runtime import project_identity_paths,project_account_enabled
 STOP=False
@@ -110,7 +111,7 @@ def cycle(market):
                 context.close()
 
 def main():
-    p=argparse.ArgumentParser();p.add_argument('--market',required=True,choices=('it','br','my','uk'));a=p.parse_args();signal.signal(signal.SIGTERM,stop);signal.signal(signal.SIGINT,stop)
+    p=argparse.ArgumentParser();p.add_argument('--market',required=True,choices=operational_market_keys(ROOT));a=p.parse_args();signal.signal(signal.SIGTERM,stop);signal.signal(signal.SIGINT,stop)
     with (ROOT/f'var/im-session-{a.market}.lock').open('a') as lock:
         try:fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
         except BlockingIOError:return 0

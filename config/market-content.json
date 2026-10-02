@@ -227,6 +227,119 @@
         "link_usage": "Abra o cartão do produto que enviamos, adicione-o à sua vitrine e use esse link no próximo vídeo ou LIVE. A comissão melhorada será aplicada às vendas geradas por esse link. Estamos ansiosos para ver seu próximo conteúdo! 😊"
       }
     },
+    "de": {
+      "language": "de",
+      "languageLabel": "德语",
+      "locale": "de-DE",
+      "tapLink": {
+        "version": "link-naming-de-v1",
+        "template": "🔥 BJN {short_name} {creator_percent}% {tail}",
+        "namePrompt": "将商品标题缩成真实商品类型，不添加营销、疗效、品质或销量主张。输出 JSON items 数组，逐项保留 ref；shortName 使用 2 至 5 个德语词，mention 是不带冠词的德语商品名词短语，可直接放在“das Produkt”之后，shortNameZh 是中文短名。"
+      },
+      "sendTemplates": {
+        "standard": {
+          "label": "利益直击型",
+          "description": "提佣前置，直接邀请趁热再出视频或直播。",
+          "text": "Hi{recipient}! Deine bisherigen Ergebnisse mit dem Produkt {mention} waren richtig stark! Diesmal haben wir deine exklusive Provision auf {rate}% erhöht. Hast du Lust, den Schwung mitzunehmen – mit einem neuen Video oder im LIVE?",
+          "translationZh": "你好！你之前带{shortZh}的数据很亮眼！这次我们直接把你的专属佣金拉到了 {rate}%，要不要趁热再上一条新视频或在直播里挂一下？"
+        },
+        "brief": {
+          "label": "利润最大化",
+          "description": "强调单条内容的收益效率。",
+          "text": "Hi{recipient}! Nach unserer Auswertung hattest du beim Produkt {mention} die beste Rendite. Damit du pro Beitrag noch mehr verdienst, haben wir die Provision auf {rate}% erhöht. Planst du diese Woche noch ein Video dazu?",
+          "translationZh": "你好！算下来你带{shortZh}的投产比是最高的。为了让你单条产出更多，后台已把佣金提高到 {rate}%，这周要不要再排一条新视频？"
+        },
+        "reconnect": {
+          "label": "爆款确定性",
+          "description": "强调同品历史出单，降低再次尝试的不确定性。",
+          "text": "Hi{recipient}! Ein neues virales Produkt zu testen ist immer ein Risiko – aber das Produkt {mention} hat bei dir schon bewiesen, dass es Bestellungen bringt. Deine exklusive Provision liegt jetzt bei {rate}%. Solange der Algorithmus noch Schwung hat, lass uns noch eine Verkaufswelle mitnehmen!",
+          "translationZh": "你好！测试新爆款有风险，但{shortZh}在你这里是确定能出单的。现在专属佣金涨到了 {rate}%，趁着算法有权重，再冲一波转化！"
+        },
+        "video_focus": {
+          "label": "限时专属福利",
+          "description": "以老合作达人的高佣名额推动再次发布。",
+          "text": "Hi{recipient}, schön, wieder von dir zu hören! Für Creator, mit denen wir schon zusammengearbeitet haben, haben wir beim Produkt {mention} eine erhöhte Provision von {rate}% reserviert. Solange sie gilt, kannst du jederzeit ein neues Video posten oder es im LIVE zeigen!",
+          "translationZh": "你好！针对老合作达人，我们特批了 {rate}% 的高佣名额给你的{shortZh}。趁高佣期还在，随时可以再发一条或开播带一带！"
+        },
+        "live_focus": {
+          "label": "零试错成本",
+          "description": "强调商品已经熟悉，无需重新磨合。",
+          "text": "Hi{recipient}, klopf klopf! Das Produkt {mention} kennst du schon richtig gut – du musst dich also nicht erst in ein neues Produkt einarbeiten. Wir haben deine Provision gerade auf {rate}% erhöht. Hast du Lust auf einen weiteren unkomplizierten Beitrag, mit dem du noch einmal verdienst?",
+          "translationZh": "你好！{shortZh}你已经很熟悉了，省去了选品磨合的时间。我们刚给你提佣到了 {rate}%，零门槛再赚一波，顺手再加更一条？"
+        },
+        "flexible_format": {
+          "label": "微调即发",
+          "description": "只需更换开头或使用镜头即可再次发布。",
+          "text": "Hi{recipient}! Du musst nicht alles neu drehen. Beim Produkt {mention} reicht es, den Einstieg zu ändern oder eine andere Alltagsszene zu zeigen. Die Provision liegt jetzt bei {rate}% – ein schnelles weiteres Video lohnt sich also richtig.",
+          "translationZh": "你好！不用大费周章重拍，把{shortZh}换个开头 hook 或者换个日常使用镜头就行～佣金已提到 {rate}%，随手发一条性价比极高。"
+        },
+        "fresh_angle": {
+          "label": "短平快轻体量",
+          "description": "鼓励几十秒的轻量日常内容。",
+          "text": "Hi{recipient}! Diesmal braucht es keine große Produktion. Ein kurzes Q&A oder ein paar Sekunden Anwendung reichen völlig. Die Provision für das Produkt {mention} ist auf {rate}% gestiegen – perfekt für einen lockeren Alltagspost.",
+          "translationZh": "你好！这次完全不需要大制作，拍个几十秒的快问快答或使用抓拍就行！{shortZh}佣金已上浮至 {rate}%，特别适合当日常填充内容。"
+        },
+        "audience_fit": {
+          "label": "爆款模板复刻",
+          "description": "沿用达人之前成功的内容框架。",
+          "text": "Hi{recipient}! Der Ansatz, den du beim Produkt {mention} gewählt hast, war genial. Wir haben die Provision auf {rate}% erhöht. Du kannst dein erfolgreiches Format einfach wiederverwenden und mit einem weiteren Video den nächsten Hit versuchen.",
+          "translationZh": "你好！你之前{shortZh}的切入角度非常棒！后台已将佣金调升至 {rate}%，直接沿用你之前的成功框架再发一条，轻松再爆一次。"
+        },
+        "commission_reminder": {
+          "label": "纯达人风格发挥",
+          "description": "不设框架，让达人按个人风格创作。",
+          "text": "Hi{recipient}! Aus unserer letzten Zusammenarbeit wissen wir: Dein Stil passt perfekt zum Produkt {mention}. Die Provision liegt jetzt bei {rate}%. Arbeite ganz in deinem Tempo und mit deinen eigenen Ideen – ohne feste Vorgaben. Wir sind gespannt auf deinen nächsten Beitrag!",
+          "translationZh": "你好！之前合作就觉得你的个人风格太对味了。{shortZh}佣金已上调至 {rate}%，完全按你自己的节奏和梗来，不设框架，期待你的新脑洞！"
+        },
+        "soft_followup": {
+          "label": "人群高度匹配",
+          "description": "从历史数据强调粉丝接受度。",
+          "text": "Hi{recipient}! Unsere Daten zeigen, dass deine Community außergewöhnlich stark auf das Produkt {mention} reagiert hat. Wir haben die Provision auf {rate}% erhöht. Das Vertrauen ist schon da – jetzt ist ein guter Moment für die nächste Verkaufswelle!",
+          "translationZh": "你好！回顾了下数据，你的粉丝对{shortZh}接受度真的极高。我们把佣金加到了 {rate}%，粉丝信任基础在，再推一波转化正合适！"
+        },
+        "showcase_focus": {
+          "label": "评论区呼声与回购",
+          "description": "用答疑内容承接之前沉淀的关注。",
+          "text": "Hi{recipient}! Unter deinem letzten Video haben ziemlich viele nach dem Produkt {mention} gefragt. Deine Provision wurde jetzt auf {rate}% erhöht. Wenn du auf diese Kommentare antwortest oder ein kurzes Q&A-Video machst, kann das richtig gut konvertieren.",
+          "translationZh": "你好！发现你之前视频底下不少人在问{shortZh}！后台佣金已经替你拉升至 {rate}%，回评或者出个答疑视频带一带，转化率会很惊人。"
+        },
+        "next_content": {
+          "label": "换个使用痛点",
+          "description": "用新的日常吐槽或反差视角二刷。",
+          "text": "Hi{recipient}! Die Vorteile, die du beim Produkt {mention} gezeigt hast, sind bei deiner Community super angekommen. Die Provision liegt jetzt bei {rate}%. Probier doch mal ein anderes Alltagsproblem oder einen Vorher-nachher-Blickwinkel, um neue Käufer zu erreichen.",
+          "translationZh": "你好！之前推{shortZh}的卖点粉丝很买账。这次佣金已经提到 {rate}%，换一个日常吐槽或反差视角再测一次，很容易抓到另一批买家。"
+        },
+        "use_case_focus": {
+          "label": "专属定向链已下发",
+          "description": "强调新高佣商品卡已经可直接使用。",
+          "text": "Hi{recipient}, klopf klopf! Wir haben deinen exklusiven Link mit {rate}% Provision für das Produkt {mention} schon eingerichtet. Nutz einfach die neue Produktkarte, dann gilt die Provision. Hast du diese Woche Zeit für einen neuen Beitrag?",
+          "translationZh": "你好！后台已经为你配置好了 {rate}% 的专属高佣定向链，推广{shortZh}直接挂新车即可生效，这周有空排上一条新内容吗？"
+        },
+        "creator_angle": {
+          "label": "团队内部点名安利",
+          "description": "以团队复盘认可表达再次合作诚意。",
+          "text": "Hi{recipient}! Bei unserer internen Auswertung starker Creator-Beispiele haben alle dich empfohlen. Deine Präsentation des Produkts {mention} wirkte besonders authentisch. Wir haben deine Provision extra auf {rate}% erhöht und würden uns sehr über einen weiteren gemeinsamen Beitrag freuen!",
+          "translationZh": "你好！我们内部复盘优质案例时大家一致推荐你！你带{shortZh}的表现特别真实。特意为你把佣金提到 {rate}%，真心希望能再次合作一条！"
+        },
+        "open_invitation": {
+          "label": "老朋友特批邀约",
+          "description": "以老合作关系表达专属重视。",
+          "text": "Hi{recipient}! Als wir unsere bisherigen Creator-Partnerschaften durchgegangen sind, bist du uns als Erstes eingefallen. Wir haben extra eine Provision von {rate}% für dich beantragt. Hast du bald Zeit für ein weiteres Video oder einen eigenen Beitrag zum Produkt {mention}?",
+          "translationZh": "你好！盘点老合作达人时第一个就想到了你～特意为你申请了 {rate}% 的特批佣金，近期有档期再为{shortZh}合作一条视频或专场吗？"
+        },
+        "casual_update": {
+          "label": "私信随性体",
+          "description": "用自然私信语气同步提佣并邀请继续合作。",
+          "text": "Hi{recipient}! Dein Content-Rhythmus ist in letzter Zeit richtig stark. Kurz eine gute Nachricht: Deine Provision für das Produkt {mention} ist auf {rate}% gestiegen. Wann immer dich die Inspiration packt, kannst du das Produkt hinzufügen und einen weiteren Beitrag machen. Wir freuen uns auf die nächste Zusammenarbeit!",
+          "translationZh": "你好！最近内容产出节奏太棒了！顺便同步个好消息：你的{shortZh}佣金已上浮到 {rate}%，有灵感的话随时挂车搞一条，期待继续合作！"
+        }
+      },
+      "agentTemplates": {
+        "sample_self_service": "Wenn du das Produkt noch hast, kannst du es gern in deinen nächsten Videos oder LIVEs weiter nutzen 😊 Falls du ein neues Sample oder ein Ersatz-Sample brauchst, schau auf der Produktseite im TikTok Shop nach, ob die Anfrage-Schaltfläche verfügbar ist. Wird sie nicht angezeigt, wende dich bitte direkt an den Verkäufer. Ob ein Sample verfügbar ist, genehmigt und verschickt wird, entscheidet der Verkäufer. Wir teilen weiterhin andere Möglichkeiten und Produkte, die zu deinem Content passen. Danke für dein Verständnis!",
+        "collaboration_ack": "Super, danke, dass du dabei bist! 😊 Wir freuen uns auf dein nächstes Video oder LIVE. Wir teilen weiterhin neue Möglichkeiten und Produkte, die zu deinem Content passen.",
+        "link_usage": "Öffne die Produktkarte, die wir dir geschickt haben, füge sie deinem Schaufenster hinzu und nutze diesen Link in deinem nächsten Video oder LIVE. Die erhöhte Provision gilt für Verkäufe über diesen Link. Wir freuen uns auf deinen nächsten Beitrag! 😊"
+      }
+    },
     "my": {
       "language": "ms",
       "languageLabel": "马来语",

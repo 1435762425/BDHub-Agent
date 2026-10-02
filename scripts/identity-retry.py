@@ -52,7 +52,8 @@ def backfill(root):
      if changed:
       stats['reasonCorrections']+=changed
       db.execute("UPDATE identity_account_wait SET reason=? WHERE market=? AND last_event=? AND reason='verification_required'",(reason,market,event))
- for market in ('it','br','my','uk'):stats['projected']+=project_isolated(root,market)
+ from lib.market_registry import operational_market_keys
+ for market in operational_market_keys(root):stats['projected']+=project_isolated(root,market)
  return {'schema':'bdhub.identity-retry-backfill.v1','counts':dict(stats),'platformWrites':0,'realSends':0}
 
 def main():

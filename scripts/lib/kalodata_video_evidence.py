@@ -171,7 +171,8 @@ def collect(pid, window_start, window_end, requester, *, min_views=1000, clock=t
 
 def persist(store, report, *, in_transaction=False):
     market=report.get('market','it')
-    if market not in ('it','br','my','uk'):raise CycleError('video_market_invalid')
+    from lib.market_registry import known_market
+    if not known_market(None,market):raise CycleError('video_market_invalid')
     if report.get('schema') != 'bdhub.kalodata-video-evidence.v1':
         raise CycleError('kalodata_video_report_invalid')
     required = {'kalodata_video_run','kalodata_video_evidence','kalodata_video_head'}

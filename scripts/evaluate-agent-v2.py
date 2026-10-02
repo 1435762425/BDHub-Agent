@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 import json
 from pathlib import Path
 
-from lib.agent_evaluation import evaluate_case, load_cases, prompt_spec, summarize, write_report
+from lib.agent_evaluation import MARKETS, evaluate_case, load_cases, prompt_spec, summarize, write_report
 from lib.draft_provider import call_model
 
 
@@ -14,7 +14,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--cases', type=Path, default=root/'config/evals/agent-v2-multiturn.json')
     parser.add_argument('--guide-db', type=Path, help='Read active guide via SQLite mode=ro; default repository guide')
-    parser.add_argument('--market', choices=('it','br','my','uk'))
+    parser.add_argument('--market', choices=MARKETS)
     parser.add_argument('--call-model', action='store_true', help='One DeepSeek call per synthetic case; no automatic retries')
     parser.add_argument('--output', type=Path, help='New directory strictly under project outputs/')
     args = parser.parse_args()

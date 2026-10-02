@@ -16,6 +16,7 @@ sys.dont_write_bytecode = True
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'scripts'))
 from lib.inbox_history import HistoryBackfill
+from lib.market_registry import operational_market_keys
 from lib.second_cycle import CycleError, CycleStore
 
 STOP = False
@@ -56,7 +57,7 @@ def read_session(market, report, stopped):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--market', required=True, choices=('it', 'br', 'my', 'uk'))
+    parser.add_argument('--market', required=True, choices=operational_market_keys(ROOT))
     parser.add_argument('--cid', required=True)
     parser.add_argument('--oec', required=True)
     parser.add_argument('--read', action='store_true', help='Perform bounded platform reads and persist historical messages; default is local status only.')

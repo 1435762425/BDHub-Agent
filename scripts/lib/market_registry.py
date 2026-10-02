@@ -81,6 +81,12 @@ def operational_market_keys(root=None):
                  if row["enabled"] and row["runtimeState"]!="planned")
 
 
+def known_market(root, key):
+    """Whether ``key`` is an operational market, read from ``root``'s registry or the project's own."""
+    has_registry = root is not None and (Path(root) / "config/markets.json").exists()
+    return key in operational_market_keys(root if has_registry else None)
+
+
 def market(root, key):
     row = load_registry(root)["markets"].get(key)
     if not row or row["enabled"] is not True:

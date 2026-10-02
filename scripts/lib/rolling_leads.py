@@ -10,6 +10,7 @@ from datetime import datetime,timedelta
 from pathlib import Path
 import sqlite3
 
+from lib.market_registry import known_market
 from lib.second_cycle import CycleStore,CycleError,digest,encoded
 from lib.video_window import BEIJING
 
@@ -95,7 +96,7 @@ def _legacy_a(root,market,pid,at):
 
 
 def sync(root,market,*,at=None,scope=None):
-    if market not in ('it','br','my','uk'):raise CycleError('lead_queue_scope_invalid')
+    if not known_market(root,market):raise CycleError('lead_queue_scope_invalid')
     at=time.time() if at is None else at
     scope=material_scope(root,market,at) if scope is None else scope
     with CycleStore(Path(root)/'var/second-cycle.sqlite') as store:
@@ -262,7 +263,7 @@ def failed(root,task,code,*,at):
 
 def status(root,market,*,at=None):
     from lib.lead_contribution import later_outcomes
-    if market not in ('it','br','my','uk'):raise CycleError('lead_queue_scope_invalid')
+    if not known_market(root,market):raise CycleError('lead_queue_scope_invalid')
     at=time.time() if at is None else at
     with CycleStore(Path(root)/'var/second-cycle.sqlite',readonly=True) as store:
         if not store.db.execute("SELECT 1 FROM sqlite_master WHERE name='lead_query_task'").fetchone():return {'available':False,'market':market}
@@ -391,7 +392,7 @@ def automatic_enabled(root,market):
 def run(root,market,*,fragments=STAGE_FRAGMENTS,kind=None,provider_factory=None,scope=None,
         clock=time.time,stopped=lambda:False,scheduled=False):
     root=Path(root)
-    if market not in ('it','br','my','uk') or kind not in (None,'A','B'):raise CycleError('lead_queue_scope_invalid')
+    if not known_market(root,market) or kind not in (None,'A','B'):raise CycleError('lead_queue_scope_invalid')
     if type(fragments) is not int or not 1<=fragments<=100:raise CycleError('lead_queue_fragment_limit_invalid')
     report={'market':market,'completed':0,'A':0,'B':0,'fragments':0,'networkRequests':0,'errors':[],
             'platformWrites':0,'realSends':0,'sliceComplete':True}

@@ -16,6 +16,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from lib.operations_workflow import create_run,finish_stage,retry_failed_stage,status as workflow_status
+from lib.market_registry import operational_market_keys
 from lib.process_liveness import record_alive
 from lib.second_cycle import CycleError, CycleStore, digest, encoded
 from lib.workflow_dispatch import claim_ready
@@ -476,13 +477,13 @@ class SubprocessStageExecutor:
                     'errorCode':f'{label}_report_invalid','writeEvidence':'uncertain',
                     'payload':{'report':str(report.relative_to(self.root)) if report.exists() else None}}
         if args[0]=='scripts/rolling-leads.py' and not child.returncode and payload.get('sliceComplete') is True:
-            valid=payload.get('market') in ('it','br','my','uk') and payload.get('platformWrites')==0 and payload.get('realSends')==0
+            valid=payload.get('market') in operational_market_keys(self.root) and payload.get('platformWrites')==0 and payload.get('realSends')==0
             if valid:
                 paused=payload.get('stopped')=='automation_paused'
                 return {'state':'stopped' if paused else 'completed','itemCount':payload.get('completed',0),
                         'complete':not paused,'platformWrites':0,'payload':payload,'scope':{}}
         if args[0]=='scripts/market-identity.py' and not child.returncode and payload.get('sliceComplete') is True:
-            if '--market' in args and payload.get('market')==args[args.index('--market')+1] and payload.get('market') in ('it','br','my','uk') and payload.get('platformWrites')==0 and payload.get('realSends')==0:
+            if '--market' in args and payload.get('market')==args[args.index('--market')+1] and payload.get('market') in operational_market_keys(self.root) and payload.get('platformWrites')==0 and payload.get('realSends')==0:
                 return {'state':'completed','complete':True,'itemCount':payload.get('newBindings',0),
                         'platformWrites':0,'payload':payload,'scope':{'coverage':'bounded_identity_slice'}}
         reported_state=str(evidence.get('state') or evidence.get('status') or payload.get('state') or payload.get('status') or '')

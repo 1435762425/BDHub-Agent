@@ -13,6 +13,7 @@ from lib.cycle_send_runtime import descriptor
 from lib.lead_pool import pool
 from lib.market_accounts import load_config
 from lib.market_im_runtime import authenticated,write_gate
+from lib.market_registry import market as market_record
 from lib.second_cycle import CycleError,CycleStore,assess_offer,digest
 from lib.template_library import next_approved_send_template,render_send_template,require_send_template_approval
 
@@ -175,7 +176,7 @@ def _candidate(root,market,store,plan,initial,require_new_conversation=True):
    for offer in current:
     binding=links.execute("SELECT * FROM catalog_current_binding WHERE market=? AND catalog_source=? AND pid=? AND campaign_id=? AND state='active'",(market,offer['catalogSource'],offer['pid'],offer['campaignId'])).fetchone()
     if not binding:continue
-    card=json.loads(binding['card_payload']);locale={'br':'pt-BR','my':'ms-MY','uk':'en-GB'}[market]
+    card=json.loads(binding['card_payload']);locale=market_record(root,market)['locale']
     name_row=store.db.execute("SELECT payload FROM cycle_product_name WHERE pid=? AND locale=? ORDER BY rowid DESC LIMIT 1",(offer['pid'],locale)).fetchone()
     if not name_row:continue
     name=json.loads(name_row[0]);template=next_approved_send_template(store,root,plan,slot['creatorId'],market)

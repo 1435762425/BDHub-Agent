@@ -8,6 +8,7 @@ import time
 
 from lib.kalodata_video_evidence import (VIDEO_DETAIL_PATH,VIDEO_LIST_PATH,parse_video_detail,
                                          parse_video_list,persist,release_date)
+from lib.market_registry import known_market
 from lib.second_cycle import CycleError,CycleStore,digest,encoded
 
 
@@ -27,7 +28,7 @@ def initialize(root,scope,window_start,window_end,*,min_views=1000,clock=time.ti
     try:
         if (date.fromisoformat(window_end)-date.fromisoformat(window_start)).days not in range(1,90):raise ValueError
     except (TypeError,ValueError):raise CycleError('kalodata_video_window_invalid') from None
-    if market not in ('it','br','my','uk'):raise CycleError('video_market_invalid')
+    if not known_market(root,market):raise CycleError('video_market_invalid')
     fingerprint=digest(normalized);generation='video-generation-'+digest(([market] if market!='it' else [])+[window_start,window_end,min_views,fingerprint])[:24]
     stamp=clock()
     with CycleStore(Path(root)/'var/second-cycle.sqlite') as store,store.tx():
