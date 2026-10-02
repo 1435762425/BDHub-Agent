@@ -5,6 +5,14 @@
 
 
 
+## 2026-10-02 23:00：德国首发完成，Campaign 货盘铺开，全托读取进行中
+
+- 线索/身份：用户要求跳过 DE 的 Kalodata 1 小时等待（只改 DE 行，等同成功后的代码更新）。用户确认后给 91 个候选 PID 建 TapLink（写 90）；A 类查询 91 PID、150 次请求；身份队列跑出 182 位可发送达人（另有 438 个 handle 待日常处理）。ACC13 `oecid_find` 经只读 find 探测（`var/releases/de-identity-canary-20261002/`）记为 verified。
+- 首发：`c651415` DE 转 `ready`（开关全关），非 IT canary/发送控制按注册表，未验证 `message_send` 的市场只发一条页面首发并自动 stop；`08a8525` 卡片发送者改为市场配置的通讯账号（原写死 IT/BR/MY/UK，DE 首次启动在写入前被拒为 `it_delivery_auth_invalid`）。ACC12 `inbox_read` 经 `probe-market-im.py` 只读初始化记为 verified（`var/de-im-read-canary-20261002.json`）。用户页面启动后 21:59 发给 @mopamintestet（JONR 吸尘器，卡＋文均 confirmed，unknown 0），worker 随即 `canary_confirmed` 停止，`message_send` verified。DE 发送已停、AI 回复未开，DE IM 会话因此不运行（收不到回复，待用户决定）。
+- Campaign：`efefff0` 协议层 DE `campaign`/`campaign_join` 改 enabled（批量加入原被能力门拦在写入前）。用户选「按规则全部加入」：184 次加入全部受理（共 185），重采 10,920 offer、筛出 724 PID；命名 719（5 个模型调用 unknown 被锁，系统不自动重试，未处理）；建链写 636，718 ready、1 读取不完整待重试。
+- 全托：首轮类目读取在第 1 类第 140 页遇平台瞬时 16201010（随后只读探测 ACC13 正常），旧批次 `de-global-20261002-18b1668905dd` 停在 blocked（续跑需 relogin 代次）；新批次 `de-global-20261002-98fa0963079d` 22:59 起后台读取。读完后：筛选 → 选入 1 个 canary → 用户确认数量后批量选入与建链。
+- 期间 BR 22:10 一条正文回执无法解析记 unknown，22:15 按原 requestRef 回查 confirmed（与本轮改动无关）。
+
 ## 2026-10-02 21:20：德国写入 canary、协议子进程与模板审批修复
 
 - 德国：ACC13 只读实测全托可用（`var/de-full-managed-probe-20261002.json`，`b11ff10` 标记 `fullManagedCatalog=true`）；用户确认后 Campaign 加入 canary（Deedlite 居家挂钩 `7646320501174585110`→平台活动 `7692026737261774614`，写 1、读回 joined）与 TapLink canary（PID `1729797683098721260`，list `8650985608433802006`「🔥 BJN Edelstahl Saugnapfhaken Set 11% 5e6cd5」，写 1、读回一致），两项经 `promote-canary` 记为 verified。Campaign 采集 1,127 offer，筛出 91 PID 均已生成德语短名。
