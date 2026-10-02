@@ -100,6 +100,22 @@ class Preview(unittest.TestCase):
             self.assertEqual(str(caught.exception), 'campaign_list_incomplete')
 
 
+    def test_the_current_total_num_count_is_read_like_the_old_total(self):
+        from lib.campaign_join import _all_pages
+
+        class Current:
+            def _params(self):
+                return {}
+
+            def require_read(self, outcome):
+                return outcome.payload
+
+            def _xhr(self, **kwargs):
+                page = int((kwargs.get('params') or {}).get('cur_page') or 1)
+                rows = [{'campaign_id': str(page)}] if page <= 2 else []
+                return type('Outcome', (), {'payload': {'data': {'campaign': rows, 'total_num': 2}}})()
+        self.assertEqual([row['campaign_id'] for row in _all_pages(Current(), {})], ['1', '2'])
+
 class Apply(unittest.TestCase):
     def _previewed(self, folder, fake, ids=(A,)):
         preview(folder, transport=context(fake), clock=lambda: NOW, job_id='job-1')

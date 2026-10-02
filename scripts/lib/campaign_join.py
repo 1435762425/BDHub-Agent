@@ -299,7 +299,8 @@ def _page(transport, params, page):
     rows = data.get('campaign') or []
     if not isinstance(rows, list):
         raise ValueError('campaign_list_malformed')
-    total = data.get('total')
+    # The platform now reports the count as ``total_num``; older responses used ``total``.
+    total = data.get('total') if data.get('total') is not None else data.get('total_num')
     if isinstance(total, str) and total.isascii() and total.isdigit():
         total = int(total)
     return rows, (total if isinstance(total, int) and total >= 0 else None)
