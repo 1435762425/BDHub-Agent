@@ -7,6 +7,7 @@ from datetime import datetime
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1];sys.dont_write_bytecode=True;sys.path.insert(0,str(ROOT/'scripts'))
 from lib.identity_retry import classify,record,snapshot,project_isolated
+from lib.market_registry import market_path_keys
 from lib.second_cycle import digest
 
 def backfill(root):
@@ -21,7 +22,7 @@ def backfill(root):
      events.append((p,'it','acc6',{id:handle},None))
  for path in (root/'var').glob('market-identity-*/output/report.private.json'):
   folder=path.parent.parent;parts=folder.name.split('-');market=parts[2];token='-'.join(parts[3:])
-  if market not in ('br','my','uk'):continue
+  if market not in market_path_keys(root):continue
   try:
    targets=json.loads((folder/'targets.private.json').read_text())['targets']
    lookup={t['ref']:t['handle'] for t in targets}

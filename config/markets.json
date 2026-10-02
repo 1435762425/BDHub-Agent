@@ -59,7 +59,7 @@
       },
       "capabilities": {
         "campaignCatalog": true,
-        "fullManagedCatalog": null
+        "fullManagedCatalog": true
       }
     },
     "it": {

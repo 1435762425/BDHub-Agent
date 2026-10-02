@@ -967,10 +967,10 @@ def main():
     p.add_argument('--qps',type=int,default=3,choices=[3,5,8,12],help='aggregate request rate shared by all lanes')
     a=p.parse_args()
     from lib.market_accounts import load_config
-    from lib.market_registry import enabled_market_keys,supports
+    from lib.market_registry import enabled_market_keys,market_path_keys,supports
     if a.market not in enabled_market_keys(ROOT):p.error('market not enabled')
     if a.route=='selected' and not supports(ROOT,a.market,'fullManagedCatalog'):p.error('market has no full-managed catalog')
-    if a.canary and (a.market not in {'br','my','uk'} or a.action!='create' or a.max_creates!=1):p.error('canary requires BR/MY/UK create --max-creates 1')
+    if a.canary and (a.market not in market_path_keys(ROOT) or a.action!='create' or a.max_creates!=1):p.error('canary requires a non-IT market create --max-creates 1')
     SCOPE.update(market=a.market,account=load_config(ROOT)['markets'][a.market]['roles']['supply'],route=a.route)
     if a.route=='campaign':
         # 非全托的源跑号用**池子的 run**：快照或规则一变就换新 run，旧 run 的结论不会被沿用。

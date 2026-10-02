@@ -31,8 +31,9 @@ class MarketRegistryTests(unittest.TestCase):
   from lib.market_registry import validate_registry
   base=json.loads((ROOT/'config/markets.json').read_text())
   validate_registry(base)
-  ready=copy.deepcopy(base);ready['markets']['de']['runtimeState']='ready'
-  with self.assertRaises(ValueError):validate_registry(ready)
+  for field,value in (('contentReady',False),('capabilities',{'campaignCatalog':True,'fullManagedCatalog':None})):
+   ready=copy.deepcopy(base);ready['markets']['de'].update({'runtimeState':'ready',field:value})
+   with self.assertRaises(ValueError):validate_registry(ready)
   empty=copy.deepcopy(base);empty['markets']['de']['accounts']={'communications':None,'supply':None}
   with self.assertRaises(ValueError):validate_registry(empty)
 

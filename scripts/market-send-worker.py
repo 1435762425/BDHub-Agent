@@ -3,6 +3,7 @@
 import argparse,fcntl,json,os,signal,sys,time
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1];sys.dont_write_bytecode=True;sys.path.insert(0,str(ROOT/'scripts'))
+from lib.market_registry import market_path_keys
 from lib.market_send_canary import run
 from lib.operations_workflow import setting
 from lib.second_cycle import CycleStore
@@ -39,7 +40,7 @@ def next_delay(*,sent,waiting,interval,inbox_waiting_now=False):
   300 if waiting in ('waiting_capacity','waiting_reconciliation') else interval
 
 def main():
- p=argparse.ArgumentParser(description=__doc__);p.add_argument('--market',required=True,choices=('br','my','uk'));p.add_argument('--once',action='store_true');p.add_argument('--interval',type=int,default=30);a=p.parse_args()
+ p=argparse.ArgumentParser(description=__doc__);p.add_argument('--market',required=True,choices=market_path_keys(ROOT));p.add_argument('--once',action='store_true');p.add_argument('--interval',type=int,default=30);a=p.parse_args()
  if not 5<=a.interval<=300:p.error('interval 5..300')
  signal.signal(signal.SIGTERM,stop);signal.signal(signal.SIGINT,stop)
  lock=(ROOT/f'var/market-send-worker-{a.market}.lock').open('a')

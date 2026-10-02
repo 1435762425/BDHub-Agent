@@ -155,9 +155,12 @@ class Scopes(unittest.TestCase):
         source = (ROOT / 'scripts/lib/global_source_transport.py').read_text(encoding='utf-8')
         prepare = (ROOT / 'scripts/catalog-link-prepare.py').read_text(encoding='utf-8')
         batch = (ROOT / 'scripts/catalog-link-batch.py').read_text(encoding='utf-8')
-        self.assertIn("market not in {'br','my','uk'} or size!=1", source)
-        self.assertIn("a.market not in {'br','my','uk'} or a.action!='create' or a.max_creates!=1", prepare)
-        self.assertIn("a.market not in {'br','my','uk'} or a.creates!=1", batch)
+        self.assertIn("market not in market_path_keys(ROOT) or size!=1", source)
+        self.assertIn("a.market not in market_path_keys(ROOT) or a.action!='create' or a.max_creates!=1", prepare)
+        self.assertIn("a.market not in market_path_keys(ROOT) or a.creates!=1", batch)
+        from lib.market_registry import market_path_keys
+        self.assertNotIn('it', market_path_keys(ROOT))
+        self.assertTrue({'br', 'my', 'uk', 'de'} <= set(market_path_keys(ROOT)))
 
 
 if __name__ == '__main__':

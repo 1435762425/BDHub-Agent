@@ -60,7 +60,8 @@ def main():
     if progress is not None and not progress.is_relative_to(ROOT/'var'):p.error('progress must live under var')
     route=['--route',a.route,'--market',a.market]
     if a.canary:
-        if a.market not in {'br','my','uk'} or a.creates!=1:p.error('canary requires BR/MY/UK and --creates 1')
+        from lib.market_registry import market_path_keys
+        if a.market not in market_path_keys(ROOT) or a.creates!=1:p.error('canary requires a non-IT market and --creates 1')
     steps=[];created=0;startedAt=time.time()
     def note(phase,pass_no=None):
         if progress is None:return

@@ -197,7 +197,8 @@ def _opportunity_transport(report,*,market='it',stopped=lambda:False,extra_read_
         size=1 if 'items' in creation_scope else len(creation_scope)
         if creation_canary:
             from bdhub.hub.markets import capability_status
-            if market not in {'br','my','uk'} or size!=1 or capability_status(market,'tap_link') not in {'pending','canary','enabled'}:
+            from lib.market_registry import market_path_keys
+            if market not in market_path_keys(ROOT) or size!=1 or capability_status(market,'tap_link') not in {'pending','canary','enabled'}:
                 raise ValueError('card_canary_capability_unavailable')
         else:
             from lib.account_identity import current_generation
@@ -212,7 +213,8 @@ def _opportunity_transport(report,*,market='it',stopped=lambda:False,extra_read_
         if selection_scope is not None or creation_scope is not None or deletion_scope is not None or account_name!=supply:
             raise ValueError('campaign_join_account_invalid')
         if campaign_canary:
-            if market not in {'br','my','uk'} or len(campaign_scope)!=1 or capability_status(market,'campaign_join') not in {'pending','canary','enabled'}:
+            from lib.market_registry import market_path_keys
+            if market not in market_path_keys(ROOT) or len(campaign_scope)!=1 or capability_status(market,'campaign_join') not in {'pending','canary','enabled'}:
                 raise ValueError('campaign_join_canary_unavailable')
         else:require_capability(market,'campaign_join')
     cfg,account=account_for(market,account_name,check_maintenance=False)

@@ -81,6 +81,11 @@ def operational_market_keys(root=None):
                  if row["enabled"] and row["runtimeState"]!="planned")
 
 
+def market_path_keys(root=None):
+    """Operational markets on the market-scoped implementation; IT still keeps its own legacy path."""
+    return tuple(key for key in operational_market_keys(root) if key != "it")
+
+
 def known_market(root, key):
     """Whether ``key`` is an operational market, read from ``root``'s registry or the project's own."""
     has_registry = root is not None and (Path(root) / "config/markets.json").exists()
