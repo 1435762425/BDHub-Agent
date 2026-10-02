@@ -110,4 +110,19 @@ class TemplateLibraryTests(unittest.TestCase):
   self.assertEqual(changed['items'][0]['state'],'pending')
   self.assertEqual(changed['approved'],0)
 
+ def test_content_of_a_paused_market_does_not_void_sending_markets_approvals(self):
+  import json,shutil
+  shutil.copytree(ROOT/'config',self.root/'config')
+  status=send_template_reviews(self.store,self.root,'br');row=status['items'][0]
+  review_send_template(self.store,self.root,'review-standard-br','standard','approved',row['revision'])
+  registry=json.loads((self.root/'config/markets.json').read_text())
+  content=json.loads((self.root/'config/market-content.json').read_text())
+  self.assertEqual(registry['markets']['de']['runtimeState'],'paused')
+  content['markets']['de']['sendTemplates']['standard']['text']+=' Bis bald!'
+  (self.root/'config/market-content.json').write_text(json.dumps(content,ensure_ascii=False))
+  self.assertEqual(send_template_reviews(self.store,self.root,'br')['items'][0]['state'],'approved')
+  registry['markets']['de']['runtimeState']='ready';registry['markets']['de']['capabilities']['fullManagedCatalog']=False
+  (self.root/'config/markets.json').write_text(json.dumps(registry,ensure_ascii=False))
+  self.assertEqual(send_template_reviews(self.store,self.root,'br')['items'][0]['state'],'pending')
+
 if __name__=='__main__':unittest.main()

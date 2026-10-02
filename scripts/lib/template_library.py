@@ -64,8 +64,13 @@ def send_templates(store,include_archived=False,market='it'):
 
 def _review_fingerprint(store,root,template_id):
  from lib.market_content import load_content
+ from lib.market_registry import load_registry
  content=load_content(root);bundle={}
+ # Only markets that can send are part of an approval: content added for a paused market must not
+ # void the approvals of markets that are already sending.
+ ready={key for key,row in load_registry(root)['markets'].items() if row['runtimeState']=='ready'}
  for market,row in content['markets'].items():
+  if market not in ready:continue
   template=row['sendTemplates'][template_id]
   bundle[market]={'text':template['text'],'translationZh':template['translationZh'],'state':'active'}
  saved=store.db.execute('''SELECT t.state,r.body_it FROM send_message_template t
