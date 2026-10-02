@@ -5,6 +5,12 @@
 
 
 
+## 2026-10-02 18:10：德国分配 ACC12/ACC13，待首次登录
+
+- 用户经账号页登记 acc12–acc17（DE acc12/13、TH acc14/15、FR acc16/17，partner_id 同机构），密码由用户输入。`5c1a076`：DE 改为 `paused` 并分配 ACC12（通讯）/ACC13（供给）；`paused` 允许内容与能力未验收，发送等业务入口仍只认 `ready`。
+- 上线：preflight（在途 0、unknown 0、requestRef 52,578 唯一）→ scheduler 空闲退出 drained 通过 → 10 个 worker 退出 `--workers-stopped` 通过 → 快进合入 → Web 构建逐文件校验 291 个文件后切换（先关闭内置浏览器标签，避免旧进程挂起）→ scheduler `13944` → postflight 全部通过。`onboard-markets.py apply --confirmed` 建 DE plan；DE 账号接口返回 acc12/acc13、无身份代次，巡检无 DE 读取错误。
+- 下一步：用户在 `/de/ops/accounts` 为 acc12、acc13 发起首次重登（可见浏览器，邮箱验证码由用户输入），验证机构与能力；随后补德语内容、Kalodata 区域与逐能力 canary。TH/FR 尚无协议层市场定义。
+
 ## 2026-10-02 17:50：IT/UK 改为单账号，释放 acc9、acc4
 
 - 用户要求 IT、UK 只做收信与 AI 回复、各占一个账号。`34ab5b6`：市场可只列一个账号、两个角色指向同一账号（IT acc6、UK acc11），单账号市场按通讯角色只登记一次维护；OECID 路由按 `identityAccountRole` 取角色。`68e6e61`：账号状态接口接受单账号市场。acc9、acc4 仍在账号登记表中、未分配，不再定期维护，留作新市场备用。
