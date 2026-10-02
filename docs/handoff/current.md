@@ -5,6 +5,12 @@
 
 
 
+## 2026-10-02 19:55：德国登录验证与德语内容上线；BR/MY 发送中断约 5 分钟
+
+- acc12（19:20）、acc13（19:32）首次重登完成并发布 relogin 代次，机构指纹一致；通讯侧机构/IM 身份/商品卡、供给侧货盘读取/Campaign 已 verified，写入能力未测。
+- `8b5ed6c`：DE 德语内容（用户确认审阅稿 `implementation/de-content-review-20261002.md`）与 `contentReady=true`，DE 仍 `paused`；线索队列、Kalodata 视频扫描、IM 会话、收信历史等市场范围改按注册表。19:44 按流程上线。
+- 事故：发送模板审批指纹把所有市场的同 ID 正文一起计算，加入德语正文使 16 条已批模板全部变为 pending，BR/MY 发送 worker 启动即 `send_template_approval_required` 退出（未发送任何消息）。`135f818` 指纹只计 `ready` 市场，德国转 ready 时其正文再进入审批；改后对生产库只读复核四市场 16/10 approved。19:49 重启后 BR/MY 发送恢复 `waiting_pool`，postflight 角色与中断前一致（基线因 worker 已退出而缺两项）。
+
 ## 2026-10-02 18:10：德国分配 ACC12/ACC13，待首次登录
 
 - 用户经账号页登记 acc12–acc17（DE acc12/13、TH acc14/15、FR acc16/17，partner_id 同机构），密码由用户输入。`5c1a076`：DE 改为 `paused` 并分配 ACC12（通讯）/ACC13（供给）；`paused` 允许内容与能力未验收，发送等业务入口仍只认 `ready`。
