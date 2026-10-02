@@ -1,9 +1,16 @@
 # BDHub-Agent 当前交接
 
-文档更新时间：2026-10-01（Asia/Shanghai）。下面各节按时间倒序，每节只代表该时刻的核验；最新一节即当前生产状态的最近记录，不是实时巡检。规则见 [PROJECT](../PROJECT.md)，实现见 [TECHNICAL](../TECHNICAL.md)，后续方向见[项目审计与清理](../implementation/project-audit-20260924.md)。更早流水见[历史交接](../archive/handoff/codex-takeover-history-20260923.md)。
+文档更新时间：2026-10-02（Asia/Shanghai）。下面各节按时间倒序，每节只代表该时刻的核验；最新一节即当前生产状态的最近记录，不是实时巡检。规则见 [PROJECT](../PROJECT.md)，实现见 [TECHNICAL](../TECHNICAL.md)，后续方向见[项目审计与清理](../implementation/project-audit-20260924.md)。更早流水见[历史交接](../archive/handoff/codex-takeover-history-20260923.md)。
 
 
 
+
+## 2026-10-02 14:50：UK/IT 只保留收信与 AI 回复，IT 发送与回复脱离旧库
+
+- 接口巡检（只读，零平台请求）：机构页面改版后，四市场会话 ready、收信连续错误 0（达人回复入库至 13:47），UK/MY 07:00–07:58 类目读取（59,208/16,803）与 TapLink 建链（平台写 4/34）完成，未见响应结构或鉴权异常；OECID 自 09-28 起无待查对象、未实际调用，发送接口当日窗口前未调用。
+- 10-01 15:27 系统更新关机时旧项目 Docker 容器 `bdhub-pg`（PostgreSQL）以退出码 0 停止，开机后 Docker 未拉起（重启策略 `unless-stopped`；推测干净停止被视为手动停止，未证实）。IT 发送与 AI 回复写入前只读检查旧库，读不到即 `legacy_state_unavailable`：10-01 16:30–24:00 IT 发送窗口零发送（上次成功 09-30 21:00），10-02 IT AI 回复 149 轮全部失败；告警未覆盖。用户 14:26 手动启动 Docker 后检查恢复（旧库无 IT 在途）。同一关机使 IT OECID 子进程无输出（`oecid_report_invalid`），身份通道按规则挂起至 acc9 下次重登（10-03 14:40）；现已随 IT 主链停用。
+- 用户要求 UK、IT 只保留收信与 AI 回复：14:39 经首页保存接口关闭两市场自动运营、全托商品发现、持续发送（IT 修订 7→8，UK 5→6），并经发送接口正式停止（`runRequested` 清除、`stopRequested` 置位；IT 控制修订 31、UK 17）。IT 收信原挂在自动运营开关下，为保持收信先打开 `config/jobs.json` 的 `inbox_monitor`（运营设置，未提交）。IT/UK 发送进程随即退出；账号定期重登因 BR/MY 自动运营仍开而照常。恢复需在首页重开开关并在发送页明确启动。
+- `5fa1ca1`：IT 发送与回复不再读取旧项目 PostgreSQL 与旧发送门禁文件（旧系统最后一次 IT 发信 09-08 12:42，旧库 IT 在途全部为空），节奏仍由本项目 `var/im-http-write-gates/` FIFO 控制；之后若从旧系统给 IT 发信，两边互不知情。Python 全量 1,613 项通过（移除 5 项旧库检查用例）。上线：preflight（在途 0、unknown 0、requestRef 52,234 唯一）→ scheduler 空闲退出 drained 通过 → 10 个 worker 退出 `--workers-stopped` 通过 → 快进合入 → scheduler `78413`（14:47）→ postflight 全部通过（控制摘要不变、角色一致、四会话 ready）。无库结构变更，未另做备份。
 
 ## 2026-10-01 17:25：系统自动更新重启、IT/UK 收信中断修复上线
 
