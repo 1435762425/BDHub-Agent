@@ -5,6 +5,14 @@
 
 
 
+## 2026-10-02 21:20：德国写入 canary、协议子进程与模板审批修复
+
+- 德国：ACC13 只读实测全托可用（`var/de-full-managed-probe-20261002.json`，`b11ff10` 标记 `fullManagedCatalog=true`）；用户确认后 Campaign 加入 canary（Deedlite 居家挂钩 `7646320501174585110`→平台活动 `7692026737261774614`，写 1、读回 joined）与 TapLink canary（PID `1729797683098721260`，list `8650985608433802006`「🔥 BJN Edelstahl Saugnapfhaken Set 11% 5e6cd5」，写 1、读回一致），两项经 `promote-canary` 记为 verified。Campaign 采集 1,127 offer，筛出 91 PID 均已生成德语短名。
+- `a495931`：协议层配置根迁到 `private-data/` 后，平台验证求解等 `python -m bdhub...` 子进程以 `private-data/.venv/bin/python` 启动，既无解释器也无 vendor 包，任何读取/选入遇到验证都会失败（切换后尚未在生产触发）；改为导出 `BDHUB_CONFIG_ROOT`/vendor 路径并用 `sys.executable`，DE 实测验证求解成功。vendor `local.patch`/manifest 同步（含 DE 能力改动），`--check` 恢复通过。
+- `7e5f13e`：平台活动列表总数字段改为 `total_num`，所有市场 Campaign 预览会报 `campaign_list_incomplete`（BR 上次加入为 09-25，未在生产触发）。
+- `df05f8d`：发送模板审批改为按市场（schema v27），迁移前在线备份 `20261002T131220Z-pre-template-review-20261002`（36 库，valid；09-28 备份移入废纸篓），`1fd32fa` 备份清单纳入 DE 三库。迁移后 IT/BR/MY/UK 各 16/16 approved，DE 0/16 待用户审。postflight 全部通过，BR/MY 发送 `waiting_pool`。
+- Kalodata：cookie 在 14:51 后失效，五市场线索查询 401（`kalodata_auth_required`，各市场等待 1 小时重试），用户 21:04 刷新后 probe ready；BR/MY/DE 分别在 21:52/21:50/22:00 自动重试。巡检尚无 Kalodata 登录失效告警。
+
 ## 2026-10-02 19:55：德国登录验证与德语内容上线；BR/MY 发送中断约 5 分钟
 
 - acc12（19:20）、acc13（19:32）首次重登完成并发布 relogin 代次，机构指纹一致；通讯侧机构/IM 身份/商品卡、供给侧货盘读取/Campaign 已 verified，写入能力未测。
