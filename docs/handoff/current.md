@@ -5,6 +5,12 @@
 
 
 
+## 2026-10-02 17:50：IT/UK 改为单账号，释放 acc9、acc4
+
+- 用户要求 IT、UK 只做收信与 AI 回复、各占一个账号。`34ab5b6`：市场可只列一个账号、两个角色指向同一账号（IT acc6、UK acc11），单账号市场按通讯角色只登记一次维护；OECID 路由按 `identityAccountRole` 取角色。`68e6e61`：账号状态接口接受单账号市场。acc9、acc4 仍在账号登记表中、未分配，不再定期维护，留作新市场备用。
+- 上线：preflight（在途 0、unknown 0、requestRef 52,368 唯一）→ scheduler 空闲退出 drained 通过 → 10 个 worker 退出 `--workers-stopped` 通过 → 快进合入 → Web 构建 `4ZAOFKZByR7t37OY18wFp` 逐文件校验 291 个文件后切换 → scheduler `7222` → postflight 全部通过（四会话 ready）。随后发现账号状态接口仍要求两个账号（503），修复后只切换 Web 构建 `vjbGu6CrvWsRcf5NCsyq2`（旧构建在 `var/web-releases/single-account-*/previous`）；切换时旧 next-server 因内置浏览器标签保持连接未退出，页面约 6 分钟不可用，关闭标签后恢复。四市场账号接口与账号登记接口回读正确。
+- 进行中：新增 DE/TH/FR（用户确认完整链路，每市场两个账号）。6 个新账号计划为 acc12–acc17，密码须由用户在账号页“账号登记”中输入；TH/FR 尚无协议层市场定义。
+
 ## 2026-10-02 15:40：本项目移出原始项目所在目录
 
 - 用户确认两个项目分文件夹存放。15:38 经带检查的脚本迁移：preflight → scheduler 空闲退出 drained → 10 个 worker 退出 `--workers-stopped` → 移除 Web 任务 → 确认无进程引用旧路径 → `BDHub/BDHub-Agent` → `/Users/bjn00003/BDHub-Agent`，`BDHub-Agent-backups`、`BDHub-Agent-sdk-probe-20260926` 同级迁出 → `git worktree repair`（含 `.claude/worktrees/dreamy-hamilton-df1cba`）→ `.venv` 启动脚本与 `pyvenv.cfg` 路径改写 → `launchctl submit` 在新路径重挂 `io.bdhub.agent.web` → scheduler `86551` → postflight 全部通过 → 页面与接口 200。停机约 1 分 30 秒；无库结构变更，未另做备份。
