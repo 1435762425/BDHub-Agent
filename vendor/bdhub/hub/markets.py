@@ -325,7 +325,8 @@ MARKETS: dict[str, Market] = {
         capabilities=MarketCapabilities(
             find="enabled", profile="enabled", pure_http="enabled",
             relation="enabled", contact="enabled",
-            im="enabled", campaign="unsupported", share_link="unsupported",
+            # 2026-10-02 ACC12 project login: IM card search and Campaign list reads verified.
+            im="enabled", product_search="enabled", campaign="pending", share_link="unsupported",
         ),
         im_find_aid="360019",
         affiliate_partner_id="8680177412768696065",

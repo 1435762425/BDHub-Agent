@@ -39,5 +39,22 @@ class ReconnectInboxTests(unittest.TestCase):
             self.assertTrue(self.adapter.reconnect_inbox("acc8", None, {}))
 
 
+
+class ValidationErrorCodeTests(unittest.TestCase):
+    def test_capability_gate_code_is_kept_and_other_errors_reduce_to_their_type(self):
+        from lib.project_account_identity import _error_code
+        self.assertEqual(_error_code(ValueError("market_institution_not_verified")), "market_institution_not_verified")
+        self.assertEqual(_error_code(RuntimeError("market_capability_unavailable:de:product_search:pending")),
+                         "market_capability_unavailable:de:product_search:pending")
+        self.assertEqual(_error_code(RuntimeError("GET https://x/?token=secret failed")), "RuntimeError")
+        self.assertEqual(_error_code(RuntimeError("")), "RuntimeError")
+
+    def test_germany_allows_the_product_search_its_login_validation_needs(self):
+        from lib.legacy_runtime import configure_vendored_bdhub
+        configure_vendored_bdhub(root=ROOT)
+        from bdhub.hub.markets import MARKETS
+        self.assertEqual(MARKETS["de"].capabilities.status("product_search"), "enabled")
+
+
 if __name__ == "__main__":
     unittest.main()

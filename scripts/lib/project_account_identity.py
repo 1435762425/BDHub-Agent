@@ -240,6 +240,12 @@ def _validate_candidate(cfg, account, market, role, candidate_id, *, full_manage
         reader.session.close()
 
 
+def _error_code(error):
+    """A secret-free code for a validation failure: the error's own code, else its type."""
+    text = str(error).split()[0] if str(error) else ""
+    return text[:100] if re.fullmatch(r"[a-z0-9_:.-]{1,100}", text) else type(error).__name__[:100]
+
+
 class ProjectAccountIdentityAdapter:
     def __init__(self, root):
         self.root = Path(root).resolve()
@@ -347,6 +353,7 @@ class ProjectAccountIdentityAdapter:
             deadline, last_fingerprint, last_attempt = time.monotonic() + timeout_seconds, None, 0.0
             autofill_submitted = False
             last_navigation = 0.0
+            validation_error = None
             while time.monotonic() < deadline:
                 active_page = context.pages[-1] if context.pages else page
                 if headed and not autofill_submitted:
@@ -381,7 +388,11 @@ class ProjectAccountIdentityAdapter:
                         cfg, candidate_account, market, role, candidate_id,
                         full_managed=self.context["fullManaged"],
                     )
-                except Exception:
+                except Exception as error:
+                    validation_error = _error_code(error)
+                    if validation_error.startswith("market_capability_unavailable"):
+                        # A market capability gate does not change while the browser waits.
+                        break
                     active_page.wait_for_timeout(1500)
                     continue
                 result = {"ok": True, "candidateId": candidate_id,
@@ -394,9 +405,10 @@ class ProjectAccountIdentityAdapter:
                           "capabilities": validation["capabilities"]}
                 break
             if result is None:
-                return {"ok": False,
-                        "errorCode": "account_login_timeout" if headed else "account_refresh_failed",
-                        "candidateDir": str(generation)}
+                # A captured login whose read-only validation kept failing reports why, not a timeout.
+                code = ("account_validation_failed:" + validation_error if validation_error else
+                        "account_login_timeout" if headed else "account_refresh_failed")
+                return {"ok": False, "errorCode": code, "candidateDir": str(generation)}
             return result
         except Exception:
             return {"ok": False, "errorCode": "account_browser_login_failed",
