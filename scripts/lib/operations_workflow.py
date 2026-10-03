@@ -353,7 +353,7 @@ def retry_failed_stage(store, run_id, *, now=None, delay=3600, max_retries=3):
 
 
 def resume_short_names(store, market, run_id, request_id, *, root=ROOT):
-    """Requeue the original IT TapLink stage after its pre-write name gap is filled."""
+    """Requeue a market's TapLink stage after its pre-write name gap is filled."""
     _required(store)
     market = _market(market)
     request_id = _request_id(request_id)
@@ -366,8 +366,6 @@ def resume_short_names(store, market, run_id, request_id, *, root=ROOT):
             raise CycleError("workflow_run_missing")
         if run["market"] != market:
             raise CycleError("workflow_market_mismatch")
-        if market != "it":
-            raise CycleError("workflow_recovery_scope_invalid")
         prior = store.db.execute(
             "SELECT value_json FROM workflow_checkpoint WHERE run_id=? AND stage='taplink_prepare' AND checkpoint_key=?",
             (run_id, checkpoint_key),
@@ -384,7 +382,6 @@ def resume_short_names(store, market, run_id, request_id, *, root=ROOT):
         catalog = by_stage.get("catalog")
         if (run["state"] != "needs_human" or run["error_code"] != "catalog_short_names_incomplete"
                 or run["stop_requested_at"] is not None
-                or json.loads(run["applicable_sources_json"]) != ["campaign"]
                 or not current or current["state"] != "needs_human"
                 or current["error_code"] != "catalog_short_names_incomplete"
                 or current["platform_writes"] != 0 or current["output_generation_id"] is not None

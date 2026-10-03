@@ -154,6 +154,22 @@ class OperationsWorkflowTests(unittest.TestCase):
         with self.assertRaisesRegex(CycleError, "recovery_already_requested"):
             resume_short_names(self.store, "it", run_id, "resume-short-names-0002", root=self.root)
 
+    def test_short_name_recovery_serves_every_market_and_both_sources(self):
+        from unittest.mock import patch
+        run = create_run(self.store, market="de", trigger_source="manual", scheduled_at=NOW + 86400,
+                         request_id="workflow-short-name-recovery-de01", sources=["selected", "campaign"])
+        start_stage(self.store, run["runId"], "catalog")
+        finish_stage(self.store, run["runId"], "catalog", state="completed", item_count=5,
+                     scope={"campaign": 5}, platform_writes=2)
+        generation = status(self.store, "de")["current"]["stages"][1]["outputGenerationId"]
+        start_stage(self.store, run["runId"], "taplink_prepare", input_generation_id=generation)
+        finish_stage(self.store, run["runId"], "taplink_prepare", state="needs_human",
+                     platform_writes=0, error_code="catalog_short_names_incomplete")
+        with patch("lib.catalog_names.gap", return_value={"scope": 5, "ready": 5, "missing": 0,
+                                                          "invalidSourceTitles": 0}):
+            resumed = resume_short_names(self.store, "de", run["runId"], "resume-short-names-de01", root=self.root)
+        self.assertEqual((resumed["state"], resumed["stages"][2]["state"]), ("running", "queued"))
+
     def test_short_name_recovery_rejects_unresolved_gap_and_prior_writes(self):
         from unittest.mock import patch
         run_id = self._short_name_blocked_run()

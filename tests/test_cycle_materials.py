@@ -29,6 +29,17 @@ class MaterialTests(unittest.TestCase):
  def test_unknown_request_not_repeated(self):
   with self.assertRaises(CycleError):self.m.prepare_names([self.o],lambda *a,**kw:1/0)
   with self.assertRaisesRegex(CycleError,'previous_request'):self.m.prepare_names([self.o],self.model)
+ def test_a_billed_but_unusable_answer_is_asked_again_while_a_transport_failure_is_not(self):
+  from lib.draft_provider import DraftProviderError
+  def unusable(*a,**kw):raise DraftProviderError('provider_output_invalid',outcome='outcome_unknown')
+  with self.assertRaisesRegex(CycleError,'names_invalid'):self.m.prepare_names([self.o],unusable)
+  # The recorded unusable answer does not block the products: it reads as names_invalid again,
+  # which the batch runner answers by forgetting the job and asking once more.
+  with self.assertRaisesRegex(CycleError,'names_invalid'):self.m.prepare_names([self.o],lambda *a:1/0)
+  def timeout(*a,**kw):raise DraftProviderError('provider_timeout',outcome='outcome_unknown')
+  other=self.o|{'title':'Body modellante'}
+  with self.assertRaisesRegex(CycleError,'names_request_unresolved'):self.m.prepare_names([other],timeout)
+  with self.assertRaisesRegex(CycleError,'previous_request'):self.m.prepare_names([other],self.model)
  def test_response_saved_can_recover_without_model(self):
   bad=lambda *a,**kw:{'content':'{}'}
   with self.assertRaises(CycleError):self.m.prepare_names([self.o],bad)

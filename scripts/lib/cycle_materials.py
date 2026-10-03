@@ -117,6 +117,9 @@ def select_offers(store,plan,limit=5,require_demand=False,scoped_pids=None):
                key=lambda o:(-len(demand.get(o['pid'],set())),o['pid']))
  return result if limit is None else result[:limit]
 
+# Provider answers that arrived complete but cannot be used; unlike transport failures they are not unknown.
+KNOWN_BAD_RESPONSES=frozenset({'provider_output_invalid','provider_output_truncated'})
+
 class Materials:
  def __init__(self,store,market='it'):self.store=store;self.market=market;store.db.executescript(SCHEMA)
  def candidates(self,plan,limit=5):
@@ -146,7 +149,10 @@ class Materials:
   if not missing:return {'modelCalls':0,'cached':len(offers)}
   if len(missing)>5:raise CycleError('names_batch_limit')
   jid='names-'+digest([name_key(o,self.market) for o in missing]);row=self.store.db.execute('SELECT * FROM cycle_name_job WHERE id=?',(jid,)).fetchone()
-  if row and row['state'] not in ('response_saved','ready'):raise CycleError('names_previous_request_unresolved')
+  if row and row['state'] not in ('response_saved','ready'):
+   # A response that arrived (and was billed) but was unusable is known-bad: ask again like names_invalid.
+   if row['state']=='unknown' and row['error'] in KNOWN_BAD_RESPONSES:raise CycleError('names_invalid')
+   raise CycleError('names_previous_request_unresolved')
   if not row:
    with self.store.tx():
     for o in missing:
@@ -159,7 +165,9 @@ class Materials:
     response=call([{'role':'system','content':names_prompt(self.market)}, {'role':'user','content':encoded(prompt)}],max_output_tokens=1000)
     with self.store.tx():self.store.db.execute("UPDATE cycle_name_job SET state='response_saved',response=? WHERE id=?",(encoded(response),jid))
    except Exception as e:
-    with self.store.tx():self.store.db.execute("UPDATE cycle_name_job SET state='unknown',error=?,response=? WHERE id=?",(getattr(e,'code','provider_failed'),encoded(getattr(e,'receipt',None)),jid))
+    code=getattr(e,'code','provider_failed')
+    with self.store.tx():self.store.db.execute("UPDATE cycle_name_job SET state='unknown',error=?,response=? WHERE id=?",(code,encoded(getattr(e,'receipt',None)),jid))
+    if code in KNOWN_BAD_RESPONSES:raise CycleError('names_invalid') from None
     raise CycleError('names_request_unresolved') from None
   else:response=json.loads(row['response'])
   parsed=checked_names(json.loads(response['content']),missing,self.market)
