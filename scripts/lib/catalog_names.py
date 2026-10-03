@@ -147,9 +147,14 @@ def scope(root,market='it'):
             else:
                 states=('missing',) if market=='it' else ('pending','reading','read_incomplete','missing','prepared')
                 placeholders=','.join('?' for _ in states)
+                # Outside Italy only each route's newest preparation run is ever linked; items left
+                # open in a superseded run are never prepared again and must not hold the gap open.
+                latest=("" if market=='it' else
+                        " AND r.created=(SELECT max(o.created) FROM catalog_prepare_run o WHERE o.market=r.market "
+                        "AND json_extract(o.scope,'$.route') IS json_extract(r.scope,'$.route'))")
                 rows = conn.execute("SELECT i.pid,i.listing,i.title FROM catalog_prepare_item i "
                                     "JOIN catalog_prepare_run r ON r.id=i.run_id "
-                                    f"WHERE i.state IN ({placeholders}) AND r.market=?",(*states,market)).fetchall()
+                                    f"WHERE i.state IN ({placeholders}) AND r.market=?{latest}",(*states,market)).fetchall()
     except sqlite3.Error:
         return {}
     out = {}

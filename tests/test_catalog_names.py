@@ -74,13 +74,28 @@ class Readiness(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             var=Path(folder)/'var';var.mkdir()
             with closing(sqlite3.connect(var/'catalog-links.sqlite')) as conn,conn:
-                conn.executescript('CREATE TABLE catalog_prepare_run(id TEXT PRIMARY KEY,market TEXT);'
+                conn.executescript('CREATE TABLE catalog_prepare_run(id TEXT PRIMARY KEY,market TEXT,scope TEXT,created REAL);'
                                    'CREATE TABLE catalog_prepare_item(run_id TEXT,pid TEXT,state TEXT,listing TEXT,title TEXT);')
-                conn.execute("INSERT INTO catalog_prepare_run VALUES('run','uk')")
+                conn.execute("INSERT INTO catalog_prepare_run VALUES('run','uk','{\"route\":\"campaign\"}',1)")
                 conn.execute("INSERT INTO catalog_prepare_item VALUES('run',?,'pending',?,?)",
                              ('1'*19,None,'Wireless sleep earbuds'))
             self.assertEqual(scope(folder,'uk'),{'1'*19:'Wireless sleep earbuds'})
             self.assertEqual(scope(folder,'it'),{})
+
+    def test_only_each_routes_newest_run_counts_outside_italy(self):
+        with tempfile.TemporaryDirectory() as folder:
+            var=Path(folder)/'var';var.mkdir()
+            with closing(sqlite3.connect(var/'catalog-links.sqlite')) as conn,conn:
+                conn.executescript('CREATE TABLE catalog_prepare_run(id TEXT PRIMARY KEY,market TEXT,scope TEXT,created REAL);'
+                                   'CREATE TABLE catalog_prepare_item(run_id TEXT,pid TEXT,state TEXT,listing TEXT,title TEXT);')
+                for run,route,created in (('old-campaign','campaign',1),('new-campaign','campaign',2),('selected','selected',1)):
+                    conn.execute("INSERT INTO catalog_prepare_run VALUES(?,?,?,?)",(run,'de',json.dumps({'route':route}),created))
+                conn.executemany("INSERT INTO catalog_prepare_item VALUES(?,?,?,?,?)",
+                                 [('old-campaign','1'*19,'read_incomplete',None,None),
+                                  ('new-campaign','2'*19,'pending',None,'Saugnapfhaken'),
+                                  ('selected','3'*19,'pending',None,'Halskissen')])
+            # The superseded Campaign run is never prepared again, so its open item is not a gap.
+            self.assertEqual(sorted(scope(folder,'de')),['2'*19,'3'*19])
 
     def test_pid_only_model_output_is_not_ready_and_can_be_discarded(self):
         with tempfile.TemporaryDirectory() as folder:
