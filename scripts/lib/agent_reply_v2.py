@@ -79,6 +79,24 @@ def rollout_stage(store,plan,market):
     return 'pilot_running' if started else 'pilot_required'
 
 
+def submitted_pilot_reply(store,plan,exclude_reply_id=None):
+    row=store.db.execute("SELECT id FROM service_reply WHERE plan_id=? AND id<>? AND started IS NOT NULL "
+                        "AND kind IN ('agent_generated_v2','agent_request_detail_v2','agent_handoff_v2') "
+                        "ORDER BY started,id LIMIT 1",(plan,exclude_reply_id or '')).fetchone()
+    return row[0] if row else None
+
+
+def require_dispatch_authorization(store,plan,market,reply_id):
+    """Check the page grant inside the same transaction that claims an automatic V2 reply."""
+    stage=rollout_stage(store,plan,market)
+    if stage=='full':return
+    if stage!='pilot_running':raise CycleError('agent_rollout_authorization_required')
+    # An uncertain first send still owns the pilot grant after isolation or a restart.
+    # Only a later explicit full authorization allows a different reply to submit.
+    if submitted_pilot_reply(store,plan,reply_id):
+        raise CycleError('agent_pilot_already_submitted')
+
+
 def authorize_rollout(store,plan,market,stage,request_id):
     if stage not in ('pilot','full') or not isinstance(request_id,str) or \
             not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._:-]{7,119}',request_id):

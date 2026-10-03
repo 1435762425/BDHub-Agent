@@ -16,6 +16,10 @@ CARD_ABSENCE_READS=2
 CREATE_REFUSED_CODE=201
 CARD_ABSENCE_SPAN_SECONDS=300
 BEIJING=timezone(timedelta(hours=8))
+def collaboration_blocked(store,plan,creator):
+ if not store.db.execute("SELECT 1 FROM sqlite_master WHERE name='creator_collaboration_current'").fetchone():return False
+ return bool(store.db.execute("SELECT 1 FROM creator_collaboration_current WHERE plan_id=? AND creator_id=? AND status IN ('paid','rejected')",
+                             (plan,creator)).fetchone())
 def rejection_class(native_status,check_code,check_message):
  return 'quota' if (native_status,check_code,check_message)==QUOTA_REJECTION else 'other'
 def new_contact_hold(store,plan):
@@ -76,6 +80,9 @@ class Deliveries:
  def _eligible(self,plan,c,*,current_delivery_id=None,allow_invitation_text=False):
   from lib.outreach_policy import marketing_isolated
   if marketing_isolated(self.s.db,plan,c['creatorId'],c['oecId']):raise CycleError('marketing_isolated')
+  # Pool selection and relationship revision can be refreshed independently. The current
+  # collaboration exclusion must be checked under prepare/begin's write transaction too.
+  if collaboration_blocked(self.s,plan,c['creatorId']):raise CycleError('collaboration_excluded')
   p=self.s._plan(plan);r=self.s.db.execute('SELECT * FROM relationship WHERE plan_id=? AND creator_id=?',(plan,c['creatorId'])).fetchone()
   if p['state']!='active' or p['revision']!=c['planRevision']:raise CycleError('plan_changed')
   from lib.invitation_continuation import allowed
@@ -324,6 +331,9 @@ class Deliveries:
    remaining=self.s.db.execute("SELECT count(*) FROM cycle_delivery_part WHERE delivery_id=? AND state<>'confirmed'",(id,)).fetchone()[0]
    if d['state']!='quarantined_unknown':
     self.s.db.execute('UPDATE cycle_delivery SET state=? WHERE id=?',('confirmed' if not remaining else 'running',id))
+    if not remaining and d['snapshot'].get('executionMode')=='market-canary-v1':
+     from lib.market_send_control import consume_canary_authorization
+     consume_canary_authorization(self.s,{**d,'state':'confirmed'})
 
 def delivery_status(store,plan):
  if not store.db.execute("SELECT 1 FROM sqlite_master WHERE name='cycle_delivery'").fetchone():return None

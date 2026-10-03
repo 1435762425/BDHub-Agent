@@ -43,9 +43,9 @@ def first_send_canary(generation):
  """Until its first card+text is confirmed a market sends only as a single page-started canary."""
  return (generation or {}).get('capabilities',{}).get('message_send',{}).get('state')!='verified'
 
-def stops_after(*,canary,sent):
- """The page authorised one first send; continuing after it is a new decision."""
- return bool(canary and sent)
+def stops_after(result):
+ """Read-only confirmation consumes the same grant without counting a new real send."""
+ return bool(result.get('canaryCompleted') and result.get('canaryStopRequested'))
 
 def main():
  p=argparse.ArgumentParser(description=__doc__);p.add_argument('--market',required=True,choices=market_path_keys(ROOT));p.add_argument('--once',action='store_true');p.add_argument('--interval',type=int,default=30);a=p.parse_args()
@@ -60,12 +60,12 @@ def main():
   waiting=None;sent=False
   try:
    with CycleStore(ROOT/'var/second-cycle.sqlite') as store:
-    control=setting(store,a.market)
-    from lib.market_send_control import control as send_control
-    send=send_control(store,a.market)
+    from lib.market_send_control import control as send_control,settle_confirmed_canaries
     from lib.account_identity import current_generation
     from lib.market_accounts import load_config
     account=load_config(ROOT)['markets'][a.market]['roles']['communications']
+    completed=settle_confirmed_canaries(store,a.market,account)
+    control=setting(store,a.market);send=send_control(store,a.market)
     generation=current_generation(store,a.market,account)
     canary=first_send_canary(generation)
   except sqlite3.OperationalError as error:
@@ -76,7 +76,7 @@ def main():
    while not STOP and time.monotonic()<until:time.sleep(0.25)
    continue
   if send['stopRequested'] or not (control['continuousSendEnabled'] or send['automaticEnabled'] or send['runRequested']):
-   write(a.market,{'running':False,'state':'off','pid':os.getpid(),'checkedAt':time.time()});break
+   write(a.market,{'running':False,'state':'canary_confirmed' if completed else 'off','pid':os.getpid(),'checkedAt':time.time()});break
   window=window_state(send['window'],time.time())
   if canary and not send['runRequested']:
    write(a.market,{'running':True,'state':'first_send_requires_page_start','pid':os.getpid(),'checkedAt':time.time()})
@@ -91,11 +91,7 @@ def main():
     sent=result.get('state')=='confirmed' and result.get('realSends',0)>0
     write(a.market,{'running':True,'state':result.get('state') or result.get('stopped') or 'idle','pid':os.getpid(),
                     'checkedAt':time.time(),'runDurationMs':round((time.monotonic()-started)*1000,1),'result':result})
-    if stops_after(canary=canary,sent=sent):
-     from lib.market_send_control import mutate
-     with CycleStore(ROOT/'var/second-cycle.sqlite') as store:
-      mutate(store,ROOT,a.market,action='stop',request_id=f"market-canary-stop-{result.get('deliveryId') or request}"[:120],
-             expected_revision=send_control(store,a.market)['revision'])
+    if stops_after(result):
      write(a.market,{'running':False,'state':'canary_confirmed','pid':os.getpid(),'checkedAt':time.time(),'result':result})
      break
    except Exception as error:

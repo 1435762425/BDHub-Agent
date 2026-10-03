@@ -34,7 +34,7 @@ ACTIVE_RUNTIME = {"waiting_window", "sending", "waiting_capacity", "waiting_reco
 PREFLIGHT_TERMINAL = frozenset({
     'conversation_needs_content_review','unknown_message_needs_review','history_incomplete',
     'message_time_missing','recent_contact_needs_allowance_review','conversation_index_conflict',
-    'relationship_changed','offer_not_eligible','offer_currently_ineligible','offer_changed',
+    'relationship_changed','collaboration_excluded','offer_not_eligible','offer_currently_ineligible','offer_changed',
     'marketing_cooldown','video_lead_expired','delivery_expired','card_binding_changed','recipient_message_limit',
 })
 ACTIVE_PENDING_STATES = frozenset({
@@ -191,6 +191,8 @@ def _candidate(root,store,plan,control_value,*,limit=200):
         nonlocal capacity_blocked
         row=indexed.get((slot['creatorId'],str(slot['pid'])))
         if row is None:return None
+        from lib.cycle_delivery import collaboration_blocked
+        if collaboration_blocked(store,plan,row['creatorId']):return None
         if store.db.execute('SELECT 1 FROM cycle_delivery WHERE plan_id=? AND creator_id=? AND pid=? AND source_id=?',
           (plan,row['creatorId'],str(row['pid']),row['source']['sourceId'])).fetchone():return None
         spec=next_approved_send_template(store,root,plan,row['creatorId'],'it')
@@ -306,7 +308,12 @@ def execute_once(root,store,*,authenticated=None,authorized_now=None,reconcile_o
             fresh=control(store,root)
             if fresh['stopRequested'] or not (fresh['runRequested'] or fresh['automaticEnabled']):raise CycleError('continuous_send_stopped')
             if authorized_now is None and not window_state(fresh['window'],store.clock())['open']:raise CycleError('outside_send_window')
-            delivery=Deliveries(store).prepare(plan,candidate);active={'id':delivery['id'],'creator_id':delivery['creator_id'],'pid':delivery['pid']}
+            try:delivery=Deliveries(store).prepare(plan,candidate)
+            except CycleError as error:
+                if str(error)=='collaboration_excluded':
+                    return publish_runtime(store,plan,'sending',delivery=None,stop_reason=str(error),failed_delta=1)
+                raise
+            active={'id':delivery['id'],'creator_id':delivery['creator_id'],'pid':delivery['pid']}
         else:delivery=Deliveries(store).get(active['id'])
         deliveries=Deliveries(store)
         if not reconcile_only:publish_runtime(store,plan,'sending',delivery=active,worker_pid=os.getpid())
@@ -359,6 +366,11 @@ def execute_once(root,store,*,authenticated=None,authorized_now=None,reconcile_o
                            verify_only=reconcile_only or delivery['state']=='unknown')
         except BaseException as error:
             latest=deliveries.get(delivery['id']);code=getattr(error,'code',None) or (str(error) if isinstance(error,CycleError) else type(error).__name__)
+            intent=deliveries.conversation_intent(delivery['id'])
+            if intent and intent['state']=='ready':
+                from lib.invitation_continuation import local_permit_error
+                local=local_permit_error(error,latest['parts'][0])
+                if local:code=str(local)
             if getattr(error,'response_ref',None):
                 store.db.execute('INSERT INTO cycle_platform_signal(delivery_id,at,outcome,code,native_status,check_code,check_message,response_ref) VALUES(?,?,?,?,?,?,?,?)',
                   (delivery['id'],store.clock(),*[getattr(error,key,None) for key in ('outcome','code','native_status','check_code','check_message','response_ref')]))

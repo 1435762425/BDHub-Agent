@@ -6,7 +6,7 @@ from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1];sys.dont_write_bytecode=True;sys.path.insert(0,str(ROOT/'scripts'))
 from lib.cycle_auto_reply import REPLY_CHECK_INTERVAL,AutoReplies,reply_blocker
 from lib.reply_events import backfill
-from lib.agent_reply_v2 import apply_production,generate,production_context,rollout_stage
+from lib.agent_reply_v2 import apply_production,generate,production_context,rollout_stage,submitted_pilot_reply
 from lib.second_cycle import CycleError,CycleStore,digest
 from lib.template_library import agent_setting
 STOP=False;BEIJING=timezone(timedelta(hours=8))
@@ -162,11 +162,16 @@ def tick(authorized_now=None,market="it"):
    AutoReplies(store).settle_observed(plan)  # Isolated replies are not re-read, only settled from stored evidence.
   recovered=recover_unresolved(store,plan,market,stage)
   if recovered:return recovered
+  # Passive inbox evidence may have completed the first reply during either recovery path.
+  # Its single-send authorization is durable; the pre-recovery stage is no longer current.
+  stage=rollout_stage(store,plan,market)
   if not setting['enabled']:return {'state':'disabled','platformWrites':0,'realSends':0}
   if send_dispatch_active(store,market):return {'state':'send_dispatch_active','platformWrites':0,'realSends':0}
   if stage in ('pilot_required','pilot_complete'):
    return {'state':'first_send_requires_page_start' if stage=='pilot_required' else 'pilot_complete_waiting_resume',
            'platformWrites':0,'realSends':0}
+  if stage=='pilot_running' and submitted_pilot_reply(store,plan):
+   return {'state':'pilot_waiting_confirmation','platformWrites':0,'realSends':0}
   if not inside(setting,now) and authorized_now is None:return {'state':'outside_reply_window','platformWrites':0,'realSends':0}
   # Replies never share time with the second send: scheduled runs wait until the send window and its buffer pass.
   if authorized_now is None and near_send_window(send_window(store,market),setting['bufferMinutes'],now):
@@ -185,7 +190,8 @@ def tick(authorized_now=None,market="it"):
    for pending in candidates:
     # Skip bounded technical failures, but never build a backlog of stale ready drafts.
     current_setting=agent_setting(store,plan)
-    if STOP or not current_setting['enabled'] or authorized_now is None and (
+    if rollout_stage(store,plan,market) not in ('pilot_running','full') or \
+       STOP or not current_setting['enabled'] or authorized_now is None and (
         not inside(current_setting,store.clock()) or
         near_send_window(send_window(store,market),current_setting['bufferMinutes'],store.clock())):
      break
@@ -210,6 +216,11 @@ def tick(authorized_now=None,market="it"):
     if applied['replyId'] is not None:break  # Send the first ready reply before another model call.
    q=store.db.execute("SELECT id FROM service_reply WHERE plan_id=? AND state='ready' AND kind IN ('agent_generated_v2','agent_request_detail_v2','agent_handoff_v2') ORDER BY created LIMIT 1",(plan,)).fetchone()
    if q:
+    stage=rollout_stage(store,plan,market)
+    if stage not in ('pilot_running','full'):
+     report['state']='pilot_complete_waiting_resume' if stage=='pilot_complete' else 'first_send_requires_page_start'
+     store.db.execute("UPDATE agent_reply_run SET state='completed',finished_at=? WHERE run_id=?",(store.clock(),run_id))
+     return report|{'replyProjection':projection}
     result=run_existing(store,replies,replies.get(q[0]),market,stage,authorized_now)
     report['realSends']=result['realSends'];report['platformWrites']=result['platformWrites']
     report['confirmed']+=int(result['state']=='confirmed');report['unknown']+=int(result['state']=='unknown')

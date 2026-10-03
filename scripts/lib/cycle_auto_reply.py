@@ -198,6 +198,8 @@ class AutoReplies:
      from lib.observed_messages import replied_after
      stamp=turn['occurred_ms']/1000 if turn['occurred_ms'] else turn['observed_at']
      if replied_after(self.s.db,q['plan_id'],q['cid'],q['oec'],stamp):raise CycleError('reply_context_changed')
+    from lib.agent_reply_v2 import require_dispatch_authorization
+    require_dispatch_authorization(self.s,q['plan_id'],self.s._plan(q['plan_id'])['market'],id)
    if q['case_id']:
     case=self.s.db.execute('SELECT * FROM service_case WHERE id=?',(q['case_id'],)).fetchone()
     if not case or case['state']!='open' or case['ack_state']=='confirmed':raise CycleError('handoff_changed')

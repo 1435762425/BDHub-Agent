@@ -130,6 +130,9 @@ class AgentReplyV2Tests(unittest.TestCase):
    call=lambda *_args,**_kwargs:{'content':json.dumps(raw)})
  def confirm_local(self,reply_id):
   replies=AutoReplies(self.store);replies.enable(self.plan,'test-only')
+  setting={key:value for key,value in DEFAULT_AGENT_SETTING.items() if key not in ('revision','updatedAt')}
+  save_agent_setting(self.store,self.plan,0,{**setting,'enabled':True})
+  authorize_rollout(self.store,self.plan,'it','pilot','fixture-pilot-first-send')
   q=replies.get(reply_id);permit=replies.begin(reply_id)
   self.assertTrue(permit['dispatchAllowed'])
   replies.accepted(reply_id,{'requestRef':q['request_ref']})

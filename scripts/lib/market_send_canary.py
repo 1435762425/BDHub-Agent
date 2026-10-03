@@ -28,6 +28,8 @@ def _dispatch_allowed(store,market,*,canary=False,page_control=False):
     if current['stopRequested'] or not (current['runRequested'] or current['automaticEnabled'] or
                                         operations['continuousSendEnabled']):
         raise CycleError('continuous_send_stopped')
+    if canary and page_control and not current['runRequested']:
+        raise CycleError('first_send_requires_page_start')
     if not window_state(current['window'],store.clock())['open']:
         raise CycleError('outside_send_window')
 
@@ -165,9 +167,18 @@ def _settle_local_refusal(store,did,kind,local):
     return {'state':'cancelled','deliveryId':did,'stopReason':reason}
 
 
+def _settle_create_refusal(store,did,error):
+    """A create permit can reject one creator before even the conversation was submitted."""
+    intent=Deliveries(store).conversation_intent(did)
+    if not intent or intent['state']!='ready':return None
+    from lib.invitation_continuation import local_permit_error
+    local=local_permit_error(error,Deliveries(store).get(did)['parts'][0])
+    return _settle_local_refusal(store,did,'card',local)
+
+
 def _candidate(root,market,store,plan,initial,require_new_conversation=True):
  from lib.outreach_allocation import select
- from lib.cycle_delivery import capacity_for_candidate
+ from lib.cycle_delivery import capacity_for_candidate,collaboration_blocked
  state=pool(root,market=market,now=store.clock(),limit=None,cache_eligible_seconds=30)
  conversations={row['oecId']:row for row in initial.get('conversations',[])}
  offers_by_pid={}
@@ -179,6 +190,7 @@ def _candidate(root,market,store,plan,initial,require_new_conversation=True):
    nonlocal capacity_blocked
    relation=store.db.execute('SELECT * FROM relationship WHERE plan_id=? AND creator_id=?',(plan,slot['creatorId'])).fetchone()
    if not relation or require_new_conversation and relation['oec'] in conversations:return None
+   if collaboration_blocked(store,plan,slot['creatorId']):return None
    if store.db.execute('SELECT 1 FROM cycle_delivery WHERE plan_id=? AND creator_id=? AND pid=?',(plan,slot['creatorId'],str(slot['pid']))).fetchone():return None
    person=identities.execute("SELECT current_handle FROM creator_identity WHERE market=? AND creator_id=? AND oec_id=? AND handle_conflict=0",(market,slot['creatorId'],relation['oec'])).fetchone()
    if not person:return None
@@ -225,6 +237,9 @@ def run(root,market,request_id,*,canary=True,page_control=False,reconcile_only=F
   plan=store.db.execute("SELECT id FROM plan WHERE institution='bjn-local-research' AND market=? AND state='active'",(market,)).fetchone()
   if not plan:raise CycleError('plan_missing')
   plan=plan[0]
+  from lib.market_send_control import settle_confirmed_canaries
+  completed=settle_confirmed_canaries(store,market,communications)
+  if completed:return report|{'state':'confirmed'}|completed[-1]
   if not reconcile_only:
    # Settle what needs no platform read before choosing work: expired frozen deliveries and refused creates.
    modes=('market-canary-v1','market-continuous-v1')
@@ -232,7 +247,9 @@ def run(root,market,request_id,*,canary=True,page_control=False,reconcile_only=F
    Deliveries(store).quarantine_refused_creates(plan,modes)
   active=_recovering(store,plan)
   if active is not None:
-   return report|reconcile_delivery(root,market,Deliveries(store),active['id'])
+   result=report|reconcile_delivery(root,market,Deliveries(store),active['id'])
+   completed=settle_confirmed_canaries(store,market,communications)
+   return result|(completed[-1] if completed else {})
   recovering_only=reconcile_only or active is not None
   if active is not None:
    canary=json.loads(active['snapshot']).get('executionMode')=='market-canary-v1'
@@ -262,8 +279,16 @@ def run(root,market,request_id,*,canary=True,page_control=False,reconcile_only=F
     if not candidate:raise CycleError('market_send_candidate_missing')
     _binding_current(root,market,candidate)
     candidate['senderAccount']=communications;candidate['senderImId']=runtime['auth'].im_id
+    if canary:
+     from lib.market_send_control import page_start_authorization
+     candidate['pageStart']=page_start_authorization(store,market) if page_control else None
     _dispatch_allowed(store,market,canary=canary,page_control=page_control)
-    delivery=Deliveries(store).prepare(plan,candidate);did=delivery['id'];candidate=delivery['snapshot']
+    try:delivery=Deliveries(store).prepare(plan,candidate)
+    except CycleError as error:
+     if str(error)=='collaboration_excluded':
+      return report|{'state':'candidate_skipped','creatorId':candidate['creatorId'],'stopReason':str(error)}
+     raise
+    did=delivery['id'];candidate=delivery['snapshot']
    checkpoint_time('candidate')
    if not recovering_only:_dispatch_allowed(store,market,canary=canary,page_control=page_control)
    intent=Deliveries(store).conversation_intent(did)
@@ -290,6 +315,8 @@ def run(root,market,request_id,*,canary=True,page_control=False,reconcile_only=F
      except BaseException as error:
       if _record_create_failure(store,did,error):
        raise CycleError('market_send_conversation_result_unknown') from None
+      settled=_settle_create_refusal(store,did,error)
+      if settled:return report|settled
       raise
     Deliveries(store).save_conversation(did,receipt);conversation=session.conversation(receipt['conversationId'],candidate['oecId']);Deliveries(store).confirm_conversation(did,receipt['conversationId'],candidate['oecId'])
    checkpoint_time('conversation')
@@ -345,10 +372,9 @@ def run(root,market,request_id,*,canary=True,page_control=False,reconcile_only=F
     checkpoint_time(kind)
    final=Deliveries(store).get(did);report.update(deliveryId=did,state=final['state'],pid=candidate['pid'],creatorId=candidate['creatorId'],
       realSends=0 if recovering_only else int(final['state']=='confirmed'),unknown=int(final['state']=='unknown'),timingMs=timing)
-   if canary and (page_control or reconcile_only) and final['state']=='confirmed':
-    from lib.account_identity import promote_capabilities
-    promote_capabilities(store,market=market,account=communications,capabilities=['message_send'],
-                         evidence_ref='cycle-delivery:'+did)
+   if final['state']=='confirmed':
+    completed=settle_confirmed_canaries(store,market,communications)
+    if completed:report.update(completed[-1])
  return report
 
 

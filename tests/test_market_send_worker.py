@@ -32,9 +32,10 @@ class MarketSendWorkerTests(unittest.TestCase):
         self.assertTrue(MODULE.first_send_canary(None))
         self.assertTrue(MODULE.first_send_canary(unverified))
         self.assertFalse(MODULE.first_send_canary(verified))
-        self.assertTrue(MODULE.stops_after(canary=True,sent=True))
-        self.assertFalse(MODULE.stops_after(canary=True,sent=False))
-        self.assertFalse(MODULE.stops_after(canary=False,sent=True))
+        self.assertTrue(MODULE.stops_after({'state':'confirmed','realSends':0,
+            'canaryCompleted':True,'canaryStopRequested':True}))
+        self.assertFalse(MODULE.stops_after({'state':'confirmed','realSends':1}))
+        self.assertFalse(MODULE.stops_after({'state':'confirmed','canaryCompleted':True,'canaryStopRequested':False}))
 
 
     def test_a_page_start_launches_the_sender_for_any_non_it_market(self):

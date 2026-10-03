@@ -1,8 +1,11 @@
 import importlib.util
 import sqlite3
+import tempfile
 import unittest
+from contextlib import contextmanager
 from datetime import datetime,timezone,timedelta
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT=Path(__file__).resolve().parents[1]
 SPEC=importlib.util.spec_from_file_location('agent_reply_worker',ROOT/'scripts/run-agent-replies.py')
@@ -123,5 +126,96 @@ class AgentReplyWorkerTests(unittest.TestCase):
                  {'state':'completed','deferred':1},{'state':'original_intent_rechecked','replyState':'unknown'}):
    self.assertEqual(WORKER.worker_delay(result,60),60)
   self.assertEqual(WORKER.worker_delay({'state':'waiting_dispatch'},1),30)
+
+class AgentReplyAuthorizationTests(unittest.TestCase):
+ def setUp(self):
+  from lib.schema_migrations import apply_database
+  from lib.second_cycle import CycleStore
+  from lib.cycle_inbox import Inbox
+  from lib.cycle_auto_reply import AutoReplies
+  from lib.cycle_delivery import Deliveries
+  from lib.template_library import DEFAULT_AGENT_SETTING,save_agent_setting
+  self.tmp=tempfile.TemporaryDirectory();self.root=Path(self.tmp.name);self.now=1800000000
+  with CycleStore(self.root/'var/second-cycle.sqlite') as store:self.plan=store.plan('bjn-local-research','it')
+  apply_database(self.root,'second-cycle')
+  self.store=CycleStore(self.root/'var/second-cycle.sqlite',lambda:self.now)
+  Inbox(self.store);Deliveries(self.store);self.replies=AutoReplies(self.store)
+  setting={k:v for k,v in DEFAULT_AGENT_SETTING.items() if k not in ('revision','updatedAt')}
+  save_agent_setting(self.store,self.plan,0,{**setting,'enabled':True})
+ def tearDown(self):self.store.close();self.tmp.cleanup()
+ def ready(self,n):
+  from lib.second_cycle import encoded
+  creator='creator-'+str(n);cid=str(100+n);oec=str(200+n);turn='turn-'+str(n)
+  self.store.db.execute("INSERT INTO relationship VALUES(?,?,?,'auto',0,1,?,1)",(self.plan,creator,oec,self.now+3600))
+  self.store.db.execute("INSERT INTO inbox_pending VALUES(?,?,1,?,'awaiting_content')",(self.plan,creator,self.now-1))
+  self.store.db.execute('INSERT INTO inbox_event VALUES(?,?,?,?,?,?,?,?,?)',
+   (self.plan,cid,'1',oec,'creatorReplies',self.now*1000,encoded({'kind':'creatorReplies'}),0,self.now))
+  self.store.db.execute('INSERT INTO inbound_turn VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',
+   (turn,self.plan,creator,oec,cid,'1','a'*64,'text','Ciao',self.now*1000,0,self.now))
+  self.replies.service.capture(self.plan,cid,oec,[{'messageId':'1','format':'text','text':'Ciao','nativeType':'text','rawSha256':'a'*64}])
+  return self.replies.prepare_generated(self.plan,creator,cid,1,turn,'agent-decision-'+str(n),'Grazie!',expected_control_revision=1)
+ def pilot(self):
+  from lib.agent_reply_v2 import authorize_rollout
+  return authorize_rollout(self.store,self.plan,'it','pilot','page-pilot-authorization')
+ def confirm(self,q):
+  self.replies.confirm(q['id'],{'status':'confirmed','requestRef':q['request_ref'],
+   'conversationId':q['cid'],'messageId':'90','evidenceRef':'exact-proof'})
+ def test_no_page_grant_cannot_begin_a_v2_reply(self):
+  from lib.second_cycle import CycleError
+  q=self.ready(1)
+  with self.assertRaisesRegex(CycleError,'agent_rollout_authorization_required'):self.replies.begin(q['id'])
+  self.assertEqual(self.replies.get(q['id'])['state'],'ready')
+ def test_first_pilot_is_allowed_and_confirmation_blocks_the_next_begin(self):
+  from lib.second_cycle import CycleError
+  first=self.ready(1);second=self.ready(2);self.pilot()
+  self.assertTrue(self.replies.begin(first['id'])['dispatchAllowed']);self.confirm(first)
+  with self.assertRaisesRegex(CycleError,'agent_rollout_authorization_required'):self.replies.begin(second['id'])
+  self.assertEqual(self.replies.get(second['id'])['state'],'ready')
+ def test_full_page_authorization_allows_the_next_reply(self):
+  from lib.agent_reply_v2 import authorize_rollout
+  first=self.ready(1);second=self.ready(2);self.pilot();self.replies.begin(first['id']);self.confirm(first)
+  authorize_rollout(self.store,self.plan,'it','full','page-full-authorization')
+  self.assertTrue(self.replies.begin(second['id'])['dispatchAllowed'])
+ def test_isolated_first_pilot_keeps_its_single_submission_grant(self):
+  from lib.second_cycle import CycleError
+  first=self.ready(1);second=self.ready(2);self.pilot();self.replies.begin(first['id'])
+  self.replies.unknown(first['id']);self.replies.isolate(first['id'])
+  with self.assertRaisesRegex(CycleError,'agent_pilot_already_submitted'):self.replies.begin(second['id'])
+  self.assertEqual(self.replies.get(second['id'])['state'],'ready')
+ def test_worker_waits_for_isolated_pilot_without_model_or_reply_transport(self):
+  first=self.ready(1);second=self.ready(2);self.pilot();self.replies.begin(first['id'])
+  self.replies.unknown(first['id']);self.replies.isolate(first['id'])
+  @contextmanager
+  def opened(*_a,**_kw):yield self.store
+  with patch.object(WORKER,'CycleStore',opened),patch.object(WORKER,'ROOT',self.root), \
+       patch.object(WORKER,'production_context',side_effect=AssertionError('context_after_pilot_submission')), \
+       patch.object(WORKER,'generate',side_effect=AssertionError('model_after_pilot_submission')), \
+       patch.object(WORKER,'run_existing',side_effect=AssertionError('transport_after_pilot_submission')):
+   result=WORKER.tick('page-authorized-now','it')
+  self.assertEqual(result,{'state':'pilot_waiting_confirmation','platformWrites':0,'realSends':0})
+  self.assertEqual(self.replies.get(second['id'])['state'],'ready')
+  self.assertEqual(self.store.db.execute('SELECT count(*) FROM agent_reply_run').fetchone()[0],0)
+ def passive_confirmation_tick(self,isolated):
+  from lib.second_cycle import encoded
+  first=self.ready(1);second=self.ready(2);self.pilot();self.replies.begin(first['id'])
+  self.replies.accepted(first['id'],{'requestRef':first['request_ref'],'messageId':'90'});self.replies.unknown(first['id'])
+  if isolated:self.replies.isolate(first['id'])
+  self.now+=1
+  self.store.db.execute('INSERT INTO inbox_event VALUES(?,?,?,?,?,?,?,?,?)',
+   (self.plan,first['cid'],'90',first['oec'],'ourMessages',self.now*1000,encoded({'kind':'ourMessages'}),0,self.now))
+  self.replies.service.capture(self.plan,first['cid'],first['oec'],[{'messageId':'90','format':'text',
+   'text':first['text'],'nativeType':'text','rawSha256':'b'*64}])
+  @contextmanager
+  def opened(*_a,**_kw):yield self.store
+  with patch.object(WORKER,'CycleStore',opened),patch.object(WORKER,'ROOT',self.root), \
+       patch.object(WORKER,'generate',side_effect=AssertionError('model_after_pilot_confirmation')), \
+       patch.object(WORKER,'run_existing',side_effect=AssertionError('second_send_after_pilot_confirmation')):
+   result=WORKER.tick('page-authorized-now','it')
+  self.assertEqual(result,{'state':'pilot_complete_waiting_resume','platformWrites':0,'realSends':0})
+  self.assertEqual(self.replies.get(first['id'])['state'],'confirmed')
+  self.assertEqual(self.replies.get(second['id'])['state'],'ready')
+ def test_unknown_passive_confirmation_recomputes_stage_before_sending(self):self.passive_confirmation_tick(False)
+ def test_isolated_passive_confirmation_recomputes_stage_before_sending(self):self.passive_confirmation_tick(True)
+
 
 if __name__=='__main__':unittest.main()
