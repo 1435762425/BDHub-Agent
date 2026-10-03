@@ -2,6 +2,12 @@
 
 文档更新时间：2026-10-03（Asia/Shanghai）。下面各节按时间倒序，每节只代表该时刻的核验；最新一节即当前生产状态的最近记录，不是实时巡检。规则见 [PROJECT](../PROJECT.md)，实现见 [TECHNICAL](../TECHNICAL.md)，后续方向见[项目审计与清理](../implementation/project-audit-20260924.md)。更早流水见[历史交接](../archive/handoff/codex-takeover-history-20260923.md)。
 
+## 2026-10-03 17:55：常驻进程重启到当前代码，修复发送进程遇库锁停发
+
+- 按 `ops-restart-check.py` 流程完成重启（最终 `restart-20261003-1750`，postflight 全部通过，版本不一致告警消除）。
+- 发现并修复：非 IT 发送许可写账遇 SQLite 锁时被适配器包装成 `it_delivery_dispatch_not_allowed`，worker 进入 attention 并冷却 5 分钟。10-03 BR/MY 17:21–17:31 停发（期间调度器正在排空，冷却后无人拉起），DE/FR 17:04–17:10、DE/MY 17:42–17:47 各停一次；均无在途或未知发送。`977a849` 让 attention 退出写日志，`aafd3c9` 把未提交组件的库锁改为 `local_store_busy` 短等待重试。
+- TH OECID 滚动批次在重启时被库锁打断，已重新开跑。
+
 ## 2026-10-03 17:25：法国开关开启，泰国首发完成、自动运营待 Campaign 加入验收
 
 - FR：用户审批法语模板后页面启动首发（16:30 confirmed，`message_send` verified），随后打开自动运营、全托周更、持续发送，AI 回复按 DE 配置启用并授权首轮 pilot。
