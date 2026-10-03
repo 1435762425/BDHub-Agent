@@ -103,6 +103,22 @@ class RestoreDrillTests(unittest.TestCase):
         self.assertEqual(report["state"], "restorable")
         self.assertIn("historical_orphans:delivery_creator_identity:1", report["warnings"])
 
+    def test_production_order_keeps_continuous_identity_imports_referentially_complete(self):
+        # The real policy must copy child ledgers before append-only identity parents.
+        # Importing between those snapshots may add extra parents, never missing ones.
+        path = self.root / "config/state-backup.json"
+        policy = json.loads(path.read_text())
+        real_order = json.loads((ROOT / "config/state-backup.json").read_text())["databases"]
+        policy["databases"].sort(key=real_order.index)
+        path.write_text(json.dumps(policy))
+        def advance():
+            self.sql("creator-identities.sqlite", "INSERT INTO creator_identity VALUES('creator_b','th','2','x');")
+            self.sql("second-cycle.sqlite", "INSERT INTO relationship VALUES('plan-it','creator_b');"
+                                            "INSERT INTO cycle_delivery VALUES('delivery-b','plan-it','creator_b',2);")
+        report = self.drill(self.backup(between=advance))
+        self.assertEqual((report["state"], report["blockers"]), ("restorable", []))
+        self.assertEqual(next(row for row in report["references"] if row["id"] == "relationship_creator_identity")["rows"], 1)
+
     def test_partial_restore_without_the_parent_database_is_blocked(self):
         backup = self.backup()
         self.assertEqual(self.drill(backup, databases=["nope.sqlite"])["blockers"], ["database_not_in_backup:nope.sqlite"])

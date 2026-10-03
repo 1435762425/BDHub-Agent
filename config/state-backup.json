@@ -1,6 +1,8 @@
 {
   "schemaVersion": "bdhub.state-backup-policy.v1",
   "databases": [
+    "second-cycle.sqlite",
+    "catalog-links.sqlite",
     "batch-tasks.sqlite",
     "campaign-join.sqlite",
     "campaign-join-br.sqlite",
@@ -16,7 +18,6 @@
     "campaign-screen-de.sqlite",
     "campaign-screen-fr.sqlite",
     "campaign-screen-th.sqlite",
-    "catalog-links.sqlite",
     "creator-discovery.sqlite",
     "creator-identities.sqlite",
     "creator-profile-refresh.sqlite",
@@ -42,7 +43,6 @@
     "matching.sqlite",
     "outreach-drafts.sqlite",
     "runtime.sqlite",
-    "second-cycle.sqlite",
     "second-italy.sqlite",
     "second-live-trials.sqlite",
     "second-outreach.sqlite",
