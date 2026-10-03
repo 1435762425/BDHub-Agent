@@ -37,30 +37,45 @@ def page_start_authorization(store,market):
   raise CycleError('first_send_requires_page_start')
  return {'requestId':row['request_id'],'revision':row['result_revision']}
 
+def require_canary_authorization(store,plan,snapshot,*,page_control=False):
+ """A frozen first send may use only its own still-active page start."""
+ if snapshot.get('executionMode')!='market-canary-v1':return
+ if 'pageStart' not in snapshot:raise CycleError('canary_authorization_unbound')
+ frozen=snapshot['pageStart']
+ if frozen is None and not page_control:return  # Explicit standalone executor only.
+ if not isinstance(frozen,dict) or set(frozen)!={'requestId','revision'}:
+  raise CycleError('canary_authorization_unbound')
+ current=_control_for_plan(store,plan)
+ start=store.db.execute("SELECT request_id,result_revision FROM continuous_send_control_request WHERE plan_id=? AND action='start' ORDER BY result_revision DESC LIMIT 1",
+                        (plan,)).fetchone()
+ if not start or frozen!={'requestId':start['request_id'],'revision':start['result_revision']} or \
+    current['stopRequested'] or not current['runRequested']:
+  raise CycleError('canary_authorization_changed')
+
 def consume_canary_authorization(store,delivery):
  """End only this confirmed canary's page grant, in its caller's confirmation transaction."""
  if not store.db.in_transaction:raise CycleError('canary_completion_transaction_required')
  snapshot=delivery['snapshot']
  if delivery['state']!='confirmed' or snapshot.get('executionMode')!='market-canary-v1':return None
  plan=delivery['plan_id'];did=delivery['id']
+ stop_request='market-canary-stop-'+did
+ stopped_before=store.db.execute("SELECT 1 FROM continuous_send_control_request WHERE request_id=? AND plan_id=? AND action='stop'",
+                                 (stop_request,plan)).fetchone()
  frozen=snapshot.get('pageStart')
  if 'pageStart' in snapshot:
-  if not frozen:return None
+  if not isinstance(frozen,dict) or set(frozen)!={'requestId','revision'}:return None
   start=store.db.execute("SELECT * FROM continuous_send_control_request WHERE plan_id=? AND action='start' AND request_id=? AND result_revision=?",
                          (plan,frozen['requestId'],frozen['revision'])).fetchone()
  else:
-  # Old frozen intents predate pageStart. Their original grant must precede creation;
-  # a later page start is a separate explicit decision and must never be stopped here.
-  start=store.db.execute("SELECT * FROM continuous_send_control_request WHERE plan_id=? AND action='start' AND created_at<=? ORDER BY result_revision DESC LIMIT 1",
-                         (plan,delivery['created'])).fetchone()
+  # Time proximity is not ownership. An exact old stop receipt proves completion,
+  # but never gives permission to consume whichever page start is current now.
+  return {'deliveryId':did,'changed':False,'superseded':False} if stopped_before else None
  if not start:return None  # A standalone diagnostic canary has no page grant to consume.
  # Readback may complete after a human paused the plan; preserve the pause while
  # persisting the receipt and consuming the original grant.
  market=store._plan(plan)['market'];current=_control_for_plan(store,plan)
  newer=store.db.execute("SELECT 1 FROM continuous_send_control_request WHERE plan_id=? AND action='start' AND result_revision>? LIMIT 1",
                         (plan,start['result_revision'])).fetchone()
- stop_request='market-canary-stop-'+did
- stopped_before=store.db.execute('SELECT 1 FROM continuous_send_control_request WHERE request_id=?',(stop_request,)).fetchone()
  changed=not newer and not stopped_before and current['runRequested'] and not current['stopRequested']
  if changed:
   revision=current['revision']+1;now=store.clock()
@@ -77,6 +92,11 @@ def settle_confirmed_canaries(store,market,account):
  Consumption is atomic with new confirmations. Existing stop receipts and later explicit starts
  are already terminal grants, so there is no historical control-event backfill.
  """
+ from lib.account_identity import current_generation,promote_capabilities
+ generation=current_generation(store,market,account)
+ # New confirmations consumed their own page grant atomically before publication.
+ # Verified continuous markets need no historical delivery scan or write transaction.
+ if (generation or {}).get('capabilities',{}).get('message_send',{}).get('state')=='verified':return []
  plan=_plan(store,market);completed=[]
  if not store.db.execute("SELECT 1 FROM sqlite_master WHERE name='cycle_delivery'").fetchone():return completed
  rows=store.db.execute("""SELECT d.* FROM cycle_delivery d WHERE d.plan_id=? AND d.state='confirmed'
@@ -87,7 +107,6 @@ def settle_confirmed_canaries(store,market,account):
   delivery=dict(row);delivery['snapshot']=json.loads(row['snapshot'])
   with store.tx():receipt=consume_canary_authorization(store,delivery)
   if not receipt or receipt['superseded']:continue
-  from lib.account_identity import current_generation,promote_capabilities
   generation=current_generation(store,market,account)
   verified=(generation or {}).get('capabilities',{}).get('message_send',{}).get('state')=='verified'
   if not receipt['changed'] and verified:continue
@@ -96,6 +115,24 @@ def settle_confirmed_canaries(store,market,account):
                                    evidence_ref='cycle-delivery:'+row['id'])
   completed.append({'deliveryId':row['id'],'canaryCompleted':True,'canaryStopRequested':control(store,market)['stopRequested']})
  return completed
+
+def unbound_confirmed_canary(store,market,account):
+ """An unverified historical canary with no reliable grant keeps new writes waiting."""
+ from lib.account_identity import current_generation
+ generation=current_generation(store,market,account)
+ if (generation or {}).get('capabilities',{}).get('message_send',{}).get('state')=='verified':return None
+ plan=_plan(store,market)
+ row=store.db.execute("""SELECT d.id FROM cycle_delivery d WHERE d.plan_id=? AND d.state='confirmed'
+  AND json_extract(d.snapshot,'$.executionMode')='market-canary-v1'
+  AND (json_extract(d.snapshot,'$.senderAccount')=? OR json_extract(d.snapshot,'$.senderAccount') IS NULL)
+  AND json_type(d.snapshot,'$.pageStart') IS NOT 'null'
+  AND NOT EXISTS(SELECT 1 FROM continuous_send_control_request s WHERE s.plan_id=d.plan_id AND s.action='start'
+                 AND s.request_id=json_extract(d.snapshot,'$.pageStart.requestId')
+                 AND s.result_revision=json_extract(d.snapshot,'$.pageStart.revision'))
+  AND NOT EXISTS(SELECT 1 FROM continuous_send_control_request r WHERE r.plan_id=d.plan_id
+                 AND r.request_id='market-canary-stop-'||d.id AND r.action='stop')
+  ORDER BY d.created LIMIT 1""",(plan,account)).fetchone()
+ return {'state':'waiting_canary_authorization','deliveryId':row['id'],'stopReason':'canary_authorization_unbound'} if row else None
 
 def _time(value):
  if not isinstance(value,str) or not re.fullmatch(r'(?:[01]\d|2[0-3]):[0-5]\d|24:00',value):raise CycleError('continuous_send_setting_invalid')

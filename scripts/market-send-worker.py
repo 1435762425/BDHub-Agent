@@ -22,6 +22,7 @@ def expected_wait_state(code):
  # Stay alive and re-read the original request every five minutes: the readback confirms the card or, after two
  # reads that find it absent, isolates the creator.  The scheduler does not relaunch a sender stopped on unknown.
  if code in ('market_send_result_unknown','market_send_conversation_result_unknown'):return 'waiting_reconciliation'
+ if code in ('canary_authorization_unbound','canary_authorization_changed'):return 'waiting_canary_authorization'
  if code=='new_contact_capacity_reached':return 'waiting_capacity'
  # A refusal is settled on its own delivery; the classified new-contact gate decides on the next pass
  # whether it was the day's quota (hold) or one creator's refusal (continue).

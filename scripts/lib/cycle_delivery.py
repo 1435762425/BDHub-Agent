@@ -62,14 +62,14 @@ class Deliveries:
   row=self.s.db.execute('SELECT * FROM cycle_delivery WHERE id=?',(id,)).fetchone()
   if not row:raise CycleError('delivery_missing')
   return {**dict(row),'snapshot':json.loads(row['snapshot']),'parts':[dict(p) for p in self.s.db.execute("SELECT * FROM cycle_delivery_part WHERE delivery_id=? ORDER BY CASE kind WHEN 'card' THEN 0 ELSE 1 END",(id,))]}
- def prepare(self,plan,candidate):
+ def prepare(self,plan,candidate,*,page_control=False):
   source=candidate['source']['sourceId'];id='delivery-'+digest([plan,candidate['creatorId'],candidate['pid'],source])[:32]
   with self.s.tx():
    prior=self.s.db.execute('SELECT snapshot FROM cycle_delivery WHERE id=?',(id,)).fetchone()
    if prior:
     if json.loads(prior[0])!=candidate:raise CycleError('delivery_source_changed')
     return self.get(id)
-   self._eligible(plan,candidate)
+   self._eligible(plan,candidate,page_control=page_control)
    self.s.db.execute('INSERT INTO cycle_delivery VALUES(?,?,?,?,?,?,?,?,?,?)',(id,plan,candidate['creatorId'],candidate['oecId'],candidate['pid'],source,encoded(candidate),self.s.clock(),self.s.clock()+1800,'ready'))
    for kind in ('card','text'):self.s.db.execute('INSERT INTO cycle_delivery_part(delivery_id,kind,request_ref) VALUES(?,?,?)',(id,kind,str(uuid.uuid4())))
    if candidate.get('sendAllocation'):
@@ -77,7 +77,9 @@ class Deliveries:
     from lib.outreach_allocation import claim
     claim(self.s,plan,candidate,id)
   return self.get(id)
- def _eligible(self,plan,c,*,current_delivery_id=None,allow_invitation_text=False):
+ def _eligible(self,plan,c,*,current_delivery_id=None,allow_invitation_text=False,page_control=False):
+  from lib.market_send_control import require_canary_authorization
+  require_canary_authorization(self.s,plan,c,page_control=page_control)
   from lib.outreach_policy import marketing_isolated
   if marketing_isolated(self.s.db,plan,c['creatorId'],c['oecId']):raise CycleError('marketing_isolated')
   # Pool selection and relationship revision can be refreshed independently. The current
@@ -98,13 +100,13 @@ class Deliveries:
   if c['message']['version']!=4 or c['message']['deliveryOrder']!='card_then_text':raise CycleError('message_not_v4')
   prior=last_contact_by_creator(self.s.db,plan,creator_id=c['creatorId'],current_delivery_id=current_delivery_id).get(c['creatorId'])
   if prior is not None and self.s.clock()-prior<MARKETING_COOLDOWN_SECONDS:raise CycleError('marketing_cooldown')
- def begin(self,id,kind,*,authorized_snapshot_hash,recipient_verified=False,allowance_verified=False):
+ def begin(self,id,kind,*,authorized_snapshot_hash,recipient_verified=False,allowance_verified=False,page_control=False):
   # Authorization is supplied by the plan runtime, never inferred from existence of a review.
   with self.s.tx():
    d=self.get(id);c=d['snapshot']
    if authorized_snapshot_hash!=digest(c):raise CycleError('execution_authorization_missing')
    if not recipient_verified or not allowance_verified:raise CycleError('execution_evidence_missing')
-   self._eligible(d['plan_id'],c,current_delivery_id=id,allow_invitation_text=kind=='text')
+   self._eligible(d['plan_id'],c,current_delivery_id=id,allow_invitation_text=kind=='text',page_control=page_control)
    if self.s.clock()>=d['expires']:raise CycleError('delivery_expired')
    if self.s.db.execute("SELECT 1 FROM cycle_delivery WHERE plan_id=? AND state='unknown'",(d['plan_id'],)).fetchone():raise CycleError('delivery_unknown')
    if self.s.db.execute("SELECT 1 FROM sqlite_master WHERE name='service_reply'").fetchone() and self.s.db.execute("SELECT 1 FROM service_reply WHERE plan_id=? AND state IN ('inflight','accepted','unknown')",(d['plan_id'],)).fetchone():raise CycleError('reply_reconciliation_required')
@@ -276,12 +278,12 @@ class Deliveries:
   with self.s.tx():
    self.s.db.execute("INSERT OR IGNORE INTO cycle_conversation_intent VALUES(?,?,'ready',NULL,NULL)",(id,str(uuid.uuid4())))
   return self.conversation_intent(id)
- def begin_conversation(self,id,approved_hash):
+ def begin_conversation(self,id,approved_hash,*,page_control=False):
   self.reserve_contact(id)
   with self.s.tx():
    d=self.get(id)
    if approved_hash!=digest(d['snapshot']):raise CycleError('execution_authorization_missing')
-   self._eligible(d['plan_id'],d['snapshot'],current_delivery_id=id)
+   self._eligible(d['plan_id'],d['snapshot'],current_delivery_id=id,page_control=page_control)
    if self.s.clock()>=d['expires']:raise CycleError('delivery_expired')
    if self.s.db.execute("SELECT 1 FROM cycle_delivery WHERE plan_id=? AND state='unknown'",(d['plan_id'],)).fetchone():raise CycleError('delivery_unknown')
    row=self.conversation_intent(id)

@@ -122,11 +122,12 @@ class MarketCanaryCompletionTests(unittest.TestCase):
   self.store.db.execute("UPDATE cycle_delivery_part SET state='confirmed' WHERE delivery_id=?",(self.did,))
  def test_legacy_confirmed_restarts_before_any_candidate_or_platform_access(self):
   self.legacy_confirmed()
+  before=control(self.store,'my');generations=self.generations()
   with patch('lib.market_send_canary.load_config',return_value={'markets':{'my':{'roles':{'communications':'acc8'}}}}), \
        patch('lib.market_send_canary.authenticated',side_effect=AssertionError('platform_must_not_open')):
    result=run(self.root,'my','restart-first-send',canary=False,page_control=True)
-  self.assertEqual((result['state'],result['realSends'],result['platformWrites']),('confirmed',0,0))
-  self.assertTrue(result['canaryStopRequested']);self.assertTrue(control(self.store,'my')['stopRequested'])
+  self.assertEqual((result['state'],result['realSends'],result['platformWrites']),('waiting_canary_authorization',0,0))
+  self.assertEqual(control(self.store,'my'),before);self.assertEqual(self.generations(),generations)
  def test_new_explicit_start_is_not_cancelled_by_legacy_history(self):
   self.legacy_confirmed();resumed=self.change('start','page-resume-legacy')
   before=self.store.db.total_changes
@@ -134,12 +135,31 @@ class MarketCanaryCompletionTests(unittest.TestCase):
   self.assertEqual(result,[]);self.assertTrue(control(self.store,'my')['runRequested'])
   self.assertEqual(control(self.store,'my')['revision'],resumed['revision'])
   self.assertEqual(self.store.db.total_changes,before)
+ def test_unrecognized_frozen_start_is_not_treated_as_a_new_grant(self):
+  self.legacy_confirmed()
+  self.store.db.execute('UPDATE cycle_delivery SET snapshot=? WHERE id=?',
+   (encoded({**self.snapshot,'pageStart':{'requestId':'missing-page-start','revision':999}}),self.did))
+  before=control(self.store,'my')
+  from lib.market_send_control import unbound_confirmed_canary
+  self.assertEqual(settle_confirmed_canaries(self.store,'my','acc8'),[])
+  self.assertEqual(unbound_confirmed_canary(self.store,'my','acc8')['state'],'waiting_canary_authorization')
+  self.assertEqual(control(self.store,'my'),before)
  def test_existing_stop_and_verified_capability_need_no_historical_control_backfill(self):
   self.confirm();settle_confirmed_canaries(self.store,'my','acc8')
   before=self.store.db.total_changes
   self.assertEqual(settle_confirmed_canaries(self.store,'my','acc8'),[])
   self.assertEqual(self.store.db.total_changes,before)
   self.assertEqual(self.store.db.execute("SELECT count(*) FROM control_event WHERE event_id LIKE 'market-canary-%'").fetchone()[0],0)
+ def test_verified_continuous_path_does_not_scan_delivery_history(self):
+  self.confirm();settle_confirmed_canaries(self.store,'my','acc8');queries=[]
+  self.store.db.set_trace_callback(queries.append)
+  self.assertEqual(settle_confirmed_canaries(self.store,'my','acc8'),[])
+  self.store.db.set_trace_callback(None)
+  self.assertFalse(any('cycle_delivery' in q.lower() or 'begin' in q.lower() for q in queries))
+ def test_exact_legacy_stop_receipt_can_finish_capability_without_changing_controls(self):
+  self.confirm();self.legacy_confirmed();before=control(self.store,'my')
+  self.assertTrue(settle_confirmed_canaries(self.store,'my','acc8')[0]['canaryCompleted'])
+  self.assertEqual(control(self.store,'my'),before)
  def test_read_only_recovery_confirmation_stops_and_promotes_without_a_new_send(self):
   def reconcile(_root,_market,deliveries,did):
    self.assertEqual(did,self.did);self.confirm(deliveries)

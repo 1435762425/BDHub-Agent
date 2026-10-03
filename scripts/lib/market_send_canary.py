@@ -250,6 +250,10 @@ def run(root,market,request_id,*,canary=True,page_control=False,reconcile_only=F
    result=report|reconcile_delivery(root,market,Deliveries(store),active['id'])
    completed=settle_confirmed_canaries(store,market,communications)
    return result|(completed[-1] if completed else {})
+  if not reconcile_only:
+   from lib.market_send_control import unbound_confirmed_canary
+   waiting=unbound_confirmed_canary(store,market,communications)
+   if waiting:return report|waiting
   recovering_only=reconcile_only or active is not None
   if active is not None:
    canary=json.loads(active['snapshot']).get('executionMode')=='market-canary-v1'
@@ -259,6 +263,17 @@ def run(root,market,request_id,*,canary=True,page_control=False,reconcile_only=F
    require_send_template_approval(store,root,market)
    _dispatch_allowed(store,market,canary=canary,page_control=page_control)
    active=_unsettled(store,plan,canary=canary)
+   if active and page_control:
+    from lib.market_send_control import require_canary_authorization
+    try:require_canary_authorization(store,plan,json.loads(active['snapshot']),page_control=True)
+    except CycleError as error:
+     if str(error)=='canary_authorization_unbound':
+      return report|{'state':'waiting_canary_authorization','deliveryId':active['id'],'stopReason':str(error)}
+     if str(error)=='canary_authorization_changed':
+      delivery=Deliveries(store).get(active['id'])
+      kind='text' if delivery['parts'][0]['state']=='confirmed' else 'card'
+      return report|_settle_local_refusal(store,active['id'],kind,error)
+     raise
   if not recovering_only and store.db.execute("SELECT 1 FROM cycle_delivery WHERE plan_id=? AND state='unknown' AND id<>? LIMIT 1",(plan,active['id'] if active else '')).fetchone():
    raise CycleError('market_send_result_unknown')
   checkpoint_time('preAuth')
@@ -283,7 +298,7 @@ def run(root,market,request_id,*,canary=True,page_control=False,reconcile_only=F
      from lib.market_send_control import page_start_authorization
      candidate['pageStart']=page_start_authorization(store,market) if page_control else None
     _dispatch_allowed(store,market,canary=canary,page_control=page_control)
-    try:delivery=Deliveries(store).prepare(plan,candidate)
+    try:delivery=Deliveries(store).prepare(plan,candidate,page_control=page_control)
     except CycleError as error:
      if str(error)=='collaboration_excluded':
       return report|{'state':'candidate_skipped','creatorId':candidate['creatorId'],'stopReason':str(error)}
@@ -310,7 +325,7 @@ def run(root,market,request_id,*,canary=True,page_control=False,reconcile_only=F
      def permit_create(scope):
       if scope.get('market')!=market or scope.get('account')!=communications or scope.get('oecId')!=candidate['oecId']:raise CycleError('conversation_scope_mismatch')
       _dispatch_allowed(store,market,canary=canary,page_control=page_control);_binding_current(root,market,candidate)
-      ref=Deliveries(store).begin_conversation(did,digest(candidate));mark();report['platformWrites']+=1;return {'dispatchAllowed':True,'requestRef':ref,'stage':'create_conversation'}
+      ref=Deliveries(store).begin_conversation(did,digest(candidate),page_control=page_control);mark();report['platformWrites']+=1;return {'dispatchAllowed':True,'requestRef':ref,'stage':'create_conversation'}
      try:receipt=adapter.create_once(candidate['oecId'],conversation_intent['request_ref'],before_dispatch=permit_create)
      except BaseException as error:
       if _record_create_failure(store,did,error):
@@ -351,7 +366,7 @@ def run(root,market,request_id,*,canary=True,page_control=False,reconcile_only=F
      def permit(scope,expected=kind):
       if scope.get('market')!=market or scope.get('account')!=communications or scope.get('componentKind')!=expected:raise CycleError('dispatch_scope_mismatch')
       _dispatch_allowed(store,market,canary=canary,page_control=page_control);_binding_current(root,market,candidate)
-      Deliveries(store).reserve_contact(did);value=Deliveries(store).begin(did,expected,authorized_snapshot_hash=digest(candidate),recipient_verified=True,allowance_verified=True);mark();report['platformWrites']+=1;return {**value,'stage':scope['stage'],'componentKind':expected,**{key:scope[key] for key in ('productId','listId','campaignId','bindingSha256') if key in scope}}
+      Deliveries(store).reserve_contact(did);value=Deliveries(store).begin(did,expected,authorized_snapshot_hash=digest(candidate),recipient_verified=True,allowance_verified=True,page_control=page_control);mark();report['platformWrites']+=1;return {**value,'stage':scope['stage'],'componentKind':expected,**{key:scope[key] for key in ('productId','listId','campaignId','bindingSha256') if key in scope}}
      try:
       receipt=adapter.send_card_once(conversation,card,part['request_ref'],before_dispatch=permit) if kind=='card' else adapter.send_once(conversation,candidate['message']['textIt'],part['request_ref'],before_dispatch=permit)
      except BaseException as error:
