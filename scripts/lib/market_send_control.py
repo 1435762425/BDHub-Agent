@@ -100,5 +100,6 @@ def status(root,store,market):
  return {'schemaVersion':'bdhub.continuous-send.v1','market':market,'account':definition['accounts']['communications'],'control':cfg,'runtime':runtime,'window':window_state(cfg['window'],now),'capacity':{'windowSeconds':86400,'limit':cycle_delivery.NEW_CONTACT_LIMIT,'used':used,'remaining':None if cycle_delivery.NEW_CONTACT_LIMIT is None else max(0,cycle_delivery.NEW_CONTACT_LIMIT-used)},'poolRemaining':remaining,'sample':None,'unknownDeliveries':unknown,'templates':send_templates(store,market=market),'legacyBatchRetired':True,'platformWrites':0,'realSends':0}
 
 def launch_worker(root,market):
- if market not in ('br','my','uk'):raise CycleError('market_send_runtime_unavailable')
+ from lib.market_registry import market_path_keys
+ if market not in market_path_keys(root):raise CycleError('market_send_runtime_unavailable')
  return launch(root,market)

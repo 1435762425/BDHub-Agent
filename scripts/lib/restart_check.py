@@ -104,12 +104,12 @@ def drained(root, *, workers_stopped=False):
     return {"phase": "drained", "at": time.time(), "checks": checks, "ok": all(row["ok"] for row in checks)}
 
 
-def session_states(root, *, wait_seconds=0, clock=time.monotonic, sleep=time.sleep):
+def session_states(root, *, wait_seconds=0, clock=time.monotonic, sleep=time.sleep, markets=MARKETS):
     """IM session owners' states; a session rotating (``starting``) is given up to ``wait_seconds`` to be ready."""
     deadline = clock() + wait_seconds
     while True:
         states = {}
-        for market in MARKETS:
+        for market in markets:
             try:
                 states[market] = json.loads((Path(root) / f"var/im-session-{market}.json").read_text()).get("state")
             except (OSError, ValueError):
@@ -126,7 +126,10 @@ def postflight(root, baseline, *, wait_seconds=0):
         integrity = db.execute("PRAGMA quick_check").fetchone()[0]
     running = processes(root)
     alive = running["alive"]
-    ready = session_states(root, wait_seconds=wait_seconds)
+    # The sessions that were running before the restart are the ones that must be ready after it.
+    sessions = sorted({row["role"][len("im-session-"):] for row in baseline["processes"]["alive"]
+                       if row["role"].startswith("im-session-")}) or MARKETS
+    ready = session_states(root, wait_seconds=wait_seconds, markets=sessions)
     changed = sorted(table for table, value in controls.items() if baseline["controls"].get(table) != value)
     checks = [_check("controls_unchanged", not changed, changed),
               _check("request_refs_kept", refs["baselineDigest"] == baseline["requestRefs"]["baselineDigest"]

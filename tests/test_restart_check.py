@@ -39,6 +39,16 @@ class RestartCheckTests(unittest.TestCase):
   failed={c['name'] for c in check.postflight(self.root,base)['checks'] if not c['ok']}
   self.assertEqual(failed,{'controls_unchanged','im_sessions_ready'})
 
+ def test_postflight_checks_the_sessions_that_ran_before_the_restart(self):
+  self.patches[0].stop()
+  alive=[{'role':'scheduler','current':True},{'role':'im-session-de','current':True},{'role':'im-session-fr','current':True}]
+  self.patches[0]=patch.object(check,'processes',return_value={'head':'h','runtimeDirty':None,'alive':alive});self.patches[0].start()
+  base=check.preflight(self.root)
+  (self.root/'var/im-session-de.json').write_text('{"state":"ready"}')
+  (self.root/'var/im-session-fr.json').write_text('{"state":"starting"}')
+  failed=[c for c in check.postflight(self.root,base)['checks'] if not c['ok']]
+  self.assertEqual([(c['name'],c['detail']) for c in failed],[('im_sessions_ready',{'de':'ready','fr':'starting'})])
+
  def test_drained_counts_a_conversation_being_opened_as_inflight(self):
   with self.db() as db,db:
    db.execute("INSERT INTO cycle_delivery VALUES('d9','running')")

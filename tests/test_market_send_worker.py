@@ -35,4 +35,15 @@ class MarketSendWorkerTests(unittest.TestCase):
         self.assertFalse(MODULE.stops_after(canary=False,sent=True))
 
 
+    def test_a_page_start_launches_the_sender_for_any_non_it_market(self):
+        import sys
+        from unittest.mock import patch
+        sys.path.insert(0,str(PATH.parents[0]))
+        import lib.market_send_control as control
+        from lib.second_cycle import CycleError
+        root=PATH.parents[1]
+        with patch.object(control,'launch',side_effect=lambda _root,market:{'pid':1,'market':market}):
+            for market in ('br','my','uk','de','fr'):self.assertEqual(control.launch_worker(root,market)['market'],market)
+            with self.assertRaisesRegex(CycleError,'market_send_runtime_unavailable'):control.launch_worker(root,'it')
+
 if __name__=='__main__':unittest.main()

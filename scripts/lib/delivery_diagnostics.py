@@ -8,6 +8,12 @@ import sqlite3
 import time
 
 
+def _markets(root):
+    """Operational markets from ``root``'s registry, or the project's own when ``root`` has none."""
+    from lib.market_registry import operational_market_keys
+    return operational_market_keys(root if (Path(root) / "config/markets.json").exists() else None)
+
+
 def distribution(values):
     ordered = sorted(values)
     if not ordered:
@@ -88,7 +94,7 @@ def diagnose(root, *, since=0, clock=time.time):
         for (market, _, creator), started in starts.items():
             deliveries[market].append({"creator": creator, "started": started})
     timing, timing_sources, log_evidence = defaultdict(lambda: defaultdict(list)), set(), []
-    for market in ("it", "br", "my", "uk"):
+    for market in _markets(root):
         names = ["continuous-send.log"] if market == "it" else [f"market-send-worker-{market}.log", f"market-send-worker-{market}.json"]
         for name in names:
             log = root / "var" / name
@@ -123,7 +129,7 @@ def diagnose(root, *, since=0, clock=time.time):
                         if _number(value) and value >= 0:
                             timing[market][stage].append(value)
     markets = {}
-    for market in sorted(set(deliveries) | {"it", "br", "my", "uk"}):
+    for market in sorted(set(deliveries) | set(_markets(root))):
         markets[market] = {"throughput": _throughput(deliveries[market], since),
                            "last24Hours": _throughput(deliveries[market], max(since, now - 86400)),
                            "confirmedComponents": components[market],

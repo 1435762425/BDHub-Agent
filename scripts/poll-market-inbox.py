@@ -9,6 +9,7 @@ sys.path.insert(0,str(ROOT/'scripts'))
 from lib.cycle_inbox import Inbox,inbox_status
 from lib.cycle_service import Service
 from lib.login_recovery import auth_family,request_refresh
+from lib.market_registry import market_path_keys
 from lib.market_im_runtime import authenticated
 from lib.reply_events import backfill
 from lib.second_cycle import CycleStore
@@ -112,7 +113,7 @@ def tick(market,limit=12):
   return report
 
 def main():
- p=argparse.ArgumentParser(description=__doc__);p.add_argument('--market',required=True,choices=('br','my','uk'))
+ p=argparse.ArgumentParser(description=__doc__);p.add_argument('--market',required=True,choices=market_path_keys(ROOT))
  p.add_argument('--worker',action='store_true');p.add_argument('--limit',type=int,default=20);p.add_argument('--interval',type=int,default=10)
  a=p.parse_args()
  if not 1<=a.limit<=30 or not 10<=a.interval<=3600:p.error('invalid interval or limit')
