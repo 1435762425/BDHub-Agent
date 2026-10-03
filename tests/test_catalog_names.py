@@ -154,6 +154,27 @@ class Filling(unittest.TestCase):
             self.assertEqual(report['errors'][0]['code'], 'names_request_unresolved')
             self.assertEqual(gap(folder)['missing'], 1)
 
+    def test_an_unusable_answer_is_asked_again_but_a_transport_failure_stays_blocked(self):
+        from lib.draft_provider import DraftProviderError
+
+        class Unusable(FakeCall):
+            def __call__(self, messages, *, max_output_tokens=1000):
+                if not self.calls:
+                    self.calls.append(messages)
+                    raise DraftProviderError('provider_output_invalid', outcome='outcome_unknown')
+                return FakeCall.__call__(self, messages, max_output_tokens=max_output_tokens)
+        with tempfile.TemporaryDirectory() as folder:
+            fixture(folder, [('1' * 19, 'missing', 'a')], [])
+            call = Unusable()
+            report = prepare(folder, 5, call=call)
+            self.assertEqual((report['prepared'], len(call.calls)), (1, 2))
+        with tempfile.TemporaryDirectory() as folder:
+            fixture(folder, [('1' * 19, 'missing', 'a')], [])
+            self.assertEqual(prepare(folder, 5, call=FakeCall(fail=True))['prepared'], 0)
+            again = FakeCall()
+            report = prepare(folder, 5, call=again)
+            self.assertEqual((report.get('blocked'), len(again.calls)), (['1' * 19], 0))
+
     def test_nothing_missing_is_a_clean_no_op(self):
         with tempfile.TemporaryDirectory() as folder:
             fixture(folder, [('1' * 19, 'missing', 'a')], [('1' * 19, 'a', {'shortNameIt': 'nome'})])

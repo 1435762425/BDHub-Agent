@@ -219,9 +219,10 @@ def prepare(root, limit=25, *, market='it', call=None, on_progress=None, all_mis
     import sys
     if str(root / 'scripts') not in sys.path:
         sys.path.insert(0, str(root / 'scripts'))
-    from lib.cycle_materials import Materials, name_key
+    from lib.cycle_materials import KNOWN_BAD_RESPONSES, Materials, name_key
     # A product can be held by a reservation from an earlier, unfinished batch. Skip those instead
     # of letting one stale row stop the whole run, and report them so they are not silently lost.
+    # A batch whose answer arrived but was unusable is not unfinished: it is asked again below.
     import sqlite3 as _sql
     blocked = set()
     try:
@@ -231,8 +232,9 @@ def prepare(root, limit=25, *, market='it', call=None, on_progress=None, all_mis
             for row in missing:
                 key = name_key(row,market)
                 prior = conn.execute('SELECT job_id FROM cycle_name_reservation WHERE id=?', (key,)).fetchone()
-                job = conn.execute('SELECT state FROM cycle_name_job WHERE id=?', (prior[0],)).fetchone() if prior else None
-                if prior and (job is None or job[0] not in ('ready', 'response_saved')):
+                job = conn.execute('SELECT state,error FROM cycle_name_job WHERE id=?', (prior[0],)).fetchone() if prior else None
+                retryable = job is not None and job[0] == 'unknown' and job[1] in KNOWN_BAD_RESPONSES
+                if prior and not retryable and (job is None or job[0] not in ('ready', 'response_saved')):
                     blocked.add(row['pid'])
     except _sql.Error:
         blocked = set()
