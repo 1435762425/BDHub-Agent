@@ -17,7 +17,7 @@
 | Netherlands | `nl` | planned |
 | Philippines | `ph` | planned |
 | Singapore | `sg` | planned |
-| Thailand | `th` | paused; ACC14/ACC15 assigned, th-TH content drafted (pending user review), first login pending |
+| Thailand | `th` | ready (switches off); ACC14/ACC15 logged in; Campaign only (no full-managed); TapLink verified; templates approved |
 | United Kingdom | `uk` | production enabled; Campaign + full-managed |
 | USA | `us` | planned |
 | Vietnam | `vn` | planned |

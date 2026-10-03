@@ -224,7 +224,7 @@
     },
     "th": {
       "enabled": true,
-      "runtimeState": "paused",
+      "runtimeState": "ready",
       "contentReady": true,
       "label": "泰国",
       "shortLabel": "TH",
