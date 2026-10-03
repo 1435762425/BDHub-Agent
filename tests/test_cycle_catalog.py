@@ -93,4 +93,19 @@ class CommissionRule(unittest.TestCase):
   self.assertIsNone(r['creatorPercent']);self.assertIn('missing_creatorPercent',assess_offer(r,AT)['reasons'])
 
 
+
+
+class TransientReadTests(unittest.TestCase):
+    def test_network_drops_and_busy_codes_are_reread_but_answers_are_not(self):
+        import importlib.util
+        from types import SimpleNamespace
+        spec=importlib.util.spec_from_file_location('sync_cycle_catalog_cli',Path(__file__).resolve().parents[1]/'scripts/sync-cycle-catalog.py')
+        module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
+        def result(http=200,code=0,turing=False):return SimpleNamespace(http_status=http,code=code,has_turing=turing,system_error_3=False)
+        for transient in (result(http=0,code=None),result(code=98001001),result(http=503,code=None),result(code=100000)):
+            self.assertTrue(module.transient_read(transient))
+        for final in (result(),result(code=16201010),result(code=98001001,turing=True),result(code=98001002)):
+            self.assertFalse(module.transient_read(final))
+
+
 if __name__=='__main__':unittest.main()

@@ -14,6 +14,15 @@ from lib.market_accounts import catalog_read_account,catalog_scope
 def save(path,data):
  tmp=path.with_suffix('.tmp');tmp.write_text(json.dumps(data,ensure_ascii=False,indent=2)+'\n');os.chmod(tmp,0o600);tmp.replace(path)
 
+READ_ATTEMPTS=3
+
+
+def transient_read(result):
+    """A read that failed for transport or platform-busy reasons, not because of what was asked."""
+    return (result.http_status in (0,429,500,502,503,504) or result.code in (429,100000,98001001)
+            or bool(getattr(result,'system_error_3',False))) and not getattr(result,'has_turing',False)
+
+
 def main():
  p=argparse.ArgumentParser(description=__doc__);p.add_argument('--market',default='it');p.add_argument('--source',choices=['campaign','selected'],required=True);p.add_argument('--run',type=Path,required=True);p.add_argument('--max-requests',type=int,default=100);p.add_argument('--audit-only',action='store_true');args=p.parse_args()
  from lib.market_registry import supports
@@ -46,8 +55,13 @@ def main():
    if report['scope']!=scope:raise CycleError('catalog_actor_scope_mismatch')
    def read(method,endpoint,extra,body):
     if (method,endpoint) not in {('GET',CAMPAIGNS),('GET',PRODUCTS),('POST',SELECTED)}:raise CycleError('catalog_endpoint_forbidden')
-    r=transport._xhr(method=method,path=endpoint,params=transport._params()|extra,payload=body,write=False)
-    state.setdefault('attempts',[]).append({'account':account_name,'path':endpoint,'http':r.http_status,'code':r.code if type(r.code) is int else None,'at':time.time()})
+    for attempt in range(READ_ATTEMPTS):
+     r=transport._xhr(method=method,path=endpoint,params=transport._params()|extra,payload=body,write=False)
+     state.setdefault('attempts',[]).append({'account':account_name,'path':endpoint,'http':r.http_status,'code':r.code if type(r.code) is int else None,'at':time.time()})
+     # A network drop or the platform's busy codes are re-read in place: these are reads, and one
+     # blip used to block a whole multi-hundred-campaign pass (TH, 2026-10-03).
+     if not transient_read(r) or attempt==READ_ATTEMPTS-1:break
+     time.sleep(2*(attempt+1))
     data=transport.require_read(r)
     return data,digest(data)
    for _ in range(args.max_requests):
