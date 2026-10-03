@@ -239,7 +239,7 @@
       },
       "capabilities": {
         "campaignCatalog": true,
-        "fullManagedCatalog": null
+        "fullManagedCatalog": false
       }
     },
     "uk": {
