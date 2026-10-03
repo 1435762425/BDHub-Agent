@@ -9,7 +9,8 @@ export type Holder={market:string;stage:string;since:number|null};
 // waitingKnown=false: the stage's resource needs could not be determined, which is not "nothing to wait for" (I05).
 export type ConsoleStage={stage:string;state:"running"|"queued";since:number|null;heartbeatAt:number|null;waitingOn:{resource:string;heldBy:Holder[]}[];waitingKnown:boolean;waitReason:string|null};
 export type FinishedStage={market:string;runId:string;stage:string;state:string;startedAt:number|null;finishedAt:number|null;errorCode:string|null;items:number|null;writeEvidence:string|null};
-export type Lane={state:string|null;value:number|null;label:string|null;unit:string|null;scope:string|null;lastSuccessAt:number|null;stopReason:string|null};
+export type Lane={state:string|null;reportedState:string|null;observedAt:number|null;fresh:boolean;running:boolean|null;enabled:boolean|null;statusReason:string|null;
+ value:number|null;label:string|null;unit:string|null;scope:string|null;lastSuccessAt:number|null;stopReason:string|null};
 export type ConsoleMarket={market:string;available:true;setting:{automaticOperationsEnabled:boolean;continuousSendEnabled:boolean;fullCatalogWeeklyEnabled:boolean};
  run:{runId:string;state:string;startedAt:number|null}|null;current:ConsoleStage|null;lastFinished:FinishedStage|null;
  needsReview:{runId:string;state:string;errorCode:string|null;at:number|null}|null;openHumanCases:number|null;
@@ -33,8 +34,13 @@ const list=(value:unknown,max:number)=>Array.isArray(value)&&value.length<=max?v
 const holder=(raw:unknown):Holder=>{const v=object(raw);return {market:text(v.market,8),stage:text(v.stage,40),since:time(v.since)};};
 const finished=(raw:unknown):FinishedStage=>{const v=object(raw);return {market:text(v.market,8),runId:text(v.runId),stage:text(v.stage,40),state:text(v.state,40),
  startedAt:time(v.startedAt),finishedAt:time(v.finishedAt),errorCode:maybeText(v.errorCode),items:count(v.items),writeEvidence:maybeText(v.writeEvidence,20)};};
-const lane=(raw:unknown):Lane|null=>{if(raw==null)return null;const v=object(raw);
- return {state:maybeText(v.state,40),value:count(v.value),label:maybeText(v.label,40),unit:maybeText(v.unit,20),scope:maybeText(v.scope,20),lastSuccessAt:time(v.lastSuccessAt),stopReason:maybeText(v.stopReason)};};
+const lane=(raw:unknown,legacyObservedAt:unknown):Lane|null=>{if(raw==null)return null;const v=object(raw);
+ const observedAt=time(v.observedAt??legacyObservedAt),running=v.running==null?null:flag(v.running);
+ const fresh=v.fresh==null?false:flag(v.fresh);
+ if(fresh&&(running!==true||observedAt===null))fail();
+ return {state:fresh?maybeText(v.state,40):"unverified",reportedState:maybeText(v.reportedState??v.state,40),observedAt,fresh,running,
+  enabled:v.enabled==null?null:flag(v.enabled),statusReason:maybeText(v.statusReason??(v.fresh==null?"legacy_snapshot":null),40),
+  value:count(v.value),label:maybeText(v.label,40),unit:maybeText(v.unit,20),scope:maybeText(v.scope,20),lastSuccessAt:time(v.lastSuccessAt),stopReason:maybeText(v.stopReason)};};
 
 export function validateOperationsConsole(raw:unknown):OperationsConsole{
  const v=object(raw);
@@ -55,7 +61,7 @@ export function validateOperationsConsole(raw:unknown):OperationsConsole{
    run,current,lastFinished:m.lastFinished==null?null:finished(m.lastFinished),needsReview:review,openHumanCases:count(m.openHumanCases),
    humanQueue:m.humanQueue==null?null:(()=>{const h=object(m.humanQueue);return {human:count(h.human),technical:count(h.technical)};})(),
    selectionPaused:m.selectionPaused==null?null:(()=>{const p=object(m.selectionPaused);return {reason:maybeText(p.reason,80),pending:p.pending==null?null:count(p.pending),pausedAt:time(p.pausedAt),retryAt:time(p.retryAt)};})(),
-   lanes:{available:flag(lanes.available),observedAt:time(lanes.observedAt),continuousSend:lane(lanes.continuousSend),agentReply:lane(lanes.agentReply)}};});
+   lanes:{available:flag(lanes.available),observedAt:time(lanes.observedAt),continuousSend:lane(lanes.continuousSend,lanes.observedAt),agentReply:lane(lanes.agentReply,lanes.observedAt)}};});
  const scheduler=object(v.scheduler),labels=object(v.stageLabels);
  return {schemaVersion:"bdhub.operations-console.v1",checkedAt:time(v.checkedAt)??fail(),markets,
   resources:list(v.resources,50).map(item=>{const r=object(item);return {resource:text(r.resource,120),...holder(r),heartbeatAt:time(r.heartbeatAt)};}),

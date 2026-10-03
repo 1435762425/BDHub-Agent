@@ -15,12 +15,14 @@ const num=(value:number|null|undefined,unit:string)=>value==null?"—":`${value.
 const STATE:Record<string,string>={completed:"已完成",quota_exhausted:"额度用尽，断点保留",failed:"失败",needs_human:"需核对",stopped:"已停止",
  skipped:"本轮跳过",running:"运行中",queued:"排队",sending:"发送中",waiting_window:"等待发送窗口",waiting_pool:"暂无可发达人",
  waiting_capacity:"等待可用额度",waiting_reconciliation:"待核验",outside_reply_window:"回复窗口外",disabled:"未启用",off:"关闭",idle:"空闲",paused:"暂停",
- attention:"已停止，需关注",first_send_requires_page_start:"首发需在页面启动",confirmed:"已确认",cancelled:"已取消",partial_delivery:"部分送达",waiting_account:"等待账号"};
+ attention:"已停止，需关注",first_send_requires_page_start:"首发需在页面启动",confirmed:"已确认",cancelled:"已取消",partial_delivery:"部分送达",waiting_account:"等待账号",
+ starting:"启动中",unverified:"状态待核实",waiting_send_window:"等待二发窗口结束",send_dispatch_active:"等待二发请求收口",waiting_dispatch:"等待在途核验",
+ pilot_complete_waiting_resume:"首条已确认，等待页面继续",original_intent_rechecked:"已核验原回复",waiting_reply_check:"等待原回复核验",reply_check_deferred:"回复核验暂缓"};
 const label=(state:string|null)=>state?STATE[state]??"状态待核实":"—";
 const tone=(state:string|null)=>state==="failed"||state==="needs_human"||state==="waiting_reconciliation"||state==="attention"?"warning":state==="running"||state==="sending"?"brand":state==="completed"?"success":"neutral";
-const MARKET_NAME:Record<string,string>={it:"意大利",br:"巴西",my:"马来西亚",uk:"英国"};
+const MARKET_NAME:Record<string,string>={it:"意大利",br:"巴西",my:"马来西亚",uk:"英国",de:"德国",fr:"法国",th:"泰国"};
 function resource(key:string){
- if(key==="platform:global")return "平台读取槽（四市场共用）";
+ if(key==="platform:global")return "平台读取槽（各市场共用）";
  if(key==="kalodata:global")return "Kalodata 读取槽";
  const [kind,name]=key.split(":");
  return kind==="workflow"?`${(name??"").toUpperCase()} 主链`:kind==="supply"?`供给账号 ${name}`:kind==="communications"?`通讯账号 ${name}`:key;
@@ -46,9 +48,15 @@ function Situation({row,labels,now}:{row:Row;labels:Record<string,string>;now:nu
  return <span className="text-gray-500">{stage}排队{wait?`，等 ${wait.heldBy.map(h=>`${h.market.toUpperCase()} ${labels[h.stage]??h.stage}`).join("、")||resource(wait.resource)}`:"，下一次调度领取"}</span>;
 }
 
+const LANE_REASON:Record<string,string>={status_stale:"采样已过期",worker_not_running:"进程未运行",worker_unknown:"进程待核实",
+ status_missing:"尚无运行采样",previous_worker_sample:"等待新进程采样",control_changed:"等待设置生效后的采样",legacy_snapshot:"历史快照"};
 function LaneLine({name,lane}:{name:string;lane:Lane|null}){
- if(!lane)return <p className="text-xs text-gray-400">{name}：—</p>;
- return <p className="text-xs"><span className="text-gray-500">{name}：</span>{label(lane.state)}</p>;
+ if(!lane)return <p className="text-xs text-gray-400">{name}：状态待核实（尚无运行采样）</p>;
+ return <div className="text-xs"><p><span className="text-gray-500">{name}：</span>{lane.fresh?label(lane.state):"状态待核实"}
+  {lane.fresh&&lane.running&&<span className="text-gray-400"> · 进程运行</span>}
+  {!lane.fresh&&lane.statusReason&&<span className="text-gray-400">（{LANE_REASON[lane.statusReason]??"采样待核实"}）</span>}</p>
+  <p className="text-[11px] text-gray-400">{lane.observedAt?`采样 ${time(lane.observedAt)}`:"尚无采样时间"}{lane.enabled===false?" · 设置已关闭":""}</p>
+ </div>;
 }
 
 function Finished({row,labels}:{row:FinishedStage|null;labels:Record<string,string>}){
@@ -92,14 +100,15 @@ export default function OperationsConsole(){
  const todo=rows.flatMap(row=>{const o=overviews[row.market],items:{key:string;text:string;href:string;since?:number|null}[]=[];
   if(row.humanQueue?.human)items.push({key:`${row.market}-human`,text:`${row.humanQueue.human} 位达人在人工队列`,href:`/${row.market}/conversations`});
   const accounts=metric(o,"handling","accountNeedsHuman");if(accounts)items.push({key:`${row.market}-accounts`,text:`${accounts} 个账号需要人工维护`,href:`/${row.market}/ops/accounts`});
-  if(row.lanes.continuousSend?.state==="attention")items.push({key:`${row.market}-send`,text:"持续发送已停止，需关注",href:`/${row.market}/workspace/send`});
+  const sender=row.lanes.continuousSend;
+  if(sender?.fresh&&sender.running&&sender.state==="attention")items.push({key:`${row.market}-send`,text:"持续发送已停止，需关注",href:`/${row.market}/workspace/send`,since:sender.observedAt});
   if(row.needsReview)items.push({key:`${row.market}-review`,text:`主链需核对：${row.needsReview.errorCode??label(row.needsReview.state)}`,href:`/${row.market}/ops/jobs`,since:row.needsReview.at});
   return items.map(item=>({...item,market:row.market}));});
  // "Nothing to do" is only said when every market's queue and overview were actually read (R11).
  const unchecked=(data?.markets??[]).filter(row=>!row.available||!row.humanQueue||!overviews[row.market]||overviewFailed.includes(row.market)).map(row=>row.market.toUpperCase());
  const unread=rows.map(row=>({market:row.market,count:metric(overviews[row.market],"inbox","unread"),oldest:metric(overviews[row.market],"inbox","oldestMinutes")}));
  return <div className="space-y-5">
-  <PageHeading title="经营总览" description="全部市场 · 北京时间今日 00:00 起 · 只读，不启动任何作业" action={data?<div className="flex flex-wrap gap-2"><Pill tone={data.scheduler.running?"success":"warning"}>{data.scheduler.running?"调度器在运行":"调度器未运行"}</Pill><Pill tone="neutral">数据截至 {time(data.checkedAt)}</Pill></div>:undefined}/>
+  <PageHeading title="经营总览" description="全部市场 · 北京时间今日 00:00 起 · 只读，不启动任何作业" action={data?<div className="flex flex-wrap gap-2"><Pill tone={data.scheduler.running?"success":"warning"}>{data.scheduler.running?"调度器在运行":"调度器未运行"}</Pill><Pill tone="neutral">总览读取 {time(data.checkedAt)}</Pill></div>:undefined}/>
   {failed&&<Notice tone="warning">总览数据暂时读不到，状态待核实{data?`；以下是 ${time(data.checkedAt)} 的记录`:""}。</Notice>}
   {overviewFailed.length>0&&data&&<Notice tone="warning">{overviewFailed.map(m=>m.toUpperCase()).join("、")} 的经营数据本次读取失败，相关列显示“—”或上次读取的值。</Notice>}
   {!data&&!failed&&<p className="text-sm text-gray-500">正在读取…</p>}

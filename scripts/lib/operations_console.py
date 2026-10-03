@@ -1,13 +1,15 @@
 """Read-only cross-market console: what each market is doing, waiting for and last achieved (H12).
 
-It reads only existing ledgers -- workflow runs/stages, claims and resource slots, the projected
-operations read model -- and never starts, retries or claims anything. Every figure keeps its own
+It reads only existing ledgers -- workflow runs/stages, claims and resource slots, and continuous
+workers' own status -- and never starts, retries or claims anything. Every figure keeps its own
 time; a market whose ledger cannot be read is reported as unavailable, never as zero.
 """
 from __future__ import annotations
 
 import json
+import math
 import sqlite3
+from pathlib import Path
 
 from lib.second_cycle import CycleError
 
@@ -15,6 +17,9 @@ SCHEMA_VERSION = "bdhub.operations-console.v1"
 QUIET_STATES = ("skipped", "waiting_upstream")
 STAGE_LABELS = {"taplink_clean": "TapLink 清理", "catalog": "货盘", "taplink_prepare": "TapLink 建链",
                 "kalodata": "Kalodata 线索", "oecid": "OECID 身份", "send_pool": "发送池"}
+# Senders may wait 300 s, then spend up to 180 s checking an original intent. A live PID alone
+# does not prove the last state is current; give those normal cycles room before calling it stale.
+LANE_MAX_AGE_SECONDS = 600
 
 
 def _stage_rows(db, run_id):
@@ -74,27 +79,99 @@ def _finished(row):
             "writeEvidence": (json.loads(row["counts_json"] or "{}") or {}).get("writeEvidence")}
 
 
-def _lanes(store, market):
-    """Continuous lanes from the projected operations page, with that projection's own time."""
-    from lib.market_read_model import read
+def _status_record(path):
+    """Read existing worker evidence only; do not call status helpers that initialize stores."""
     try:
-        page = read(store, market, "operations")
-    except CycleError:
-        page = None
-    if not page:
-        return {"available": False, "observedAt": None, "continuousSend": None, "agentReply": None}
-    by_id = {row.get("id"): row for row in page.get("stages") or [] if isinstance(row, dict)}
+        value = json.loads(path.read_text(encoding="utf-8"))
+        return value if isinstance(value, dict) else {}
+    except (OSError, ValueError):
+        return {}
 
-    def lane(stage_id):
-        row = by_id.get(stage_id)
-        if not row:
-            return None
-        metric = row.get("metric") or {}
-        return {"state": row.get("state"), "value": metric.get("value"), "label": metric.get("label"),
-                "unit": metric.get("unit"), "scope": metric.get("scope"),
-                "lastSuccessAt": row.get("lastSuccessAt"), "stopReason": row.get("stopReason")}
-    return {"available": True, "observedAt": page.get("observationTime"),
-            "continuousSend": lane("continuous_send"), "agentReply": lane("agent_reply")}
+
+def _stamp(value):
+    return value if type(value) in (int, float) and math.isfinite(value) and value > 0 else None
+
+
+def _lane(record, now, *, enabled=None, sample=None, control_at=None):
+    """A process observation and its own sample time, independent of the console read time."""
+    from lib.process_liveness import record_alive
+    sample = record if sample is None else sample
+    observed = _stamp(sample.get("checkedAt")) or _stamp(sample.get("startedAt"))
+    running = record_alive(record) if type(record.get("pid")) is int and record["pid"] > 0 else None
+    if record.get("running") is False:
+        running = False
+    state = sample.get("state")
+    state = state if isinstance(state, str) and 0 < len(state) <= 40 else None
+    reason = None
+    if observed is None:
+        reason = "status_missing"
+    elif not -60 <= now - observed <= LANE_MAX_AGE_SECONDS:
+        reason = "status_stale"
+    elif _stamp(record.get("startedAt")) and observed < record["startedAt"]:
+        reason = "previous_worker_sample"
+    elif running is not True:
+        reason = "worker_not_running" if running is False else "worker_unknown"
+    elif not state:
+        reason = "status_missing"
+    elif _stamp(control_at) and observed < control_at:
+        reason = "control_changed"
+    fresh = reason is None
+    stop_reason = next((sample[key][:160] for key in ("stopReason", "reason", "error")
+                        if isinstance(sample.get(key), str) and sample[key]), None)
+    return {"state": state if fresh else "unverified", "reportedState": state,
+            "observedAt": observed, "fresh": fresh, "running": running, "enabled": enabled,
+            "statusReason": reason, "value": None, "label": None, "unit": None, "scope": None,
+            "lastSuccessAt": _stamp(sample.get("lastSuccessAt")),
+            "stopReason": stop_reason}
+
+
+def _lanes(root, store, market, automation):
+    """Read both independently authorized workers even while the supply workflow is disabled.
+
+    The IT sender's sample is in continuous_send_runtime; its launcher JSON identifies the process.
+    Other senders and all AI workers publish their own status JSON. These are the existing sources,
+    not a second persistent projection. Every query here is SELECT, on the caller's read-only store.
+    """
+    root = Path(root)
+    now = store.clock()
+    plan = store.db.execute("SELECT id,state FROM plan WHERE market=? AND institution='bjn-local-research'",
+                            (market,)).fetchone()
+    sender = _status_record(root / "var" / ("continuous-send-worker.json" if market == "it" else
+                                             f"market-send-worker-{market}.json"))
+    agent = _status_record(root / "var" / ("agent-reply-status.json" if market == "it" else
+                                            f"agent-reply-status-{market}.json"))
+    send_enabled = agent_enabled = None
+    send_control_at = agent_control_at = None
+    sample = sender
+    if plan:
+        try:
+            cfg = store.db.execute("SELECT * FROM continuous_send_control WHERE plan_id=?", (plan[0],)).fetchone()
+            send_enabled = plan["state"] == "active" and not (cfg and cfg["stop_requested"]) and bool(
+                cfg and (cfg["run_requested"] or cfg["automatic_enabled"]) or
+                market != "it" and automation["continuousSendEnabled"])
+            send_control_at = cfg["updated_at"] if cfg else None
+            if market == "it":
+                # _runtime is a SELECT-only reader; status() without a supplied store would open a writable DB.
+                from lib.continuous_send import _runtime
+                runtime = _runtime(store, plan[0])
+                sample = runtime | {"checkedAt": runtime["seenAt"], "startedAt": None}
+        except (sqlite3.Error, KeyError, TypeError):
+            sample = {}
+        try:
+            # agent_setting only reads the existing table and supplies disabled defaults; it does not migrate.
+            from lib.template_library import agent_setting
+            cfg = agent_setting(store, plan[0])
+            agent_enabled = plan["state"] == "active" and cfg["enabled"]
+            agent_control_at = cfg.get("updatedAt")
+        except (sqlite3.Error, KeyError, TypeError, ValueError):
+            agent = {}
+    else:
+        sender = agent = sample = {}
+    send_lane = _lane(sender, now, enabled=send_enabled, sample=sample, control_at=send_control_at)
+    agent_lane = _lane(agent, now, enabled=agent_enabled, control_at=agent_control_at)
+    stamps = [row["observedAt"] for row in (send_lane, agent_lane) if row["observedAt"] is not None]
+    return {"available": send_lane["fresh"] or agent_lane["fresh"], "observedAt": min(stamps) if stamps else None,
+            "continuousSend": send_lane, "agentReply": agent_lane}
 
 
 def _selection_paused(root, db, market):
@@ -172,7 +249,7 @@ def console(root, store, *, markets=None, recent=15):
                 "openHumanCases": human,
                 "humanQueue": _human_queue(root, store, market),
                 "selectionPaused": _selection_paused(root, db, market),
-                "lanes": _lanes(store, market)})
+                "lanes": _lanes(root, store, market, current_setting)})
         except (CycleError, KeyError, TypeError, ValueError) as error:
             rows.append({"market": market, "available": False, "error": str(error)[:120]})
     recent_rows = [_finished(row) for row in db.execute(f"""SELECT s.*,r.market FROM workflow_stage_run s

@@ -1,5 +1,6 @@
 import json,sys,tempfile,unittest
 from pathlib import Path
+from unittest import mock
 ROOT=Path(__file__).resolve().parents[1];sys.path.insert(0,str(ROOT/'scripts'))
 from lib.operations_console import console  # noqa:E402
 from lib.operations_workflow import create_run,finish_stage  # noqa:E402
@@ -91,5 +92,106 @@ class OperationsConsoleTests(unittest.TestCase):
   self.assertEqual(row['humanQueue']['human'],1)
   self.assertEqual(row['humanQueue']['human'],1)   # human mode without an open case still needs a person
   self.assertIn(row['openHumanCases'],(0,None))
+
+ def worker_record(self,name,**value):
+  (self.root/'var'/name).write_text(json.dumps(value))
+
+ def snapshot(self,market,state,at):
+  from lib.market_read_model import publish
+  publish(self.store,market,'operations',{'market':market,'stages':[
+   {'id':'continuous_send','state':state,'metric':{'value':9,'label':'旧记录'}},
+   {'id':'agent_reply','state':state,'metric':{'value':1,'label':'旧记录'}}]},observed_at=at)
+
+ def read_console(self,markets):
+  # The actual entry point supplies a read-only store. Any accidental initializer/mutation fails here.
+  with CycleStore(self.root/'var/second-cycle.sqlite',clock=lambda:NOW,readonly=True) as reader:
+   reader.db.execute('PRAGMA query_only=ON')
+   with mock.patch('lib.market_read_model.read',side_effect=AssertionError('projection is not live status')):
+    return console(self.root,reader,markets=markets)
+
+ def test_recovered_sender_uses_its_live_sample_instead_of_old_attention(self):
+  self.snapshot('br','attention',NOW-35*60)
+  self.worker_record('market-send-worker-br.json',pid=100,checkedAt=NOW-5,running=True,state='confirmed')
+  before={p.name:p.read_bytes() for p in (self.root/'var').glob('*.json')}
+  with mock.patch('lib.process_liveness.record_alive',return_value=True):
+   result=self.read_console(['br'])
+  lane=result['markets'][0]['lanes']['continuousSend']
+  self.assertEqual((lane['state'],lane['fresh'],lane['running']),('confirmed',True,True))
+  self.assertEqual(lane['observedAt'],NOW-5)
+  self.assertNotEqual(lane['observedAt'],result['checkedAt'])
+  self.assertEqual(before,{p.name:p.read_bytes() for p in (self.root/'var').glob('*.json')})
+  self.assertEqual((result['readOnly'],result['platformWrites']),(True,0))
+
+ def test_ai_status_remains_live_when_automatic_operations_are_off(self):
+  from lib.template_library import DEFAULT_AGENT_SETTING,save_agent_setting
+  plan=self.store.plan('bjn-local-research','it')
+  save_agent_setting(self.store,plan,0,{key:value for key,value in
+   (DEFAULT_AGENT_SETTING|{'enabled':True}).items() if key not in ('revision','updatedAt')})
+  self.store.db.execute('UPDATE agent_reply_setting SET updated_at=? WHERE plan_id=?',(NOW-100,plan))
+  self.snapshot('it','failed',NOW-27.8*3600)
+  self.worker_record('agent-reply-status.json',pid=101,checkedAt=NOW-10,state='outside_reply_window')
+  with mock.patch('lib.process_liveness.record_alive',return_value=True):
+   row=self.read_console(['it'])['markets'][0]
+  self.assertFalse(row['setting']['automaticOperationsEnabled'])
+  lane=row['lanes']['agentReply']
+  self.assertEqual((lane['state'],lane['enabled'],lane['fresh']),('outside_reply_window',True,True))
+  self.assertEqual(lane['observedAt'],NOW-10)
+  # No projector is needed for the next independent AI worker observation to appear.
+  self.worker_record('agent-reply-status.json',pid=101,checkedAt=NOW-1,state='completed')
+  with mock.patch('lib.process_liveness.record_alive',return_value=True):
+   lane=self.read_console(['it'])['markets'][0]['lanes']['agentReply']
+  self.assertEqual((lane['state'],lane['observedAt']),('completed',NOW-1))
+
+ def test_dead_or_stale_workers_cannot_publish_old_attention_as_current(self):
+  from lib.operations_console import LANE_MAX_AGE_SECONDS
+  for alive,age,reason in ((True,LANE_MAX_AGE_SECONDS+1,'status_stale'),(False,5,'worker_not_running')):
+   with self.subTest(alive=alive,age=age):
+    self.worker_record('market-send-worker-br.json',pid=102,checkedAt=NOW-age,running=True,state='attention')
+    self.worker_record('agent-reply-status-br.json',pid=103,checkedAt=NOW-age,state='failed')
+    with mock.patch('lib.process_liveness.record_alive',return_value=alive):
+     lanes=self.read_console(['br'])['markets'][0]['lanes']
+    self.assertFalse(lanes['available'])
+    for key in ('continuousSend','agentReply'):
+     self.assertEqual((lanes[key]['state'],lanes[key]['fresh'],lanes[key]['statusReason']),('unverified',False,reason))
+     self.assertEqual(lanes[key]['observedAt'],NOW-age)
+
+ def test_missing_or_malformed_status_does_not_borrow_another_market_or_projection(self):
+  self.snapshot('br','attention',NOW-5)
+  self.worker_record('market-send-worker-my.json',pid=104,checkedAt=NOW-5,running=True,state='confirmed')
+  (self.root/'var/agent-reply-status-br.json').write_text('{broken')
+  with mock.patch('lib.process_liveness.record_alive',return_value=True):
+   rows={row['market']:row for row in self.read_console(['br','my'])['markets']}
+  for lane in ('continuousSend','agentReply'):
+   self.assertEqual(rows['br']['lanes'][lane]['state'],'unverified')
+   self.assertIsNone(rows['br']['lanes'][lane]['observedAt'])
+  self.assertEqual(rows['my']['lanes']['continuousSend']['state'],'confirmed')
+
+ def test_it_sender_uses_ledger_sample_and_checks_launcher_identity(self):
+  from lib.continuous_send import publish_runtime
+  plan=self.store.plan('bjn-local-research','it')
+  self.store.clock=lambda:NOW-5
+  publish_runtime(self.store,plan,'sending',worker_pid=105)
+  self.store.clock=lambda:NOW
+  self.worker_record('continuous-send-worker.json',pid=105,startedAt=NOW-100)
+  with mock.patch('lib.process_liveness.record_alive',return_value=True):
+   lane=self.read_console(['it'])['markets'][0]['lanes']['continuousSend']
+  self.assertEqual((lane['state'],lane['observedAt'],lane['fresh']),('sending',NOW-5,True))
+  # A new launcher must not lend its live PID to the preceding worker's stale state.
+  self.worker_record('continuous-send-worker.json',pid=106,startedAt=NOW-1)
+  with mock.patch('lib.process_liveness.record_alive',return_value=True):
+   lane=self.read_console(['it'])['markets'][0]['lanes']['continuousSend']
+  self.assertEqual((lane['state'],lane['statusReason']),('unverified','previous_worker_sample'))
+
+ def test_a_new_control_revision_waits_for_a_new_worker_sample(self):
+  plan=self.store.db.execute("SELECT id FROM plan WHERE market='br'").fetchone()[0]
+  self.store.db.execute("INSERT INTO continuous_send_control VALUES(?,1,0,0,'16:30','24:00','standard',1,?)",(plan,NOW))
+  self.worker_record('market-send-worker-br.json',pid=107,checkedAt=NOW-5,running=True,state='attention')
+  with mock.patch('lib.process_liveness.record_alive',return_value=True):
+   lane=self.read_console(['br'])['markets'][0]['lanes']['continuousSend']
+  self.assertEqual((lane['state'],lane['statusReason'],lane['enabled']),('unverified','control_changed',True))
+  self.worker_record('market-send-worker-br.json',pid=107,checkedAt=NOW,running=True,state='waiting_window')
+  with mock.patch('lib.process_liveness.record_alive',return_value=True):
+   lane=self.read_console(['br'])['markets'][0]['lanes']['continuousSend']
+  self.assertEqual((lane['state'],lane['fresh']),('waiting_window',True))
 
 if __name__=='__main__':unittest.main()

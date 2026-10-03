@@ -35,3 +35,29 @@ test('a paused full-managed selection survives validation; absent reads as not p
  assert.equal(validateOperationsConsole(payload).markets[0].selectionPaused,null);
  assert.throws(()=>validateOperationsConsole({...payload,markets:[{...paused,selectionPaused:{pending:-1}}]}),/invalid_operations_console/);
 });
+test('continuous workers retain their own sample times and independently enabled AI state',()=>{
+ const send={state:'confirmed',reportedState:'confirmed',observedAt:90,fresh:true,running:true,enabled:true,statusReason:null};
+ const agent={state:'outside_reply_window',reportedState:'outside_reply_window',observedAt:95,fresh:true,running:true,enabled:true,statusReason:null};
+ const row={...market,setting:{...market.setting,automaticOperationsEnabled:false},lanes:{available:true,observedAt:90,continuousSend:send,agentReply:agent}};
+ const result=validateOperationsConsole({...payload,markets:[row]}).markets[0];
+ assert.equal(result.setting.automaticOperationsEnabled,false);
+ assert.equal(result.lanes.continuousSend.state,'confirmed');assert.equal(result.lanes.continuousSend.observedAt,90);
+ assert.equal(result.lanes.agentReply.enabled,true);assert.equal(result.lanes.agentReply.observedAt,95);
+ assert.equal(result.lanes.agentReply.fresh,true);
+});
+test('dead, expired and legacy snapshots cannot remain actionable attention states',()=>{
+ for(const extra of [{observedAt:9,fresh:false,running:false,statusReason:'worker_not_running'},
+                     {observedAt:9,fresh:false,running:true,statusReason:'status_stale'},{}]){
+  const row={...market,lanes:{...market.lanes,continuousSend:{state:'attention',...extra}}};
+  const lane=validateOperationsConsole({...payload,markets:[row]}).markets[0].lanes.continuousSend;
+  assert.equal(lane.state,'unverified');assert.equal(lane.reportedState,'attention');assert.equal(lane.fresh,false);
+  assert.equal(lane.observedAt,9);
+ }
+});
+test('a claimed fresh lane needs a live worker and a recorded sample',()=>{
+ for(const lane of [{state:'confirmed',fresh:true,running:false,observedAt:90},
+                    {state:'confirmed',fresh:true,running:true,observedAt:null},
+                    {state:'confirmed',fresh:'yes',running:true,observedAt:90}]){
+  assert.throws(()=>validateOperationsConsole({...payload,markets:[{...market,lanes:{...market.lanes,observedAt:null,continuousSend:lane}}]}),/invalid_operations_console/);
+ }
+});
