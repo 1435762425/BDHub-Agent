@@ -2,6 +2,12 @@
 
 文档更新时间：2026-10-03（Asia/Shanghai）。下面各节按时间倒序，每节只代表该时刻的核验；最新一节即当前生产状态的最近记录，不是实时巡检。规则见 [PROJECT](../PROJECT.md)，实现见 [TECHNICAL](../TECHNICAL.md)，后续方向见[项目审计与清理](../implementation/project-audit-20260924.md)。更早流水见[历史交接](../archive/handoff/codex-takeover-history-20260923.md)。
 
+## 2026-10-03 21:20：前端信息精简上线
+
+- `da9b46e`：精简共用导航和重复说明；总览并列市场表现与人工待办，窄屏前置待办并改为市场卡片；运营首页前置库存、控制和运行事项；发送状态与操作集中；货盘前置商品入口。历史、统计口径和健康诊断默认折叠，未知、异常与旧数据提示保留。
+- Web 208 项测试、build/typecheck 和文档检查通过；四个重点页面完成桌面与窄屏检查。新构建 `QE2f4OwsHKtmfULqm5t2J` 的 291 个文件校验一致后，于 21:12:58 只切换 Web；生产四页面及六个只读接口返回 200，浏览器无控制台错误。截图、审计笔记和验收记录在 `outputs/ui-simplification-20261003/`，旧构建保留于 `var/web-releases/ui-simplification-20261003/previous`。
+- 七张授权/控制表摘要及原 `config/jobs.json` 运营变更保持不变；本任务没有调用平台写入或启动/停止业务任务。其余 18 个常驻进程 PID 保持；BR sender 在 21:12:19 因 TikTok IM TLS `SSLEOFError` 自行退出，早于 Web 切换约 39 秒，新总览正确显示“发送已停止，需关注”。21:17:29 原 scheduler 按既有任务重新拉起 BR sender，核对父进程及授权未变，现为等待候选；本任务未手动恢复。
+
 ## 2026-10-03 20:22：全面审计修复上线，46 库恢复演练通过
 
 - 审计 A1–A8 已修复：首条二发/AI 授权与能力恢复、paid 最终门禁、Campaign 原证据结算、TapLink 原市场/账号核验、总览实时通道、备份及文档一致性。细节、边界与提交见[本次交付](../implementation/audit-fixes-20261003.md)。无业务库结构迁移，未新开任何发送或 AI 全量授权。
