@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Continuous market sender using the market-scoped durable delivery path."""
-import argparse,fcntl,json,os,signal,sys,time
+import argparse,fcntl,json,os,signal,sqlite3,sys,time
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1];sys.dont_write_bytecode=True;sys.path.insert(0,str(ROOT/'scripts'))
 from lib.market_registry import market_path_keys
@@ -26,7 +26,7 @@ def expected_wait_state(code):
  # A refusal is settled on its own delivery; the classified new-contact gate decides on the next pass
  # whether it was the day's quota (hold) or one creator's refusal (continue).
  if code=='it_delivery_send_rejected':return 'waiting_platform_refusal'
- if code in ('ProfileBusyError','live_guard_busy','delivery_executor_busy'):return 'waiting_account'
+ if code in ('ProfileBusyError','live_guard_busy','delivery_executor_busy','local_store_busy'):return 'waiting_account'
  return None
 
 def inbox_waiting(market):
@@ -58,15 +58,23 @@ def main():
  register(ROOT,f'market-send-{a.market}')
  while not STOP:
   waiting=None;sent=False
-  with CycleStore(ROOT/'var/second-cycle.sqlite') as store:
-   control=setting(store,a.market)
-   from lib.market_send_control import control as send_control
-   send=send_control(store,a.market)
-   from lib.account_identity import current_generation
-   from lib.market_accounts import load_config
-   account=load_config(ROOT)['markets'][a.market]['roles']['communications']
-   generation=current_generation(store,a.market,account)
-   canary=first_send_canary(generation)
+  try:
+   with CycleStore(ROOT/'var/second-cycle.sqlite') as store:
+    control=setting(store,a.market)
+    from lib.market_send_control import control as send_control
+    send=send_control(store,a.market)
+    from lib.account_identity import current_generation
+    from lib.market_accounts import load_config
+    account=load_config(ROOT)['markets'][a.market]['roles']['communications']
+    generation=current_generation(store,a.market,account)
+    canary=first_send_canary(generation)
+  except sqlite3.OperationalError as error:
+   # Opening the shared ledger while many processes start can hit a lock; wait instead of crashing.
+   if 'locked' not in str(error) and 'busy' not in str(error):raise
+   write(a.market,{'running':True,'state':'waiting_account','pid':os.getpid(),'checkedAt':time.time(),'reason':'local_store_busy'})
+   until=time.monotonic()+3
+   while not STOP and time.monotonic()<until:time.sleep(0.25)
+   continue
   if send['stopRequested'] or not (control['continuousSendEnabled'] or send['automaticEnabled'] or send['runRequested']):
    write(a.market,{'running':False,'state':'off','pid':os.getpid(),'checkedAt':time.time()});break
   window=window_state(send['window'],time.time())
@@ -95,7 +103,7 @@ def main():
     if waiting:write(a.market,{'running':True,'state':waiting,'pid':os.getpid(),'checkedAt':time.time(),'reason':code})
     else:
      # The state file is overwritten by the next launch; the log keeps why this worker stopped.
-     print(json.dumps({'event':'attention_exit','market':a.market,'error':code,'detail':str(error)[:300],'at':time.time()},ensure_ascii=False),file=sys.stderr,flush=True)
+     print(json.dumps({'event':'attention_exit','market':a.market,'error':code,'detail':str(error)[:300],'cause':repr(error.__context__)[:300] if error.__context__ else None,'at':time.time()},ensure_ascii=False),file=sys.stderr,flush=True)
      write(a.market,{'running':False,'state':'attention','pid':os.getpid(),'checkedAt':time.time(),'error':code});return 2
   if a.once:break
   if sent and inbox_waiting(a.market):

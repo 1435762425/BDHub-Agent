@@ -228,4 +228,21 @@ class MarketLaunchContracts(unittest.TestCase):
   with self.assertRaisesRegex(CycleError,'delivery_cancel_not_safe'):
    _settle_local_refusal(self.store,started,'card',CycleError('offer_changed'))
 
+ def test_a_locked_ledger_before_dispatch_waits_only_while_the_component_is_unsubmitted(self):
+  from lib.italy_im_delivery import ItalyImDeliveryError
+  from lib.market_send_canary import _store_busy_before_dispatch
+  def wrapped(original):
+   try:
+    try:raise original
+    except Exception:raise ItalyImDeliveryError('it_delivery_dispatch_not_allowed') from None
+   except ItalyImDeliveryError as error:return error
+  ready={'state':'ready','started':None,'receipt':None,'confirmation':None}
+  self.assertTrue(_store_busy_before_dispatch(wrapped(sqlite3.OperationalError('database is locked')),ready))
+  # A component that may have reached the platform stays on original-intent reads.
+  self.assertFalse(_store_busy_before_dispatch(wrapped(sqlite3.OperationalError('database is locked')),
+                                               {**ready,'state':'inflight','started':NOW}))
+  self.assertFalse(_store_busy_before_dispatch(wrapped(sqlite3.OperationalError('no such table: x')),ready))
+  self.assertFalse(_store_busy_before_dispatch(wrapped(RuntimeError('database is locked')),ready))
+  self.assertFalse(_store_busy_before_dispatch(ItalyImDeliveryError('it_delivery_dispatch_not_allowed'),ready))
+
 if __name__=='__main__':unittest.main()

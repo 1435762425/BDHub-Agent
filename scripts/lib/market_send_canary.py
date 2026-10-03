@@ -137,6 +137,17 @@ def _preflight_or_close(store,session,plan,candidate,conversation,did):
     return None
 
 
+def _store_busy_before_dispatch(error,part):
+    """The permit could not write its local ledger because SQLite was locked, so nothing was dispatched.
+
+    The adapter wraps every permit failure as ``it_delivery_dispatch_not_allowed``; a busy database is a wait,
+    not a reason to stop the market worker, but only while the component is provably unsubmitted."""
+    original=getattr(error,'__context__',None)
+    return (getattr(error,'code',None)=='it_delivery_dispatch_not_allowed' and isinstance(original,sqlite3.OperationalError)
+            and any(word in str(original) for word in ('locked','busy')) and part['state']=='ready' and part['started'] is None
+            and not part['receipt'] and not part['confirmation'])
+
+
 def _settle_local_refusal(store,did,kind,local):
     """A known per-recipient exclusion refused before dispatch settles this delivery only (never the market).
 
@@ -324,6 +335,7 @@ def run(root,market,request_id,*,canary=True,page_control=False,reconcile_only=F
       settled=_settle_local_refusal(store,did,kind,local)
       if settled:return report|settled
       if local:raise local from None
+      if _store_busy_before_dispatch(error,latest):raise CycleError('local_store_busy') from None
       raise
     Deliveries(store).receipt(did,kind,receipt)
     proof=adapter.readback_card(conversation,card,part['request_ref'],message_id=receipt.get('messageId')) if kind=='card' else adapter.readback(conversation,candidate['message']['textIt'],part['request_ref'],message_id=receipt.get('messageId'))

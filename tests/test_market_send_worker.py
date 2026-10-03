@@ -11,6 +11,8 @@ class MarketSendWorkerTests(unittest.TestCase):
     def test_an_empty_ready_pool_waits_without_relaunch_churn(self):
         self.assertEqual(MODULE.expected_wait_state('market_send_candidate_missing'),'waiting_pool')
         self.assertEqual(MODULE.expected_wait_state('ProfileBusyError'),'waiting_account')
+        self.assertEqual(MODULE.expected_wait_state('local_store_busy'),'waiting_account')
+        self.assertIsNone(MODULE.expected_wait_state('it_delivery_dispatch_not_allowed'))
         self.assertEqual(MODULE.expected_wait_state('new_contact_capacity_reached'),'waiting_capacity')
         self.assertEqual(MODULE.expected_wait_state('it_delivery_send_rejected'),'waiting_platform_refusal')
         self.assertEqual(MODULE.expected_wait_state('market_send_result_unknown'),'waiting_reconciliation')
