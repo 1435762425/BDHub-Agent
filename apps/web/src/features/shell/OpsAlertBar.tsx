@@ -15,7 +15,7 @@ type Kind="system"|"people"|"waiting";
 const PEOPLE=/-(human|unread|needs-human|identity-overdue|send-unknown|agent-failed|agent-first-send|agent-pilot-complete|selection-isolated)$|-stage-/;
 const WAITING=/-(platform-rejected|send-quarantined|inbox-stopped)$|^production-paused$/;
 const kind=(alert:OpsAlert):Kind=>WAITING.test(alert.id)?"waiting":PEOPLE.test(alert.id)?"people":"system";
-const GROUPS:{kind:Kind;title:string}[]=[{kind:"system",title:"系统问题"},{kind:"people",title:"需要人工处理"},{kind:"waiting",title:"正常等待与提示（系统已在处理）"}];
+const GROUPS:{kind:Kind;title:string}[]=[{kind:"system",title:"系统异常"},{kind:"people",title:"待处理事项"},{kind:"waiting",title:"等待与提示"}];
 
 function Row({alert}:{alert:OpsAlert}){
  return <li className="flex items-start gap-3 py-2">
@@ -44,24 +44,23 @@ export default function OpsAlertBar(){
  const headline=HEADLINES.map(id=>data.alerts.find(alert=>alert.id===id)).find(Boolean);
  const rest=data.alerts.filter(alert=>alert!==headline);
  const count=(level:OpsAlert["level"])=>data.alerts.filter(alert=>alert.level===level&&kind(alert)!=="waiting").length;
- const urgent=rest.filter(alert=>kind(alert)!=="waiting"&&alert.level!=="info");
+ const actionable=data.alerts.filter(alert=>kind(alert)!=="waiting");
  const kinds=(k:Kind)=>rest.filter(alert=>kind(alert)===k);
  const tone=count("critical")?"border-error-200 bg-error-50 dark:border-error-900 dark:bg-error-900/10":count("warning")?"border-warning-200 bg-warning-50 dark:border-warning-900 dark:bg-warning-900/10":"border-gray-200 bg-gray-50 dark:border-gray-800 dark:bg-gray-900";
- const summary=[["系统",kinds("system").length+(headline&&kind(headline)==="system"?1:0)],["需人工",kinds("people").length],["等待/提示",kinds("waiting").length+(headline&&kind(headline)==="waiting"?1:0)]].filter(([,value])=>value).map(([label,value])=>`${label} ${value}`).join(" · ");
+ const summary=[["系统异常",actionable.filter(alert=>kind(alert)==="system").length],["待处理",actionable.filter(alert=>kind(alert)==="people").length]].filter(([,value])=>value).map(([label,value])=>`${label} ${value}`).join(" · ");
  return <div role="region" aria-label="运行告警" className={`border-b px-4 py-2.5 sm:px-6 ${tone}`}>
   <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
-   <span aria-hidden className={`size-2 shrink-0 rounded-full ${DOT[headline?.level??(count("critical")?"critical":count("warning")?"warning":"info")]}`}/>
-   <strong className="font-semibold text-gray-800 dark:text-gray-100">{headline?headline.title:urgent.length?`${urgent.length} 项需要处理`:"运行提示"}</strong>
+   <span aria-hidden className={`size-2 shrink-0 rounded-full ${DOT[count("critical")?"critical":count("warning")?"warning":headline?.level??"info"]}`}/>
+   <strong className="font-semibold text-gray-800 dark:text-gray-100">{headline?headline.title:actionable.length?`${actionable.length} 项待关注`:"运行提示"}</strong>
    {headline?.since&&<span className="text-xs text-gray-500">自 {time(headline.since)}</span>}
-   <span className="text-xs text-gray-500">{summary}</span>
+   {headline?rest.some(alert=>kind(alert)!=="waiting")&&<span className="text-xs font-medium text-gray-700 dark:text-gray-200">另 {rest.filter(alert=>kind(alert)!=="waiting").length} 项待关注</span>:<span className="hidden text-xs text-gray-600 dark:text-gray-300 sm:inline">{summary}</span>}
    {failed&&<span className="text-xs font-medium text-warning-700 dark:text-warning-300">巡检读取失败，以下为 {time(data.checkedAt)} 的旧结果</span>}
-   {!open&&urgent.length>0&&<span className="min-w-0 truncate text-xs text-gray-600 dark:text-gray-300">{urgent.slice(0,2).map(alert=>alert.title).join(" · ")}{urgent.length>2?` 等 ${urgent.length} 项`:""}</span>}
-   <button type="button" aria-expanded={open} onClick={()=>setOpen(value=>!value)} className="ml-auto text-xs font-medium text-brand-500 hover:text-brand-600">{open?"收起":"查看全部"}</button>
+   <button type="button" aria-expanded={open} onClick={()=>setOpen(value=>!value)} className="ml-auto min-h-8 rounded px-2 text-xs font-medium text-brand-600 hover:bg-black/5 focus-visible:outline-2 focus-visible:outline-brand-500 dark:text-brand-300">{open?"收起":"查看详情"}</button>
   </div>
   {open&&<div className="mt-2 border-t border-black/5 pt-1 dark:border-white/10">
    {headline&&<p className="py-2 text-xs leading-5 text-gray-600 dark:text-gray-300">{headline.detail}</p>}
    {GROUPS.map(group=>{const items=kinds(group.kind);return items.length?<div key={group.kind} className="pt-2"><p className="text-[11px] font-medium text-gray-500">{group.title}</p><ul className="divide-y divide-black/5 dark:divide-white/10">{items.map(alert=><Row key={alert.id} alert={alert}/>)}</ul></div>:null;})}
-   <p className="pt-1 text-[11px] text-gray-400">检查于 {time(data.checkedAt)} · 页面打开时每分钟刷新</p>
+   <p className="pt-2 text-xs text-gray-500">更新于 {time(data.checkedAt)}</p>
   </div>}
  </div>;
 }
