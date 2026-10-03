@@ -135,7 +135,7 @@ def _save_workspace(update, *, root=None):
 
 
 def save_filters(market, value, *, root=None):
-    if market not in {"mx", "br", "it", "uk", "us", "jp", "de"}:
+    if market not in {"mx", "br", "it", "uk", "us", "jp", "de", "fr"}:
         raise ValueError("catalog_market_invalid")
     rules = validate_filters(value)
     _save_workspace(lambda section: section.setdefault("filters", {}).__setitem__(market, rules), root=root)
@@ -186,7 +186,7 @@ def link_rules_for(market, route):
 
 
 def save_link_rule(market, route, value, *, root=None, make_default=False):
-    if market not in {"mx", "br", "it", "uk", "us", "jp", "de"} or route not in {"campaign", "selected"}:
+    if market not in {"mx", "br", "it", "uk", "us", "jp", "de", "fr"} or route not in {"campaign", "selected"}:
         raise ValueError("taplink_scope_invalid")
     rule = validate_link_rule(value)
     if type(make_default) is not bool:

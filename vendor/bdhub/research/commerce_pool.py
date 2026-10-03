@@ -13,7 +13,7 @@ from bdhub.research.campaign_catalog import project_inventory_offer, money_value
 from bdhub.research.commerce_transport import commerce_transport, require_market
 from bdhub.send.sharelink.commission import decimal_value
 
-CURRENCIES = {'br': 'BRL', 'it': 'EUR', 'uk': 'GBP', 'us': 'USD', 'jp': 'JPY', 'de': 'EUR'}
+CURRENCIES = {'br': 'BRL', 'it': 'EUR', 'uk': 'GBP', 'us': 'USD', 'jp': 'JPY', 'de': 'EUR', 'fr': 'EUR'}
 
 
 class PoolStore(FileIntentStore):

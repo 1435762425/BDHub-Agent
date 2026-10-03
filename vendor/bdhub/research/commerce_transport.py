@@ -14,7 +14,7 @@ from bdhub.send.sharelink.transport import SEARCH_PATH, OPPORTUNITY_SEARCH_PATH,
 from bdhub.send.taplink.protocol import CREATE_PATH, CARD_LIST_PATH, identifier, find_card
 from bdhub.send.taplink.transport import account_for
 
-MARKETS = frozenset({'br', 'my', 'it', 'uk', 'us', 'jp', 'de'})
+MARKETS = frozenset({'br', 'my', 'it', 'uk', 'us', 'jp', 'de', 'fr'})
 REVIEW_PATH = '/api/v1/affiliate/partner/campaign/review'
 PRODUCTS_PATH = '/api/v1/affiliate/partner/campaign/product_list/products'
 CATEGORY_PATH = '/api/v1/affiliate/lux/product/category/childrenv2'

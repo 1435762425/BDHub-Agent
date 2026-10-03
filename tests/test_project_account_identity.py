@@ -66,6 +66,8 @@ class ValidationErrorCodeTests(unittest.TestCase):
                          ("17", "8683739727707539216", "eu"))
         self.assertEqual(france.capabilities.status("product_search"), "enabled")
         self.assertEqual(france.capabilities.status("campaign_join"), "pending")
+        from bdhub.research.commerce_transport import require_market
+        require_market("fr")
 
 
 if __name__ == "__main__":

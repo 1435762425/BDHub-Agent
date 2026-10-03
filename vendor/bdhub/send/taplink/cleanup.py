@@ -79,7 +79,7 @@ class CleanupStore(FileIntentStore):
 
     def block(self, market, list_id, state):
         identifier(list_id)
-        if market not in {"mx", "br", "it", "uk", "us", "jp", "de"}:
+        if market not in {"mx", "br", "it", "uk", "us", "jp", "de", "fr"}:
             raise ValueError("taplink_scope_invalid")
         path = self.root / "retired" / f"{market}-{list_id}.json"
         atomic_json(path, {"state": state, "at": now()})
@@ -189,7 +189,7 @@ def cleanup_transport(job, *, allow_write=False):
 
 
 def create_scan(market, account, request_key, *, store=None, source_scope='all'):
-    if market not in {"mx", "br", "it", "uk", "us", "jp", "de"} or not isinstance(request_key, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,100}", request_key):
+    if market not in {"mx", "br", "it", "uk", "us", "jp", "de", "fr"} or not isinstance(request_key, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,100}", request_key):
         raise ValueError("taplink_scope_invalid")
     account_for(market, account, check_maintenance=False)
     if source_scope not in {'all','campaign','selected'}:raise ValueError('taplink_scope_invalid')

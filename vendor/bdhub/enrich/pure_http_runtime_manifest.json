@@ -23,7 +23,7 @@
       "unisec_region": "ttp"
     },
     "eu": {
-      "markets": ["uk", "it", "de"],
+      "markets": ["uk", "it", "de", "fr"],
       "web_region": "eu-ttp",
       "unisec_region": "eu",
       "core_url": "https://sf16-website-login.neutral.tiktokcdn-eu.com/obj/tiktok_web_login_static_eu/oec/unisec/web/1.0.0.40/eu/index.js",

@@ -123,7 +123,7 @@ def project_inventory_offer(raw: dict, market: str, *, at: datetime | None = Non
         "price_max": money_value(price.get("max_price")) if isinstance(price, dict) else money_value(price),
         "rating": float(rating) if rating is not None else None,
         "review_count": sample_quantity(product.get("product_review_count")),
-        "currency": {**MARKETS, "it": "EUR", "uk": "GBP", "us": "USD", "jp": "JPY", "de": "EUR"}[market], "sales": sample_quantity(product.get("product_sales")),
+        "currency": {**MARKETS, "it": "EUR", "uk": "GBP", "us": "USD", "jp": "JPY", "de": "EUR", "fr": "EUR"}[market], "sales": sample_quantity(product.get("product_sales")),
         "public_commission": format(public / 100, "f") if public is not None else None,
         "total_commission": format(total / 100, "f") if total is not None else None,
         "commission_gap": format((total - public) / 100, "f") if total is not None and public is not None else None, "sample_quota": quota,

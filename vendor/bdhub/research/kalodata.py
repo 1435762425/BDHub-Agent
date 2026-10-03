@@ -11,7 +11,7 @@ import re
 from typing import Any
 from uuid import uuid4
 
-MARKETS = {"mx": "MXN", "br": "BRL", "it": "EUR", "uk": "GBP", "us": "USD", "de": "EUR", "jp": "JPY"}
+MARKETS = {"mx": "MXN", "br": "BRL", "it": "EUR", "uk": "GBP", "us": "USD", "de": "EUR", "fr": "EUR", "jp": "JPY"}
 RUN_ID = re.compile(r"kd_[a-f0-9]{32}\Z")
 PID = re.compile(r"[0-9]{19}\Z")
 HANDLE = re.compile(r"[a-z0-9_.]{1,24}\Z")
