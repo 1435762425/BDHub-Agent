@@ -440,6 +440,37 @@ class CliErrorPath(unittest.TestCase):
 class WriteProtection(unittest.TestCase):
     """写入保护：结果未知绝不重试、已加入总数以平台为准。"""
 
+    def test_refresh_only_settles_the_original_or_frozen_child_campaign(self):
+        for joined, expected in [([B], 'result_unknown'), ([A], 'joined'), ([D], 'joined')]:
+            with self.subTest(joined=joined), tempfile.TemporaryDirectory() as folder:
+                fake = Fake(joinable=[A, B], joined=[B])
+                preview(folder, transport=context(fake), clock=lambda: NOW, job_id='job-1')
+                evidence = {'request_json': json.dumps(join_payload(A, 'original@example.com')),
+                            'verify_attempts': 2, 'verify_deadline': NOW + 300,
+                            'followup_stopped': 1, 'verify_error': 'original_read_timeout'}
+                store = Store(folder, clock=lambda: NOW)
+                try:
+                    store.set_item('job-1', A, state='result_unknown', write_attempted=1,
+                                   joined_campaign_id=D, reason='original_write_timeout', **evidence)
+                finally:
+                    store.close()
+                fake.joined_rows = [{'campaign_id': cid} for cid in joined]
+                result = preview(folder, transport=context(fake), clock=lambda: NOW, job_id='job-1')
+                row = next(item for item in result['items'] if item['campaign_id'] == A)
+                self.assertEqual((row['state'], row['write_attempted'], row['joined_campaign_id']),
+                                 (expected, 1, D))
+                for key, value in evidence.items():
+                    self.assertEqual(row[key], value)
+                self.assertEqual(result['unresolved'], [A] if expected == 'result_unknown' else [])
+                self.assertEqual(fake.writes, [])
+                self.assertEqual(result['platformWrites'], 0)
+                if expected == 'result_unknown':
+                    self.assertEqual(row['reason'], 'original_write_timeout')
+                    with self.assertRaisesRegex(ValueError, 'campaign_write_requires_verification'):
+                        apply(folder, campaign_ids=[A], email='original@example.com', confirm=True,
+                              transport=context(fake), clock=lambda: NOW, job_id='job-1')
+                    self.assertEqual(fake.writes, [])
+
     def test_preview_never_erases_an_attempted_write(self):
         """预览是"先预览再提交"（一键加入）的第一步，它不能把禁重试保护清掉。
 

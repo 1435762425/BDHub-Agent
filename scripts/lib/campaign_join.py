@@ -420,7 +420,7 @@ def preview(root, *, market='it', transport=None, clock=time.time, job_id=None):
             old = previous.get(row['campaign_id'])
             if old and old['state'] in ('writing', 'result_unknown', 'joined'):
                 # Preserve original evidence even when the platform now positively settles it.
-                observed = cid in joined or old['joined_campaign_id'] in joined
+                observed = row['campaign_id'] in joined or old['joined_campaign_id'] in joined
                 row = {**row, 'state': 'joined' if observed else old['state'],
                        'reason': 'observed_joined_in_normal_refresh' if observed else old['reason'],
                        'write_attempted': old['write_attempted'],
