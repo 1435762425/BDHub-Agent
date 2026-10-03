@@ -20,7 +20,7 @@ Web 使用 Next.js 16、React 19、TypeScript 5.9，Node ≥22.18.0；业务使�
 - `config/`：业务参数和敏感配置样例；`var/`：真实状态/证据；`vendor/`：本仓协议闭包。
 - `tests/` 与 `apps/web/tests/`：状态机、恢复、API 和显示合同。
 
-Web 路由与 bridge 显式携带 market，URL/body/CLI/返回值一致；约 10 个 CLI 的 `--market` 仍缺省为 `it`，手工调用必须显式传参。`markets.json` 是唯一市场注册表，未验收能力拒绝动作，空市场不回退 IT。注册表只登记 `campaignCatalog`、`fullManagedCatalog` 两个能力位；TapLink 清理、会话页人工文本/卡片、身份队列/精确发现/画像刷新、Kalodata 身份和全托作业页目前只在 IT 实现，由代码直接拒绝其他市场。自动 A/B 线索读取、身份衔接与发送已支持 IT/BR/MY/UK，不能由手动页面入口限制推断后台未接入。首页使用 `market_read_head → market_read_generation` 只读快照，同市场 GET 由 singleflight 合并；缺失/过期才本地聚合。快照失败不修改 workflow 结果，筛分摘要必须匹配当前来源 head。
+Web 路由与 bridge 显式携带 market，URL/body/CLI/返回值一致；约 10 个 CLI 的 `--market` 仍缺省为 `it`，手工调用必须显式传参。`markets.json` 是唯一市场注册表，未验收能力拒绝动作，空市场不回退 IT。注册表只登记 `campaignCatalog`、`fullManagedCatalog` 两个能力位；TapLink 清理、会话页人工文本/卡片、身份队列/精确发现/画像刷新、Kalodata 身份和全托作业页目前只在 IT 实现，由代码直接拒绝其他市场。自动 A/B 线索读取、身份衔接与发送按注册表支持全部运营市场，不能由手动页面入口限制推断后台未接入。首页使用 `market_read_head → market_read_generation` 只读快照，同市场 GET 由 singleflight 合并；缺失/过期才本地聚合。快照失败不修改 workflow 结果，筛分摘要必须匹配当前来源 head。
 
 ## 2. 领域模块与合同
 
@@ -30,7 +30,7 @@ Web 路由与 bridge 显式携带 market，URL/body/CLI/返回值一致；约 10
 | --- | --- |
 | `global-source-control.py` / `global_source.py` | 全托 run、分页、分区、覆盖与 head |
 | `global_selection.py` / `global_selection_fast.py` | 持久选入队列、单 PID 提交、批后回读 |
-| `campaign-join.py` / `campaign-collect.py` | 加入意图、未知核验、已加入列表完整采集 |
+| `campaign-join.py` / `campaign-collect.py` | 加入意图、未知核验、已加入列表完整采集；`sync-cycle-catalog.py` 读已加入列表遇 HTTP 0/429/5xx 或业务码 429/100000/98001001（不含 turing 验证）按 `transient_read` 同页重读，最多 3 次 |
 | `global_screen.py` / `campaign_screen.py` / `catalog_binding.py` | 商品筛分、Offer 指纹与唯一当前绑定 |
 
 来源完整发布才推进下游，既有用户明确接受的 `accepted_partial` 保留覆盖缺口。类目采集按一级类目保存页码、reported total、唯一数和停止原因，完成后跨类目 PID 去重。按总数漂移/排序漂移规则收口的类目只证明“按策略读完”，不证明每个在售 PID 都读到：`status()` 给出 `coverageVerified=false` 与 `coverageDrift`（原因、唯一数、末页总数），下游不据缺席推断商品失效。类目重读（`retry_partial_partition`）记 `partition_rescan_<类目>`，此前的补洞记录保留但不再作为新一轮复读证据；读不懂页的重试额度按类目计。历史 `coverageOverlay` 继续兼容：它保存类目基线和普通查询重叠更新证据；新常规发现不再创建每周普通查询。catalog 阶段沿用 `operations_policy.selected_source_run_id` 的原 workflow/source 命名，已完整发布的同轮类目或普通来源直接复用；未完成采集优先续原类目/页码，已停止任务不自动恢复。
@@ -57,7 +57,7 @@ Campaign 核验最多首次加 3 次补查，同市场整批共享 300 秒墙钟
 
 `catalog_current_binding` 是发送唯一材料投影，键覆盖 market/PID/来源/Campaign/分佣与命名指纹，保存 `currentListId`。普通历史卡不参与当前复用；仅同标准、同绑定且已核验卡幂等复用。完整 Campaign 筛分后 `reconcile_current_offers()` 将不再合格绑定 inactive、条款变化 waiting_refresh，全部写 event。
 
-短名按 `cycle_product_name.locale` 校验，非 IT 不读 IT 缓存或截断标题；缺失停止创建。IT 准备顺序 seed/read → names → create，其他市场 seed → localized names → read → create。新建回读未知隔离该 PID，整批写完公共回读，再按 30/120 秒轮询两次；仍缺失只保留 unknown，不重复 POST。在 `step_create` 中，若实时 offer 在尝试创建前已不再合格（`product_no_longer_eligible`）或其商业事实变化（`commercial_facts_changed:*`），`retire_or_block` 会取代已准备的意图（`catalog_link_intent.state='superseded'`，回读记录原因与 0 次创建尝试）并退役 prepare 项（`retired`，不计入 summary 计数）；已尝试/unknown 的意图保留其回读路径；若退役失败则按原样阻断该项，错误中带 `retire_failed`。
+短名按 `cycle_product_name.locale` 校验，非 IT 不读 IT 缓存或截断标题；缺失停止创建。模型已返回但不可用的答复（`provider_output_invalid`/`provider_output_truncated`）按 `names_invalid` 重问，准备阶段不跳过该批；非 IT 的短名缺口只看每条路由最新一次准备批次，`resume_short_names` 适用于所有市场与两种来源。IT 准备顺序 seed/read → names → create，其他市场 seed → localized names → read → create。新建回读未知隔离该 PID，整批写完公共回读，再按 30/120 秒轮询两次；仍缺失只保留 unknown，不重复 POST。在 `step_create` 中，若实时 offer 在尝试创建前已不再合格（`product_no_longer_eligible`）或其商业事实变化（`commercial_facts_changed:*`），`retire_or_block` 会取代已准备的意图（`catalog_link_intent.state='superseded'`，回读记录原因与 0 次创建尝试）并退役 prepare 项（`retired`，不计入 summary 计数）；已尝试/unknown 的意图保留其回读路径；若退役失败则按原样阻断该项，错误中带 `retire_failed`。
 
 清理只删除整卡平台 invalid，内部期限/佣金门槛仅本地停用。`taplink_clean` 按 `jobs.json` 中 `taplink_clean.weekday`（作业页可改，默认周一，所有市场共用）排期：IT 执行账号库存 refresh/classify/delete；BR/MY/UK 只运行 `catalog-clean.py check-bindings --market`，经本市场供给账号只读重读每个 active binding 自己的卡成员，仅在商品不在卡内、`product_status≠2`、被治理或非 8 类不可用时把该 binding 转 `waiting_refresh` 并记证据，读取失败保留原可信 binding；非 IT 不复用 IT 账号库存表，远端删除不开放。标准卡判定（`classify_pid`）要求名称/creator 佣金精确匹配且平台有效、商品合格；同形但平台报不可用的卡返回 `ineligible`，落 `review` 并阻止替代建链，同一卡已是 active binding 时转 `waiting_refresh`。删除收口后完整回读，仍存在记 failed_known，不自动重复 DELETE。发送端本地核对 binding/Offer/currentListId，不调用 fresh_card。
 
@@ -93,7 +93,7 @@ B 全窗口读取完成后，将回执/head/current/job 同事务发布；单条
 身份映射后的 `project_current_offers` 按本次涉及的 source ID 增量计算，未变化不写，最多 100 项一段短事务；计算移到写锁外，提交时核对原 catalog head。重复绑定后的中断可补投影，不重查身份或重写原回执；B 使用独立视频证据，不覆盖旧正销量 opportunity。全量 catalog 更新仍可重算完整投影，历史 source 事实不删除。
 `creator_discovery.py/discovery_cohort.py` 执行精确 Find，`identity_queue.py/identity-batch.py` 聚合去重身份，`profile_refresh.py` 独立刷新画像。resolved/unresolved 复用证据，blocked 保留原断点。`IdentityBridge` 只交接当前 head 的 source edge，固定索引顺序避免历史全表 JSON 扫描；OECID 发布不能等待或伪装 Profile 成功。BR/MY/UK 的 OECID 由 scheduler 调 `market-identity.py`（`lib/market_identity.py`）：每 3 个 handle 拉起一次 `probe-italy-profile.py`，证据写入 `var/market-identity-{market}-*` 目录（目前不清理）。页面的身份队列、精确发现与画像刷新接口只支持 IT。
 
-四市场 `identityAccountRole=supply` 时，OECID 走对应供给账号：BR acc2、MY acc5，IT/UK 单账号市场即其唯一账号（acc6/acc11），先要求该账号已发布 `oecid_find=verified`。IT 先结算旧 cohort/outbox 的原报告，再使用 `market-identity.py` 的有界每批 3 人、每轮最多 50 人路径；原 acc6 的 12 QPS 验收不转授 acc9。旧 started 按原账号读取报告，当前批次也按冻结账号消费；handle 预算、有效身份和未匹配结论跨角色切换保留，账号故障只等待当前所选账号。workflow 的 OECID 资源槽绑定供给账号，与同账号货盘任务互斥。下面的 IT cohort 描述适用于兼容模式与旧任务恢复。
+`identityAccountRole=supply` 时，OECID 走对应供给账号：BR acc2、MY acc5、DE acc13、FR acc17、TH acc15，IT/UK 单账号市场即其唯一账号（acc6/acc11），先要求该账号已发布 `oecid_find=verified`。新市场的 `oecid_find` canary 用 `probe-italy-profile.py` 单目标：带画像（`profileTypeSets`）可同时验收 `creator_profile`；画像阶段若返回 HTTP200/code 100000/systemError3（TH 实测），改用 `identityOnly:true` 且不带 `profileTypeSets` 的目标文件只验 Find（两者同时出现会被拒为 `invalid_profile_type_sets`），报告 `completed` 且 `identityFileUnchanged` 后经 `account-identity.py promote-canary` 发布。IT 先结算旧 cohort/outbox 的原报告，再使用 `market-identity.py` 的有界每批 3 人、每轮最多 50 人路径；原 acc6 的 12 QPS 验收不转授 acc9。旧 started 按原账号读取报告，当前批次也按冻结账号消费；handle 预算、有效身份和未匹配结论跨角色切换保留，账号故障只等待当前所选账号。workflow 的 OECID 资源槽绑定供给账号，与同账号货盘任务互斥。下面的 IT cohort 描述适用于兼容模式与旧任务恢复。
 
 Find lanes 共用原账号 QPS 和滑块验证合同；IT 沿用已发布的 Find cohort 策略，其他市场沿用每 3 个 handle 的 probe。有效 unresolved 与已验证身份按同市场规范化 handle 复用，不因新 PID、A/B 或窗口重查；Profile 后续失败不丢弃已确认 Find。IT 的 `identity_only` 成功证据可交接为可用身份，原画像失败记录保留。
 
@@ -113,11 +113,11 @@ IT 交接在写事务外读取并 materialize 当前 A/B 来源，短事务内�
 | `cycle_review.py` | 领取前身份、材料、关系、去重复检 |
 | `cycle_delivery.py` / `cycle_executor.py` | 不可变 delivery、组件意图、额度和回执 |
 | `continuous_send.py` / `continuous-send-worker.py` | IT 控制、窗口、断点与 worker |
-| `market_send_control.py` / `market_send_canary.py` / `market-send-worker.py` | BR/MY/UK 控制与持续发送；`market_send_canary.run` 是三市场正式发送核心，名称沿用首测阶段 |
+| `market_send_control.py` / `market_send_canary.py` / `market-send-worker.py` | 非 IT 市场控制与持续发送；`market_send_canary.run` 是这些市场的正式发送核心，名称沿用首测阶段 |
 | `request_budget.py` | 进程内请求节拍：每个 runtime 各持一份，不跨进程；跨进程只共享写门禁 |
 | `cycle_service.py` / `collaboration_status.py` | 案件、人工接管、合作状态 |
 
-`outreach_allocation.py` 在四市场正式持续发送与 market canary 的既有候选入口分配 4 A / 1 B 领取份额；schema v23 追加 `outreach_rotation` 和 `outreach_allocation`。轮转按 market 持久化、跨日连续；按北京时间冻结日记账，market×日期×OEC 唯一，不按 PID、组件或核验轮数计数。新 delivery、两条组件和份额行在同一事务提交；游标过期、资格/容量拒绝或并发同达人领取全部回滚，不消耗份额。已有冻结和在途意图不回填、不改写分类。
+`outreach_allocation.py` 在各市场正式持续发送与 market canary 的既有候选入口分配 4 A / 1 B 领取份额；schema v23 追加 `outreach_rotation` 和 `outreach_allocation`。轮转按 market 持久化、跨日连续；按北京时间冻结日记账，market×日期×OEC 唯一，不按 PID、组件或核验轮数计数。新 delivery、两条组件和份额行在同一事务提交；游标过期、资格/容量拒绝或并发同达人领取全部回滚，不消耗份额。已有冻结和在途意图不回填、不改写分类。
 
 二发模板审批按市场独立（schema v27 `send_template_market_review`，主键 market×template）：指纹只含该市场自己的正文与中文对照（IT 取已保存正文），一个市场改文案只让该市场的对应模板回到 pending，新市场的模板从 pending 开始；达到 `sendTemplateApprovalMinimum` 才能启动发送。v27 迁移把旧的共享审批中仍与 IT/BR/MY/UK 当前正文一致的项逐市场转存（`migration-27:*` 事件），旧表 `send_template_review` 只作历史。
 
@@ -131,7 +131,7 @@ IT 交接在写事务外读取并 materialize 当前 A/B 来源，短事务内�
 
 预算耗尽记 `quarantined_unknown`，保留原会话意图与卡文的真实状态；只阻断同市场/OEC 主动营销，不改关系为 human、不新增技术人工案件，不自动周期追查。原业务人工案件及拒联不清除。发送池独立展示“技术隔离”，不混入人工等待；原 unknown 组件不再占全市场派发槽或把状态接口误标为仍待核验。隔离后的精确迟到回执可幂等确认原组件，但不重开投递或补发从未提交组件；核验确认卡片和关闭未提交文字同事务完成。建会话业务码 201 保持明确商业拒绝的旧隔离/案件分类，额度状态 3 / check_code 100 / `im_limit_reached` 仍走额度暂停。
 
-IT/BR/MY/UK 的正式发送与核验共用每市场 `delivery-executor-<market>.lock`，锁覆盖原执行、请求收口和落账，原执行器未结束不能释放槽；进程退出后内核释放，已有逐写账号锁与门禁保留。两类 worker 持续处于有限 `waiting_reconciliation`，调度器可在原持久授权下恢复退出的 worker；核验本身没有发送权限。新非 IT 投递冻结 senderAccount/senderImId；旧投递按原实现固定通信账号（BR acc1、MY acc8、UK acc11）兼容，配置换号拒绝读取，IT 继续校验原 senderBindingHash。适配器包装为 `it_delivery_dispatch_not_allowed` 的原本地 `CycleError`，仅在组件仍 ready、started/receipt/confirmation 全空时由 `local_permit_error()` 恢复；已提交组件不改判未提交。具体交付和运行证据见[二发未知隔离报告](implementation/delivery-isolation-20260925.md)。
+各市场的正式发送与核验共用每市场 `delivery-executor-<market>.lock`，锁覆盖原执行、请求收口和落账，原执行器未结束不能释放槽；进程退出后内核释放，已有逐写账号锁与门禁保留。两类 worker 持续处于有限 `waiting_reconciliation`，调度器可在原持久授权下恢复退出的 worker；核验本身没有发送权限。新非 IT 投递冻结 senderAccount/senderImId；旧投递按原实现固定通信账号（BR acc1、MY acc8、UK acc11）兼容，配置换号拒绝读取，IT 继续校验原 senderBindingHash。适配器包装为 `it_delivery_dispatch_not_allowed` 的原本地 `CycleError`，仅在组件仍 ready、started/receipt/confirmation 全空时由 `local_permit_error()` 恢复；已提交组件不改判未提交。具体交付和运行证据见[二发未知隔离报告](implementation/delivery-isolation-20260925.md)。
 
 组件已提交只读精确回查。`/api/send` reconcile 即使停止/窗口外也只查原账号/requestRef，结束即返回，不能领取下一人或启动未提交组件。会话 received 只有原 requestRef/CID/达人身份全部匹配才可确认，缺回执 inflight 保持未知。IT 已授权的零卡文未知会话隔离保留原意图和案件，不改成失败/成功，不对该达人再发。
 
@@ -155,7 +155,7 @@ SDK 当前平台枚举为 0 未初始化、1 初始化中、2 成功、3 失败�
 
 首次 checkpoint 以同 plan/CID/OEC 最新已确认卡的 started 为实时回复基线，兼容只有文字确认的旧记录；没有已确认外发则首次导入为历史。冻结 CID 缺失时只由原已确认 conversation intent 补齐，received/inflight 不能猜测。查询按关系和原投递定点限定；不翻转旧 historical 行或重开已处理事项。已确认卡和文字按各自 `cycle_delivery_part` 状态/时间投影，不用 episode 冻结正文冒充已发文字。showcaseNotifications 单列系统事件，不输入文字分类器。消息完整性以覆盖/水位证明，worker 存活不足以证明新鲜。
 
-兼容 HTTP polling 模式下，IT 默认热点＋冷 checkpoint 每轮 12 个/30 秒；其他三市场 20 个/10 秒，每个 poller 进程各自 2 QPS 读预算（进程内节拍，收信与发送不共用）。认证短持 profile 租约后释放，每次读取仍核验维护与身份指纹；账号忙显示 waiting_account。认证读取遇到平台业务码 16201010（通讯账号登录失效；BR/MY/UK 由 `market_im_runtime._read` 附在原错误上，IT 取认证报告 `authReads`）时，收信经 `login_recovery.request_refresh` 登记恢复（见下文“账号认证恢复”）。状态文件的 `accountRecovery` 记录这次登记。扫描规模增长后应按真实覆盖延迟调参，不能仅提高 tick。
+兼容 HTTP polling 模式下，IT 默认热点＋冷 checkpoint 每轮 12 个/30 秒；其他市场 20 个/10 秒，每个 poller 进程各自 2 QPS 读预算（进程内节拍，收信与发送不共用）。认证短持 profile 租约后释放，每次读取仍核验维护与身份指纹；账号忙显示 waiting_account。认证读取遇到平台业务码 16201010（通讯账号登录失效；BR/MY/UK 由 `market_im_runtime._read` 附在原错误上，IT 取认证报告 `authReads`）时，收信经 `login_recovery.request_refresh` 登记恢复（见下文“账号认证恢复”）。状态文件的 `accountRecovery` 记录这次登记。扫描规模增长后应按真实覆盖延迟调参，不能仅提高 tick。
 
 ### 2.7 Agent V2 与回复 transport
 
@@ -260,7 +260,7 @@ inbox 趋势和日明细使用同一账本，totals 等于每日求和，文字�
 
 ## 5. 账号、配置与 vendor
 
-通信/货盘固定为 BR ACC1/ACC2、MY ACC8/ACC5；IT ACC6、UK ACC11 为单账号市场（`accounts` 只列一个，两个角色指向同一账号，`markets.json` 同样），acc9、acc4 已释放。DE 为 `ready`（自动运营、持续发送、AI 回复开关均关闭）：已分配 ACC12（通讯）/ACC13（供给），10-02 首次重登均已验证（同一机构），德语内容（`de-DE`，`link-naming-de.json`，审阅稿见 implementation/de-content-review-20261002.md）已就绪，全托经 ACC13 只读实测可用（`fullManagedCatalog=true`，`var/de-full-managed-probe-20261002.json`）；非 IT 市场的 canary 范围按 `market_path_keys()`（注册表中除 IT 外的运营市场）判定；通讯账号 `message_send` 未验证的市场只能由页面启动单条首发 canary，确认后 worker 自动发起 stop 并退出（`canary_confirmed`），继续发送需页面再次启动；`paused` 允许内容与能力未验收，`ready` 才要求两者齐备，发送等业务入口仍只认 `ready`。FR 为 `ready`（开关全关，法语模板待用户审批）：全托经 ACC17 只读实测可用，ACC17 Campaign 加入与 TapLink canary 已 verified；地区 17、机构编号经合作伙伴信息只读查得（地区 14 为西班牙），已分配 ACC16（通讯）/ACC17（供给），法语内容见 implementation/fr-content-review-20261003.md，协议层 Campaign/加入保持 pending 待 canary；欧洲区 IM 地区列表含 17。TH 为 `ready`（开关全关，泰语模板已由用户审批）：地区 5（SG 区，协议形态同 MY），全托列表为空（`fullManagedCatalog=false`，`var/th-full-managed-probe-20261003.json`），机构已在泰国加入 707 个 Campaign，ACC14 通讯/ACC15 供给，泰语内容见 implementation/th-content-review-20261003.md，Campaign/加入 pending 待 canary。新市场接入后用 `scripts/onboard-markets.py apply --confirmed` 为其建 plan 行（只建本地容器，开关默认全关）。线索队列、Kalodata 视频扫描、IM 会话、收信历史等的市场范围按注册表 `operational_market_keys`/`known_market` 判定，不再写死四个市场；Kalodata 区域取市场键大写（UK 为 GB）、币种取注册表。单账号市场按通讯角色只登记一次维护，职责为两角色之和；OECID 路由按 `identityAccountRole` 取角色，不再按账号是否等于供给账号推断。`market-accounts.json` 定角色，`account_runtime_setting` 和已发布 generation 定当前能力；不继承原始项目停用状态。账号登录记录（名称、市场、partner_id、用户名、密码及账号策略字段）只在本项目 `private-data/secrets/accounts.json`，经账号页“账号登记”或 `scripts/account-registry.py list|add|update`（`lib/account_registry.py`）读写：密码经 stdin 传入、只写不回显，文件原子替换、权限 0600；登记不等于分配，新账号分配到市场角色后才能首次重登与能力验证。
+通信/货盘固定为 BR ACC1/ACC2、MY ACC8/ACC5；IT ACC6、UK ACC11 为单账号市场（`accounts` 只列一个，两个角色指向同一账号，`markets.json` 同样），acc9、acc4 已释放。DE（ACC12 通讯/ACC13 供给，`de-DE`，`link-naming-de.json`，审阅稿 implementation/de-content-review-20261002.md）与 FR（ACC16/ACC17，地区 17，机构编号经合作伙伴信息只读查得，地区 14 为西班牙；法语审阅稿 implementation/fr-content-review-20261003.md；欧洲区 IM 地区列表含 17）均为 `ready`、全托（`fullManagedCatalog=true`）且协议层 Campaign/加入 enabled，自动运营、全托周更、持续发送与 AI 回复由用户打开。TH（ACC14 通讯/ACC15 供给，地区 5，SG 区，协议形态同 MY；泰语审阅稿 implementation/th-content-review-20261003.md）为 `ready`，全托列表为空（`fullManagedCatalog=false`），AI 回复已开；协议层 Campaign/加入仍 pending，`campaign_join` 未验收前 `operations_workflow.save` 以 `market_automation_capabilities_pending` 拒绝打开自动运营与持续发送（两者都要求 campaign、campaign_join、catalog_read、inbox_read、message_send、oecid_find、taplink，全托市场另加 product_select）。非 IT 市场的 canary 范围按 `market_path_keys()`（注册表中除 IT 外的运营市场）判定；通讯账号 `message_send` 未验证的市场只能由页面启动单条首发 canary，确认后 worker 自动发起 stop 并退出（`canary_confirmed`），继续发送需页面再次启动；`paused` 允许内容与能力未验收，`ready` 才要求两者齐备，发送等业务入口仍只认 `ready`。新市场接入后用 `scripts/onboard-markets.py apply --confirmed` 为其建 plan 行（只建本地容器，开关默认全关）。线索队列、Kalodata 视频扫描、IM 会话、收信历史等的市场范围按注册表 `operational_market_keys`/`known_market` 判定，不再写死四个市场；Kalodata 区域取市场键大写（UK 为 GB）、币种取注册表。单账号市场按通讯角色只登记一次维护，职责为两角色之和；OECID 路由按 `identityAccountRole` 取角色，不再按账号是否等于供给账号推断。`market-accounts.json` 定角色，`account_runtime_setting` 和已发布 generation 定当前能力；不继承原始项目停用状态。账号登录记录（名称、市场、partner_id、用户名、密码及账号策略字段）只在本项目 `private-data/secrets/accounts.json`，经账号页“账号登记”或 `scripts/account-registry.py list|add|update`（`lib/account_registry.py`）读写：密码经 stdin 传入、只写不回显，文件原子替换、权限 0600；登记不等于分配，新账号分配到市场角色后才能首次重登与能力验证。
 
 能力验收发布使用 `reason=capability`，不推迟维护时钟；`identity_baseline` 取该账号最近一次真实登录（`relogin`，或导入的 `baseline`）的发布时间。`refresh` 只用无头浏览器重读现有登录，不延长平台登录：实测登录在真实登录后约 72 小时 6–11 分钟失效（acc8、acc1 在 refresh 后仍按上次重登时间过期）。
 
