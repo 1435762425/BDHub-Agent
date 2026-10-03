@@ -5,6 +5,13 @@
 
 
 
+## 2026-10-03 13:45：德国开关开启，法国货盘铺开完成
+
+- 用户纠正：Kalodata 额度按市场独立（已存记忆）。用户授权代办「法国登录、模板审批、德国开关」：法语模板审批被权限系统判为自我审批而拒绝，仍需用户在页面审批；其余已办。
+- DE：10:12 经运营设置打开自动运营、全托周更、持续发送（send control 联动 automaticEnabled），AI 回复按 BR 配置启用（回复窗口 00:30–08:00）并授权首轮 pilot（`agent-v2-first-send`）。首轮完整流程中 taplink_prepare 因 5 个短名 `provider_output_invalid` 被锁转 needs_human：`0de1d92`/`b1ce1a1` 把「已返回但不可用」的模型答复（output invalid/truncated）按 names_invalid 重问、prepare 不再跳过；`8a0a705` 非 IT 短名缺口只看每条路由最新准备批次（旧批次的 read_incomplete 曾永久挡住恢复）；`resume_short_names` 放开到所有市场与两种来源。补名后恢复，主流程 6 阶段完成，DE 可发送达人 782、位置 2,873；身份积压按滚动轮次继续。Kalodata A 类约 2,090 PID 后当日额度用尽，余 1,931 由流程续查。因调度器持续运行 DE OECID，今天合入的命名修复尚未重启常驻进程（巡检会提示版本不一致，待空闲按流程重启）。
+- FR：`0e71a52` 协议层固定市场名单补 fr（首次登录验证曾 `commerce_market_invalid`），ACC16/ACC17 首登均无需验证码、同机构；`c6e993e` FR ready（开关全关）、全托、Campaign/加入 enabled。canary：Campaign 加入 ORICO.FR、TapLink 1 条、选入 1 个、身份查询（找到并读到画像，`oecid_find`/`creator_profile` verified）、ACC16 IM 只读初始化（`inbox_read` verified）。全托 28 类 44,382 商品（男装稳定重复 1 行），筛出 2,082、选入 2,079 confirmed/3 skipped_unknown；Campaign 加入 139（共 140，平台已加入列表暂显示 103）、筛出 551；建链 Campaign 551、全托 2,079 全部 ready。Kalodata 查约 290 PID 后当日额度用尽。备份清单补 DE/FR 全托与 FR 线索库（43 库，inventory ready）。
+- 待用户：FR 16 条法语模板审批；FR 首发需页面启动；FR 是否开启自动运营/持续发送/AI 回复。
+
 ## 2026-10-03 04:20：德国货盘铺开完成，法国接入到首次登录前
 
 - DE 全托：新批次类目读取完成并发布（28 类、46,013 商品；女装 `endpoint_end_stable_duplicate_rows_1`、运动与户外 `endpoint_end_total_drift`），筛出 3,309；用户确认后选入 canary（PID `1729480004826732625`，写 1、经平台验证后 confirmed，`product_select` verified），批量选入 3,304 confirmed、5 `skipped_unknown`；已选同步 3,304 offer，德语短名 3,304（模型 661 次），建 TapLink 写 3,304、全部 ready。
