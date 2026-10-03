@@ -64,7 +64,7 @@
     },
     "fr": {
       "enabled": true,
-      "runtimeState": "paused",
+      "runtimeState": "ready",
       "contentReady": true,
       "label": "法国",
       "shortLabel": "FR",
@@ -79,7 +79,7 @@
       },
       "capabilities": {
         "campaignCatalog": true,
-        "fullManagedCatalog": null
+        "fullManagedCatalog": true
       }
     },
     "it": {

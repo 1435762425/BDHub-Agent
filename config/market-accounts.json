@@ -84,7 +84,7 @@
       "automaticRoleSwitchEnabled": false,
       "catalogCapabilities": {
         "campaign": true,
-        "fullManaged": null
+        "fullManaged": true
       },
       "imSessionMode": "sdk_http",
       "identityAccountRole": "supply"

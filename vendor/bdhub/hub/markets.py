@@ -337,7 +337,7 @@ MARKETS: dict[str, Market] = {
     ),
     # France: market region 17 and partner ids read from the agency's partner info on 2026-10-03;
     # its opportunity list returned French listings. Protocol shape as Germany (EU portal and signer);
-    # Campaign and joins stay pending until the project's own canaries.
+    # ACC17's Campaign join canary (ORICO.FR, var/fr-campaign-join-canary-20261003.json) read back joined.
     "fr": Market(
         key="fr", label="法国",
         host="https://partner.eu.tiktokshop.com",
@@ -354,7 +354,8 @@ MARKETS: dict[str, Market] = {
         capabilities=MarketCapabilities(
             find="enabled", profile="enabled", pure_http="enabled",
             relation="enabled", contact="enabled",
-            im="enabled", product_search="enabled", campaign="pending", share_link="unsupported",
+            im="enabled", product_search="enabled", campaign="enabled", share_link="unsupported",
+            campaign_join="enabled",
         ),
         im_find_aid="360019",
         affiliate_partner_id="8683699487047190289",
