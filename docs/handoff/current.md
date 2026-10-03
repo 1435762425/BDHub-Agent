@@ -2,6 +2,15 @@
 
 文档更新时间：2026-10-03（Asia/Shanghai）。下面各节按时间倒序，每节只代表该时刻的核验；最新一节即当前生产状态的最近记录，不是实时巡检。规则见 [PROJECT](../PROJECT.md)，实现见 [TECHNICAL](../TECHNICAL.md)，后续方向见[项目审计与清理](../implementation/project-audit-20260924.md)。更早流水见[历史交接](../archive/handoff/codex-takeover-history-20260923.md)。
 
+## 2026-10-03 20:22：全面审计修复上线，46 库恢复演练通过
+
+- 审计 A1–A8 已修复：首条二发/AI 授权与能力恢复、paid 最终门禁、Campaign 原证据结算、TapLink 原市场/账号核验、总览实时通道、备份及文档一致性。细节、边界与提交见[本次交付](../implementation/audit-fixes-20261003.md)。无业务库结构迁移，未新开任何发送或 AI 全量授权。
+- 最终 Python 1,721 项、Web 208 项通过，build/typecheck/文档检查通过。19:57 已切换 Web 与常驻代码；postflight 全通过：七张控制表摘要不变，原 60,662 条 requestRef 映射保留且全表唯一，19 个常驻角色一致，七市场 IM owner ready。原 `config/jobs.json` 未提交运营变更完整保留。
+- 备份清单含 46 库。两次先父库后子库的副本被演练正确拦下：另一 Claude 会话的 TH 身份导入循环继续写入，造成备份间引用时间差，现场库无缺口。保持该任务，改为先引用库后追加式父库；`20261003T121047Z-audit-fixes-ordered` 校验及正式隔离恢复演练通过，blockers 为空，身份依赖提示保留、不重发 unknown。
+- 经用户明确批准，校验并确认未占用后只删除 09-29 的 `20260929T132106Z-pre-audit-b798911`（3,210,859,560 字节）；10-01、10-02 与其他备份保留。新备份位于 `/Users/bjn00003/BDHub-Agent-backups/state/`。
+- 现场旧 scheduler/MY sender 在 19:34 左右因库锁退出；核对无停止请求、控制不变后恢复。补齐首次打开库/裸 SQLite busy 的等待及失败连接关闭，不把其他数据库错误吞掉。生产回读未再出现调度器停止、版本不一致、备份阻断或恢复失败告警。
+- 本机证据：`var/releases/audit-fixes-20261003/`；当前发送保持原设置（IT/UK/TH 关闭，其余按原窗口/额度/供给继续），历史人工事项和未回队列未批量结算。代码已合入生产分支，未推送远端。
+
 ## 2026-10-03 17:55：常驻进程重启到当前代码，修复发送进程遇库锁停发
 
 - 按 `ops-restart-check.py` 流程完成重启（最终 `restart-20261003-1750`，postflight 全部通过，版本不一致告警消除）。
