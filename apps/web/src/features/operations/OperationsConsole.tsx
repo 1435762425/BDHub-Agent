@@ -17,7 +17,7 @@ const STATE:Record<string,string>={completed:"已完成",quota_exhausted:"额度
  waiting_capacity:"等待可用额度",waiting_reconciliation:"待核验",outside_reply_window:"回复窗口外",disabled:"未启用",off:"关闭",idle:"空闲",paused:"暂停",
  attention:"已停止，需关注",first_send_requires_page_start:"首发需在页面启动",confirmed:"已确认",cancelled:"已取消",partial_delivery:"部分送达",waiting_account:"等待账号",
  starting:"启动中",unverified:"状态待核实",waiting_send_window:"等待二发窗口结束",send_dispatch_active:"等待二发请求收口",waiting_dispatch:"等待在途核验",
- canary_confirmed:"首条已确认，已停止",pilot_complete_waiting_resume:"首条已确认，等待页面继续",original_intent_rechecked:"已核验原回复",waiting_reply_check:"等待原回复核验",reply_check_deferred:"回复核验暂缓"};
+ canary_confirmed:"首条已确认，已停止",pilot_complete_waiting_resume:"首条已确认，等待页面继续",pilot_waiting_confirmation:"首条结果尚未确认",waiting_canary_authorization:"首条授权归属待确认",original_intent_rechecked:"已核验原回复",waiting_reply_check:"等待原回复核验",reply_check_deferred:"回复核验暂缓"};
 const label=(state:string|null)=>state?STATE[state]??"状态待核实":"—";
 const tone=(state:string|null)=>state==="failed"||state==="needs_human"||state==="waiting_reconciliation"||state==="attention"?"warning":state==="running"||state==="sending"?"brand":state==="completed"?"success":"neutral";
 const MARKET_NAME:Record<string,string>={it:"意大利",br:"巴西",my:"马来西亚",uk:"英国",de:"德国",fr:"法国",th:"泰国"};

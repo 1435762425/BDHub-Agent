@@ -1,6 +1,6 @@
 # BDHub-Agent 技术文档
 
-当前实现合同，按 2026-09-26 代码基线 `d3bcc5a` 核对。产品规则见 [PROJECT.md](PROJECT.md)，运行快照见[当前交接](handoff/current.md)。本文保留模块入口、状态边界及恢复方法，实验数值与事故流水只链接证据。
+当前实现合同；发布基线见[当前交接](handoff/current.md)。产品规则见 [PROJECT.md](PROJECT.md)，运行快照见[当前交接](handoff/current.md)。本文保留模块入口、状态边界及恢复方法，实验数值与事故流水只链接证据。
 
 ## 1. 架构与环境
 
@@ -54,6 +54,8 @@ Campaign 核验最多首次加 3 次补查，同市场整批共享 300 秒墙钟
 ### 2.2 TapLink 与当前材料
 
 `catalog_links.py` 保存创建意图，`catalog_prepare.py` 和 `catalog-link-batch.py` 驱动准备，`catalog_clean.py` 核验清理，`link_naming.py` 读取市场短名。读链、创建、清理共享同一账本；`creates=0` 只读。
+
+共享库的核验与重新读取按原准备 run 的市场、冻结账号筛选，当前角色换号不代替旧账号核验。回读证据的 `market/readAccount` 来自实际 transport；创建回读、标准卡复用及批次 unknown 结算共用范围校验。新确认缺失或错配范围时保持未决，历史已验证产物不被重写。Campaign 普通刷新也只用本条原活动或冻结返回子活动的加入证据结算。
 
 `catalog_current_binding` 是发送唯一材料投影，键覆盖 market/PID/来源/Campaign/分佣与命名指纹，保存 `currentListId`。普通历史卡不参与当前复用；仅同标准、同绑定且已核验卡幂等复用。完整 Campaign 筛分后 `reconcile_current_offers()` 将不再合格绑定 inactive、条款变化 waiting_refresh，全部写 event。
 
@@ -131,7 +133,7 @@ IT 交接在写事务外读取并 materialize 当前 A/B 来源，短事务内�
 
 预算耗尽记 `quarantined_unknown`，保留原会话意图与卡文的真实状态；只阻断同市场/OEC 主动营销，不改关系为 human、不新增技术人工案件，不自动周期追查。原业务人工案件及拒联不清除。发送池独立展示“技术隔离”，不混入人工等待；原 unknown 组件不再占全市场派发槽或把状态接口误标为仍待核验。隔离后的精确迟到回执可幂等确认原组件，但不重开投递或补发从未提交组件；核验确认卡片和关闭未提交文字同事务完成。建会话业务码 201 保持明确商业拒绝的旧隔离/案件分类，额度状态 3 / check_code 100 / `im_limit_reached` 仍走额度暂停。
 
-各市场的正式发送与核验共用每市场 `delivery-executor-<market>.lock`，锁覆盖原执行、请求收口和落账，原执行器未结束不能释放槽；进程退出后内核释放，已有逐写账号锁与门禁保留。两类 worker 持续处于有限 `waiting_reconciliation`，调度器可在原持久授权下恢复退出的 worker；核验本身没有发送权限。新非 IT 投递冻结 senderAccount/senderImId；旧投递按原实现固定通信账号（BR acc1、MY acc8、UK acc11）兼容，配置换号拒绝读取，IT 继续校验原 senderBindingHash。适配器包装为 `it_delivery_dispatch_not_allowed` 的原本地 `CycleError`，仅在组件仍 ready、started/receipt/confirmation 全空时由 `local_permit_error()` 恢复；已提交组件不改判未提交。非 IT 发送核心在许可写账遇 SQLite locked/busy、组件仍可证明未提交时改报 `local_store_busy`，worker 按 `waiting_account` 3 秒后重试，不进入 `attention` 的 5 分钟冷却；worker 每轮读控制遇锁同样等待。其他意外退出在 `var/market-send-worker-<market>.log` 写一行 `attention_exit`（含被包装的原错误）。具体交付和运行证据见[二发未知隔离报告](implementation/delivery-isolation-20260925.md)。
+各市场的正式发送与核验共用每市场 `delivery-executor-<market>.lock`，锁覆盖原执行、请求收口和落账，原执行器未结束不能释放槽；进程退出后内核释放，已有逐写账号锁与门禁保留。两类 worker 持续处于有限 `waiting_reconciliation`，调度器可在原持久授权下恢复退出的 worker；核验本身没有发送权限。新非 IT 投递冻结 senderAccount/senderImId；旧投递按原实现固定通信账号（BR acc1、MY acc8、UK acc11）兼容，配置换号拒绝读取，IT 继续校验原 senderBindingHash。适配器包装为 `it_delivery_dispatch_not_allowed` 的原本地 `CycleError`，仅在组件仍 ready、started/receipt/confirmation 全空时由 `local_permit_error()` 恢复；已提交组件不改判未提交。非 IT 发送核心在许可写账遇 SQLite locked/busy、组件仍可证明未提交时改报 `local_store_busy`，worker 按 `waiting_account` 3 秒后重试，不进入 `attention` 的 5 分钟冷却；worker 每轮读控制遇锁同样等待。裸 SQLite locked/busy 同样进入短等待；原提交已落盘时下一轮只走原意图恢复，不创建另一发送。调度器首次打开台账遇 locked/busy 在领取阶段前等待下一轮，其他数据库错误仍报错；初始化失败的连接立即关闭。其他意外退出在 `var/market-send-worker-<market>.log` 写一行 `attention_exit`（含被包装的原错误）。具体交付和运行证据见[二发未知隔离报告](implementation/delivery-isolation-20260925.md)。
 
 组件已提交只读精确回查。`/api/send` reconcile 即使停止/窗口外也只查原账号/requestRef，结束即返回，不能领取下一人或启动未提交组件。会话 received 只有原 requestRef/CID/达人身份全部匹配才可确认，缺回执 inflight 保持未知。IT 已授权的零卡文未知会话隔离保留原意图和案件，不改成失败/成功，不对该达人再发。
 
@@ -140,6 +142,10 @@ IT 交接在写事务外读取并 materialize 当前 A/B 来源，短事务内�
 worker 在等待窗口、池或容量时常驻退避；同账号在途写串行，僵尸进程不算存活；记录里的 pid 若被启动时间晚于记录写入时间（`checkedAt`/`startedAt`，租约用 `heartbeat_at`，维护意图用 `started_at`）的进程占用，也不算存活（`process_liveness.record_alive`），防止重启后 PID 被其他程序复用时 scheduler 不再拉起 worker。账号认证可短复用同进程/身份指纹/代次，逐位和逐写复检不省略。单账号串行是当前正式路径；30 人/分钟未由代码配置证明。
 
 `invitation_continuation.py` 只为原正式投递的卡确认、文字从未提交状态记录继续凭证。Inbox/Service 在原入站事务内，将精确 CID/messageId、冻结 controlRevision → beforeRevision → afterRevision、inboxUntil/unlocked 写入 `cycle_delivery_check(kind=invitation_inbox_revision)`；中间暂停/接管等版本变化不能跳过。逐写重查关系、同 CID tracking、当前 pending、人工案件及所有原有授权/账号/材料/容量/窗口门禁，仅原文字可忽略已证明的入站变化，新领取不适用。非 IT 续发核对冻结 senderAccount/senderImId；明确终止只取消未提交文字、保留已确认卡为 partial_delivery，其他达人继续。schema v24 幂等确保原核验表和 `(delivery_id,kind,checked)` 索引，不回填业务行。当前凭证要求摄取入站时卡已经确认；入站先入库、卡后确认的顺序未放宽。
+
+首条 market canary 在冻结快照中绑定页面 start 请求；整单确认与消费这一份单条授权在同一事务完成，原停止回执使收尾幂等。核验确认仍计 `realSends=0`，但同样结束原首发授权；能力晋升可在重启后续完。之后新的明确 start、既有人工暂停及已验证历史 canary 不被旧收尾覆盖，新 standalone canary 不借用历史页面授权。未提交的 canary 也在领取和提交事务内核对原 start；被后续 start 取代的未提交组件安全取消，unknown 仍只核验原意图。缺少可靠绑定的旧首发保持等待，不按创建时间推测授权归属。
+
+候选准备、建会话和组件提交的同一写事务内重新检查 `creator_collaboration_current`；paid/rejected 不能仅靠发送池快照排除。并发改为排除状态时，只取消尚未提交的相关组件，保留已提交证据，其他达人继续。
 
 ### 2.6 双向消息与会话
 
@@ -158,6 +164,8 @@ SDK 当前平台枚举为 0 未初始化、1 初始化中、2 成功、3 失败�
 兼容 HTTP polling 模式下，IT 默认热点＋冷 checkpoint 每轮 12 个/30 秒；其他市场 20 个/10 秒，每个 poller 进程各自 2 QPS 读预算（进程内节拍，收信与发送不共用）。认证短持 profile 租约后释放，每次读取仍核验维护与身份指纹；账号忙显示 waiting_account。认证读取遇到平台业务码 16201010（通讯账号登录失效；BR/MY/UK 由 `market_im_runtime._read` 附在原错误上，IT 取认证报告 `authReads`）时，收信经 `login_recovery.request_refresh` 登记恢复（见下文“账号认证恢复”）。状态文件的 `accountRecovery` 记录这次登记。扫描规模增长后应按真实覆盖延迟调参，不能仅提高 tick。
 
 ### 2.7 Agent V2 与回复 transport
+
+Agent 在原意图核验或被动收信结算后重新计算 pilot/full 状态，提交事务再次检查首条许可。首条已提交而未确认时等待原结果，不生成或提交第二条；被动确认后仍停在首条验收状态，后续全量须沿用页面明确授权。
 
 2026-09-25 已完成[AI 回复设计审查](architecture/ai-reply-optimization-20260925.md)；Jev 已清理、原邀请衔接已分批实施，集中回复的范围/排序/结算已实现；长期业务记忆、完整历史回放及新隔离服务策略仍待后续。以下描述当前代码。
 
@@ -211,19 +219,21 @@ IT 使用无后缀文件名，其他市场加 `-{market}` 后缀。`state-backup
 
 `state-retention.py` 执行历史保留：Campaign/全托货盘快照保留当前加最近 2 个完整版本；Campaign 采集 JSON 每组只留最新一份用于重同步；每轮报告 JSON 与 `var/cycle-scheduler/` 阶段日志保留 14 天；账号身份目录保留当前与上一代（72 小时内的目录不动）；超过 20MB 的日志轮转：仍有进程打开（`lsof` 判定，判定不了按有人写）的日志先跳过、记在清单 `skippedLogs`，等写入进程退出后再轮转；超过 100MB 才强制复制后截断，截断前补抄尾部并标 `mayMissTail`，不作审计日志用。当前 head、head 覆盖引用的基线/刷新轮次、未结束 workflow 对应的来源轮次、未完成轮次和被未结束阶段记录引用的文件一律保留。累计候选及其自包含资格/分页证据不参与来源版本轮换；历史来源明细归档后候选事实和原选入意图仍保留。`plan` 只读；`apply --confirm [--vacuum]` 先把候选写入仓库外 `../BDHub-Agent-backups/retention/<时间>/` 并校验，再删除原件；全托轮次只删明细行，保留轮次记录；`restore --archive <目录> --confirm` 补回缺失的行和文件。应在 worker 暂停或空闲时执行。
 
-`state-backup.py` 按 `config/state-backup.json` 显式清单执行 SQLite online backup（每库在单个读事务内一步复制，业务 worker 持续写入时也能完成一致快照，无需停机；开始前按各库及 WAL 实测体积×1.2＋512MB 检查剩余空间，不足即拒绝，不删除旧备份腾空间），保存 hash、quick_check、schema；新业务库未入清单则失败。备份目录/文件为 0700/0600，敏感配置独立管理。restore 只接受空目标并生成回执；跨机器切换需排空写 worker 后最终备份，多库备份不声称跨库单事务。`retention-plan` 校验现存备份并只生成保留建议（默认 7 天全部、30 天每日、84 天每周，每种库清单至少 3 份）；迁移标签、损坏和不明文件保留，无删除操作。`drill --backup <目录> [--database …]`（`lib/restore_drill.py`）是离线恢复演练：把备份恢复到新建的临时目录，所有副本只读打开，不启动进程、不联网、平台写入 0，结束后删除副本（`--keep` 保留）。它检查备份本身与恢复路径；声明的跨库引用（关系/投递达人→creator_identity，建链准备→Campaign 筛选或全托来源 run，全托选入→来源 run），父库复制开始后才写入的子行缺父记录判为复制时差并阻断，更早的只算历史孤儿警告；库 schema 新于代码时阻断；未决发送意图所在市场须有已发布身份代次（身份文件本不在备份内，列为外部依赖）。部分库演练缺父库时阻断。演练还逐条核对未决意图：AI/人工回复冻结了发送账号与 IM 身份，备份中该账号须有已发布代次（与当天配置账号无关），缺失即阻断；二发投递组件没有冻结发送身份，只能记为 `identity_not_frozen` 警告。报告 `layers` 分层说明快照、schema、跨库引用、原意图依赖（complete/partial）和外部身份文件（external_required）各自证明到哪一步，`businessResumeProven` 始终为 false。报告写在 `var/backups/drills/`，不放进备份目录；最近一次未通过时告警条提示。
+`state-backup.py` 按 `config/state-backup.json` 显式清单执行 SQLite online backup（每库在单个读事务内一步复制，业务 worker 持续写入时也能完成一致快照，无需停机；开始前按各库及 WAL 实测体积×1.2＋512MB 检查剩余空间，不足即拒绝，不删除旧备份腾空间），保存 hash、quick_check、schema；新业务库未入清单则失败。备份目录/文件为 0700/0600，敏感配置独立管理。restore 只接受空目标并生成回执；跨机器切换需排空写 worker 后最终备份，多库备份不声称跨库单事务。`retention-plan` 校验现存备份并只生成保留建议（默认 7 天全部、30 天每日、84 天每周，每种库清单至少 3 份）；迁移标签、损坏和不明文件保留，无删除操作。`drill --backup <目录> [--database …]`（`lib/restore_drill.py`）是离线恢复演练：把备份恢复到新建的临时目录，所有副本只读打开，不启动进程、不联网、平台写入 0，结束后删除副本（`--keep` 保留）。它检查备份本身与恢复路径；声明的跨库引用（关系/投递达人→creator_identity，建链准备→Campaign 筛选或全托来源 run，全托选入→来源 run），父库复制开始后才写入的子行缺父记录判为复制时差并阻断，更早的只算历史孤儿警告；库 schema 新于代码时阻断；未决发送意图所在市场须有已发布身份代次（身份文件本不在备份内，列为外部依赖）。部分库演练缺父库时阻断。演练还逐条核对未决意图：AI/人工回复冻结了发送账号与 IM 身份，备份中该账号须有已发布代次（与当天配置账号无关），缺失即阻断；二发投递组件没有冻结发送身份，只能记为 `identity_not_frozen` 警告。报告 `layers` 分层说明快照、schema、跨库引用、原意图依赖（complete/partial）和外部身份文件（external_required）各自证明到哪一步，`businessResumeProven` 始终为 false。报告写在 `var/backups/drills/`，不放进备份目录；最近一次未通过时告警条提示。跨库引用按备份内的市场记录和库名确定，包含新接入市场；不以固定四市场名单跳过检查。
 
 `offsite-backup.py` 把代码、当前状态和本机专有配置加密写到外接盘。每次先按 `state-backup.json` 做一份全量 online backup 到临时目录，连同 `git bundle --all`、未提交改动补丁、`../BDHub-Agent-backups/` 下的归档（git 离线包与密钥目录除外）、3 个被忽略的敏感配置和 `private-data/` 打成 tar.gz，经 openssl AES-256-CBC（PBKDF2 20 万次）直接写入 `<盘>/BDHub-Agent-offsite/<UTC 时间>/`；刷到设备后解密回读，核对明文 hash 与成员，最后写 manifest 表示完成，失败则删除本次目录。盘上只动这个文件夹，保留最近 3 份。密钥 `../BDHub-Agent-backups/offsite/offsite.key` 只在本机，须另存一份到密码管理器，丢失则副本无法解开。账号浏览器身份与 `var/` 运行文件不在副本内，换机后按账号页重登重建；恢复不依赖原始项目。`plan` 只读，`run --confirm` 写入，`verify` 从盘上重读最新一份；`auto` 供插盘触发，只处理已有该文件夹的卷，先校验最新一份，超过 20 小时或校验失败才写新的，并发系统通知。每次写入成功后，在本机 `offsite/latest.json` 记下这份副本，告警条据此判断备份是否过期。
 
 **账号认证恢复（单一入口）：** 所有发现登录失效的地方——SDK 会话 owner、HTTP 收信、全托选入、OECID——都用 `login_recovery.auth_family` 判定（平台码 16201010、`sdk_login_required`、`market_identity_auth_required`；超时、额度、业务拒绝不算），再调用 `login_recovery.request_recovery`。一条恢复链的键是市场/账号/身份代次/错误族，报告来源和角色不进键，所以并发报告者都汇入同一个 `account_maintenance_intent`；旧的 `inbox-login-*` 请求号仍被识别为同一代次已处理。意图一律从 `refresh` 开始，刷新失败时维护 worker 在同一意图内改为可见重登。全托选入中收到明确 16201010 的原意图，须在尝试之后该供给账号发布过 `relogin` 或 `refresh` 代次（两者都验证了登录可用）才允许按原 PID 重提一次（此前只认 relogin，导致自动 refresh 恢复后仍需人工）。失败或需验证的意图留给人处理，只有新发布的代次才能再发起。同账号已有其他维护在进行时返回 `waiting_active`，不排第二个登录。scheduler 的阶段恢复（`_relogin_market_account`）加入这条链并等待其结束，只有发布了比故障代次更新的身份才算恢复；角色取实际执行的账号，不按简称换号。
 
-**总控制台（只读）：** `scripts/operations-console.py`（`lib/operations_console.py`）一次读取四市场的当前主链阶段（运行中，或排队中并列出在等哪个资源、被哪个市场哪个阶段占了多久）、最近一次结束的阶段结果、持续通道快照（来自各市场运营页读模型，带其截至时间）、需核对的主链与人工会话数、全局资源占用和最近 15 个阶段结果；`/api/operations-console` 多标签页合并为一次读取，页面在 `/<市场>/console`，只在可见时每 15 秒刷新。首页阶段卡片各带 `metric`（名称、单位、窗口：本轮/今日/最近一轮，未记录为 null）与 `writes`（持续发送和 AI 回复不在此记录写入数，不再显示 0）；供给主链与持续通道分组显示，去掉串联箭头。Kalodata 状态区分“已排队等资源”和“正在读取”，并返回 `lastFinished`（取该阶段自己发布的结果，未发布为 null）；`leads-queue.py status/plan` 以只读方式打开线索台账，库不存在时读作空、旧结构报 `leads_ledger_migration_required`，不再建库或建表。首页设置只有“新提交且仍是当前修订”才会拉起调度器或发送 worker，重放旧回执或已被后续提交覆盖的请求不启动任何进程、不删除停止标记。会话时间线把完整 `(occurredAt,id)` 游标下推到机构消息来源，同一时间的大量消息也能完整翻页。
+**总控制台（只读）：** `scripts/operations-console.py`（`lib/operations_console.py`）一次读取全部运营市场的当前主链阶段（运行中，或排队中并列出在等哪个资源、被哪个市场哪个阶段占了多久）、最近一次结束的阶段结果、持续通道状态（每次只读现有 worker 状态文件、IT 发送运行表及持久控制，逐通道核对进程存活与采样时间，不使用供给主链的旧投影）、需核对的主链与人工会话数、全局资源占用和最近 15 个阶段结果；`/api/operations-console` 多标签页合并为一次读取，页面在 `/<市场>/console`，只在可见时每 30 秒刷新。首页阶段卡片各带 `metric`（名称、单位、窗口：本轮/今日/最近一轮，未记录为 null）与 `writes`（持续发送和 AI 回复不在此记录写入数，不再显示 0）；供给主链与持续通道分组显示，去掉串联箭头。Kalodata 状态区分“已排队等资源”和“正在读取”，并返回 `lastFinished`（取该阶段自己发布的结果，未发布为 null）；`leads-queue.py status/plan` 以只读方式打开线索台账，库不存在时读作空、旧结构报 `leads_ledger_migration_required`，不再建库或建表。首页设置只有“新提交且仍是当前修订”才会拉起调度器或发送 worker，重放旧回执或已被后续提交覆盖的请求不启动任何进程、不删除停止标记。会话时间线把完整 `(occurredAt,id)` 游标下推到机构消息来源，同一时间的大量消息也能完整翻页。
 
-`ops-alerts.py`（`lib/ops_alerts.py`）为页面顶部告警条汇总异常，只读、不启动或重试任何作业，只读 SQLite。人工告警按会话页同一分类器计“N 位达人在人工队列”（与总控一致）；人工队列读不到时才退回“N 条未关闭人工工单”，不把工单数称作会话数。总控读不到运营策略时，依赖容量的等待原因显示待核实，不代入默认容量。`gather` 读取页面本来就用的台账和状态文件：调度器运行态与停止文件、各市场收信状态文件、最新一轮 workflow 各阶段、`unknown`/`quarantined_unknown` 发送、未结人工 case、账号维护队列与下次维护时间、Agent 设置与首发阶段、`offsite/latest.json`。`evaluate` 把这些事实转成告警，分 critical/warning/info 三级：
+总览逐通道区分 worker 采样与当前控制核实时间：超过 10 分钟、进程归属不符或控制已变化的旧采样显示待核实；新鲜且属于原进程的明确终态仍可显示。只有当前控制明确关闭且原进程已退出，才据控制显示关闭；真实新故障退出可列待办，历史 attention 不生成当前待办。
+
+`ops-alerts.py`（`lib/ops_alerts.py`）为页面顶部告警条汇总异常，只读、不启动或重试任何作业，只读 SQLite。人工告警按会话页同一分类器计“N 位达人在人工队列”（与总控一致）；人工队列读不到时才退回“N 条未关闭人工工单”，不把工单数称作会话数。总控读不到运营策略时，依赖容量的等待原因显示待核实，不代入默认容量。`gather` 读取页面本来就用的台账和状态文件：调度器运行态与停止文件、各市场收信状态文件、最新一轮 workflow 各阶段、`unknown`/`quarantined_unknown` 发送、未结人工 case、账号维护队列与下次维护时间、Agent 设置与首发阶段、当前状态库备份 inventory、`offsite/latest.json`。`evaluate` 把这些事实转成告警，分 critical/warning/info 三级：
 - 调度器没有停止请求却不在运行 → critical；有停止请求 → “生产已暂停”提示，暂停直接造成的收信停滞不报，身份维护逾期降为提示。
 - 收信错误码（`live_guard_busy` 与停止请求触发的 `stopped` 除外）且最后成功超过 10 分钟 → 运行中为 critical、暂停时为 warning，详情附带自动刷新的结果；运行中收信超过 15 分钟没有新记录 → critical。
 - 未回来信用会话列表 unread 标记的同一规则（`conversation_workbench.UNREAD_PENDING` 且机构后台未在达人最新消息后回复），最早一条超过 26 小时（错过一个每日回复窗口）才升为 warning。
-- 身份维护超过下次维护时间 2 小时且不在队列中才报；U 盘备份缺失或超过 7 天报 warning。
+- 身份维护超过下次维护时间 2 小时且不在队列中才报；U 盘备份缺失或超过 7 天报 warning；状态库未纳入备份清单、清单库缺失/路径不安全或清单读取失败时，另报“新备份被阻断”，不以旧备份新鲜度替代当前可备份性。
 
 某个市场读取失败只报该市场，不影响其它告警。收信状态文件里的 `pendingContent` 统计全部 `inbox_pending` 行（含已处理状态），不能当待回复数。
 

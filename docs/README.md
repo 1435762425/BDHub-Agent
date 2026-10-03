@@ -1,6 +1,6 @@
 # 文档导航
 
-当前规则只在 [PROJECT.md](PROJECT.md)（产品）与 [TECHNICAL.md](TECHNICAL.md)（实现）维护。[AGENTS.md](../AGENTS.md) 规定执行边界，[当前交接](handoff/current.md) 记录带时间的运行快照。日期化报告只证明当时的范围和结果，不提供当前执行授权。当前代码核对基线为 2026-09-26 的 `d3bcc5a`；模块方案与 AI 审查页顶部的实施表区分已完成、部分完成和剩余项，早期报告中的“待实施”不覆盖该表。
+当前规则只在 [PROJECT.md](PROJECT.md)（产品）与 [TECHNICAL.md](TECHNICAL.md)（实现）维护。[AGENTS.md](../AGENTS.md) 规定执行边界，[当前交接](handoff/current.md) 记录带时间的运行快照。日期化报告只证明当时的范围和结果，不提供当前执行授权。当前发布基线见带时间的交接记录；模块方案与 AI 审查页顶部的实施表区分已完成、部分完成和剩余项，早期报告中的“待实施”不覆盖该表。
 
 ## 按问题阅读
 

@@ -1,10 +1,10 @@
 # BDHub-Agent
 
-独立的 Agent 驱动达人经营系统。IT、BR、MY、UK 共用货盘、线索、身份、持续发送、收信和服务处理流程，各市场保留独立账号、语言、能力和台账边界；自动 A/B 线索均支持四市场；TapLink 清理、会话页人工发送和身份/画像页面操作仍仅支持 IT（见技术文档）。
+独立的 Agent 驱动达人经营系统。市场注册表已接入 IT、BR、MY、UK、DE、FR、TH，按各市场已验证能力开放货盘、线索、身份、持续发送、收信和服务处理流程；账号、语言、能力和台账按市场隔离。IT/UK 当前只保留收信与 AI 回复；TapLink 清理、会话页人工发送和身份/画像页面操作仍仅支持 IT（见技术文档）。
 
 实际开关、进程和断点以[当前交接](docs/handoff/current.md)及本机台账为准。打开页面、预检、构建与重启不产生发送授权，也不改变已有开关。
 
-当前采用固定双账号分工：通讯账号负责 SDK 收信及原 HTTP 二发/AI 回复，供给账号负责 Campaign、商品、TapLink 和 OECID。全托支持 IT/UK 首次及每 15 天按类目发现，候选增量累积；A/B 持久队列每 7 天到期重查，发送按 4 A / 1 B 分配机会。具体例外与未完成范围见主文档。
+完整经营市场采用固定双账号分工：通讯账号负责 SDK 收信及原 HTTP 二发/AI 回复，供给账号负责 Campaign、商品、TapLink 和 OECID；仅收信与 AI 回复的 IT/UK 各使用一个通讯账号。具备全托能力的市场首次及每 15 天按类目发现，候选增量累积；A/B 持久队列每 7 天到期重查，发送按 4 A / 1 B 分配机会。具体例外与未完成范围见主文档。
 
 ## 当前入口
 
@@ -30,7 +30,7 @@ var/               本机真实状态与证据，不进入 Git
 
 ## 开发与验证
 
-本目录就是生产环境：scheduler 按路径拉起子脚本，Web 生产实例在 `apps/web` 占用 `127.0.0.1:5198`。代码改动在 `/Users/bjn00003/BDHub/` 下的独立 git worktree 中进行和验证（代码按 `ROOT.parent/'01-BDSystem-V2'` 定位旧项目，所以 worktree 要放在同一父目录），合入前再核对进程、锁和断点。
+本目录 `/Users/bjn00003/BDHub-Agent` 就是生产环境：scheduler 按路径拉起子脚本，Web 生产实例在 `apps/web` 占用 `127.0.0.1:5198`。代码改动在 `/Users/bjn00003/` 下的独立 git worktree（`BDHub-Agent-<主题>`）中进行和验证，合入前核对进程、锁和断点。运行协议来自本项目 `vendor/`，私有配置和运行资源来自 `private-data/`，不依赖原始 BDHub 项目。
 
 Web 需要 Node.js `>=22.18.0`。在 worktree 的 `apps/web` 中验证：
 
@@ -66,6 +66,6 @@ chmod 600 config/kalodata-identity.json config/campaign-join.json
 
 ## GitHub 与恢复
 
-代码仓库：[1435762425/BDHub-Agent](https://github.com/1435762425/BDHub-Agent)（私有），远端默认分支为 `main`；本机生产检出分支为 `codex/v1-runtime-alignment`。开发使用独立 `codex/` worktree，验证后合入，再显式推送正式分支到远端 `main`，不推送全部实验分支。
+代码仓库：[1435762425/BDHub-Agent](https://github.com/1435762425/BDHub-Agent)，远端默认分支为 `main`；本机生产检出分支为 `codex/v1-runtime-alignment`。开发使用独立 `codex/` worktree，验证后合入，再显式推送正式分支到远端 `main`，不推送全部实验分支。
 
-SDK 切换前代码标签为 `pre-sdk-rollout-20260926`，已验收的 SDK/HTTP 版本标签为 `sdk-http-four-market-20260926`；标签固定对应发布时的代码，不随后续文档提交移动。GitHub 保存代码和文档，SQLite、身份材料和本机备份仍在 Git 之外。克隆代码不等于恢复可运行生产环境：还依赖真实状态、本机私密配置及只读旧项目运行依赖。回退须保留切换后新消息，按[上线与回退步骤](docs/implementation/sdk-http-rollout-20260926.md)操作。
+SDK 切换前代码标签为 `pre-sdk-rollout-20260926`，已验收的 SDK/HTTP 版本标签为 `sdk-http-four-market-20260926`；标签固定对应发布时的代码，不随后续文档提交移动。GitHub 保存代码和文档，SQLite、身份材料和本机备份仍在 Git 之外。克隆代码不等于恢复可运行生产环境：还需要本项目真实状态、`private-data/` 中的私有配置及签名运行资源，账号身份按账号页重新建立。普通状态备份不含凭据，异机加密备份另包含私有配置；恢复不读取原始项目。回退须保留切换后新消息，按[上线与回退步骤](docs/implementation/sdk-http-rollout-20260926.md)操作。
