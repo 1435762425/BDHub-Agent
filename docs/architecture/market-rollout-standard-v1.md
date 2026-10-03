@@ -17,7 +17,7 @@
 | Netherlands | `nl` | planned |
 | Philippines | `ph` | planned |
 | Singapore | `sg` | planned |
-| Thailand | `th` | ready (switches off); ACC14/ACC15 logged in; Campaign only (no full-managed); TapLink verified; templates approved |
+| Thailand | `th` | ready; Campaign only (no full-managed); first send confirmed, AI reply on; automation waits for Campaign join canary |
 | United Kingdom | `uk` | production enabled; Campaign + full-managed |
 | USA | `us` | planned |
 | Vietnam | `vn` | planned |

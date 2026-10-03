@@ -2,8 +2,12 @@
 
 文档更新时间：2026-10-03（Asia/Shanghai）。下面各节按时间倒序，每节只代表该时刻的核验；最新一节即当前生产状态的最近记录，不是实时巡检。规则见 [PROJECT](../PROJECT.md)，实现见 [TECHNICAL](../TECHNICAL.md)，后续方向见[项目审计与清理](../implementation/project-audit-20260924.md)。更早流水见[历史交接](../archive/handoff/codex-takeover-history-20260923.md)。
 
+## 2026-10-03 17:25：法国开关开启，泰国首发完成、自动运营待 Campaign 加入验收
 
-
+- FR：用户审批法语模板后页面启动首发（16:30 confirmed，`message_send` verified），随后打开自动运营、全托周更、持续发送，AI 回复按 DE 配置启用并授权首轮 pilot。
+- TH：`b312ead`/`185afea`/`e471503`/`c691d08` 接入 ACC14/ACC15（region 5、SG host、无全托货盘）；Campaign 货盘读取遇平台瞬时码会重读（最多 3 次）。TapLink 2,016 条 ready；泰语模板用户已审批；AI 回复已启用并授权 pilot。带画像的身份 canary 画像阶段连续 `100000`，改用 identityOnly canary（find code 0）验收 ACC15 `oecid_find`，身份滚动批次已开跑。17:20 用户页面启动首发，ACC14 卡＋文字 confirmed，`message_send` verified，worker 按 `canary_confirmed` 自停。Kalodata A 类当日额度用尽，次日续查。
+- TH 自动运营与持续发送被 `market_automation_capabilities_pending` 挡住，只缺 `campaign_join`：唯一候选活动 Raiyusiri `7692131618631943956` 北京时间 2026-10-05 01:00 开始，届时 canary 加入→promote→协议层 TH campaign/campaign_join 置 enabled（重生成 vendor patch）→打开自动运营与持续发送（全托周更不适用）。
+- 常驻进程仍运行命名修复前代码（版本不一致提示），待调度器空闲按 `ops-restart-check.py` 流程重启。
 
 ## 2026-10-03 13:45：德国开关开启，法国货盘铺开完成
 
