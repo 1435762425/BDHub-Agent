@@ -32,6 +32,7 @@
     "kalodata-leads-my.sqlite",
     "kalodata-leads-uk.sqlite",
     "kalodata-leads-de.sqlite",
+    "kalodata-leads-fr.sqlite",
     "kalodata-source-cache.sqlite",
     "matching-italy-profiles.sqlite",
     "matching-italy.sqlite",
