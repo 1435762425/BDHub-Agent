@@ -60,6 +60,27 @@ def scope():
     policy=json.loads((ROOT/'config/catalog-link-policy.json').read_text())
     return SCOPE|{'policyVersion':policy['version'],'policyFingerprint':policy_fingerprint(policy)}
 
+def transport_read_scope(transport,expected):
+    """Bind observations to the actual live session, including its read-only forked lanes."""
+    market=getattr(getattr(transport,'identity',None),'market',None)
+    account=getattr(getattr(transport,'_account',None),'name',None)
+    if not market or not account or market!=expected['market'] or account!=expected['account']:
+        raise ValueError('catalog_transport_scope_mismatch')
+    return {'market':market,'readAccount':account}
+
+def require_verification_scope(prep,item,intent,expected):
+    """Recheck the original run and intent before either readback or local settlement."""
+    run=prep.db.execute('SELECT market,scope FROM catalog_prepare_run WHERE id=?',(item['run_id'],)).fetchone()
+    frozen=json.loads(run['scope']) if run else {}
+    spec=intent['spec']
+    if not run or prep.market!=expected['market'] or run['market']!=expected['market'] or \
+            frozen.get('market')!=expected['market'] or frozen.get('account')!=expected['account'] or \
+            spec.get('market')!=expected['market'] or spec.get('account')!=expected['account'] or \
+            intent['account']!=expected['account'] or intent['pid']!=item['pid'] or \
+            spec.get('pid')!=item['pid'] or spec.get('campaignId')!=item['campaign_id'] or \
+            spec.get('route')!=item['catalog_source'] or frozen.get('route')!=item['catalog_source']:
+        raise ValueError('catalog_verify_scope_mismatch')
+
 def plan_bounds(offer):
     """Full binding used by creation, card inspection and the material consumer."""
     return {'pid':offer['pid'],'campaignId':offer['campaignId'],'catalogSource':offer['catalogSource'],'creatorPercent':offer['creatorPercent'],
@@ -367,8 +388,12 @@ def requeue_cardless(prep,route):
     """Requeue every legacy reuse/review decision under the standard-card policy."""
     src='campaign' if route=='campaign' else 'selected'
     with prep.db:
-        rows=prep.db.execute("SELECT run_id,pid,campaign_id,catalog_source,state,card FROM catalog_prepare_item "
-                             "WHERE catalog_source=? AND state IN ('review','reuse','missing')",(src,)).fetchall()
+        rows=prep.db.execute("SELECT i.* FROM catalog_prepare_item i JOIN catalog_prepare_run r ON r.id=i.run_id "
+                             "WHERE r.market=? AND json_extract(r.scope,'$.market')=? "
+                             "AND json_extract(r.scope,'$.account')=? AND json_extract(r.scope,'$.route')=? "
+                             "AND i.catalog_source=? "
+                             "AND i.state IN ('review','reuse','missing')",
+                             (SCOPE['market'],SCOPE['market'],SCOPE['account'],src,src)).fetchall()
         n=0
         for row in rows:
             if not needs_standard_reread(row['state'],row['card']):continue
@@ -376,6 +401,14 @@ def requeue_cardless(prep,route):
                                "updated=? WHERE run_id=? AND pid=? AND campaign_id=? AND catalog_source=?",
                                (time.time(),row['run_id'],row['pid'],row['campaign_id'],row['catalog_source'])).rowcount
     return n
+
+def cardless_runs(prep,route):
+    return [row[0] for row in prep.db.execute(
+        "SELECT DISTINCT i.run_id FROM catalog_prepare_item i JOIN catalog_prepare_run r ON r.id=i.run_id "
+        "WHERE r.market=? AND json_extract(r.scope,'$.market')=? AND json_extract(r.scope,'$.account')=? "
+        "AND json_extract(r.scope,'$.route')=? AND i.catalog_source=? "
+        "AND (i.card IS NULL OR coalesce(json_extract(i.card,'$.listId'),'')='')",
+        (SCOPE['market'],SCOPE['market'],SCOPE['account'],route,route))]
 
 
 def requeue_binding_mismatches(prep,run_id):
@@ -532,19 +565,39 @@ def step_verify(prep,report,limit=None):
     An intent whose POST returned but whose card could not be confirmed stays in the ledger
     with its receipt; reading it back is the only correct way to resolve it.
     """
-    rows=[dict(r) for r in prep.db.execute("SELECT * FROM catalog_prepare_item WHERE state IN ('unknown','submitted') AND intent_id IS NOT NULL ORDER BY updated LIMIT ?",(limit or 500,))]
+    expected=dict(SCOPE)
+    if not prep.db.execute("SELECT 1 FROM sqlite_master WHERE name='catalog_link_intent'").fetchone():
+        report['verifyItems']=0;return {}
+    rows=[dict(r) for r in prep.db.execute(
+        "SELECT i.* FROM catalog_prepare_item i JOIN catalog_prepare_run r ON r.id=i.run_id "
+        "JOIN catalog_link_intent l ON l.id=i.intent_id "
+        "WHERE r.market=? AND json_extract(r.scope,'$.market')=? AND json_extract(r.scope,'$.account')=? "
+        "AND json_extract(l.spec,'$.market')=? AND json_extract(l.spec,'$.account')=? AND l.account=? "
+        "AND i.state IN ('unknown','submitted') ORDER BY i.updated LIMIT ?",
+        (expected['market'],expected['market'],expected['account'],expected['market'],
+         expected['account'],expected['account'],limit or 500))]
     report['verifyItems']=len(rows);states={}
     if not rows:return states
     ledger=CatalogLinks(ROOT)
     try:
-        with opportunity_reader(report,market=SCOPE['market'],extra_read_endpoints=READ_EXTRA,wait_seconds=60,account_name=SCOPE['account']) as transport:
+        with opportunity_reader(report,market=expected['market'],extra_read_endpoints=READ_EXTRA,wait_seconds=60,account_name=expected['account']) as transport:
+            read_scope=transport_read_scope(transport,expected)
             def read(path,extra):
                 r=transport._xhr(method='GET',path=path,params=transport._params()|extra,payload=None,write=False)
                 body=transport.require_read(r);return body,digest(body)
             for item in rows:
                 pid,cid,src=item['pid'],item['campaign_id'],item['catalog_source']
                 intent=ledger.get(item['intent_id'])
+                try:require_verification_scope(prep,item,intent,expected)
+                except ValueError:
+                    states['scope_mismatch']=states.get('scope_mismatch',0)+1;continue
                 if intent['state']=='verified':
+                    # Legacy verified artifacts may omit scope, but explicit conflicting
+                    # scope is never evidence for making this preparation row ready.
+                    card=intent['readback'] or {}
+                    if card.get('market') not in (None,expected['market']) or \
+                            card.get('readAccount') not in (None,expected['account']):
+                        states['scope_mismatch']=states.get('scope_mismatch',0)+1;continue
                     prep.mark_progress(item['run_id'],pid,cid,src,'ready',card=intent['readback'])
                     states['already_verified']=states.get('already_verified',0)+1;continue
                 receipt=intent.get('receipt') or {}
@@ -563,19 +616,22 @@ def step_verify(prep,report,limit=None):
                         card=inspection.inspect_card(offer,read,expected_list_id=receipt.get('list_id'),expected_name=intent['spec']['listName'])
                         if card['state']=='verified_read_only':break
                     if not card or card['state']!='verified_read_only':raise ValueError('created_card_not_verified')
-                    card.update(readAccount=SCOPE['account'])
+                    card.update(read_scope)
+                    require_verification_scope(prep,item,ledger.get(intent['id']),expected)
                     ledger.confirm(intent['id'],card)
                     prep.mark_progress(item['run_id'],pid,cid,src,'ready',card=card)
                     states['verified']=states.get('verified',0)+1
                 except Exception as error:
                     # Still unresolved: stay unknown, keep the receipt, never re-create.
                     code=str(error) if isinstance(error,ValueError) else f'{type(error).__name__}:{str(error)[:60]}'
+                    if code=='catalog_verify_scope_mismatch':
+                        states['scope_mismatch']=states.get('scope_mismatch',0)+1;continue
                     prep.mark_progress(item['run_id'],pid,cid,src,'unknown',error=code)
                     states['still_unknown']=states.get('still_unknown',0)+1
     finally:ledger.db.close()
     return states
 
-def verify_created_card(read,intent,receipt):
+def verify_created_card(read,intent,receipt,*,read_scope):
     """Read back a just-created card by its receipt list_id. Returns the card, or None.
 
     Cheaper than a full search: the receipt already names the list to read, and the frozen
@@ -613,7 +669,7 @@ def verify_created_card(read,intent,receipt):
             'campaignName':'','stock':str(member.get('stock')) if needs_stock else None,'stockRequired':needs_stock,
             'publicPercent':format(Decimal(str(public))/100,'f') if public is not None else None,
             'listId':list_id,'wireCampaignId':wire,'sourceCampaignId':wanted,'creatorPercent':format(rate,'f'),
-            'checkedAt':time.time(),'evidenceRefs':[sha],'executionAllowed':False,'readAccount':SCOPE['account']}
+            'checkedAt':time.time(),'evidenceRefs':[sha],'executionAllowed':False,**read_scope}
 
 def create_spec(prep,run_id,offer,short_name,naming=None,route=None):
     """Freeze one creation intent. The name comes from the frontend-controllable naming config."""
@@ -709,6 +765,7 @@ def step_create(prep,run_id,limit,report,pace=0.0,lanes=1,qps=5,canary=False,pid
         extra_reads=CAMPAIGN_OFFER_READS if route=='campaign' else frozenset()
         with opportunity_card_creator_batch(report,payloads,market=SCOPE['market'],canary=canary,
                                              stopped=lambda:False,wait_seconds=60,extra_reads=extra_reads) as transport:
+            transport_read_scope(transport,SCOPE)
             def reader(on):
                 def read(path,extra):
                     r=on._xhr(method='GET',path=path,params=on._params()|extra,payload=None,write=False)
@@ -739,6 +796,8 @@ def step_create(prep,run_id,limit,report,pace=0.0,lanes=1,qps=5,canary=False,pid
                         if not raw:raise ValueError('product_no_longer_eligible')
                         current=(raw if source=='campaign' else new_offer(raw,pid,intent['spec']['campaignId'],'selected',policy=prep.policy))
                         outcome=classify_pid(pid,current,lane_reads[index%max(1,lanes)],prep.policy,intent['spec'])
+                        if outcome.get('state')=='standard':
+                            outcome['card'].update(transport_read_scope(lane_transports[index%max(1,lanes)],SCOPE))
                         return pid,outcome,None
                     except Exception as error:return pid,None,error
                 with ThreadPoolExecutor(max_workers=max(1,lanes)) as executor:
@@ -751,6 +810,7 @@ def step_create(prep,run_id,limit,report,pace=0.0,lanes=1,qps=5,canary=False,pid
             report.setdefault('phaseSeconds',{})['searches']=round(time.time()-t,2)
             # Readback runs on its own lane so it can overlap the next creation.
             rb_lane=transport.fork_lane(lambda:None)
+            rb_scope=transport_read_scope(rb_lane,SCOPE)
             rb_read=reader(rb_lane)
             rb_pool=ThreadPoolExecutor(max_workers=1)
             def rb_lane_close():
@@ -759,7 +819,7 @@ def step_create(prep,run_id,limit,report,pace=0.0,lanes=1,qps=5,canary=False,pid
             def readback_once(target_intent,target_receipt):
                 for delay in (0,1,2):
                     if delay:time.sleep(delay)
-                    try:card=verify_created_card(rb_read,target_intent,target_receipt)
+                    try:card=verify_created_card(rb_read,target_intent,target_receipt,read_scope=rb_scope)
                     except Exception:card=None
                     if card:return card
                 return None
@@ -853,7 +913,8 @@ def step_create(prep,run_id,limit,report,pace=0.0,lanes=1,qps=5,canary=False,pid
                 current=raw if route=='campaign' else new_offer(
                     raw,pid,intent['spec']['campaignId'],'selected',policy=prep.policy)
                 outcome=classify_pid(pid,current,rb_read,prep.policy,intent['spec'])
-                return outcome.get('card') if outcome.get('state')=='standard' else None
+                if outcome.get('state')!='standard':return None
+                return outcome['card']|rb_scope
             delays=tuple(prep.policy.get('unknownReadbackDelaysSeconds') or (30,120))
             report['unknownReconcile']=reconcile_unknown_batch(
                 ROOT,prep,run_id,lookup_unknown,delays=delays)
@@ -1055,11 +1116,11 @@ def main():
             # 非全托的 run 是**按活动来源**建的（`sourceRun` 进 id），每次调用都会算出新 id，
             # 所以不能用本次的 run_id 去读——要读**真正持有这些行的那些 run**。
             src='campaign'
-            runs=[r[0] for r in prep.db.execute(
-                "SELECT DISTINCT run_id FROM catalog_prepare_item WHERE catalog_source=? AND "
-                "(card IS NULL OR coalesce(json_extract(card,'$.listId'),'')='')",(src,))]
+            runs=cardless_runs(prep,src)
             report['readRuns']=len(runs)
-            report['read']={run:step_read_campaign(prep,run,a.limit,report) for run in runs}
+            report['read']={run:(step_read_campaign(prep,run,a.limit,report) if a.market=='it' else
+                                step_read_campaign_direct(prep,run,a.limit,report,lanes=a.lanes,qps=a.qps))
+                            for run in runs}
         else:
             report['read']=step_read(prep,run_id,a.limit,report,lanes=a.lanes,qps=a.qps)
     elif a.action=='inventory':

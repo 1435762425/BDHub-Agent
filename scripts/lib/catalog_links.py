@@ -164,6 +164,11 @@ class CatalogLinks:
         return self._confirm(id,card,allowed=('prepared',),existing=True)
     def _confirm(self,id,card,*,allowed,existing):
         row=self.get(id);s=row['spec']
+        # Scope comes from the session that actually read this card, never from the current
+        # role assignment or by copying the frozen intent onto an unscoped observation.
+        if not s.get('market') or not row['account'] or s.get('account')!=row['account'] or \
+                card.get('market')!=s['market'] or card.get('readAccount')!=row['account']:
+            raise ValueError('catalog_link_read_scope_mismatch')
         if row['state']=='verified':return self.get(id)
         if row['state'] not in allowed:raise ValueError('catalog_link_not_submitted')
         if not re.fullmatch(r'[1-9][0-9]{0,31}',str(card.get('listId',''))):raise ValueError('catalog_link_id_missing')

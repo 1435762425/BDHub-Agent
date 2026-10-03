@@ -45,7 +45,8 @@ class BatchLinkTests(unittest.TestCase):
         pct=format(Decimal(creator)/100,'f');name=f'🔥 BJN Quaderno {pct}% abcdef'
         return {'state':'verified_read_only','pid':pid,'verifiedListName':name,'listName':name,'campaignName':'x',
                 'stock':None,'stockRequired':False,'publicPercent':format(Decimal(public)/100,'f'),'listId':list_id,'wireCampaignId':'0','sourceCampaignId':cid,
-                'creatorPercent':format(Decimal(creator)/100,'f'),'checkedAt':1.0,'evidenceRefs':['a','b'],'executionAllowed':False}
+                'creatorPercent':format(Decimal(creator)/100,'f'),'checkedAt':1.0,'evidenceRefs':['a','b'],'executionAllowed':False,
+                'market':'it','readAccount':'acc9'}
     def promote(self,spec,card):
         bindings=CatalogBindings(self.root)
         try:return bindings.promote(spec,card)

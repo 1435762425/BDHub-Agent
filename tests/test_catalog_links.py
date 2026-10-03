@@ -33,7 +33,7 @@ class LinkTests(unittest.TestCase):
    with self.assertRaises(ValueError):l.begin(r['id'],'acc6')
    l.begin(r['id'],'acc9');l.unknown(r['id'],'timeout')
    with self.assertRaises(ValueError):l.begin(r['id'],'acc9')
-   card={'state':'verified_read_only','listId':'789','pid':'123','sourceCampaignId':'456','creatorPercent':'13','wireCampaignId':'0','verifiedListName':'BJN test'}
+   card={'state':'verified_read_only','listId':'789','pid':'123','sourceCampaignId':'456','creatorPercent':'13','wireCampaignId':'0','verifiedListName':'BJN test','market':'it','readAccount':'acc9'}
    with self.assertRaises(ValueError):l.confirm(r['id'],card|{'sourceCampaignId':'wrong'})
    with self.assertRaises(ValueError):l.confirm(r['id'],card|{'creatorPercent':'12'})
    l.confirm(r['id'],card);self.assertEqual(l.get(r['id'])['state'],'verified')
@@ -56,7 +56,7 @@ class LinkTests(unittest.TestCase):
    r=l.prepare(s);self.assertEqual(r['state'],'prepared')
    with self.assertRaises(ValueError):l.prepare(s|{'pid':'124','payload':create_payload(pid='124',campaign_id='456',creator_pct='13',name='BJN test',route='selected')})
    l.begin(r['id'],'acc9')
-   card={'state':'verified_read_only','listId':'789','pid':'123','sourceCampaignId':'456','creatorPercent':'13','wireCampaignId':'456','verifiedListName':'BJN test','checkedAt':1.0,'evidenceRefs':['proof']}
+   card={'state':'verified_read_only','listId':'789','pid':'123','sourceCampaignId':'456','creatorPercent':'13','wireCampaignId':'456','verifiedListName':'BJN test','checkedAt':1.0,'evidenceRefs':['proof'],'market':'it','readAccount':'acc9'}
    with self.assertRaises(ValueError):l.confirm(r['id'],card|{'wireCampaignId':'0'})
    l.confirm(r['id'],card);self.assertEqual(l.get(r['id'])['state'],'verified')
    changed=l.prepare(s|{'offer':s['offer']|{'publicPercent':'11'}})
