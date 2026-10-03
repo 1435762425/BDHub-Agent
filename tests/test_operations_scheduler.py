@@ -52,6 +52,17 @@ class SchedulerFlow(unittest.TestCase):
         save(self.root,{'jobs':{}});executor=FakeExecutor();state=tick(self.root,now=NOW,executor=executor)
         self.assertIsNone(state['runId']);self.assertEqual(executor.calls,[])
 
+    def test_busy_initial_ledger_waits_before_claiming_and_other_database_errors_remain_errors(self):
+        executor=FakeExecutor()
+        with patch('lib.operations_scheduler.CycleStore',side_effect=sqlite3.OperationalError('database is locked')), \
+             patch('lib.operations_scheduler.claim_ready',side_effect=AssertionError('must not claim while unopened')):
+            result=tick(self.root,now=NOW,executor=executor)
+        self.assertEqual((result['state'],result['error']),('waiting_database','local_store_busy'))
+        self.assertEqual(executor.calls,[])
+        self.assertEqual(json.loads((self.root/'var/operations-scheduler-status.json').read_text())['state'],'waiting_database')
+        with patch('lib.operations_scheduler.CycleStore',side_effect=sqlite3.OperationalError('database disk image is malformed')):
+            with self.assertRaises(sqlite3.OperationalError):tick(self.root,now=NOW,executor=executor)
+
     def test_master_switch_alone_runs_the_monday_chain_in_order(self):
         save(self.root,{'jobs':{}})
         save_setting(self.store,'it','automation-setting-request',0,

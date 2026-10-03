@@ -11,6 +11,14 @@ def edge(pid='1',person='c1',source='e1',**changes):
  return dict({'sourceId':source,'creatorId':person,'oec':'123' if person=='c1' else '456' if person else None,'pid':pid,'offerKey':'o'+pid,'units':10,'evidenceRef':'source','observedAt':NOW,'windowStart':'2026-08-31','windowEnd':'2026-09-13','historicalOwnership':'unverified'},**changes)
 
 class CycleTests(unittest.TestCase):
+ def test_failed_store_initialization_closes_the_unreturned_connection(self):
+  import sqlite3
+  from unittest.mock import Mock,patch
+  connection=Mock();connection.executescript.side_effect=sqlite3.OperationalError('database is locked')
+  with patch('lib.second_cycle.sqlite3.connect',return_value=connection):
+   with self.assertRaisesRegex(sqlite3.OperationalError,'database is locked'):CycleStore(self.path)
+  connection.close.assert_called_once_with()
+
  def setUp(self):
   self.tmp=tempfile.TemporaryDirectory();self.path=Path(self.tmp.name)/'cycle.sqlite';self.now=NOW
   self.s=CycleStore(self.path,lambda:self.now);self.p=self.s.plan('institution','it')

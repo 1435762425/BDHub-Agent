@@ -8,6 +8,14 @@ MODULE=importlib.util.module_from_spec(SPEC);SPEC.loader.exec_module(MODULE)
 
 
 class MarketSendWorkerTests(unittest.TestCase):
+    def test_raw_ledger_contention_waits_without_hiding_other_database_errors(self):
+        import sqlite3
+        for message in ('database is locked','database table is locked','database is busy'):
+            code=MODULE.error_code(sqlite3.OperationalError(message))
+            self.assertEqual(MODULE.expected_wait_state(code),'waiting_account')
+        code=MODULE.error_code(sqlite3.OperationalError('database disk image is malformed'))
+        self.assertEqual(code,'OperationalError');self.assertIsNone(MODULE.expected_wait_state(code))
+
     def test_an_empty_ready_pool_waits_without_relaunch_churn(self):
         self.assertEqual(MODULE.expected_wait_state('market_send_candidate_missing'),'waiting_pool')
         self.assertEqual(MODULE.expected_wait_state('ProfileBusyError'),'waiting_account')

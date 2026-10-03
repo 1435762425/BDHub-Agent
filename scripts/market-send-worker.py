@@ -30,6 +30,13 @@ def expected_wait_state(code):
  if code in ('ProfileBusyError','live_guard_busy','delivery_executor_busy','local_store_busy'):return 'waiting_account'
  return None
 
+def error_code(error):
+ # The immutable request already records any submission before a later local write
+ # fails. Re-entering run() recovers that original request instead of resending it.
+ if isinstance(error,sqlite3.OperationalError) and any(word in str(error).lower() for word in ('locked','busy')):
+  return 'local_store_busy'
+ return getattr(error,'code',None) or (str(error) if isinstance(error,ValueError) else type(error).__name__)
+
 def inbox_waiting(market):
  try:
   value=json.loads((ROOT/f'var/market-inbox-{market}.json').read_text())
@@ -96,7 +103,7 @@ def main():
      write(a.market,{'running':False,'state':'canary_confirmed','pid':os.getpid(),'checkedAt':time.time(),'result':result})
      break
    except Exception as error:
-    code=getattr(error,'code',None) or (str(error) if isinstance(error,ValueError) else type(error).__name__);waiting=expected_wait_state(code)
+    code=error_code(error);waiting=expected_wait_state(code)
     if waiting:write(a.market,{'running':True,'state':waiting,'pid':os.getpid(),'checkedAt':time.time(),'reason':code})
     else:
      # The state file is overwritten by the next launch; the log keeps why this worker stopped.

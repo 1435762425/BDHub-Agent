@@ -1024,7 +1024,15 @@ def tick(root,*,now=None,executor=None,refill=False,clock=None,wait_seconds=30,s
     from lib.jobs import load
     jobs=load(root)
     projected=[]
-    with CycleStore(database,**({'clock':clock} if clock else {})) as store:
+    try:
+        store=CycleStore(database,**({'clock':clock} if clock else {}))
+    except sqlite3.OperationalError as error:
+        # No claim or external operation has started yet. Busy startup is a wait, not a
+        # scheduler exit that leaves every independent lane without supervision.
+        if not any(word in str(error).lower() for word in ('locked','busy')):raise
+        progress.update(state='waiting_database',error='local_store_busy')
+        _write(status_path(root),progress);return progress
+    with store:
         active,policy,updates=_collect_ready_runs(root,store,jobs,stamp,progress);projected.extend(updates)
         owner_id=f'scheduler-{os.getpid()}-{int(stamp*1000)}'
         selection=claim_ready(store,root,active,policy,owner_id,max_parallel=min(14,len(active) or 1),worker_pid=os.getpid())

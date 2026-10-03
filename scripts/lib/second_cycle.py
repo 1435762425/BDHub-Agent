@@ -91,12 +91,16 @@ class CycleStore:
         self.clock=clock
         if not readonly:Path(path).parent.mkdir(parents=True,exist_ok=True)
         self.db=sqlite3.connect(Path(path).resolve().as_uri()+'?mode=ro' if readonly else path,uri=readonly,timeout=10,isolation_level=None);self.db.row_factory=sqlite3.Row
-        self.db.execute('PRAGMA foreign_keys=ON')
-        if not readonly:
-            self.db.execute('PRAGMA journal_mode=WAL');self.db.executescript(SCHEMA)
-            for table,column in [('plan','capacity_new'),('plan','capacity_established'),('relationship','unlocked')]:
-                if column not in {r['name'] for r in self.db.execute(f'PRAGMA table_info({table})')}:
-                    self.db.execute(f'ALTER TABLE {table} ADD COLUMN {column} INTEGER NOT NULL DEFAULT 0')
+        try:
+            self.db.execute('PRAGMA foreign_keys=ON')
+            if not readonly:
+                self.db.execute('PRAGMA journal_mode=WAL');self.db.executescript(SCHEMA)
+                for table,column in [('plan','capacity_new'),('plan','capacity_established'),('relationship','unlocked')]:
+                    if column not in {r['name'] for r in self.db.execute(f'PRAGMA table_info({table})')}:
+                        self.db.execute(f'ALTER TABLE {table} ADD COLUMN {column} INTEGER NOT NULL DEFAULT 0')
+        except BaseException:
+            self.db.close()
+            raise
     def close(self):self.db.close()
     def __enter__(self):return self
     def __exit__(self,*_):self.close()
