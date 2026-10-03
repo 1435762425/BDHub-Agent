@@ -21,6 +21,7 @@ from contextlib import closing
 from datetime import datetime
 import json
 from pathlib import Path
+import re
 import shutil
 import sqlite3
 import tempfile
@@ -43,7 +44,7 @@ def _epoch(value):
         return None
 
 
-def _references():
+def _references(markets=None):
     """(id, child db, child SQL -> (key, at), parent dbs, parent SQL -> key); ``at`` may be NULL."""
     refs = [
         ("relationship_creator_identity", "second-cycle.sqlite",
@@ -53,7 +54,10 @@ def _references():
          "SELECT creator_id, created FROM cycle_delivery", ("creator-identities.sqlite",),
          "SELECT creator_id FROM creator_identity"),
     ]
-    for market, suffix in MARKET_SUFFIX.items():
+    for market in sorted(MARKET_SUFFIX if markets is None else markets):
+        if not re.fullmatch(r"[a-z]{2}", market):
+            raise ValueError("restore_market_invalid")
+        suffix = "" if market == "it" else "-" + market
         # Supply preparation reads either a Campaign screen or a full-managed source run.
         refs.append((f"catalog_prepare_source_run:{market}", "catalog-links.sqlite",
                      f"SELECT source_run, created FROM catalog_prepare_run WHERE market='{market}'",
@@ -64,6 +68,22 @@ def _references():
                      "SELECT source_run, created FROM intake_run", (f"global-source{suffix}.sqlite",),
                      "SELECT id FROM global_source_run"))
     return refs
+
+
+def _reference_markets(restored, entries):
+    """Use the backup's own market rows and ledger names, including newly onboarded markets."""
+    markets = set()
+    for name in entries:
+        match = re.fullmatch(r"(?:campaign-screen|global-source|global-selection)(?:-([a-z]{2}))?\.sqlite", name)
+        if match:
+            markets.add(match[1] or "it")
+    if "catalog-links.sqlite" in entries:
+        with _open(restored / "catalog-links.sqlite") as db:
+            if _table_exists(db, "catalog_prepare_run"):
+                markets.update(row[0] for row in db.execute("SELECT DISTINCT market FROM catalog_prepare_run"))
+    if any(not isinstance(market, str) or not re.fullmatch(r"[a-z]{2}", market) for market in markets):
+        raise ValueError("restore_market_invalid")
+    return markets
 
 
 def _open(path):
@@ -237,7 +257,8 @@ def run_drill(backup, *, databases=None, accounts=None, work_dir=None, keep=Fals
     try:
         restore_backup(backup, target, confirmed=True, clock=clock)
         restored = target
-        references = [row for row in (_check_reference(ref, restored, entries) for ref in _references()) if row]
+        references = [row for row in (_check_reference(ref, restored, entries)
+                      for ref in _references(_reference_markets(restored, entries))) if row]
         schema = _schema(restored, entries)
         identities = _identity_dependencies(restored, entries, accounts or {})
         intents = _intent_dependencies(restored, entries)

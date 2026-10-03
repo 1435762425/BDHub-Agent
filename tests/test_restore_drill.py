@@ -160,6 +160,25 @@ class RestoreDrillTests(unittest.TestCase):
         self.assertIn("intent_identity_unverified:1", report["warnings"])
         self.assertEqual(report["intentDependencies"][0]["status"], "identity_not_frozen")
 
+    def test_new_market_references_are_checked_from_the_backups_own_scope(self):
+        self.sql("catalog-links.sqlite", "CREATE TABLE catalog_prepare_run(market,source_run,created);"
+                 "INSERT INTO catalog_prepare_run VALUES('th','th-campaign',1);")
+        self.sql("campaign-screen-th.sqlite", "CREATE TABLE campaign_screen_run(run_id);"
+                 "CREATE TABLE campaign_pool_run(run_id);"
+                 "INSERT INTO campaign_screen_run VALUES('th-campaign');")
+        path = self.root / "config/state-backup.json"
+        policy = json.loads(path.read_text())
+        policy["databases"].extend(["campaign-screen-th.sqlite", "catalog-links.sqlite"])
+        path.write_text(json.dumps(policy))
+        backup = self.backup()
+        report = self.drill(backup)
+        self.assertEqual(report["state"], "restorable")
+        reference = next(row for row in report["references"] if row["id"] == "catalog_prepare_source_run:th")
+        self.assertEqual((reference["state"], reference["rows"]), ("ok", 1))
+        # A partial group missing TH's own parent cannot be declared restorable using IT's parents.
+        report = self.drill(backup, databases=["creator-identities.sqlite", "second-cycle.sqlite", "catalog-links.sqlite"])
+        self.assertIn("reference:catalog_prepare_source_run:th:dependency_database_missing", report["blockers"])
+
 
 if __name__ == "__main__":
     unittest.main()
