@@ -93,7 +93,10 @@ def main():
    except Exception as error:
     code=getattr(error,'code',None) or (str(error) if isinstance(error,ValueError) else type(error).__name__);waiting=expected_wait_state(code)
     if waiting:write(a.market,{'running':True,'state':waiting,'pid':os.getpid(),'checkedAt':time.time(),'reason':code})
-    else:write(a.market,{'running':False,'state':'attention','pid':os.getpid(),'checkedAt':time.time(),'error':code});return 2
+    else:
+     # The state file is overwritten by the next launch; the log keeps why this worker stopped.
+     print(json.dumps({'event':'attention_exit','market':a.market,'error':code,'detail':str(error)[:300],'at':time.time()},ensure_ascii=False),file=sys.stderr,flush=True)
+     write(a.market,{'running':False,'state':'attention','pid':os.getpid(),'checkedAt':time.time(),'error':code});return 2
   if a.once:break
   if sent and inbox_waiting(a.market):
    handoff_until=time.monotonic()+8
