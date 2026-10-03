@@ -20,6 +20,9 @@ STAGE_LABELS = {"taplink_clean": "TapLink 清理", "catalog": "货盘", "taplink
 # Senders may wait 300 s, then spend up to 180 s checking an original intent. A live PID alone
 # does not prove the last state is current; give those normal cycles room before calling it stale.
 LANE_MAX_AGE_SECONDS = 600
+# These workers explicitly publish a final state before exiting. An exited process does not undo
+# a recent terminal receipt, unlike a last "sending"/"completed" sample left behind by a crash.
+LANE_TERMINAL_STATES = frozenset({"attention", "off", "stopped", "canary_confirmed"})
 
 
 def _stage_rows(db, run_id):
@@ -92,14 +95,12 @@ def _stamp(value):
     return value if type(value) in (int, float) and math.isfinite(value) and value > 0 else None
 
 
-def _lane(record, now, *, enabled=None, sample=None, control_at=None):
+def _lane(record, now, *, enabled=None, sample=None, control_at=None, disabled_state="off"):
     """A process observation and its own sample time, independent of the console read time."""
     from lib.process_liveness import record_alive
     sample = record if sample is None else sample
     observed = _stamp(sample.get("checkedAt")) or _stamp(sample.get("startedAt"))
     running = record_alive(record) if type(record.get("pid")) is int and record["pid"] > 0 else None
-    if record.get("running") is False:
-        running = False
     state = sample.get("state")
     state = state if isinstance(state, str) and 0 < len(state) <= 40 else None
     reason = None
@@ -109,17 +110,29 @@ def _lane(record, now, *, enabled=None, sample=None, control_at=None):
         reason = "status_stale"
     elif _stamp(record.get("startedAt")) and observed < record["startedAt"]:
         reason = "previous_worker_sample"
-    elif running is not True:
+    elif sample.get("pid") is not None and sample["pid"] != record.get("pid"):
+        reason = "previous_worker_sample"
+    elif running is False and state in LANE_TERMINAL_STATES and (enabled is None or _stamp(control_at) is None):
+        reason = "control_unavailable"
+    elif running is not True and not (running is False and state in LANE_TERMINAL_STATES):
         reason = "worker_not_running" if running is False else "worker_unknown"
     elif not state:
         reason = "status_missing"
     elif _stamp(control_at) and observed < control_at:
         reason = "control_changed"
     fresh = reason is None
+    source = "worker"
+    worker_observed = observed
+    current_state = state if fresh else "unverified"
     stop_reason = next((sample[key][:160] for key in ("stopReason", "reason", "error")
                         if isinstance(sample.get(key), str) and sample[key]), None)
-    return {"state": state if fresh else "unverified", "reportedState": state,
+    # A saved OFF is current control evidence, not an old worker failure. Read it even when the
+    # final worker sample has aged out, but only after proving the recorded process has exited.
+    if not fresh and enabled is False and running is False and _stamp(control_at) is not None:
+        current_state, observed, fresh, reason, source, stop_reason = disabled_state, now, True, None, "control", None
+    return {"state": current_state, "reportedState": state, "statusSource": source,
             "observedAt": observed, "fresh": fresh, "running": running, "enabled": enabled,
+            "workerObservedAt": worker_observed, "controlUpdatedAt": _stamp(control_at),
             "statusReason": reason, "value": None, "label": None, "unit": None, "scope": None,
             "lastSuccessAt": _stamp(sample.get("lastSuccessAt")),
             "stopReason": stop_reason}
@@ -148,7 +161,7 @@ def _lanes(root, store, market, automation):
             cfg = store.db.execute("SELECT * FROM continuous_send_control WHERE plan_id=?", (plan[0],)).fetchone()
             send_enabled = plan["state"] == "active" and not (cfg and cfg["stop_requested"]) and bool(
                 cfg and (cfg["run_requested"] or cfg["automatic_enabled"]) or
-                market != "it" and automation["continuousSendEnabled"])
+                market != "it" and automation["continuousSendEnabled"]) if cfg else None
             send_control_at = cfg["updated_at"] if cfg else None
             if market == "it":
                 # _runtime is a SELECT-only reader; status() without a supplied store would open a writable DB.
@@ -160,15 +173,16 @@ def _lanes(root, store, market, automation):
         try:
             # agent_setting only reads the existing table and supplies disabled defaults; it does not migrate.
             from lib.template_library import agent_setting
-            cfg = agent_setting(store, plan[0])
-            agent_enabled = plan["state"] == "active" and cfg["enabled"]
-            agent_control_at = cfg.get("updatedAt")
+            if store.db.execute("SELECT 1 FROM agent_reply_setting WHERE plan_id=?", (plan[0],)).fetchone():
+                cfg = agent_setting(store, plan[0])
+                agent_enabled = plan["state"] == "active" and cfg["enabled"]
+                agent_control_at = cfg.get("updatedAt")
         except (sqlite3.Error, KeyError, TypeError, ValueError):
             agent = {}
     else:
         sender = agent = sample = {}
     send_lane = _lane(sender, now, enabled=send_enabled, sample=sample, control_at=send_control_at)
-    agent_lane = _lane(agent, now, enabled=agent_enabled, control_at=agent_control_at)
+    agent_lane = _lane(agent, now, enabled=agent_enabled, control_at=agent_control_at, disabled_state="disabled")
     stamps = [row["observedAt"] for row in (send_lane, agent_lane) if row["observedAt"] is not None]
     return {"available": send_lane["fresh"] or agent_lane["fresh"], "observedAt": min(stamps) if stamps else None,
             "continuousSend": send_lane, "agentReply": agent_lane}

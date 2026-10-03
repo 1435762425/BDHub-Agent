@@ -10,6 +10,7 @@ export type Holder={market:string;stage:string;since:number|null};
 export type ConsoleStage={stage:string;state:"running"|"queued";since:number|null;heartbeatAt:number|null;waitingOn:{resource:string;heldBy:Holder[]}[];waitingKnown:boolean;waitReason:string|null};
 export type FinishedStage={market:string;runId:string;stage:string;state:string;startedAt:number|null;finishedAt:number|null;errorCode:string|null;items:number|null;writeEvidence:string|null};
 export type Lane={state:string|null;reportedState:string|null;observedAt:number|null;fresh:boolean;running:boolean|null;enabled:boolean|null;statusReason:string|null;
+ statusSource:"worker"|"control";workerObservedAt:number|null;controlUpdatedAt:number|null;
  value:number|null;label:string|null;unit:string|null;scope:string|null;lastSuccessAt:number|null;stopReason:string|null};
 export type ConsoleMarket={market:string;available:true;setting:{automaticOperationsEnabled:boolean;continuousSendEnabled:boolean;fullCatalogWeeklyEnabled:boolean};
  run:{runId:string;state:string;startedAt:number|null}|null;current:ConsoleStage|null;lastFinished:FinishedStage|null;
@@ -36,10 +37,17 @@ const finished=(raw:unknown):FinishedStage=>{const v=object(raw);return {market:
  startedAt:time(v.startedAt),finishedAt:time(v.finishedAt),errorCode:maybeText(v.errorCode),items:count(v.items),writeEvidence:maybeText(v.writeEvidence,20)};};
 const lane=(raw:unknown,legacyObservedAt:unknown):Lane|null=>{if(raw==null)return null;const v=object(raw);
  const observedAt=time(v.observedAt??legacyObservedAt),running=v.running==null?null:flag(v.running);
- const fresh=v.fresh==null?false:flag(v.fresh);
- if(fresh&&(running!==true||observedAt===null))fail();
- return {state:fresh?maybeText(v.state,40):"unverified",reportedState:maybeText(v.reportedState??v.state,40),observedAt,fresh,running,
-  enabled:v.enabled==null?null:flag(v.enabled),statusReason:maybeText(v.statusReason??(v.fresh==null?"legacy_snapshot":null),40),
+ const fresh=v.fresh==null?false:flag(v.fresh),state=maybeText(v.state,40),enabled=v.enabled==null?null:flag(v.enabled);
+ const source=v.statusSource??"worker";if(source!=="worker"&&source!=="control")fail();
+ const controlUpdatedAt=time(v.controlUpdatedAt);
+ const validTerminal=running===false&&enabled!==null&&controlUpdatedAt!==null&&observedAt!==null&&controlUpdatedAt<=observedAt&&
+  ["attention","off","stopped","canary_confirmed"].includes(state??"");
+ const validWorker=source==="worker"&&(running===true||validTerminal);
+ const validControl=source==="control"&&enabled===false&&running===false&&controlUpdatedAt!==null&&(state==="off"||state==="disabled");
+ if(fresh&&(observedAt===null||!(validWorker||validControl)))fail();
+ return {state:fresh?state:"unverified",reportedState:maybeText(v.reportedState??v.state,40),observedAt,fresh,running,
+  enabled,statusSource:source as "worker"|"control",workerObservedAt:time(v.workerObservedAt??(source==="worker"?observedAt:null)),controlUpdatedAt,
+  statusReason:maybeText(v.statusReason??(v.fresh==null?"legacy_snapshot":null),40),
   value:count(v.value),label:maybeText(v.label,40),unit:maybeText(v.unit,20),scope:maybeText(v.scope,20),lastSuccessAt:time(v.lastSuccessAt),stopReason:maybeText(v.stopReason)};};
 
 export function validateOperationsConsole(raw:unknown):OperationsConsole{

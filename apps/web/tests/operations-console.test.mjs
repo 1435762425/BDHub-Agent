@@ -54,10 +54,36 @@ test('dead, expired and legacy snapshots cannot remain actionable attention stat
   assert.equal(lane.observedAt,9);
  }
 });
-test('a claimed fresh lane needs a live worker and a recorded sample',()=>{
+test('a claimed fresh active lane needs a live worker and a recorded sample',()=>{
  for(const lane of [{state:'confirmed',fresh:true,running:false,observedAt:90},
                     {state:'confirmed',fresh:true,running:true,observedAt:null},
                     {state:'confirmed',fresh:'yes',running:true,observedAt:90}]){
   assert.throws(()=>validateOperationsConsole({...payload,markets:[{...market,lanes:{...market.lanes,observedAt:null,continuousSend:lane}}]}),/invalid_operations_console/);
+ }
+});
+test('fresh explicit terminal receipts remain credible after their original worker exits',()=>{
+ for(const state of ['attention','off','stopped','canary_confirmed']){
+  const terminal={state,reportedState:state,fresh:true,running:false,enabled:true,observedAt:99,controlUpdatedAt:90,statusSource:'worker'};
+  const lane=validateOperationsConsole({...payload,markets:[{...market,lanes:{...market.lanes,continuousSend:terminal}}]}).markets[0].lanes.continuousSend;
+  assert.equal(lane.state,state);assert.equal(lane.fresh,true);assert.equal(lane.running,false);
+ }
+ for(const state of ['sending','completed','failed','disabled']){
+  const terminal={state,fresh:true,running:false,observedAt:99,statusSource:'worker'};
+  assert.throws(()=>validateOperationsConsole({...payload,markets:[{...market,lanes:{...market.lanes,continuousSend:terminal}}]}),/invalid_operations_console/);
+ }
+ for(const invalid of [{enabled:null},{controlUpdatedAt:null},{controlUpdatedAt:100}]){
+  const terminal={state:'attention',fresh:true,running:false,enabled:true,observedAt:99,controlUpdatedAt:90,statusSource:'worker',...invalid};
+  assert.throws(()=>validateOperationsConsole({...payload,markets:[{...market,lanes:{...market.lanes,continuousSend:terminal}}]}),/invalid_operations_console/);
+ }
+});
+test('current disabled control evidence is distinct from the dead workers old sample',()=>{
+ const disabled={state:'disabled',reportedState:'failed',fresh:true,running:false,enabled:false,observedAt:100,
+  statusSource:'control',controlUpdatedAt:95,workerObservedAt:5};
+ const validate=value=>validateOperationsConsole({...payload,markets:[{...market,lanes:{...market.lanes,agentReply:value}}]}).markets[0].lanes.agentReply;
+ const lane=validate(disabled);
+ assert.equal(lane.state,'disabled');assert.equal(lane.observedAt,100);assert.equal(lane.workerObservedAt,5);
+ assert.equal(lane.controlUpdatedAt,95);assert.equal(lane.statusSource,'control');
+ for(const invalid of [{enabled:null},{enabled:true},{running:true},{running:null},{controlUpdatedAt:null},{state:'attention'}]){
+  assert.throws(()=>validate({...disabled,...invalid}),/invalid_operations_console/);
  }
 });

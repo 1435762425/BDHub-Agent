@@ -142,11 +142,11 @@ class OperationsConsoleTests(unittest.TestCase):
    lane=self.read_console(['it'])['markets'][0]['lanes']['agentReply']
   self.assertEqual((lane['state'],lane['observedAt']),('completed',NOW-1))
 
- def test_dead_or_stale_workers_cannot_publish_old_attention_as_current(self):
+ def test_dead_active_or_stale_workers_cannot_publish_their_last_state_as_current(self):
   from lib.operations_console import LANE_MAX_AGE_SECONDS
   for alive,age,reason in ((True,LANE_MAX_AGE_SECONDS+1,'status_stale'),(False,5,'worker_not_running')):
    with self.subTest(alive=alive,age=age):
-    self.worker_record('market-send-worker-br.json',pid=102,checkedAt=NOW-age,running=True,state='attention')
+    self.worker_record('market-send-worker-br.json',pid=102,checkedAt=NOW-age,running=True,state='sending')
     self.worker_record('agent-reply-status-br.json',pid=103,checkedAt=NOW-age,state='failed')
     with mock.patch('lib.process_liveness.record_alive',return_value=alive):
      lanes=self.read_console(['br'])['markets'][0]['lanes']
@@ -154,6 +154,79 @@ class OperationsConsoleTests(unittest.TestCase):
     for key in ('continuousSend','agentReply'):
      self.assertEqual((lanes[key]['state'],lanes[key]['fresh'],lanes[key]['statusReason']),('unverified',False,reason))
      self.assertEqual(lanes[key]['observedAt'],NOW-age)
+
+ def test_recent_explicit_sender_terminal_states_survive_process_exit(self):
+  plan=self.store.db.execute("SELECT id FROM plan WHERE market='br'").fetchone()[0]
+  self.store.db.execute("INSERT INTO continuous_send_control VALUES(?,1,1,0,'16:30','24:00','standard',1,?)",(plan,NOW-100))
+  for state in ('attention','off','stopped','canary_confirmed'):
+   with self.subTest(state=state):
+    self.worker_record('market-send-worker-br.json',pid=102,checkedAt=NOW-5,running=False,state=state)
+    with mock.patch('lib.process_liveness.record_alive',return_value=False):
+     lane=self.read_console(['br'])['markets'][0]['lanes']['continuousSend']
+    self.assertEqual((lane['state'],lane['fresh'],lane['running'],lane['statusSource']),(state,True,False,'worker'))
+    self.assertEqual(lane['observedAt'],NOW-5)
+
+ def test_an_old_attention_is_unverified_even_though_it_was_terminal(self):
+  from lib.operations_console import LANE_MAX_AGE_SECONDS
+  self.worker_record('market-send-worker-br.json',pid=102,checkedAt=NOW-LANE_MAX_AGE_SECONDS-1,running=False,state='attention')
+  with mock.patch('lib.process_liveness.record_alive',return_value=False):
+   lane=self.read_console(['br'])['markets'][0]['lanes']['continuousSend']
+  self.assertEqual((lane['state'],lane['fresh'],lane['statusReason']),('unverified',False,'status_stale'))
+
+ def test_current_explicit_off_controls_replace_old_dead_worker_samples(self):
+  from lib.continuous_send import publish_runtime
+  from lib.template_library import DEFAULT_AGENT_SETTING,save_agent_setting
+  it=self.store.plan('bjn-local-research','it')
+  br=self.store.db.execute("SELECT id FROM plan WHERE market='br'").fetchone()[0]
+  for plan in (it,br):
+   self.store.db.execute("INSERT INTO continuous_send_control VALUES(?,0,0,1,'16:30','24:00','standard',1,?)",(plan,NOW-100))
+   save_agent_setting(self.store,plan,0,{key:value for key,value in DEFAULT_AGENT_SETTING.items() if key not in ('revision','updatedAt')})
+  self.store.clock=lambda:NOW-86400
+  publish_runtime(self.store,it,'failed',worker_pid=108)
+  self.store.clock=lambda:NOW
+  self.worker_record('continuous-send-worker.json',pid=108,startedAt=NOW-2*86400)
+  self.worker_record('market-send-worker-br.json',pid=109,checkedAt=NOW-86400,running=False,state='attention')
+  self.worker_record('agent-reply-status.json',pid=110,checkedAt=NOW-86400,state='failed')
+  self.worker_record('agent-reply-status-br.json',pid=111,checkedAt=NOW-86400,state='failed')
+  with mock.patch('lib.process_liveness.record_alive',return_value=False):
+   rows=self.read_console(['it','br'])['markets']
+  for row in rows:
+   for key,state in (('continuousSend','off'),('agentReply','disabled')):
+    lane=row['lanes'][key]
+    self.assertEqual((lane['state'],lane['fresh'],lane['enabled'],lane['statusSource']),(state,True,False,'control'))
+    self.assertEqual(lane['observedAt'],NOW)
+    self.assertEqual(lane['workerObservedAt'],NOW-86400)
+
+ def test_control_close_does_not_replace_a_recent_canary_stop_receipt(self):
+  plan=self.store.db.execute("SELECT id FROM plan WHERE market='br'").fetchone()[0]
+  self.store.db.execute("INSERT INTO continuous_send_control VALUES(?,0,0,1,'16:30','24:00','standard',1,?)",(plan,NOW-10))
+  self.worker_record('market-send-worker-br.json',pid=112,checkedAt=NOW-5,running=False,state='canary_confirmed')
+  with mock.patch('lib.process_liveness.record_alive',return_value=False):
+   lane=self.read_console(['br'])['markets'][0]['lanes']['continuousSend']
+  self.assertEqual((lane['state'],lane['fresh'],lane['statusSource']),('canary_confirmed',True,'worker'))
+
+ def test_a_new_launcher_or_control_change_invalidates_the_old_terminal(self):
+  from lib.operations_console import _lane
+  with mock.patch('lib.process_liveness.record_alive',return_value=False):
+   lane=_lane({'pid':114,'startedAt':NOW-1},NOW,sample={'state':'attention','checkedAt':NOW-5},enabled=True,control_at=NOW-100)
+   self.assertEqual((lane['state'],lane['statusReason']),('unverified','previous_worker_sample'))
+   lane=_lane({'pid':114,'startedAt':NOW-100},NOW,sample={'pid':113,'state':'attention','checkedAt':NOW-5},enabled=True,control_at=NOW-100)
+   self.assertEqual((lane['state'],lane['statusReason']),('unverified','previous_worker_sample'))
+   lane=_lane({'pid':114,'state':'attention','checkedAt':NOW-5},NOW,enabled=True,control_at=NOW-1)
+   self.assertEqual((lane['state'],lane['statusReason']),('unverified','control_changed'))
+
+ def test_missing_controls_cannot_manufacture_a_current_disabled_state(self):
+  self.worker_record('market-send-worker-br.json',pid=115,checkedAt=NOW-86400,running=False,state='off')
+  self.worker_record('agent-reply-status-br.json',pid=116,checkedAt=NOW-86400,state='disabled')
+  with mock.patch('lib.process_liveness.record_alive',return_value=False):
+   lanes=self.read_console(['br'])['markets'][0]['lanes']
+  for key in ('continuousSend','agentReply'):
+   self.assertIsNone(lanes[key]['enabled'])
+   self.assertEqual((lanes[key]['state'],lanes[key]['fresh']),('unverified',False))
+  self.worker_record('market-send-worker-br.json',pid=115,checkedAt=NOW-1,running=False,state='attention')
+  with mock.patch('lib.process_liveness.record_alive',return_value=False):
+   lane=self.read_console(['br'])['markets'][0]['lanes']['continuousSend']
+  self.assertEqual((lane['state'],lane['statusReason']),('unverified','control_unavailable'))
 
  def test_missing_or_malformed_status_does_not_borrow_another_market_or_projection(self):
   self.snapshot('br','attention',NOW-5)
