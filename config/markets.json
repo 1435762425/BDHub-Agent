@@ -224,18 +224,18 @@
     },
     "th": {
       "enabled": true,
-      "runtimeState": "planned",
-      "contentReady": false,
+      "runtimeState": "paused",
+      "contentReady": true,
       "label": "泰国",
       "shortLabel": "TH",
-      "locale": null,
-      "currency": null,
-      "timeZone": null,
+      "locale": "th-TH",
+      "currency": "THB",
+      "timeZone": "Asia/Bangkok",
       "platformRegion": "5",
-      "templateLanguage": null,
+      "templateLanguage": "th",
       "accounts": {
-        "communications": null,
-        "supply": null
+        "communications": "acc14",
+        "supply": "acc15"
       },
       "capabilities": {
         "campaignCatalog": true,

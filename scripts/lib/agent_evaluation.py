@@ -17,13 +17,14 @@ from lib.agent_reply_v2 import prompt, validate_decision
 from lib.draft_provider import MODEL, DraftProviderError
 from lib.second_cycle import CycleError, digest, encoded
 
-MARKETS = ('it', 'br', 'de', 'fr', 'my', 'uk')
+MARKETS = ('it', 'br', 'de', 'fr', 'my', 'th', 'uk')
 LANGUAGE_HINTS = {
     'it': r'\b(grazie|puoi|per|il|la|non|che|tuo|ricevuto|certo|perfetto|va bene)\b',
     'br': r'\b(obrigad[oa]|você|pode|para|não|com|seu|sua|recebido|claro|perfeito)\b',
     'de': r'\b(danke|du|dein|deine|kannst|für|nicht|wir|gern|super|klar|perfekt)\b',
     'fr': r'\b(merci|tu|ton|ta|tes|peux|pour|pas|nous|avec|parfait|bien sûr)\b',
     'my': r'\b(terima kasih|anda|boleh|untuk|yang|kami|sila|saya|baik|akan|sudah)\b',
+    'th': r'(ขอบคุณ|คุณ|สามารถ|สินค้า|ได้เลย|นะ)',
     'uk': r'\b(thank|thanks|you|your|can|the|we|will|please|great|sure)\b',
 }
 REMINDER_HINTS = {
@@ -32,6 +33,7 @@ REMINDER_HINTS = {
     'de': r'(füg\w*|hinzu\w*).{0,80}(schaufenster|showcase)',
     'fr': r'(ajout\w*|mets?\b).{0,80}(vitrine|showcase)',
     'my': r'(tambah\w*|masuk\w*).{0,80}(pameran|showcase)',
+    'th': r'เพิ่ม.{0,80}(โชว์เคส|showcase)',
     'uk': r'add\w*.{0,80}showcase',
 }
 
@@ -41,6 +43,7 @@ NEAR_TERM_HINTS = {
     'de': r'\b(bald|in kürze|so schnell wie möglich)\b',
     'fr': r'\b(bientôt|sous peu|dès que possible)\b',
     'my': r'\b(sebentar lagi|tidak lama lagi|secepat mungkin)\b',
+    'th': r'(เร็วๆ นี้|ในไม่ช้า|โดยเร็วที่สุด)',
     'uk': r'\b(shortly|soon|as soon as possible)\b',
 }
 

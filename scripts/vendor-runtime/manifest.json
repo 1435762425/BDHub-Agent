@@ -4,7 +4,7 @@
   "upstreamRevision": "72dc12a71e566702232a279aac23fd547addea12",
   "patch": {
     "file": "local.patch",
-    "sha256": "c03721210dda8d1719c920004274182cab74b4bf0851cd8a1e1f05e391182e47"
+    "sha256": "473a16c95f43692eedddf60e12fc7880543241ec4fcaa28ca51703a3694b0b3d"
   },
   "files": [
     {
@@ -185,13 +185,13 @@
       "path": "bdhub/hub/market_catalog.py",
       "source": "upstream",
       "upstreamSha256": "e0f6d92c9006159302be7466fbc324a5678c9fb3bce77a05d921d91b4e7277f8",
-      "sha256": "64b4f04cbc9bc664398c495806d4cdb540ed33e6797d7a0c3f0d1b130685ad17"
+      "sha256": "d23a7463588c57803cc85dfcebe1bdf3f03fd2d9a93e8b2318038ce550d8eb9a"
     },
     {
       "path": "bdhub/hub/markets.py",
       "source": "upstream",
       "upstreamSha256": "6be5341d74ec0aa68f3df0b234527a4802d898c8a632bdd0dc7096bec02113b5",
-      "sha256": "ba80151f1a2377bc1760c1661851b1be3b3630ca3a49dbb51ebff7a7e1250cec"
+      "sha256": "aeb40452a5fe4ad1f2ee8d32d9b294465b7eff1ad116377bfcb26f83f6f4c6a6"
     },
     {
       "path": "bdhub/hub/migration_runner.py",
@@ -791,7 +791,7 @@
       "path": "bdhub/research/commerce_transport.py",
       "source": "upstream",
       "upstreamSha256": "f374d227f8fefdacc8355cd86bdaba4a53481479819869265941c425be4b2de0",
-      "sha256": "b244fa34192115198267fc1100e3a7bf004e9dadada3f0332bfa948a67692ff3"
+      "sha256": "11c0def0695c54de0f918a69f8abe06dbca82eea4d76853ca91f52d303c9efb6"
     },
     {
       "path": "bdhub/research/commerce_verification.py",

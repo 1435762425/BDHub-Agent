@@ -110,7 +110,7 @@ def allow(scope):
 class CardSenderTests(unittest.TestCase):
     def test_only_a_markets_assigned_communications_account_sends_cards(self):
         from lib.italy_im_delivery import card_sender
-        for market, account in (('it', 'acc6'), ('br', 'acc1'), ('my', 'acc8'), ('uk', 'acc11'), ('de', 'acc12'), ('fr', 'acc16')):
+        for market, account in (('it', 'acc6'), ('br', 'acc1'), ('my', 'acc8'), ('uk', 'acc11'), ('de', 'acc12'), ('fr', 'acc16'), ('th', 'acc14')):
             self.assertTrue(card_sender(market, account), market)
         for market, account in (('de', 'acc13'), ('it', 'acc9'), ('uk', 'acc4'), ('fr', 'acc17'), ('it', 'acc12')):
             self.assertFalse(card_sender(market, account), (market, account))

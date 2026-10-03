@@ -17,7 +17,7 @@ class MarketRegistryTests(unittest.TestCase):
  def test_visible_markets_share_one_registry_and_runtime_pairs_stay_bounded(self):
   registry=load_registry(ROOT);accounts=load_config(ROOT)
   self.assertEqual(enabled_market_keys(ROOT),('be','br','de','fr','it','jp','my','mx','nl','ph','sg','th','uk','us','vn'))
-  self.assertEqual(set(operational_market_keys(ROOT)),{'it','br','de','fr','my','uk'})
+  self.assertEqual(set(operational_market_keys(ROOT)),{'it','br','de','fr','my','th','uk'})
   self.assertEqual(registry['markets']['de']['runtimeState'],'ready')
   self.assertEqual(set(accounts['markets']),set(operational_market_keys(ROOT)))
   assigned=[]

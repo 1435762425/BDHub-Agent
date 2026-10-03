@@ -212,6 +212,32 @@ MARKETS: dict[str, Market] = {
         pw_profile_suffix="_my",
         signer_region="sg",
     ),
+    # Thailand: market region 5 and partner ids read from the agency's partner info on 2026-10-03.
+    # Protocol shape as Malaysia (SG API host and signer); Campaign and joins stay pending until
+    # the project's own canaries.
+    "th": Market(
+        key="th", label="泰国",
+        host="https://api-partner-sg.tiktokshop.com",
+        aid="360019", user_language="zh-CN",
+        default_partner_id="8677544489142290192",
+        warmup="https://partner.tiktokshop.com/affiliate-cmp/creator?market=5",
+        home="https://partner.tiktokshop.com/home",
+        canary="__CANARY_REQUIRED__",
+        profile_tbl=creator_profile, miss_tbl=miss_log,
+        profile_name="creator_profile", miss_name="miss_log",
+        im_market="5", shop_id="8677544489142290192",
+        im_market_partner_id="8677598095938127617",
+        template_lang="th", accounts=[],
+        capabilities=MarketCapabilities(
+            find="enabled", profile="enabled", pure_http="enabled",
+            relation="enabled", im="enabled", product_search="enabled",
+            campaign="pending", share_link="unsupported",
+        ),
+        im_find_aid="360019",
+        affiliate_partner_id="8677544489142290192",
+        pw_profile_suffix="_th",
+        signer_region="sg",
+    ),
     "uk": Market(
         key="uk", label="英国",
         host="https://partner.eu.tiktokshop.com",

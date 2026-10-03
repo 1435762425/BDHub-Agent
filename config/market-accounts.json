@@ -110,6 +110,27 @@
       "imSessionMode": "sdk_http",
       "identityAccountRole": "supply"
     },
+    "th": {
+      "accounts": [
+        "acc14",
+        "acc15"
+      ],
+      "roles": {
+        "communications": "acc14",
+        "supply": "acc15"
+      },
+      "assignmentState": "pending",
+      "validationEvidence": "var/thailand-account-pair-project.json",
+      "credentialAuthority": "project_owned",
+      "maintenanceExecutor": "agent_identity_generation",
+      "automaticRoleSwitchEnabled": false,
+      "catalogCapabilities": {
+        "campaign": true,
+        "fullManaged": null
+      },
+      "imSessionMode": "sdk_http",
+      "identityAccountRole": "supply"
+    },
     "uk": {
       "accounts": [
         "acc11"

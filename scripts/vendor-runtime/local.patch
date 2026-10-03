@@ -49,10 +49,20 @@
          "墨西哥",
 --- a/bdhub/hub/market_catalog.py
 +++ b/bdhub/hub/market_catalog.py
-@@ -46,6 +46,16 @@
+@@ -46,6 +46,26 @@
          template_lang="pt",
          rollout_group="priority-1",
          rollout_order=10,
++    ),
++    "th": DashboardMarket(
++        key="th",
++        label="泰国",
++        short_label="TH",
++        currency="THB",
++        locale="th-TH",
++        template_lang="th",
++        rollout_group="priority-2",
++        rollout_order=80,
 +    ),
 +    "my": DashboardMarket(
 +        key="my",
@@ -66,7 +76,7 @@
      ),
      "uk": DashboardMarket(
          key="uk",
-@@ -97,6 +107,16 @@
+@@ -97,6 +117,16 @@
          rollout_group="priority-2",
          rollout_order=60,
      ),
@@ -85,7 +95,7 @@
  
 --- a/bdhub/hub/markets.py
 +++ b/bdhub/hub/markets.py
-@@ -182,11 +182,34 @@
+@@ -182,11 +182,60 @@
          capabilities=MarketCapabilities(
              find="enabled", profile="enabled", relation="enabled",
              im="enabled", product_search="enabled", campaign="enabled",
@@ -118,10 +128,36 @@
 +        im_find_aid="360019",
 +        affiliate_partner_id="8677544525004441360",
 +        pw_profile_suffix="_my",
++        signer_region="sg",
++    ),
++    # Thailand: market region 5 and partner ids read from the agency's partner info on 2026-10-03.
++    # Protocol shape as Malaysia (SG API host and signer); Campaign and joins stay pending until
++    # the project's own canaries.
++    "th": Market(
++        key="th", label="泰国",
++        host="https://api-partner-sg.tiktokshop.com",
++        aid="360019", user_language="zh-CN",
++        default_partner_id="8677544489142290192",
++        warmup="https://partner.tiktokshop.com/affiliate-cmp/creator?market=5",
++        home="https://partner.tiktokshop.com/home",
++        canary="__CANARY_REQUIRED__",
++        profile_tbl=creator_profile, miss_tbl=miss_log,
++        profile_name="creator_profile", miss_name="miss_log",
++        im_market="5", shop_id="8677544489142290192",
++        im_market_partner_id="8677598095938127617",
++        template_lang="th", accounts=[],
++        capabilities=MarketCapabilities(
++            find="enabled", profile="enabled", pure_http="enabled",
++            relation="enabled", im="enabled", product_search="enabled",
++            campaign="pending", share_link="unsupported",
++        ),
++        im_find_aid="360019",
++        affiliate_partner_id="8677544489142290192",
++        pw_profile_suffix="_th",
          signer_region="sg",
      ),
      "uk": Market(
-@@ -206,7 +229,7 @@
+@@ -206,7 +255,7 @@
              find="enabled", profile="enabled", pure_http="enabled",
              relation="unsupported",
              contact="enabled", im="enabled", product_search="enabled",
@@ -130,7 +166,7 @@
          ),
          im_find_aid="360019",
          affiliate_partner_id="8652354317985613569",
-@@ -302,11 +325,41 @@
+@@ -302,11 +351,41 @@
          capabilities=MarketCapabilities(
              find="enabled", profile="enabled", pure_http="enabled",
              relation="enabled", contact="enabled",
@@ -277,7 +313,7 @@
  from bdhub.send.taplink.transport import account_for
  
 -MARKETS = frozenset({'br', 'it', 'uk', 'us', 'jp', 'de'})
-+MARKETS = frozenset({'br', 'my', 'it', 'uk', 'us', 'jp', 'de', 'fr'})
++MARKETS = frozenset({'br', 'my', 'it', 'uk', 'us', 'jp', 'de', 'fr', 'th'})
  REVIEW_PATH = '/api/v1/affiliate/partner/campaign/review'
  PRODUCTS_PATH = '/api/v1/affiliate/partner/campaign/product_list/products'
  CATEGORY_PATH = '/api/v1/affiliate/lux/product/category/childrenv2'
