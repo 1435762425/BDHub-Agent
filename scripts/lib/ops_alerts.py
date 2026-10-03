@@ -282,8 +282,11 @@ def evaluate(facts):
                 details.append(f"{label}：{'、'.join(names[:5])}" + (f" 等 {len(names)} 项" if len(names) > 5 else ""))
         if inventory.get("error"):
             details.append(f"清单读取失败：{inventory['error']}")
+        detail = "；".join(details) or "备份清单未就绪"
+        if len(detail) > 330:
+            detail = detail[:329] + "…"
         add("state-backup-blocked", "warning", "新备份被阻断",
-            "；".join(details) + "。核对状态库与备份清单后再创建备份。")
+            detail + "。核对状态库与备份清单后再创建备份。")
     offsite = facts["offsite"]
     if not offsite:
         add("offsite-missing", "warning", "还没有 U 盘备份", "插上 U 盘后执行一次异机备份。")

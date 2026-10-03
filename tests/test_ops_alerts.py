@@ -149,6 +149,15 @@ class EvaluateTests(unittest.TestCase):
         self.assertEqual(levels(alerts), {"state-backup-blocked": "warning"})
         self.assertIn("清单读取失败", alerts[0]["detail"])
 
+    def test_many_backup_inventory_errors_keep_the_alert_within_the_web_contract(self):
+        current = facts()
+        names = ["market-" + "x" * 100 + str(i) + ".sqlite" for i in range(12)]
+        current["backupInventory"] = {"ready": False, "unexpected": names, "missing": names, "unsafe": names}
+        alert = evaluate(current)[0]
+        self.assertEqual(alert["id"], "state-backup-blocked")
+        self.assertLessEqual(len(alert["detail"]), 400)
+        self.assertIn("…", alert["detail"])
+
     def test_isolated_selections_ask_a_person_to_check_the_campaign(self):
         alerts = evaluate(facts(market("br", selectionIsolated=2)))
         self.assertEqual(levels(alerts), {"br-selection-isolated": "warning"})
