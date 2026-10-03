@@ -132,6 +132,23 @@ class EvaluateTests(unittest.TestCase):
         self.assertEqual(levels(evaluate(facts(offsite=None))), {"offsite-missing": "warning"})
         self.assertEqual(levels(evaluate(facts(offsite=NOW - 8 * 86400))), {"offsite-stale": "warning"})
 
+    def test_new_state_database_blocks_new_backups_even_with_a_recent_offsite_copy(self):
+        current = facts()
+        current["backupInventory"] = {"ready": False, "unexpected": ["kalodata-leads-th.sqlite"],
+                                      "missing": [], "unsafe": []}
+        alerts = evaluate(current)
+        self.assertEqual(levels(alerts), {"state-backup-blocked": "warning"})
+        self.assertIn("kalodata-leads-th.sqlite", alerts[0]["detail"])
+        current["backupInventory"] = {"ready": True, "unexpected": [], "missing": [], "unsafe": []}
+        self.assertEqual(evaluate(current), [])
+
+    def test_backup_inventory_error_is_not_treated_as_ready(self):
+        current = facts()
+        current["backupInventory"] = {"ready": False, "error": "state_backup_policy_unavailable"}
+        alerts = evaluate(current)
+        self.assertEqual(levels(alerts), {"state-backup-blocked": "warning"})
+        self.assertIn("清单读取失败", alerts[0]["detail"])
+
     def test_isolated_selections_ask_a_person_to_check_the_campaign(self):
         alerts = evaluate(facts(market("br", selectionIsolated=2)))
         self.assertEqual(levels(alerts), {"br-selection-isolated": "warning"})
@@ -174,7 +191,25 @@ class GatherTests(unittest.TestCase):
                 gathered = gather(root, store)
             self.assertNotIn("accountError", gathered)
             self.assertEqual([entry.get("error") for entry in gathered["markets"]], [None] * len(gathered["markets"]))
-            self.assertEqual(levels(evaluate(gathered)), {"offsite-missing": "warning"})
+            self.assertEqual(levels(evaluate(gathered)), {"offsite-missing": "warning",
+                                                        "state-backup-blocked": "warning"})
+
+    def test_backup_inventory_is_read_only_and_identifies_unregistered_market_ledger(self):
+        import json
+        from lib.ops_alerts import _backup_inventory
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "var").mkdir()
+            (root / "config").mkdir()
+            policy = {"schemaVersion": "bdhub.state-backup-policy.v1",
+                      "databases": ["second-cycle.sqlite"], "ignoredSnapshots": []}
+            (root / "config/state-backup.json").write_text(json.dumps(policy))
+            (root / "var/second-cycle.sqlite").write_bytes(b"inspection does not open databases")
+            (root / "var/kalodata-leads-th.sqlite").write_bytes(b"existing state")
+            before = {p: p.read_bytes() for p in root.rglob("*") if p.is_file()}
+            self.assertEqual(_backup_inventory(root), {"ready": False, "missing": [],
+                             "unexpected": ["kalodata-leads-th.sqlite"], "unsafe": []})
+            self.assertEqual({p: p.read_bytes() for p in root.rglob("*") if p.is_file()}, before)
 
 
 if __name__ == "__main__":

@@ -122,6 +122,16 @@ def _reason(error):
     return (str(error) or type(error).__name__)[:200]
 
 
+def _backup_inventory(root):
+    """Check the current allowlist without opening or changing any state database."""
+    from lib.state_backup import inventory
+    try:
+        current = inventory(root)
+    except (OSError, ValueError) as error:
+        return {"ready": False, "error": _reason(error)}
+    return {key: current[key] for key in ("ready", "missing", "unexpected", "unsafe")}
+
+
 def _model_service(store):
     from lib import model_service
     from lib.draft_provider import MODEL
@@ -185,6 +195,7 @@ def gather(root, store):
             codes[row.get("sha")] = code_id(root, row.get("sha"))
         row["code"] = codes[row.get("sha")]
     facts = {"now": store.clock(), "offsite": offsite_latest(root), "markets": [],
+             "backupInventory": _backup_inventory(root),
              "release": {"head": head, "headCode": code_id(root, head), "headDirty": runtime_dirty(root) if head else None, "loaded": live},
              "modelService": _model_service(store), "restoreDrill": _restore_drill(root),
              "scheduler": {"running": bool(scheduler["running"]), "stopRequestedAt": requested,
@@ -262,6 +273,17 @@ def evaluate(facts):
         add("restore-drill-blocked", "warning", "最近一次恢复演练未通过",
             f"备份 {drill.get('backup')}：{'；'.join(drill.get('blockers') or []) or drill.get('state')}。演练只读，未改动任何数据；需核对备份组后重新演练。",
             since=drill.get("finishedAt"))
+    inventory = facts.get("backupInventory")
+    if inventory is not None and not inventory["ready"]:
+        details = []
+        for key, label in (("unexpected", "未纳入清单"), ("missing", "缺失"), ("unsafe", "路径不安全")):
+            names = inventory.get(key) or []
+            if names:
+                details.append(f"{label}：{'、'.join(names[:5])}" + (f" 等 {len(names)} 项" if len(names) > 5 else ""))
+        if inventory.get("error"):
+            details.append(f"清单读取失败：{inventory['error']}")
+        add("state-backup-blocked", "warning", "新备份被阻断",
+            "；".join(details) + "。核对状态库与备份清单后再创建备份。")
     offsite = facts["offsite"]
     if not offsite:
         add("offsite-missing", "warning", "还没有 U 盘备份", "插上 U 盘后执行一次异机备份。")
