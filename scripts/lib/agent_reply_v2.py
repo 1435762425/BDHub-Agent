@@ -86,6 +86,44 @@ def submitted_pilot_reply(store,plan,exclude_reply_id=None):
     return row[0] if row else None
 
 
+def settle_pilot_capability(root,store,plan,market):
+    """Complete only the original pilot's confirmed receipt; never grant or send anything."""
+    event=store.db.execute("SELECT payload FROM control_event WHERE plan_id=? AND event_id='agent-v2-first-send'",
+                           (plan,)).fetchone()
+    if not event:return False
+    reply_id=submitted_pilot_reply(store,plan)
+    if not reply_id:return False
+    reply=store.db.execute('SELECT * FROM service_reply WHERE id=?',(reply_id,)).fetchone()
+    if reply['state']!='confirmed':return False
+    from lib.market_accounts import load_config
+    from lib.account_identity import current_generation,promote_capabilities
+    account=load_config(root)['markets'][market]['roles']['communications']
+    generation=current_generation(store,market,account)
+    if (generation or {}).get('capabilities',{}).get('agent_reply',{}).get('state')=='verified':return False
+    if not reply['sender_account'] or not reply['sender_identity']:raise CycleError('reply_original_sender_unknown')
+    if reply['sender_account']!=account:raise CycleError('reply_original_account_changed')
+    if store._plan(plan)['market']!=market:raise CycleError('reply_original_account_changed')
+    try:authorization=json.loads(event['payload']);proof=json.loads(reply['proof'] or '')
+    except (TypeError,ValueError):raise CycleError('agent_pilot_evidence_invalid') from None
+    if not isinstance(authorization,dict) or not isinstance(authorization.get('requestId'),str) or \
+       not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._:-]{7,119}',authorization['requestId']) or \
+       type(authorization.get('authorizedAt')) not in (int,float) or \
+       not 0<authorization['authorizedAt']<=reply['started']:
+        raise CycleError('agent_pilot_authorization_invalid')
+    if not isinstance(proof,dict) or proof.get('status')!='confirmed' or \
+       proof.get('requestRef')!=reply['request_ref'] or proof.get('conversationId')!=reply['cid'] or \
+       not proof.get('messageId') or not proof.get('evidenceRef'):
+        raise CycleError('reply_proof_invalid')
+    if proof.get('source')=='passive_inbox':
+        try:receipt=json.loads(reply['receipt'] or '')
+        except (TypeError,ValueError):raise CycleError('reply_proof_invalid') from None
+        if not isinstance(receipt,dict) or receipt.get('requestRef')!=reply['request_ref'] or \
+           str(receipt.get('messageId') or '')!=str(proof['messageId']):raise CycleError('reply_proof_invalid')
+    promote_capabilities(store,market=market,account=account,capabilities=['agent_reply'],
+                         evidence_ref='service-reply:'+reply_id)
+    return True
+
+
 def require_dispatch_authorization(store,plan,market,reply_id):
     """Check the page grant inside the same transaction that claims an automatic V2 reply."""
     stage=rollout_stage(store,plan,market)

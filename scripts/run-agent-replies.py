@@ -6,7 +6,7 @@ from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1];sys.dont_write_bytecode=True;sys.path.insert(0,str(ROOT/'scripts'))
 from lib.cycle_auto_reply import REPLY_CHECK_INTERVAL,AutoReplies,reply_blocker
 from lib.reply_events import backfill
-from lib.agent_reply_v2 import apply_production,generate,production_context,rollout_stage,submitted_pilot_reply
+from lib.agent_reply_v2 import apply_production,generate,production_context,rollout_stage,submitted_pilot_reply,settle_pilot_capability
 from lib.second_cycle import CycleError,CycleStore,digest
 from lib.template_library import agent_setting
 STOP=False;BEIJING=timezone(timedelta(hours=8))
@@ -66,6 +66,7 @@ def run_existing(store,replies,reply,market,stage,authorized_now=None,read_start
  if market=='it':
   from lib.reply_transport import run_reply
   state=run_reply(store,replies,reply,root=ROOT,authorized_now=authorized_now is not None,stopped=lambda:STOP,read_started=read_started)
+  if state=='confirmed':settle_pilot_capability(ROOT,store,reply['plan_id'],market)
   return {'state':state,'platformWrites':int(not recovering and state in ('confirmed','unknown')),
           'realSends':int(not recovering and state=='confirmed')}
  from lib.market_agent_reply import run_reply as market_run_reply
@@ -161,6 +162,7 @@ def tick(authorized_now=None,market="it"):
   if store.db.execute("SELECT 1 FROM service_reply WHERE plan_id=? AND state='isolated' LIMIT 1",(plan,)).fetchone():
    AutoReplies(store).settle_observed(plan)  # Isolated replies are not re-read, only settled from stored evidence.
   recovered=recover_unresolved(store,plan,market,stage)
+  settle_pilot_capability(ROOT,store,plan,market)
   if recovered:return recovered
   # Passive inbox evidence may have completed the first reply during either recovery path.
   # Its single-send authorization is durable; the pre-recovery stage is no longer current.

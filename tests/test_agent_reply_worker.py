@@ -140,6 +140,12 @@ class AgentReplyAuthorizationTests(unittest.TestCase):
   apply_database(self.root,'second-cycle')
   self.store=CycleStore(self.root/'var/second-cycle.sqlite',lambda:self.now)
   Inbox(self.store);Deliveries(self.store);self.replies=AutoReplies(self.store)
+  (self.root/'config').mkdir()
+  (self.root/'config/market-accounts.json').write_text((ROOT/'config/market-accounts.json').read_text())
+  from lib.account_identity import publish_generation
+  publish_generation(self.store,market='it',account='acc6',role='communications',reason='baseline',
+   identity={'browserRef':'browser','httpRef':'http','imRef':'im','institutionFingerprint':'institution'},
+   capabilities={'agent_reply':{'state':'not_tested'}})
   setting={k:v for k,v in DEFAULT_AGENT_SETTING.items() if k not in ('revision','updatedAt')}
   save_agent_setting(self.store,self.plan,0,{**setting,'enabled':True})
  def tearDown(self):self.store.close();self.tmp.cleanup()
@@ -197,7 +203,8 @@ class AgentReplyAuthorizationTests(unittest.TestCase):
   self.assertEqual(self.store.db.execute('SELECT count(*) FROM agent_reply_run').fetchone()[0],0)
  def passive_confirmation_tick(self,isolated):
   from lib.second_cycle import encoded
-  first=self.ready(1);second=self.ready(2);self.pilot();self.replies.begin(first['id'])
+  first=self.ready(1);second=self.ready(2);self.pilot()
+  self.replies.begin(first['id'],{'account':'acc6','identity':'b'*64})
   self.replies.accepted(first['id'],{'requestRef':first['request_ref'],'messageId':'90'});self.replies.unknown(first['id'])
   if isolated:self.replies.isolate(first['id'])
   self.now+=1
@@ -214,8 +221,23 @@ class AgentReplyAuthorizationTests(unittest.TestCase):
   self.assertEqual(result,{'state':'pilot_complete_waiting_resume','platformWrites':0,'realSends':0})
   self.assertEqual(self.replies.get(first['id'])['state'],'confirmed')
   self.assertEqual(self.replies.get(second['id'])['state'],'ready')
+  from lib.account_identity import current_generation
+  self.assertEqual(current_generation(self.store,'it','acc6')['capabilities']['agent_reply']['state'],'verified')
+  self.assertIsNone(self.store.db.execute("SELECT 1 FROM control_event WHERE event_id='agent-v2-full-run'").fetchone())
  def test_unknown_passive_confirmation_recomputes_stage_before_sending(self):self.passive_confirmation_tick(False)
  def test_isolated_passive_confirmation_recomputes_stage_before_sending(self):self.passive_confirmation_tick(True)
+ def test_restart_completes_already_confirmed_pilot_before_waiting_for_resume(self):
+  from lib.account_identity import current_generation
+  first=self.ready(1);self.pilot();self.replies.begin(first['id'],{'account':'acc6','identity':'b'*64});self.confirm(first)
+  self.assertEqual(current_generation(self.store,'it','acc6')['capabilities']['agent_reply']['state'],'not_tested')
+  @contextmanager
+  def opened(*_a,**_kw):yield self.store
+  with patch.object(WORKER,'CycleStore',opened),patch.object(WORKER,'ROOT',self.root), \
+       patch.object(WORKER,'generate',side_effect=AssertionError('model_after_confirmed_pilot')), \
+       patch.object(WORKER,'run_existing',side_effect=AssertionError('transport_after_confirmed_pilot')):
+   result=WORKER.tick('page-authorized-now','it')
+  self.assertEqual(result,{'state':'pilot_complete_waiting_resume','platformWrites':0,'realSends':0})
+  self.assertEqual(current_generation(self.store,'it','acc6')['capabilities']['agent_reply']['state'],'verified')
 
 
 if __name__=='__main__':unittest.main()

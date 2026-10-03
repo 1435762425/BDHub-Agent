@@ -19,7 +19,12 @@ class ReplyScopeTests(unittest.TestCase):
   from lib.cycle_delivery import Deliveries
   Deliveries(self.s)
   self.seed('c','123','999')
+  self.authorize_full(self.plan)
  def tearDown(self):self.s.close();self.tmp.cleanup()
+ def authorize_full(self,plan):
+  # These scope tests exercise an already enabled production Agent across multiple replies.
+  self.s.db.execute('INSERT INTO control_event VALUES(?,?,?)',(plan,'agent-v2-full-run',json.dumps(
+   {'requestId':'fixture-existing-full-run','authorizedAt':self.now[0]})))
  def seed(self,creator,oec,cid,plan=None):
   plan=plan or self.plan
   self.s.db.execute("INSERT INTO relationship VALUES(?,?,?,'auto',0,1,0,1)",(plan,creator,oec))
@@ -42,7 +47,7 @@ class ReplyScopeTests(unittest.TestCase):
  def test_four_market_scope_contains_all_questions_then_thanks(self):
   for i,market in enumerate(('it','br','my','uk')):
    plan=self.plan if market=='it' else self.s.plan('bjn-local-research',market)
-   if market!='it':self.seed('c','123','999',plan)
+   if market!='it':self.seed('c','123','999',plan);self.authorize_full(plan)
    for mid,body in (('1','First question?'),('2','Second question?'),('3','Thanks')):self.add(mid,body,plan=plan)
    ctx=self.context(plan,market=market)
    self.assertEqual(ctx['unansweredMessageIds'],['1','2','3']);self.assertEqual(len(ctx['replyScope']),3)

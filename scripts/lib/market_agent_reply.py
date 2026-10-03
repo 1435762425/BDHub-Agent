@@ -84,7 +84,6 @@ def run_reply(root,store,replies,reply,market,*,pilot=False,authorized_now=False
   else:replies.unknown(reply['id'])
   report['state']=replies.get(reply['id'])['state'];report['realSends']=int(report['state']=='confirmed' and not recovering)
   if pilot and report['state']=='confirmed':
-   from lib.account_identity import promote_capabilities
-   promote_capabilities(store,market=market,account=runtime['account'].name,
-                        capabilities=['agent_reply'],evidence_ref='service-reply:'+reply['id'])
+   from lib.agent_reply_v2 import settle_pilot_capability
+   settle_pilot_capability(root,store,reply['plan_id'],market)
  return report
