@@ -1,6 +1,14 @@
-# 每日经营邮件
+# 每日经营日报
 
 用户确认的经营日报：北京时间统计，按除英国、意大利之外的运营市场逐行展示，最后汇总；未接入市场列状态，不计为业务 0。包含可用商品（全托／Campaign）、有效 TapLink 准备率、Kalodata 当日新增 A/B 线索、发送消耗及剩余池、当日发送、累计回复和橱窗、未回及人工事项。不包含 GMV、内容发布、机构佣金、财务、7 日转化或批次分析。
+
+## 当前投递：Codex 对话
+
+用户已取消邮件通道，改为每天北京时间 09:00 在当前 Codex 对话直接接收日报。使用对话内心跳，沿用当前上下文；每次运行 `.venv/bin/python scripts/business-daily.py preview --output outputs/business-daily-codex/latest`，读取输出的 `report.json` 和 `email.txt`，在对话中完整展示分市场 Markdown 表格及末尾汇总，不只给文件链接。
+
+日报事件默认取上一北京自然日，累计截至该日末；库存、待办和货盘来源标明实际采样／更新时间。每次重新读取真实台账，不用旧稿或模拟数据代替当前结果。任务只读台账，允许写本次导出，不改代码、业务库或运营控制，也不启动、重启 TikTok 任务。
+
+这是读取本机项目的定时任务，需要电脑和 Codex 应用保持运行。邮件私有配置已设 `enabled=false`；邮件 LaunchAgent 已卸载并移除开机入口。保留此前邮件实现用于历史追溯，不自动恢复邮件，不操作 Gmail。
 
 ## 数据与口径
 
@@ -12,7 +20,7 @@
 - 来信库存复用会话页的 `unread_items`，保留最早未回答问题的等待时间。已回复人数只计实际确认的 AI／人工回复；无需回复不伪装成已发回复。技术案件与商业人工事项分列。
 - 比例按合计分子／合计分母，缺数据不补 0，分母为 0 时不宣称 0% 转化。累计截至报告日末；库存和当前待办标明实际采样时间，来源更新时间保留。已经保存的每日报告不覆盖。
 
-## 配置与运行
+## 历史邮件配置与运行（已停用）
 
 私有配置位于 `private-data/business-daily-mail.json`，模板为 `config/business-daily-mail.example.json`。`recipients` 为收件人；`sender`、`smtp.host`、`smtp.port`、`smtp.security`、`smtp.username` 配置发件通道。仅支持 SSL 或 STARTTLS。密码单独保存在配置指定的 `private-data/` 文件，不入 Git、不出现在命令 argv 或报告里。暂停邮件可将 `enabled` 设为 false；不影响 TikTok 控制。
 
@@ -33,7 +41,7 @@ Gmail 使用 `smtp.gmail.com:465`、SSL、完整邮箱地址作为 username，�
 
 `install-schedule` 把 plist 保存在项目 `var/business-daily/`，在用户 LaunchAgents 中添加指向本项目的入口并注册；已有同名非本项目任务不会被覆盖。用户登录后会自动加载，睡眠时不保证准点运行，醒来由下一次 tick 补执行。
 
-## 邮件交付
+## 历史邮件交付合同
 
 提交前冻结 Message-ID 并将当日状态记为 `submitting`；已成功、提交中或结果未知不会重复提交。连接／认证阶段明确未提交，最多 3 次、间隔至少 15 分钟；DATA 提交期间断线记 unknown，不盲重发。SMTP 接受仅表示服务商收件，不证明收件箱最终到账。进程被中断且停在 submitting 同样等待原 Message-ID 核验，不另起发送意图。
 

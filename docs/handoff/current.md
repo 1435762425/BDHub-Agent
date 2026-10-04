@@ -1,6 +1,13 @@
 # BDHub-Agent 当前交接
 
-文档更新时间：2026-10-04（Asia/Shanghai）。下面各节按时间倒序，每节只代表该时刻的核验；最新一节即当前生产状态的最近记录，不是实时巡检。规则见 [PROJECT](../PROJECT.md)，实现见 [TECHNICAL](../TECHNICAL.md)，后续方向见[项目审计与清理](../implementation/project-audit-20260924.md)。更早流水见[历史交接](../archive/handoff/codex-takeover-history-20260923.md)。
+文档更新时间：2026-10-05（Asia/Shanghai）。下面各节按时间倒序，每节只代表该时刻的核验；最新一节即当前生产状态的最近记录，不是实时巡检。规则见 [PROJECT](../PROJECT.md)，实现见 [TECHNICAL](../TECHNICAL.md)，后续方向见[项目审计与清理](../implementation/project-audit-20260924.md)。更早流水见[历史交接](../archive/handoff/codex-takeover-history-20260923.md)。
+
+## 2026-10-05 00:24：经营日报改由 Codex 通报，邮件暂停
+
+- 用户明确要求先不发邮件，改为通过 Codex 接收。已将 `private-data/business-daily-mail.json` 的 `enabled` 设为 false；卸载 `io.bdhub.agent.business-daily` 并移除其用户 LaunchAgents 入口，保留历史代码和报告。Gmail 发件凭据未取得，本机无日报投递记录；不继续 Google 登录或应用密码创建。
+- 已创建当前对话的每日心跳“BDHub每日经营日报”（`bdhub`，ACTIVE），北京时间每日 09:00。复用 `scripts/business-daily.py preview` 只读真实台账，在当前 Codex 对话完整展示分市场表格与末尾汇总；排除 UK/IT，保留累计口径，不展示 GMV／发布／财务，也不调用邮件 tick。未变更“完成泰国自动运营开启”等其他心跳。
+- 手工验证 10/04 报告生成成功，五市场无数据读取缺口；库存实际采样 10/05 00:16。可用商品 16,304，TapLink 就绪 13,299／81.6%；新增 A/B 2,967／409，完整发送 3,156 位，剩余线索 11,744；累计回复率 6.3%，累计橱窗通知／确认卡比例 5.6%。当前未回 288 位，其中等待超过 24 小时 122 位。
+- 原 `config/jobs.json` 运营改动保留；未修改业务库、运营控制，未启动或重启 TikTok worker，平台写入 0。通报需要本机项目可访问且 Codex 应用运行，详见[每日经营日报](../implementation/business-daily-mail.md)。最新人工验证导出在 `outputs/business-daily-codex/latest/`。
 
 ## 2026-10-04 09:35：分市场经营日报已生成，定时任务等待发件配置
 
