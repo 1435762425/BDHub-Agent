@@ -3,6 +3,7 @@ import json
 from pathlib import Path
 import shutil
 import smtplib
+import ssl
 import sqlite3
 import sys
 import tempfile
@@ -186,6 +187,9 @@ class MailTests(unittest.TestCase):
             def __init__(self,*args,**kw):
                 self.closed=False;outer.clients.append(self)
                 outer.assertIn('context',kw)
+                outer.assertTrue(kw['context'].check_hostname)
+                outer.assertEqual(kw['context'].verify_mode,ssl.CERT_REQUIRED)
+                outer.assertGreater(len(kw['context'].get_ca_certs()),0)
             def login(self,user,password):
                 if outer.fail_login:raise smtplib.SMTPAuthenticationError(535,b'bad test login')
             def send_message(self,message):
@@ -240,6 +244,12 @@ class MailTests(unittest.TestCase):
         result=deliver(self.root,DAY,self.config,now=END+32400,smtp_factory=self.factory)
         self.assertEqual(result['state'],'waiting_mail_configuration')
         self.assertFalse((self.root/f'var/business-daily/delivery/{DAY}.json').exists())
+
+    def test_google_display_spaces_are_not_sent_as_password_characters(self):
+        from lib.business_daily_mail import credentials
+        self.config['smtp']['host']='smtp.gmail.com'
+        (self.root/'private-data/mail.password').write_text('abcd efgh ijkl mnop\n')
+        self.assertEqual(credentials(self.root,self.config),'abcdefghijklmnop')
 
     def test_schedule_is_beijing_time_and_report_snapshot_is_frozen(self):
         self.assertEqual(tick(self.root,now=END+32000,collector=simple_report,smtp_factory=self.factory)['state'],'waiting_send_time')

@@ -14,6 +14,7 @@ import re
 import smtplib
 import ssl
 import time
+import certifi
 
 from lib.business_daily import collect, render
 from lib.cycle_stats import BEIJING
@@ -86,6 +87,8 @@ def credentials(root, config):
     if not config.get('sender') or not smtp.get('host') or not smtp.get('username') or not path.is_file():
         return None
     password = path.read_text().strip()
+    if smtp.get('host') == 'smtp.gmail.com':
+        password = ''.join(password.split())  # Google displays app passwords in spaced groups.
     return password if password else None
 
 
@@ -145,7 +148,7 @@ def deliver(root, day, config, *, now=None, smtp_factory=None):
     state['attempts'] += 1
     client = None
     try:
-        context = ssl.create_default_context()
+        context = ssl.create_default_context(cafile=certifi.where())
         factory = smtp_factory or (smtplib.SMTP_SSL if smtp.get('security', 'ssl') == 'ssl' else smtplib.SMTP)
         client = factory(smtp['host'], smtp.get('port', 465), timeout=30,
                          **({'context': context} if smtp.get('security', 'ssl') == 'ssl' else {}))

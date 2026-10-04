@@ -16,6 +16,8 @@
 
 私有配置位于 `private-data/business-daily-mail.json`，模板为 `config/business-daily-mail.example.json`。`recipients` 为收件人；`sender`、`smtp.host`、`smtp.port`、`smtp.security`、`smtp.username` 配置发件通道。仅支持 SSL 或 STARTTLS。密码单独保存在配置指定的 `private-data/` 文件，不入 Git、不出现在命令 argv 或报告里。暂停邮件可将 `enabled` 设为 false；不影响 TikTok 控制。
 
+Gmail 使用 `smtp.gmail.com:465`、SSL、完整邮箱地址作为 username，以及用户生成的 16 位应用专用密码；Google 显示的分组空格读取时自动移除。TLS 使用项目已锁定的 `certifi` CA bundle，并保持服务端证书和主机名验证，兼容本机 Python 默认 CA 路径为空的环境。
+
 独立 LaunchAgent `io.bdhub.agent.business-daily` 每分钟调用 `scripts/business-daily.py tick`。新北京日第一次执行时冻结前日事件和实际采样库存，到 `sendTime`（默认 09:00）后发送；休眠／关机错过时醒来补生成，并明确实际采样时间，不伪称取得日末库存。缺发件配置时生成报告并等待，不提交邮件。
 
 报告位于 `var/business-daily/reports/YYYY-MM-DD/`，包含 `report.json`、`email.txt`、`email.html`。发件状态位于 `var/business-daily/delivery/YYYY-MM-DD.json`；全局 runner 文件锁防止重入。
