@@ -17,7 +17,7 @@
 | Netherlands | `nl` | planned |
 | Philippines | `ph` | planned |
 | Singapore | `sg` | planned |
-| Thailand | `th` | ready; Campaign only (no full-managed); first send confirmed, AI reply on; automation waits for Campaign join canary |
+| Thailand | `th` | production enabled; Campaign only (no full-managed); continuous send and full AI reply authorized |
 | United Kingdom | `uk` | production enabled; Campaign + full-managed |
 | USA | `us` | planned |
 | Vietnam | `vn` | planned |

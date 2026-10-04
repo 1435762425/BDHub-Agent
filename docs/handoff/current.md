@@ -2,6 +2,14 @@
 
 文档更新时间：2026-10-05（Asia/Shanghai）。下面各节按时间倒序，每节只代表该时刻的核验；最新一节即当前生产状态的最近记录，不是实时巡检。规则见 [PROJECT](../PROJECT.md)，实现见 [TECHNICAL](../TECHNICAL.md)，后续方向见[项目审计与清理](../implementation/project-audit-20260924.md)。更早流水见[历史交接](../archive/handoff/codex-takeover-history-20260923.md)。
 
+## 2026-10-05 01:34：泰国加入验证完成，自动运营全流程已开启
+
+- Raiyusiri 原活动 `7692131618631943956` 已实时确认开始且符合大于 45 天规则。ACC15 单条 canary 只提交一次，平台返回子活动 `7692812595147294471`，再次读取已加入列表确认该子活动存在，unknown=0；经正式入口发布 `campaign_join=verified`，保留原申请与请求哈希。
+- `f560e31` 仅启用 TH 协议层 `campaign`/`campaign_join`，同步本地 patch、169 文件 manifest 和可恢复的上一快照。相关 Python 57 项、完整补丁重建/逐文件 hash、能力门禁及文档检查通过；没有业务库迁移或 Web 改动。
+- 正式首页保存回执修订 0→1，automaticOperationsEnabled=true、continuousSendEnabled=true、fullCatalogWeeklyEnabled=false。发送原 automaticEnabled/runRequested=true、stopRequested=false 及 16:30–24:00 窗口保留；AI enabled=true、rolloutStage=full、00:30–08:00 窗口保留。scheduler 已自动创建滚动主链并消费 Kalodata 片段，OECID 与发送池继续衔接；现有货盘/TapLink 未到刷新时间的阶段按计划跳过，未把等待算作完成。
+- 只读 postflight 全部 11 项通过：其他市场 7 张控制表摘要、原 config/jobs.json hash 与既有 20 个常驻 PID 保持。新 TH 供给子任务按固定 argv 加载已发布能力；按本次保留进程要求未重启旧常驻，旧 loaded SHA 的版本提示仍保留，不伪造其已载入新代码。原收信覆盖提示与人工案件未清除。
+- “完成泰国自动运营开启”心跳 `automation-2` 已暂停，后续供给、发送及回复由项目原 scheduler 和持久控制继续。证据、原请求回执、只读回查与测试日志位于 `var/releases/th-activation-20261005/`。
+
 ## 2026-10-05 00:24：经营日报改由 Codex 通报，邮件暂停
 
 - 用户明确要求先不发邮件，改为通过 Codex 接收。已将 `private-data/business-daily-mail.json` 的 `enabled` 设为 false；卸载 `io.bdhub.agent.business-daily` 并移除其用户 LaunchAgents 入口，保留历史代码和报告。Gmail 发件凭据未取得，本机无日报投递记录；不继续 Google 登录或应用密码创建。
