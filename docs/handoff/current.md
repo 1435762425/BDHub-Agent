@@ -1,6 +1,13 @@
 # BDHub-Agent 当前交接
 
-文档更新时间：2026-10-03（Asia/Shanghai）。下面各节按时间倒序，每节只代表该时刻的核验；最新一节即当前生产状态的最近记录，不是实时巡检。规则见 [PROJECT](../PROJECT.md)，实现见 [TECHNICAL](../TECHNICAL.md)，后续方向见[项目审计与清理](../implementation/project-audit-20260924.md)。更早流水见[历史交接](../archive/handoff/codex-takeover-history-20260923.md)。
+文档更新时间：2026-10-04（Asia/Shanghai）。下面各节按时间倒序，每节只代表该时刻的核验；最新一节即当前生产状态的最近记录，不是实时巡检。规则见 [PROJECT](../PROJECT.md)，实现见 [TECHNICAL](../TECHNICAL.md)，后续方向见[项目审计与清理](../implementation/project-audit-20260924.md)。更早流水见[历史交接](../archive/handoff/codex-takeover-history-20260923.md)。
+
+## 2026-10-04 08:05：用户委托代选泰国方案，AI 全量放行，安排主链自动完成
+
+- 用户在原“全流程打开”要求上明确委托 Agent 代选方案。已选择保留大于 45 天的期限规则，等待合格活动开始后完成加入验证；本次实时刷新仍无合格未加入活动，Raiyusiri `7692131618631943956` 尚未开始、yuna 剩余期限不足。
+- TH 首轮 AI 回复已确认，ACC14 `agent_reply` 和 `message_send` 均 verified。经正式 `/api/agent-replies?market=th` 的 `resume-full` 保存全量授权，读回 `rolloutStage=full`、enabled=true；沿用 00:30–08:00 窗口。发送持久控制仍为 automaticEnabled/runRequested=true、stopRequested=false，当前窗口外等待，unknown=0。
+- 已创建当前 chat 的心跳“完成泰国自动运营开启”（`automation-2`，ACTIVE），首次计划执行北京时间 10-05 01:05，之后每日同一时刻重查直至完成。流程为实时活动资格核对→ACC15 唯一 Campaign 加入 canary/原申请核验→真实回读确认后能力晋升→按现有接入与发布流程启用协议层能力→正式首页开启主链及持续发送，TH 全托发现保持关闭；尊重用户后续暂停，不重发未知申请。未变化时静默，完成或新故障时通知，完成后暂停心跳。
+- 本轮只有运营授权与交接变更，未重启业务进程，原 `config/jobs.json` 变更保留。回执、刷新结果与后续安排证据在 `outputs/th-full-activation-20261004/`。
 
 ## 2026-10-03 22:28：用户要求开启泰国全流程，持续发送已开始，主链仍待加入验证
 
