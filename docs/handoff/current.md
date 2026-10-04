@@ -2,6 +2,14 @@
 
 文档更新时间：2026-10-04（Asia/Shanghai）。下面各节按时间倒序，每节只代表该时刻的核验；最新一节即当前生产状态的最近记录，不是实时巡检。规则见 [PROJECT](../PROJECT.md)，实现见 [TECHNICAL](../TECHNICAL.md)，后续方向见[项目审计与清理](../implementation/project-audit-20260924.md)。更早流水见[历史交接](../archive/handoff/codex-takeover-history-20260923.md)。
 
+## 2026-10-04 09:35：分市场经营日报已生成，定时任务等待发件配置
+
+- 用户确认表格日报：除英国、意大利之外的所有运营市场分别展示商品／TapLink、当日新增 A/B 线索、发送与剩余池、累计回复／橱窗及待办，最后汇总；取消 GMV、发布、财务和 7 日／批次分析。收件人由用户提供，保存在 `private-data/business-daily-mail.json`；发送时间暂按建议北京时间 09:00。
+- `0f19d10` 在独立 worktree 开发验证后合入生产。相关 Python 64 项和文档检查通过；真实五市场报告及桌面／390px 显示核验通过。6 张既有控制表摘要与 `config/jobs.json` 原运营改动 SHA256 未变；未重启业务 worker、Web 或 scheduler，TikTok 写入 0。
+- 首份报告事件日期 10/03，库存实际采样为 10/04 09:34:52，不伪称历史日末库存：可用商品 16,304（全托 5,380、Campaign 10,924），TapLink 就绪 13,299／81.6%；当日新增 A/B 16,836／171，完整发送 3,707 位，累计橱窗通知／确认卡观察比例 5.6%。现有橱窗通知没有 PID/listId，因此邮件明确标为通知口径，不宣称逐卡采用转化。
+- 独立 LaunchAgent `io.bdhub.agent.business-daily` 已安装并首次运行 exit 0；按北京日保存报告，09:00 后发件，已成功／提交中／未知均不重复提交。当前 `waiting_mail_configuration`，实际发件 0：尚未收到用户对发件邮箱／服务及认证方式的答复。后续补齐私有 SMTP 配置后再验证服务商接受回执，不能称邮件已经送达。
+- 口径、运行与恢复见[每日经营邮件](../implementation/business-daily-mail.md)。本机证据 `var/releases/business-daily-20261004/release.json`；冻结报告 `var/business-daily/reports/2026-10-03/`；用户可读版本 `outputs/business-daily-real-20261004/`。
+
 ## 2026-10-04 08:05：用户委托代选泰国方案，AI 全量放行，安排主链自动完成
 
 - 用户在原“全流程打开”要求上明确委托 Agent 代选方案。已选择保留大于 45 天的期限规则，等待合格活动开始后完成加入验证；本次实时刷新仍无合格未加入活动，Raiyusiri `7692131618631943956` 尚未开始、yuna 剩余期限不足。
