@@ -131,8 +131,8 @@
 +        signer_region="sg",
 +    ),
 +    # Thailand: market region 5 and partner ids read from the agency's partner info on 2026-10-03.
-+    # Protocol shape as Malaysia (SG API host and signer); Campaign and joins stay pending until
-+    # the project's own canaries.
++    # Protocol shape as Malaysia (SG API host and signer); ACC15 Campaign join canary
++    # (Raiyusiri, var/releases/th-activation-20261005/campaign-join-canary.json) read back joined.
 +    "th": Market(
 +        key="th", label="泰国",
 +        host="https://api-partner-sg.tiktokshop.com",
@@ -149,7 +149,7 @@
 +        capabilities=MarketCapabilities(
 +            find="enabled", profile="enabled", pure_http="enabled",
 +            relation="enabled", im="enabled", product_search="enabled",
-+            campaign="pending", share_link="unsupported",
++            campaign="enabled", share_link="unsupported", campaign_join="enabled",
 +        ),
 +        im_find_aid="360019",
 +        affiliate_partner_id="8677544489142290192",
