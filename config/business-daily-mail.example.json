@@ -1,0 +1,14 @@
+{
+  "enabled": false,
+  "timezone": "Asia/Shanghai",
+  "sendTime": "09:00",
+  "recipients": ["you@example.com"],
+  "sender": "",
+  "smtp": {
+    "host": "smtp.gmail.com",
+    "port": 465,
+    "security": "ssl",
+    "username": "",
+    "passwordFile": "private-data/business-daily-mail.password"
+  }
+}

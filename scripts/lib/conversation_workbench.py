@@ -75,9 +75,9 @@ def _latest_external(db,plan,rel,latest,tables=None):
 def _turn_at(latest):
  return latest['occurred_ms']/1000 if latest and latest['occurred_ms'] else latest['observed_at'] if latest else 0
 
-def unread_backlog(store,market='it'):
- """Count and oldest creator-message time of the conversations the list marks unread, without building the list."""
- db=store.db;plan=_plan_id(store,market);count,oldest=0,None
+def unread_items(store,market='it'):
+ """Yield the same unread conversations and original waiting times used by the backlog."""
+ db=store.db;plan=_plan_id(store,market)
  marks=','.join('?'*len(UNREAD_PENDING))
  for rel in db.execute("SELECT r.* FROM relationship r JOIN inbox_pending p ON p.plan_id=r.plan_id AND p.creator_id=r.creator_id "
                        f"WHERE r.plan_id=? AND p.state IN ({marks})",(plan,*UNREAD_PENDING)):
@@ -87,7 +87,13 @@ def unread_backlog(store,market='it'):
   if available(db):
    scope=unresolved(store,plan,rel['creator_id'])
    if scope:inbound_at=min(r['at'] for r in scope)
-  count+=1
+  yield {'creatorId':rel['creator_id'],'oec':rel['oec'],'waitingAt':inbound_at}
+
+def unread_backlog(store,market='it'):
+ """Count and oldest creator-message time of the conversations the list marks unread, without building the list."""
+ count,oldest=0,None
+ for row in unread_items(store,market):
+  count+=1;inbound_at=row['waitingAt']
   if inbound_at and (oldest is None or inbound_at<oldest):oldest=inbound_at
  return {'unread':count,'oldestAt':oldest}
 
