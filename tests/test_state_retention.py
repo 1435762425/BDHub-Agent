@@ -133,6 +133,14 @@ class RetentionTests(unittest.TestCase):
                                                          "var/account-identities/acc4/generations/gen-orphan"])
         self.assertEqual(result["identityKept"], {"acc4": ["gen-cur", "gen-prev"]})
 
+    def test_finder_metadata_does_not_make_an_old_generation_young(self):
+        old = self.var / "account-identities/acc4/generations/gen-old"
+        (old / ".DS_Store").write_text("finder")  # bumps the directory mtime to now
+        (old / "profile/.DS_Store").write_text("finder")
+        result = state_retention.plan(self.root, now=NOW)
+        self.assertIn("var/account-identities/acc4/generations/gen-old", result["identityGenerations"])
+        self.assertNotIn("var/account-identities/acc4/generations/gen-young", result["identityGenerations"])
+
     def test_a_log_with_a_live_writer_is_left_alone_until_it_outgrows_the_hard_cap(self):
         log = self.root / "var/big.log"
         with open(log, "a", encoding="utf-8") as writer:  # this process keeps it open, like a worker

@@ -184,6 +184,18 @@ def _mtime(path):
     return path.stat().st_mtime
 
 
+# Files Chromium and the capture rewrite whenever a generation is used.  The directory's own mtime
+# also moves when Finder drops a .DS_Store into it, which kept old generations "young" forever.
+IDENTITY_ACTIVITY_FILES = ("headers.json", "profile/Local State", "profile/Default/Preferences",
+                           "profile/Default/Cookies", "profile/Cookies")
+
+
+def _identity_activity(generation):
+    stamps = [(generation / name).stat().st_mtime for name in IDENTITY_ACTIVITY_FILES
+              if (generation / name).exists()]
+    return max(stamps) if stamps else _mtime(generation)
+
+
 def _file_candidates(root, now, workflow_text):
     var = Path(root) / "var"
     cutoff = now - REPORT_DAYS * 86400
@@ -232,7 +244,7 @@ def _identity_candidates(root, now):
             continue
         current = keep.get(account_dir.name, [])
         for generation in sorted(generations.iterdir()):
-            if generation.is_dir() and generation.name not in current and _mtime(generation) < cutoff:
+            if generation.is_dir() and generation.name not in current and _identity_activity(generation) < cutoff:
                 candidates.append(generation)
     return candidates, keep
 

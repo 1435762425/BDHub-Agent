@@ -40,6 +40,25 @@ class ReconnectInboxTests(unittest.TestCase):
 
 
 
+class PrepareProfileTests(unittest.TestCase):
+    def test_new_generation_copies_login_state_but_not_rebuildable_caches(self):
+        with tempfile.TemporaryDirectory() as temp:
+            current = Path(temp) / "current"
+            for rel in ("Default/Cookies", "Default/Local Storage/leveldb/000.log",
+                        "Default/Service Worker/Database/LOG", "Default/Service Worker/CacheStorage/x/blob",
+                        "Default/Cache/Cache_Data/data_0", "Default/Code Cache/js/index",
+                        "BrowserMetrics/m.pma", ".bdhub.lease.guard"):
+                (current / rel).parent.mkdir(parents=True, exist_ok=True)
+                (current / rel).write_text("x")
+            adapter = identity.ProjectAccountIdentityAdapter(Path(temp))
+            target = Path(temp) / "candidate"
+            with mock.patch.object(identity, "project_identity_paths", return_value={"profileDir": current}):
+                adapter._prepare_profile("acc8", target)
+            copied = {str(p.relative_to(target)) for p in target.rglob("*") if p.is_file()}
+        self.assertEqual(copied, {"Default/Cookies", "Default/Local Storage/leveldb/000.log",
+                                  "Default/Service Worker/Database/LOG", ".bdhub.lease.guard"})
+
+
 class ValidationErrorCodeTests(unittest.TestCase):
     def test_capability_gate_code_is_kept_and_other_errors_reduce_to_their_type(self):
         from lib.project_account_identity import _error_code

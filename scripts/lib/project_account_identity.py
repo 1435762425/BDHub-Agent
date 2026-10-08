@@ -23,6 +23,11 @@ from lib.second_cycle import digest
 
 
 PID_CANARY = "1729779362302171335"
+# Chromium rebuilds these on demand; copying them made every generation a ~1 GB clone of the last.
+# Login state (Cookies, Local Storage, IndexedDB, Service Worker/Database) is still copied.
+PROFILE_CACHE_DIRS = ("Cache", "Code Cache", "GPUCache", "CacheStorage", "ScriptCache", "GrShaderCache",
+                      "ShaderCache", "GraphiteDawnCache", "DawnWebGPUCache", "DawnGraphiteCache",
+                      "BrowserMetrics", "component_crx_cache", "extensions_crx_cache")
 INFO = "/api/v1/affiliate/partner/info"
 IM_ID = "/api/v1/affiliate/partner/im/id/get"
 IM_TOKEN = "/api/v1/affiliate/partner/im/token/get"
@@ -308,7 +313,8 @@ class ProjectAccountIdentityAdapter:
         else:
             shutil.copytree(current["profileDir"], target, symlinks=False,
                             ignore=shutil.ignore_patterns("SingletonLock", "SingletonCookie", "SingletonSocket",
-                                                           ".bdhub.lease", ".bdhub.lease.guard"))
+                                                           ".bdhub.lease", ".bdhub.lease.guard",
+                                                           *PROFILE_CACHE_DIRS))
         os.chmod(target, 0o700)
         guard = target / ".bdhub.lease.guard"
         descriptor = os.open(guard, os.O_WRONLY | os.O_CREAT | os.O_EXCL |
