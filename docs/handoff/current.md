@@ -1,6 +1,12 @@
 # BDHub-Agent 当前交接
 
-文档更新时间：2026-10-05（Asia/Shanghai）。下面各节按时间倒序，每节只代表该时刻的核验；最新一节即当前生产状态的最近记录，不是实时巡检。规则见 [PROJECT](../PROJECT.md)，实现见 [TECHNICAL](../TECHNICAL.md)，后续方向见[项目审计与清理](../implementation/project-audit-20260924.md)。更早流水见[历史交接](../archive/handoff/codex-takeover-history-20260923.md)。
+文档更新时间：2026-10-08（Asia/Shanghai）。下面各节按时间倒序，每节只代表该时刻的核验；最新一节即当前生产状态的最近记录，不是实时巡检。规则见 [PROJECT](../PROJECT.md)，实现见 [TECHNICAL](../TECHNICAL.md)，后续方向见[项目审计与清理](../implementation/project-audit-20260924.md)。更早流水见[历史交接](../archive/handoff/codex-takeover-history-20260923.md)。
+
+## 2026-10-08 20:55：磁盘写满停掉调度器已恢复；10-06 起发送骤降归因于本机代理
+
+- 10-08 17:25 scheduler 写状态文件遇 `ENOSPC` 退出（`var/account-identities` 每代整份复制浏览器缓存，已由 `47aba9b` 修复；恢复时可用 50G）。主链与各市场 sender 随后停止，收信与 AI 回复常驻未受影响。经用户同意，按 `ops-restart-check.py` 流程（release `scheduler-recover-20261008`）preflight 通过（在途 0）后 20:47 用 `jobs.py start-scheduler` 恢复；scheduler 续跑 MY OECID 并开启 BR 新轮次，五市场 sender 已拉起。postflight 控制七表、requestRef 保留与唯一、`quick_check`、七市场 IM owner ready 均通过；`processes_on_head` 不通过是 14 个常驻仍载入 `da05525`（未重启，原状保留），`same_process_roles` 不通过是基线时 scheduler/sender 本已停止。BR 未知已按原意图结清，TH 仍有 1 条。
+- 10-06 04:00 起五市场同时出现 TapLink 远程读取失败、IM SDK 掉线和 sender 反复 `SSLEOFError`/`ReadTimeout`（SG 与 i18n 两个 IM 主机），日发送从约 2,000–3,700 位跌到约 100 位，每市场每天新增 3–7 条 unknown；`ops-alerts` 未对这种“sender 被反复拉起但几乎发不出”的状态告警。所有进程经 Clash Verge（127.0.0.1:7897，规则模式，TikTok 域名落兜底 `Main Proxy`）出网；原订阅 `43.100.32.52` 自 10-05 15:36 起每日更新失败。10-08 17:22 代理切换到另一订阅（当前 `US-Frontier-Opti-03`）后，IM 会话恢复约每 10 分钟续期，17:22–18:20 确认商品卡 584 张、20:47 后 5 分钟 54 张，均无 unknown；此前 10-07 00:00 起 41 小时只有 128 张（另 12 部件 unknown）。代理切换非本项目操作。
+- 只读证据：`var/releases/scheduler-recover-20261008/`，sender/IM 日志 `var/market-send-worker-*.log`、`var/im-session-*.log`，代理日志 `~/Library/Application Support/io.github.clash-verge-rev.clash-verge-rev/logs/latest.log`。未改代理配置、授权或发送设置；平台写入仅为恢复后 sender 按原持久授权的正常发送。
 
 ## 2026-10-05 01:34：泰国加入验证完成，自动运营全流程已开启
 
