@@ -1,4 +1,4 @@
-"""Offline TikTok core-profile adapter and bounded refresh-plan prototype.
+"""TikTok core-profile adapters and bounded refresh plans.
 
 No transport, queues or database writes. Callers must keep the original account,
 canonical market/OEC and observation time when later persisting these facts.
@@ -20,6 +20,14 @@ _END = "sales_performance_end_time"
 _AVAILABLE = {"value", "zero"}
 _FIND_MARKETS = {"br", "my", "th"}
 _PROFILE_MARKETS = {"it", "de", "fr", "uk"}
+
+
+def core_read_route(market):
+    if market in _FIND_MARKETS:
+        return "find"
+    if market in _PROFILE_MARKETS:
+        return "profile"
+    raise ValueError("core_profile_market_unsupported")
 
 
 def _observed_at(value):

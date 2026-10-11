@@ -302,6 +302,7 @@ class ProfileRefreshJobsTests(unittest.TestCase):
         never.assert_not_called()
 
     def test_owned_process_is_terminated_when_outer_probe_deadline_expires(self):
+        (self.var / "targets.json").write_text(json.dumps({"market": "it", "targets": []}))
         process = Mock(pid=999991)
         process.wait.side_effect = [profile_refresh.subprocess.TimeoutExpired("probe", 190), 0]
         process.poll.return_value = None

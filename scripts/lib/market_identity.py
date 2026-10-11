@@ -135,6 +135,23 @@ def _apply(root,market,report,requested,*,expected_account=None):
  if account not in load_config(root)['markets'][market]['accounts']:raise CycleError('identity_original_account_invalid')
  valid,blocked,block_code=validated_report_targets(report,requested,market,account)
  observed=report.get('finishedAt') or datetime.now(timezone.utc).isoformat();resolved={};unresolved=set()
+ # Find identity remains usable even if its optional business fields are malformed.
+ # The core adapter imports lazily because it reuses this module's report validator.
+ from lib.creator_core_profile import find_core_observations
+ core_rows={};core_errors=0
+ for target,source,_ in valid:
+  if not isinstance((target.get('find') or {}).get('fields'),dict):continue
+  partial={**report,'targets':[target],'requests':[r for r in report.get('requests',[]) if r.get('targetRef')==target['targetRef']]}
+  # A blocked prefix still carries its original block/receipt evidence; completed
+  # per-target slices are only for validation. Provenance stays on the full report.
+  partial['status']='completed' if not _followup_blocked(report,target['targetRef']) else 'blocked'
+  try:
+   rows=find_core_observations(partial,[source],market=market,account=account)
+   if rows:
+    row=rows[0];ref='market-profile-probe:'+hashlib.sha256(json.dumps(report,sort_keys=True,ensure_ascii=False).encode()).hexdigest()+':'+target['targetRef']+':find-profile'
+    core_rows[target['targetRef']]={**row,'evidenceRef':ref}
+  except (ValueError,TypeError,KeyError):core_errors+=1
+ core_saved=0
  with CreatorIdentityStore(Path(root)/'var/creator-identities.sqlite') as identities:
   for target,source,receipt in valid:
    ref=target['targetRef'];handle=source['handle']
@@ -150,6 +167,11 @@ def _apply(root,market,report,requested,*,expected_account=None):
    outcome=identities.resolve_handle_lead(lead['leadId'],oec,observed,evidence+':find',exact_find={
     'market':market,'queriedHandle':handle,'returnedHandle':returned,'oecId':oec,
     'httpStatus':receipt['httpStatus'],'code':0,'verificationRequired':False})
+   if ref in core_rows:
+    core=core_rows[ref]
+    identities.observe_known_profile(outcome['identity']['creatorId'],market,oec,handle,
+       core['observedAt'],core['evidenceRef'],payload=core['payload'])
+    core_saved+=1
    resolved[handle]=(outcome['identity']['creatorId'],oec,evidence+':find')
  with CycleStore(Path(root)/'var/second-cycle.sqlite') as store:
   plan=_plan(store,market);bound=0;missed=0;bound_ids=[]
@@ -169,6 +191,7 @@ def _apply(root,market,report,requested,*,expected_account=None):
      if not old:bound_ids.append(row[0])
   if bound_ids:store.project_current_offers(plan,source_ids=bound_ids)
  return {'resolvedHandles':len(resolved),'unresolvedHandles':len(unresolved),'newBindings':bound,'unresolvedEdges':missed,
+         'coreProfilesSaved':core_saved,'coreProfileErrors':core_errors,
          'profileVerified':sum(target.get('status')=='completed' for target,_,_ in valid),
          'blockedHandles':len(blocked),'blockCode':block_code if blocked else None}
 

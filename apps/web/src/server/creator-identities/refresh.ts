@@ -7,6 +7,8 @@ import {enabledMarket} from "../markets/registry.ts";
 
 export class ProfileRefreshError extends Error {readonly code:string;readonly status:number;constructor(code:string,status:number,message:string){super(message);this.code=code;this.status=status;}}
 export type RefreshCommand="enqueue"|"status"|"list";
+const CORE_MARKETS=new Set(["it","br","my","th","uk","de","fr"]);
+export function coreProfileMarket(market:string){return CORE_MARKETS.has(market)&&Boolean(enabledMarket(market));}
 const messages:Record<string,[number,string]>={
   idempotency_conflict:[409,"此请求编号已用于另一位达人，请恢复原请求或重新发起。"],
   creator_not_found:[404,"没有找到已核验的达人档案。"],
@@ -16,6 +18,8 @@ const messages:Record<string,[number,string]>={
   invalid_input:[400,"刷新请求格式不正确。"],
   invalid_request:[400,"刷新请求格式不正确。"],
   identity_changed:[409,"达人身份与任务不一致，请重新读取档案。"],
+  market_mismatch:[409,"达人或刷新任务属于另一市场。"],
+  current_handle_required:[409,"平台尚未确认此达人的当前名字。"],
 };
 export function parseRefreshRequest(value:unknown):ProfileRefreshRequest {
   if(!value||typeof value!=="object"||Array.isArray(value))throw new InputError("刷新请求必须为对象。");
@@ -43,13 +47,13 @@ export function decodeRefreshOutput(output:string):unknown {
   if("error" in parsed){const error=(parsed as {error?:{code?:unknown}}).error;const code=typeof error?.code==="string"?error.code:"refresh_unavailable";const definition=messages[code];throw new ProfileRefreshError(definition?code:"refresh_unavailable",definition?.[0]??503,definition?.[1]??"画像服务暂不可用，原有档案保持不变。");}
   return parsed;
 }
-export function callRefreshCommand(command:RefreshCommand,input:Record<string,string>|ProfileRefreshRequest):Promise<unknown> {
-  if(input.market!=="it")throw new ProfileRefreshError("unsupported_market",409,"此市场尚未接通页面画像刷新。");
-  const root=projectRoot();
+export function callRefreshCommand(command:RefreshCommand,input:Record<string,string>|ProfileRefreshRequest,transport:{root?:string;run?:typeof execFile}={}):Promise<unknown> {
+  if(!coreProfileMarket(input.market))throw new ProfileRefreshError("unsupported_market",409,"此市场尚未接通页面画像刷新。");
+  const root=transport.root??projectRoot(),run=transport.run??execFile;
   return new Promise((resolveResult,reject)=>{
-    const child=execFile(join(root,".venv/bin/python"),[join(root,"scripts/creator-profile-refresh.py"),command],
-      {cwd:root,timeout:10000,maxBuffer:128*1024,env:{...process.env,PYTHONDONTWRITEBYTECODE:"1"}},(error,stdout)=>{
-        try{if(error&&!stdout.trim())throw new ProfileRefreshError("refresh_unavailable",503,"暂未确认刷新请求，请保留原编号后重试。");resolveResult(decodeRefreshOutput(stdout));}catch(failure){reject(failure);}
+    const child=run(join(root,".venv/bin/python"),[join(root,"scripts/creator-profile-refresh.py"),command,"--market",input.market],
+      {cwd:root,timeout:10000,maxBuffer:128*1024,shell:false,env:{...process.env,PYTHONDONTWRITEBYTECODE:"1"}},(error,stdout)=>{
+        try{const value=decodeRefreshOutput(stdout);if(error)throw new ProfileRefreshError("refresh_unavailable",503,"暂未确认刷新请求，请保留原编号后重试。");resolveResult(value);}catch(failure){reject(failure);}
       });
     const {market:_,...payload}=input;child.stdin?.on("error",()=>{});child.stdin?.end(JSON.stringify(payload));
   });

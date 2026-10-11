@@ -20,7 +20,7 @@ Web 使用 Next.js 16、React 19、TypeScript 5.9，Node ≥22.18.0；业务使�
 - `config/`：业务参数和敏感配置样例；`var/`：真实状态/证据；`vendor/`：本仓协议闭包。
 - `tests/` 与 `apps/web/tests/`：状态机、恢复、API 和显示合同。
 
-Web 路由与 bridge 显式携带 market，URL/body/CLI/返回值一致；约 10 个 CLI 的 `--market` 仍缺省为 `it`，手工调用必须显式传参。`markets.json` 是唯一市场注册表，未验收能力拒绝动作，空市场不回退 IT。注册表只登记 `campaignCatalog`、`fullManagedCatalog` 两个能力位；TapLink 清理、会话页人工文本/卡片、身份队列/精确发现/画像刷新、Kalodata 身份和全托作业页目前只在 IT 实现，由代码直接拒绝其他市场。自动 A/B 线索读取、身份衔接与发送按注册表支持全部运营市场，不能由手动页面入口限制推断后台未接入。首页使用 `market_read_head → market_read_generation` 只读快照，同市场 GET 由 singleflight 合并；缺失/过期才本地聚合。快照失败不修改 workflow 结果，筛分摘要必须匹配当前来源 head。
+Web 路由与 bridge 显式携带 market，URL/body/CLI/返回值一致；约 10 个 CLI 的 `--market` 仍缺省为 `it`，手工调用必须显式传参。`markets.json` 是唯一市场注册表，未验收能力拒绝动作，空市场不回退 IT。注册表只登记 `campaignCatalog`、`fullManagedCatalog` 两个能力位；TapLink 清理、会话页人工文本/卡片、身份队列/精确发现、Kalodata 身份和全托作业页目前只在 IT 实现；画像刷新通过固定 CLI 接入七个运营市场，由代码直接拒绝其他市场。自动 A/B 线索读取、身份衔接与发送按注册表支持全部运营市场，不能由手动页面入口限制推断后台未接入。首页使用 `market_read_head → market_read_generation` 只读快照，同市场 GET 由 singleflight 合并；缺失/过期才本地聚合。快照失败不修改 workflow 结果，筛分摘要必须匹配当前来源 head。
 
 ## 2. 领域模块与合同
 
@@ -93,9 +93,17 @@ B 全窗口读取完成后，将回执/head/current/job 同事务发布；单条
 调度在没有新货盘任务时也可从 kalodata 开始一个有界续跑，然后衔接可完成的身份/发送池；沿用 workflow claims、fence、市场互斥与 Kalodata 全局两槽。已失败身份阶段单独等待原恢复证据（成功身份阶段或新的所选身份查询账号代次）；已解析线索和 A/B 读取可继续，原失败 run/checkpoint 不改判成功。页面手动推进也经同一 workflow 调度，不另开无资源约束的消费者。身份技术失败预算与隔离已接入，80/20 发送已接入 §2.5 的正式候选入口；二发有限核验隔离见 §2.5。
 
 身份映射后的 `project_current_offers` 按本次涉及的 source ID 增量计算，未变化不写，最多 100 项一段短事务；计算移到写锁外，提交时核对原 catalog head。重复绑定后的中断可补投影，不重查身份或重写原回执；B 使用独立视频证据，不覆盖旧正销量 opportunity。全量 catalog 更新仍可重算完整投影，历史 source 事实不删除。
-`creator_discovery.py/discovery_cohort.py` 执行精确 Find，`identity_queue.py/identity-batch.py` 聚合去重身份，`profile_refresh.py` 独立刷新画像。resolved/unresolved 复用证据，blocked 保留原断点。`IdentityBridge` 只交接当前 head 的 source edge，固定索引顺序避免历史全表 JSON 扫描；OECID 发布不能等待或伪装 Profile 成功。BR/MY/UK 的 OECID 由 scheduler 调 `market-identity.py`（`lib/market_identity.py`）：每 3 个 handle 拉起一次 `probe-italy-profile.py`，证据写入 `var/market-identity-{market}-*` 目录（目前不清理）。页面的身份队列、精确发现与画像刷新接口只支持 IT。
+`creator_discovery.py/discovery_cohort.py` 执行精确 Find，`identity_queue.py/identity-batch.py` 聚合去重身份，`profile_refresh.py` 独立刷新画像。resolved/unresolved 复用证据，blocked 保留原断点。`IdentityBridge` 只交接当前 head 的 source edge，固定索引顺序避免历史全表 JSON 扫描；OECID 发布不能等待或伪装 Profile 成功。BR/MY/UK 的 OECID 由 scheduler 调 `market-identity.py`（`lib/market_identity.py`）：每 3 个 handle 拉起一次 `probe-italy-profile.py`，证据写入 `var/market-identity-{market}-*` 目录（目前不清理）。页面的身份队列和精确发现仍只支持 IT；画像刷新接口支持七个运营市场。
 
 `identityAccountRole=supply` 时，OECID 走对应供给账号：BR acc2、MY acc5、DE acc13、FR acc17、TH acc15，IT/UK 单账号市场即其唯一账号（acc6/acc11），先要求该账号已发布 `oecid_find=verified`。新市场的 `oecid_find` canary 用 `probe-italy-profile.py` 单目标：带画像（`profileTypeSets`）可同时验收 `creator_profile`；画像阶段若返回 HTTP200/code 100000/systemError3（TH 实测），改用 `identityOnly:true` 且不带 `profileTypeSets` 的目标文件只验 Find（两者同时出现会被拒为 `invalid_profile_type_sets`），报告 `completed` 且 `identityFileUnchanged` 后经 `account-identity.py promote-canary` 发布。IT 先结算旧 cohort/outbox 的原报告，再使用 `market-identity.py` 的有界每批 3 人、每轮最多 50 人路径；原 acc6 的 12 QPS 验收不转授 acc9。旧 started 按原账号读取报告，当前批次也按冻结账号消费；handle 预算、有效身份和未匹配结论跨角色切换保留，账号故障只等待当前所选账号。workflow 的 OECID 资源槽绑定供给账号，与同账号货盘任务互斥。下面的 IT cohort 描述适用于兼容模式与旧任务恢复。
+
+`market_identity._apply()` 在确认 Find 身份后，用 `creator_core_profile` 白名单将已返回的核心画像追加到现有 `identity_observation.payload_json`。画像格式异常单独计数，不撤销成功身份，也不新增 Profile 请求。画像字段与 PID 线索金额没有补值或合并关系。`observe_known_profile()` 在写事务中核对原 creatorId×market×OECID；原币种、精确金额、授权状态、观测时间和业绩截止保留，未知统计起点不推断。
+
+`creator-profile-backfill.py preview --preview-file var/...` 只读核对留存报告和已消费 exact Find 台账，生成冻结文件范围与预览摘要；`apply --preview-file ... --confirm` 重验后按原时间幂等追加。新增报告不改变已冻结范围，原报告或归属变化则拒绝；不重做身份解析或投影业务关系。
+
+`profile_refresh.py` 复用原画像队列，additive 增加原账号、读取路线、查询 handle、零请求等待次数及重试时间。BR/MY/TH 以当前已核验 handle Find，再严格核对原 OECID；IT/DE/FR/UK 按 OECID Profile `[2]`。API 的 URL/CLI/队列结果按 market 隔离，新增任务会启动只处理该市场画像的 worker，空队列退出有事务握手，避免新任务被退出中的 PID 吞掉。核心字段未授权可完成一次读取，但不改为零或可用；页面直接展示字段状态。原账号/全局资源繁忙且确定零请求时保留原输入、等待并用新目录保存下一次尝试；已提交但无最终结果只保留未完成证据，不自动重跑。
+
+画像 worker 使用 `workflow_stage_claim`、`workflow_resource_slot` 的原全局/账号/市场槽位与 fence，实际网络仍经原 ProfileLease 和账号维护门禁，不开平行采集通道。`creator-profile-refresh.py due --market <市场> [--max-age-hours 168 --limit 3]` 预览到期名单；`enqueue-due` 将有界名单送入同一队列，默认检查 7 天时效、每次最多 3 位，最新核心字段未授权及同一周期已尝试的达人跳过。工具可供已有调度器调用，本次不更改运营开关或定时任务。
 
 Find lanes 共用原账号 QPS 和滑块验证合同；IT 沿用已发布的 Find cohort 策略，其他市场沿用每 3 个 handle 的 probe。有效 unresolved 与已验证身份按同市场规范化 handle 复用，不因新 PID、A/B 或窗口重查；Profile 后续失败不丢弃已确认 Find。IT 的 `identity_only` 成功证据可交接为可用身份，原画像失败记录保留。
 

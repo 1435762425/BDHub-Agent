@@ -688,7 +688,7 @@ class StageWiring(unittest.TestCase):
                 db.execute("INSERT INTO global_source_run VALUES('r',?,'accepted_partial',?,1)",(json.dumps({'market':'uk','partitionMode':'category_l1_v1'}),NOW-86400))
                 db.execute("INSERT INTO global_source_operator_acceptance VALUES('r',?)",(NOW-86400,))
                 db.execute("INSERT INTO global_source_head VALUES('r')")
-            executor=SubprocessStageExecutor(root);calls=[]
+            executor=SubprocessStageExecutor(root,clock=lambda:NOW);calls=[]
             executor._call=lambda args,label,timeout=14400:(calls.append((args,label)) or answers(args,label))
             result=executor.execute(None,{'runId':'workflow-uk','market':'uk','applicableSources':['selected']},'catalog',{'jobs':{}})
             self.assertEqual(result['state'],'completed')

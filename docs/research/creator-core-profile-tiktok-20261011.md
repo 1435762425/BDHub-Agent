@@ -1,6 +1,6 @@
 # TikTok 达人核心画像长期链路研究
 
-状态：2026-10-11 只读平台实验及离线原型；未合入生产、未导入正式画像、未启用刷新任务。达人画像来源限定为 TikTok。
+状态：以下为 2026-10-11 平台实验与离线原型的当时证据。后续接入状态见 [当前实现](../TECHNICAL.md) 与 [当前交接](../handoff/current.md)。达人画像来源限定为 TikTok。
 
 ## 结论
 
@@ -40,7 +40,7 @@ UK 原登记账号 acc11 恢复登录后，Find/Profile 返回成功，但已测
 
 现有缺口在 `market_identity.py::_apply()`：只持久化 exact Find 身份，没有保存响应画像；同时 `reuse_judgments()` 永久复用身份判定，不能承担画像刷新。仅补入库逻辑不会解决老达人画像过期。
 
-本分支 `scripts/lib/creator_core_profile.py` 是无网络、无持久队列、无正式数据库写入的原型，提供白名单核心事实提取及最多三人的刷新输入。离线测试使用临时身份库验证幂等、最新未授权、原金额精度、零值、错账号/市场/身份拒绝及 Profile 失败保留 Find。
+实验阶段的 `scripts/lib/creator_core_profile.py` 是无网络、无持久队列、无正式数据库写入的原型，提供白名单核心事实提取及最多三人的刷新输入。离线测试使用临时身份库验证幂等、最新未授权、原金额精度、零值、错账号/市场/身份拒绝及 Profile 失败保留 Find。
 
 以 8,281 份已归属报告回放此原型，提取 20,212 条 Find 事实，适配器拒绝数为零。原型识别 IT 的 `bdhub.italy-profile-probe.v3` 与其他市场的 `bdhub.market-profile-probe.v1`，不把历史报告格式错当未知结果。针对原型、画像规范化、身份台账及市场报告合同的 46 项离线测试通过；文档路径检查通过。回放摘要 `prototype-replay.json`、UK 扩测 `uk-collaborated-results.json`、BR/MY 重复刷新 `refresh-repeat-results.json` 均在上述私有证据目录。
 

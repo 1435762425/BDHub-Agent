@@ -1,8 +1,12 @@
 #!/usr/bin/env python3
 """Enqueue/status a fixed OEC profile refresh, or run the local refresh worker."""
 import argparse
+from contextlib import contextmanager
+import fcntl
 import json
+import os
 import signal
+import subprocess
 import sys
 import time
 import traceback
@@ -12,6 +16,58 @@ from lib.creator_discovery import CreatorDiscoveryError, CreatorDiscoveryStore, 
 
 
 CRASH_LOG = ROOT / "var/identity-worker-crash.log"
+MARKETS = ("it", "br", "my", "th", "uk", "de", "fr")
+
+
+def launch_profile_worker(store, market):
+    root = store.root
+    if store.worker_online(market):
+        return
+    with (root / f"var/profile-refresh-worker-{market}.log").open("a") as log:
+        os.chmod(log.name, 0o600)
+        subprocess.Popen([str(root / ".venv/bin/python"), str(root / "scripts/creator-profile-refresh.py"),
+                          "worker", "--profiles-only", "--until-idle", "--market", market, "--interval", "1"],
+                         cwd=root, start_new_session=True, stdin=subprocess.DEVNULL, stdout=log, stderr=log,
+                         env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"})
+
+
+@contextmanager
+def profile_worker_lock(root, market):
+    folder = root / "var/locks"
+    folder.mkdir(parents=True, exist_ok=True)
+    fd = os.open(folder / f"profile-refresh-{market}.lock", os.O_CREAT | os.O_RDWR, 0o600)
+    try:
+        deadline = time.monotonic() + 15
+        while True:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                if time.monotonic() >= deadline:
+                    raise
+                time.sleep(0.05)
+        yield
+    finally:
+        os.close(fd)
+
+
+def run_profiles(store, args):
+    with profile_worker_lock(store.root, args.market), ProfileRefreshWorker(store, market=args.market) as runner:
+        from lib.runtime_release import register
+        register(store.root, "profile-refresh-" + args.market)
+        path = store.var_dir / f"profile-refresh-worker-{args.market}.json"
+        path.write_text(json.dumps({"pid": os.getpid(), "startedAt": time.time(), "market": args.market, "state": "running"}))
+        path.chmod(0o600)
+        try:
+            while True:
+                value = runner.run_once()
+                if value is not None or args.once:
+                    print(json.dumps({"refresh": value}), flush=True)
+                if args.once or args.until_idle and store.begin_drain(runner.owner, args.market):
+                    break
+                time.sleep(args.interval)
+        finally:
+            path.unlink(missing_ok=True)
 
 
 def record_crash(error):
@@ -82,11 +138,18 @@ def reconcile_cycle(var_dir,discovery_store,only_batch=None):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
-    commands.add_parser("enqueue")
-    commands.add_parser("status")
-    commands.add_parser("list")
+    for command in ("enqueue", "status", "list"):
+        commands.add_parser(command).add_argument("--market", choices=MARKETS, default="it")
+    for command in ("due", "enqueue-due"):
+        due = commands.add_parser(command)
+        due.add_argument("--market", choices=MARKETS, required=True)
+        due.add_argument("--max-age-hours", type=int, default=168)
+        due.add_argument("--limit", type=int, default=3)
     worker = commands.add_parser("worker")
     worker.add_argument("--once", action="store_true")
+    worker.add_argument("--market", choices=MARKETS, default="it")
+    worker.add_argument("--profiles-only", action="store_true")
+    worker.add_argument("--until-idle", action="store_true")
     worker.add_argument("--soak-run")
     worker.add_argument("--cohort-size",type=int,choices=(1,10,20,50),default=1)
     worker.add_argument("--cohort-lanes",type=int,choices=(3,6,9),default=3)
@@ -99,20 +162,36 @@ def main():
         with ProfileRefreshStore() as store:
             if args.command == "enqueue":
                 value = read_request(("creatorId", "requestId"))
-                print(json.dumps(store.enqueue(value["creatorId"], value["requestId"])))
+                job = store.enqueue(value["creatorId"], value["requestId"], args.market)
+                if job["status"] in {"queued", "running"}:
+                    launch_profile_worker(store, args.market)
+                print(json.dumps(job))
             elif args.command == "status":
                 value = read_request(("jobId",))
-                print(json.dumps(store.status(value["jobId"])))
+                print(json.dumps(store.status(value["jobId"], args.market)))
             elif args.command == "list":
                 value = read_request(("creatorId",))
-                print(json.dumps(store.list_jobs(value["creatorId"])))
+                print(json.dumps(store.list_jobs(value["creatorId"], args.market)))
+            elif args.command in {"due", "enqueue-due"}:
+                value = (store.enqueue_due if args.command == "enqueue-due" else store.due_candidates)(args.market,
+                    max_age_hours=args.max_age_hours, limit=args.limit)
+                if args.command == "enqueue-due" and value["jobs"]:
+                    launch_profile_worker(store, args.market)
+                print(json.dumps(value))
             else:
                 if not 0.1 <= args.interval <= 60:
                     raise ProfileRefreshError("invalid_request")
                 def stop(*_):
                     raise KeyboardInterrupt()
                 signal.signal(signal.SIGTERM, stop)
-                with CreatorDiscoveryStore(store.var_dir) as discovery_store, ProfileRefreshWorker(store) as runner, CreatorDiscoveryWorker(discovery_store) as discovery:
+                if args.profiles_only:
+                    if args.only_batch or args.cohort_size != 1 or args.soak_run:
+                        raise ProfileRefreshError("invalid_request")
+                    run_profiles(store, args)
+                    return 0
+                if args.market != "it" or args.until_idle:
+                    raise ProfileRefreshError("unsupported_market")
+                with CreatorDiscoveryStore(store.var_dir) as discovery_store, ProfileRefreshWorker(store, market="it") as runner, CreatorDiscoveryWorker(discovery_store) as discovery:
                     while True:
                         # An exact discovery batch is an identity-only backfill round. Running one
                         # unrelated OEC profile refresh before every scoped Find cohort adds account
@@ -144,6 +223,9 @@ def main():
         return 1
     except KeyboardInterrupt:
         return 130
+    except BlockingIOError:
+        print(json.dumps({"status": "already_running"}))
+        return 0
     except Exception as error:
         record_crash(error)
         print(envelope("internal_error", "Profile refresh service error", 500))

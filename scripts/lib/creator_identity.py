@@ -260,6 +260,21 @@ class CreatorIdentityStore:
         with self._transaction():
             return self._observe(market, oec_id, handle, observed_at, observed_us, evidence_ref, payload_json)
 
+    def observe_known_profile(self, creator_id, market, oec_id, handle, observed_at, evidence_ref, payload=None, *, return_inserted=False):
+        """Append to an existing stable identity, checking its binding in the write transaction."""
+        creator_id = _text(creator_id, "creator_id")
+        market, oec_id, handle = _market(market), _oec(oec_id), _handle(handle, optional=True)
+        observed_at, observed_us = _timestamp(observed_at)
+        evidence_ref, payload_json = _text(evidence_ref, "evidence_ref"), _payload(payload)
+        with self._transaction():
+            row = self._get(market, oec_id)
+            if row is None or row["creator_id"] != creator_id:
+                raise IdentityConflict("profile does not belong to the existing stable identity")
+            inserted = self._db.execute("SELECT 1 FROM identity_observation WHERE market=? AND oec_id=? AND evidence_ref=? AND observed_at=?",
+                                        (market, oec_id, evidence_ref, observed_at)).fetchone() is None
+            identity = self._observe(market, oec_id, handle, observed_at, observed_us, evidence_ref, payload_json)
+            return (identity, inserted) if return_inserted else identity
+
     def record_profile_failure(self, market, oec_id, observed_at, evidence_ref, outcome):
         """Retain failure evidence without creating, deleting or refreshing identity."""
         market, oec_id = _market(market), _oec(oec_id)

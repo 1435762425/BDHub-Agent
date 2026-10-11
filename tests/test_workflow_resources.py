@@ -87,4 +87,27 @@ class WorkflowResourceTests(unittest.TestCase):
   # Nothing is left holding the platform slot.
   claim(self.store,'stage-2','scheduler-owner-c',[('platform:global',1)],worker_pid=997)
 
+ def test_profile_reads_share_global_and_account_slots_with_normal_stages(self):
+  from lib.workflow_resources import claim_profile_read
+  job='refresh_'+'a'*32
+  read=claim_profile_read(self.store,job,'profile-reader-owner',[('platform:global',2),('supply:acc2',1)],worker_pid=999)
+  claim(self.store,'stage-0','scheduler-owner-a',[('platform:global',2),('supply:acc1',1)],worker_pid=998)
+  with self.assertRaisesRegex(CycleError,'resource_busy'):
+   claim(self.store,'stage-1','scheduler-owner-b',[('platform:global',2),('supply:acc3',1)],worker_pid=997)
+  with self.assertRaisesRegex(CycleError,'resource_busy'):
+   claim(self.store,'stage-2','scheduler-owner-c',[('supply:acc2',1)],worker_pid=996)
+  release(self.store,read['stageRunId'],read['ownerId'],read['fence'])
+  claim(self.store,'stage-2','scheduler-owner-c',[('supply:acc2',1)],worker_pid=996)
+
+ def test_dead_profile_reader_releases_slots_without_creating_or_replaying_business_stage(self):
+  from lib.workflow_resources import claim_profile_read
+  before=self.store.db.execute('SELECT count(*) FROM workflow_stage_run').fetchone()[0]
+  read=claim_profile_read(self.store,'refresh_'+'b'*32,'profile-reader-owner',[('platform:global',1)],lease_seconds=5,worker_pid=999)
+  self.now[0]=106
+  self.assertEqual(recover_expired(self.store,pid_alive=lambda _:False),[])
+  self.assertEqual(self.store.db.execute('SELECT count(*) FROM workflow_stage_run').fetchone()[0],before)
+  with self.assertRaisesRegex(CycleError,'fence_stale'):
+   assert_current(self.store,read['stageRunId'],read['ownerId'],read['fence'])
+  claim(self.store,'stage-0','scheduler-owner-a',[('platform:global',1)],worker_pid=998)
+
 if __name__=='__main__':unittest.main()

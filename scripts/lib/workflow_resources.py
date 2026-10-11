@@ -10,15 +10,34 @@ def _required(store):
  tables={row[0] for row in store.db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
  if not {'workflow_stage_claim','workflow_resource_slot','workflow_claim_sequence'}<=tables:raise CycleError('workflow_resource_migration_required')
 
-def claim(store,stage_run_id,owner_id,resources,*,lease_seconds=60,worker_pid=None,input_generation_id=None):
- _required(store)
- if not isinstance(stage_run_id,str) or not isinstance(owner_id,str) or not OWNER.fullmatch(owner_id) or not isinstance(resources,(list,tuple)) or not resources or type(lease_seconds) not in (int,float) or not 5<=lease_seconds<=3600 or input_generation_id is not None and not isinstance(input_generation_id,str):raise CycleError('workflow_resource_claim_invalid')
+def _normalize(stage_run_id,owner_id,resources,lease_seconds):
+ if not isinstance(stage_run_id,str) or not isinstance(owner_id,str) or not OWNER.fullmatch(owner_id) or not isinstance(resources,(list,tuple)) or not resources or type(lease_seconds) not in (int,float) or not 5<=lease_seconds<=3600:raise CycleError('workflow_resource_claim_invalid')
  normalized=[]
  for key,slots in resources:
   if not isinstance(key,str) or not key or len(key)>120 or type(slots) is not int or not 1<=slots<=32:raise CycleError('workflow_resource_claim_invalid')
   normalized.append((key,slots))
  if len({key for key,_ in normalized})!=len(normalized):raise CycleError('workflow_resource_claim_invalid')
+ return normalized
+
+def _allocate(store,stage_run_id,owner_id,normalized,lease_seconds,worker_pid):
  now=store.clock();pid=os.getpid() if worker_pid is None else worker_pid
+ allocations=[]
+ for key,slots in normalized:
+  # Expired/live owners keep their slots until the existing recovery confirms death.
+  taken={row[0] for row in store.db.execute('SELECT slot_no FROM workflow_resource_slot WHERE resource_key=?',(key,))}
+  slot=next((number for number in range(slots) if number not in taken),None) if len(taken)<slots else None
+  if slot is None:raise CycleError('workflow_resource_busy')
+  allocations.append((key,slot))
+ store.db.execute('INSERT INTO workflow_claim_sequence(created_at) VALUES(?)',(now,));fence=store.db.execute('SELECT last_insert_rowid()').fetchone()[0];lease=now+lease_seconds
+ store.db.execute('INSERT INTO workflow_stage_claim VALUES(?,?,?,?,?,?,?)',(stage_run_id,owner_id,fence,lease,now,pid,now))
+ for key,slot in allocations:store.db.execute('INSERT INTO workflow_resource_slot VALUES(?,?,?,?,?,?)',(key,slot,stage_run_id,fence,lease,now))
+ return {'stageRunId':stage_run_id,'ownerId':owner_id,'fence':fence,'leaseUntil':lease,'resources':[{'key':key,'slot':slot} for key,slot in allocations],'duplicate':False}
+
+def claim(store,stage_run_id,owner_id,resources,*,lease_seconds=60,worker_pid=None,input_generation_id=None):
+ _required(store)
+ normalized=_normalize(stage_run_id,owner_id,resources,lease_seconds)
+ if input_generation_id is not None and not isinstance(input_generation_id,str):raise CycleError('workflow_resource_claim_invalid')
+ now=store.clock()
  with store.tx():
   existing=store.db.execute('SELECT * FROM workflow_stage_claim WHERE stage_run_id=?',(stage_run_id,)).fetchone()
   if existing:
@@ -28,21 +47,22 @@ def claim(store,stage_run_id,owner_id,resources,*,lease_seconds=60,worker_pid=No
   if not stage or stage['state']!='queued':raise CycleError('workflow_stage_not_claimable')
   run=store.db.execute('SELECT state FROM workflow_run WHERE run_id=?',(stage['run_id'],)).fetchone()
   if not run or run['state'] not in ('queued','running'):raise CycleError('workflow_run_not_claimable')
-  allocations=[]
-  for key,slots in normalized:
-   # An expired lease remains occupied until recovery confirms the owner is dead.
-   taken={row[0] for row in store.db.execute('SELECT slot_no FROM workflow_resource_slot WHERE resource_key=?',(key,))}
-   # After the capacity is lowered, slots numbered beyond it still count until their owners release them.
-   slot=next((number for number in range(slots) if number not in taken),None) if len(taken)<slots else None
-   if slot is None:raise CycleError('workflow_resource_busy')
-   allocations.append((key,slot))
-  store.db.execute('INSERT INTO workflow_claim_sequence(created_at) VALUES(?)',(now,));fence=store.db.execute('SELECT last_insert_rowid()').fetchone()[0];lease=now+lease_seconds
-  store.db.execute('INSERT INTO workflow_stage_claim VALUES(?,?,?,?,?,?,?)',(stage_run_id,owner_id,fence,lease,now,pid,now))
-  for key,slot in allocations:store.db.execute('INSERT INTO workflow_resource_slot VALUES(?,?,?,?,?,?)',(key,slot,stage_run_id,fence,lease,now))
+  result=_allocate(store,stage_run_id,owner_id,normalized,lease_seconds,worker_pid)
   store.db.execute("UPDATE workflow_stage_run SET state='running',started_at=coalesce(started_at,?),input_generation_id=?,error_code=NULL WHERE stage_run_id=? AND state='queued'",(now,input_generation_id,stage_run_id))
   if store.db.execute('SELECT changes()').fetchone()[0]!=1:raise CycleError('workflow_stage_claim_race')
   store.db.execute("UPDATE workflow_run SET state='running' WHERE run_id=? AND state='queued'",(stage['run_id'],))
- return {'stageRunId':stage_run_id,'ownerId':owner_id,'fence':fence,'leaseUntil':lease,'resources':[{'key':key,'slot':slot} for key,slot in allocations],'duplicate':False}
+ return result
+
+def claim_profile_read(store,job_id,owner_id,resources,*,lease_seconds=240,worker_pid=None):
+ """A queued profile read shares the workflow slots; its job stays in the profile queue."""
+ _required(store)
+ if not isinstance(job_id,str) or not re.fullmatch(r'refresh_[0-9a-f]{32}',job_id):raise CycleError('workflow_resource_claim_invalid')
+ request='profile-refresh:'+job_id
+ normalized=_normalize(request,owner_id,resources,lease_seconds)
+ with store.tx():
+  if store.db.execute('SELECT 1 FROM workflow_stage_claim WHERE stage_run_id=?',(request,)).fetchone():
+   raise CycleError('workflow_resource_busy')
+  return _allocate(store,request,owner_id,normalized,lease_seconds,worker_pid)
 
 def heartbeat(store,stage_run_id,owner_id,fence,*,lease_seconds=60):
  _required(store);now=store.clock();lease=now+lease_seconds

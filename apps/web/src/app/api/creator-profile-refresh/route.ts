@@ -1,5 +1,5 @@
 import {InputError,isLocalRequest} from "../../../server/runtime/validation.ts";
-import {callRefreshCommand,parseRefreshQuery,parseRefreshRequest,ProfileRefreshError} from "../../../server/creator-identities/refresh.ts";
+import {callRefreshCommand,coreProfileMarket,parseRefreshQuery,parseRefreshRequest,ProfileRefreshError} from "../../../server/creator-identities/refresh.ts";
 export const runtime="nodejs";
 export const dynamic="force-dynamic";
 const headers={"Cache-Control":"no-store","X-Content-Type-Options":"nosniff"};
@@ -9,7 +9,7 @@ export async function GET(request:Request){if(!isLocalRequest(request,false))ret
 export async function POST(request:Request){
  if(!isLocalRequest(request,true))return reject();
  const url=new URL(request.url),market=url.searchParams.get("market");
- if([...url.searchParams.keys()].some(key=>key!=="market")||url.searchParams.getAll("market").length!==1||market!=="it")return Response.json({error:{code:"invalid_market",message:"市场无效或画像刷新尚未接通。"}},{status:400,headers});
+ if([...url.searchParams.keys()].some(key=>key!=="market")||url.searchParams.getAll("market").length!==1||!market||!coreProfileMarket(market))return Response.json({error:{code:"invalid_market",message:"市场无效或画像刷新尚未接通。"}},{status:400,headers});
   if(request.headers.get("content-type")?.split(";")[0].trim()!=="application/json")return Response.json({error:{code:"json_required",message:"请使用 JSON 请求。"}},{status:415,headers});
   try{
     const reader=request.body?.getReader();if(!reader)throw new InputError("请求为空。");const chunks:Uint8Array[]=[];let length=0;

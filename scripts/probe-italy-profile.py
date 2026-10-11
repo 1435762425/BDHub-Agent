@@ -181,6 +181,8 @@ def network_child(account_name: str, target_file: Path, output: Path, market: st
     if target_input.get('market','it')!=market:raise ValueError('target_market_mismatch')
     if type(target_input.get("identityOnly",False)) is not bool:raise ValueError("invalid_identity_mode")
     identity_only=target_input.get("identityOnly",False)
+    owner_wait=target_input.get("ownerWaitSeconds",0)
+    if type(owner_wait) is not int or not 0<=owner_wait<=15:raise ValueError("invalid_owner_wait")
     raw_profile_sets=target_input.get('profileTypeSets')
     allowed_profile_sets={(1,2,6),(1,6),(2,)}
     if raw_profile_sets is None:
@@ -266,7 +268,8 @@ def network_child(account_name: str, target_file: Path, output: Path, market: st
         report["transport"] = {"host": selected.identity["api_host"], "signerRegion": selected.identity["signer_region"], "marketCode": int(market_row(ROOT,market)["platformRegion"]), "aid": selected.identity["aid"], "runtimeManifestValidated": True}
         report["coordination"] = "Existing canonical guard locked read-only for this short probe; other lease acquisition may briefly wait. No lease file created."
         save()
-        guard=(readonly_guard(selected.account,wait_seconds=15) if market=='it' and (cohort or stress) else
+        guard=(readonly_guard(selected.account,market=market,wait_seconds=owner_wait) if owner_wait else
+               readonly_guard(selected.account,wait_seconds=15) if market=='it' and (cohort or stress) else
                readonly_guard(selected.account) if market=='it' else
                readonly_guard(selected.account,market=market,wait_seconds=15) if cohort or stress else
                readonly_guard(selected.account,market=market))
