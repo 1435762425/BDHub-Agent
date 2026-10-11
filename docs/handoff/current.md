@@ -1,6 +1,13 @@
 # BDHub-Agent 当前交接
 
-文档更新时间：2026-10-08（Asia/Shanghai）。下面各节按时间倒序，每节只代表该时刻的核验；最新一节即当前生产状态的最近记录，不是实时巡检。规则见 [PROJECT](../PROJECT.md)，实现见 [TECHNICAL](../TECHNICAL.md)，后续方向见[项目审计与清理](../implementation/project-audit-20260924.md)。更早流水见[历史交接](../archive/handoff/codex-takeover-history-20260923.md)。
+文档更新时间：2026-10-11（Asia/Shanghai）。下面各节按时间倒序，每节只代表该时刻的核验；最新一节即当前生产状态的最近记录，不是实时巡检。规则见 [PROJECT](../PROJECT.md)，实现见 [TECHNICAL](../TECHNICAL.md)，后续方向见[项目审计与清理](../implementation/project-audit-20260924.md)。更早流水见[历史交接](../archive/handoff/codex-takeover-history-20260923.md)。
+
+## 2026-10-11 17:47：TikTok 核心画像保存、历史回填与多市场刷新已发布
+
+- `d25fb7c` 接入 Find 保存、七市场原画像队列与页面、有界到期刷新工具；`71f0733` 修复原 owner 的自然交接等待，`4c63ce2` 隐藏正常任务完成后的等待提示。细节见[接入验收](../implementation/creator-core-profile-chain-20261011.md)。画像只用 TikTok；未改现有定时任务、运营开关或推荐排序。
+- 已回填 20,212 条原 Find 画像，保留原观测时间；重复同一计划新增 0。正式 BR/MY 刷新各一次 Find，核心字段完整；UK 原账号自然释放后读取完成、字段仍未授权。没有换账号取数、联系达人或新增平台业务写入。
+- 最终 Web Build ID `w2jkxJ7N-m-I7gdyeCPRZ`、291 文件校验；原调度/sender/IM/AI 18 个常驻 PID 保持。两库备份与 quick_check 通过；身份 33,749、观测 74,465；仅三位验收达人更新观测时间。五张授权/控制表及原 `config/jobs.json` 摘要不变，原未提交运营改动保留。
+- 证据 `var/releases/core-profile-chain-20261011/`；Python 全量 1,773、交接专项 75、Web 212、build/typecheck/docs 通过。业务常驻仍载入原代码登记，不把磁盘新 HEAD 当成其已重启；原其他模块告警保持。
 
 ## 2026-10-08 20:55：磁盘写满停掉调度器已恢复；10-06 起发送骤降归因于本机代理
 
