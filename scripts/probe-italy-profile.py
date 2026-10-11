@@ -139,15 +139,19 @@ def readonly_guard(account, *, market="it", wait_seconds=0):
         deadline=time.monotonic()+wait_seconds
         while True:
             try:
-                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB);break
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except BlockingIOError:
                 if time.monotonic()>=deadline:raise
-                time.sleep(0.25)
-        current = lease.mutex_path.lstat()
-        if stat.S_ISLNK(current.st_mode) or (current.st_dev, current.st_ino) != (before.st_dev, before.st_ino):
-            raise RuntimeError("guard_changed")
-        if lease.has_active_owner():
-            raise RuntimeError("account_in_use")
+                time.sleep(0.25);continue
+            current = lease.mutex_path.lstat()
+            if stat.S_ISLNK(current.st_mode) or (current.st_dev, current.st_ino) != (before.st_dev, before.st_ino):
+                raise RuntimeError("guard_changed")
+            if not lease.has_active_owner():break
+            # The owner must be able to take the mutex to release its lease.
+            # Wait for its normal handoff without holding that mutex.
+            fcntl.flock(fd, fcntl.LOCK_UN)
+            if time.monotonic()>=deadline:raise RuntimeError("account_in_use")
+            time.sleep(0.25)
         yield
     finally:
         os.close(fd)

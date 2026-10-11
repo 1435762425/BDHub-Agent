@@ -149,7 +149,7 @@ class CoreRefreshTests(unittest.TestCase):
         self.assertEqual(result["errorCode"], "resources_busy")
         self.assertFalse((self.var / "creator-profile-refresh" / job["id"]).exists())
         never.assert_not_called()
-        self.now += 2
+        self.now += 6
         self.assertEqual(ProfileRefreshWorker(self.store, market="br", executor=self.execute).run_once()["status"], "completed")
 
     def test_zero_request_mutex_wait_keeps_immutable_attempt_then_reads_same_input(self):
@@ -165,7 +165,7 @@ class CoreRefreshTests(unittest.TestCase):
         self.assertEqual(result["status"], "queued")
         file = self.var / "creator-profile-refresh" / job["id"] / "attempt-1/report.private.json"
         first = file.read_bytes()
-        self.now += 2
+        self.now += 31
         self.assertEqual(ProfileRefreshWorker(self.store, market="br", executor=self.execute).run_once()["status"], "completed")
         self.assertEqual(first, file.read_bytes())
         self.assertTrue(file.parent.parent.joinpath("attempt-2/report.private.json").exists())

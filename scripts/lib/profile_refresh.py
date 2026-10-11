@@ -330,8 +330,9 @@ class ProfileRefreshStore:
             row = self._row(job_id)
             if row["status"] != "running" or row["lease_owner"] != owner or row["lease_until"] <= self.now():
                 return self._public(row)
+            delay = 30 if code == "account_busy" else 5
             self._db.execute("UPDATE profile_refresh_job SET status='queued',started_at=NULL,error_code=?,retry_at=?,attempt_no=attempt_no+?,lease_owner=NULL,lease_pid=NULL,lease_until=NULL WHERE id=?",
-                             (code, self.now() + 1, int(attempted), job_id))
+                             (code, self.now() + delay, int(attempted), job_id))
             return self._public(self._row(job_id))
 
     def finish(self, job_id, owner, *, error=None, identity_updated=False, request_count=None):

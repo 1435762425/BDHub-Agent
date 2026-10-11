@@ -15,6 +15,23 @@ SPEC.loader.exec_module(probe)
 
 
 class ProfileProbeTests(unittest.TestCase):
+    def test_wait_for_owner_releases_mutex_so_owner_can_finish_its_handoff(self):
+        from lib.legacy_runtime import configure_vendored_bdhub
+        configure_vendored_bdhub(root=Path(__file__).resolve().parents[1])
+        from bdhub.enrich import profile_lease
+        with tempfile.TemporaryDirectory() as folder:
+            mutex = Path(folder) / "mutex"
+            mutex.touch()
+            lease = Mock(mutex_path=mutex)
+            lease.has_active_owner.side_effect = [True, False]
+            with patch.object(profile_lease, "ProfileLease", return_value=lease), \
+                    patch.object(probe.time, "sleep") as sleep, \
+                    patch.object(probe.fcntl, "flock", wraps=probe.fcntl.flock) as lock:
+                with probe.readonly_guard(Mock(), wait_seconds=15):
+                    self.assertEqual(lease.has_active_owner.call_count, 2)
+                self.assertEqual(sleep.call_count, 1)
+                self.assertTrue(any(call.args[1] == probe.fcntl.LOCK_UN for call in lock.call_args_list))
+
     def test_readiness_canary_never_overrides_pauses_or_pool_exclusion(self):
         ready={'manual_paused':False,'market_paused':False,'blockers':[{'code':'unchecked'}]}
         self.assertTrue(probe.permits_readiness_canary(ready,True,True,[{}],None))
