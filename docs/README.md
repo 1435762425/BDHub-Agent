@@ -15,6 +15,7 @@
 | 当前代码、GitHub 与回退 | [仓库说明](../README.md#github-与恢复)、[SDK/HTTP 上线及保留数据的回退](implementation/sdk-http-rollout-20260926.md) |
 | 工作流、市场与账号 | [自动运营设计](architecture/automated-operations-workflow-v1.md)、[市场接入标准](architecture/market-rollout-standard-v1.md)、[账号生命周期](architecture/dual-account-lifecycle.md) |
 | 身份与排序 | [稳定身份](architecture/creator-identity-and-rename.md)、[排序规则](PROJECT.md#43-发送位置) |
+| TikTok 达人核心画像及各市场权限缺口 | [长期链路实验](research/creator-core-profile-tiktok-20261011.md)（只读实验与离线原型，未上线） |
 | 会话与当前 Agent | [已确认 V2 场景与原设计](architecture/conversation-agent-upgrade-plan-20260923.md)、[AI 回复设计审查与优化方案](architecture/ai-reply-optimization-20260925.md)（已完成消息范围/原子准备；AI unknown 隔离、长期记忆等剩余项见顶部状态表） |
 | 四市场真实平台结果/限制 | [启动实测](implementation/four-market-launch-implementation-20260923.md)、[接入证据](implementation/br-my-uk-onboarding-20260921.md) |
 | DE/FR/TH 接入内容 | [德语](implementation/de-content-review-20261002.md)、[法语](implementation/fr-content-review-20261003.md)、[泰语](implementation/th-content-review-20261003.md)审阅稿；接入状态见 [TECHNICAL §5](TECHNICAL.md#5-账号配置与-vendor) 与[当前交接](handoff/current.md) |
