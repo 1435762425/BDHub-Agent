@@ -15,6 +15,10 @@ SPEC.loader.exec_module(probe)
 
 
 class ProfileProbeTests(unittest.TestCase):
+    def test_returned_unicode_username_can_be_refreshed_by_find(self):
+        result=probe.normalize_target({'ref':'one','externalId':'one','handle':'jéssicanayane2'})
+        self.assertEqual(result['handle'],'jéssicanayane2')
+        with self.assertRaises(ValueError):probe.normalize_target({'ref':'one','externalId':'one','handle':'name/script'})
     def test_wait_for_owner_releases_mutex_so_owner_can_finish_its_handoff(self):
         from lib.legacy_runtime import configure_vendored_bdhub
         configure_vendored_bdhub(root=Path(__file__).resolve().parents[1])

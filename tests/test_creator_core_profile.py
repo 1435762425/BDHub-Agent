@@ -42,6 +42,9 @@ def observations(report, requested, **kwargs):
 
 
 class CoreProfileTests(unittest.TestCase):
+    def test_unicode_platform_handle_remains_a_valid_find_refresh_target(self):
+        plan=core_refresh_plan('br',[{'market':'br','creator_id':'creator_a','oec_id':'123','current_handle':'jéssicanayane2'}])
+        self.assertEqual(plan['probeInput']['targets'][0]['handle'],'jéssicanayane2')
     def test_exact_amount_zero_unmapped_category_and_unknown_window(self):
         report, requested = fixture(amount="9007199254740993.01")
         row = observations(report, requested)[0]

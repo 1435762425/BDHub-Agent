@@ -12,6 +12,7 @@ import re
 
 from lib.market_identity import validated_report_targets
 from lib.profile_completion import merge_profile_summaries, summarize_profile
+from lib.creator_identity import valid_handle
 
 
 CORE_FIELDS = ("med_gmv_revenue", "industry_groups", "video_gmv", "live_gmv")
@@ -135,7 +136,7 @@ def core_refresh_plan(market, creators):
         ref = "core-profile:" + creator_id
         target = {"ref": ref, "externalId": creator_id}
         if market in _FIND_MARKETS:
-            if not isinstance(handle, str) or not re.fullmatch(r"[a-z0-9._]{1,100}", handle):
+            if not valid_handle(handle, maximum=100):
                 raise ValueError("core_profile_current_handle_required")
             target["handle"] = handle
         else:

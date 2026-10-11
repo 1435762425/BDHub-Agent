@@ -80,13 +80,19 @@ def _oec(value):
     return value
 
 
+def valid_handle(value, *, maximum=64):
+    """TikTok also returns usernames with Unicode letters, e.g. Brazilian accents."""
+    return isinstance(value, str) and 1 <= len(value) <= maximum and all(
+        character.isalnum() or character in '._' for character in value)
+
+
 def _handle(value, *, optional=False):
     if value is None and optional:
         return None
     if not isinstance(value, str):
         raise ValueError("handle must be a string")
     normalized = value.strip().removeprefix("@").lower()
-    if not re.fullmatch(r"[a-z0-9._]{1,64}", normalized):
+    if not valid_handle(normalized):
         raise ValueError("invalid handle")
     return normalized
 

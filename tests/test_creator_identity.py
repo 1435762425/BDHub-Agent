@@ -52,6 +52,11 @@ class CreatorIdentityTests(unittest.TestCase):
         self.assertFalse(old[0]["routingAuthoritative"])
         with identity.CreatorIdentityStore(self.path) as reopened:
             self.assertEqual(reopened.get_by_oec("it", OEC), after)
+    def test_platform_unicode_username_is_retained_and_symbols_are_rejected(self):
+        result=self.observe(handle='jéssicanayane2')
+        self.assertEqual(result['currentHandle'],'jéssicanayane2')
+        for invalid in ('a/b','a b','a\u200bb','name<script>'):
+            with self.assertRaises(ValueError):self.observe(handle=invalid,ref='invalid:'+invalid)
 
     def test_reused_handle_keeps_separate_identities_and_returns_ambiguous_candidates(self):
         original = self.observe()

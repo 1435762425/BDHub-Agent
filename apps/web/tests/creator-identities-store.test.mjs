@@ -139,6 +139,8 @@ test("field projection keeps only allowed typed values and discards unauthorized
   assert.equal(PROFILE_FIELDS.length,22);
   assert.deepEqual(sanitizeProfileField("gpm",{status:"unauthorized",value:{decimal:"SECRET"}},TIMES[0]),{name:"gpm",status:"unauthorized",observedAt:TIMES[0]});
   assert.equal(sanitizeProfileField("follower_cnt",{status:"value",value:NaN},TIMES[0]).status,"error");
+  assert.equal(sanitizeProfileField("handle",{status:"value",value:"jéssicanayane2"},TIMES[0]).value,"jéssicanayane2");
+  assert.equal(sanitizeProfileField("handle",{status:"value",value:"name<script>"},TIMES[0]).status,"error");
   assert.equal(sanitizeProfileField("product_price_range",{status:"value",value:"https://private.invalid"},TIMES[0]).status,"error");
   const value=sanitizeProfileField("top_video_data",{status:"value",value:{count:2,structureKeys:["video","cookie"],raw:"SECRET"}},TIMES[0]).value;
   assert.deepEqual(value,{count:2,structureKeys:["video"]});

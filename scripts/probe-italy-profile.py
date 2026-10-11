@@ -82,10 +82,11 @@ def normalize_target(target: dict) -> dict:
         raise ValueError("invalid_oec_id")
     handle = target.get("handle")
     if handle is not None:
+        from lib.creator_identity import valid_handle
         if not isinstance(handle, str):
             raise ValueError("invalid_handle")
         handle = handle.strip().lstrip("@").lower()
-        if not 1 <= len(handle) <= 100 or any(c not in "abcdefghijklmnopqrstuvwxyz0123456789._" for c in handle):
+        if not valid_handle(handle, maximum=100):
             raise ValueError("invalid_handle")
     if not oec and not handle:
         raise ValueError("target_identity_required")

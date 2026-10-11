@@ -28,7 +28,7 @@ function groups(value:unknown):SafeObject[]|null{
 }
 function fieldValue(name:string,value:unknown):ProfileFieldValue|undefined{
   if(COUNTS.has(name))return integer(value)??undefined;
-  if(name==="handle")return typeof value==="string"&&/^[a-z0-9._]{1,64}$/.test(value)?value:undefined;
+  if(name==="handle")return typeof value==="string"&&/^[\p{L}\p{N}._]{1,64}$/u.test(value)?value:undefined;
   if(name==="creator_oecuid")return typeof value==="string"&&/^[0-9]{1,64}$/.test(value)?value:undefined;
   if(name==="selection_region")return typeof value==="string"&&/^[A-Za-z]{2}$/.test(value)?value:undefined;
   if(name==="product_price_range")return text(value)??undefined;

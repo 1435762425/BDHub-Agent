@@ -485,7 +485,8 @@ class ProfileRefreshWorker:
         target = {"ref": job["id"], "externalId": job["creator_id"]}
         if route == "find":
             handle = job.get("requested_handle")
-            if not isinstance(handle, str) or not re.fullmatch(r"[a-z0-9._]{1,100}", handle):
+            from lib.creator_identity import valid_handle
+            if not valid_handle(handle, maximum=100):
                 raise ProfileRefreshError("current_handle_required", 409)
             target["handle"] = handle
         else:
