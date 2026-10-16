@@ -351,6 +351,6 @@ npm run dev   # 开发；生产使用 npm run start，不能同时占用 5198
 
 交付分别报告：合同测试、类型/构建、本机 API、只读真实数据、平台回执、业务结果。不把历史测试数、旧吞吐或存活进程当当前验收。结构改进与历史实测限制见[项目审计与清理](implementation/project-audit-20260924.md)。
 
-**登录自动恢复：** `ops/macos/launch_agents.py render --node <absolute-node> --output-dir <local-directory>` 生成本机 Web 与 scheduler-watch 两份 LaunchAgent（安装说明见 [macOS 启动恢复](implementation/macos-startup-recovery.md)）。Web 登录即启动，退出后由 launchd 恢复；watch 登录及每 60 秒只检查 scheduler，缺失时调用原启动入口。已有 scheduler、持久停止标记或缺少真实数据库时不启动，不修改业务授权；worker 仍由原 scheduler 按持久开关管理。生成配置保存当前代理环境，属于本机私有运行配置，不入 Git。
+**登录自动恢复：** `ops/macos/launch_agents.py render --node <absolute-node> --output-dir <local-directory>` 生成本机 Web 与 scheduler-watch 两份 LaunchAgent（安装说明见 [macOS 启动恢复](implementation/macos-startup-recovery.md)）。Web 登录即启动，退出后由 launchd 恢复；watch 登录及每 60 秒只检查 scheduler，缺失时调用原启动入口。已有 scheduler、持久停止标记或缺少真实数据库时不启动，不修改业务授权；worker 仍由原 scheduler 按持久开关管理。生成配置保存当前代理环境，属于本机私有运行配置，不入 Git。 macOS ProfileLease 使用硬件 UUID 的哈希识别本机，避免 DHCP 主机名变化把本机旧锁判成远程占用；同机锁早于系统本次开机时间时可回收，PID 复用不再阻止恢复。旧版不同主机名、格式错误或其他机器的锁仍保守保留，须核对进程与 profile 占用后人工归档恢复。
 
 **重启检查（只读）：** `scripts/ops-restart-check.py preflight|drained|postflight --release-id <id>` 只读各库、只写 `var/releases/<id>/restart-<phase>.json`。preflight 记录控制七表摘要、`(delivery, kind, request_ref)` 映射摘要（按基线 rowid）、在途（投递部件、服务回复、打开会话意图）与存活进程；drained 要求 scheduler 已停、无阶段 claim、在途为零（`--workers-stopped` 另要求无常驻进程）；postflight 比对控制摘要、基线 requestRef 映射未被替换且全表唯一、`quick_check`、无未提交运行代码、全部存活进程载入 HEAD 代码且角色与基线一致、四个会话 owner 在 120 秒内 ready。通过 0、失败 1、读不到 2；它不停止或启动任何进程，不清除 unknown/gap/requestRef。

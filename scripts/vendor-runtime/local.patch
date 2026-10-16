@@ -12,6 +12,88 @@
  
  
  @dataclass(frozen=True)
+--- a/bdhub/enrich/profile_lease.py
++++ b/bdhub/enrich/profile_lease.py
+@@ -4,13 +4,17 @@
+ import hashlib
+ import json
+ import os
++import plistlib
+ import re
+ import socket
++import subprocess
++import sys
+ import uuid
+ from contextlib import contextmanager
+ from ctypes import wintypes
+ from dataclasses import asdict, dataclass
+ from datetime import datetime, timedelta, timezone
++from functools import lru_cache
+ from pathlib import Path
+ from typing import Callable, Iterator
+ 
+@@ -35,6 +39,37 @@
+     "profile_name",
+     "profile_hash",
+ }
++
++
++@lru_cache(maxsize=1)
++def _local_host_identity() -> str:
++    """DHCP can change macOS gethostname(); use a stable, hashed machine identity."""
++    if sys.platform == "darwin":
++        try:
++            result = subprocess.run(
++                ["/usr/sbin/ioreg", "-rd1", "-c", "IOPlatformExpertDevice", "-a"],
++                capture_output=True, timeout=5, check=True,
++            )
++            machine = plistlib.loads(result.stdout)[0]["IOPlatformUUID"]
++            # Reject missing or malformed IDs instead of giving all machines one fallback ID.
++            machine = str(uuid.UUID(machine))
++            return "macos-" + hashlib.sha256(machine.encode()).hexdigest()[:32]
++        except (OSError, subprocess.SubprocessError, ValueError, KeyError, IndexError, TypeError):
++            pass
++    return socket.gethostname()
++
++
++@lru_cache(maxsize=1)
++def _boot_started_at() -> float | None:
++    if sys.platform == "darwin":
++        try:
++            result = subprocess.run(["/usr/sbin/sysctl", "-n", "kern.boottime"],
++                                    capture_output=True, text=True, timeout=5, check=True)
++            match = re.search(r"\bsec\s*=\s*(\d+)", result.stdout)
++            return float(match.group(1)) if match else None
++        except (OSError, subprocess.SubprocessError, ValueError):
++            pass
++    return None
+ 
+ 
+ @dataclass(frozen=True, slots=True)
+@@ -272,7 +307,7 @@
+             schema_version=_SCHEMA_VERSION,
+             token=uuid.uuid4().hex,
+             pid=os.getpid(),
+-            hostname=socket.gethostname(),
++            hostname=_local_host_identity(),
+             account=self.account,
+             market=self.market,
+             operation=self.operation,
+@@ -343,8 +378,13 @@
+             owner = self._decode_owner(payload)
+         except (KeyError, TypeError, ValueError):
+             return False
+-        if owner.hostname != socket.gethostname():
++        # Accept legacy leases only when their recorded hostname still matches this host.
++        # A different legacy hostname needs evidence-based operator recovery, never guessing.
++        if owner.hostname not in {_local_host_identity(), socket.gethostname()}:
+             return False
++        boot = _boot_started_at()
++        if boot is not None and datetime.fromisoformat(owner.started_at.replace("Z", "+00:00")).timestamp() < boot:
++            return True  # A pre-boot owner is gone even if its PID has since been reused.
+         try:
+             alive = self._pid_alive(owner.pid)
+         except Exception:
 --- a/bdhub/enrich/pure_http_runtime_manifest.json
 +++ b/bdhub/enrich/pure_http_runtime_manifest.json
 @@ -23,7 +23,7 @@

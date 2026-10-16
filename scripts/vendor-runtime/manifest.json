@@ -4,7 +4,7 @@
   "upstreamRevision": "72dc12a71e566702232a279aac23fd547addea12",
   "patch": {
     "file": "local.patch",
-    "sha256": "f9c959d086a37081150caf1eae0f0dd348d8988c0b4919f6bb9cde77725f4197"
+    "sha256": "2d6422360327b6a1427036fe8fc35b6e93760a211519de6ca3841c44fcd74142"
   },
   "files": [
     {
@@ -95,7 +95,7 @@
       "path": "bdhub/enrich/profile_lease.py",
       "source": "upstream",
       "upstreamSha256": "1832494048c99d22a37b81303c2774f3aaaebd3e72aa15e527dee030f69a2037",
-      "sha256": "1832494048c99d22a37b81303c2774f3aaaebd3e72aa15e527dee030f69a2037"
+      "sha256": "e0ebd4852f6fa3ab7de13cf17bdf35e370ba414f1f8f3c362088239b4dc972ec"
     },
     {
       "path": "bdhub/enrich/profile_transport.py",
@@ -1053,7 +1053,7 @@
     "bdhub/hub/im_markets.py": "19a34739bf72dd9fc3285c4d9064786626753353959142eda794543848903dad",
     "bdhub/hub/keys.py": "3e7253ac91276c6b2a809f5fdfb6f8c6f63923f588e2235494cfad157ba769bf",
     "bdhub/hub/market_catalog.py": "d23a7463588c57803cc85dfcebe1bdf3f03fd2d9a93e8b2318038ce550d8eb9a",
-    "bdhub/hub/markets.py": "aeb40452a5fe4ad1f2ee8d32d9b294465b7eff1ad116377bfcb26f83f6f4c6a6",
+    "bdhub/hub/markets.py": "0a564e57797d2a0ced4e70873cdc253b264acc56085447b51b060a055e82fb54",
     "bdhub/hub/migration_runner.py": "ec5d7d4fb06fc6e0ca7ec0e2081db719802a321913ee49ac783838e8ea177d2d",
     "bdhub/hub/migrations/__init__.py": "30c6db8cc45f9b2b9ca6088f93d3cea85579f4224bf5422ac5ba17b17dcd502f",
     "bdhub/hub/migrations/ai_operations_v1.py": "e479d88aabe35a6a7eaad44afbdb5d99f6a98b366e88c4789d339b962356cea9",
