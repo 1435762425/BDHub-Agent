@@ -343,12 +343,14 @@ npm run typecheck
 npm run dev   # 开发；生产使用 npm run start，不能同时占用 5198
 ```
 
-本工作目录就是生产：scheduler 按路径拉起子脚本，`io.bdhub.agent.web`（`launchctl submit`）在 `apps/web` 运行 `next start`。开发与验证在 `/Users/bjn00003/` 下的独立 git worktree（`BDHub-Agent-<主题>`）进行（`.venv`、`apps/web/node_modules` 可软链生产目录，提交前移除软链），备份目录为同级的 `BDHub-Agent-backups`，不在生产目录 build 或 dev，也不要同时起第二个 5198。`tsc` 会读取 `.next/types`，删改路由后先 build 再 typecheck。部署前核对 PID/cwd/worker 依赖，替换后回读 API；源码变更不自动重启持久 worker 或改授权。状态查询使用 CLI status/check，不用 run-agent-replies 等执行入口探测状态。手动作业优先页面/job-run，不绕过同名作业锁另开底层 CLI。
+本工作目录就是生产：scheduler 按路径拉起子脚本，`io.bdhub.agent.web`（用户 LaunchAgent）在 `apps/web` 运行 `next start`。开发与验证在 `/Users/bjn00003/` 下的独立 git worktree（`BDHub-Agent-<主题>`）进行（`.venv`、`apps/web/node_modules` 可软链生产目录，提交前移除软链），备份目录为同级的 `BDHub-Agent-backups`，不在生产目录 build 或 dev，也不要同时起第二个 5198。`tsc` 会读取 `.next/types`，删改路由后先 build 再 typecheck。部署前核对 PID/cwd/worker 依赖，替换后回读 API；源码变更不自动重启持久 worker 或改授权。状态查询使用 CLI status/check，不用 run-agent-replies 等执行入口探测状态。手动作业优先页面/job-run，不绕过同名作业锁另开底层 CLI。
 
 历史补扫：`inbox-history.py --market <market> --cid <cid> --oec <oec>` 默认只读本地状态，显式 `--read --max-pages 5 --page-size 20` 才做平台只读与历史写入；单会话锁和暂停文件约束执行，断点未完可重跑同一命令。
 
 迁移/回填前先 `state-backup.py create --label <label>` 并 verify（单库变更可只做该库 online backup，保存 hash/quick_check 回执）；apply 仅按明确范围升级既有库。`migrate-lead-receipts.py` 缺 schema 拒绝运行，不在 worker 启动时隐式升级；backfill-current-bindings/leads 的 check 只读，apply 只本地投影，无平台调用。只读检查直接 SQLite 时使用 mode=ro。
 
 交付分别报告：合同测试、类型/构建、本机 API、只读真实数据、平台回执、业务结果。不把历史测试数、旧吞吐或存活进程当当前验收。结构改进与历史实测限制见[项目审计与清理](implementation/project-audit-20260924.md)。
+
+**登录自动恢复：** `ops/macos/launch_agents.py render --node <absolute-node> --output-dir <local-directory>` 生成本机 Web 与 scheduler-watch 两份 LaunchAgent（安装说明见 [macOS 启动恢复](implementation/macos-startup-recovery.md)）。Web 登录即启动，退出后由 launchd 恢复；watch 登录及每 60 秒只检查 scheduler，缺失时调用原启动入口。已有 scheduler、持久停止标记或缺少真实数据库时不启动，不修改业务授权；worker 仍由原 scheduler 按持久开关管理。生成配置保存当前代理环境，属于本机私有运行配置，不入 Git。
 
 **重启检查（只读）：** `scripts/ops-restart-check.py preflight|drained|postflight --release-id <id>` 只读各库、只写 `var/releases/<id>/restart-<phase>.json`。preflight 记录控制七表摘要、`(delivery, kind, request_ref)` 映射摘要（按基线 rowid）、在途（投递部件、服务回复、打开会话意图）与存活进程；drained 要求 scheduler 已停、无阶段 claim、在途为零（`--workers-stopped` 另要求无常驻进程）；postflight 比对控制摘要、基线 requestRef 映射未被替换且全表唯一、`quick_check`、无未提交运行代码、全部存活进程载入 HEAD 代码且角色与基线一致、四个会话 owner 在 120 秒内 ready。通过 0、失败 1、读不到 2；它不停止或启动任何进程，不清除 unknown/gap/requestRef。
