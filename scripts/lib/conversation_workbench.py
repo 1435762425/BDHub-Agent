@@ -97,11 +97,17 @@ def unread_backlog(store,market='it'):
   if inbound_at and (oldest is None or inbound_at<oldest):oldest=inbound_at
  return {'unread':count,'oldestAt':oldest}
 
-def _handles(root,market='it'):
+def _handles(root,market='it',creator_ids=None):
  path=Path(root)/'var/creator-identities.sqlite'
  if not path.exists():return {}
  with closing(sqlite3.connect(path.resolve().as_uri()+'?mode=ro',uri=True)) as db:
-  return {r[0]:r[1] for r in db.execute("SELECT creator_id,current_handle FROM creator_identity WHERE market=? AND handle_conflict=0",(market,))}
+  if creator_ids is None:
+   return {r[0]:r[1] for r in db.execute("SELECT creator_id,current_handle FROM creator_identity WHERE market=? AND handle_conflict=0",(market,))}
+  ids=sorted(set(creator_ids));result={}
+  for offset in range(0,len(ids),400):
+   chunk=ids[offset:offset+400];marks=','.join('?' for _ in chunk)
+   result.update(db.execute(f"SELECT creator_id,current_handle FROM creator_identity WHERE market=? AND handle_conflict=0 AND creator_id IN ({marks})",(market,*chunk)))
+  return result
 
 def _metric_value(fields,name):
  row=fields.get(name) if isinstance(fields,dict) else None
@@ -233,7 +239,7 @@ def list_conversations(root,store,view='human',query='',limit=30,offset=0,market
  finally:store.db.set_trace_callback(None)
 
 def _list(root,store,view,query,limit,offset,market,cursor,started,statements):
- handles=_handles(root,market);db=store.db;plan=db.execute("SELECT id FROM plan WHERE market=? AND institution='bjn-local-research'",(market,)).fetchone()
+ handles=_handles(root,market) if query else {};db=store.db;plan=db.execute("SELECT id FROM plan WHERE market=? AND institution='bjn-local-research'",(market,)).fetchone()
  if not plan:raise CycleError('plan_missing')
  plan=plan[0]
  setting=agent_setting(store,plan);clock=datetime.fromtimestamp(store.clock(),ZoneInfo('Asia/Shanghai')).strftime('%H:%M')
@@ -316,6 +322,11 @@ def _list(root,store,view,query,limit,offset,market,cursor,started,statements):
  counts={key:sum(r['state']==key for r in rows) for key in LIST_ORDER};counts['all']=len(rows)
  if cursor is not None:offset=sum(1 for r in filtered if _list_key(r)<=cursor)
  page=filtered[offset:offset+limit];more=offset+limit<len(filtered)
+ # Handles affect text search, but never classification, counts or order. For ordinary
+ # pages and dashboard counts, fetch only displayed creators instead of scanning profiles.
+ if not query:
+  handles=_handles(root,market,[row['creatorId'] for row in page])
+  for row in page:row['handle']=handles.get(row['creatorId'])
  stats={'relationsScanned':scanned,'candidates':len(candidates),'rows':len(rows),'sqlStatements':statements[0],
   'elapsedMs':round((time.perf_counter()-started)*1000,1)}
  return {'available':True,'view':view,'query':query,'counts':counts,'total':len(filtered),'offset':offset,'limit':limit,

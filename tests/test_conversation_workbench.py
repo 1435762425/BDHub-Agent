@@ -37,6 +37,21 @@ class ConversationWorkbenchTests(unittest.TestCase):
  def test_default_human_queue_explains_reason(self):
   result=list_conversations(self.root,self.store,'human')
   self.assertEqual(result['total'],1);self.assertEqual(result['items'][0]['humanReasonLabel'],'链接打不开')
+ def test_paged_handles_keep_search_counts_and_market_isolation(self):
+  with closing(sqlite3.connect(self.root/'var/creator-identities.sqlite')) as db,db:
+   db.execute("INSERT INTO creator_identity VALUES('creator-1','123','br','other-market',0)")
+   db.execute("INSERT INTO creator_identity VALUES('unused','456','it','not-a-conversation',0)")
+  page=list_conversations(self.root,self.store,'human',limit=1)
+  searched=list_conversations(self.root,self.store,'human',query='alice',limit=1)
+  self.assertEqual(page['items'],searched['items'])
+  self.assertEqual(page['counts'],searched['counts'])
+  self.assertEqual(page['items'][0]['handle'],'alice')
+  self.assertEqual(list_conversations(self.root,self.store,'human',query='other-market')['total'],0)
+  self.assertEqual(list_conversations(self.root,self.store,'human',query='not-a-conversation')['total'],0)
+  with closing(sqlite3.connect(self.root/'var/creator-identities.sqlite')) as db,db:
+   db.execute("UPDATE creator_identity SET handle_conflict=1 WHERE market='it'")
+  self.assertIsNone(list_conversations(self.root,self.store,'human')['items'][0]['handle'])
+  self.assertEqual(list_conversations(self.root,self.store,'human',query='alice')['total'],0)
  def test_manual_unknown_is_visible_and_only_original_intent_is_reconciled(self):
   replies=AutoReplies(self.store)
   request_id='manual-audit-unknown-001'
