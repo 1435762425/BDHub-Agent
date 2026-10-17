@@ -12,7 +12,7 @@ Web 和 scheduler 使用当前用户的 LaunchAgents。配置仅服务本项目�
   --output-dir var/launchagents
 ```
 
-生成器将当前代理环境写入配置，保证登录启动使用与手工启动相同的网络出口。换代理端口、项目位置或 Node 路径时重新生成；配置不包含其他 shell 环境或业务凭据。
+生成器将当前代理环境写入配置，保证登录启动使用与手工启动相同的网络出口。 LaunchAgents 的 PATH 优先使用本项目 `private-data/tools/bin`，本机移除 Apple 开发工具后可由经校验的项目私有 Git 支持版本核验；私有二进制、包装入口与安装回执不进入 Git。换代理端口、项目位置或 Node 路径时重新生成；配置不包含其他 shell 环境或业务凭据。
 
 将两份 plist 以 0600 权限安装到 `~/Library/LaunchAgents/`，用 `plutil -lint` 验证，再用 `launchctl bootstrap gui/$(id -u) <plist>` 加载。同名 Web 若已由临时 `launchctl submit` 加载，需要先 `launchctl bootout gui/$(id -u)/io.bdhub.agent.web`，会有短暂网页中断；不要同时启动第二个 5198 实例。安装 scheduler-watch 不停止已有 scheduler 或 worker。
 

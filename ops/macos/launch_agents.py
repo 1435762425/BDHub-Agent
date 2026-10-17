@@ -39,7 +39,7 @@ def ensure_scheduler(root, state=None, start=None):
 
 def jobs(root, node, environment):
     root = Path(root).resolve()
-    env = {'PATH': '/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin',
+    env = {'PATH': str(root / 'private-data/tools/bin') + ':/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin',
            'PYTHONDONTWRITEBYTECODE': '1', 'NEXT_TELEMETRY_DISABLED': '1'}
     # launchd does not inherit the interactive shell's network route. Render locally only;
     # generated plists are machine configuration and must not be committed.
