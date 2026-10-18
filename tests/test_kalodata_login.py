@@ -5,7 +5,7 @@ from unittest.mock import Mock,patch
 from contextlib import nullcontext
 
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'scripts'))
-from lib.kalodata_login import initialize_session,export_proxy_fallback
+from lib.kalodata_login import initialize_session,export_proxy_fallback,verified_probe
 from lib.kalodata_login import run_login
 import tempfile,json
 
@@ -26,11 +26,14 @@ class ExtensionIdentityTests(unittest.TestCase):
         self.assertLess(names.index('activate_and_login_extension'),names.index('export_extension_runtime'))
         self.assertLess(names.index('export_extension_runtime'),names.index('export_current_cookie'))
 
-    def test_failed_proxy_export_never_reports_identity_export_complete(self):
+    def test_optional_proxy_does_not_override_the_real_provider_verdict(self):
         launcher=self.launcher();launcher.export_extension_runtime.return_value=False
-        with self.assertRaisesRegex(ValueError,'kalodata_proxy_export_failed'):
-            initialize_session(launcher,Mock(),'refresh',wait_seconds=0)
-        launcher.export_current_cookie.assert_not_called()
+        self.assertEqual(initialize_session(launcher,Mock(),'refresh',wait_seconds=0),'extension')
+        launcher.export_current_cookie.assert_called_once()
+        for result in ({'success':True,'hasUpdate':True},{'verdict':'auth_required','identityOk':False},
+                       {'verdict':'ready','identityOk':None}):self.assertFalse(verified_probe(result))
+        for verdict in ('ready','quota_exhausted'):
+            self.assertTrue(verified_probe({'verdict':verdict,'identityOk':True}))
 
     def test_refresh_uses_saved_card_and_only_activates_when_missing(self):
         launcher=self.launcher();context=Mock()
@@ -54,7 +57,7 @@ class ExtensionIdentityTests(unittest.TestCase):
         launcher.launch_context.return_value=context
         with tempfile.TemporaryDirectory() as directory, \
              patch('lib.kalodata_identity.export_helpers',return_value=launcher), \
-             patch('lib.kalodata_login.initialize_session',side_effect=ValueError('kalodata_proxy_export_failed')), \
+             patch('lib.kalodata_login.initialize_session',side_effect=ValueError('kalodata_extension_missing')), \
              patch('lib.kalodata_login.signal.signal'),patch('builtins.print'):
             self.assertEqual(run_login(Path(directory),'activate'),1)
         launcher.export_current_cookie.assert_not_called()

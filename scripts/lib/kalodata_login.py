@@ -46,7 +46,7 @@ def export_proxy_fallback(launcher,context,extension_id):
     return False
 
 
-def initialize_session(launcher,context,mode,code='',*,wait_seconds=30):
+def initialize_session(launcher,context,mode,code='',*,wait_seconds=0):
     extension_id=launcher.wait_for_extension_id(context)
     if not extension_id:raise ValueError('kalodata_extension_missing')
     if mode=='activate':
@@ -62,10 +62,14 @@ def initialize_session(launcher,context,mode,code='',*,wait_seconds=30):
     if not launcher.export_extension_runtime(context,extension_id):
         deadline=time.monotonic()+wait_seconds
         while not export_proxy_fallback(launcher,context,extension_id):
-            if time.monotonic()>=deadline:raise ValueError('kalodata_proxy_export_failed')
+            if time.monotonic()>=deadline:break  # The supplier protocol permits direct sessions.
             time.sleep(.5)
     launcher.export_current_cookie(context)
     return extension_id
+
+
+def verified_probe(result):
+    return isinstance(result,dict) and result.get('identityOk') is True and result.get('verdict') in ('ready','quota_exhausted')
 
 
 def checkpoint(root,state,**details):
@@ -77,7 +81,7 @@ def checkpoint(root,state,**details):
 
 
 def run_login(root,mode):
-    from lib.kalodata_identity import export_helpers,load
+    from lib.kalodata_identity import export_helpers,load,probe,cookie_state
     launcher=export_helpers();code=os.environ.get('KALODATA_ACTIVATION_CODE') or load(root)['activationCode']
     state={'mode':mode,'startedAt':time.time(),'log':str(Path(root)/'var/kalodata-login.log')}
     stopped=[False]
@@ -89,26 +93,11 @@ def run_login(root,mode):
             context=launcher.launch_context(playwright)
             identity_ready=False
             try:
-                try:
-                    initialize_session(launcher,context,mode,code)
-                except ValueError as error:
-                    if str(error)!='kalodata_proxy_export_failed':raise
-                    extension_id=launcher.wait_for_extension_id(context)
-                    popup=context.new_page()
-                    popup.goto(f'chrome-extension://{extension_id}/popup.html',wait_until='domcontentloaded')
-                    print('扩展尚未提供有效代理；更新提示不算登录成功。请在专用窗口检查扩展登录。',flush=True)
-                    while not stopped[0] and context.pages:
-                        update=False
-                        try:update=popup.locator('#update-modal').is_visible()
-                        except Exception:pass
-                        checkpoint(root,state,stage='waiting_extension_login',error='kalodata_proxy_export_failed',updatePrompt=update)
-                        if export_proxy_fallback(launcher,context,extension_id):
-                            launcher.export_current_cookie(context);break
-                        time.sleep(1)
-                    else:return 1
-                identity_ready=True
-                checkpoint(root,state,stage='identity_exported')
-                print('扩展新身份及匹配代理已同步；不会重新注入旧 Cookie。',flush=True)
+                initialize_session(launcher,context,mode,code)
+                result=probe(root)
+                identity_ready=verified_probe(result)
+                cookie_at=cookie_state()['updatedAt'];last_probe=time.monotonic()
+                print(json.dumps({'stage':'production_probe','verdict':result['verdict'],'identityOk':result['identityOk']},ensure_ascii=False),flush=True)
                 page=context.pages[0] if context.pages else context.new_page()
                 try:page.goto(launcher.TARGET_URL,wait_until='domcontentloaded',timeout=60000)
                 except Exception:pass  # Keep the normal browser available for user verification.
@@ -118,9 +107,13 @@ def run_login(root,mode):
                     if active:
                         try:challenge=active.title().strip().casefold() in ('just a moment...','请稍候…','请稍候...')
                         except Exception:pass
-                    checkpoint(root,state,stage='waiting_browser_verification' if challenge else 'browser_open',
-                               verificationRequired=challenge)
                     launcher.export_current_cookie(context)
+                    changed=cookie_state()['updatedAt']!=cookie_at
+                    if not identity_ready and changed and time.monotonic()-last_probe>=15:
+                        result=probe(root);identity_ready=verified_probe(result)
+                        cookie_at=cookie_state()['updatedAt'];last_probe=time.monotonic()
+                    checkpoint(root,state,stage='identity_verified' if identity_ready else 'waiting_browser_verification' if challenge else 'waiting_login',
+                               verificationRequired=challenge,identityOk=identity_ready,probeVerdict=result['verdict'])
                     for _ in range(6):
                         if stopped[0]:break
                         time.sleep(.5)
@@ -130,7 +123,7 @@ def run_login(root,mode):
                 except Exception:pass
                 context.close()
         checkpoint(root,state,stage='closed')
-        return 0
+        return 0 if identity_ready else 1
     except Exception as error:
         code=str(error) if isinstance(error,ValueError) and str(error).startswith('kalodata_') else type(error).__name__
         checkpoint(root,state,stage='failed',error=code)
