@@ -179,6 +179,40 @@ class AccountIdentityTests(unittest.TestCase):
         self.assertIn(("relogin", "acc6"), adapter.calls)
         self.assertNotIn(("refresh", "acc6"), adapter.calls)
 
+    def test_failed_validation_keeps_only_safe_response_shape_in_its_checkpoint(self):
+        (self.root / "config/market-accounts.json").write_text(json.dumps(config("project_owned")))
+        request_maintenance(self.store, self.root, market="it", account="acc6", operation="relogin",
+                            request_id="maintenance-invalid-campaign-shape", scheduled_at=NOW)
+        claimed = claim_next(self.store, now=NOW)
+        class FailedAdapter(Adapter):
+            def relogin(self, account):
+                return {"ok": False, "errorCode": "account_validation_failed:campaign_read_invalid",
+                        "validationDiagnostic": {"endpoint": "campaign/list", "dataType": "dict",
+                        "campaignPresent": False, "campaignType": "NoneType", "token": "SECRET",
+                        "countFields": {"total_num": {"type": "int", "value": 0, "cookie": "SECRET"},
+                                        "total": {"type": "str", "value": "SECRET"},
+                                        "cookie": {"type": "str", "value": "SECRET"}}}}
+        result = execute_claimed(self.store, self.root, claimed["intentId"], FailedAdapter())
+        self.assertEqual(result["state"], "failed_known")
+        diagnostic = result["checkpoint"]["validationDiagnostic"]
+        self.assertEqual(diagnostic, {"endpoint": "campaign/list", "dataType": "dict",
+            "campaignPresent": False, "campaignType": "NoneType",
+            "countFields": {"total_num": {"type": "int", "value": 0}, "total": {"type": "str", "value": None}}})
+        self.assertNotIn("SECRET", json.dumps(result))
+        self.assertIsNone(current_generation(self.store, "it", "acc6"))
+
+    def test_unknown_validation_diagnostics_are_filtered(self):
+        from lib.account_identity import _safe_validation_diagnostic
+        self.assertIsNone(_safe_validation_diagnostic({"endpoint": "secret", "token": "SECRET"}))
+        self.assertEqual(_safe_validation_diagnostic({"endpoint": "campaign/list",
+            "countFields": {"total": {"type": ["SECRET"], "value": "SECRET"}}}),
+            {"endpoint": "campaign/list", "countFields": {}})
+        self.assertEqual(_safe_validation_diagnostic({"endpoint": "campaign/list", "dataType": "SECRET",
+            "campaignPresent": "SECRET", "countFields": {"total": {"type": "str", "value": "SECRET"},
+            "total_num": {"type": "int", "value": True}, "token": "SECRET"}}),
+            {"endpoint": "campaign/list", "countFields": {"total": {"type": "str", "value": None},
+                                                         "total_num": {"type": "int", "value": None}}})
+
     def test_same_institution_relogin_keeps_verified_write_canary(self):
         previous={"institutionFingerprint":"i"*64,"capabilities":{
             "product_select":{"state":"verified","evidenceRef":"canary-proof"}}}

@@ -465,6 +465,29 @@ def _intent_checkpoint(store, intent_id, stage, **details):
         )
 
 
+def _safe_validation_diagnostic(value):
+    """Keep only the Campaign response shape, never arbitrary adapter/remote details."""
+    if not isinstance(value, dict) or value.get("endpoint") != "campaign/list":
+        return None
+    types = {"dict", "list", "NoneType", "str", "bool", "int", "float"}
+    safe = {"endpoint": "campaign/list"}
+    for key in ("dataType", "campaignType"):
+        if isinstance(value.get(key), str) and value[key] in types:
+            safe[key] = value[key]
+    if type(value.get("campaignPresent")) is bool:
+        safe["campaignPresent"] = value["campaignPresent"]
+    fields = value.get("countFields")
+    if isinstance(fields, dict):
+        safe["countFields"] = {}
+        for key in ("total", "total_num"):
+            item = fields.get(key)
+            if not isinstance(item, dict) or not isinstance(item.get("type"), str) or item["type"] not in types:
+                continue
+            safe["countFields"][key] = {"type": item["type"],
+                "value": item.get("value") if item["type"] == "int" and type(item.get("value")) is int else None}
+    return safe
+
+
 def execute_claimed(store, root, intent_id, adapter=None):
     """Execute one claimed intent against project-owned identity storage.
 
@@ -531,11 +554,15 @@ def execute_claimed(store, root, intent_id, adapter=None):
         state = "needs_human" if code in {
             "account_login_timeout", "account_manual_verification_required", "saved_credentials_missing",
         } else "failed_known"
+        checkpoint = {"stage": state, "errorCode": code}
+        diagnostic = _safe_validation_diagnostic(result.get("validationDiagnostic")) if isinstance(result, dict) else None
+        if diagnostic is not None:
+            checkpoint["validationDiagnostic"] = diagnostic
         with store.tx():
             store.db.execute(
                 "UPDATE account_maintenance_intent SET state=?,finished_at=?,error_code=?,checkpoint_json=? "
                 "WHERE intent_id=?", (state, store.clock(), code,
-                encoded({"stage": state, "errorCode": code}), intent_id),
+                encoded(checkpoint), intent_id),
             )
     finally:
         if hasattr(adapter,'release_drain'):

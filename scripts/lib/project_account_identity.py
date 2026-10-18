@@ -162,6 +162,37 @@ def _autofill(page, context, username, password, timeout_seconds=45):
     return False
 
 
+class CampaignReadInvalid(ValueError):
+    def __init__(self, data):
+        super().__init__("campaign_read_invalid")
+        # Return only a small shape summary. Campaign payloads can contain merchant details;
+        # credentials, tokens and arbitrary values never belong in maintenance diagnostics.
+        self.diagnostic = {"endpoint": "campaign/list", "dataType": type(data).__name__}
+        if isinstance(data, dict):
+            self.diagnostic.update(
+                campaignPresent="campaign" in data,
+                campaignType=type(data.get("campaign")).__name__,
+                countFields={key: {"type": type(data[key]).__name__,
+                                   "value": data[key] if type(data[key]) is int else None}
+                             for key in ("total", "total_num") if key in data},
+            )
+
+
+def _validated_campaign_rows(data):
+    if not isinstance(data, dict):
+        raise CampaignReadInvalid(data)
+    rows = data.get("campaign")
+    if isinstance(rows, list):
+        return rows
+    # Empty Campaign lists omit the repeated field in the platform's JSON encoding.
+    # Only an explicit integer zero proves emptiness; bool, missing counts and other
+    # malformed values must still fail validation. require_read has already checked code 0.
+    counts = [data[key] for key in ("total", "total_num") if key in data]
+    if rows is None and counts and all(type(value) is int and value == 0 for value in counts):
+        return []
+    raise CampaignReadInvalid(data)
+
+
 def _validate_candidate(cfg, account, market, role, candidate_id, *, full_managed):
     from bdhub.hub.markets import identity_for
     from bdhub.research.commerce_transport import CommerceTransport
@@ -229,9 +260,7 @@ def _validate_candidate(cfg, account, market, role, candidate_id, *, full_manage
             campaign_result = reader._xhr(method="GET", path=CAMPAIGNS, params=query,
                                           payload=None, write=False)
             campaign_data = data_of(reader.require_read(campaign_result))
-            campaign_rows = campaign_data.get("campaign")
-            if not isinstance(campaign_rows, list):
-                raise ValueError("campaign_read_invalid")
+            _validated_campaign_rows(campaign_data)
             capabilities["campaign"] = {"state": "verified", "evidenceRef": evidence}
             if full_managed:
                 reader.selected_page(1)
@@ -360,6 +389,7 @@ class ProjectAccountIdentityAdapter:
             autofill_submitted = False
             last_navigation = 0.0
             validation_error = None
+            validation_diagnostic = None
             while time.monotonic() < deadline:
                 active_page = context.pages[-1] if context.pages else page
                 if headed and not autofill_submitted:
@@ -396,6 +426,8 @@ class ProjectAccountIdentityAdapter:
                     )
                 except Exception as error:
                     validation_error = _error_code(error)
+                    validation_diagnostic = (error.diagnostic if isinstance(error, CampaignReadInvalid)
+                                             else None)
                     if validation_error.startswith("market_capability_unavailable"):
                         # A market capability gate does not change while the browser waits.
                         break
@@ -414,7 +446,8 @@ class ProjectAccountIdentityAdapter:
                 # A captured login whose read-only validation kept failing reports why, not a timeout.
                 code = ("account_validation_failed:" + validation_error if validation_error else
                         "account_login_timeout" if headed else "account_refresh_failed")
-                return {"ok": False, "errorCode": code, "candidateDir": str(generation)}
+                return {"ok": False, "errorCode": code, "candidateDir": str(generation),
+                        "validationDiagnostic": validation_diagnostic}
             return result
         except Exception:
             return {"ok": False, "errorCode": "account_browser_login_failed",

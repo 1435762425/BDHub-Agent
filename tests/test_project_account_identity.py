@@ -59,6 +59,59 @@ class PrepareProfileTests(unittest.TestCase):
                                   "Default/Service Worker/Database/LOG", ".bdhub.lease.guard"})
 
 
+class CampaignValidationTests(unittest.TestCase):
+    def test_explicit_integer_zero_proves_an_omitted_or_null_list_is_empty(self):
+        for data in ({"total": 0}, {"total_num": 0, "campaign": None},
+                     {"total": 0, "total_num": 0}, {"total_num": 0, "campaign": []}):
+            with self.subTest(data=data):
+                self.assertEqual(identity._validated_campaign_rows(data), [])
+        rows = [{"campaign_id": "123"}]
+        self.assertIs(identity._validated_campaign_rows({"campaign": rows}), rows)
+
+    def test_unknown_counts_and_malformed_lists_are_not_empty_success(self):
+        for data in (None, [], {}, {"total": False}, {"total": "0"}, {"total": 0.0},
+                     {"total": -1}, {"total_num": 1}, {"total": None},
+                     {"total": 0, "total_num": 1}, {"total": 0, "total_num": False},
+                     {"total": 0, "campaign": {}}, {"total": 0, "campaign": ""}):
+            with self.subTest(data=data), self.assertRaisesRegex(ValueError, "campaign_read_invalid"):
+                identity._validated_campaign_rows(data)
+
+    def test_failure_diagnostic_contains_only_whitelisted_structure(self):
+        try:
+            identity._validated_campaign_rows({"total": "secret", "campaign": {"token": "secret"},
+                                               "cookie": "secret"})
+        except identity.CampaignReadInvalid as error:
+            diagnostic = error.diagnostic
+        self.assertEqual(diagnostic, {"endpoint": "campaign/list", "dataType": "dict",
+                                     "campaignPresent": True, "campaignType": "dict",
+                                     "countFields": {"total": {"type": "str", "value": None}}})
+        self.assertNotIn("secret", json.dumps(diagnostic))
+
+    def test_nonzero_remote_code_never_reaches_empty_campaign_compatibility(self):
+        from types import SimpleNamespace
+        from lib.legacy_runtime import configure_vendored_bdhub
+        configure_vendored_bdhub(root=ROOT)
+        from bdhub.hub import markets
+        from bdhub.research import commerce_transport
+        from bdhub.send.taplink.transport import TapLinkTransport
+        # The real read boundary rejects the remote result before the empty-list parser runs.
+        class Reader:
+            require_read = staticmethod(TapLinkTransport.require_read)
+            def __init__(self, *args, **kwargs):
+                self.session = SimpleNamespace(trust_env=False, close=lambda: None)
+            def _xhr(self, **kwargs):
+                return SimpleNamespace(http_status=200, code=16201010, ambiguous=False,
+                                       has_turing=False, system_error_3=False,
+                                       payload={"code": 16201010, "data": {"total": 0}})
+        wire = SimpleNamespace(require_product_search=lambda: wire, aid=1, partner_id="2")
+        with mock.patch.object(commerce_transport, "CommerceTransport", Reader), \
+             mock.patch.object(markets, "identity_for", return_value=wire), \
+             mock.patch.object(identity, "_validated_campaign_rows") as parse:
+            with self.assertRaisesRegex(ValueError, "taplink_remote_read_failed"):
+                identity._validate_candidate({}, object(), "br", "supply", "candidate", full_managed=False)
+            parse.assert_not_called()
+
+
 class ValidationErrorCodeTests(unittest.TestCase):
     def test_capability_gate_code_is_kept_and_other_errors_reduce_to_their_type(self):
         from lib.project_account_identity import _error_code

@@ -4,9 +4,49 @@ import os
 from pathlib import Path
 import signal
 import time
+from urllib.parse import quote,urlsplit
 
 
-def initialize_session(launcher,context,mode,code=''):
+def proxy_url(value):
+    if isinstance(value,dict):
+        host=str(value.get('host') or '').strip();port=str(value.get('port') or '').strip()
+        if not host or not port.isdigit() or not 0<int(port)<65536:return None
+        username=str(value.get('username') or '');password=str(value.get('password') or '')
+        auth=f'{quote(username,safe="")}:{quote(password,safe="")}@' if username or password else ''
+        return f'http://{auth}{host}:{port}'
+    if not isinstance(value,str):return None
+    value=value.strip()
+    if '|' in value:
+        parts=value.split('|')
+        return proxy_url(dict(zip(('host','port','username','password'),parts))) if len(parts)==4 else None
+    try:
+        parsed=urlsplit(value)
+        if parsed.scheme in ('http','https','socks5') and parsed.hostname and parsed.port:return value
+    except ValueError:pass
+    return None
+
+
+def export_proxy_fallback(launcher,context,extension_id):
+    """An empty currentProxy object must not hide the extension's saved proxy."""
+    try:
+        workers=list(context.service_workers)
+    except TypeError:return False
+    for worker in workers:
+        if not worker.url.startswith(f'chrome-extension://{extension_id}/'):continue
+        values=worker.evaluate("async () => ({runtime:typeof state!=='undefined'?state.currentProxy:null, saved:await chrome.storage.local.get(['proxy'])})")
+        if not isinstance(values,dict):continue
+        saved=values.get('saved') or {}
+        url=proxy_url(values.get('runtime')) or proxy_url(saved.get('proxy') if isinstance(saved,dict) else None)
+        if not url:continue
+        target=Path(launcher.EXTENSION_RUNTIME_PATH)
+        temporary=target.with_name(target.name+f'.{os.getpid()}.tmp')
+        temporary.write_text(json.dumps({'proxy_url':url,'updated_at':time.time(),'source':'kalodata_extension'},indent=2)+'\n')
+        temporary.chmod(0o600);temporary.replace(target);target.chmod(0o600)
+        return True
+    return False
+
+
+def initialize_session(launcher,context,mode,code='',*,wait_seconds=30):
     extension_id=launcher.wait_for_extension_id(context)
     if not extension_id:raise ValueError('kalodata_extension_missing')
     if mode=='activate':
@@ -20,7 +60,10 @@ def initialize_session(launcher,context,mode,code=''):
     # The extension issued cookies and the matching egress together. Importing an old
     # latest_cookie.txt here would undo that login and mix identities from different routes.
     if not launcher.export_extension_runtime(context,extension_id):
-        raise ValueError('kalodata_proxy_export_failed')
+        deadline=time.monotonic()+wait_seconds
+        while not export_proxy_fallback(launcher,context,extension_id):
+            if time.monotonic()>=deadline:raise ValueError('kalodata_proxy_export_failed')
+            time.sleep(.5)
     launcher.export_current_cookie(context)
     return extension_id
 
