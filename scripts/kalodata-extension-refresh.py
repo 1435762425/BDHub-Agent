@@ -15,34 +15,12 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(ROOT / 'scripts'))
-from lib.kalodata_identity import export_helpers  # noqa: E402
+import os
+from lib.kalodata_login import run_login  # noqa: E402
 
 
 def main():
-    launcher = export_helpers()
-    with launcher.sync_playwright() as playwright:
-        context = launcher.launch_context(playwright)
-        try:
-            extension_id = launcher.wait_for_extension_id(context)
-            if not extension_id:
-                print('未检测到 Kalodata 扩展，无法刷新。')
-                return 1
-            if not launcher.refresh_extension_login(context, extension_id):
-                print('扩展里没有已保存的卡号，需要先用激活码获取身份。')
-                return 1
-            launcher.export_extension_runtime(context, extension_id)
-            launcher.export_current_cookie(context)
-            print('身份已刷新，Cookie 与代理已更新。可以关闭这个 Chrome 窗口。')
-            # Keep the context alive until the operator closes the window, exactly like the launcher.
-            while context.pages:
-                context.pages[0].wait_for_timeout(3000)
-                launcher.export_current_cookie(context)
-        finally:
-            try:
-                context.close()
-            except Exception:
-                pass
-    return 0
+    return run_login(ROOT,os.environ.get('KALODATA_LOGIN_MODE','refresh'))
 
 
 if __name__ == '__main__':

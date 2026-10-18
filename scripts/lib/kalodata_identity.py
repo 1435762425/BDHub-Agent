@@ -267,14 +267,8 @@ def login_state(root=None):
         return None
     if not isinstance(state, dict):
         return None
-    pid = state.get('pid')
-    alive = False
-    if isinstance(pid, int) and pid > 0:
-        try:
-            os.kill(pid, 0)
-            alive = True
-        except OSError:
-            alive = False
+    from lib.process_liveness import record_alive
+    alive = record_alive(state)
     return state | {'running': alive}
 
 
@@ -306,12 +300,9 @@ def start_login(root, mode, *, code='', clock=time.time):
         raise ValueError('kalodata_login_already_running')
     log_path = root / 'var/kalodata-login.log'
     log_path.parent.mkdir(parents=True, exist_ok=True)
-    if mode == 'activate':
-        runner = [str(python_bin()), str(launcher_script())]
-        environment = {**os.environ, 'PYTHONDONTWRITEBYTECODE': '1', 'KALODATA_ACTIVATION_CODE': code}
-    else:
-        runner = [str(python_bin()), str(root / 'scripts/kalodata-extension-refresh.py')]
-        environment = {**os.environ, 'PYTHONDONTWRITEBYTECODE': '1'}
+    runner = [str(python_bin()), str(root / 'scripts/kalodata-extension-refresh.py')]
+    environment = {**os.environ, 'PYTHONDONTWRITEBYTECODE': '1','PYTHONUNBUFFERED':'1',
+                   'KALODATA_LOGIN_MODE':mode,'KALODATA_ACTIVATION_CODE':code}
     with log_path.open('a', encoding='utf-8') as log:
         log.write(f"\n=== {mode} 开始 {time.strftime('%Y-%m-%d %H:%M:%S')} ===\n")
         log.flush()
