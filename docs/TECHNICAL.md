@@ -80,6 +80,8 @@ Campaign 核验最多首次加 3 次补查，同市场整批共享 300 秒墙钟
 
 ### 2.4 线索与身份
 
+Kalodata 激活与刷新共用本项目登录适配：只保存扩展新发的 Cookie 与匹配代理，不在激活后注入旧 Cookie；空 currentProxy 继续检查扩展已保存代理。扩展更新提示不算登录成功，无有效代理时保留扩展页并显示等待登录，不以浏览器基础 Cookie 覆盖身份文件。登录进程按 PID 与记录时间判活；需要真人验证时保留页面，不自动点击。调度的有界片段结束不代表查询成功，告警直接读取 `lead_query_market` 的身份等待状态。
+
 `rolling_leads.py` 与 `rolling-leads.py` 是正式 A/B 持久读取入口，`lead_query_task` 按 market×PID×类型保存一份活动查询，冻结查询 ID、窗口、版本和 market/region/currency。A 的 `rolling-a50-v1` 范围最多 50 位正销量达人，按数值 GMV、来源排名确定性选择并按 creator/handle 去重；原 20 位发布结果不改判为读过 50。已实际开始的旧 A 页回执按原窗口和原范围续读，随后独立排入 A50 新查询。已完整结果保留直到新范围发布；每 PID 原子发布，未完成页不覆盖 head。
 
 只将当前资格合格且有相符有效标准 binding 的 PID 入队；校验市场、命名/分佣版本、来源/Campaign/Offer 指纹，不把所有历史候选无条件查询。新/到期项按有效等待起点、商品历史销量、PID 排序；A/B 轮转，各类型内部先续断点，再给新/到期项一次机会，空侧可借用。轮转类型、内部阶段及 service_order 持久化，重启不回到固定队头。每片段最多 3 个网络请求，单次 workflow Kalodata 阶段最多 8 片段；这是让出资源的处理片段，不是每日视频数/请求数的业务截断。分页、详情及作者缓存继续复用原台账。
@@ -231,7 +233,9 @@ IT 使用无后缀文件名，其他市场加 `-{market}` 后缀。`state-backup
 
 `offsite-backup.py` 把代码、当前状态和本机专有配置加密写到外接盘。每次先按 `state-backup.json` 做一份全量 online backup 到临时目录，连同 `git bundle --all`、未提交改动补丁、`../BDHub-Agent-backups/` 下的归档（git 离线包与密钥目录除外）、3 个被忽略的敏感配置和 `private-data/` 打成 tar.gz，经 openssl AES-256-CBC（PBKDF2 20 万次）直接写入 `<盘>/BDHub-Agent-offsite/<UTC 时间>/`；刷到设备后解密回读，核对明文 hash 与成员，最后写 manifest 表示完成，失败则删除本次目录。盘上只动这个文件夹，保留最近 3 份。密钥 `../BDHub-Agent-backups/offsite/offsite.key` 只在本机，须另存一份到密码管理器，丢失则副本无法解开。账号浏览器身份与 `var/` 运行文件不在副本内，换机后按账号页重登重建；恢复不依赖原始项目。`plan` 只读，`run --confirm` 写入，`verify` 从盘上重读最新一份；`auto` 供插盘触发，只处理已有该文件夹的卷，先校验最新一份，超过 20 小时或校验失败才写新的，并发系统通知。每次写入成功后，在本机 `offsite/latest.json` 记下这份副本，告警条据此判断备份是否过期。
 
-**账号认证恢复（单一入口）：** 所有发现登录失效的地方——SDK 会话 owner、HTTP 收信、全托选入、OECID——都用 `login_recovery.auth_family` 判定（平台码 16201010、`sdk_login_required`、`market_identity_auth_required`；超时、额度、业务拒绝不算），再调用 `login_recovery.request_recovery`。一条恢复链的键是市场/账号/身份代次/错误族，报告来源和角色不进键，所以并发报告者都汇入同一个 `account_maintenance_intent`；旧的 `inbox-login-*` 请求号仍被识别为同一代次已处理。意图一律从 `refresh` 开始，刷新失败时维护 worker 在同一意图内改为可见重登。全托选入中收到明确 16201010 的原意图，须在尝试之后该供给账号发布过 `relogin` 或 `refresh` 代次（两者都验证了登录可用）才允许按原 PID 重提一次（此前只认 relogin，导致自动 refresh 恢复后仍需人工）。失败或需验证的意图留给人处理，只有新发布的代次才能再发起。同账号已有其他维护在进行时返回 `waiting_active`，不排第二个登录。scheduler 的阶段恢复（`_relogin_market_account`）加入这条链并等待其结束，只有发布了比故障代次更新的身份才算恢复；角色取实际执行的账号，不按简称换号。
+**发送写门禁持久化：** HTTP FIFO 由稳定 `.lock.guard` inode 加锁，原 `.lock` 仍是唯一状态文件。状态通过同目录临时文件、文件 fsync、原子替换及目录 fsync 发布，缩短 JSON 不残留旧队列尾部，写失败不覆盖原状态。损坏状态明确拒绝派发；恢复须先排空旧 writer、保存原字节，并依据原投递/回复台账处理，不重置未知意图。升级锁协议前必须退出全部旧发送与回复进程，不能混用旧 `.lock` 锁和新 guard。
+
+**账号认证恢复（单一入口）：** 供给账号的 Campaign 登录验证只接受实际列表，或平台成功返回且 total/total_num 明确为整数 0 的空列表；异常结构的类型与计数字段按白名单保存在原维护 checkpoint，不记录凭据或原响应。 所有发现登录失效的地方——SDK 会话 owner、HTTP 收信、全托选入、OECID——都用 `login_recovery.auth_family` 判定（平台码 16201010、`sdk_login_required`、`market_identity_auth_required`；超时、额度、业务拒绝不算），再调用 `login_recovery.request_recovery`。一条恢复链的键是市场/账号/身份代次/错误族，报告来源和角色不进键，所以并发报告者都汇入同一个 `account_maintenance_intent`；旧的 `inbox-login-*` 请求号仍被识别为同一代次已处理。意图一律从 `refresh` 开始，刷新失败时维护 worker 在同一意图内改为可见重登。全托选入中收到明确 16201010 的原意图，须在尝试之后该供给账号发布过 `relogin` 或 `refresh` 代次（两者都验证了登录可用）才允许按原 PID 重提一次（此前只认 relogin，导致自动 refresh 恢复后仍需人工）。失败或需验证的意图留给人处理，只有新发布的代次才能再发起。同账号已有其他维护在进行时返回 `waiting_active`，不排第二个登录。scheduler 的阶段恢复（`_relogin_market_account`）加入这条链并等待其结束，只有发布了比故障代次更新的身份才算恢复；角色取实际执行的账号，不按简称换号。
 
 会话列表在无搜索条件时，只读取本页达人的 handle；全队列分类、数量和排序不依赖 handle，不再为总控与告警的计数扫描整份画像库。 外部消息候选仅为尚未被来信、案件或待办命中的会话读取原始回执，不再扫描全部投递历史；机构后台消息与本系统消息仍沿用同一分类函数。带搜索条件仍保留 handle 搜索及市场、冲突过滤。
 

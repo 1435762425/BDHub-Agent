@@ -4,7 +4,7 @@
   "upstreamRevision": "72dc12a71e566702232a279aac23fd547addea12",
   "patch": {
     "file": "local.patch",
-    "sha256": "2d6422360327b6a1427036fe8fc35b6e93760a211519de6ca3841c44fcd74142"
+    "sha256": "2df94af055ccce4249e92fb9704d2ec5af5b82f56cbe8387a227d5a6d46340df"
   },
   "files": [
     {
@@ -917,7 +917,7 @@
       "path": "bdhub/send/http_write_gate.py",
       "source": "upstream",
       "upstreamSha256": "de73d4d2c552fbff8185e1a31cee70cf4d7b5bbfa47aae13298e450ba3f131eb",
-      "sha256": "de73d4d2c552fbff8185e1a31cee70cf4d7b5bbfa47aae13298e450ba3f131eb"
+      "sha256": "03569db7a17a1689f9a37259d654cb9b1316bb29057a3d3efc69a6928eec34f6"
     },
     {
       "path": "bdhub/send/runner.py",
@@ -1037,7 +1037,7 @@
     "bdhub/enrich/creator_profile.py": "88371446a6de5f8c6ca1dd45c5d9af94ab067782044dfbdbb9a1025f8b87af34",
     "bdhub/enrich/identity_store.py": "8c0fdd08506d8164c1655bcf369860e418539a94bb5ffa8166e1a8c2f5955a13",
     "bdhub/enrich/markets.py": "325298de3d64cdd8d8f28932c54279dcb5e6660e601c3b30d92aac3a8adfcdac",
-    "bdhub/enrich/profile_lease.py": "1832494048c99d22a37b81303c2774f3aaaebd3e72aa15e527dee030f69a2037",
+    "bdhub/enrich/profile_lease.py": "e0ebd4852f6fa3ab7de13cf17bdf35e370ba414f1f8f3c362088239b4dc972ec",
     "bdhub/enrich/profile_transport.py": "403587dd5856abe6d52b089b3394c89a47471af8ff3a6a64cd00e66704ad1d08",
     "bdhub/enrich/pure_http_canary.py": "a6b5bfb80f83a7e611660ce10c51fa8a7ad0ffd460008b24ebe044422c878f4a",
     "bdhub/enrich/pure_http_runtime_manifest.json": "a9a6eca85764656130c25cf00a9ee638147e26858870946cad6942892b2e8c21",

@@ -90,10 +90,15 @@ def _market_facts(root, store, market, accounts):
         if _has(db, "cycle_platform_signal") and _has(db, "cycle_delivery") else (0, None)
     from lib.cycle_delivery import new_contact_hold
     rejection_hold = new_contact_hold(store, plan) if _has(db, "cycle_delivery") else None
+    lead = db.execute('SELECT state,last_error,updated_at FROM lead_query_market WHERE market=?',(market,)).fetchone() \
+        if _has(db,'lead_query_market') else None
     empty = {"count": 0, "oldestAt": None}
     return {
         "market": market,
         "active": bool(current["automaticOperationsEnabled"] or current["continuousSendEnabled"] or agent["enabled"]),
+        "kalodata": {"enabled":bool(current['automaticOperationsEnabled']),
+                     "state":lead['state'] if lead else None,"error":lead['last_error'] if lead else None,
+                     "at":lead['updated_at'] if lead else None},
         "selectionIsolated": _selection_isolated(root, market, store.clock()),
         "inbox": {"checkedAt": _stamp(inbox.get("checkedAt")),
                   "lastSuccessAt": _stamp((inbox.get("status") or {}).get("lastCheckedAt")),
@@ -302,6 +307,12 @@ def evaluate(facts):
             add(f"{key}-read-failed", "warning", f"{name} 巡检读取失败", market["error"], market=key, href=base)
             continue
         inbox = market["inbox"]
+        lead=market.get('kalodata') or {}
+        if lead.get('enabled') and lead.get('state')=='waiting_account' and lead.get('error'):
+            code=str(lead['error'])[:100]
+            add(f'{key}-kalodata-identity','warning',f'{name} Kalodata 抓取未恢复',
+                'Kalodata 登录失效，需刷新身份；本轮没有完成新查询。' if code=='kalodata_auth_required' else code,
+                market=key,since=lead.get('at'),href='/it/ops/kalodata')
         failing = inbox["errorCode"] and inbox["errorCode"] not in NON_FAILURE_INBOX_CODES and (
             inbox["lastSuccessAt"] is None or now - inbox["lastSuccessAt"] > INBOX_ERROR_GRACE_SECONDS)
         if failing:

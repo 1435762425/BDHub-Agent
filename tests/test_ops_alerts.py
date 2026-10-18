@@ -45,6 +45,15 @@ def levels(alerts):
 
 
 class SelectionIsolatedTests(unittest.TestCase):
+    def test_kalodata_identity_wait_is_visible_even_when_bounded_stage_completed(self):
+        value=market('my',kalodata={'enabled':True,'state':'waiting_account','error':'kalodata_auth_required','at':NOW-60})
+        self.assertIn('my-kalodata-identity',levels(evaluate(facts(value))))
+
+    def test_kalodata_auth_warning_clears_on_recovery_and_ignores_paused_markets(self):
+        for lead in ({'enabled':False,'state':'waiting_account','error':'kalodata_auth_required'},
+                     {'enabled':True,'state':'ready','error':None}):
+            self.assertNotIn('my-kalodata-identity',levels(evaluate(facts(market('my',kalodata=lead)))))
+
     def test_counts_only_recent_isolations_and_tolerates_a_missing_ledger(self):
         import json
         import sqlite3
