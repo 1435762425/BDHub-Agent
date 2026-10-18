@@ -1,10 +1,12 @@
 from pathlib import Path
 import sys
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock,patch
+from contextlib import nullcontext
 
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'scripts'))
 from lib.kalodata_login import initialize_session,export_proxy_fallback
+from lib.kalodata_login import run_login
 import tempfile,json
 
 
@@ -45,6 +47,17 @@ class ExtensionIdentityTests(unittest.TestCase):
             record=json.loads(launcher.EXTENSION_RUNTIME_PATH.read_text())
             self.assertEqual(record['proxy_url'],'http://demo%20user:demo%3Apassword@127.0.0.1:8000')
             self.assertEqual(launcher.EXTENSION_RUNTIME_PATH.stat().st_mode&0o777,0o600)
+
+    def test_failed_extension_does_not_export_browser_preferences_as_a_login_cookie(self):
+        launcher=self.launcher();context=Mock(pages=[])
+        launcher.sync_playwright.return_value=nullcontext(Mock())
+        launcher.launch_context.return_value=context
+        with tempfile.TemporaryDirectory() as directory, \
+             patch('lib.kalodata_identity.export_helpers',return_value=launcher), \
+             patch('lib.kalodata_login.initialize_session',side_effect=ValueError('kalodata_proxy_export_failed')), \
+             patch('lib.kalodata_login.signal.signal'),patch('builtins.print'):
+            self.assertEqual(run_login(Path(directory),'activate'),1)
+        launcher.export_current_cookie.assert_not_called()
         launcher.refresh_extension_login.return_value=False
         initialize_session(launcher,context,'refresh','fallback-code')
         launcher.activate_and_login_extension.assert_called_once_with(context,'extension','fallback-code')

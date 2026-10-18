@@ -87,8 +87,26 @@ def run_login(root,mode):
     try:
         with launcher.sync_playwright() as playwright:
             context=launcher.launch_context(playwright)
+            identity_ready=False
             try:
-                initialize_session(launcher,context,mode,code)
+                try:
+                    initialize_session(launcher,context,mode,code)
+                except ValueError as error:
+                    if str(error)!='kalodata_proxy_export_failed':raise
+                    extension_id=launcher.wait_for_extension_id(context)
+                    popup=context.new_page()
+                    popup.goto(f'chrome-extension://{extension_id}/popup.html',wait_until='domcontentloaded')
+                    print('扩展尚未提供有效代理；更新提示不算登录成功。请在专用窗口检查扩展登录。',flush=True)
+                    while not stopped[0] and context.pages:
+                        update=False
+                        try:update=popup.locator('#update-modal').is_visible()
+                        except Exception:pass
+                        checkpoint(root,state,stage='waiting_extension_login',error='kalodata_proxy_export_failed',updatePrompt=update)
+                        if export_proxy_fallback(launcher,context,extension_id):
+                            launcher.export_current_cookie(context);break
+                        time.sleep(1)
+                    else:return 1
+                identity_ready=True
                 checkpoint(root,state,stage='identity_exported')
                 print('扩展新身份及匹配代理已同步；不会重新注入旧 Cookie。',flush=True)
                 page=context.pages[0] if context.pages else context.new_page()
@@ -107,7 +125,8 @@ def run_login(root,mode):
                         if stopped[0]:break
                         time.sleep(.5)
             finally:
-                try:launcher.export_current_cookie(context)
+                try:
+                    if identity_ready:launcher.export_current_cookie(context)
                 except Exception:pass
                 context.close()
         checkpoint(root,state,stage='closed')
