@@ -110,6 +110,9 @@ def run_login(root,mode):
                 identity_ready=verified_probe(result)
                 cookie_at=cookie_state()['updatedAt'];last_probe=time.monotonic()
                 print(json.dumps({'stage':'production_probe','verdict':result['verdict'],'identityOk':result['identityOk']},ensure_ascii=False),flush=True)
+                if identity_ready:
+                    checkpoint(root,state,stage='identity_verified',identityOk=True,probeVerdict=result['verdict'])
+                    return 0  # A healthy production read needs no unrelated website challenge page.
                 page=context.pages[0] if context.pages else context.new_page()
                 try:page.goto(launcher.TARGET_URL,wait_until='domcontentloaded',timeout=60000)
                 except Exception:pass  # Keep the normal browser available for user verification.
@@ -126,6 +129,7 @@ def run_login(root,mode):
                         cookie_at=cookie_state()['updatedAt'];last_probe=time.monotonic()
                     checkpoint(root,state,stage='identity_verified' if identity_ready else 'waiting_browser_verification' if challenge else 'waiting_login',
                                verificationRequired=challenge,identityOk=identity_ready,probeVerdict=result['verdict'])
+                    if identity_ready:break
                     for _ in range(6):
                         if stopped[0]:break
                         time.sleep(.5)

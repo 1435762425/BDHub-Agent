@@ -11,6 +11,17 @@ import tempfile,json
 
 
 class ExtensionIdentityTests(unittest.TestCase):
+    def test_verified_production_read_finishes_without_opening_a_challenge_page(self):
+        launcher=self.launcher();context=Mock(pages=[])
+        launcher.sync_playwright.return_value=nullcontext(Mock());launcher.launch_context.return_value=context
+        with tempfile.TemporaryDirectory() as directory, \
+             patch('lib.kalodata_identity.export_helpers',return_value=launcher), \
+             patch('lib.kalodata_login.initialize_session'), \
+             patch('lib.kalodata_login.production_probe',return_value={'identityOk':True,'verdict':'ready'}), \
+             patch('lib.kalodata_login.signal.signal'),patch('builtins.print'):
+            self.assertEqual(run_login(Path(directory),'activate'),0)
+        context.new_page.assert_not_called();context.close.assert_called_once()
+
     def test_probe_uses_project_interpreter_instead_of_the_extension_interpreter(self):
         with patch('lib.kalodata_login.subprocess.run',return_value=Mock(returncode=0,stdout='{"verdict":"ready","identityOk":true}')) as run:
             self.assertTrue(verified_probe(production_probe(Path('/project'))))
