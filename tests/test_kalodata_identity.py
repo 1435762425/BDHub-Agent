@@ -65,6 +65,40 @@ class CookieIsNeverRead(unittest.TestCase):
 
 
 class Verdicts(unittest.TestCase):
+    def test_cookie_changed_during_request_does_not_validate_the_new_identity(self):
+        from contextlib import nullcontext
+        from unittest.mock import Mock,patch
+        from lib.kalodata_identity import probe
+        provider=Mock(proxy=None,unchanged=False)
+        provider.request.return_value={'data':[]}
+        with tempfile.TemporaryDirectory() as folder,patch('lib.batch_source_runtime.kalodata_provider',return_value=nullcontext(provider)):
+            result=probe(Path(folder),pid='1729480002729777701')
+        self.assertEqual(result['verdict'],'unreachable')
+        self.assertIsNone(result['identityOk'])
+        self.assertEqual(result['detail'],'kalodata_identity_changed_during_probe')
+
+    def test_real_authentication_releases_only_existing_auth_waits_without_resetting_queries(self):
+        import sqlite3
+        from lib.kalodata_identity import resume_authenticated_queries
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder);(root/'var').mkdir();path=root/'var/second-cycle.sqlite'
+            with sqlite3.connect(path) as db:
+                db.executescript('CREATE TABLE lead_query_market(market,state,last_error,updated_at,retry_at,available_at); CREATE TABLE market_automation_setting(market,automatic_operations_enabled); CREATE TABLE lead_query_task(query_id,attempts,cursor);')
+                db.executemany('INSERT INTO market_automation_setting VALUES(?,?)',[('br',1),('my',1),('fr',1),('it',0)])
+                db.executemany('INSERT INTO lead_query_market VALUES(?,?,?,?,?,?)',[
+                    ('br','waiting_account','kalodata_auth_required',100,999,0),
+                    ('my','waiting_quota','kalodata_daily_quota_exhausted',100,999,0),
+                    ('fr','waiting_account','kalodata_auth_required',300,999,0),
+                    ('it','waiting_account','kalodata_auth_required',100,999,0)])
+                db.execute('INSERT INTO lead_query_task VALUES(?,?,?)',('original-query',2,9))
+            self.assertEqual(resume_authenticated_queries(root,{'verdict':'auth_required','identityOk':False,'checkedAt':200}),[])
+            self.assertEqual(resume_authenticated_queries(root,{'verdict':'ready','identityOk':True,'checkedAt':200}),['br'])
+            with sqlite3.connect(path) as db:
+                self.assertEqual(db.execute("SELECT state,retry_at FROM lead_query_market WHERE market='br'").fetchone(),('ready',0))
+                self.assertEqual(db.execute("SELECT state,retry_at FROM lead_query_market WHERE market='my'").fetchone(),('waiting_quota',999))
+                self.assertEqual(db.execute("SELECT state FROM lead_query_market WHERE market='fr'").fetchone()[0],'waiting_account')
+                self.assertEqual(db.execute('SELECT * FROM lead_query_task').fetchone(),('original-query',2,9))
+
     def test_an_exhausted_quota_counts_as_a_healthy_identity(self):
         # The platform accepting the request and answering "quota used up" proves the session works.
         self.assertTrue(VERDICTS['quota_exhausted'])

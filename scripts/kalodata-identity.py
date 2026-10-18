@@ -30,6 +30,7 @@ def main():
     parser.add_argument('action', choices=['status', 'save', 'probe', 'activate', 'refresh'])
     parser.add_argument('--json', help='config JSON, inline or @path')
     parser.add_argument('--pid', help='product id to probe with')
+    parser.add_argument('--result-only',action='store_true',help='Probe result only; omit credential configuration')
     args = parser.parse_args()
 
     try:
@@ -46,7 +47,7 @@ def main():
             return 0
         if args.action == 'probe':
             result = probe(ROOT, pid=args.pid or None)
-            print(json.dumps(status(ROOT) | {'lastProbe': result}, ensure_ascii=False))
+            print(json.dumps(result if args.result_only else status(ROOT) | {'lastProbe': result}, ensure_ascii=False))
             return 0
         # Activation needs the card; refresh reuses the card the extension already saved.
         code = load(ROOT)['activationCode']

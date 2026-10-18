@@ -5,12 +5,17 @@ from unittest.mock import Mock,patch
 from contextlib import nullcontext
 
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'scripts'))
-from lib.kalodata_login import initialize_session,export_proxy_fallback,verified_probe
+from lib.kalodata_login import initialize_session,export_proxy_fallback,verified_probe,production_probe
 from lib.kalodata_login import run_login
 import tempfile,json
 
 
 class ExtensionIdentityTests(unittest.TestCase):
+    def test_probe_uses_project_interpreter_instead_of_the_extension_interpreter(self):
+        with patch('lib.kalodata_login.subprocess.run',return_value=Mock(returncode=0,stdout='{"verdict":"ready","identityOk":true}')) as run:
+            self.assertTrue(verified_probe(production_probe(Path('/project'))))
+        self.assertEqual(run.call_args.args[0][0],'/project/.venv/bin/python')
+        self.assertIn('--result-only',run.call_args.args[0])
     def launcher(self):
         launcher=Mock();launcher.wait_for_extension_id.return_value='extension'
         launcher.refresh_extension_login.return_value=True

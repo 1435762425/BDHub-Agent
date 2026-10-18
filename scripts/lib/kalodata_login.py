@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 import signal
 import time
+import subprocess
 from urllib.parse import quote,urlsplit
 
 
@@ -72,6 +73,17 @@ def verified_probe(result):
     return isinstance(result,dict) and result.get('identityOk') is True and result.get('verdict') in ('ready','quota_exhausted')
 
 
+def production_probe(root):
+    root=Path(root)
+    child=subprocess.run([str(root/'.venv/bin/python'),str(root/'scripts/kalodata-identity.py'),'probe','--result-only'],
+                         cwd=root,capture_output=True,text=True,timeout=60,
+                         env={**os.environ,'PYTHONDONTWRITEBYTECODE':'1'})
+    if child.returncode:raise ValueError('kalodata_production_probe_failed')
+    result=json.loads(child.stdout)
+    if not isinstance(result,dict) or 'verdict' not in result:raise ValueError('kalodata_production_probe_invalid')
+    return result
+
+
 def checkpoint(root,state,**details):
     from lib.kalodata_identity import login_state_path
     target=login_state_path(root);target.parent.mkdir(parents=True,exist_ok=True)
@@ -81,7 +93,7 @@ def checkpoint(root,state,**details):
 
 
 def run_login(root,mode):
-    from lib.kalodata_identity import export_helpers,load,probe,cookie_state
+    from lib.kalodata_identity import export_helpers,load,cookie_state
     launcher=export_helpers();code=os.environ.get('KALODATA_ACTIVATION_CODE') or load(root)['activationCode']
     state={'mode':mode,'startedAt':time.time(),'log':str(Path(root)/'var/kalodata-login.log')}
     stopped=[False]
@@ -94,7 +106,7 @@ def run_login(root,mode):
             identity_ready=False
             try:
                 initialize_session(launcher,context,mode,code)
-                result=probe(root)
+                result=production_probe(root)
                 identity_ready=verified_probe(result)
                 cookie_at=cookie_state()['updatedAt'];last_probe=time.monotonic()
                 print(json.dumps({'stage':'production_probe','verdict':result['verdict'],'identityOk':result['identityOk']},ensure_ascii=False),flush=True)
@@ -110,7 +122,7 @@ def run_login(root,mode):
                     launcher.export_current_cookie(context)
                     changed=cookie_state()['updatedAt']!=cookie_at
                     if not identity_ready and changed and time.monotonic()-last_probe>=15:
-                        result=probe(root);identity_ready=verified_probe(result)
+                        result=production_probe(root);identity_ready=verified_probe(result)
                         cookie_at=cookie_state()['updatedAt'];last_probe=time.monotonic()
                     checkpoint(root,state,stage='identity_verified' if identity_ready else 'waiting_browser_verification' if challenge else 'waiting_login',
                                verificationRequired=challenge,identityOk=identity_ready,probeVerdict=result['verdict'])

@@ -205,6 +205,24 @@ def response_row_count(body):
     return 0
 
 
+def resume_authenticated_queries(root,result):
+    """Release only older authentication waits; retain each query's frozen scope and budget."""
+    path=Path(root)/'var/second-cycle.sqlite'
+    if result.get('identityOk') is not True or result.get('verdict') not in ('ready','quota_exhausted') or not path.is_file():return []
+    stamp=result['checkedAt']
+    with closing(sqlite3.connect(path.resolve().as_uri()+'?mode=rw',uri=True,timeout=10)) as db,db:
+        tables={r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        if not {'lead_query_market','market_automation_setting'}<=tables:return []
+        markets=[r[0] for r in db.execute("""SELECT m.market FROM lead_query_market m JOIN market_automation_setting a USING(market)
+            WHERE a.automatic_operations_enabled=1 AND m.state='waiting_account'
+            AND m.last_error='kalodata_auth_required' AND m.updated_at<=? ORDER BY m.market""",(stamp,))]
+        for market in markets:
+            db.execute("""UPDATE lead_query_market SET state='ready',retry_at=0,last_error=NULL,available_at=?,updated_at=?
+                WHERE market=? AND state='waiting_account' AND last_error='kalodata_auth_required' AND updated_at<=?""",
+                (stamp,stamp,market,stamp))
+    return markets
+
+
 def probe(root=None, pid=None, clock=time.time):
     """Ask the production path for one creator page and classify what came back.
 
@@ -227,6 +245,7 @@ def probe(root=None, pid=None, clock=time.time):
     started = clock()
     verdict, detail, rows = 'unreachable', None, None
     proxy_configured = False
+    provider = None
     try:
         with kalodata_provider(root) as provider:
             proxy_configured = bool(provider.proxy)
@@ -244,10 +263,17 @@ def probe(root=None, pid=None, clock=time.time):
                 verdict, detail = 'ready', 'ok'
     except Exception as error:
         detail = type(error).__name__
+    if verdict in ('ready','quota_exhausted') and getattr(provider,'unchanged',True) is False:
+        verdict,detail='unreachable','kalodata_identity_changed_during_probe'
     result = {'verdict': verdict, 'identityOk': VERDICTS.get(verdict), 'detail': detail,
               'pid': target, 'rows': rows, 'proxyConfigured': proxy_configured,
               'checkedAt': started, 'elapsedSeconds': round(clock() - started, 2)}
     _write_state(root, result)
+    try:
+        resumed=resume_authenticated_queries(root,result)
+        if resumed:result['resumedMarkets']=resumed
+    except sqlite3.Error:result['resumeError']='local_store_busy'
+    if 'resumedMarkets' in result or 'resumeError' in result:_write_state(root,result)
     return result
 
 
