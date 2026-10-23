@@ -635,7 +635,10 @@ def status(root, market='br', limit=20):
         head = _head(store, plan)
         blockers = []
         offers = [offer for _, offer in _offers(store, plan)]
-        empty['counts']['products'] = sum(assess_first_offer(offer, store.clock())['eligible'] for offer in offers)
+        # The public product tile counts PIDs; alternate Campaign offers remain
+        # separate qualification evidence and must not count the product twice.
+        empty['counts']['products'] = len({offer['pid'] for offer in offers
+                                          if assess_first_offer(offer, store.clock())['eligible']})
         materials = _materials(root, store, market, offers)
         if not empty['counts']['products']:
             blockers.append('sample_products_unavailable')

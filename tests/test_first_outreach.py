@@ -16,6 +16,12 @@ from lib.second_cycle import CycleError, CycleStore, digest, encoded
 
 
 class FirstOutreachTests(unittest.TestCase):
+    def test_public_products_count_deduplicates_alternate_campaign_offers(self):
+        original = self.offer()
+        alternative = self.offer(campaignId='other-campaign', offerKey='other-offer')
+        self.s.publish(self.plan, 'catalog', self.now + 1, [original, alternative])
+        self.assertEqual(first.status(self.root)['counts']['products'], 1)
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.root = Path(self.temp.name)
