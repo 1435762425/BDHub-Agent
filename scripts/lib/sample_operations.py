@@ -15,14 +15,18 @@ from lib.sample_transport import review_payload, sample_session, validate_contra
 
 SCHEMA = '''
 CREATE TABLE IF NOT EXISTS sample_capability(market TEXT NOT NULL,account_name TEXT NOT NULL,state TEXT NOT NULL,evidence_ref TEXT NOT NULL,observed REAL NOT NULL,binding TEXT,contract TEXT,PRIMARY KEY(market,account_name));
-CREATE TABLE IF NOT EXISTS sample_sync(id TEXT PRIMARY KEY,market TEXT NOT NULL,account_name TEXT NOT NULL,observed REAL NOT NULL,evidence_ref TEXT NOT NULL,record_count INTEGER NOT NULL,complete INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS sample_sync(id TEXT PRIMARY KEY,market TEXT NOT NULL,account_name TEXT NOT NULL,observed REAL NOT NULL,evidence_ref TEXT NOT NULL,record_count INTEGER NOT NULL,complete INTEGER NOT NULL,binding_fingerprint TEXT,contract_fingerprint TEXT);
+CREATE TABLE IF NOT EXISTS sample_sync_member(sync_id TEXT NOT NULL,application_id TEXT NOT NULL,PRIMARY KEY(sync_id,application_id));
 CREATE TABLE IF NOT EXISTS sample_application(market TEXT NOT NULL,application_id TEXT NOT NULL,account_name TEXT NOT NULL,observed REAL NOT NULL,evidence_ref TEXT NOT NULL,payload TEXT NOT NULL,PRIMARY KEY(market,application_id));
 CREATE TABLE IF NOT EXISTS sample_review_intent(id TEXT PRIMARY KEY,market TEXT NOT NULL,application_id TEXT NOT NULL,account_name TEXT NOT NULL,request_ref TEXT NOT NULL UNIQUE,state TEXT NOT NULL,created REAL NOT NULL,started REAL,binding TEXT NOT NULL,application TEXT NOT NULL,payload TEXT NOT NULL,contract TEXT NOT NULL,quota_proof TEXT NOT NULL,offer TEXT NOT NULL,delivery_id TEXT NOT NULL,receipt TEXT,confirmation TEXT,lease_owner TEXT,fence INTEGER NOT NULL DEFAULT 0,lease_until REAL NOT NULL DEFAULT 0,UNIQUE(market,application_id));
+CREATE TABLE IF NOT EXISTS sample_reconcile_attempt(intent_id TEXT NOT NULL,attempt_number INTEGER NOT NULL,started REAL NOT NULL,outcome TEXT,PRIMARY KEY(intent_id,attempt_number));
 CREATE TABLE IF NOT EXISTS sample_review_check(id INTEGER PRIMARY KEY AUTOINCREMENT,intent_id TEXT NOT NULL,observed REAL NOT NULL,payload TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS sample_review_pending ON sample_review_intent(market,state,created);
 CREATE TRIGGER IF NOT EXISTS sample_intent_frozen BEFORE UPDATE OF market,application_id,account_name,request_ref,binding,application,payload,contract,quota_proof,offer,delivery_id ON sample_review_intent BEGIN SELECT RAISE(ABORT,'immutable sample intent'); END;
 '''
-PENDING_INTENTS = ('inflight', 'accepted', 'unknown')
+PENDING_INTENTS = ('inflight', 'accepted', 'unknown', 'quarantined_unknown')
+MIN_RECONCILE_INTERVAL = 60
+MAX_UNKNOWN_CHECKS = 3
 MAX_FACT_AGE = 900
 
 
@@ -33,6 +37,10 @@ def require_market(market):
 
 def ensure_schema(store):
     store.db.executescript(SCHEMA)
+    columns = {row['name'] for row in store.db.execute('PRAGMA table_info(sample_sync)')}
+    for column in ('binding_fingerprint', 'contract_fingerprint'):
+        if column not in columns:
+            store.db.execute(f'ALTER TABLE sample_sync ADD COLUMN {column} TEXT')
 
 
 def authorize(store, market, enabled, event_id, *, root=None, expected_revision=None):
@@ -69,7 +77,7 @@ def capability(store, market, account_name):
                         'binding': json.loads(row['binding']) if row['binding'] else None}
 
 
-def store_records(store, market, account_name, records, *, observed_at=None, evidence_ref, complete=False):
+def store_records(store, market, account_name, records, *, observed_at=None, evidence_ref, complete=False, binding=None, contract=None):
     require_market(market)
     if type(complete) is not bool or not isinstance(records, list) or len(records) > 10000:
         raise CycleError('sample_sync_invalid')
@@ -82,6 +90,13 @@ def store_records(store, market, account_name, records, *, observed_at=None, evi
     ensure_schema(store)
     sid = 'sample-sync-' + digest([market, account_name, at, evidence_ref])[:32]
     with store.tx():
+        binding_fingerprint = contract_fingerprint = None
+        if complete and (binding is not None or contract is not None):
+            current = capability(store, market, account_name)
+            if current['state'] != 'verified' or current.get('binding') != binding or current.get('contract') != contract or at < current['observed']:
+                raise CycleError('sample_sync_provenance_mismatch')
+            validate_contract(contract)
+            binding_fingerprint, contract_fingerprint = digest(binding), digest(contract)
         for row in records:
             prior = store.db.execute('SELECT account_name,observed,payload FROM sample_application WHERE market=? AND application_id=?', (market, row['applicationId'])).fetchone()
             # Account ownership is immutable for an intent, even if another account can see the record.
@@ -93,7 +108,10 @@ def store_records(store, market, account_name, records, *, observed_at=None, evi
                 raise CycleError('sample_observation_conflict')
             store.db.execute('INSERT INTO sample_application VALUES(?,?,?,?,?,?) ON CONFLICT(market,application_id) DO UPDATE SET observed=excluded.observed,evidence_ref=excluded.evidence_ref,payload=excluded.payload',
                              (market, row['applicationId'], account_name, at, evidence_ref, encoded(row)))
-        store.db.execute('INSERT OR IGNORE INTO sample_sync VALUES(?,?,?,?,?,?,?)', (sid, market, account_name, at, evidence_ref, len(records), int(complete)))
+        store.db.execute('INSERT OR IGNORE INTO sample_sync(id,market,account_name,observed,evidence_ref,record_count,complete,binding_fingerprint,contract_fingerprint) VALUES(?,?,?,?,?,?,?,?,?)', (sid, market, account_name, at, evidence_ref, len(records), int(complete), binding_fingerprint, contract_fingerprint))
+        if complete:
+            store.db.executemany('INSERT OR IGNORE INTO sample_sync_member VALUES(?,?)', [(sid, application_id) for application_id in ids])
+    _passive_confirm(store, market, records, evidence_ref)
     return {'syncId': sid, 'records': len(records), 'complete': complete, 'platformWrites': 0}
 
 
@@ -195,9 +213,12 @@ def sync(root, market='br', *, transport_factory=None, stopped=lambda: False):
         ensure_schema(store)
         cap = capability(store, market, account)
         contract = cap.get('contract') if cap['state'] == 'verified' else None
-        with factory(root, market, account, report, contract=contract, stopped=stopped) as adapter:
+        with factory(root, market, account, report, contract=contract, expected_binding=cap.get('binding') if contract else None, stopped=stopped) as adapter:
             rows, complete, ref = _pages(adapter)
-        result = store_records(store, market, account, rows, evidence_ref=ref, complete=complete)
+            binding = adapter.binding if contract else None
+            if contract and binding != cap.get('binding'):
+                raise CycleError('sample_sync_provenance_mismatch')
+        result = store_records(store, market, account, rows, evidence_ref=ref, complete=complete, binding=binding, contract=contract)
         # A read proves the read endpoint only. Never promote review capability here.
         if cap['state'] == 'unknown':
             record_capability(store, market, account, 'readonly', ref)
@@ -287,7 +308,7 @@ def _quota_capacity(store, market, application, proof, *, exclude_id):
             at > store.clock() + 30 or store.clock() - at > MAX_FACT_AGE or not proof.get('evidenceRef'):
         raise CycleError('sample_quota_unverified')
     used = 0
-    for row in store.db.execute("SELECT id,state,started,application FROM sample_review_intent WHERE market=? AND state IN ('ready','inflight','accepted','unknown','seller_pending','approved')", (market,)):
+    for row in store.db.execute("SELECT id,state,started,application FROM sample_review_intent WHERE market=? AND state IN ('ready','inflight','accepted','unknown','quarantined_unknown','seller_pending','approved')", (market,)):
         previous = json.loads(row['application'])
         if row['id'] != exclude_id and (previous.get('oecId'), previous.get('pid'), previous.get('campaignId')) == (application.get('oecId'), application.get('pid'), application.get('campaignId')):
             raise CycleError('sample_duplicate_intent')
@@ -340,17 +361,73 @@ def _confirm_from_records(store, intent, rows, evidence_ref):
     return outcome
 
 
+def _passive_confirm(store, market, records, evidence_ref):
+    """A normal exact lifecycle observation may settle a quarantined original intent."""
+    current = {row['applicationId']: row for row in records}
+    for row in store.db.execute("SELECT * FROM sample_review_intent WHERE market=? AND state IN ('inflight','accepted','unknown','quarantined_unknown','seller_pending')", (market,)).fetchall():
+        actual = current.get(row['application_id'])
+        if actual and _identity(actual) == _identity(json.loads(row['application'])) and actual.get('state') in {'approved', 'shipped', 'completed', 'seller_pending', 'rejected', 'cancelled'} and actual.get('contractFingerprint') == digest(json.loads(row['contract'])):
+            _confirm_from_records(store, dict(row), [actual], evidence_ref)
+
+
+def _quarantine(store, intent, reason):
+    with store.tx():
+        store.db.execute("UPDATE sample_review_intent SET state='quarantined_unknown',lease_owner=NULL,lease_until=0 WHERE id=? AND state IN ('inflight','accepted','unknown')", (intent['id'],))
+        store.db.execute('INSERT INTO sample_review_check(intent_id,observed,payload) VALUES(?,?,?)',
+                         (intent['id'], store.clock(), encoded({'status': 'quarantined_unknown', 'reason': reason, 'platformWrites': 0})))
+    return {'state': 'quarantined_unknown', 'reason': reason, 'intentId': intent['id'], 'platformWrites': 0}
+
+
 def reconcile(store, root, intent, *, transport_factory=None, stopped=lambda: False):
-    """Original account, binding and application only; absence/pending never causes a replay."""
+    """Original intent only; durable finite unknown checks never replay a review."""
     factory = transport_factory or sample_session
-    contract = validate_contract(json.loads(intent['contract']))
+    current = _intent(store, intent['id'])
+    if current['state'] == 'quarantined_unknown':
+        return {'state': 'quarantined_unknown', 'intentId': intent['id'], 'platformWrites': 0}
+    is_unknown = current['state'] in ('inflight', 'accepted', 'unknown')
+    attempt = None
+    if is_unknown:
+        with store.tx():
+            row = store.db.execute('SELECT count(*) count,max(started) last_started FROM sample_reconcile_attempt WHERE intent_id=?', (intent['id'],)).fetchone()
+            count, last_started = row['count'], row['last_started']
+            if last_started is None:
+                previous_read = store.db.execute('SELECT max(observed) FROM sample_review_check WHERE intent_id=?', (intent['id'],)).fetchone()[0]
+                last_started = max(previous_read or 0, current['started'] or current['created'])
+            if count < MAX_UNKNOWN_CHECKS and (last_started is None or store.clock() - last_started >= MIN_RECONCILE_INTERVAL):
+                attempt = count + 1
+                # The attempt is spent before auth or any platform read; failures consume it too.
+                store.db.execute('INSERT INTO sample_reconcile_attempt VALUES(?,?,?,NULL)', (intent['id'], attempt, store.clock()))
+        if count >= MAX_UNKNOWN_CHECKS:
+            return _quarantine(store, intent, 'sample_reconciliation_budget_exhausted')
+        if attempt is None:
+            return {'state': 'waiting_reconciliation', 'reason': 'sample_reconciliation_cooldown',
+                    'intentId': intent['id'], 'nextCheckAt': last_started + MIN_RECONCILE_INTERVAL, 'platformWrites': 0}
     report = {'platformWrites': 0}
-    with factory(root, intent['market'], intent['account_name'], report, contract=contract,
-                 expected_binding=json.loads(intent['binding']), stopped=stopped) as adapter:
-        rows, _, evidence = _pages(adapter)
-    store_records(store, intent['market'], intent['account_name'], rows, evidence_ref=evidence, complete=False)
-    state = _confirm_from_records(store, intent, rows, evidence)
-    return report | {'state': state, 'intentId': intent['id'], 'platformWrites': 0}
+    try:
+        contract = validate_contract(json.loads(intent['contract']))
+        with factory(root, intent['market'], intent['account_name'], report, contract=contract,
+                     expected_binding=json.loads(intent['binding']), stopped=stopped) as adapter:
+            rows, _, evidence = _pages(adapter)
+        store_records(store, intent['market'], intent['account_name'], rows, evidence_ref=evidence, complete=False)
+        state = _confirm_from_records(store, intent, rows, evidence)
+        if attempt is not None:
+            store.db.execute('UPDATE sample_reconcile_attempt SET outcome=? WHERE intent_id=? AND attempt_number=?', (state, intent['id'], attempt))
+        if state == 'unknown' and attempt == MAX_UNKNOWN_CHECKS:
+            return report | _quarantine(store, intent, 'sample_reconciliation_budget_exhausted')
+        return report | {'state': state, 'intentId': intent['id'], 'platformWrites': 0}
+    except Exception as error:
+        if attempt is not None:
+            with store.tx():
+                store.db.execute('UPDATE sample_reconcile_attempt SET outcome=? WHERE intent_id=? AND attempt_number=?', ('read_failed:' + type(error).__name__, intent['id'], attempt))
+                store.db.execute("UPDATE sample_review_intent SET state='unknown',lease_owner=NULL,lease_until=0 WHERE id=? AND state IN ('inflight','accepted','unknown')", (intent['id'],))
+            if attempt == MAX_UNKNOWN_CHECKS:
+                return report | _quarantine(store, intent, 'sample_reconciliation_budget_exhausted')
+        else:
+            # Seller waiting is ordinary lifecycle polling, with its own 60-second clock.
+            store.db.execute('INSERT INTO sample_review_check(intent_id,observed,payload) VALUES(?,?,?)',
+                             (intent['id'], store.clock(), encoded({'status': 'seller_pending', 'reason': 'sample_read_failed'})))
+        return report | {'state': 'unknown' if is_unknown else 'seller_pending', 'reason': 'sample_read_failed',
+                         'intentId': intent['id'], 'platformWrites': 0}
 
 
 def run_one(root, market='br', *, transport_factory=None, stopped=lambda: False, assessor=_assess):

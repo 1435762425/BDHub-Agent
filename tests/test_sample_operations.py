@@ -24,6 +24,8 @@ class FakeSessions:
     def __init__(self, records, *, after='approved', failure=None, stopped_on_write=None, quota=1):
         self.records = copy.deepcopy(records)
         self.quota = quota
+        self.binding = BINDING
+        self.read_failure = None
         self.after = after
         self.failure = failure
         self.writes = []
@@ -35,8 +37,10 @@ class FakeSessions:
         self.sessions.append({'market': market, 'account': account, **options})
         owner = self
         class Adapter:
-            binding = BINDING
+            binding = owner.binding
             def read_page(self, page=1):
+                if owner.read_failure:
+                    raise owner.read_failure
                 return {'records': copy.deepcopy(owner.records), 'total': len(owner.records), 'page': page,
                         'pageSize': 5, 'evidenceRef': 'test-read:' + str(len(owner.writes))}
             def refresh_sample_quota(self, offer):
@@ -135,6 +139,9 @@ class SampleOperationsTest(unittest.TestCase):
     def test_success_response_without_lifecycle_stays_unknown(self):
         sessions = FakeSessions([self.application], after='pending')
         self.assertEqual(self.run_one(sessions)['state'], 'unknown')
+        self.assertEqual(self.run_one(sessions)['state'], 'waiting_reconciliation')
+        self.store.db.execute('UPDATE sample_review_check SET observed=observed-61')
+        self.store.db.execute('UPDATE sample_review_intent SET started=started-61')
         self.assertEqual(self.run_one(sessions)['state'], 'unknown')
         self.assertEqual(len(sessions.writes), 1)
         self.assertNotIn('frozen', sessions.sessions[-1])
@@ -148,6 +155,8 @@ class SampleOperationsTest(unittest.TestCase):
         ops.authorize(self.store, 'br', False, 'test-stop-0002', root=self.root)
         sessions.failure = None
         sessions.records[0]['state'] = 'approved'
+        self.store.db.execute('UPDATE sample_review_check SET observed=observed-61')
+        self.store.db.execute('UPDATE sample_review_intent SET started=started-61')
         self.assertEqual(self.run_one(sessions)['state'], 'approved')
         self.assertEqual(len(sessions.writes), 1)
         self.assertEqual(self.store.db.execute('SELECT request_ref FROM sample_review_intent').fetchone()[0], original_ref)
@@ -252,6 +261,119 @@ class SampleOperationsTest(unittest.TestCase):
             ops.sync(self.root, transport_factory=sessions)
         self.assertEqual(ops.capability(self.store, 'br', 'acc2')['state'], 'readonly')
         self.assertFalse(ops.status(self.root)['enabled'])
+        self.assertFalse(sessions.writes)
+
+    def test_legacy_empty_filtered_sync_does_not_prove_current_application_coverage(self):
+        self.store.db.execute('DELETE FROM sample_capability')
+        sessions = FakeSessions([])
+        with patch.object(ops, '_account', return_value='acc2'):
+            ops.sync(self.root, transport_factory=sessions)
+        row = self.store.db.execute('SELECT * FROM sample_sync').fetchone()
+        self.assertEqual(row['complete'], 1)
+        self.assertIsNone(row['binding_fingerprint'])
+        self.assertIsNone(row['contract_fingerprint'])
+        self.assertEqual(ops.capability(self.store, 'br', 'acc2')['state'], 'readonly')
+
+    def test_verified_full_sync_records_current_binding_and_contract_provenance(self):
+        from lib.second_cycle import digest
+        sessions = FakeSessions([self.application])
+        with patch.object(ops, '_account', return_value='acc2'):
+            ops.sync(self.root, transport_factory=sessions)
+        row = self.store.db.execute('SELECT * FROM sample_sync').fetchone()
+        self.assertEqual(row['complete'], 1)
+        self.assertEqual(row['binding_fingerprint'], digest(BINDING))
+        self.assertEqual(row['contract_fingerprint'], digest(contract()))
+        self.assertEqual(sessions.sessions[0]['expected_binding'], BINDING)
+
+    def test_changed_binding_cannot_create_current_complete_coverage(self):
+        sessions = FakeSessions([self.application])
+        sessions.binding = BINDING | {'identitySha256': 'different-generation'}
+        with patch.object(ops, '_account', return_value='acc2'):
+            with self.assertRaisesRegex(CycleError, 'provenance_mismatch'):
+                ops.sync(self.root, transport_factory=sessions)
+        self.assertEqual(self.store.db.execute('SELECT count(*) FROM sample_sync').fetchone()[0], 0)
+        with self.assertRaisesRegex(CycleError, 'provenance_mismatch'):
+            ops.store_records(self.store, 'br', 'acc2', [self.application], evidence_ref='bad-binding', complete=True,
+                              binding=sessions.binding, contract=contract())
+
+    def test_old_sync_rows_migrate_with_null_provenance(self):
+        self.store.db.execute('DROP TABLE sample_sync')
+        self.store.db.execute('CREATE TABLE sample_sync(id TEXT PRIMARY KEY,market TEXT,account_name TEXT,observed REAL,evidence_ref TEXT,record_count INTEGER,complete INTEGER)')
+        self.store.db.execute("INSERT INTO sample_sync VALUES('old','br','acc2',1,'old-evidence',0,1)")
+        ops.ensure_schema(self.store)
+        row = self.store.db.execute('SELECT * FROM sample_sync').fetchone()
+        self.assertIsNone(row['binding_fingerprint'])
+        self.assertIsNone(row['contract_fingerprint'])
+
+    def test_complete_sync_members_cover_only_current_response_keep_history(self):
+        from lib.second_cycle import digest
+        ops.store_records(self.store, 'br', 'acc2', [self.application], evidence_ref='old-app', complete=True)
+        current = self.application | {'applicationId': '102', 'oecId': '202', 'platformCreatorId': '302'}
+        sessions = FakeSessions([current])
+        with patch.object(ops, '_account', return_value='acc2'):
+            result = ops.sync(self.root, transport_factory=sessions)
+        current_rows = self.store.db.execute('SELECT a.application_id FROM sample_sync_member m JOIN sample_application a ON a.application_id=m.application_id AND a.market=? WHERE m.sync_id=?', ('br', result['syncId'])).fetchall()
+        self.assertEqual([r[0] for r in current_rows], ['102'])
+        self.assertEqual(self.store.db.execute('SELECT count(*) FROM sample_application').fetchone()[0], 2)
+        sessions.records = []
+        with patch.object(ops, '_account', return_value='acc2'):
+            empty = ops.sync(self.root, transport_factory=sessions)
+        self.assertEqual(self.store.db.execute('SELECT count(*) FROM sample_sync_member WHERE sync_id=?', (empty['syncId'],)).fetchone()[0], 0)
+        self.assertEqual(self.store.db.execute('SELECT count(*) FROM sample_application').fetchone()[0], 2)
+
+    def test_unknown_checks_have_persistent_spacing_and_finite_budget(self):
+        intent, _ = self.prepare()
+        intent = ops._begin(self.store, intent, self.application)
+        now = [time.time() + 60]
+        self.store.clock = lambda: now[0]
+        sessions = FakeSessions([self.application])
+        for attempt in range(1, ops.MAX_UNKNOWN_CHECKS + 1):
+            result = ops.reconcile(self.store, self.root, intent, transport_factory=sessions)
+            self.assertEqual(len(sessions.sessions), attempt)
+            self.assertEqual(self.store.db.execute('SELECT count(*) FROM sample_reconcile_attempt').fetchone()[0], attempt)
+            if attempt < ops.MAX_UNKNOWN_CHECKS:
+                self.assertEqual(result['state'], 'unknown')
+                self.assertEqual(ops.reconcile(self.store, self.root, intent, transport_factory=sessions)['state'], 'waiting_reconciliation')
+                self.assertEqual(len(sessions.sessions), attempt)
+            now[0] += 60
+        self.assertEqual(result['state'], 'quarantined_unknown')
+        self.assertEqual(ops.reconcile(self.store, self.root, intent, transport_factory=sessions)['state'], 'quarantined_unknown')
+        self.assertEqual(len(sessions.sessions), ops.MAX_UNKNOWN_CHECKS)
+        self.assertFalse(sessions.writes)
+        original = self.store.db.execute('SELECT * FROM sample_review_intent').fetchone()
+        self.assertEqual(original['request_ref'], intent['request_ref'])
+        with self.assertRaisesRegex(CycleError, 'duplicate_intent|duplicate_application'):
+            self.prepare(self.application | {'applicationId': '102'})
+        with self.assertRaisesRegex(CycleError, 'quota_reserved'):
+            self.prepare(self.application | {'applicationId': '103', 'oecId': '203', 'platformCreatorId': '303'})
+
+    def test_failed_reads_spend_persisted_unknown_budget_before_network(self):
+        intent, _ = self.prepare()
+        intent = ops._begin(self.store, intent, self.application)
+        now = [time.time() + 60]
+        self.store.clock = lambda: now[0]
+        sessions = FakeSessions([self.application])
+        sessions.read_failure = TimeoutError('test read timeout')
+        for attempt in range(1, ops.MAX_UNKNOWN_CHECKS + 1):
+            result = ops.reconcile(self.store, self.root, intent, transport_factory=sessions)
+            row = self.store.db.execute('SELECT outcome FROM sample_reconcile_attempt WHERE attempt_number=?', (attempt,)).fetchone()
+            self.assertEqual(row['outcome'], 'read_failed:TimeoutError')
+            now[0] += 60
+        self.assertEqual(result['state'], 'quarantined_unknown')
+        self.assertFalse(sessions.writes)
+
+    def test_later_normal_sync_passively_confirms_quarantined_original_intent(self):
+        intent, _ = self.prepare()
+        ops._begin(self.store, intent, self.application)
+        self.store.db.execute("UPDATE sample_review_intent SET state='quarantined_unknown' WHERE id=?", (intent['id'],))
+        wrong = self.application | {'state': 'approved', 'platformCreatorId': '999'}
+        ops.store_records(self.store, 'br', 'acc2', [wrong], evidence_ref='wrong-creator')
+        self.assertEqual(ops._intent(self.store, intent['id'])['state'], 'quarantined_unknown')
+        exact = self.application | {'state': 'approved'}
+        sessions = FakeSessions([exact])
+        with patch.object(ops, '_account', return_value='acc2'):
+            ops.sync(self.root, transport_factory=sessions)
+        self.assertEqual(ops._intent(self.store, intent['id'])['state'], 'approved')
         self.assertFalse(sessions.writes)
 
     def test_immutable_intent_and_original_account_cannot_change(self):
