@@ -92,7 +92,8 @@ def read_original(root, market, d, kind, intent):
     if load_config(root)['markets'][market]['roles']['communications'] != account:
         raise CycleError('reconciliation_original_account_changed')
     report = {}
-    with authenticated(root, market, report, read_only=True) as rt:
+    with authenticated(root, market, report, read_only=True,
+                       use_environment_proxy=c.get('imUseEnvironmentProxy', True)) as rt:
         if rt['auth'].account_name != account:
             raise CycleError('reconciliation_original_account_changed')
         if market == 'it':

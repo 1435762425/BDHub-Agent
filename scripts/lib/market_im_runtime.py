@@ -37,7 +37,8 @@ def _data(payload):
 
 
 @contextmanager
-def authenticated(root,market,report,*,canary=False,read_only=False,capability='message_send',stopped=lambda:False,owner=False):
+def authenticated(root,market,report,*,canary=False,read_only=False,capability='message_send',stopped=lambda:False,owner=False,use_environment_proxy=True):
+ if type(use_environment_proxy) is not bool:raise ValueError('market_im_proxy_setting_invalid')
  root=Path(root);pair=load_config(root)['markets'][market];account_name=pair['roles']['communications']
  if capability not in ('message_send','agent_reply'):raise ValueError('market_im_capability_invalid')
  if canary:
@@ -87,7 +88,7 @@ def authenticated(root,market,report,*,canary=False,read_only=False,capability='
     if hashlib.sha256(headers_path.read_bytes()).hexdigest()!=before:raise ValueError('market_send_identity_changed')
     return scheduled_relogin.maintenance_due(account,initialize=False,ignore_retry_throttle=True)
    report.update(market=market,account=account.name,sendCapability='read_only' if read_only else 'enabled',authSource='sdk_http_owner',platformWrites=0,realSends=0)
-   with ItalyImReadSession(auth,report,use_environment_proxy=True,stopped=stopped,maintenance_due=available,request_budget=RequestBudget(qps=2 if read_only else 3)) as session:
+   with ItalyImReadSession(auth,report,use_environment_proxy=use_environment_proxy,stopped=stopped,maintenance_due=available,request_budget=RequestBudget(qps=2 if read_only else 3)) as session:
     yield {'account':account,'identity':identity,'auth':auth,'session':session,'adapter':None if read_only else ItalyImDeliveryAdapter(auth,session),'partnerHost':auth.native_context['partner_host'],'headersPath':headers_path,'beforeHash':before}
    report['identityFileUnchanged']=hashlib.sha256(headers_path.read_bytes()).hexdigest()==before
   return
@@ -139,7 +140,7 @@ def authenticated(root,market,report,*,canary=False,read_only=False,capability='
    def session_unavailable():
     if hashlib.sha256(headers_path.read_bytes()).hexdigest()!=before:raise ValueError('market_send_identity_changed')
     return scheduled_relogin.maintenance_due(account,initialize=False,ignore_retry_throttle=True)
-   with ItalyImReadSession(auth,report,use_environment_proxy=True,stopped=stopped,
+   with ItalyImReadSession(auth,report,use_environment_proxy=use_environment_proxy,stopped=stopped,
                            maintenance_due=session_unavailable,
                            request_budget=RequestBudget(qps=2 if read_only else 3)) as session:
     yield {'account':account,'identity':identity,'auth':auth,'session':session,

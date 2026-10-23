@@ -294,8 +294,9 @@ def run(root,market,request_id,*,canary=True,page_control=False,reconcile_only=F
   if not recovering_only and store.db.execute("SELECT 1 FROM cycle_delivery WHERE plan_id=? AND state='unknown' AND id<>? LIMIT 1",(plan,active['id'] if active else '')).fetchone():
    raise CycleError('market_send_result_unknown')
   checkpoint_time('preAuth')
+  use_environment_proxy=json.loads(active['snapshot']).get('imUseEnvironmentProxy',True) if active else not first
   with authenticated(root,market,report,canary=canary,
-                     read_only=recovering_only) as runtime:
+                     read_only=recovering_only,use_environment_proxy=use_environment_proxy) as runtime:
    checkpoint_time('auth')
    session=runtime['session'];adapter=runtime['adapter'];initial=session.initialize(0)
    if recovering_only:
@@ -314,6 +315,7 @@ def run(root,market,request_id,*,canary=True,page_control=False,reconcile_only=F
     if not candidate:raise CycleError('market_send_candidate_missing')
     _binding_current(root,market,candidate)
     candidate['senderAccount']=communications;candidate['senderImId']=runtime['auth'].im_id
+    if first:candidate['imUseEnvironmentProxy']=False
     if canary:
      from lib.market_send_control import page_start_authorization
      candidate['pageStart']=page_start_authorization(store,market) if page_control else None

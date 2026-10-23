@@ -57,6 +57,7 @@ class MarketImRuntimeLockingTests(unittest.TestCase):
                 def __init__(self, _auth, _report, **kwargs):
                     self.maintenance_due = kwargs['maintenance_due']
                     self.request_budget = kwargs['request_budget']
+                    self.use_environment_proxy = kwargs['use_environment_proxy']
                 def __enter__(self): return self
                 def __exit__(self, *_args): pass
 
@@ -91,8 +92,9 @@ class MarketImRuntimeLockingTests(unittest.TestCase):
                  patch.object(runtime, 'ItalyImReadSession', Session), \
                  patch('lib.second_cycle.CycleStore', store), \
                  patch('lib.account_identity.current_generation', return_value=generation) as current:
-                with runtime.authenticated(root, 'br', {}, read_only=True) as context:
+                with runtime.authenticated(root, 'br', {}, read_only=True, use_environment_proxy=False) as context:
                     self.assertFalse(state['held'])
+                    self.assertFalse(context['session'].use_environment_proxy)
                     self.assertEqual(state['read_busy'],0)
                     self.assertIsNone(context['adapter'])
                     self.assertAlmostEqual(context['session'].request_budget.interval, 0.5)
@@ -109,8 +111,9 @@ class MarketImRuntimeLockingTests(unittest.TestCase):
                     self.assertFalse(state['held'])
                     yield borrowed_auth,lambda:checks.append('check')
                 with patch('lib.im_session_owner.enabled',return_value=True),patch('lib.im_session_owner.borrow',borrow),patch.object(runtime,'ItalyImDeliveryAdapter',return_value=object()):
-                    with runtime.authenticated(root,'br',{}) as context:
+                    with runtime.authenticated(root,'br',{},use_environment_proxy=False) as context:
                         self.assertFalse(state['held']);self.assertIs(context['auth'],borrowed_auth)
+                        self.assertFalse(context['session'].use_environment_proxy)
                         self.assertFalse(context['session'].maintenance_due());self.assertEqual(checks,['check'])
                     from lib.second_cycle import CycleError
                     with self.assertRaisesRegex(CycleError,'business_failure'):
@@ -118,6 +121,7 @@ class MarketImRuntimeLockingTests(unittest.TestCase):
                 with patch.object(runtime, 'ItalyImDeliveryAdapter', return_value=object()):
                     with runtime.authenticated(root, 'br', {}) as context:
                         self.assertTrue(state['held'])
+                        self.assertTrue(context['session'].use_environment_proxy)
                         self.assertIsNotNone(context['adapter'])
                         self.assertAlmostEqual(context['session'].request_budget.interval, 1/3)
                     self.assertFalse(state['held'])
