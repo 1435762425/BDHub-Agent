@@ -88,6 +88,8 @@ def read_original(root, market, d, kind, intent):
     from lib.italy_im_delivery import ItalyImDeliveryAdapter
     from lib.cycle_send_runtime import descriptor
     c = d['snapshot']
+    if c.get('market', market) != market:
+        raise CycleError('reconciliation_original_market_changed')
     account = c.get('senderAccount') or LEGACY_ACCOUNTS[market]
     if load_config(root)['markets'][market]['roles']['communications'] != account:
         raise CycleError('reconciliation_original_account_changed')

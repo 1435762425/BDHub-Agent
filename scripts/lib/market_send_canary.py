@@ -240,9 +240,9 @@ def run(root,market,request_id,*,canary=True,page_control=False,reconcile_only=F
   nonlocal checkpoint
   now=time.monotonic();timing[name]=round((now-checkpoint)*1000,1);checkpoint=now
  with CycleStore(root/'var/second-cycle.sqlite') as store:
-  plan=store.db.execute("SELECT id FROM plan WHERE institution='bjn-local-research' AND market=? AND state='active'",(market,)).fetchone()
+  plan=store.db.execute("SELECT id,state FROM plan WHERE institution='bjn-local-research' AND market=?",(market,)).fetchone()
   if not plan:raise CycleError('plan_missing')
-  plan=plan[0]
+  plan,plan_state=plan['id'],plan['state']
   def dispatch():
    if not first:return _dispatch_allowed(store,market,canary=canary,page_control=page_control)
    from lib.first_outreach import dispatch_allowed
@@ -255,19 +255,21 @@ def run(root,market,request_id,*,canary=True,page_control=False,reconcile_only=F
    try:dispatch();return False
    except CycleError:return True
   from lib.market_send_control import settle_confirmed_canaries
-  completed=[] if first else settle_confirmed_canaries(store,market,communications)
+  completed=[] if first or plan_state!='active' else settle_confirmed_canaries(store,market,communications)
   if completed:return report|{'state':'confirmed'}|completed[-1]
-  if not reconcile_only:
+  if not reconcile_only and plan_state=='active':
    # Settle what needs no platform read before choosing work: expired frozen deliveries and refused creates.
    modes=('market-first-v1',) if first else ('market-canary-v1','market-continuous-v1')
    Deliveries(store).cancel_expired_unsubmitted(plan,modes)
    Deliveries(store).quarantine_refused_creates(plan,modes)
-  active=_recovering(store,plan,['market-first-v1']) if first else _recovering(store,plan)
+  # Both purposes share the same recipient ledger and executor lock. Either
+  # worker may verify the original pending write without borrowing send authority.
+  active=_recovering(store,plan,['market-first-v1','market-canary-v1','market-continuous-v1'])
   if active is not None:
    result=report|reconcile_delivery(root,market,Deliveries(store),active['id'])
-   completed=[] if first else settle_confirmed_canaries(store,market,communications)
+   completed=settle_confirmed_canaries(store,market,communications) if plan_state=='active' and json.loads(active['snapshot']).get('executionMode')=='market-canary-v1' else []
    return result|(completed[-1] if completed else {})
-  if not reconcile_only and not first:
+  if not reconcile_only and not first and plan_state=='active':
    from lib.market_send_control import unbound_confirmed_canary
    waiting=unbound_confirmed_canary(store,market,communications)
    if waiting:return report|waiting
@@ -277,6 +279,7 @@ def run(root,market,request_id,*,canary=True,page_control=False,reconcile_only=F
   elif reconcile_only:
    return report|{'state':'nothing_to_reconcile'}
   else:
+   if plan_state!='active':raise CycleError('plan_paused')
    if not first:require_send_template_approval(store,root,market)
    dispatch()
    active=_unsettled(store,plan,execution_mode='market-first-v1') if first else _unsettled(store,plan,canary=canary)
@@ -294,7 +297,7 @@ def run(root,market,request_id,*,canary=True,page_control=False,reconcile_only=F
   if not recovering_only and store.db.execute("SELECT 1 FROM cycle_delivery WHERE plan_id=? AND state='unknown' AND id<>? LIMIT 1",(plan,active['id'] if active else '')).fetchone():
    raise CycleError('market_send_result_unknown')
   checkpoint_time('preAuth')
-  use_environment_proxy=json.loads(active['snapshot']).get('imUseEnvironmentProxy',True) if active else not first
+  use_environment_proxy=json.loads(active['snapshot']).get('imUseEnvironmentProxy',True) if active else market!='br'
   with authenticated(root,market,report,canary=canary,
                      read_only=recovering_only,use_environment_proxy=use_environment_proxy) as runtime:
    checkpoint_time('auth')
@@ -315,7 +318,7 @@ def run(root,market,request_id,*,canary=True,page_control=False,reconcile_only=F
     if not candidate:raise CycleError('market_send_candidate_missing')
     _binding_current(root,market,candidate)
     candidate['senderAccount']=communications;candidate['senderImId']=runtime['auth'].im_id
-    if first:candidate['imUseEnvironmentProxy']=False
+    if market=='br':candidate['imUseEnvironmentProxy']=False
     if canary:
      from lib.market_send_control import page_start_authorization
      candidate['pageStart']=page_start_authorization(store,market) if page_control else None
