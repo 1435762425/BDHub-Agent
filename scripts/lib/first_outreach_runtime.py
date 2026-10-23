@@ -292,7 +292,7 @@ def _coverage_snapshot(root, store):
      WHERE market='br' AND account_name=? AND complete=1 ORDER BY observed DESC,rowid DESC LIMIT 1""", (account,)).fetchone()
     if not row or not cap.get('observed') or not cap['observed'] <= row['observed'] <= store.clock() + 30 or store.clock() - row['observed'] > samples.MAX_FACT_AGE:
         return None
-    if row['binding_fingerprint'] != digest(cap['binding']) or row['contract_fingerprint'] != samples.record_contract_fingerprint(contract):
+    if row['binding_fingerprint'] != digest(cap['binding']) or row['contract_fingerprint'] != digest(contract):
         return None
     members = store.db.execute("""SELECT count(*) FROM sample_sync_member m JOIN sample_application a
      ON a.application_id=m.application_id AND a.market='br' AND a.account_name=? WHERE m.sync_id=?""", (account, row['id'])).fetchone()[0]
