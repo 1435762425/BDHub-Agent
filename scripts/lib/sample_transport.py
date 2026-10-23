@@ -9,6 +9,8 @@ from contextlib import contextmanager
 from copy import deepcopy
 import hashlib
 import json
+import re
+import sqlite3
 import time
 from pathlib import Path
 
@@ -24,7 +26,14 @@ OBSERVED_READ_BODY = {'search_params': [],
                       'order_params': [{'order_key': 9, 'order_type': 2}], 'page_size': 20, 'cur_page': 1}
 CONTRACT_SCHEMA = 'bdhub.br-sample-contract.v1'
 READ_CONTRACT_SCHEMA = 'bdhub.br-sample-read-contract.v1'
+READ_PROBE_SCHEMA = 'bdhub.br-sample-read-probe.v1'
 CANARY_CONTRACT_SCHEMA = 'bdhub.br-sample-canary-contract.v1'
+STATUS_EVIDENCE_SCHEMA = 'bdhub.br-sample-status-evidence.v1'
+UI_STAGES = {'To review': 'pending', 'Ready to ship': 'ready_to_ship', 'Shipped': 'shipped',
+             'Content pending': 'content_pending', 'Completed': 'completed', 'Canceled': 'cancelled'}
+UI_FILES = {'Ready to ship': 'sample-ready-to-ship-ui.private.txt', 'Shipped': 'sample-shipped-ui.private.txt',
+            'Content pending': 'sample-content-pending-ui.private.txt', 'Completed': 'sample-completed-ui.private.txt',
+            'Canceled': 'sample-canceled-ui.private.txt'}
 READ_EVIDENCE = 'var/br-sample-allstate-readonly-20261023-complete.private.json'
 READ_PATHS = {'applicationId': 'apply_id', 'oecId': 'creator_info.oec_id',
               'platformCreatorId': 'creator_info.id', 'pid': 'product_info.product_id',
@@ -110,9 +119,9 @@ def validate_contract(contract):
         raise CycleError('sample_contract_fields_missing')
     statuses = contract.get('statusMap')
     if not isinstance(statuses, dict) or not statuses or not all(isinstance(k, str) and v in
-            {'pending', 'seller_pending', 'approved', 'rejected', 'shipped', 'completed', 'cancelled'} for k, v in statuses.items()):
+            {'pending', 'seller_pending', 'approved', 'ready_to_ship', 'shipped', 'content_pending', 'completed', 'rejected', 'cancelled'} for k, v in statuses.items()):
         raise CycleError('sample_contract_status_missing')
-    if 'pending' not in statuses.values() or not {'approved', 'shipped', 'completed'}.intersection(statuses.values()):
+    if 'pending' not in statuses.values() or not {'approved', 'ready_to_ship', 'shipped', 'content_pending', 'completed'}.intersection(statuses.values()):
         raise CycleError('sample_contract_status_missing')
     if policy is None and contract.get('paymentFreeValue') is not False:
         raise CycleError('sample_contract_payment_unverified')
@@ -139,16 +148,109 @@ def build_canary_contract(read_contract, cost_policy, *, pending_ui_evidence_ref
     return validate_canary_contract(result)
 
 
+def validate_status_evidence(evidence, *, binding=None):
+    if not isinstance(evidence, dict) or set(evidence) - {'sourceBinding', 'revalidatedBy'} != {'schema', 'market', 'binding', 'observations'} or evidence.get('schema') != STATUS_EVIDENCE_SCHEMA or evidence.get('market') != 'br' or not isinstance(evidence.get('observations'), list) or not evidence['observations']:
+        raise CycleError('sample_status_evidence_invalid')
+    if binding is not None and evidence.get('binding') != binding:
+        raise CycleError('sample_original_identity_changed')
+    if 'sourceBinding' in evidence or 'revalidatedBy' in evidence:
+        source, current = evidence.get('sourceBinding'), evidence.get('binding')
+        if not isinstance(source, dict) or not isinstance(current, dict) or any(source.get(key) != current.get(key) for key in ('market', 'account', 'institutionFingerprint')) or not isinstance(evidence.get('revalidatedBy'), str) or not evidence['revalidatedBy']:
+            raise CycleError('sample_status_evidence_binding_invalid')
+    statuses = {}
+    for row in evidence['observations']:
+        if not isinstance(row, dict) or type(row.get('nativeStatus')) is not int or row['nativeStatus'] < 0 or UI_STAGES.get(row.get('uiLabel')) != row.get('state') or any(not isinstance(row.get(key), str) or not row[key] for key in ('uiEvidenceRef', 'apiEvidenceRef')):
+            raise CycleError('sample_status_evidence_invalid')
+        for key in ('applicationId', 'platformCreatorId', 'oecId', 'pid', 'campaignId'):
+            if not isinstance(row.get(key), str) or not row[key].isascii() or not row[key].isdigit() or int(row[key]) <= 0:
+                raise CycleError('sample_status_evidence_identity_missing')
+        native = str(row['nativeStatus'])
+        if native == '10' and row['state'] != 'pending' or native in statuses and statuses[native] != row['state']:
+            raise CycleError('sample_status_evidence_conflict')
+        statuses[native] = row['state']
+    return statuses
+
+
+def observed_status_evidence(root, binding):
+    """Join archived real BR UI rows to the immutable API observation, never totals alone."""
+    root = Path(root)
+    read = observed_read_contract(root, binding)
+    if read is None:
+        return None
+    proof = json.loads((root / READ_EVIDENCE).read_text())
+    records = []
+    for page in proof['pages']:
+        values = page.get('businessValues') or {}
+        indices = sorted({int(match[1]) for key in values if (match := re.fullmatch(r'\$\.data\.sample_records\[(\d+)\]\.apply_id', key))})
+        for index in indices:
+            row = {key: values.get(f'$.data.sample_records[{index}].{path}') for key, path in READ_PATHS.items()}
+            row['nativeStatus'] = row.pop('status')
+            records.append(row)
+    observations = []
+    identities = root / 'var/creator-identities.sqlite'
+    database = sqlite3.connect(identities.resolve().as_uri() + '?mode=ro', uri=True) if identities.is_file() else None
+    try:
+        for label, filename in UI_FILES.items():
+            path = root / 'var/releases/br-first-activation-20261023' / filename
+            if not path.is_file():
+                continue
+            source = path.read_text()
+            if 'Brazil' not in source:
+                continue
+            reference = str(path.relative_to(root)) + ':sha256:' + hashlib.sha256(source.encode()).hexdigest()
+            for section in re.split(r'\n\s*\d+\s+row\s*\n', source):
+                ids = re.findall(r'\bID\s*:\s*(\d{10,32})', section)
+                if len(ids) != 2 or not re.search(r'(?:文本|text)\s+' + re.escape(label) + r'(?:\s|$)', section):
+                    continue
+                matches = [row for row in records if (row['pid'], row['campaignId']) == tuple(ids)]
+                handle = re.search(r'(?:文本|text)\s+@\s*([A-Za-z0-9._]+)', section)
+                if not handle or database is None:
+                    continue
+                if handle and database is not None:
+                    exact = []
+                    for row in matches:
+                        person = database.execute("SELECT current_handle FROM creator_identity WHERE market='br' AND oec_id=? AND handle_conflict=0", (row['oecId'],)).fetchone()
+                        if person and str(person[0] or '').lstrip('@').lower() == handle[1].lower():
+                            exact.append(row)
+                    matches = exact
+                if len(matches) != 1:
+                    continue
+                observations.append(matches[0] | {'state': UI_STAGES[label], 'uiLabel': label,
+                    'uiEvidenceRef': reference, 'apiEvidenceRef': read['evidence']['records']})
+    finally:
+        if database is not None:
+            database.close()
+    if not observations:
+        return None
+    evidence = {'schema': STATUS_EVIDENCE_SCHEMA, 'market': 'br', 'binding': deepcopy(binding), 'observations': observations}
+    validate_status_evidence(evidence, binding=binding)
+    return evidence
+
+
+def extend_canary_contract(contract, evidence):
+    current = validate_canary_contract(contract)
+    statuses = validate_status_evidence(evidence, binding=current['binding'])
+    if 'statusEvidence' in current:
+        combined = {digest(row): row for row in current['statusEvidence']['observations'] + evidence['observations']}
+        evidence = evidence | {'observations': list(combined.values())}
+        statuses = validate_status_evidence(evidence, binding=current['binding'])
+    current.update(statusEvidence=deepcopy(evidence), statusMap={'10': 'pending'} | statuses)
+    return validate_canary_contract(current)
+
+
 def validate_canary_contract(contract, *, binding=None):
-    if not isinstance(contract, dict) or set(contract) != {'schema', 'market', 'readScope', 'evidence', 'recordPaths', 'readBody', 'statusCountersPath', 'binding', 'statusMap', 'costPolicy', 'request'} or contract.get('schema') != CANARY_CONTRACT_SCHEMA:
+    if not isinstance(contract, dict) or set(contract) - {'statusEvidence'} != {'schema', 'market', 'readScope', 'evidence', 'recordPaths', 'readBody', 'statusCountersPath', 'binding', 'statusMap', 'costPolicy', 'request'} or contract.get('schema') != CANARY_CONTRACT_SCHEMA:
         raise CycleError('sample_canary_contract_invalid')
-    if contract.get('statusMap') != {'10': 'pending'} or contract.get('request') != {
+    statuses = {'10': 'pending'}
+    if 'statusEvidence' in contract:
+        statuses.update(validate_status_evidence(contract['statusEvidence'], binding=contract.get('binding')))
+    if contract.get('statusMap') != statuses or contract.get('request') != {
             'method': 'POST', 'path': REVIEW, 'fields': ['campaign_id', 'creator_id', 'product_id', 'is_approved'], 'requestPayment': 'omit'}:
         raise CycleError('sample_canary_unobserved_semantics')
     evidence = contract.get('evidence')
     if not isinstance(evidence, dict) or set(evidence) != {'records', 'creatorIdentity', 'pendingUi', 'requestCandidate'} or any(not isinstance(ref, str) or not ref for ref in evidence.values()):
         raise CycleError('sample_canary_evidence_missing')
-    read = {key: deepcopy(value) for key, value in contract.items() if key not in {'statusMap', 'costPolicy', 'request'}}
+    read = {key: deepcopy(value) for key, value in contract.items() if key not in {'statusMap', 'costPolicy', 'request', 'statusEvidence'}}
     read['schema'] = READ_CONTRACT_SCHEMA
     read['evidence'] = {key: evidence[key] for key in ('records', 'creatorIdentity')}
     validate_read_contract(read, binding=binding)
@@ -216,6 +318,9 @@ def normalize_record(raw, *, contract=None):
             'state': (contract or {}).get('statusMap', {}).get(str(status), 'unknown') if writable or canary else 'unknown',
             'nativeStatus': status if type(status) in (str, int) else None,
             'paymentRequired': payment if type(payment) is bool else None,
+            'isPosted': raw.get('is_posted') if type(raw.get('is_posted')) is bool else None,
+            'videoCount': raw.get('video_count') if type(raw.get('video_count')) is int and raw['video_count'] >= 0 else None,
+            'liveCount': raw.get('room_count') if type(raw.get('room_count')) is int and raw['room_count'] >= 0 else None,
             'contractFingerprint': record_contract_fingerprint(contract) if contract else None}
 
 
@@ -229,9 +334,29 @@ def review_payload(application, policy=None):
     return dict(zip(('campaign_id', 'creator_id', 'product_id'), values)) | {'is_approved': True}
 
 
+def receipt_accepted(receipt):
+    return isinstance(receipt, dict) and receipt.get('status') == 'accepted' and receipt.get('http') == 200 and \
+           type(receipt.get('code')) is int and receipt['code'] == 0 and \
+           all(receipt.get(key) is None or receipt.get(key) is False for key in ('ambiguous', 'verificationRequired', 'systemError3'))
+
+
+def read_failure(result):
+    if result.has_turing or result.system_error_3 and result.code == 10000:
+        return 'sample_verification_required'
+    if result.http_status == 429:
+        return 'sample_rate_limited'
+    if result.http_status == 401 or result.code == 16201010:
+        return 'sample_authentication_required'
+    if result.http_status == 403:
+        return 'sample_permission_denied'
+    if result.http_status in {0, 500, 502, 503, 504}:
+        return 'sample_network_unavailable'
+    return 'sample_remote_read_failed'
+
+
 class SampleAdapter:
     """Protocol independent of transport construction, useful for narrow contract tests."""
-    def __init__(self, transport, report, *, contract=None, frozen=None, stopped=lambda: False):
+    def __init__(self, transport, report, *, contract=None, frozen=None, stopped=lambda: False, sleep=time.sleep, probe_binding=None):
         self.transport = transport
         self.report = report
         if frozen is not None:
@@ -242,6 +367,30 @@ class SampleAdapter:
         self.frozen = deepcopy(frozen)
         self.stopped = stopped
         self.used = False
+        self.sleep = sleep
+        self.probe_binding = probe_binding
+
+    def _read(self, *, method, path, params, payload):
+        for attempt in range(2):
+            if self.stopped():
+                raise CycleError('sample_stopped')
+            try:
+                current_params = dict(params)
+                if 'fp' in current_params and getattr(self.transport, 'fp', None):
+                    current_params['fp'] = self.transport.fp
+                result = self.transport._xhr(method=method, path=path, params=current_params, payload=payload, write=False)
+            except ValueError as error:
+                if str(error).startswith('commerce_verification'):
+                    raise CycleError('sample_verification_required') from error
+                raise
+            if not (result.http_status != 200 or type(result.code) is not int or result.code != 0 or result.ambiguous or result.has_turing or result.system_error_3):
+                return self.transport.require_read(result)
+            code = read_failure(result)
+            if code != 'sample_network_unavailable' or attempt == 1:
+                raise CycleError(code)
+            self.report['readRetries'] = self.report.get('readRetries', 0) + 1
+            self.sleep(.5)
+        raise CycleError('sample_remote_read_failed')
 
     def read_page(self, page=1):
         if self.stopped():
@@ -250,8 +399,7 @@ class SampleAdapter:
             raise CycleError('sample_page_invalid')
         body = deepcopy(self.contract['readBody'] if self.contract else OBSERVED_READ_BODY)
         body['cur_page'] = page
-        result = self.transport._xhr(method='POST', path=LIST, params=self.transport._params(), payload=body, write=False)
-        payload = self.transport.require_read(result)
+        payload = self._read(method='POST', path=LIST, params=self.transport._params(), payload=body)
         data = payload.get('data')
         if not isinstance(data, dict):
             raise CycleError('sample_records_response_invalid')
@@ -266,14 +414,15 @@ class SampleAdapter:
         if counters is not None and (not isinstance(counters, dict) or any(not isinstance(k, str) or not k or
                 type(v) is not int or v < 0 for k, v in counters.items())):
             raise CycleError('sample_records_response_invalid')
-        if self.contract and self.contract.get('schema') in {READ_CONTRACT_SCHEMA, CANARY_CONTRACT_SCHEMA} and \
+        if (self.probe_binding or self.contract and self.contract.get('schema') in {READ_CONTRACT_SCHEMA, CANARY_CONTRACT_SCHEMA}) and \
                 (counters is None or sum(counters.values()) != total):
             raise CycleError('sample_records_counters_incomplete')
         self.report['readRequests'] = self.report.get('readRequests', 0) + 1
-        return {'records': [normalize_record(r, contract=self.contract) for r in rows], 'total': total,
+        candidate = self.contract or ({'schema': READ_PROBE_SCHEMA, 'recordPaths': READ_PATHS, 'binding': self.probe_binding} if self.probe_binding else None)
+        return {'records': [normalize_record(r, contract=candidate) for r in rows], 'total': total,
                 'page': page, 'pageSize': body['page_size'], 'evidenceRef': 'sample-list:' + digest(payload),
                 'platformCounts': deepcopy(counters), 'readScope': (self.contract or {}).get('readScope',
-                    'all_states' if self.contract and body.get('search_params') == [] else None)}
+                    'all_states' if (self.contract or self.probe_binding) and body.get('search_params') == [] else None)}
 
     def refresh_sample_quota(self, offer):
         """Read the exact joined Campaign/PID; incomplete pages never prove absence."""
@@ -287,9 +436,8 @@ class SampleAdapter:
             for page in range(1, max_pages + 1):
                 if self.stopped():
                     raise CycleError('sample_stopped')
-                result = self.transport._xhr(method='GET', path=path,
-                    params=self.transport._params() | params | {'cur_page': page, 'page_size': 100}, payload=None, write=False)
-                payload = self.transport.require_read(result)
+                payload = self._read(method='GET', path=path,
+                    params=self.transport._params() | params | {'cur_page': page, 'page_size': 100}, payload=None)
                 self.report['readRequests'] = self.report.get('readRequests', 0) + 1
                 refs.append(digest(payload))
                 data = payload.get('data')
@@ -338,7 +486,8 @@ class SampleAdapter:
         if result.http_status:
             self.report['platformWrites'] = self.report.get('platformWrites', 0) + 1
         receipt = {'http': result.http_status, 'code': result.code if type(result.code) is int else None,
-                   'evidenceRef': 'sample-review:' + digest(result.payload)}
+                   'evidenceRef': 'sample-review:' + digest(result.payload), 'ambiguous': bool(result.ambiguous),
+                   'verificationRequired': bool(result.has_turing), 'systemError3': bool(result.system_error_3)}
         if result.ambiguous or result.http_status != 200 or result.has_turing or result.system_error_3 or type(result.code) is not int:
             return receipt | {'status': 'unknown'}
         if self.contract.get('schema') == CANARY_CONTRACT_SCHEMA:
@@ -352,7 +501,7 @@ class SampleAdapter:
 
 @contextmanager
 def sample_session(root, market, account_name, report, *, contract=None, frozen=None,
-                   expected_binding=None, stopped=lambda: False, wait_seconds=5):
+                   expected_binding=None, stopped=lambda: False, wait_seconds=5, expected_institution_fingerprint=None):
     """Share the original platform slots before acquiring this account's lease."""
     if market != 'br':
         raise CycleError('sample_market_not_supported')
@@ -364,13 +513,13 @@ def sample_session(root, market, account_name, report, *, contract=None, frozen=
             return stopped()
         with _account_sample_session(root, market, account_name, report, contract=contract, frozen=frozen,
                                      expected_binding=expected_binding, stopped=scoped_stopped,
-                                     wait_seconds=wait_seconds) as adapter:
+                                     wait_seconds=wait_seconds, expected_institution_fingerprint=expected_institution_fingerprint) as adapter:
             yield adapter
 
 
 @contextmanager
 def _account_sample_session(root, market, account_name, report, *, contract=None, frozen=None,
-                            expected_binding=None, stopped=lambda: False, wait_seconds=5):
+                            expected_binding=None, stopped=lambda: False, wait_seconds=5, expected_institution_fingerprint=None):
     """Use project-owned identity, existing ProfileLease and fixed endpoint scopes."""
     if market != 'br':
         raise CycleError('sample_market_not_supported')
@@ -387,7 +536,8 @@ def _account_sample_session(root, market, account_name, report, *, contract=None
     from bdhub import scheduled_relogin
     from bdhub.enrich.profile_lease import ProfileBusyError, ProfileLease
     from bdhub.hub.markets import identity_for
-    from bdhub.send.taplink.transport import TapLinkTransport, account_for
+    from bdhub.send.taplink.transport import account_for
+    from bdhub.research.commerce_transport import CommerceTransport
     cfg, account = account_for(market, account_name, check_maintenance=False)
     identity = identity_for(market, account=account, cfg=cfg).require_product_search()
     if not identity.partner_id_is_own:
@@ -396,12 +546,20 @@ def _account_sample_session(root, market, account_name, report, *, contract=None
     before = hashlib.sha256(headers_path.read_bytes()).hexdigest()
     binding = {'market': market, 'account': account_name,
                'institutionFingerprint': digest(str(identity.im_market_partner_id)), 'identitySha256': before}
+    if expected_institution_fingerprint is not None and binding['institutionFingerprint'] != expected_institution_fingerprint:
+        raise CycleError('sample_reader_institution_changed')
     if expected_binding is not None and binding != expected_binding:
         raise CycleError('sample_original_identity_changed')
     if contract is not None:
         contract = validate_any_contract(contract, binding=binding)
     elif contract is None:
-        contract = observed_read_contract(root, binding)
+        try:
+            contract = observed_read_contract(root, binding)
+        except CycleError as error:
+            if str(error) != 'sample_read_evidence_binding_mismatch':
+                raise
+            # A normal identity rotation may re-probe reads. It grants no write scope.
+            contract = None
     def check():
         if frozen is not None:
             require_current_cost_policy(root, contract)
@@ -411,7 +569,7 @@ def _account_sample_session(root, market, account_name, report, *, contract=None
             raise CycleError('sample_account_maintenance_due')
         if hashlib.sha256(headers_path.read_bytes()).hexdigest() != before:
             raise CycleError('sample_identity_changed')
-    class Scoped(TapLinkTransport):
+    class Scoped(CommerceTransport):
         READ_ENDPOINTS = frozenset({(LIST, 'POST'), (CAMPAIGNS, 'GET'), (PRODUCTS, 'GET')})
         WRITE_ENDPOINTS = frozenset({(REVIEW, 'POST')}) if frozen is not None else frozenset()
         def _xhr(self, **kwargs):
@@ -434,7 +592,7 @@ def _account_sample_session(root, market, account_name, report, *, contract=None
         check()
         transport = Scoped(identity, account, allow_write=frozen is not None)
         report.update(binding=binding, platformWriteAttempts=0, platformWrites=0)
-        adapter = SampleAdapter(transport, report, contract=contract, frozen=frozen, stopped=stopped)
+        adapter = SampleAdapter(transport, report, contract=contract, frozen=frozen, stopped=stopped, probe_binding=binding if contract is None else None)
         adapter.binding = binding
         yield adapter
     finally:
@@ -442,3 +600,5 @@ def _account_sample_session(root, market, account_name, report, *, contract=None
             transport.session.close()
         lease.release(owner.token)
         report['identityFileUnchanged'] = hashlib.sha256(headers_path.read_bytes()).hexdigest() == before
+        report['verificationAttempts'] = getattr(transport, 'verification_attempts', 0)
+        report['verificationSuccesses'] = getattr(transport, 'verification_successes', 0)

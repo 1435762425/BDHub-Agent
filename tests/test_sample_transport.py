@@ -6,7 +6,7 @@ import unittest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts'))
 from lib.sample_transport import (CONTRACT_SCHEMA, READ_CONTRACT_SCHEMA, CANARY_CONTRACT_SCHEMA, READ_EVIDENCE, READ_PATHS,
                                   OBSERVED_READ_BODY, LIST, REVIEW, SampleAdapter, normalize_record,
-                                  observed_read_contract, review_payload, validate_contract, validate_read_contract, build_canary_contract, validate_canary_contract)
+                                  observed_read_contract, review_payload, validate_contract, validate_read_contract, build_canary_contract, validate_canary_contract, extend_canary_contract, validate_status_evidence, observed_status_evidence, read_failure, receipt_accepted)
 from lib.second_cycle import CycleError
 
 
@@ -49,6 +49,16 @@ def seller_policy():
 def canary_contract():
     return build_canary_contract(read_contract(), seller_policy(), pending_ui_evidence_ref='observed:br-pending-ui',
                                   request_candidate_ref='docs/contracts/tiktok/business-catalog.md:TK-010')
+
+
+def status_evidence(binding=None):
+    owner = binding or read_contract()['binding']
+    observations = []
+    for native, state, label in ((40, 'content_pending', 'Content pending'), (100, 'completed', 'Completed')):
+        observations.append({'applicationId': '90001', 'platformCreatorId': '90002', 'oecId': '90003', 'pid': '90004', 'campaignId': '90005',
+                             'nativeStatus': native, 'state': state, 'uiLabel': label, 'uiEvidenceRef': 'observed:br-ui:' + label,
+                             'apiEvidenceRef': 'observed:br-original-list'})
+    return {'schema': 'bdhub.br-sample-status-evidence.v1', 'market': 'br', 'binding': owner, 'observations': observations}
 
 
 def br_raw(index=0, status=10):
@@ -235,6 +245,114 @@ class SampleTransportTest(unittest.TestCase):
         transport = Transport({'data': {'total_num': 101, 'campaign': []}})
         with self.assertRaisesRegex(CycleError, 'pagination_incomplete'):
             SampleAdapter(transport, {}).refresh_sample_quota({'pid': '401', 'campaignId': '501'})
+        self.assertEqual(len(transport.calls), 1)
+
+    def test_real_status_evidence_extends_only_observed_phases_and_publication_facts(self):
+        value = extend_canary_contract(canary_contract(), status_evidence())
+        self.assertEqual(value['statusMap'], {'10': 'pending', '40': 'content_pending', '100': 'completed'})
+        self.assertNotIn('review', value['evidence'])
+        self.assertNotIn('lifecycle', value['evidence'])
+        source = br_raw(status=40) | {'is_posted': False, 'video_count': 0, 'room_count': 0}
+        record = normalize_record(source, contract=value)
+        self.assertEqual((record['state'], record['isPosted'], record['videoCount'], record['liveCount']), ('content_pending', False, 0, 0))
+        self.assertEqual(normalize_record(br_raw(status=52), contract=value)['state'], 'unknown')
+        forged = status_evidence()
+        forged['observations'][0]['nativeStatus'] = 10
+        with self.assertRaisesRegex(CycleError, 'evidence_conflict'):
+            extend_canary_contract(canary_contract(), forged)
+
+    def test_rebinding_probe_observes_identity_without_granting_write_or_guessing_stage(self):
+        transport = Transport({'code': 0, 'data': {'total': 1, 'sample_records': [br_raw()], 'sample_status_num_map': {'TO_REVIEW_1': 1}}})
+        binding = read_contract()['binding'] | {'identitySha256': 'new-login'}
+        adapter = SampleAdapter(transport, {}, probe_binding=binding)
+        page = adapter.read_page()
+        self.assertIsNone(adapter.contract)
+        self.assertEqual(page['readScope'], 'all_states')
+        self.assertEqual(page['records'][0]['platformCreatorId'], '20001')
+        self.assertEqual(page['records'][0]['state'], 'unknown')
+        self.assertIsNone(page['records'][0]['paymentRequired'])
+        with self.assertRaisesRegex(CycleError, 'outside_intent'):
+            adapter.approve_once({'is_approved': True})
+        self.assertTrue(all(not request['write'] for request in transport.calls))
+
+    def test_archived_ui_and_immutable_api_rows_require_exact_creator_disambiguation(self):
+        import json, sqlite3, tempfile
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            binding = read_contract()['binding']
+            rows = []
+            for index, native in enumerate((100, 40)):
+                rows.append({'applicationId': str(1000000000000000001 + index), 'platformCreatorId': str(2000000000000000001 + index),
+                    'oecId': str(3000000000000000001 + index), 'pid': '4000000000000000001', 'campaignId': '5000000000000000001', 'status': native})
+            values = {f'$.data.sample_records[{index}].{path}': row[key] for index, row in enumerate(rows) for key, path in READ_PATHS.items()}
+            fields = {'$.data.sample_records[].' + path: {'number' if key == 'status' else 'string': 2} for key, path in READ_PATHS.items()}
+            fields.update({'$.data.sample_status_num_map.COMPLETED': {'number': 1}, '$.data.sample_status_num_map.CONTENT_PENDING': {'number': 1}})
+            proof = {'schema': 'bdhub.br-sample-field-probe.v1', 'market': 'br', 'account': 'acc2', 'binding': binding,
+                'status': 'observed', 'complete': True, 'total': 2, 'recordCount': 2, 'platformWrites': 0, 'platformWriteAttempts': 0,
+                'identityFileUnchanged': True, 'request': {'path': LIST, 'method': 'POST', 'body': OBSERVED_READ_BODY},
+                'pages': [{'page': 1, 'http': 200, 'code': 0, 'recordCount': 2, 'ambiguous': False, 'verificationRequired': False,
+                          'systemError3': False, 'fields': fields, 'statusCounts': {'COMPLETED': 1, 'CONTENT_PENDING': 1}, 'businessValues': values}]}
+            path = root / READ_EVIDENCE
+            path.parent.mkdir(parents=True)
+            path.write_text(json.dumps(proof))
+            folder = root / 'var/releases/br-first-activation-20261023'
+            folder.mkdir(parents=True)
+            for label, name, handle in [('Completed', 'sample-completed-ui.private.txt', 'done_creator'),
+                                        ('Content pending', 'sample-content-pending-ui.private.txt', 'waiting_creator')]:
+                (folder / name).write_text('Brazil\n1 row\n2 text ID : 4000000000000000001\n3 text ID: 5000000000000000001\n4 文本 ' + label + '\n5 text @ ' + handle + '\n')
+            # Same PID/Campaign occurs twice: labels alone cannot assign either state.
+            self.assertIsNone(observed_status_evidence(root, binding))
+            with sqlite3.connect(root / 'var/creator-identities.sqlite') as db:
+                db.execute('CREATE TABLE creator_identity(market TEXT,oec_id TEXT,current_handle TEXT,handle_conflict INTEGER)')
+                db.executemany('INSERT INTO creator_identity VALUES(?,?,?,0)', [('br', rows[0]['oecId'], 'done_creator'), ('br', rows[1]['oecId'], 'waiting_creator')])
+            result = observed_status_evidence(root, binding)
+            self.assertEqual(validate_status_evidence(result, binding=binding), {'40': 'content_pending', '100': 'completed'})
+            self.assertEqual({row['applicationId'] for row in result['observations']}, {row['applicationId'] for row in rows})
+            # A unique PID/Campaign still needs the same creator; another creator's
+            # Completed row cannot redefine an unrelated cancellation enum.
+            one = dict(proof)
+            one.update(total=1, recordCount=1)
+            single_fields = {'$.data.sample_records[].' + value: {'number' if key == 'status' else 'string': 1} for key, value in READ_PATHS.items()}
+            single_fields['$.data.sample_status_num_map.CANCELED'] = {'number': 1}
+            single_values = {f'$.data.sample_records[0].{value}': (52 if key == 'status' else rows[0][key]) for key, value in READ_PATHS.items()}
+            one['pages'] = [dict(proof['pages'][0], recordCount=1, fields=single_fields, statusCounts={'CANCELED': 1}, businessValues=single_values)]
+            path.write_text(json.dumps(one))
+            (folder / 'sample-content-pending-ui.private.txt').unlink()
+            (folder / 'sample-completed-ui.private.txt').write_text('Brazil\n1 row\n2 text ID : 4000000000000000001\n3 text ID: 5000000000000000001\n4 文本 Completed\n5 text @ different_creator\n')
+            self.assertIsNone(observed_status_evidence(root, binding))
+
+    def test_sample_read_failures_are_typed_and_only_transient_reads_retry(self):
+        examples = [(200, 10000, True, 'sample_verification_required'),
+                    (401, 0, False, 'sample_authentication_required'),
+                    (403, 0, False, 'sample_permission_denied'), (429, 0, False, 'sample_rate_limited')]
+        for http, code, challenge, expected in examples:
+            transport = Transport()
+            transport.result.http_status, transport.result.code, transport.result.has_turing = http, code, challenge
+            with self.assertRaisesRegex(CycleError, expected):
+                SampleAdapter(transport, {}, sleep=lambda _: None).read_page()
+            self.assertEqual(len(transport.calls), 1)
+        transport = Transport()
+        transport.result.http_status = 0
+        sleeps = []
+        with self.assertRaisesRegex(CycleError, 'sample_network_unavailable'):
+            SampleAdapter(transport, {}, sleep=sleeps.append).read_page()
+        self.assertEqual((len(transport.calls), sleeps), (2, [.5]))
+
+    def test_receipt_permission_requires_an_unambiguous_accepted_response(self):
+        accepted = {'status': 'accepted', 'http': 200, 'code': 0, 'ambiguous': False, 'verificationRequired': False, 'systemError3': False}
+        self.assertTrue(receipt_accepted(accepted))
+        for altered in (accepted | {'status': 'unknown'}, accepted | {'ambiguous': True}, accepted | {'verificationRequired': True},
+                        accepted | {'systemError3': True}, accepted | {'status': 'accepted', 'code': True}):
+            self.assertFalse(receipt_accepted(altered))
+
+    def test_commerce_verification_failure_remains_a_challenge_without_plain_replay(self):
+        transport = Transport()
+        def challenge(**kwargs):
+            transport.calls.append(kwargs)
+            raise ValueError('commerce_verification_required')
+        transport._xhr = challenge
+        with self.assertRaisesRegex(CycleError, 'sample_verification_required'):
+            SampleAdapter(transport, {}, sleep=lambda _: None).read_page()
         self.assertEqual(len(transport.calls), 1)
 
     def test_canary_contract_proves_only_pending_and_keeps_review_lifecycle_unverified(self):

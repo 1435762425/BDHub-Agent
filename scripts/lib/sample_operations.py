@@ -12,7 +12,8 @@ from pathlib import Path
 import uuid
 
 from lib.second_cycle import CycleError, CycleStore, digest, encoded, epoch
-from lib.sample_transport import (READ_CONTRACT_SCHEMA, CANARY_CONTRACT_SCHEMA, build_canary_contract,
+from lib.sample_transport import (CONTRACT_SCHEMA, READ_CONTRACT_SCHEMA, CANARY_CONTRACT_SCHEMA, READ_PATHS, OBSERVED_READ_BODY, build_canary_contract,
+                                 observed_status_evidence, extend_canary_contract, validate_status_evidence, receipt_accepted,
                                  review_payload, sample_session, validate_contract, validate_read_contract,
                                  validate_canary_contract, validate_execution_contract, validate_any_contract,
                                  require_current_cost_policy, record_contract_fingerprint)
@@ -33,6 +34,7 @@ PENDING_INTENTS = ('inflight', 'accepted', 'unknown', 'quarantined_unknown')
 MIN_RECONCILE_INTERVAL = 60
 MAX_UNKNOWN_CHECKS = 3
 MAX_FACT_AGE = 900
+APPROVAL_STAGES = frozenset({'approved', 'ready_to_ship', 'shipped', 'content_pending', 'completed'})
 
 
 def require_market(market):
@@ -119,7 +121,7 @@ def promote_canary(root, market, account_name, verified_contract, *, transport_f
                 raise CycleError('sample_canary_not_started')
             intent = _intent(store, started['id'])
             receipt = json.loads(intent['receipt']) if intent['receipt'] else {}
-            if receipt.get('http') != 200 or type(receipt.get('code')) is not int or receipt['code'] != 0:
+            if not receipt_accepted(receipt) or not receipt.get('evidenceRef'):
                 raise CycleError('sample_canary_review_unconfirmed')
             verified['costPolicy'] = deepcopy(current['contract']['costPolicy'])
             report = {'platformWrites': 0}
@@ -200,7 +202,7 @@ def store_records(store, market, account_name, records, *, observed_at=None, evi
         store.db.execute('INSERT OR IGNORE INTO sample_sync(id,market,account_name,observed,evidence_ref,record_count,complete,binding_fingerprint,contract_fingerprint,read_scope,platform_counts) VALUES(?,?,?,?,?,?,?,?,?,?,?)', (sid, market, account_name, at, evidence_ref, len(records), int(complete), binding_fingerprint, contract_fingerprint, read_scope, encoded(platform_counts) if platform_counts is not None else None))
         if complete:
             store.db.executemany('INSERT OR IGNORE INTO sample_sync_member VALUES(?,?)', [(sid, application_id) for application_id in ids])
-    _passive_confirm(store, market, records, evidence_ref)
+    _passive_confirm(store, market, records, evidence_ref, binding=binding)
     return {'syncId': sid, 'records': len(records), 'complete': complete, 'platformWrites': 0}
 
 
@@ -258,12 +260,46 @@ def read_snapshot(store, market='br', *, account_name=None):
     return None
 
 
+def tracking(store, market='br', limit=100):
+    """Read the original intent's observed fulfilment/publication facts, without new actions."""
+    require_market(market)
+    if not _has_table(store.db, 'sample_review_intent'):
+        return []
+    result = []
+    for row in store.db.execute("SELECT * FROM sample_review_intent WHERE market=? AND started IS NOT NULL ORDER BY created DESC LIMIT ?", (market, limit)):
+        observation = store.db.execute("SELECT observed,payload FROM sample_review_check WHERE intent_id=? AND json_extract(payload,'$.kind')='lifecycle' ORDER BY id DESC LIMIT 1", (row['id'],)).fetchone()
+        facts = json.loads(observation['payload']) if observation else {}
+        result.append({'intentId': row['id'], 'applicationId': row['application_id'], 'account': row['account_name'],
+                       'reviewState': row['state'], 'platformStage': facts.get('platformStage', 'unknown'), 'nativeStatus': facts.get('nativeStatus'),
+                       'receiptConfirmed': facts.get('receiptConfirmed'), 'possibleExternalCompletion': row['state'] == 'goal_observed',
+                       'isPosted': facts.get('isPosted'), 'videoCount': facts.get('videoCount'), 'liveCount': facts.get('liveCount'),
+                       'observedAt': observation['observed'] if observation else None, 'evidenceRef': facts.get('evidenceRef')})
+    return result
+
+
+def has_followups(root, market='br'):
+    require_market(market)
+    path = Path(root) / 'var/second-cycle.sqlite'
+    if not path.is_file():
+        return False
+    with CycleStore(path, readonly=True) as store:
+        if not _has_table(store.db, 'sample_review_intent'):
+            return False
+        for row in store.db.execute("SELECT id,state FROM sample_review_intent WHERE market=? AND state IN ('inflight','accepted','unknown','quarantined_unknown','seller_pending','approved','goal_observed')", (market,)):
+            if row['state'] not in {'approved', 'goal_observed'}:
+                return True
+            last = store.db.execute("SELECT payload FROM sample_review_check WHERE intent_id=? AND json_extract(payload,'$.kind')='lifecycle' ORDER BY id DESC LIMIT 1", (row['id'],)).fetchone()
+            if not last or json.loads(last[0]).get('platformStage') not in {'completed', 'cancelled', 'rejected'}:
+                return True
+    return False
+
+
 def status(root, market='br'):
     """No mkdir, schema installation, authorization or platform access on a status read."""
     require_market(market)
     result = {'market': market, 'enabled': False, 'capability': {'state': 'unknown', 'reason': 'sample_review_contract_unverified'},
               'counts': {}, 'applicationCounts': {}, 'paymentNeedsReview': 0, 'records': [], 'platformWrites': 0,
-              'platformCounts': {}, 'readCoverage': {'complete': False}}
+              'platformCounts': {}, 'readCoverage': {'complete': False}, 'tracking': [], 'lifecycleCounts': {}}
     path = Path(root) / 'var/second-cycle.sqlite'
     if not path.is_file():
         return result
@@ -287,6 +323,10 @@ def status(root, market='br'):
         result['applicationCounts'] = {r[0]: r[1] for r in store.db.execute("SELECT coalesce(json_extract(payload,'$.state'),'unknown'),count(*) FROM sample_application WHERE market=? GROUP BY 1", (market,))}
         result['paymentNeedsReview'] = store.db.execute("SELECT count(*) FROM sample_application WHERE market=? AND json_extract(payload,'$.state')='pending' AND (json_type(payload,'$.paymentRequired') IS NOT 'false')", (market,)).fetchone()[0]
         result['records'] = query_records(store, market)
+        result['tracking'] = tracking(store, market)
+        for item in result['tracking']:
+            stage = item['platformStage']
+            result['lifecycleCounts'][stage] = result['lifecycleCounts'].get(stage, 0) + 1
         snapshot = read_snapshot(store, market)
         if snapshot:
             result['platformCounts'] = snapshot['platformCounts']
@@ -344,6 +384,94 @@ def _pages(adapter, *, max_pages=20, summary=None):
     return records, False, 'sample-pages:' + digest(refs)
 
 
+def _refresh_status_evidence(store, root, market, account, cap):
+    if cap['state'] != 'canary' or cap['contract'].get('statusEvidence'):
+        return cap
+    try:
+        proof = observed_status_evidence(root, cap['binding'])
+    except CycleError as error:
+        if str(error) == 'sample_read_evidence_binding_mismatch':
+            return cap
+        raise
+    if proof is None:
+        return cap
+    updated = extend_canary_contract(cap['contract'], proof)
+    if updated != cap['contract']:
+        record_capability(store, market, account, 'canary', cap['evidence_ref'], contract=updated, binding=cap['binding'])
+        return capability(store, market, account)
+    return cap
+
+
+def _reader_contract(store, intent):
+    frozen = json.loads(intent['contract'])
+    current = capability(store, intent['market'], intent['account_name'])
+    if current['state'] in {'canary', 'verified'} and current.get('binding') == json.loads(intent['binding']):
+        try:
+            _require_lifecycle_extension(frozen, current['contract'])
+            return current['contract']
+        except CycleError:
+            pass
+    return frozen
+
+
+def _auto_promote(store, root, market, account):
+    cap = capability(store, market, account)
+    if cap['state'] != 'canary' or not cap['contract'].get('statusEvidence'):
+        return False
+    require_current_cost_policy(root, cap['contract'])
+    started = _started_canary(store, market, cap['binding'])
+    if not started:
+        return False
+    intent = _intent(store, started['id'])
+    receipt = json.loads(intent['receipt']) if intent['receipt'] else {}
+    confirmation = json.loads(intent['confirmation']) if intent['confirmation'] else {}
+    if intent['state'] != 'approved' or not receipt_accepted(receipt) or not receipt.get('evidenceRef') or confirmation.get('platformStage') not in APPROVAL_STAGES or not confirmation.get('evidenceRef'):
+        return False
+    frozen = json.loads(intent['contract'])
+    verified = deepcopy(cap['contract'])
+    verified.update(schema=CONTRACT_SCHEMA, reviewSuccessCode=0)
+    verified['evidence'].update(payment='user-policy:' + digest(frozen['costPolicy']), review=receipt['evidenceRef'], lifecycle=confirmation['evidenceRef'])
+    validate_contract(verified)
+    _require_lifecycle_extension(frozen, verified)
+    record_capability(store, market, account, 'verified', confirmation['evidenceRef'], contract=verified, binding=cap['binding'])
+    return True
+
+
+def _rebind_reader(store, root, market, account, cap, factory, report, stopped):
+    summary = {}
+    with factory(root, market, account, report, contract=None, expected_binding=None, stopped=stopped,
+                 expected_institution_fingerprint=(cap.get('binding') or {}).get('institutionFingerprint')) as adapter:
+        rows, complete, reference = _pages(adapter, summary=summary)
+        binding = adapter.binding
+    old = cap.get('binding') or {}
+    if not complete or summary.get('readScope') != 'all_states' or summary.get('platformCounts') is None or any(binding.get(key) != old.get(key) for key in ('market', 'account', 'institutionFingerprint')):
+        raise CycleError('sample_reader_rebind_unverified')
+    if any(any(not isinstance(row.get(key), str) or not row[key].isascii() or not row[key].isdigit() or int(row[key]) <= 0
+               for key in ('applicationId', 'platformCreatorId', 'oecId', 'pid', 'campaignId')) or type(row.get('nativeStatus')) is not int for row in rows):
+        raise CycleError('sample_reader_rebind_fields_unverified')
+    read = validate_read_contract({'schema': READ_CONTRACT_SCHEMA, 'market': market, 'readScope': 'all_states',
+        'recordPaths': deepcopy(READ_PATHS), 'readBody': deepcopy(OBSERVED_READ_BODY), 'statusCountersPath': 'sample_status_num_map',
+        'evidence': {'records': reference, 'creatorIdentity': reference}, 'binding': binding}, binding=binding)
+    contract, state = read, 'readonly'
+    prior = cap.get('contract') or {}
+    policy = load_cost_policy(root)
+    if cap['state'] in {'canary', 'verified'} and policy is not None and prior.get('statusMap', {}).get('10') == 'pending' and all(prior.get('recordPaths', {}).get(key) == value for key, value in READ_PATHS.items()):
+        contract = build_canary_contract(read, policy,
+            pending_ui_evidence_ref=(prior.get('evidence') or {}).get('pendingUi') or 'prior-verified-contract:' + digest(prior),
+            request_candidate_ref=(prior.get('evidence') or {}).get('requestCandidate') or prior['evidence']['review'])
+        if prior.get('statusEvidence'):
+            evidence = deepcopy(prior['statusEvidence'])
+            evidence.update(sourceBinding=evidence.get('sourceBinding', evidence['binding']), binding=binding, revalidatedBy=reference)
+            contract = extend_canary_contract(contract, evidence)
+        state = 'canary'
+    record_capability(store, market, account, state, reference, contract=contract, binding=binding)
+    rows = [row | {'state': contract.get('statusMap', {}).get(str(row['nativeStatus']), 'unknown'),
+                    'contractFingerprint': record_contract_fingerprint(contract)} for row in rows]
+    result = store_records(store, market, account, rows, evidence_ref=reference, complete=True, binding=binding,
+                           contract=contract, read_scope='all_states', platform_counts=summary['platformCounts'])
+    return report | result | {'reviewCapability': state, 'readerRebound': True, 'promoted': False, 'platformCounts': summary['platformCounts']}
+
+
 def sync(root, market='br', *, transport_factory=None, stopped=lambda: False):
     require_market(market)
     root = Path(root)
@@ -352,15 +480,20 @@ def sync(root, market='br', *, transport_factory=None, stopped=lambda: False):
     report = {'market': market, 'platformWrites': 0}
     with CycleStore(root / 'var/second-cycle.sqlite') as store:
         ensure_schema(store)
-        cap = capability(store, market, account)
+        cap = _refresh_status_evidence(store, root, market, account, capability(store, market, account))
         contract = cap.get('contract') if cap['state'] in {'verified', 'readonly', 'canary'} else None
         summary = {}
-        with factory(root, market, account, report, contract=contract, expected_binding=cap.get('binding') if contract else None, stopped=stopped) as adapter:
-            rows, complete, ref = _pages(adapter, summary=summary)
-            actual_contract = getattr(adapter, 'contract', contract)
-            binding = adapter.binding if actual_contract else None
-            if contract and (binding != cap.get('binding') or actual_contract != contract):
-                raise CycleError('sample_sync_provenance_mismatch')
+        try:
+            with factory(root, market, account, report, contract=contract, expected_binding=cap.get('binding') if contract else None, stopped=stopped) as adapter:
+                rows, complete, ref = _pages(adapter, summary=summary)
+                actual_contract = getattr(adapter, 'contract', contract)
+                binding = adapter.binding if actual_contract else None
+                if contract and (binding != cap.get('binding') or actual_contract != contract):
+                    raise CycleError('sample_sync_provenance_mismatch')
+        except CycleError as error:
+            if str(error) == 'sample_original_identity_changed' and cap.get('binding'):
+                return _rebind_reader(store, root, market, account, cap, factory, report, stopped)
+            raise
         if actual_contract and actual_contract.get('schema') == READ_CONTRACT_SCHEMA:
             validate_read_contract(actual_contract, binding=binding)
             if cap['state'] != 'verified' and (cap.get('contract') != actual_contract or cap.get('binding') != binding):
@@ -371,9 +504,17 @@ def sync(root, market='br', *, transport_factory=None, stopped=lambda: False):
         result = store_records(store, market, account, rows, evidence_ref=ref, complete=complete, binding=binding, contract=actual_contract,
                                read_scope=summary.get('readScope'),
                                platform_counts=summary.get('platformCounts') if summary.get('readScope') == 'all_states' else None)
-        # A read proves the read endpoint only. Never promote review capability here.
+        # List success alone cannot promote. A persisted original POST receipt plus
+        # the exact application's proven positive lifecycle observation can.
+        promoted = _auto_promote(store, root, market, account)
+        if promoted:
+            verified = capability(store, market, account)['contract']
+            rows = [row | {'contractFingerprint': record_contract_fingerprint(verified)} for row in rows]
+            result = store_records(store, market, account, rows, evidence_ref=ref + ':promoted', complete=complete,
+                binding=binding, contract=verified, read_scope=summary.get('readScope'),
+                platform_counts=summary.get('platformCounts') if summary.get('readScope') == 'all_states' else None)
         return report | result | {'reviewCapability': capability(store, market, account)['state'],
-                                  'platformCounts': summary.get('platformCounts') or {}}
+                                  'promoted': promoted, 'platformCounts': summary.get('platformCounts') or {}}
 
 
 def _intent(store, id):
@@ -405,13 +546,22 @@ def _identity(application):
     return tuple(application.get(k) for k in ('applicationId', 'oecId', 'platformCreatorId', 'pid', 'campaignId'))
 
 
-def _started_canary(store, market, binding, *, exclude_id=None):
-    return store.db.execute("SELECT id,state FROM sample_review_intent WHERE market=? AND binding=? AND started IS NOT NULL AND json_extract(contract,'$.schema')=? AND id<>? LIMIT 1",
-                            (market, encoded(binding), CANARY_CONTRACT_SCHEMA, exclude_id or '')).fetchone()
+def _started_canary(store, market, binding, *, exclude_id=None, unsettled=False):
+    # A normal relogin cannot reset an unresolved canary's account/institution slot.
+    if unsettled:
+        owner = "account_name=? AND json_extract(binding,'$.institutionFingerprint')=?"
+        args = (binding.get('account'), binding.get('institutionFingerprint'))
+        condition = " AND state NOT IN ('goal_observed','closed_externally','rejected','cancelled')"
+    else:
+        owner, args, condition = 'binding=?', (encoded(binding),), ''
+    return store.db.execute("SELECT id,state FROM sample_review_intent WHERE market=? AND " + owner +
+                            " AND started IS NOT NULL AND json_extract(contract,'$.schema')=? AND id<>?" + condition +
+                            " ORDER BY created DESC,id DESC LIMIT 1",
+                            (market, *args, CANARY_CONTRACT_SCHEMA, exclude_id or '')).fetchone()
 
 
 def _require_canary_slot(store, market, contract, binding, *, exclude_id=None):
-    if contract.get('schema') == CANARY_CONTRACT_SCHEMA and _started_canary(store, market, binding, exclude_id=exclude_id):
+    if contract.get('schema') == CANARY_CONTRACT_SCHEMA and _started_canary(store, market, binding, exclude_id=exclude_id, unsettled=True):
         raise CycleError('sample_canary_already_started')
 
 
@@ -455,7 +605,7 @@ def _check_application_duplicates(store, market, application):
     # A new application ID is not permission to sample the same triple again.
     for row in store.db.execute("SELECT application_id,payload FROM sample_application WHERE market=? AND application_id<>?", (market, application['applicationId'])):
         observed = json.loads(row['payload'])
-        if (observed.get('oecId'), observed.get('pid'), observed.get('campaignId')) == (application.get('oecId'), application.get('pid'), application.get('campaignId')) and observed.get('state') in {'unknown', 'pending', 'seller_pending', 'approved', 'shipped', 'completed'}:
+        if (observed.get('oecId'), observed.get('pid'), observed.get('campaignId')) == (application.get('oecId'), application.get('pid'), application.get('campaignId')) and observed.get('state') in {'unknown', 'pending', 'seller_pending', 'approved', 'ready_to_ship', 'shipped', 'content_pending', 'completed'}:
             raise CycleError('sample_duplicate_application')
 
 
@@ -471,7 +621,7 @@ def _quota_capacity(store, market, application, proof, *, exclude_id):
             at > store.clock() + 30 or store.clock() - at > MAX_FACT_AGE or not proof.get('evidenceRef'):
         raise CycleError('sample_quota_unverified')
     used = 0
-    for row in store.db.execute("SELECT id,state,started,application FROM sample_review_intent WHERE market=? AND state IN ('ready','inflight','accepted','unknown','quarantined_unknown','seller_pending','approved')", (market,)):
+    for row in store.db.execute("SELECT id,state,started,application FROM sample_review_intent WHERE market=? AND state IN ('ready','inflight','accepted','unknown','quarantined_unknown','seller_pending','approved','goal_observed')", (market,)):
         previous = json.loads(row['application'])
         if row['id'] != exclude_id and (previous.get('oecId'), previous.get('pid'), previous.get('campaignId')) == (application.get('oecId'), application.get('pid'), application.get('campaignId')):
             raise CycleError('sample_duplicate_intent')
@@ -510,7 +660,7 @@ def _begin(store, intent, application, *, quota_proof=None, root=None, assessor=
 
 
 def _require_lifecycle_extension(frozen, verified):
-    validate_contract(verified)
+    validate_execution_contract(verified)
     if frozen.get('schema') == CANARY_CONTRACT_SCHEMA and (
             any(verified['recordPaths'].get(key) != value for key, value in frozen['recordPaths'].items()) or
             any(verified['statusMap'].get(key) != value for key, value in frozen['statusMap'].items())):
@@ -522,32 +672,52 @@ def _confirm_from_records(store, intent, rows, evidence_ref, *, lifecycle_contra
     matches = [r for r in rows if r.get('applicationId') == original['applicationId']]
     outcome = 'unknown'
     frozen_contract = json.loads(intent['contract'])
-    lifecycle_known = frozen_contract.get('schema') != CANARY_CONTRACT_SCHEMA
+    lifecycle_known = frozen_contract.get('schema') != CANARY_CONTRACT_SCHEMA or bool(frozen_contract.get('statusEvidence'))
+    if lifecycle_contract is None:
+        current = _reader_contract(store, intent)
+        if current != frozen_contract:
+            lifecycle_contract = current
     if lifecycle_contract is not None:
         _require_lifecycle_extension(frozen_contract, lifecycle_contract)
-        lifecycle_known = True
+        lifecycle_known = lifecycle_contract.get('schema') != CANARY_CONTRACT_SCHEMA or bool(lifecycle_contract.get('statusEvidence'))
     if lifecycle_known and len(matches) == 1 and _identity(matches[0]) == _identity(original):
         stage = matches[0].get('state')
-        if stage in {'approved', 'shipped', 'completed'}:
-            outcome = 'approved'
+        if stage in APPROVAL_STAGES:
+            receipt = json.loads(intent['receipt']) if intent.get('receipt') else {}
+            acknowledged = receipt_accepted(receipt)
+            outcome = 'goal_observed' if frozen_contract.get('schema') == CANARY_CONTRACT_SCHEMA and not acknowledged else 'approved'
         elif stage == 'seller_pending':
             outcome = 'seller_pending'
         elif stage in {'rejected', 'cancelled'}:
             outcome = 'closed_externally'
-    proof = {'status': outcome, 'evidenceRef': evidence_ref, 'applicationId': original['applicationId']}
+    if outcome == 'unknown' and intent['state'] in {'approved', 'goal_observed', 'quarantined_unknown'}:
+        outcome = intent['state']
+    actual = matches[0] if len(matches) == 1 and _identity(matches[0]) == _identity(original) else {}
+    receipt = json.loads(intent['receipt']) if intent.get('receipt') else {}
+    receipt_confirmed = receipt_accepted(receipt)
+    proof = {'kind': 'lifecycle', 'status': outcome, 'evidenceRef': evidence_ref, 'applicationId': original['applicationId'],
+             'platformStage': actual.get('state', 'unknown'), 'nativeStatus': actual.get('nativeStatus'),
+             'receiptConfirmed': receipt_confirmed, 'possibleExternalCompletion': outcome == 'goal_observed',
+             'isPosted': actual.get('isPosted'), 'videoCount': actual.get('videoCount'), 'liveCount': actual.get('liveCount')}
     with store.tx():
-        store.db.execute('INSERT INTO sample_review_check(intent_id,observed,payload) VALUES(?,?,?)', (intent['id'], store.clock(), encoded(proof)))
+        previous = store.db.execute("SELECT payload FROM sample_review_check WHERE intent_id=? AND json_extract(payload,'$.kind')='lifecycle' ORDER BY id DESC LIMIT 1", (intent['id'],)).fetchone()
+        before = json.loads(previous[0]) if previous else {}
+        if {k:v for k,v in before.items() if k != 'evidenceRef'} != {k:v for k,v in proof.items() if k != 'evidenceRef'}:
+            store.db.execute('INSERT INTO sample_review_check(intent_id,observed,payload) VALUES(?,?,?)', (intent['id'], store.clock(), encoded(proof)))
         store.db.execute('UPDATE sample_review_intent SET state=?,confirmation=?,lease_owner=NULL,lease_until=0 WHERE id=?', (outcome, encoded(proof), intent['id']))
     return outcome
 
 
-def _passive_confirm(store, market, records, evidence_ref):
+def _passive_confirm(store, market, records, evidence_ref, *, binding=None):
     """A normal exact lifecycle observation may settle a quarantined original intent."""
     current = {row['applicationId']: row for row in records}
-    for row in store.db.execute("SELECT * FROM sample_review_intent WHERE market=? AND state IN ('inflight','accepted','unknown','quarantined_unknown','seller_pending')", (market,)).fetchall():
+    for row in store.db.execute("SELECT * FROM sample_review_intent WHERE market=? AND state IN ('inflight','accepted','unknown','quarantined_unknown','seller_pending','approved','goal_observed')", (market,)).fetchall():
         actual = current.get(row['application_id'])
-        if actual and _identity(actual) == _identity(json.loads(row['application'])) and actual.get('state') in {'approved', 'shipped', 'completed', 'seller_pending', 'rejected', 'cancelled'} and actual.get('contractFingerprint') == record_contract_fingerprint(json.loads(row['contract'])):
-            _confirm_from_records(store, dict(row), [actual], evidence_ref)
+        if binding != json.loads(row['binding']):
+            continue
+        reader_contract = _reader_contract(store, dict(row))
+        if actual and _identity(actual) == _identity(json.loads(row['application'])) and (actual.get('state') in APPROVAL_STAGES | {'seller_pending', 'rejected', 'cancelled'} or row['state'] in {'approved', 'goal_observed'}) and actual.get('contractFingerprint') == record_contract_fingerprint(reader_contract):
+            _confirm_from_records(store, dict(row), [actual], evidence_ref, lifecycle_contract=reader_contract)
 
 
 def _quarantine(store, intent, reason):
@@ -584,18 +754,23 @@ def reconcile(store, root, intent, *, transport_factory=None, stopped=lambda: Fa
                     'intentId': intent['id'], 'nextCheckAt': last_started + MIN_RECONCILE_INTERVAL, 'platformWrites': 0}
     report = {'platformWrites': 0}
     try:
-        contract = validate_execution_contract(json.loads(intent['contract']))
+        contract = validate_execution_contract(_reader_contract(store, intent))
         with factory(root, intent['market'], intent['account_name'], report, contract=contract,
                      expected_binding=json.loads(intent['binding']), stopped=stopped) as adapter:
             rows, _, evidence = _pages(adapter)
-        store_records(store, intent['market'], intent['account_name'], rows, evidence_ref=evidence, complete=False)
-        state = _confirm_from_records(store, intent, rows, evidence)
+        store_records(store, intent['market'], intent['account_name'], rows, evidence_ref=evidence, complete=False, binding=json.loads(intent['binding']))
+        state = _confirm_from_records(store, _intent(store, intent['id']), rows, evidence)
         if attempt is not None:
             store.db.execute('UPDATE sample_reconcile_attempt SET outcome=? WHERE intent_id=? AND attempt_number=?', (state, intent['id'], attempt))
         if state == 'unknown' and attempt == MAX_UNKNOWN_CHECKS:
             return report | _quarantine(store, intent, 'sample_reconciliation_budget_exhausted')
+        _auto_promote(store, root, intent['market'], intent['account_name'])
         return report | {'state': state, 'intentId': intent['id'], 'platformWrites': 0}
     except Exception as error:
+        if str(error) in {'sample_original_identity_changed', 'sample_identity_changed'}:
+            if attempt is not None:
+                store.db.execute('UPDATE sample_reconcile_attempt SET outcome=? WHERE intent_id=? AND attempt_number=?', ('original_identity_unavailable', intent['id'], attempt))
+            return report | _quarantine(store, intent, 'sample_original_identity_changed') | {'state': 'waiting_original_identity'}
         if attempt is not None:
             with store.tx():
                 store.db.execute('UPDATE sample_reconcile_attempt SET outcome=? WHERE intent_id=? AND attempt_number=?', ('read_failed:' + type(error).__name__, intent['id'], attempt))
@@ -637,7 +812,7 @@ def run_one(root, market='br', *, transport_factory=None, stopped=lambda: False,
             contract = validate_execution_contract(cap['contract'], binding=cap['binding'])
             if cap['state'] == 'canary':
                 require_current_cost_policy(root, contract)
-                if _started_canary(store, market, cap['binding']):
+                if _started_canary(store, market, cap['binding'], unsettled=True):
                     return {'state': 'waiting_canary_verification', 'reason': 'sample_canary_already_started', 'platformWrites': 0}
             else:
                 policy = load_cost_policy(root)
@@ -648,6 +823,8 @@ def run_one(root, market='br', *, transport_factory=None, stopped=lambda: False,
             # Read application facts and reserve the exact intent before opening a write scope.
             with factory(root, market, account, report, contract=contract, expected_binding=cap['binding'], stopped=stopped) as reader:
                 rows, complete, evidence = _pages(reader)
+                if not complete:
+                    return report | {'state': 'waiting_sample_sync', 'reason': 'sample_sync_incomplete'}
                 store_records(store, market, account, rows, evidence_ref=evidence, complete=complete)
                 _settle_unsubmitted(store, market, rows, complete=complete)
                 selected = None
@@ -700,7 +877,8 @@ def run_one(root, market='br', *, transport_factory=None, stopped=lambda: False,
                         return report | {'state': 'rejected', 'intentId': selected['id']}
                     fresh, _, evidence = _pages(writer)
                     store_records(store, market, account, fresh, evidence_ref=evidence, complete=False)
-                    state = _confirm_from_records(store, selected, fresh, evidence)
+                    state = _confirm_from_records(store, _intent(store, selected['id']), fresh, evidence)
+                    _auto_promote(store, root, market, account)
                     return report | {'state': state, 'intentId': selected['id']}
                 except BaseException:
                     with store.tx():
