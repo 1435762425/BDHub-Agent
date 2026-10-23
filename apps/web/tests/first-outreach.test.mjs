@@ -35,6 +35,18 @@ test("waiting reasons use plain language and unknown codes never leak into the p
  assert.equal(firstOutreachLabel("private_technical_code:/secret/path"),"当前步骤尚未完成，请查看运行记录");
 });
 
+test("independent cycle status preserves retry times and excludes private runtime data",()=>{
+ const cycle={state:"waiting",reason:"sample_verification_required",updatedAt:123,nextRunAt:183};
+ const automation={supply:{...cycle,state:"running",reason:null},samples:cycle};
+ assert.deepEqual(validateFirstOutreach({...payload,automation}).automation,automation);
+ assert.equal(firstOutreachLabel(cycle.reason),"平台验证尚未完成，将自动重试");
+ assert.equal(firstOutreachLabel("goal_observed"),"平台已进入后续阶段，原审批回执未确认");
+ assert.equal(validateFirstOutreach({...payload,automation:{...automation,supply:{...cycle,state:"partial"}}}).automation.supply.state,"partial");
+ assert.match(firstOutreachLabel("first_model_batches_isolated:2"),/^2 批模型准备暂未完成/);
+ assert.equal(firstOutreachLabel("first_model_batches_isolated:<private>"),"当前步骤尚未完成，请查看运行记录");
+ for(const bad of [null,{supply:cycle},{...automation,raw:{}},{...automation,samples:{...cycle,state:"authorized"}},{...automation,samples:{...cycle,nextRunAt:-1}},{...automation,samples:{...cycle,updatedAt:Infinity}},{...automation,samples:{...cycle,cookie:"private"}},{...automation,samples:{...cycle,reason:{raw:1}}}])assert.throws(()=>validateFirstOutreach({...payload,automation:bad}),/invalid_first_outreach/);
+});
+
 test("every mutation requires an idempotency key, revision and the exact BR action shape",()=>{
  for(const action of ["prepare","sync","start","continue","stop","reconcile"])assert.deepEqual(validateFirstOutreachRequest({...request,action}),{...request,action});
  assert.deepEqual(validateFirstOutreachRequest({...request,action:"set-approvals",approvalsEnabled:true}),{...request,action:"set-approvals",approvalsEnabled:true});

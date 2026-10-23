@@ -19,7 +19,7 @@ Web 和 scheduler 使用当前用户的 LaunchAgents。配置仅服务本项目�
 ## 行为与验证
 
 - Web 登录即启动，异常退出由 launchd 恢复，最短重启间隔 30 秒。
-- scheduler-watch 登录及每 60 秒检查一次。已有 scheduler 时直接返回；真实数据库缺失或 `var/operations-scheduler.stop` 存在时保留现状；否则调用原 `start_scheduler`。它不读写业务控制表、不直接启动发送或登录任务。
+- scheduler-watch 登录及每 60 秒检查一次。已有 scheduler 时保留；真实数据库缺失或 `var/operations-scheduler.stop` 存在时不启动 scheduler；否则调用原 `start_scheduler`。同次检查独立读取 BR 一发持久授权和未完成任务，需要工作且原进程已退出时调用原 `launch_worker`；原进程仍在时不并行拉起。停止检查与启动之间再次读取控制，用户暂停保持。它不改写任何业务控制表，也不创建新的业务意图。
 - 用户主动停止 scheduler 后，watch 保留停止标记。恢复使用原页面或 `jobs.py start-scheduler --market <market>`；它是明确启动入口。
 - 停用自动恢复：`launchctl bootout gui/$(id -u)/io.bdhub.agent.scheduler-watch`，并移除对应 plist。单独卸载 watch 不会停止当前业务进程。
 - 用 `launchctl print` 验证加载与退出码，回读 5198 页面和 API，执行 `ops-restart-check.py postflight` 核对控制表、原请求、数据库与会话。基线为全停时，角色集合增加是恢复的预期变化，须另核对全部应有角色，而非要求角色集合不变。

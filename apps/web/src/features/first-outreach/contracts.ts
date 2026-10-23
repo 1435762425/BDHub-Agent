@@ -1,5 +1,6 @@
 export type FirstOutreachAction="prepare"|"sync"|"start"|"continue"|"stop"|"set-approvals"|"reconcile";
 export type FirstOutreachRequest={action:FirstOutreachAction;market:"br";requestId:string;expectedRevision:number;approvalsEnabled?:boolean};
+export type FirstOutreachCycle={state:"queued"|"running"|"waiting"|"complete"|"partial"|"stopped"|"idle"|"attention";reason:string|null;updatedAt:number|null;nextRunAt:number|null};
 export type FirstOutreachState={
  schemaVersion:"bdhub.first-outreach.v1";market:"br";
  control:{revision:number;mode:"stopped"|"canary"|"continuous";approvalsEnabled:boolean;updatedAt:number};
@@ -9,5 +10,6 @@ export type FirstOutreachState={
  candidates:{creatorId:string;handle:string;pid:string;productName:string;categoryName:string;gmv:string|null;message:string}[];
  applications:{id:string;handle:string;pid:string;productName:string;state:string;reason:string|null}[];
  runtime:{state:string;reason:string|null;updatedAt:number|null};
+ automation?:{supply:FirstOutreachCycle;samples:FirstOutreachCycle};
  platformWrites:0;sourceUpdatedAt?:number|null;
 };

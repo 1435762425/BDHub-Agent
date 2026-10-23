@@ -1,7 +1,7 @@
 import {execFile} from "node:child_process";
 import {join} from "node:path";
 import {projectRoot} from "../runtime/project-root.ts";
-import type {FirstOutreachAction,FirstOutreachRequest,FirstOutreachState} from "../../features/first-outreach/contracts.ts";
+import type {FirstOutreachAction,FirstOutreachRequest,FirstOutreachState,FirstOutreachCycle} from "../../features/first-outreach/contracts.ts";
 
 function object(value:unknown):Record<string,unknown>{if(!value||typeof value!=="object"||Array.isArray(value))throw Error("invalid_first_outreach");return value as Record<string,unknown>;}
 function keys(value:Record<string,unknown>,required:string[],optional:string[]=[]){if(required.some(key=>!Object.hasOwn(value,key))||Object.keys(value).some(key=>!required.includes(key)&&!optional.includes(key)))throw Error("invalid_first_outreach");}
@@ -11,9 +11,14 @@ function timestamp(value:unknown):number{if(typeof value!=="number"||!Number.isF
 const nullableTime=(value:unknown)=>value===null?null:timestamp(value);
 const nullableText=(value:unknown,max=500)=>value===null?null:text(value,max);
 const actions:FirstOutreachAction[]=["prepare","sync","start","continue","stop","set-approvals","reconcile"];
+function cycle(raw:unknown):FirstOutreachCycle{
+ const value=object(raw);keys(value,["state","reason","updatedAt","nextRunAt"]);
+ if(!["queued","running","waiting","complete","partial","stopped","idle","attention"].includes(String(value.state)))throw Error("invalid_first_outreach");
+ return {state:value.state as FirstOutreachCycle["state"],reason:nullableText(value.reason),updatedAt:nullableTime(value.updatedAt),nextRunAt:nullableTime(value.nextRunAt)};
+}
 
 export function validateFirstOutreach(raw:unknown):FirstOutreachState{
- const value=object(raw);keys(value,["schemaVersion","market","control","readiness","applicationCoverage","counts","candidates","applications","runtime","platformWrites"],["sourceUpdatedAt"]);
+ const value=object(raw);keys(value,["schemaVersion","market","control","readiness","applicationCoverage","counts","candidates","applications","runtime","platformWrites"],["sourceUpdatedAt","automation"]);
  if(value.schemaVersion!=="bdhub.first-outreach.v1"||value.market!=="br"||value.platformWrites!==0||value.applicationCoverage!=="unverified"&&value.applicationCoverage!=="complete")throw Error("invalid_first_outreach");
  const c=object(value.control);keys(c,["revision","mode","approvalsEnabled","updatedAt"]);
  if(!["stopped","canary","continuous"].includes(String(c.mode))||typeof c.approvalsEnabled!=="boolean")throw Error("invalid_first_outreach");
@@ -25,7 +30,9 @@ export function validateFirstOutreach(raw:unknown):FirstOutreachState{
  const candidates=value.candidates.map(item=>{const row=object(item);keys(row,["creatorId","handle","pid","productName","categoryName","gmv","message"]);const gmv=nullableText(row.gmv,80);if(gmv!==null&&!/^\d+(?:\.\d+)?$/.test(gmv))throw Error("invalid_first_outreach");return {creatorId:text(row.creatorId,120),handle:text(row.handle,100),pid:text(row.pid,40),productName:text(row.productName,500),categoryName:text(row.categoryName,200),gmv,message:text(row.message,4000)};});
  const applications=value.applications.map(item=>{const row=object(item);keys(row,["id","handle","pid","productName","state","reason"]);return {id:text(row.id,160),handle:text(row.handle,100),pid:text(row.pid,40),productName:text(row.productName,500),state:text(row.state,80),reason:nullableText(row.reason)};});
  const runtime=object(value.runtime);keys(runtime,["state","reason","updatedAt"]);
- return {schemaVersion:"bdhub.first-outreach.v1",market:"br",control:{revision:count(c.revision),mode:c.mode as FirstOutreachState["control"]["mode"],approvalsEnabled:c.approvalsEnabled,updatedAt:timestamp(c.updatedAt)},readiness:{ready:r.ready,blockers:r.blockers.map(item=>text(item,500))},applicationCoverage:value.applicationCoverage,counts,candidates,applications,runtime:{state:text(runtime.state,100),reason:nullableText(runtime.reason),updatedAt:nullableTime(runtime.updatedAt)},platformWrites:0,...(value.sourceUpdatedAt===undefined?{}:{sourceUpdatedAt:nullableTime(value.sourceUpdatedAt)})};
+ let automation:FirstOutreachState["automation"];
+ if(value.automation!==undefined){const a=object(value.automation);keys(a,["supply","samples"]);automation={supply:cycle(a.supply),samples:cycle(a.samples)};}
+ return {schemaVersion:"bdhub.first-outreach.v1",market:"br",control:{revision:count(c.revision),mode:c.mode as FirstOutreachState["control"]["mode"],approvalsEnabled:c.approvalsEnabled,updatedAt:timestamp(c.updatedAt)},readiness:{ready:r.ready,blockers:r.blockers.map(item=>text(item,500))},applicationCoverage:value.applicationCoverage,counts,candidates,applications,runtime:{state:text(runtime.state,100),reason:nullableText(runtime.reason),updatedAt:nullableTime(runtime.updatedAt)},platformWrites:0,...(value.sourceUpdatedAt===undefined?{}:{sourceUpdatedAt:nullableTime(value.sourceUpdatedAt)}),...(automation?{automation}:{})};
 }
 
 export function validateFirstOutreachRequest(raw:unknown):FirstOutreachRequest{
