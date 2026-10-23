@@ -4,7 +4,7 @@
   "upstreamRevision": "72dc12a71e566702232a279aac23fd547addea12",
   "patch": {
     "file": "local.patch",
-    "sha256": "2df94af055ccce4249e92fb9704d2ec5af5b82f56cbe8387a227d5a6d46340df"
+    "sha256": "57a4af0b947804a6b597470390448d531a1c64f1895b4649527feb87470f7f31"
   },
   "files": [
     {
@@ -191,7 +191,7 @@
       "path": "bdhub/hub/markets.py",
       "source": "upstream",
       "upstreamSha256": "6be5341d74ec0aa68f3df0b234527a4802d898c8a632bdd0dc7096bec02113b5",
-      "sha256": "0a564e57797d2a0ced4e70873cdc253b264acc56085447b51b060a055e82fb54"
+      "sha256": "97ed5c85b6afea6900a09d67cdaebca22ddd71d39ee08725dcdb42e807e5fc42"
     },
     {
       "path": "bdhub/hub/migration_runner.py",
@@ -1174,7 +1174,7 @@
     "bdhub/send/http_protocol.py": "57a2c321c0aa2ac8cf42440ed2170c32e55166b22e51b865b0afda85298e10aa",
     "bdhub/send/http_session.py": "4c58f64f38f7711c74a0b9c5c93c7c81b2c0bd4812953f2763d5d3e273391bb6",
     "bdhub/send/http_trial.py": "d873c7eb995e1e8523956be64d8d229995fc8f884425e578e9a0c1a251c39781",
-    "bdhub/send/http_write_gate.py": "de73d4d2c552fbff8185e1a31cee70cf4d7b5bbfa47aae13298e450ba3f131eb",
+    "bdhub/send/http_write_gate.py": "03569db7a17a1689f9a37259d654cb9b1316bb29057a3d3efc69a6928eec34f6",
     "bdhub/send/runner.py": "06fbd8e661e36553f11ce4b37a1ff5d40fe2f355c763f71ef1e1f415c6b86d71",
     "bdhub/send/sharelink/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
     "bdhub/send/sharelink/candidates.py": "7180e3d82d4c6d3c292791a813cc6afcbc5be5a1efeaa6e3e0598b55730561d6",

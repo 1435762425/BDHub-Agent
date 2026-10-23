@@ -177,9 +177,13 @@
  
 --- a/bdhub/hub/markets.py
 +++ b/bdhub/hub/markets.py
-@@ -182,11 +182,60 @@
+@@ -180,13 +180,63 @@
+         im_market_partner_id="8678404287775868688",
+         template_lang="pt", accounts=[],
          capabilities=MarketCapabilities(
-             find="enabled", profile="enabled", relation="enabled",
+-            find="enabled", profile="enabled", relation="enabled",
++            # Bounded read verification stage; full pure-HTTP batches stay disabled.
++            find="enabled", profile="enabled", pure_http="canary", relation="enabled",
              im="enabled", product_search="enabled", campaign="enabled",
 -            share_link="unsupported",
 +            share_link="unsupported", campaign_join="enabled",
@@ -239,7 +243,7 @@
          signer_region="sg",
      ),
      "uk": Market(
-@@ -206,7 +255,7 @@
+@@ -206,7 +256,7 @@
              find="enabled", profile="enabled", pure_http="enabled",
              relation="unsupported",
              contact="enabled", im="enabled", product_search="enabled",
@@ -248,7 +252,7 @@
          ),
          im_find_aid="360019",
          affiliate_partner_id="8652354317985613569",
-@@ -302,11 +351,41 @@
+@@ -302,11 +352,41 @@
          capabilities=MarketCapabilities(
              find="enabled", profile="enabled", pure_http="enabled",
              relation="enabled", contact="enabled",

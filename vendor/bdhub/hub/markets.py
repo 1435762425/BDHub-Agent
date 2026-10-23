@@ -180,7 +180,8 @@ MARKETS: dict[str, Market] = {
         im_market_partner_id="8678404287775868688",
         template_lang="pt", accounts=[],
         capabilities=MarketCapabilities(
-            find="enabled", profile="enabled", relation="enabled",
+            # Bounded read verification stage; full pure-HTTP batches stay disabled.
+            find="enabled", profile="enabled", pure_http="canary", relation="enabled",
             im="enabled", product_search="enabled", campaign="enabled",
             share_link="unsupported", campaign_join="enabled",
         ),
