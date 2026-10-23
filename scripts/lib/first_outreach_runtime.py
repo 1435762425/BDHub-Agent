@@ -263,6 +263,14 @@ def _coverage_snapshot(root, store):
     try:
         account = samples._account(root, 'br')
         cap = samples.capability(store, 'br', account)
+        if cap['state'] == 'readonly':
+            samples.validate_read_contract(cap.get('contract'), binding=cap.get('binding'))
+            snapshot = samples.read_snapshot(store, 'br', account_name=account)
+            if not snapshot or 'TO_REVIEW_1' not in snapshot['platformCounts'] or not _sample_binding_current(root, account, cap.get('binding')) or \
+                    snapshot['observedAt'] > store.clock() + 30 or store.clock() - snapshot['observedAt'] > samples.MAX_FACT_AGE:
+                return None
+            return {'id': snapshot['syncId'], 'observed': snapshot['observedAt'],
+                    'platformCounts': snapshot['platformCounts'], 'readonly': True}
         if cap['state'] != 'verified':
             return None
         contract = samples.validate_contract(cap.get('contract'))
@@ -297,6 +305,11 @@ def status(root, market='br'):
         counts = {key: base['counts'][key] for key in ('products', 'matchedCreators', 'sent', 'pendingApplications', 'approved', 'needsReview', 'unknown')}
         send_unknown = base['counts']['unknown']
         pending_count, manual_count, assessable_count = _application_counts(store, sync_id)
+        if snapshot is not None and isinstance(snapshot, dict) and snapshot.get('readonly'):
+            # The named platform total proves the pending count without guessing
+            # how native numeric row statuses map to lifecycle actions.
+            pending_count = snapshot['platformCounts'].get('TO_REVIEW_1', 0)
+            manual_count, assessable_count = pending_count, 0
         counts.update(pendingApplications=pending_count, approved=sample['counts'].get('approved', 0), needsReview=manual_count)
         counts['unknown'] += sum(sample['counts'].get(key, 0) for key in ('inflight', 'accepted', 'unknown', 'quarantined_unknown'))
         applications, assessed_count = [], 0
@@ -311,9 +324,12 @@ def status(root, market='br'):
             assessed_count += int(assessable)
             counts['needsReview'] += int(assessable and reason is not None)
             pid = app.get('pid') or '商品身份待核对'
+            public_state = row['review_state'] or app.get('state') or 'unknown'
+            if public_state == 'unknown' and snapshot is not None and isinstance(snapshot, dict) and snapshot.get('readonly'):
+                public_state = 'sample_application_state_unverified'
             applications.append({'id': row['application_id'], 'handle': names.get(app.get('oecId')) or '身份待核对',
                                  'pid': pid, 'productName': product_names.get((app.get('pid'), app.get('campaignId'))) or str(pid),
-                                 'state': row['review_state'] or app.get('state') or 'unknown', 'reason': reason})
+                                 'state': public_state, 'reason': reason})
         category_wait = _category_blockers(store, cfg['planId'])
         # Unclassified products stay out of the pool; they do not hold ready
         # products and their fully matched creators behind an unrelated item.

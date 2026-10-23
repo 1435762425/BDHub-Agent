@@ -17,6 +17,29 @@ from lib.second_cycle import CycleError, CycleStore, digest, encoded
 
 
 class FirstOutreachRuntimeTests(unittest.TestCase):
+    def test_current_readonly_all_state_counts_do_not_grant_approval_or_guess_row_status(self):
+        from tests.test_sample_transport import read_contract, br_raw
+        from lib.sample_transport import normalize_record
+        binding = {'market': 'br', 'account': 'acc2', 'institutionFingerprint': 'agency', 'identitySha256': 'current-headers'}
+        observed_contract = read_contract(binding)
+        rows = [normalize_record(br_raw(i, status=10 if i < 6 else 100), contract=observed_contract) for i in range(22)]
+        with CycleStore(self.root / 'var/second-cycle.sqlite') as store:
+            samples.record_capability(store, 'br', 'acc2', 'readonly', 'readonly-proof', contract=observed_contract, binding=binding)
+            samples.store_records(store, 'br', 'acc2', rows, evidence_ref='all-state-proof', complete=True,
+                                  binding=binding, contract=observed_contract, read_scope='all_states',
+                                  platform_counts={'TO_REVIEW_1': 6, 'COMPLETED': 16})
+        with patch.object(samples, '_account', return_value='acc2'), patch.object(runtime, '_sample_binding_current', return_value=True):
+            value = runtime.status(self.root)
+            self.assertEqual(value['applicationCoverage'], 'complete')
+            self.assertEqual((value['counts']['pendingApplications'], value['counts']['needsReview']), (6, 6))
+            self.assertEqual(value['counts']['unknown'], 0)
+            self.assertEqual(len(value['applications']), 22)
+            self.assertTrue(all(row['state'] == 'sample_application_state_unverified' for row in value['applications']))
+            self.assertFalse(value['control']['approvalsEnabled'])
+            with CycleStore(self.root / 'var/second-cycle.sqlite') as store:
+                store.db.execute("UPDATE sample_sync SET platform_counts=?", (encoded({'UNRECOGNIZED': 22}),))
+                self.assertEqual(runtime._application_coverage(self.root, store), 'unverified')
+
     def test_unclassified_product_does_not_block_other_ready_matches(self):
         base = first.status(self.root)
         base['readiness'] = {'ready': True, 'blockers': []}
@@ -214,7 +237,7 @@ class FirstOutreachRuntimeTests(unittest.TestCase):
                 store.db.execute('UPDATE sample_sync SET contract_fingerprint=?', (digest(contract()),))
                 with patch.object(runtime, '_sample_binding_current', return_value=False):
                     self.assertEqual(runtime._application_coverage(self.root, store), 'unverified')
-                samples.record_capability(store, 'br', 'acc11', 'readonly', 'readonly-filtered')
+                store.db.execute("UPDATE sample_capability SET state='readonly',contract=NULL,binding=NULL WHERE market='br' AND account_name='acc11'")
                 self.assertEqual(runtime._application_coverage(self.root, store), 'unverified')
 
     def test_application_coverage_rejects_stale_or_different_account_sync(self):
