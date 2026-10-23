@@ -12,6 +12,7 @@ from pathlib import Path
 import re
 import sqlite3
 import subprocess
+import uuid
 
 from lib.second_cycle import CycleError, CycleStore, digest, encoded
 
@@ -104,7 +105,7 @@ def _classifications(receipt, products, categories):
     return result
 
 
-def enrich(root, market='br', *, stopped=lambda: False, model=None):
+def enrich(root, market='br', *, stopped=lambda: False, model=None, max_batches=None):
     """Classify only eligible sample products; each frozen batch is called once."""
     if market != 'br':
         raise CycleError('first_outreach_market_unsupported')
@@ -137,6 +138,7 @@ def enrich(root, market='br', *, stopped=lambda: False, model=None):
             if not prior:
                 pending[offer['pid']] = {'pid': offer['pid'], 'title': title}
         rows = [pending[key] for key in sorted(pending)]
+        batches = 0
         for offset in range(0, len(rows), 5):
             if stopped():
                 return {'state': 'paused', 'classified': classified, 'platformWrites': 0}
@@ -147,6 +149,10 @@ def enrich(root, market='br', *, stopped=lambda: False, model=None):
             if prior and prior['state'] in {'requesting', 'unknown', 'failed'}:
                 # A lost model response is not silently paid for again.
                 continue
+            if max_batches is not None and batches >= max_batches:
+                return {'state': 'paused', 'reason': 'first_category_read_budget',
+                        'classified': classified, 'platformWrites': 0}
+            batches += 1
             if prior and prior['response']:
                 receipt = json.loads(prior['response'])
             else:
@@ -181,20 +187,125 @@ def enrich(root, market='br', *, stopped=lambda: False, model=None):
     return {'state': 'complete', 'classified': classified, 'platformWrites': 0}
 
 
-def refresh(root, market='br', request_id=None, *, stopped=lambda: False, runner=None):
+def prepare_names(root, market='br', *, stopped=lambda: False, model=None):
+    """Fill one sample-only name batch in the original name intent ledger.
+
+    Stored responses are replayed locally. An unfinished model intent is kept
+    on its exact original batch and never paid for a second time here.
+    """
+    if market != 'br':
+        raise CycleError('first_outreach_market_unsupported')
+    from lib.first_outreach import material_offers
+    from lib.catalog_names import _recover
+    from lib.cycle_materials import Materials, name_key
+    from lib.draft_provider import call_model
+    from lib.model_service import guard
+    with CycleStore(Path(root) / 'var/second-cycle.sqlite') as store:
+        plan = store.db.execute("SELECT id FROM plan WHERE institution='bjn-local-research' AND market=?", (market,)).fetchone()
+        if not plan:
+            raise CycleError('plan_missing')
+        materials = Materials(store, market)
+        unique = {(offer['pid'], offer.get('title')): offer for offer in material_offers(store, market)
+                  if isinstance(offer.get('title'), str)}
+        rows = [unique[key] for key in sorted(unique)]
+        _recover(root, store, rows, market)
+        pending, unresolved = [], 0
+        for offer in rows:
+            if materials.usable_cached(offer):
+                continue
+            if store.db.execute('SELECT 1 FROM cycle_name_reservation WHERE id=?', (name_key(offer, market),)).fetchone():
+                unresolved += 1
+                continue
+            pending.append(offer)
+        if stopped():
+            return {'state': 'paused', 'reason': 'first_outreach_job_stopped', 'platformWrites': 0}
+        result = materials.prepare_names(pending[:5], model or guard(root, call_model)) if pending else {'prepared': 0}
+        return {**result, 'state': 'paused' if len(pending) > 5 else 'complete',
+                'reason': 'first_names_read_budget' if len(pending) > 5 else None,
+                'unresolvedNames': unresolved, 'platformWrites': 0}
+
+
+def prepare_cards(root, request_id, first_start, action, *, stopped=lambda: False, runner=None):
+    """One bounded pass through the original card preparation/intent machinery."""
+    from lib import first_outreach as first
+    if action not in {'seed', 'read', 'create', 'verify'}:
+        raise CycleError('first_material_action_invalid')
+    root = Path(root)
+    with CycleStore(root / 'var/second-cycle.sqlite', readonly=True) as store:
+        first.require_material_grant(store, first_start)
+        tables = {row[0] for row in store.db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        if {'workflow_run', 'workflow_stage_run'} <= tables and store.db.execute("""SELECT 1
+            FROM workflow_run r JOIN workflow_stage_run s ON s.run_id=r.run_id
+            WHERE r.market='br' AND r.state IN ('queued','running')
+              AND s.stage IN ('catalog','taplink_prepare') AND s.state IN ('queued','running') LIMIT 1""").fetchone():
+            return {'state': 'paused', 'reason': 'first_material_waiting_workflow', 'platformWrites': 0}
+        targets = first.material_offers(store)
+    if stopped():
+        return {'state': 'paused', 'reason': 'first_outreach_job_stopped', 'platformWrites': 0}
+    pids = sorted({offer['pid'] for offer in targets if offer.get('catalogSource') == 'campaign'})
+    if not pids:
+        return {'state': 'complete', 'platformWrites': 0}
+    folder = root / 'var/first-outreach'
+    folder.mkdir(parents=True, exist_ok=True)
+    report = folder / ('materials-' + digest(request_id)[:16] + '-' + action + '-' + uuid.uuid4().hex[:12] + '.json')
+    command = [str(root / '.venv/bin/python'), str(root / 'scripts/catalog-link-prepare.py'), action,
+               '--market', 'br', '--route', 'campaign', '--pids', ','.join(pids), '--limit', '5',
+               '--max-creates', '1', '--items', '5', '--lanes', '1', '--qps', '3',
+               '--first-request', first_start['requestId'], '--first-revision', str(first_start['revision']),
+               '--report', str(report)]
+    if runner is not None:
+        result = runner(command, cwd=root, capture_output=True, text=True, timeout=240)
+    else:
+        from lib.first_resources import platform_read
+        with platform_read(root, request_id) as grant:
+            grant.check()
+            child = subprocess.Popen(command, cwd=root, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                     text=True, env={**os.environ, 'PYTHONDONTWRITEBYTECODE': '1'})
+            grant.adopt(child.pid)
+            try:
+                stdout, stderr = child.communicate(timeout=240)
+            except subprocess.TimeoutExpired:
+                child.kill()
+                child.communicate()
+                raise CycleError('first_material_timeout') from None
+            finally:
+                if child.poll() is not None:
+                    grant.adopt(os.getpid())
+            result = subprocess.CompletedProcess(command, child.returncode, stdout, stderr)
+    try:
+        payload = json.loads(result.stdout.strip().splitlines()[-1])
+    except (ValueError, IndexError, AttributeError):
+        raise CycleError('first_material_failed') from None
+    if result.returncode != 0 or payload.get('state') != 'completed' or payload.get('writeEvidence') == 'uncertain':
+        raise CycleError('first_material_failed')
+    # Read/create passes yield even when other products are still pending. The
+    # shared ledger, not this job, owns missing, prepared and unknown cards.
+    with CycleStore(root / 'var/second-cycle.sqlite', readonly=True) as store:
+        current = first.material_offers(store)
+        missing = first._materials(root, store, 'br', current)
+    return {'state': 'complete', 'platformWrites': payload.get('platformWrites', 0),
+            'remaining': missing['missingLinks'] + missing['missingNames'],
+            'reportRef': str(report.relative_to(root))}
+
+
+def refresh(root, market='br', request_id=None, *, stopped=lambda: False, runner=None,
+            max_chunks=200, max_requests=150, timeout=3000):
     """Resume the exact full catalog read. It never joins or creates a campaign."""
     if market != 'br' or not isinstance(request_id, str) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._:-]{7,119}', request_id):
         raise CycleError('first_catalog_request_invalid')
     root = Path(root)
     run_file = root / 'var/first-outreach' / ('catalog-' + digest(request_id)[:24] + '.json')
     run_file.parent.mkdir(parents=True, exist_ok=True)
-    for _ in range(200):
+    if type(max_chunks) is not int or not 1 <= max_chunks <= 200 or \
+            type(max_requests) is not int or not 1 <= max_requests <= 150 or timeout <= 0:
+        raise CycleError('first_catalog_read_budget_invalid')
+    for _ in range(max_chunks):
         if stopped():
             return {'state': 'paused', 'reason': 'first_catalog_stopped', 'platformWrites': 0}
         command = [str(root / '.venv/bin/python'), str(root / 'scripts/sync-cycle-catalog.py'),
-                   '--market', market, '--source', 'campaign', '--run', str(run_file), '--max-requests', '150']
+                   '--market', market, '--source', 'campaign', '--run', str(run_file), '--max-requests', str(max_requests)]
         if runner is not None:
-            result = runner(command, cwd=root, capture_output=True, text=True, timeout=3000)
+            result = runner(command, cwd=root, capture_output=True, text=True, timeout=timeout)
         else:
             from lib.first_resources import platform_read
             with platform_read(root, request_id) as grant:
@@ -203,7 +314,7 @@ def refresh(root, market='br', request_id=None, *, stopped=lambda: False, runner
                                          text=True, env={**os.environ, 'PYTHONDONTWRITEBYTECODE': '1'})
                 grant.adopt(child.pid)
                 try:
-                    stdout, stderr = child.communicate(timeout=3000)
+                    stdout, stderr = child.communicate(timeout=timeout)
                 except subprocess.TimeoutExpired:
                     child.kill()
                     child.communicate()

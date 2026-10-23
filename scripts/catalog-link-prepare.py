@@ -17,6 +17,7 @@ from lib.product_stock_policy import full_managed,mark_full_managed,require_stoc
 from lib.second_cycle import digest
 spec=importlib.util.spec_from_file_location('catalog_card_inspection',ROOT/'scripts/prepare-cycle-materials.py');inspection=importlib.util.module_from_spec(spec);spec.loader.exec_module(inspection)
 SCOPE={'market':'it','account':'acc9','institution':'bjn-local-research','sourceRun':'it-global-20260914','route':'selected'}
+FIRST_START=None
 ROUTES=('selected','campaign')
 # 非全托读卡用的渠道号：卡清单是 `source=1, campaign_id=<活动>`，成员读也要带 source=1。
 CAMPAIGN_SOURCE='1'
@@ -696,7 +697,7 @@ def short_name_for(pid,title):
     from lib.link_naming import short_name_for as cached_short_name
     return cached_short_name(ROOT,pid,title,SCOPE['market'])
 
-def step_create(prep,run_id,limit,report,pace=0.0,lanes=1,qps=5,canary=False,pids=None):
+def step_create(prep,run_id,limit,report,pace=0.0,lanes=1,qps=5,canary=False,pids=None,stopped=lambda:False):
     """Freeze a batch locally, then create it under ONE account session.
 
     Establishing the ACC9 session (profile lock, cookies, signer) is the dominant fixed cost of
@@ -713,6 +714,7 @@ def step_create(prep,run_id,limit,report,pace=0.0,lanes=1,qps=5,canary=False,pid
     try:
         # Phase 1: local only. Claim and freeze; nothing here touches the platform.
         for _ in range(limit):
+            if stopped():break
             item=prep.claim_create(run_id,pids=pids)
             if not item:break
             pid,cid,src=item['pid'],item['campaign_id'],item['catalog_source']
@@ -764,7 +766,7 @@ def step_create(prep,run_id,limit,report,pace=0.0,lanes=1,qps=5,canary=False,pid
         from lib.global_source_transport import CAMPAIGN_OFFER_READS
         extra_reads=CAMPAIGN_OFFER_READS if route=='campaign' else frozenset()
         with opportunity_card_creator_batch(report,payloads,market=SCOPE['market'],canary=canary,
-                                             stopped=lambda:False,wait_seconds=60,extra_reads=extra_reads) as transport:
+                                             stopped=stopped,wait_seconds=60,extra_reads=extra_reads) as transport:
             transport_read_scope(transport,SCOPE)
             def reader(on):
                 def read(path,extra):
@@ -865,6 +867,7 @@ def step_create(prep,run_id,limit,report,pace=0.0,lanes=1,qps=5,canary=False,pid
                 t0=time.time()
                 pid,cid,src=item['pid'],item['campaign_id'],item['catalog_source']
                 try:
+                    if stopped():raise ValueError('source_stopped')
                     fresh=fresh_all.get(pid)
                     if not fresh:raise ValueError('product_no_longer_eligible')
                     # The campaign binding comes from the frozen intent; only the commercial facts
@@ -874,6 +877,10 @@ def step_create(prep,run_id,limit,report,pace=0.0,lanes=1,qps=5,canary=False,pid
                         current=fresh
                     else:
                         current=new_offer(fresh,pid,intent['spec']['campaignId'],'selected',policy=prep.policy)
+                    if FIRST_START is not None:
+                        from lib.first_outreach import assess_first_offer
+                        if not assess_first_offer({**current,'categoryId':current.get('categoryId') or 'material-only'},time.time())['eligible']:
+                            raise ValueError('product_no_longer_eligible')
                     # Record which field moved, not just that something did. Without the diff the
                     # only way to learn what happened was to read the platform again by hand, and
                     # a transient platform answer looks exactly like a real change.
@@ -981,8 +988,30 @@ def channel_overlap(route=None):
 
 def campaign_block():
     """非全托的建链目标：已入池（chosen）商品 + 按**当前**规则重算的商业事实。"""
+    if FIRST_START is not None:
+        from lib import first_outreach as first
+        from lib.second_cycle import CycleStore
+        with CycleStore(ROOT/'var/second-cycle.sqlite',readonly=True) as store:
+            first.require_material_grant(store,FIRST_START,'br')
+            rows=first.material_offers(store,'br')
+            heads=[list(row) for row in store.db.execute('SELECT source,snapshot_id FROM catalog_head WHERE plan_id=? ORDER BY source',(first.control(store)['planId'],))]
+        targets=[{**offer,'offer':offer} for offer in rows if offer.get('catalogSource')=='campaign']
+        return {'available':True,'source':'campaign','runId':'first-material-'+digest([heads,[(item['offerKey'],item.get('planFingerprint')) for item in targets]])[:32],
+                'snapshot':digest(heads),'targets':targets,'skipped':{}}
     from lib.campaign_screen import link_targets
     return link_targets(ROOT,market=SCOPE['market'],exclude=channel_overlap(SCOPE['route']))
+
+
+def first_materials_stopped():
+    if FIRST_START is None:return False
+    from lib.first_outreach import require_material_grant
+    from lib.second_cycle import CycleStore
+    try:
+        with CycleStore(ROOT/'var/second-cycle.sqlite',readonly=True) as store:
+            require_material_grant(store,FIRST_START,'br')
+        return False
+    except Exception:
+        return True
 
 def status_view(route='selected'):
     """Read-only coverage view for the product page: links, covered PIDs and blocking reasons."""
@@ -1017,6 +1046,7 @@ def main():
     p=argparse.ArgumentParser(description=__doc__);p.add_argument('action',nargs='?',choices=['status','seed','read','reread','create','inventory','reconcile','verify'])
     p.add_argument('--status-links',action='store_true',help='read-only coverage view for the product page')
     p.add_argument('--market',default='it');p.add_argument('--canary',action='store_true')
+    p.add_argument('--first-request');p.add_argument('--first-revision',type=int)
     p.add_argument('--report',type=Path);p.add_argument('--pids');p.add_argument('--limit',type=int,default=15);p.add_argument('--max-creates',type=int,default=0)
     p.add_argument('--lists',type=int,default=0,help='inventory: max lists to read members for (0=all pending)')
     p.add_argument('--items',type=int,default=0,help='reconcile: max queued plans to judge (0=all)')
@@ -1027,6 +1057,13 @@ def main():
     p.add_argument('--lanes',type=int,default=1,choices=[1,3,6,9],help='same-account read lanes')
     p.add_argument('--qps',type=int,default=3,choices=[3,5,8,12],help='aggregate request rate shared by all lanes')
     a=p.parse_args()
+    global FIRST_START
+    if a.first_request is not None or a.first_revision is not None:
+        import re
+        if a.market!='br' or a.route!='campaign' or a.canary or not isinstance(a.first_request,str) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._:-]{7,119}',a.first_request) or type(a.first_revision) is not int or a.first_revision<1:
+            p.error('invalid first material scope')
+        FIRST_START={'requestId':a.first_request,'revision':a.first_revision}
+        if first_materials_stopped():p.error('first outreach material authorization unavailable')
     from lib.market_accounts import load_config
     from lib.market_registry import enabled_market_keys,market_path_keys,supports
     if a.market not in enabled_market_keys(ROOT):p.error('market not enabled')
@@ -1132,7 +1169,7 @@ def main():
     elif a.action=='create':
         try:
             report['create']=step_create(prep,run_id,a.max_creates,report,lanes=a.lanes,qps=a.qps,canary=a.canary,
-                                         pids=set(a.pids.split(',')) if a.pids else None)
+                                         pids=set(a.pids.split(',')) if a.pids else None,stopped=first_materials_stopped)
         except Exception as error:                                     # noqa: BLE001 - 报告必须先落盘
             # 写不出去的时候，**这份报告就是唯一的证据**：异常抛出会让 stdout 空白、
             # 报告文件根本不生成，于是"为什么没写成"就查不出来了（踩过一次）。

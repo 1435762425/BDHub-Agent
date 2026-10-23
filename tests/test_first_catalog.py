@@ -105,6 +105,45 @@ class FirstCatalogTests(unittest.TestCase):
         first_catalog.refresh(self.root, request_id='catalog-request-456', runner=runner, stopped=lambda: True)
         self.assertEqual(calls, [])
 
+    def test_classification_fragment_keeps_completed_batches_and_resumes_remaining_products(self):
+        self.s.publish(self.plan, 'live-br-campaign', self.now + 1,
+                       [self.item | {'pid': str(123 + i), 'offerKey': 'offer-' + str(i)} for i in range(6)])
+        calls = []
+        def model(messages, **kwargs):
+            inputs = json.loads(messages[1]['content'])
+            calls.append(inputs['products'])
+            return {'content': json.dumps({'products': [{'pid': row['pid'], 'categoryId': '601450'} for row in inputs['products']]})}
+        first_pass = first_catalog.enrich(self.root, model=model, max_batches=1)
+        second_pass = first_catalog.enrich(self.root, model=model, max_batches=1)
+        self.assertEqual((first_pass['state'], first_pass['classified']), ('paused', 5))
+        self.assertEqual((second_pass['state'], second_pass['classified']), ('complete', 1))
+        self.assertEqual([len(batch) for batch in calls], [5, 1])
+
+    def test_sample_name_fragments_use_existing_intents_and_do_not_repeat_unknown_model_calls(self):
+        self.s.publish(self.plan, 'live-br-campaign', self.now + 1,
+                       [self.item | {'pid': str(123 + i), 'offerKey': 'offer-' + str(i),
+                                     'categoryId': str(601450 + i)} for i in range(6)])
+        calls = []
+        def model(messages, **kwargs):
+            inputs = json.loads(messages[1]['content'])
+            calls.append(inputs['items'])
+            return {'content': json.dumps({'items': [{'ref': row['ref'], 'shortName': 'Batom',
+                      'mention': 'este batom', 'shortNameZh': '口红'} for row in inputs['items']]})}
+        self.assertEqual(first_catalog.prepare_names(self.root, model=model)['state'], 'paused')
+        self.assertEqual(first_catalog.prepare_names(self.root, model=model)['state'], 'complete')
+        self.assertEqual(first_catalog.prepare_names(self.root, model=model)['prepared'], 0)
+        self.assertEqual([len(batch) for batch in calls], [5, 1])
+        self.s.publish(self.plan, 'live-br-campaign', self.now + 2,
+                       [self.item | {'pid': '999', 'categoryId': '601450', 'offerKey': 'unknown-offer'}])
+        unknown = []
+        def lost(*args, **kwargs):
+            unknown.append('submitted')
+            raise RuntimeError('response unavailable')
+        with self.assertRaisesRegex(CycleError, 'names_request_unresolved'):
+            first_catalog.prepare_names(self.root, model=lost)
+        resumed = first_catalog.prepare_names(self.root, model=lost)
+        self.assertEqual((unknown, resumed['unresolvedNames']), (['submitted'], 1))
+
     def test_cross_market_actions_are_refused_before_model_or_platform(self):
         with self.assertRaisesRegex(CycleError, 'market_unsupported'):
             first_catalog.enrich(self.root, 'my', model=self.model)

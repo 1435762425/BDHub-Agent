@@ -25,6 +25,8 @@ from lib.second_cycle import CycleError, CycleStore, digest, encoded
 
 ACTIONS = {'prepare', 'sync', 'start', 'continue', 'stop', 'set-approvals', 'reconcile'}
 JOBS = {'prepare', 'sync', 'reconcile'}
+SUPPLY_REFRESH_SECONDS = 6 * 60 * 60
+SUPPLY_EXHAUSTED_RECHECK_SECONDS = 30 * 60
 SCHEMA = '''
 CREATE TABLE IF NOT EXISTS first_outreach_job(
  request_id TEXT PRIMARY KEY,plan_id TEXT NOT NULL,action TEXT NOT NULL,payload TEXT NOT NULL,
@@ -53,6 +55,16 @@ def validate_request(action, market, body):
 def ensure_schema(store):
     first.ensure_schema(store)
     store.db.executescript(SCHEMA)
+    columns = {row['name'] for row in store.db.execute('PRAGMA table_info(first_outreach_job)')}
+    for name, definition in (('next_attempt', 'REAL NOT NULL DEFAULT 0'), ('failures', 'INTEGER NOT NULL DEFAULT 0')):
+        if name not in columns:
+            store.db.execute(f'ALTER TABLE first_outreach_job ADD COLUMN {name} {definition}')
+    runtime_columns = {row['name'] for row in store.db.execute('PRAGMA table_info(first_outreach_runtime)')}
+    for name, definition in (('sample_state', "TEXT NOT NULL DEFAULT 'idle'"), ('sample_reason', 'TEXT'),
+                             ('sample_updated', 'REAL'), ('sample_next_at', 'REAL NOT NULL DEFAULT 0'),
+                             ('sample_failures', 'INTEGER NOT NULL DEFAULT 0')):
+        if name not in runtime_columns:
+            store.db.execute(f'ALTER TABLE first_outreach_runtime ADD COLUMN {name} {definition}')
 
 
 def _table(store, name):
@@ -313,7 +325,8 @@ def status(root, market='br'):
         snapshot = _coverage_snapshot(root, store)
         sync_id = snapshot['id'] if snapshot is not None else None
         counts = {key: base['counts'][key] for key in ('products', 'matchedCreators', 'sent', 'pendingApplications', 'approved', 'needsReview', 'unknown')}
-        send_unknown = base['counts']['unknown']
+        send_unknown = _unresolved_send_count(store, cfg['planId'])
+        counts['unknown'] = send_unknown
         from lib.sample_cost_policy import load_cost_policy, payment_basis
         try:
             cost_policy = load_cost_policy(root, now=store.clock())
@@ -331,6 +344,8 @@ def status(root, market='br'):
         counts.update(pendingApplications=pending_count, approved=sample['counts'].get('approved', 0), needsReview=manual_count)
         counts['unknown'] += sum(sample['counts'].get(key, 0) for key in ('inflight', 'accepted', 'unknown', 'quarantined_unknown'))
         applications, assessed_count = [], 0
+        lifecycle = {row['applicationId']: row for row in sample.get('tracking', [])
+                     if row.get('reviewState') == 'approved'}
         parsed = [(row, json.loads(row['payload'])) for row in _application_rows(store, sync_id)]
         names = _identity_names(root, [app.get('oecId') for _, app in parsed])
         from lib.first_catalog import offers
@@ -348,6 +363,9 @@ def status(root, market='br'):
             counts['needsReview'] += int(assessable and reason is not None)
             pid = app.get('pid') or '商品身份待核对'
             public_state = row['review_state'] or app.get('state') or 'unknown'
+            stage = lifecycle.get(row['application_id'], {}).get('platformStage')
+            if row['review_state'] == 'approved' and stage in {'seller_pending', 'ready_to_ship', 'shipped', 'content_pending', 'completed', 'cancelled', 'rejected'}:
+                public_state = stage
             if public_state == 'unknown' and scoped:
                 public_state = 'sample_application_state_unverified'
             applications.append({'id': row['application_id'], 'handle': names.get(app.get('oecId')) or '身份待核对',
@@ -370,9 +388,9 @@ def status(root, market='br'):
         if _table(store, 'first_outreach_job'):
             queued = store.db.execute("SELECT * FROM first_outreach_job WHERE plan_id=? AND state IN ('queued','running') ORDER BY created LIMIT 1", (cfg['planId'],)).fetchone()
             latest = store.db.execute("SELECT * FROM first_outreach_job WHERE plan_id=? ORDER BY created DESC LIMIT 1", (cfg['planId'],)).fetchone()
-            if not queued and latest and latest['state'] == 'error':
+            if not queued and latest and latest['state'] == 'error' and not _automatic(dict(latest)):
                 runtime = {'state': 'attention', 'reason': latest['error'], 'updatedAt': latest['updated']}
-        if queued:
+        if queued and not _automatic(dict(queued)):
             waiting = runtime['state'] in {'waiting_account', 'waiting_capacity'}
             runtime = {'state': runtime['state'] if waiting else {'prepare': 'preparing', 'sync': 'syncing', 'reconcile': 'waiting_reconciliation'}[queued['action']], 'reason': runtime['reason'] if waiting else None, 'updatedAt': queued['updated']}
         elif send_unknown:
@@ -381,38 +399,80 @@ def status(root, market='br'):
             runtime['state'], runtime['reason'] = ('canary_confirmed' if cfg.get('canaryDeliveryId') else 'stopped'), None
         if (queued or cfg['mode'] != 'stopped' or cfg['approvalsEnabled']) and not worker_state(root)['running']:
             runtime['reason'] = 'first_outreach_worker_unavailable'
-        if assessed_count < assessable_count and not queued and not send_unknown and runtime['state'] != 'attention' and runtime['reason'] != 'first_outreach_worker_unavailable':
-            runtime['reason'] = 'sample_application_assessment_incomplete'
-        if not runtime['reason'] and cfg['approvalsEnabled'] and sample['capability']['state'] != 'verified':
-            runtime['reason'] = sample['capability'].get('reason') or 'sample_review_contract_unverified'
         if not runtime['reason'] and category_wait:
             runtime['reason'] = category_wait[0]
         generation = base.get('generation') or {}
+        automation = _automation_status(store, cfg)
+        if not automation['samples']['reason']:
+            if assessed_count < assessable_count:
+                automation['samples'].update(state='waiting', reason='sample_application_assessment_incomplete')
+            elif cfg['approvalsEnabled'] and sample['capability']['state'] != 'verified':
+                automation['samples'].update(state='waiting', reason=sample['capability'].get('reason') or 'sample_review_contract_unverified')
         return {'schemaVersion': 'bdhub.first-outreach.v1', 'market': market,
                 'control': {key: cfg[key] for key in ('revision', 'mode', 'approvalsEnabled', 'updatedAt')},
                 'readiness': {'ready': not blockers, 'blockers': blockers}, 'counts': counts,
                 'applicationCoverage': 'complete' if snapshot is not None else 'unverified',
                 'candidates': [{key: row[key] for key in ('creatorId', 'handle', 'pid', 'productName', 'categoryName', 'gmv', 'message')} for row in base['candidates']],
                 'applications': applications, 'runtime': runtime, 'platformWrites': 0,
-                'sourceUpdatedAt': generation.get('completedAt')}
+                'sourceUpdatedAt': generation.get('completedAt'), 'automation': automation}
+
+
+def _automation_status(store, cfg):
+    idle = {'state': 'idle', 'reason': None, 'updatedAt': None, 'nextRunAt': None}
+    supply, sample = dict(idle), dict(idle)
+    if _table(store, 'first_outreach_job'):
+        row = store.db.execute("SELECT * FROM first_outreach_job WHERE plan_id=? AND json_extract(payload,'$.origin')='automatic_supply' ORDER BY created DESC LIMIT 1", (cfg['planId'],)).fetchone()
+        if row:
+            row = dict(row)
+            waiting = row['state'] in {'queued', 'running'} and row.get('next_attempt', 0) > store.clock()
+            state = 'waiting' if waiting else 'attention' if row['state'] == 'error' else row['state']
+            supply = {'state': state, 'reason': row['error'], 'updatedAt': row['updated'],
+                      'nextRunAt': row.get('next_attempt') if row['state'] in {'queued', 'running'} else None}
+        if cfg['mode'] == 'continuous' and supply['nextRunAt'] is None:
+            catalog = store.db.execute('SELECT max(c.observed) FROM catalog_head h JOIN catalog c ON c.id=h.snapshot_id WHERE h.plan_id=?', (cfg['planId'],)).fetchone()[0]
+            supply['nextRunAt'] = (catalog + SUPPLY_REFRESH_SECONDS) if catalog else store.clock()
+    if cfg['mode'] == 'stopped':
+        supply.update(state='stopped', nextRunAt=None)
+    if _table(store, 'first_outreach_runtime'):
+        row = store.db.execute('SELECT * FROM first_outreach_runtime WHERE plan_id=?', (cfg['planId'],)).fetchone()
+        if row and 'sample_state' in row.keys():
+            sample = {'state': row['sample_state'], 'reason': row['sample_reason'],
+                      'updatedAt': row['sample_updated'], 'nextRunAt': row['sample_next_at'] or None}
+    return {'supply': supply, 'samples': sample}
 
 
 def _publish(root, state, reason=None, request=None, *, sample_sync=False, started_at=None):
     with CycleStore(_path(root)) as store:
         ensure_schema(store)
         plan, now = first.control(store)['planId'], store.clock()
-        store.db.execute('''INSERT INTO first_outreach_runtime VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(plan_id) DO UPDATE SET
+        store.db.execute('''INSERT INTO first_outreach_runtime(plan_id,state,reason,updated,pid,started_at,current_request,last_sample_sync)
+         VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(plan_id) DO UPDATE SET
          state=excluded.state,reason=excluded.reason,updated=excluded.updated,pid=excluded.pid,
          started_at=COALESCE(excluded.started_at,first_outreach_runtime.started_at),current_request=excluded.current_request,
          last_sample_sync=CASE WHEN ? THEN excluded.last_sample_sync ELSE first_outreach_runtime.last_sample_sync END''',
                          (plan, state, reason, now, os.getpid(), started_at, request, now if sample_sync else 0, int(sample_sync)))
 
 
+def _publish_sample(root, state, reason=None, *, failed=False):
+    with CycleStore(_path(root)) as store:
+        ensure_schema(store)
+        plan, now = first.control(store)['planId'], store.clock()
+        row = store.db.execute('SELECT sample_failures FROM first_outreach_runtime WHERE plan_id=?', (plan,)).fetchone()
+        failures = (row[0] if row else 0) + 1 if failed else 0
+        delay = min(1800, 60 * 2 ** min(max(failures - 1, 0), 5)) if failed else 60
+        store.db.execute('''INSERT INTO first_outreach_runtime(plan_id,state,updated,last_sample_sync,sample_state,
+            sample_reason,sample_updated,sample_next_at,sample_failures) VALUES(?,'stopped',?,?,?,?,?,?,?)
+            ON CONFLICT(plan_id) DO UPDATE SET last_sample_sync=excluded.last_sample_sync,
+            sample_state=excluded.sample_state,sample_reason=excluded.sample_reason,sample_updated=excluded.sample_updated,
+            sample_next_at=excluded.sample_next_at,sample_failures=excluded.sample_failures''',
+                         (plan, now, now, state, reason, now, now + delay, failures))
+
+
 def _claim(root):
     with CycleStore(_path(root)) as store:
         ensure_schema(store)
         with store.tx():
-            row = store.db.execute("SELECT * FROM first_outreach_job WHERE state IN ('queued','running') ORDER BY created LIMIT 1").fetchone()
+            row = store.db.execute("SELECT * FROM first_outreach_job WHERE state IN ('queued','running') AND next_attempt<=? ORDER BY created LIMIT 1", (store.clock(),)).fetchone()
             if not row:
                 return None
             now = store.clock()
@@ -420,11 +480,54 @@ def _claim(root):
             return dict(store.db.execute('SELECT * FROM first_outreach_job WHERE request_id=?', (row['request_id'],)).fetchone())
 
 
-def _job_update(root, job, *, stage=None, state=None, error=None):
+def _job_update(root, job, *, stage=None, state=None, error=None, delay=0, failure=False):
     with CycleStore(_path(root)) as store:
         store.db.execute('''UPDATE first_outreach_job SET stage=COALESCE(?,stage),state=COALESCE(?,state),
-         updated=?,finished=CASE WHEN ? IN ('complete','error') THEN ? ELSE finished END,error=? WHERE request_id=?''',
-                         (stage, state, store.clock(), state, store.clock(), error, job['request_id']))
+         updated=?,finished=CASE WHEN ? IN ('complete','error') THEN ? ELSE finished END,error=?,
+         next_attempt=?,failures=CASE WHEN ? THEN failures+1 ELSE 0 END WHERE request_id=?''',
+                         (stage, state, store.clock(), state, store.clock(), error,
+                          store.clock() + delay, int(failure), job['request_id']))
+
+
+def _automatic(job):
+    return json.loads(job['payload']).get('origin') == 'automatic_supply'
+
+
+def _queue_supply(root, reason=None):
+    """Maintain the current grant's supply in the original durable job queue.
+
+    This records local read/material work, never a page request or send grant.
+    An unfinished refresh keeps its request/run file across failures/restarts.
+    """
+    with CycleStore(_path(root)) as store:
+        ensure_schema(store)
+        with store.tx():
+            cfg = first.control(store)
+            if cfg['mode'] != 'continuous' or not cfg['firstStart']:
+                return None
+            prior = store.db.execute("SELECT * FROM first_outreach_job WHERE plan_id=? AND state IN ('queued','running') ORDER BY created LIMIT 1", (cfg['planId'],)).fetchone()
+            if prior:
+                return dict(prior)
+            now = store.clock()
+            catalog = store.db.execute('SELECT max(c.observed) FROM catalog_head h JOIN catalog c ON c.id=h.snapshot_id WHERE h.plan_id=?', (cfg['planId'],)).fetchone()[0]
+            head = first._head(store, cfg['planId'])
+            last_sync = store.db.execute("SELECT max(created) FROM first_outreach_job WHERE plan_id=? AND action='sync' AND json_extract(payload,'$.origin')='automatic_supply'", (cfg['planId'],)).fetchone()[0] or 0
+            last_prepare = store.db.execute("SELECT max(created) FROM first_outreach_job WHERE plan_id=? AND json_extract(payload,'$.origin')='automatic_supply'", (cfg['planId'],)).fetchone()[0] or 0
+            exhausted = reason in {'market_send_candidate_missing', 'first_outreach_candidates_missing', 'first_outreach_materials_unavailable'}
+            stale = not catalog or now - catalog >= SUPPLY_REFRESH_SECONDS
+            if stale or exhausted and now - max(catalog or 0, last_sync) >= SUPPLY_EXHAUSTED_RECHECK_SECONDS:
+                action, trigger = 'sync', 'catalog_stale' if stale else 'candidates_exhausted'
+            elif reason in {'first_outreach_prepare_required', 'first_outreach_catalog_changed'} or not head or catalog and catalog > head['created'] or now - head['completed'] >= SUPPLY_REFRESH_SECONDS:
+                action, trigger = 'prepare', 'matching_stale'
+            elif exhausted and now - max(head['completed'], last_prepare) >= SUPPLY_EXHAUSTED_RECHECK_SECONDS:
+                action, trigger = 'prepare', 'candidates_exhausted'
+            else:
+                return None
+            request = 'first-auto-' + uuid.uuid4().hex
+            payload = encoded({'origin': 'automatic_supply', 'trigger': trigger, 'firstStart': cfg['firstStart']})
+            store.db.execute('INSERT INTO first_outreach_job(request_id,plan_id,action,payload,result_revision,state,created,updated) VALUES(?,?,?,?,?,?,?,?)',
+                             (request, cfg['planId'], action, payload, cfg['revision'], 'queued', now, now))
+            return dict(store.db.execute('SELECT * FROM first_outreach_job WHERE request_id=?', (request,)).fetchone())
 
 
 def _job_stopped(root, job, stopped):
@@ -433,18 +536,33 @@ def _job_stopped(root, job, stopped):
     if job['action'] == 'reconcile':
         return False
     with CycleStore(_path(root), readonly=True) as store:
+        if _automatic(job):
+            cfg = first.control(store)
+            if cfg['mode'] != 'continuous' or cfg['firstStart'] != json.loads(job['payload']).get('firstStart'):
+                return True
         rows = store.db.execute('SELECT payload FROM first_outreach_request WHERE plan_id=? AND result_revision>?', (job['plan_id'], job['result_revision']))
         return any(json.loads(row[0])[1] == 'stop' for row in rows)
 
 
-def _enrich(root, stopped):
+def _enrich(root, stopped, *, bounded=False):
     from lib.first_catalog import enrich
-    return enrich(root, 'br', stopped=stopped)
+    return enrich(root, 'br', stopped=stopped, **({'max_batches': 1} if bounded else {}))
 
 
-def _refresh(root, request, stopped):
+def _refresh(root, request, stopped, *, bounded=False):
     from lib.first_catalog import refresh
-    return refresh(root, 'br', request, stopped=stopped)
+    return refresh(root, 'br', request, stopped=stopped,
+                   **({'max_chunks': 1, 'max_requests': 5, 'timeout': 180} if bounded else {}))
+
+
+def _names(root, stopped):
+    from lib.first_catalog import prepare_names
+    return prepare_names(root, 'br', stopped=stopped)
+
+
+def _cards(root, job, action, stopped):
+    from lib.first_catalog import prepare_cards
+    return prepare_cards(root, job['request_id'], json.loads(job['payload'])['firstStart'], action, stopped=stopped)
 
 
 def _send(root, request, *, reconcile_only=False):
@@ -468,15 +586,26 @@ def _reconcile_samples(root, stopped):
     return {'state': 'complete'}
 
 
+def _unresolved_send_count(store, plan):
+    if not _table(store, 'cycle_delivery'):
+        return 0
+    return store.db.execute("""SELECT count(*) FROM cycle_delivery d WHERE d.plan_id=?
+            AND d.state<>'quarantined_unknown' AND (d.state='unknown' OR EXISTS(
+            SELECT 1 FROM cycle_delivery_part p WHERE p.delivery_id=d.id AND p.state IN ('inflight','accepted','unknown'))
+            OR EXISTS(SELECT 1 FROM cycle_conversation_intent i WHERE i.delivery_id=d.id AND i.state IN ('inflight','received')))""", (plan,)).fetchone()[0]
+
+
 def _send_unknown(root):
     with CycleStore(_path(root), readonly=True) as store:
-        cfg = first.control(store)
-        return first._unknown(store, cfg['planId'])
+        return _unresolved_send_count(store, first.control(store)['planId'])
 
 
 def process_job(root, job, *, stopped=lambda: False):
     cancel = lambda: _job_stopped(root, job, stopped)
-    stages = {'prepare': ('enrich', 'prepare'), 'sync': ('refresh', 'samples', 'enrich', 'prepare'), 'reconcile': ('send_reconcile', 'sample_reconcile')}[job['action']]
+    automatic = _automatic(job)
+    materials = ('cards_seed', 'cards_read', 'cards_verify', 'cards_create')
+    stages = ({'prepare': ('enrich', 'names', 'prepare', *materials), 'sync': ('refresh', 'enrich', 'names', 'prepare', *materials)}
+              if automatic else {'prepare': ('enrich', 'prepare'), 'sync': ('refresh', 'samples', 'enrich', 'prepare'), 'reconcile': ('send_reconcile', 'sample_reconcile')})[job['action']]
     for index in range(job['stage'], len(stages)):
         if cancel():
             if stopped():
@@ -484,16 +613,21 @@ def process_job(root, job, *, stopped=lambda: False):
             _job_update(root, job, state='error', error='first_outreach_job_stopped')
             return {'state': 'stopped'}
         name = stages[index]
-        _publish(root, 'preparing' if job['action'] == 'prepare' else 'syncing' if job['action'] == 'sync' else 'waiting_reconciliation', request=job['request_id'])
+        if not automatic:
+            _publish(root, 'preparing' if job['action'] == 'prepare' else 'syncing' if job['action'] == 'sync' else 'waiting_reconciliation', request=job['request_id'])
         if name == 'refresh':
-            result = _refresh(root, job['request_id'], cancel)
+            result = _refresh(root, job['request_id'], cancel, **({'bounded': True} if automatic else {}))
         elif name == 'samples':
             result = samples.sync(root, 'br', stopped=cancel)
             _publish(root, 'syncing', request=job['request_id'], sample_sync=True)
         elif name == 'enrich':
-            result = _enrich(root, cancel)
+            result = _enrich(root, cancel, **({'bounded': True} if automatic else {}))
+        elif name == 'names':
+            result = _names(root, cancel)
+        elif name.startswith('cards_'):
+            result = _cards(root, job, name.removeprefix('cards_'), cancel)
         elif name == 'prepare':
-            result = first.prepare(root, 'br', should_stop=cancel)
+            result = first.prepare(root, 'br', should_stop=cancel, **({'max_pages': 4} if automatic else {}))
         elif name == 'send_reconcile':
             result = _send(root, job['request_id'], reconcile_only=True) if _send_unknown(root) else {'state': 'complete'}
         else:
@@ -501,13 +635,26 @@ def process_job(root, job, *, stopped=lambda: False):
         if result.get('state') in {'paused', 'waiting'}:
             if result.get('state') == 'waiting':
                 raise CycleError(result.get('reason') or 'first_outreach_job_not_ready')
-            if result.get('reason'):
+            if result.get('reason') and not automatic:
                 waiting = _wait_state(result['reason'])
                 _publish(root, waiting if waiting != 'attention' else 'syncing' if job['action'] == 'sync' else 'preparing', result['reason'], job['request_id'])
+            elif automatic and result.get('reason') and result['reason'] not in {
+                    'first_catalog_read_budget', 'first_category_read_budget', 'first_names_read_budget'}:
+                delay = min(3600, 30 * 2 ** min(job.get('failures', 0), 7))
+                _job_update(root, job, state='running', error=result['reason'], delay=delay, failure=True)
             return result
+        if automatic and name == 'cards_create' and result.get('remaining', 0) > 0 and time.time() - job['created'] < SUPPLY_REFRESH_SECONDS:
+            # Ready cards are usable immediately. Other products retain their
+            # original card intents while one later bounded pass advances them.
+            _job_update(root, job, stage=stages.index('cards_read'), delay=30,
+                        error='first_outreach_materials_unavailable')
+            return {'state': 'paused', 'reason': 'first_outreach_materials_unavailable'}
         _job_update(root, job, stage=index + 1)
+        if automatic and index + 1 < len(stages):
+            return {'state': 'paused', 'reason': 'first_outreach_maintenance_yield'}
     _job_update(root, job, state='complete')
-    _publish(root, 'stopped' if _cfg(root)['mode'] == 'stopped' else 'ready')
+    if not automatic:
+        _publish(root, 'stopped' if _cfg(root)['mode'] == 'stopped' else 'ready')
     return {'state': 'complete'}
 
 
@@ -528,7 +675,8 @@ def _wait_state(code):
 
 def worker_tick(root, *, stopped=lambda: False):
     job = _claim(root)
-    if job:
+    automatic = bool(job and _automatic(job))
+    if job and not automatic:
         try:
             return process_job(root, job, stopped=stopped)
         except Exception as error:
@@ -554,25 +702,43 @@ def worker_tick(root, *, stopped=lambda: False):
             code = _code(error)
             result = {'state': _wait_state(code), 'reason': code}
             _publish(root, result['state'], code)
+    if not stopped():
+        if automatic:
+            try:
+                if result.get('reason') in {'first_outreach_prepare_required', 'first_outreach_catalog_changed'} and job['stage'] >= (4 if job['action'] == 'sync' else 3):
+                    job['stage'] = 1 if job['action'] == 'sync' else 0
+                    _job_update(root, job, stage=job['stage'])
+                maintained = process_job(root, job, stopped=stopped)
+                result['supply'] = maintained
+            except Exception as error:
+                code = _code(error)
+                # A read/material failure never drops the original request or
+                # stops independent sends and sample lifecycle reads.
+                delay = min(3600, 30 * 2 ** min(job.get('failures', 0), 7))
+                _job_update(root, job, state='running', error=code, delay=delay, failure=True)
+                result['supply'] = {'state': 'waiting', 'reason': code, 'retryAfterSeconds': delay}
+        else:
+            _queue_supply(root, result.get('stopReason') or result.get('reason'))
     if not stopped() and _pending_samples(root):
         try:
             _reconcile_samples(root, stopped)
         except Exception as error:
-            _publish(root, 'waiting_reconciliation', _code(error))
-        return result
+            _publish_sample(root, 'waiting', _code(error), failed=True)
     cfg = _cfg(root)
-    if not stopped() and cfg['approvalsEnabled']:
+    followups = samples.has_followups(root, 'br')
+    if not stopped() and (cfg['approvalsEnabled'] or followups):
         with CycleStore(_path(root), readonly=True) as store:
-            row = store.db.execute('SELECT last_sample_sync FROM first_outreach_runtime WHERE plan_id=?', (cfg['planId'],)).fetchone()
-            due = not row or time.time() - row[0] >= 60
+            row = store.db.execute('SELECT sample_next_at FROM first_outreach_runtime WHERE plan_id=?', (cfg['planId'],)).fetchone()
+            due = not row or time.time() >= row[0]
         if due:
             approval_stopped = lambda: stopped() or not _cfg(root)['approvalsEnabled']
             try:
-                samples.sync(root, 'br', stopped=approval_stopped)
-                _publish(root, result['state'], result.get('reason'), sample_sync=True)
-                samples.run_one(root, 'br', stopped=approval_stopped)
+                samples.sync(root, 'br', stopped=stopped)
+                review = samples.run_one(root, 'br', stopped=approval_stopped) if cfg['approvalsEnabled'] else {'state': 'idle'}
+                sample_state = 'waiting' if str(review.get('state', '')).startswith(('waiting', 'capability', 'unknown')) else 'idle' if review.get('state') == 'idle' else 'complete'
+                _publish_sample(root, sample_state, review.get('reason'))
             except Exception as error:
-                _publish(root, 'attention', _code(error), sample_sync=True)
+                _publish_sample(root, 'attention', _code(error), failed=True)
     return result
 
 
@@ -610,7 +776,7 @@ def worker(root, *, once=False, stopped=None, interval=5):
                     cfg = _cfg(root)
                     with CycleStore(_path(root), readonly=True) as store:
                         queued = store.db.execute("SELECT 1 FROM first_outreach_job WHERE state IN ('queued','running') LIMIT 1").fetchone()
-                    if not queued and cfg['mode'] == 'stopped' and not cfg['approvalsEnabled'] and not _send_unknown(root) and not _pending_samples(root):
+                    if not queued and cfg['mode'] == 'stopped' and not cfg['approvalsEnabled'] and not _send_unknown(root) and not samples.has_followups(root, 'br'):
                         fcntl.flock(lock, fcntl.LOCK_UN)
                         _record_worker(root, {'pid': None, 'startedAt': started, 'checkedAt': time.time(), 'state': 'stopped'})
                         released = True

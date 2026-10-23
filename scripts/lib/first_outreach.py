@@ -253,6 +253,31 @@ def _offer_rank(offer):
             -offer['sample']['quota'], offer['pid'], offer['campaignId'], offer['offerKey'])
 
 
+def material_offers(store, market='br'):
+    """Only the current best offer of each actual category needs a send card."""
+    plan = _plan(store, market)
+    selected = {}
+    for offer in sorted((offer for _, offer in _offers(store, plan)
+                         if assess_first_offer(offer, store.clock())['eligible']), key=_offer_rank):
+        selected.setdefault(offer['categoryId'], offer)
+    return list(selected.values())
+
+
+def require_material_grant(store, expected_start, market='br'):
+    """The existing page grant also bounds its required product material writes."""
+    cfg = dispatch_allowed(store, market)
+    if cfg['mode'] != 'continuous' or not isinstance(expected_start, dict) or \
+            set(expected_start) != {'requestId', 'revision'} or type(expected_start.get('revision')) is not int or \
+            not isinstance(expected_start.get('requestId'), str) or cfg['firstStart'] != expected_start:
+        raise CycleError('first_outreach_authorization_changed')
+    receipt = store.db.execute('SELECT * FROM first_outreach_request WHERE request_id=? AND plan_id=?',
+                               (expected_start.get('requestId'), cfg['planId'])).fetchone()
+    if not receipt or receipt['result_revision'] != expected_start.get('revision') or \
+            json.loads(receipt['payload']) != [market, 'continue', None]:
+        raise CycleError('first_outreach_material_authorization_invalid')
+    return cfg
+
+
 def _localized_name(store, offer, market='br'):
     if not _table(store, 'cycle_product_name') or not isinstance(offer.get('title'), str):
         return None
