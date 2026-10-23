@@ -14,6 +14,7 @@ export default function AppShell({children,currentMarket,markets}:{children:Reac
  const navigation:{href:string;label:string;icon:IconName;match:string}[]=[
   {href:`${base}/console`,label:"经营总览",icon:"chart",match:`${base}/console`},
   {href:base,label:"市场运营",icon:"bolt",match:base},
+  ...(currentMarket.key==="br"?[{href:`${base}/first-outreach`,label:"一发 · 样品推荐",icon:"send" as IconName,match:`${base}/first-outreach`}]:[]),
   {href:`${base}/workspace/send`,label:"合作工作台",icon:"chat",match:`${base}/workspace`},
   {href:`${base}/conversations`,label:"会话",icon:"bell",match:`${base}/conversations`},
   {href:`${base}/catalog`,label:"货盘",icon:"grid",match:`${base}/catalog`},
@@ -41,7 +42,7 @@ export default function AppShell({children,currentMarket,markets}:{children:Reac
    </Link>
    <div className={`mx-1 mt-4 ${collapsed?"lg:hidden":""}`}>
     <label htmlFor="market-switch" className="sr-only">当前市场</label>
-    <select id="market-switch" value={currentMarket.key} onChange={event=>{const target=event.target.value;window.location.assign(pathname.replace(new RegExp(`^/${currentMarket.key}(?=/|$)`),`/${target}`));}} className="w-full rounded-lg border border-gray-200 bg-gray-50 px-3 py-2.5 text-sm font-medium text-gray-700 outline-none focus-visible:ring-2 focus-visible:ring-brand-500 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200">
+    <select id="market-switch" value={currentMarket.key} onChange={event=>{const target=event.target.value;window.location.assign(pathname===`${base}/first-outreach`&&target!=="br"?`/${target}`:pathname.replace(new RegExp(`^/${currentMarket.key}(?=/|$)`),`/${target}`));}} className="w-full rounded-lg border border-gray-200 bg-gray-50 px-3 py-2.5 text-sm font-medium text-gray-700 outline-none focus-visible:ring-2 focus-visible:ring-brand-500 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200">
      <optgroup label="正式接入">{connectedMarkets.map(row=><option key={row.key} value={row.key}>{row.label} · {row.shortLabel}</option>)}</optgroup>
      {currentPlanned&&<optgroup label="待接入"><option value={currentPlanned.key}>{currentPlanned.label} · {currentPlanned.shortLabel}</option></optgroup>}
     </select>

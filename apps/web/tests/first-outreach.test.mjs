@@ -1,0 +1,61 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import {readFileSync} from "node:fs";
+import {firstOutreachArgv,validateFirstOutreach,validateFirstOutreachRequest} from "../src/server/first-outreach/bridge.ts";
+import {firstOutreachCanContinue} from "../src/features/first-outreach/presentation.ts";
+import {GET,POST} from "../src/app/api/first-outreach/route.ts";
+
+const payload={schemaVersion:"bdhub.first-outreach.v1",market:"br",control:{revision:1,mode:"stopped",approvalsEnabled:false,updatedAt:1},readiness:{ready:false,blockers:["sample_facts_unavailable"]},counts:{products:0,matchedCreators:0,sent:0,pendingApplications:0,approved:0,needsReview:0,unknown:0},candidates:[],applications:[],runtime:{state:"blocked",reason:"sample_facts_unavailable",updatedAt:null},platformWrites:0,sourceUpdatedAt:null};
+const request={action:"start",market:"br",requestId:"first-request-0001",expectedRevision:1};
+const local={host:"127.0.0.1:5198",origin:"http://127.0.0.1:5198","content-type":"application/json"};
+const mutate=(body,query="?market=br",headers=local)=>POST(new Request(`http://127.0.0.1:5198/api/first-outreach${query}`,{method:"POST",headers,body:JSON.stringify(body)}));
+
+test("BR state preserves explicit data gaps and real candidate previews",()=>{
+ assert.equal(validateFirstOutreach(payload).readiness.blockers[0],"sample_facts_unavailable");
+ const value=validateFirstOutreach({...payload,readiness:{ready:true,blockers:[]},counts:{...payload.counts,products:1,matchedCreators:1},candidates:[{creatorId:"creator-01",handle:"alice",pid:"1729571380453480878",productName:"Creme",categoryName:"Beleza",gmv:null,message:"Olá @alice!"}]});
+ assert.equal(value.candidates[0].message,"Olá @alice!");assert.equal(value.candidates[0].gmv,null);
+ for(const bad of [{...payload,market:"it"},{...payload,platformWrites:1},{...payload,counts:undefined},{...payload,counts:{...payload.counts,products:-1}},{...payload,readiness:{ready:true,blockers:["missing"]}},{...payload,credentials:"private"},{...payload,control:{...payload.control,cookie:"secret"}},{...payload,applications:[{id:"1",handle:"a",pid:"1",productName:"p",state:"pending",reason:null,raw:{secret:1}}]}])assert.throws(()=>validateFirstOutreach(bad),/invalid_first_outreach/);
+});
+
+test("every mutation requires an idempotency key, revision and the exact BR action shape",()=>{
+ for(const action of ["prepare","sync","start","continue","stop","reconcile"])assert.deepEqual(validateFirstOutreachRequest({...request,action}),{...request,action});
+ assert.deepEqual(validateFirstOutreachRequest({...request,action:"set-approvals",approvalsEnabled:true}),{...request,action:"set-approvals",approvalsEnabled:true});
+ for(const bad of [{...request,market:"it"},{...request,requestId:undefined},{...request,expectedRevision:undefined},{...request,expectedRevision:-1},{...request,expectedRevision:1.2},{...request,action:"execute"},{...request,confirmed:true},{...request,action:"reconcile",deliveryId:"different-intent"},{...request,action:"set-approvals"},{...request,approvalsEnabled:true}])assert.throws(()=>validateFirstOutreachRequest(bad),/invalid_first_outreach_request/);
+});
+
+test("bridge uses fixed CLI argv without a shell or fallback market",()=>{
+ assert.deepEqual(firstOutreachArgv("/project","status"),["/project/scripts/first-outreach.py","status","--market","br"]);
+ assert.deepEqual(firstOutreachArgv("/project","start",request),["/project/scripts/first-outreach.py","start","--market","br","--json",JSON.stringify(request)]);
+});
+
+test("API rejects missing, repeated and foreign markets before invoking CLI",async()=>{
+ for(const query of ["","?market=it","?market=br&market=br","?market=br&other=1"]){
+  const response=await GET(new Request(`http://127.0.0.1:5198/api/first-outreach${query}`,{headers:{host:local.host}}));assert.equal(response.status,400,query);
+  assert.equal((await mutate(request,query)).status,400,query);
+ }
+ assert.equal((await mutate({...request,market:"it"})).status,409);
+ assert.equal((await mutate({...request,account:"acc6"})).status,400);
+ assert.equal((await mutate({...request,action:"reconcile",expectedRevision:undefined})).status,400);
+});
+
+test("API requires local origin and JSON for all mutations",async()=>{
+ assert.equal((await mutate(request,"?market=br",{...local,origin:"https://foreign.test"})).status,403);
+ assert.equal((await mutate(request,"?market=br",{...local,"sec-fetch-site":"cross-site"})).status,403);
+ assert.equal((await mutate(request,"?market=br",{host:local.host,"content-type":"application/json"})).status,403);
+ assert.equal((await mutate(request,"?market=br",{...local,"content-type":"text/plain"})).status,415);
+});
+
+test("continuous mode waits for a confirmed canary and stops on unknown",()=>{
+ const confirmed={control:{mode:"stopped"},runtime:{state:"canary_confirmed"},counts:{sent:1,unknown:0}};
+ assert.equal(firstOutreachCanContinue(confirmed),true);
+ for(const row of [{...confirmed,counts:{sent:0,unknown:0}},{...confirmed,counts:{sent:1,unknown:1}},{...confirmed,runtime:{state:"sending"}},{...confirmed,control:{mode:"continuous"}}])assert.equal(firstOutreachCanContinue(row),false);
+});
+
+test("page gates BR, presents real data gaps, separate approval and explicit first send",()=>{
+ const route=readFileSync(new URL("../src/app/[market]/first-outreach/page.tsx",import.meta.url),"utf8");
+ const page=readFileSync(new URL("../src/features/first-outreach/FirstOutreachWorkspace.tsx",import.meta.url),"utf8");
+ const shell=readFileSync(new URL("../src/features/shell/AppShell.tsx",import.meta.url),"utf8");
+ assert.match(route,/market!=="br"\)notFound\(\)/);assert.match(shell,/currentMarket.key==="br"\?\[\{href:`\$\{base\}\/first-outreach/);
+ for(const text of ["可推荐商品","匹配达人","成功推送","自动审批通过","待处理申请","当前等待","葡语邀约预览","确认发送首条","继续持续推送","自动审批已关闭","停止新动作"])assert.ok(page.includes(text)||text==="自动审批已关闭"&&page.includes('"已关闭"'),text);
+ assert.match(page,/value=\{data\.counts\.products\}/);assert.match(page,/lang="pt-BR"/);assert.match(page,/setConfirmation\("start"\)/);assert.doesNotMatch(page,/sqlite|demo|mockData/i);
+});
