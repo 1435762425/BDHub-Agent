@@ -12,6 +12,7 @@
 | 调度/B 类连续性与 Agent 执行修复 | [验证、加载与剩余范围](implementation/continuity-agent-runtime-20260925.md) |
 | 第一批只读运营面板交付 | [实现、验证与 Web 发布状态](implementation/readonly-operations-overview-20260925.md) |
 | 商品全生命周期 | [PID 生命周期](architecture/pid-lifecycle-v1.md)、[Campaign](architecture/non-full-managed-campaign-v1.md) |
+| 巴西一发、主营类目匹配与样品审批 | [交付与平台验证边界](implementation/br-first-outreach-20261023.md) |
 | 当前代码、GitHub 与回退 | [仓库说明](../README.md#github-与恢复)、[SDK/HTTP 上线及保留数据的回退](implementation/sdk-http-rollout-20260926.md) |
 | 工作流、市场与账号 | [自动运营设计](architecture/automated-operations-workflow-v1.md)、[市场接入标准](architecture/market-rollout-standard-v1.md)、[账号生命周期](architecture/dual-account-lifecycle.md) |
 | 身份与排序 | [稳定身份](architecture/creator-identity-and-rename.md)、[排序规则](PROJECT.md#43-发送位置) |

@@ -10,6 +10,25 @@ C={'campaign_id':'234','crs_campaign_type':5,'promotion_start_time':str((AT-8640
 P={'product_id':'123','product_name':'product','stock':'101','total_commission_percent':'1500','plan_commission_percent':'1000','product_status':2,'product_rating':'3.8'}
 def calc(t,p):return SimpleNamespace(valid=t is not None and p is not None,creator_pct=13)
 class CatalogTests(unittest.TestCase):
+ def test_samples_are_not_inferred_from_product_stock(self):
+  r=normalize(P,C,'campaign',RULE,calc,'ref',AT)
+  self.assertEqual(r['sample'],{'supported':None,'quota':None,'observedAt':AT,'evidenceRef':'ref'})
+  for invalid in (True,-1,'1.5','NaN','Infinity'):
+   with self.subTest(invalid=invalid):
+    r=normalize(P|{'sample_quota':invalid},C,'campaign',RULE,calc,'ref',AT)
+    self.assertIsNone(r['sample']['quota']);self.assertIsNone(r['sample']['supported'])
+ def test_sample_quota_and_explicit_unavailable_remain_distinct(self):
+  r=normalize(P|{'sample_quota':'2'},C,'campaign',RULE,calc,'ref',AT)
+  self.assertEqual(r['sample']['quota'],2);self.assertIs(r['sample']['supported'],True)
+  r=normalize(P|{'sample_quota':2,'has_free_sample':False},C,'campaign',RULE,calc,'ref',AT)
+  self.assertIs(r['sample']['supported'],False)
+  r=normalize(P|{'sample_quota':0,'is_free_sample':True},C,'campaign',RULE,calc,'ref',AT)
+  self.assertEqual(r['sample']['quota'],0);self.assertIs(r['sample']['supported'],True)
+ def test_only_explicit_level_one_category_is_used_for_main_category_matching(self):
+  r=normalize(P|{'category_id':'42'},C,'campaign',RULE,calc,'ref',AT)
+  self.assertNotIn('categoryId',r)
+  r=normalize(P|{'first_category_id':'42','first_category_name':'Beauty'},C,'campaign',RULE,calc,'ref',AT)
+  self.assertEqual((r['categoryId'],r['categoryName'],r['categoryEvidenceRef']),('42','Beauty','ref'))
  def test_normalize(self):
   r=normalize(P,C,'campaign',RULE,calc,'ref',AT)
   self.assertTrue(assess_offer(r,AT)['eligible']);self.assertFalse(r['cardBindingVerified']);self.assertEqual(r['commissionState'],'proposed_not_applied');self.assertEqual(r['publicPercent'],'10');self.assertEqual(r['totalPercent'],'15')

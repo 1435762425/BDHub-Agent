@@ -206,6 +206,24 @@ class SampleAdapter:
 @contextmanager
 def sample_session(root, market, account_name, report, *, contract=None, frozen=None,
                    expected_binding=None, stopped=lambda: False, wait_seconds=5):
+    """Share the original platform slots before acquiring this account's lease."""
+    if market != 'br':
+        raise CycleError('sample_market_not_supported')
+    import uuid
+    from lib.first_resources import platform_read
+    with platform_read(root, 'first-sample-' + uuid.uuid4().hex, account_name=account_name) as grant:
+        def scoped_stopped():
+            grant.check()
+            return stopped()
+        with _account_sample_session(root, market, account_name, report, contract=contract, frozen=frozen,
+                                     expected_binding=expected_binding, stopped=scoped_stopped,
+                                     wait_seconds=wait_seconds) as adapter:
+            yield adapter
+
+
+@contextmanager
+def _account_sample_session(root, market, account_name, report, *, contract=None, frozen=None,
+                            expected_binding=None, stopped=lambda: False, wait_seconds=5):
     """Use project-owned identity, existing ProfileLease and fixed endpoint scopes."""
     if market != 'br':
         raise CycleError('sample_market_not_supported')

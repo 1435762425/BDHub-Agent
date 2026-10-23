@@ -133,7 +133,7 @@ class PlatformRead:
 
 
 @contextmanager
-def platform_read(root, request_id):
+def platform_read(root, request_id, *, account_name=None):
     """Reserve BR's existing heavy-platform slots for one bounded read operation.
 
     ``with platform_read(root, request_id) as grant`` yields ``grant.check()``
@@ -151,7 +151,10 @@ def platform_read(root, request_id):
     try:
         resources._required(store)
         capacity = load_policy(root)['platformMaxParallelMarkets']
-        account = load_config(root).get('markets', {}).get('br', {}).get('roles', {}).get('supply')
+        pair = load_config(root).get('markets', {}).get('br', {})
+        account = account_name or pair.get('roles', {}).get('supply')
+        if account_name is not None and account_name not in pair.get('accounts', []):
+            raise CycleError('workflow_resource_market_unavailable')
         if not isinstance(account, str) or not account:
             raise CycleError('workflow_resource_market_unavailable')
         job = 'first-platform-read-' + digest(request_id)[:32]

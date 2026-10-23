@@ -78,6 +78,10 @@ class Deliveries:
     claim(self.s,plan,candidate,id)
   return self.get(id)
  def _eligible(self,plan,c,*,current_delivery_id=None,allow_invitation_text=False,page_control=False):
+  first_flags=(c.get('outreachPurpose')=='first',c.get('executionMode')=='market-first-v1',
+               c.get('source',{}).get('kind')=='first_category')
+  if any(first_flags) and not all(first_flags):
+   raise CycleError('first_outreach_source_invalid')
   from lib.market_send_control import require_canary_authorization
   require_canary_authorization(self.s,plan,c,page_control=page_control)
   from lib.outreach_policy import marketing_isolated
@@ -93,9 +97,16 @@ class Deliveries:
      (r['inbox_until'] or r['revision']!=c['controlRevision']) and not continuation:raise CycleError('relationship_changed')
   from lib.video_window import current as video_current
   if c.get('source',{}).get('sourceClass')=='B' and not video_current(c['source'].get('videoReleasedAt'),self.s.clock()):raise CycleError('video_lead_expired')
-  if not assess_offer(c['offer'],self.s.clock())['eligible']:raise CycleError('offer_not_eligible')
+  if c.get('outreachPurpose')=='first':
+   from lib.first_outreach import require_delivery,assess_first_offer
+   require_delivery(self.s,c,current_delivery_id=current_delivery_id,plan=plan)
+   if not assess_first_offer(c['offer'],self.s.clock())['eligible']:raise CycleError('offer_not_eligible')
+  elif not assess_offer(c['offer'],self.s.clock())['eligible']:raise CycleError('offer_not_eligible')
   if self.s.db.execute("SELECT 1 FROM sqlite_master WHERE name='cycle_card_creation'").fetchone() and self.s.db.execute("SELECT 1 FROM cycle_card_creation WHERE plan_id=? AND offer_json=? AND state='invalidated'",(plan,encoded(c['offer']))).fetchone():raise CycleError('offer_currently_ineligible')
-  current={o['offerKey']:o for _,o in self.s._offers(plan)}
+  if c.get('outreachPurpose')=='first':
+   from lib.first_catalog import offers as first_offers
+   current={o['offerKey']:o for _,o in first_offers(self.s,plan)}
+  else:current={o['offerKey']:o for _,o in self.s._offers(plan)}
   if digest(current.get(c['offer']['offerKey']))!=digest(c['offer']):raise CycleError('offer_changed')
   if c['message']['version']!=4 or c['message']['deliveryOrder']!='card_then_text':raise CycleError('message_not_v4')
   prior=last_contact_by_creator(self.s.db,plan,creator_id=c['creatorId'],current_delivery_id=current_delivery_id).get(c['creatorId'])
@@ -336,6 +347,9 @@ class Deliveries:
     if not remaining and d['snapshot'].get('executionMode')=='market-canary-v1':
      from lib.market_send_control import consume_canary_authorization
      consume_canary_authorization(self.s,{**d,'state':'confirmed'})
+    if not remaining and d['snapshot'].get('outreachPurpose')=='first':
+     from lib.first_outreach import consume_canary
+     consume_canary(self.s,{**d,'state':'confirmed'})
 
 def delivery_status(store,plan):
  if not store.db.execute("SELECT 1 FROM sqlite_master WHERE name='cycle_delivery'").fetchone():return None

@@ -62,6 +62,28 @@ def timestamp(v):
  try:return datetime.fromtimestamp(float(d)/(1000 if d>100000000000 else 1),timezone.utc).isoformat()
  except (ValueError,OverflowError,OSError):return None
 
+def sample_facts(product,evidence,at):
+ """Keep sample facts separate from ordinary stock; missing values stay unknown."""
+ quota=number(product.get('sample_quota'))
+ quota=int(quota) if quota is not None and 0<=quota<=2147483647 and quota==quota.to_integral_value() else None
+ flags=[product[key] for key in ('is_free_sample','has_free_sample') if type(product.get(key)) is bool]
+ # Conflicting source fields are not permission to promise a free sample.
+ supported=False if False in flags else True if True in flags or quota is not None and quota>0 else None
+ return {'supported':supported,'quota':quota,'observedAt':at,'evidenceRef':evidence}
+
+def category_facts(product,evidence):
+ """Only an explicit level-one category is a main-category match.
+
+ A generic category_id can be a leaf in another taxonomy. Preserve no inferred
+ mapping between that ID and a creator's industry_groups.
+ """
+ raw=product.get('first_category_id')
+ if raw is None:raw=product.get('category_l1_id')
+ if isinstance(raw,bool) or not isinstance(raw,(str,int)) or not str(raw).isascii() or not str(raw).isdigit():return {}
+ name=product.get('first_category_name') or product.get('category_l1_name')
+ return {'categoryId':str(raw),'categoryName':str(name)[:200] if isinstance(name,str) else str(raw),
+         'categoryEvidenceRef':evidence}
+
 def normalize(product,campaign,source,rule,calculator,evidence,at):
  pid=str(product.get('product_id') or '');cid=str(campaign.get('campaign_id') or '')
  if not pid.isdigit() or not cid.isdigit():raise CycleError('catalog_identity_missing')
@@ -81,7 +103,8 @@ def normalize(product,campaign,source,rule,calculator,evidence,at):
  if start and datetime.fromisoformat(start).timestamp()>at:available=False
  if end and datetime.fromisoformat(end).timestamp()<=at:available=False
  title=product.get('product_name') or product.get('title') or pid
- return {**management,'pid':pid,'offerKey':source+':'+pid+':'+cid,'campaignId':cid,'title':str(title)[:500],'catalogSource':source,
+ return {**management,**category_facts(product,evidence),'sample':sample_facts(product,evidence,at),
+ 'pid':pid,'offerKey':source+':'+pid+':'+cid,'campaignId':cid,'title':str(title)[:500],'catalogSource':source,
  'stock':str(number(product.get('stock'))) if require_stock(management) and number(product.get('stock')) is not None else None,'creatorPercent':creator,
  'publicPercent':percent(public),'totalPercent':percent(total),'endAt':end,'startAt':start,'available':available,
  'rating':str(number(product.get('product_rating'))) if number(product.get('product_rating')) is not None else None,

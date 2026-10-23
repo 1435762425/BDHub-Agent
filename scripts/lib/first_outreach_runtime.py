@@ -476,7 +476,8 @@ def _wait_state(code):
         return 'waiting_reconciliation'
     if code in {'new_contact_capacity_reached', 'recipient_limit'}:
         return 'waiting_capacity'
-    if code in {'ProfileBusyError', 'live_guard_busy', 'delivery_executor_busy', 'local_store_busy', 'account_busy', 'first_catalog_account_busy'}:
+    if code in {'ProfileBusyError', 'live_guard_busy', 'delivery_executor_busy', 'local_store_busy', 'account_busy', 'first_catalog_account_busy',
+                'workflow_resource_busy', 'workflow_stage_already_claimed', 'sample_account_in_use', 'first_resource_child_running'}:
         return 'waiting_account'
     return 'attention'
 
@@ -547,6 +548,8 @@ def worker(root, *, once=False, stopped=None, interval=5):
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             return {'state': 'busy', 'platformWrites': 0}
+        from lib.runtime_release import register
+        register(root, 'first-outreach-br')
         started = time.time()
         _publish(root, 'starting', started_at=started)
         try:
