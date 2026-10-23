@@ -670,6 +670,10 @@ def process_job(root, job, *, stopped=lambda: False):
                     'first_catalog_read_budget', 'first_category_read_budget', 'first_names_read_budget'}:
                 delay = min(3600, 30 * 2 ** min(job.get('failures', 0), 7))
                 _job_update(root, job, state='running', error=result['reason'], delay=delay, failure=True)
+            elif automatic:
+                # A successful bounded slice has recovered the earlier read
+                # failure even when the whole stage still has more pages.
+                _job_update(root, job, state='running')
             return result
         if automatic and name == 'cards_create' and result.get('remaining', 0) > 0 and time.time() - job['created'] < SUPPLY_REFRESH_SECONDS:
             # Ready cards are usable immediately. Other products retain their

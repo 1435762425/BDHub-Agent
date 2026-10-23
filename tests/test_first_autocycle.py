@@ -86,6 +86,19 @@ class FirstAutocycleTests(unittest.TestCase):
         self.assertEqual(send.call_count, 2)
         refresh.assert_called_once()
 
+    def test_successful_read_slice_clears_old_failure_without_restarting_stage(self):
+        job = runtime._queue_supply(self.root)
+        original = runtime._cfg(self.root)
+        runtime._job_update(self.root, job, state='running', error='workflow_resource_busy', failure=True)
+        with patch.object(runtime, '_refresh', return_value={'state': 'paused', 'reason': 'first_catalog_read_budget'}):
+            runtime.process_job(self.root, self.record())
+        current = self.record()
+        self.assertEqual((current['request_id'], current['stage'], current['state']), (job['request_id'], 0, 'running'))
+        self.assertIsNone(current['error'])
+        self.assertEqual(current['failures'], 0)
+        self.assertLessEqual(current['next_attempt'], time.time())
+        self.assertEqual(runtime._cfg(self.root), original)
+
     def test_bounded_prepare_resumes_exact_stage_and_leaves_time_for_samples(self):
         self.fresh_supply()
         job = runtime._queue_supply(self.root, 'first_outreach_prepare_required')
