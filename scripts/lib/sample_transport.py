@@ -8,6 +8,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 from copy import deepcopy
 import hashlib
+import json
 import time
 from pathlib import Path
 
@@ -17,11 +18,77 @@ LIST = '/api/v1/affiliate/partner/sample/records/list'
 CAMPAIGNS = '/api/v1/affiliate/partner/campaign/list'
 PRODUCTS = '/api/v1/affiliate/partner/campaign/product/list'
 REVIEW = '/api/v1/affiliate/partner/campaign/sample/budget/review'
-# The one request shape observed in this project's historical BR read. Status 2
-# is retained as an opaque filter; it is never interpreted as a pending request.
-OBSERVED_READ_BODY = {'search_params': [{'search_key': 28, 'search_type': 1, 'value': '2'}],
-                      'order_params': [{'order_key': 9, 'order_type': 2}], 'page_size': 5, 'cur_page': 1}
+# Current BR all-state read, observed with acc2 on 2026-10-23 (22 records).
+# The native numeric status is retained without inventing its lifecycle meaning.
+OBSERVED_READ_BODY = {'search_params': [],
+                      'order_params': [{'order_key': 9, 'order_type': 2}], 'page_size': 20, 'cur_page': 1}
 CONTRACT_SCHEMA = 'bdhub.br-sample-contract.v1'
+READ_CONTRACT_SCHEMA = 'bdhub.br-sample-read-contract.v1'
+READ_EVIDENCE = 'var/br-sample-allstate-readonly-20261023-complete.private.json'
+READ_PATHS = {'applicationId': 'apply_id', 'oecId': 'creator_info.oec_id',
+              'platformCreatorId': 'creator_info.id', 'pid': 'product_info.product_id',
+              'campaignId': 'campaign_info.campaign_id', 'status': 'sample_status'}
+
+
+def validate_read_contract(contract, *, binding=None):
+    """Validate a read-only observation; no payment or approval semantics exist here."""
+    if not isinstance(contract, dict) or contract.get('schema') != READ_CONTRACT_SCHEMA or contract.get('market') != 'br':
+        raise CycleError('sample_read_contract_unverified')
+    if set(contract) != {'schema', 'market', 'readScope', 'evidence', 'recordPaths', 'readBody', 'statusCountersPath', 'binding'} or \
+            contract.get('readScope') != 'all_states' or contract.get('recordPaths') != READ_PATHS or \
+            contract.get('readBody') != OBSERVED_READ_BODY or contract.get('statusCountersPath') != 'sample_status_num_map':
+        raise CycleError('sample_read_contract_shape_invalid')
+    proofs = contract.get('evidence')
+    if not isinstance(proofs, dict) or set(proofs) != {'records', 'creatorIdentity'} or \
+            any(not isinstance(ref, str) or not ref for ref in proofs.values()):
+        raise CycleError('sample_read_contract_evidence_missing')
+    owner = contract.get('binding')
+    if not isinstance(owner, dict) or owner.get('market') != 'br' or owner.get('account') != 'acc2' or \
+            any(not isinstance(owner.get(key), str) or not owner[key] for key in ('institutionFingerprint', 'identitySha256')):
+        raise CycleError('sample_read_contract_binding_missing')
+    if binding is not None and owner != binding:
+        raise CycleError('sample_original_identity_changed')
+    return deepcopy(contract)
+
+
+def observed_read_contract(root, binding):
+    """Load only this project's complete BR observation, bound to the same identity."""
+    path = Path(root) / READ_EVIDENCE
+    try:
+        proof = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return None
+    if proof.get('schema') != 'bdhub.br-sample-field-probe.v1' or proof.get('status') != 'observed' or \
+            proof.get('market') != 'br' or proof.get('account') != 'acc2' or proof.get('binding') != binding:
+        raise CycleError('sample_read_evidence_binding_mismatch')
+    pages = proof.get('pages')
+    if proof.get('complete') is not True or type(proof.get('total')) is not int or proof.get('recordCount') != proof['total'] or \
+            proof.get('platformWrites') != 0 or proof.get('platformWriteAttempts') != 0 or proof.get('identityFileUnchanged') is not True or \
+            not isinstance(pages, list) or not pages or sum(page.get('recordCount', 0) for page in pages) != proof['total']:
+        raise CycleError('sample_read_evidence_incomplete')
+    request = proof.get('request') or {}
+    if request.get('path') != LIST or request.get('method') != 'POST' or request.get('body') != OBSERVED_READ_BODY:
+        raise CycleError('sample_read_evidence_shape_invalid')
+    counters = pages[0].get('statusCounts')
+    if not isinstance(counters, dict) or any(not isinstance(k, str) or not k or type(v) is not int or v < 0
+                                            for k, v in counters.items()) or sum(counters.values()) != proof['total']:
+        raise CycleError('sample_read_evidence_counters_missing')
+    for index, page in enumerate(pages, 1):
+        if page.get('page') != index or page.get('http') != 200 or type(page.get('code')) is not int or page['code'] != 0 or \
+                page.get('ambiguous') is not False or page.get('verificationRequired') is not False or page.get('systemError3') is not False:
+            raise CycleError('sample_read_evidence_incomplete')
+        shapes = page.get('fields') or {}
+        if page.get('statusCounts') != counters or any(shapes.get('$.data.sample_status_num_map.' + key) != {'number': 1} for key in counters):
+            raise CycleError('sample_read_evidence_counters_missing')
+        if page['recordCount'] and any(shapes.get('$.data.sample_records[].' + value) != {'string': page['recordCount']}
+                                      for key, value in READ_PATHS.items() if key != 'status'):
+            raise CycleError('sample_read_evidence_fields_missing')
+        if page['recordCount'] and shapes.get('$.data.sample_records[].sample_status') != {'number': page['recordCount']}:
+            raise CycleError('sample_read_evidence_fields_missing')
+    ref = READ_EVIDENCE + ':sha256:' + hashlib.sha256(path.read_bytes()).hexdigest()
+    return validate_read_contract({'schema': READ_CONTRACT_SCHEMA, 'market': 'br', 'readScope': 'all_states',
+        'evidence': {'records': ref, 'creatorIdentity': ref}, 'recordPaths': deepcopy(READ_PATHS),
+        'readBody': deepcopy(OBSERVED_READ_BODY), 'statusCountersPath': 'sample_status_num_map', 'binding': deepcopy(binding)}, binding=binding)
 
 
 def validate_contract(contract):
@@ -78,10 +145,11 @@ def normalize_record(raw, *, contract=None):
     if not application:
         raise CycleError('sample_application_id_missing')
     status = _path(raw, paths.get('status', ''))
-    payment = _path(raw, paths.get('paymentRequired', '')) if contract else None
+    writable = bool(contract and contract.get('schema') == CONTRACT_SCHEMA)
+    payment = _path(raw, paths.get('paymentRequired', '')) if writable else None
     return {'applicationId': application, 'oecId': ident('oecId'), 'pid': ident('pid'),
             'campaignId': ident('campaignId'), 'platformCreatorId': ident('platformCreatorId') if contract else None,
-            'state': (contract or {}).get('statusMap', {}).get(str(status), 'unknown'),
+            'state': (contract or {}).get('statusMap', {}).get(str(status), 'unknown') if writable else 'unknown',
             'nativeStatus': status if type(status) in (str, int) else None,
             'paymentRequired': payment if type(payment) is bool else None,
             'contractFingerprint': digest(contract) if contract else None}
@@ -102,7 +170,10 @@ class SampleAdapter:
     def __init__(self, transport, report, *, contract=None, frozen=None, stopped=lambda: False):
         self.transport = transport
         self.report = report
-        self.contract = validate_contract(contract) if contract is not None else None
+        if frozen is not None:
+            validate_contract(contract)
+        self.contract = (validate_read_contract(contract) if contract.get('schema') == READ_CONTRACT_SCHEMA else
+                         validate_contract(contract)) if contract is not None else None
         self.frozen = deepcopy(frozen)
         self.stopped = stopped
         self.used = False
@@ -126,9 +197,18 @@ class SampleAdapter:
         rows = [] if rows is None else rows
         if len(rows) > body['page_size'] or len(rows) > total:
             raise CycleError('sample_records_response_invalid')
+        counters = data.get('sample_status_num_map')
+        if counters is not None and (not isinstance(counters, dict) or any(not isinstance(k, str) or not k or
+                type(v) is not int or v < 0 for k, v in counters.items())):
+            raise CycleError('sample_records_response_invalid')
+        if self.contract and self.contract.get('schema') == READ_CONTRACT_SCHEMA and \
+                (counters is None or sum(counters.values()) != total):
+            raise CycleError('sample_records_counters_incomplete')
         self.report['readRequests'] = self.report.get('readRequests', 0) + 1
         return {'records': [normalize_record(r, contract=self.contract) for r in rows], 'total': total,
-                'page': page, 'pageSize': body['page_size'], 'evidenceRef': 'sample-list:' + digest(payload)}
+                'page': page, 'pageSize': body['page_size'], 'evidenceRef': 'sample-list:' + digest(payload),
+                'platformCounts': deepcopy(counters), 'readScope': (self.contract or {}).get('readScope',
+                    'all_states' if self.contract and body.get('search_params') == [] else None)}
 
     def refresh_sample_quota(self, offer):
         """Read the exact joined Campaign/PID; incomplete pages never prove absence."""
@@ -184,7 +264,7 @@ class SampleAdapter:
     def approve_once(self, payload):
         if self.stopped():
             raise CycleError('sample_stopped')
-        if not self.contract or self.frozen is None or payload != self.frozen or self.used:
+        if not self.contract or self.contract.get('schema') != CONTRACT_SCHEMA or self.frozen is None or payload != self.frozen or self.used:
             raise CycleError('sample_review_outside_intent')
         # Claim the attempt before transport entry: network failure is never replayable.
         self.used = True
@@ -251,6 +331,10 @@ def _account_sample_session(root, market, account_name, report, *, contract=None
                'institutionFingerprint': digest(str(identity.im_market_partner_id)), 'identitySha256': before}
     if expected_binding is not None and binding != expected_binding:
         raise CycleError('sample_original_identity_changed')
+    if contract is not None and contract.get('schema') == READ_CONTRACT_SCHEMA:
+        contract = validate_read_contract(contract, binding=binding)
+    elif contract is None:
+        contract = observed_read_contract(root, binding)
     def check():
         if stopped():
             raise CycleError('sample_stopped')

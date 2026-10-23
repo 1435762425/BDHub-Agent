@@ -4,8 +4,9 @@ from types import SimpleNamespace
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts'))
-from lib.sample_transport import (CONTRACT_SCHEMA, LIST, REVIEW, SampleAdapter, normalize_record,
-                                  review_payload, validate_contract)
+from lib.sample_transport import (CONTRACT_SCHEMA, READ_CONTRACT_SCHEMA, READ_EVIDENCE, READ_PATHS,
+                                  OBSERVED_READ_BODY, LIST, REVIEW, SampleAdapter, normalize_record,
+                                  observed_read_contract, review_payload, validate_contract, validate_read_contract)
 from lib.second_cycle import CycleError
 
 
@@ -26,6 +27,22 @@ def raw():
     return {'apply_id': '101', 'creator_info': {'oec_id': '201', 'creator_id': '301', 'email': 'do-not-store'},
             'product_info': {'product_id': '401'}, 'campaign_info': {'campaign_id': '501'},
             'sample_status': 'pending-observed', 'requires_partner_payment': False,
+            'seller_contact_info': {'phone': 'do-not-store'}}
+
+
+def read_contract(binding=None):
+    import copy
+    return {'schema': READ_CONTRACT_SCHEMA, 'market': 'br', 'readScope': 'all_states',
+            'evidence': {'records': 'test-observed:br-22', 'creatorIdentity': 'test-observed:creator-id'},
+            'recordPaths': copy.deepcopy(READ_PATHS), 'readBody': copy.deepcopy(OBSERVED_READ_BODY),
+            'statusCountersPath': 'sample_status_num_map',
+            'binding': binding or {'market': 'br', 'account': 'acc2', 'institutionFingerprint': 'test-agency', 'identitySha256': 'test-generation'}}
+
+
+def br_raw(index=0, status=10):
+    return {'apply_id': str(10001 + index), 'creator_info': {'id': str(20001 + index), 'oec_id': str(30001 + index),
+            'email': 'do-not-store'}, 'product_info': {'product_id': str(40001 + index), 'sample_quota': 3},
+            'campaign_info': {'campaign_id': '50001', 'sample_budget': {}}, 'sample_status': status,
             'seller_contact_info': {'phone': 'do-not-store'}}
 
 
@@ -87,7 +104,93 @@ class SampleTransportTest(unittest.TestCase):
         self.assertEqual(row['records'], [])
         self.assertEqual(transport.calls[0]['path'], LIST)
         self.assertFalse(transport.calls[0]['write'])
-        self.assertEqual(transport.calls[0]['payload']['search_params'][0]['value'], '2')
+        self.assertEqual(transport.calls[0]['payload'], OBSERVED_READ_BODY)
+
+    def test_read_contract_keeps_native_status_and_distinct_platform_identity(self):
+        row = normalize_record(br_raw(), contract=read_contract())
+        self.assertEqual((row['platformCreatorId'], row['oecId']), ('20001', '30001'))
+        self.assertEqual(row['nativeStatus'], 10)
+        self.assertEqual(row['state'], 'unknown')
+        self.assertIsNone(row['paymentRequired'])
+        self.assertNotIn('do-not-store', str(row))
+
+    def test_empty_budget_and_injected_boolean_cannot_prove_payment_free_for_read_contract(self):
+        value = br_raw() | {'paymentRequired': False, 'requires_partner_payment': False}
+        row = normalize_record(value, contract=read_contract())
+        self.assertIsNone(row['paymentRequired'])
+        with self.assertRaisesRegex(CycleError, 'payment_requires_handling'):
+            review_payload(row)
+
+    def test_read_contract_never_opens_an_approval_request(self):
+        transport = Transport()
+        with self.assertRaisesRegex(CycleError, 'contract_unverified'):
+            SampleAdapter(transport, {}, contract=read_contract(), frozen={'is_approved': True})
+        self.assertFalse(transport.calls)
+        adapter = SampleAdapter(transport, {}, contract=read_contract())
+        with self.assertRaisesRegex(CycleError, 'outside_intent'):
+            adapter.approve_once({'is_approved': True})
+        with self.assertRaisesRegex(CycleError, 'contract_unverified'):
+            validate_contract(read_contract())
+        with self.assertRaisesRegex(CycleError, 'read_contract_unverified'):
+            validate_read_contract(contract())
+
+    def test_read_contract_binding_scope_and_identity_paths_cannot_drift(self):
+        import copy
+        value = read_contract()
+        with self.assertRaisesRegex(CycleError, 'identity_changed'):
+            validate_read_contract(value, binding=value['binding'] | {'identitySha256': 'new-generation'})
+        for change in ({'readScope': 'pending'}, {'recordPaths': value['recordPaths'] | {'platformCreatorId': 'creator_info.oec_id'}},
+                       {'paymentFreeValue': False}, {'readBody': value['readBody'] | {'search_params': [{'value': '10'}]}}):
+            with self.assertRaisesRegex(CycleError, 'shape_invalid'):
+                validate_read_contract(copy.deepcopy(value) | change)
+
+    def test_all_state_br_shape_retains_platform_named_counters_without_guessing_enums(self):
+        counts = {'TO_REVIEW_1': 6, 'CANCELED': 9, 'COMPLETED': 6, 'CONTENT_PENDING': 1}
+        rows = [br_raw(i, status) for i, status in enumerate([10] * 6 + [40] + [52] * 8 + [56] + [100] * 6)]
+        transport = Transport({'code': 0, 'data': {'total': 22, 'sample_records': rows[:20], 'sample_status_num_map': counts}})
+        adapter = SampleAdapter(transport, {}, contract=read_contract())
+        first = adapter.read_page()
+        self.assertEqual(first['platformCounts'], counts)
+        self.assertEqual(first['readScope'], 'all_states')
+        self.assertTrue(all(r['state'] == 'unknown' and r['paymentRequired'] is None for r in first['records']))
+        transport.result.payload['data']['sample_records'] = rows[20:]
+        second = adapter.read_page(2)
+        self.assertEqual((len(first['records']), len(second['records']), second['total']), (20, 2, 22))
+        self.assertEqual(transport.calls[-1]['payload']['cur_page'], 2)
+
+    def test_read_contract_requires_complete_nonnegative_integer_status_counters(self):
+        for counts in (None, {'TO_REVIEW_1': True}, {'TO_REVIEW_1': -1}, {'TO_REVIEW_1': 5}):
+            data = {'total': 6, 'sample_records': [br_raw()], 'sample_status_num_map': counts}
+            with self.assertRaisesRegex(CycleError, 'response_invalid|counters_incomplete'):
+                SampleAdapter(Transport({'data': data}), {}, contract=read_contract()).read_page()
+
+    def test_project_read_evidence_requires_original_account_identity_and_complete_pages(self):
+        import copy
+        import json
+        import tempfile
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = root / READ_EVIDENCE
+            path.parent.mkdir(parents=True)
+            binding = read_contract()['binding']
+            shapes = {'$.data.sample_records[].' + value: {'number' if key == 'status' else 'string': 1}
+                      for key, value in READ_PATHS.items()}
+            shapes['$.data.sample_status_num_map.TO_REVIEW_1'] = {'number': 1}
+            evidence = {'schema': 'bdhub.br-sample-field-probe.v1', 'market': 'br', 'account': 'acc2',
+                'binding': binding, 'status': 'observed', 'complete': True, 'total': 1, 'recordCount': 1,
+                'platformWrites': 0, 'platformWriteAttempts': 0, 'identityFileUnchanged': True,
+                'request': {'path': LIST, 'method': 'POST', 'body': OBSERVED_READ_BODY},
+                'pages': [{'page': 1, 'http': 200, 'code': 0, 'recordCount': 1, 'ambiguous': False,
+                    'verificationRequired': False, 'systemError3': False, 'fields': shapes, 'statusCounts': {'TO_REVIEW_1': 1}}]}
+            path.write_text(json.dumps(evidence))
+            self.assertEqual(observed_read_contract(root, binding)['binding'], binding)
+            with self.assertRaisesRegex(CycleError, 'binding_mismatch'):
+                observed_read_contract(root, binding | {'identitySha256': 'changed'})
+            incomplete = copy.deepcopy(evidence)
+            incomplete['complete'] = False
+            path.write_text(json.dumps(incomplete))
+            with self.assertRaisesRegex(CycleError, 'incomplete'):
+                observed_read_contract(root, binding)
 
     def test_incomplete_or_unbounded_read_refused(self):
         for payload in ({'data': {}}, {'data': {'total': 1}}, {'data': {'total': -1}},
@@ -138,11 +241,14 @@ class SampleTransportTest(unittest.TestCase):
 
     def test_changed_scope_or_no_contract_cannot_write(self):
         payload = review_payload(normalize_record(raw(), contract=contract()))
-        for adapter, changed in ((SampleAdapter(Transport(), {}, frozen=payload), payload),
-                                  (SampleAdapter(Transport(), {}, contract=contract(), frozen=payload), payload | {'creator_id': '201'})):
-            with self.assertRaisesRegex(CycleError, 'outside_intent'):
-                adapter.approve_once(changed)
-            self.assertEqual(adapter.transport.calls, [])
+        transport = Transport()
+        with self.assertRaisesRegex(CycleError, 'contract_unverified'):
+            SampleAdapter(transport, {}, frozen=payload)
+        self.assertEqual(transport.calls, [])
+        adapter = SampleAdapter(Transport(), {}, contract=contract(), frozen=payload)
+        with self.assertRaisesRegex(CycleError, 'outside_intent'):
+            adapter.approve_once(payload | {'creator_id': '201'})
+        self.assertEqual(adapter.transport.calls, [])
 
     def test_ambiguous_write_cannot_be_replayed(self):
         payload = review_payload(normalize_record(raw(), contract=contract()))

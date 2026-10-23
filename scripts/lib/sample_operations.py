@@ -11,11 +11,12 @@ from pathlib import Path
 import uuid
 
 from lib.second_cycle import CycleError, CycleStore, digest, encoded, epoch
-from lib.sample_transport import review_payload, sample_session, validate_contract
+from lib.sample_transport import (READ_CONTRACT_SCHEMA, review_payload, sample_session,
+                                 validate_contract, validate_read_contract)
 
 SCHEMA = '''
 CREATE TABLE IF NOT EXISTS sample_capability(market TEXT NOT NULL,account_name TEXT NOT NULL,state TEXT NOT NULL,evidence_ref TEXT NOT NULL,observed REAL NOT NULL,binding TEXT,contract TEXT,PRIMARY KEY(market,account_name));
-CREATE TABLE IF NOT EXISTS sample_sync(id TEXT PRIMARY KEY,market TEXT NOT NULL,account_name TEXT NOT NULL,observed REAL NOT NULL,evidence_ref TEXT NOT NULL,record_count INTEGER NOT NULL,complete INTEGER NOT NULL,binding_fingerprint TEXT,contract_fingerprint TEXT);
+CREATE TABLE IF NOT EXISTS sample_sync(id TEXT PRIMARY KEY,market TEXT NOT NULL,account_name TEXT NOT NULL,observed REAL NOT NULL,evidence_ref TEXT NOT NULL,record_count INTEGER NOT NULL,complete INTEGER NOT NULL,binding_fingerprint TEXT,contract_fingerprint TEXT,read_scope TEXT,platform_counts TEXT);
 CREATE TABLE IF NOT EXISTS sample_sync_member(sync_id TEXT NOT NULL,application_id TEXT NOT NULL,PRIMARY KEY(sync_id,application_id));
 CREATE TABLE IF NOT EXISTS sample_application(market TEXT NOT NULL,application_id TEXT NOT NULL,account_name TEXT NOT NULL,observed REAL NOT NULL,evidence_ref TEXT NOT NULL,payload TEXT NOT NULL,PRIMARY KEY(market,application_id));
 CREATE TABLE IF NOT EXISTS sample_review_intent(id TEXT PRIMARY KEY,market TEXT NOT NULL,application_id TEXT NOT NULL,account_name TEXT NOT NULL,request_ref TEXT NOT NULL UNIQUE,state TEXT NOT NULL,created REAL NOT NULL,started REAL,binding TEXT NOT NULL,application TEXT NOT NULL,payload TEXT NOT NULL,contract TEXT NOT NULL,quota_proof TEXT NOT NULL,offer TEXT NOT NULL,delivery_id TEXT NOT NULL,receipt TEXT,confirmation TEXT,lease_owner TEXT,fence INTEGER NOT NULL DEFAULT 0,lease_until REAL NOT NULL DEFAULT 0,UNIQUE(market,application_id));
@@ -38,7 +39,7 @@ def require_market(market):
 def ensure_schema(store):
     store.db.executescript(SCHEMA)
     columns = {row['name'] for row in store.db.execute('PRAGMA table_info(sample_sync)')}
-    for column in ('binding_fingerprint', 'contract_fingerprint'):
+    for column in ('binding_fingerprint', 'contract_fingerprint', 'read_scope', 'platform_counts'):
         if column not in columns:
             store.db.execute(f'ALTER TABLE sample_sync ADD COLUMN {column} TEXT')
 
@@ -58,8 +59,8 @@ def record_capability(store, market, account_name, state, evidence_ref, *, contr
     require_market(market)
     if state not in {'unknown', 'readonly', 'verified', 'blocked'} or not isinstance(evidence_ref, str) or not evidence_ref:
         raise CycleError('sample_capability_invalid')
-    if state == 'verified':
-        contract = validate_contract(contract)
+    if state in {'verified', 'readonly'}:
+        contract = validate_contract(contract) if state == 'verified' else validate_read_contract(contract, binding=binding)
         if not isinstance(binding, dict) or binding.get('market') != market or binding.get('account') != account_name or \
                 not binding.get('institutionFingerprint') or not binding.get('identitySha256'):
             raise CycleError('sample_capability_binding_missing')
@@ -77,13 +78,20 @@ def capability(store, market, account_name):
                         'binding': json.loads(row['binding']) if row['binding'] else None}
 
 
-def store_records(store, market, account_name, records, *, observed_at=None, evidence_ref, complete=False, binding=None, contract=None):
+def store_records(store, market, account_name, records, *, observed_at=None, evidence_ref, complete=False, binding=None, contract=None,
+                  read_scope=None, platform_counts=None):
     require_market(market)
     if type(complete) is not bool or not isinstance(records, list) or len(records) > 10000:
         raise CycleError('sample_sync_invalid')
     at = store.clock() if observed_at is None else epoch(observed_at)
     if at > store.clock() + 30 or not isinstance(evidence_ref, str) or not evidence_ref:
         raise CycleError('sample_sync_invalid')
+    if read_scope not in {None, 'all_states'} or platform_counts is not None and (
+            not isinstance(platform_counts, dict) or any(not isinstance(k, str) or not k or type(v) is not int or v < 0
+                                                       for k, v in platform_counts.items())):
+        raise CycleError('sample_sync_invalid')
+    if platform_counts is not None and (read_scope != 'all_states' or not complete or sum(platform_counts.values()) != len(records)):
+        raise CycleError('sample_sync_counts_incomplete')
     ids = [r.get('applicationId') for r in records]
     if any(not isinstance(v, str) or not v.isascii() or not v.isdigit() for v in ids) or len(ids) != len(set(ids)):
         raise CycleError('sample_sync_duplicate_or_invalid_identity')
@@ -93,14 +101,27 @@ def store_records(store, market, account_name, records, *, observed_at=None, evi
         binding_fingerprint = contract_fingerprint = None
         if complete and (binding is not None or contract is not None):
             current = capability(store, market, account_name)
-            if current['state'] != 'verified' or current.get('binding') != binding or current.get('contract') != contract or at < current['observed']:
+            if current['state'] not in {'verified', 'readonly'} or current.get('binding') != binding or current.get('contract') != contract or at < current['observed']:
                 raise CycleError('sample_sync_provenance_mismatch')
-            validate_contract(contract)
+            if current['state'] == 'readonly':
+                validate_read_contract(contract, binding=binding)
+                if read_scope != contract['readScope']:
+                    raise CycleError('sample_sync_provenance_mismatch')
+            else:
+                validate_contract(contract)
             binding_fingerprint, contract_fingerprint = digest(binding), digest(contract)
+            if current['state'] == 'readonly' and any(row.get('contractFingerprint') != contract_fingerprint or
+                    any(not isinstance(row.get(key), str) or not row[key].isascii() or not row[key].isdigit() or int(row[key]) <= 0
+                        for key in ('applicationId', 'platformCreatorId', 'oecId', 'pid', 'campaignId')) for row in records):
+                raise CycleError('sample_sync_provenance_mismatch')
+        elif read_scope is not None or platform_counts is not None:
+            raise CycleError('sample_sync_provenance_mismatch')
         for row in records:
             prior = store.db.execute('SELECT account_name,observed,payload FROM sample_application WHERE market=? AND application_id=?', (market, row['applicationId'])).fetchone()
             # Account ownership is immutable for an intent, even if another account can see the record.
             if prior and prior['account_name'] != account_name:
+                if binding_fingerprint is not None:
+                    raise CycleError('sample_sync_provenance_mismatch')
                 continue
             if prior and prior['observed'] > at:
                 continue
@@ -108,7 +129,7 @@ def store_records(store, market, account_name, records, *, observed_at=None, evi
                 raise CycleError('sample_observation_conflict')
             store.db.execute('INSERT INTO sample_application VALUES(?,?,?,?,?,?) ON CONFLICT(market,application_id) DO UPDATE SET observed=excluded.observed,evidence_ref=excluded.evidence_ref,payload=excluded.payload',
                              (market, row['applicationId'], account_name, at, evidence_ref, encoded(row)))
-        store.db.execute('INSERT OR IGNORE INTO sample_sync(id,market,account_name,observed,evidence_ref,record_count,complete,binding_fingerprint,contract_fingerprint) VALUES(?,?,?,?,?,?,?,?,?)', (sid, market, account_name, at, evidence_ref, len(records), int(complete), binding_fingerprint, contract_fingerprint))
+        store.db.execute('INSERT OR IGNORE INTO sample_sync(id,market,account_name,observed,evidence_ref,record_count,complete,binding_fingerprint,contract_fingerprint,read_scope,platform_counts) VALUES(?,?,?,?,?,?,?,?,?,?,?)', (sid, market, account_name, at, evidence_ref, len(records), int(complete), binding_fingerprint, contract_fingerprint, read_scope, encoded(platform_counts) if platform_counts is not None else None))
         if complete:
             store.db.executemany('INSERT OR IGNORE INTO sample_sync_member VALUES(?,?)', [(sid, application_id) for application_id in ids])
     _passive_confirm(store, market, records, evidence_ref)
@@ -130,11 +151,51 @@ def _has_table(db, name):
     return bool(db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (name,)).fetchone())
 
 
+def read_snapshot(store, market='br', *, account_name=None):
+    """Latest all-state snapshot whose immutable membership matches its source proof.
+
+    This checks ledger provenance only. Callers claiming live coverage must also
+    check the current identity files and observation age without a platform write.
+    """
+    require_market(market)
+    if not _has_table(store.db, 'sample_sync') or not _has_table(store.db, 'sample_capability'):
+        return None
+    columns = {row['name'] for row in store.db.execute('PRAGMA table_info(sample_sync)')}
+    if not {'read_scope', 'platform_counts', 'binding_fingerprint', 'contract_fingerprint'} <= columns:
+        return None
+    suffix = ' AND account_name=?' if account_name else ''
+    rows = store.db.execute("SELECT * FROM sample_sync WHERE market=? AND complete=1 AND read_scope='all_states'" + suffix + ' ORDER BY observed DESC,id DESC',
+                            (market, account_name) if account_name else (market,)).fetchall()
+    for row in rows:
+        current = capability(store, market, row['account_name'])
+        if current['state'] not in {'readonly', 'verified'} or row['observed'] < current['observed'] or \
+                row['binding_fingerprint'] != digest(current.get('binding')) or row['contract_fingerprint'] != digest(current.get('contract')):
+            continue
+        try:
+            if current['state'] == 'readonly':
+                validate_read_contract(current['contract'], binding=current['binding'])
+            else:
+                validate_contract(current['contract'])
+            counters = json.loads(row['platform_counts']) if row['platform_counts'] else None
+        except (CycleError, ValueError, TypeError):
+            continue
+        members = store.db.execute('SELECT count(*) FROM sample_sync_member WHERE sync_id=?', (row['id'],)).fetchone()[0]
+        if members != row['record_count'] or counters is None or not isinstance(counters, dict) or \
+                any(not isinstance(k, str) or not k or type(v) is not int or v < 0 for k, v in counters.items()) or sum(counters.values()) != members:
+            continue
+        return {'complete': True, 'total': row['record_count'], 'observedAt': row['observed'], 'evidenceRef': row['evidence_ref'],
+                'account': row['account_name'], 'readScope': row['read_scope'], 'syncId': row['id'],
+                'bindingFingerprint': row['binding_fingerprint'], 'contractFingerprint': row['contract_fingerprint'],
+                'platformCounts': counters}
+    return None
+
+
 def status(root, market='br'):
     """No mkdir, schema installation, authorization or platform access on a status read."""
     require_market(market)
     result = {'market': market, 'enabled': False, 'capability': {'state': 'unknown', 'reason': 'sample_review_contract_unverified'},
-              'counts': {}, 'applicationCounts': {}, 'paymentNeedsReview': 0, 'records': [], 'platformWrites': 0}
+              'counts': {}, 'applicationCounts': {}, 'paymentNeedsReview': 0, 'records': [], 'platformWrites': 0,
+              'platformCounts': {}, 'readCoverage': {'complete': False}}
     path = Path(root) / 'var/second-cycle.sqlite'
     if not path.is_file():
         return result
@@ -158,6 +219,10 @@ def status(root, market='br'):
         result['applicationCounts'] = {r[0]: r[1] for r in store.db.execute("SELECT coalesce(json_extract(payload,'$.state'),'unknown'),count(*) FROM sample_application WHERE market=? GROUP BY 1", (market,))}
         result['paymentNeedsReview'] = store.db.execute("SELECT count(*) FROM sample_application WHERE market=? AND json_extract(payload,'$.state')='pending' AND (json_type(payload,'$.paymentRequired') IS NOT 'false')", (market,)).fetchone()[0]
         result['records'] = query_records(store, market)
+        snapshot = read_snapshot(store, market)
+        if snapshot:
+            result['platformCounts'] = snapshot['platformCounts']
+            result['readCoverage'] = {k: v for k, v in snapshot.items() if k != 'platformCounts'}
     return result
 
 
@@ -180,16 +245,22 @@ def _assess(store, root, market, application):
     return assess_application(store, root, market, application)
 
 
-def _pages(adapter, *, max_pages=20):
+def _pages(adapter, *, max_pages=20, summary=None):
     records = []
     total = None
     refs = []
     seen = set()
+    counters = None
+    scope = None
     for page in range(1, max_pages + 1):
         data = adapter.read_page(page)
         if total is not None and total != data['total']:
             raise CycleError('sample_sync_total_changed')
         total = data['total']
+        if page == 1:
+            counters, scope = data.get('platformCounts'), data.get('readScope')
+        elif counters != data.get('platformCounts') or scope != data.get('readScope'):
+            raise CycleError('sample_sync_counters_changed')
         refs.append(data['evidenceRef'])
         for row in data['records']:
             if row['applicationId'] in seen:
@@ -197,6 +268,8 @@ def _pages(adapter, *, max_pages=20):
             records.append(row)
             seen.add(row['applicationId'])
         if len(records) == total:
+            if summary is not None:
+                summary.update(readScope=scope, platformCounts=counters)
             return records, True, 'sample-pages:' + digest(refs)
         if len(records) > total or len(data['records']) < data['pageSize']:
             raise CycleError('sample_sync_incomplete')
@@ -212,17 +285,27 @@ def sync(root, market='br', *, transport_factory=None, stopped=lambda: False):
     with CycleStore(root / 'var/second-cycle.sqlite') as store:
         ensure_schema(store)
         cap = capability(store, market, account)
-        contract = cap.get('contract') if cap['state'] == 'verified' else None
+        contract = cap.get('contract') if cap['state'] in {'verified', 'readonly'} else None
+        summary = {}
         with factory(root, market, account, report, contract=contract, expected_binding=cap.get('binding') if contract else None, stopped=stopped) as adapter:
-            rows, complete, ref = _pages(adapter)
-            binding = adapter.binding if contract else None
-            if contract and binding != cap.get('binding'):
+            rows, complete, ref = _pages(adapter, summary=summary)
+            actual_contract = getattr(adapter, 'contract', contract)
+            binding = adapter.binding if actual_contract else None
+            if contract and (binding != cap.get('binding') or actual_contract != contract):
                 raise CycleError('sample_sync_provenance_mismatch')
-        result = store_records(store, market, account, rows, evidence_ref=ref, complete=complete, binding=binding, contract=contract)
+        if actual_contract and actual_contract.get('schema') == READ_CONTRACT_SCHEMA:
+            validate_read_contract(actual_contract, binding=binding)
+            if cap['state'] != 'verified' and (cap.get('contract') != actual_contract or cap.get('binding') != binding):
+                record_capability(store, market, account, 'readonly', ref, contract=actual_contract, binding=binding)
+            contract = actual_contract
+        elif actual_contract:
+            validate_contract(actual_contract)
+        result = store_records(store, market, account, rows, evidence_ref=ref, complete=complete, binding=binding, contract=actual_contract,
+                               read_scope=summary.get('readScope'),
+                               platform_counts=summary.get('platformCounts') if summary.get('readScope') == 'all_states' else None)
         # A read proves the read endpoint only. Never promote review capability here.
-        if cap['state'] == 'unknown':
-            record_capability(store, market, account, 'readonly', ref)
-        return report | result | {'reviewCapability': cap['state']}
+        return report | result | {'reviewCapability': capability(store, market, account)['state'],
+                                  'platformCounts': summary.get('platformCounts') or {}}
 
 
 def _intent(store, id):

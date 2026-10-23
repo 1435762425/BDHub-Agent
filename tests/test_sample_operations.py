@@ -15,7 +15,7 @@ from lib.second_cycle import CycleStore, CycleError, encoded
 from lib import sample_operations as ops
 from lib import first_outreach
 from lib.sample_transport import normalize_record
-from test_sample_transport import contract, raw
+from test_sample_transport import br_raw, contract, raw, read_contract
 
 BINDING = {'market': 'br', 'account': 'acc2', 'institutionFingerprint': 'test-agency', 'identitySha256': 'test-generation'}
 
@@ -31,6 +31,8 @@ class FakeSessions:
         self.writes = []
         self.sessions = []
         self.stopped_on_write = stopped_on_write
+        self.contract = None
+        self.platform_counts = None
 
     @contextmanager
     def __call__(self, root, market, account, report, **options):
@@ -38,11 +40,14 @@ class FakeSessions:
         owner = self
         class Adapter:
             binding = owner.binding
+            contract = options.get('contract') or owner.contract
             def read_page(self, page=1):
                 if owner.read_failure:
                     raise owner.read_failure
-                return {'records': copy.deepcopy(owner.records), 'total': len(owner.records), 'page': page,
-                        'pageSize': 5, 'evidenceRef': 'test-read:' + str(len(owner.writes))}
+                size = (self.contract or {}).get('readBody', {}).get('page_size', 5)
+                return {'records': copy.deepcopy(owner.records[(page - 1) * size:page * size]), 'total': len(owner.records), 'page': page,
+                        'pageSize': size, 'evidenceRef': 'test-read:' + str(len(owner.writes)),
+                        'platformCounts': owner.platform_counts, 'readScope': (self.contract or {}).get('readScope')}
             def refresh_sample_quota(self, offer):
                 return offer['sample'] | {'pid': offer['pid'], 'campaignId': offer['campaignId'], 'available': True, 'quota': owner.quota, 'observedAt': time.time()}
             def approve_once(self, payload):
@@ -246,7 +251,7 @@ class SampleOperationsTest(unittest.TestCase):
 
     def test_no_authorization_or_unverified_capability_never_opens_session(self):
         sessions = FakeSessions([self.application])
-        ops.record_capability(self.store, 'br', 'acc2', 'readonly', 'test-read')
+        ops.record_capability(self.store, 'br', 'acc2', 'readonly', 'test-read', contract=read_contract(), binding=BINDING)
         self.assertEqual(self.run_one(sessions)['state'], 'capability_unverified')
         self.assertFalse(sessions.sessions)
         ops.authorize(self.store, 'br', False, 'test-stop-0002', root=self.root)
@@ -256,14 +261,16 @@ class SampleOperationsTest(unittest.TestCase):
     def test_read_sync_cannot_authorize_or_promote_review_capability(self):
         ops.authorize(self.store, 'br', False, 'test-stop-0002', root=self.root)
         self.store.db.execute('DELETE FROM sample_capability')
-        sessions = FakeSessions([self.application])
+        sessions = FakeSessions([normalize_record(br_raw(), contract=read_contract())])
+        sessions.contract = read_contract()
+        sessions.platform_counts = {'TO_REVIEW_1': 1}
         with patch.object(ops, '_account', return_value='acc2'):
             ops.sync(self.root, transport_factory=sessions)
         self.assertEqual(ops.capability(self.store, 'br', 'acc2')['state'], 'readonly')
         self.assertFalse(ops.status(self.root)['enabled'])
         self.assertFalse(sessions.writes)
 
-    def test_legacy_empty_filtered_sync_does_not_prove_current_application_coverage(self):
+    def test_unproven_empty_sync_does_not_prove_current_application_coverage_or_read_contract(self):
         self.store.db.execute('DELETE FROM sample_capability')
         sessions = FakeSessions([])
         with patch.object(ops, '_account', return_value='acc2'):
@@ -272,7 +279,65 @@ class SampleOperationsTest(unittest.TestCase):
         self.assertEqual(row['complete'], 1)
         self.assertIsNone(row['binding_fingerprint'])
         self.assertIsNone(row['contract_fingerprint'])
-        self.assertEqual(ops.capability(self.store, 'br', 'acc2')['state'], 'readonly')
+        self.assertEqual(ops.capability(self.store, 'br', 'acc2')['state'], 'unknown')
+
+    def test_readonly_capability_requires_read_contract_and_original_binding(self):
+        for value, binding in ((None, BINDING), (contract(), BINDING),
+                               (read_contract(), BINDING | {'identitySha256': 'other-generation'})):
+            with self.assertRaises(CycleError):
+                ops.record_capability(self.store, 'br', 'acc2', 'readonly', 'test-evidence', contract=value, binding=binding)
+
+    def test_all_state_sync_records_22_members_without_granting_review_capability(self):
+        self.store.db.execute('DELETE FROM sample_capability')
+        statuses = [10] * 6 + [40] + [52] * 8 + [56] + [100] * 6
+        records = [normalize_record(br_raw(i, native), contract=read_contract()) for i, native in enumerate(statuses)]
+        sessions = FakeSessions(records)
+        sessions.contract = read_contract()
+        sessions.platform_counts = {'TO_REVIEW_1': 6, 'CANCELED': 9, 'COMPLETED': 6, 'CONTENT_PENDING': 1}
+        with patch.object(ops, '_account', return_value='acc2'):
+            result = ops.sync(self.root, transport_factory=sessions)
+        self.assertEqual((result['records'], result['complete'], result['reviewCapability']), (22, True, 'readonly'))
+        self.assertEqual(ops.capability(self.store, 'br', 'acc2')['contract'], read_contract())
+        snapshot = ops.read_snapshot(self.store)
+        self.assertEqual((snapshot['total'], snapshot['platformCounts']['TO_REVIEW_1']), (22, 6))
+        self.assertEqual(snapshot['syncId'], result['syncId'])
+        self.assertEqual(self.store.db.execute('SELECT count(*) FROM sample_sync_member WHERE sync_id=?', (result['syncId'],)).fetchone()[0], 22)
+        value = ops.status(self.root)
+        self.assertEqual(value['applicationCounts'], {'unknown': 22})
+        self.assertEqual(value['platformCounts'], sessions.platform_counts)
+        self.assertEqual(value['capability']['state'], 'readonly')
+        self.assertTrue(value['readCoverage']['complete'])
+        self.assertFalse(sessions.writes)
+
+    def test_readonly_sync_binding_mismatch_cannot_store_members_or_counts(self):
+        ops.record_capability(self.store, 'br', 'acc2', 'readonly', 'test-read', contract=read_contract(), binding=BINDING)
+        sessions = FakeSessions([normalize_record(br_raw(), contract=read_contract())])
+        sessions.binding = BINDING | {'identitySha256': 'other-generation'}
+        sessions.contract = read_contract()
+        sessions.platform_counts = {'TO_REVIEW_1': 1}
+        with patch.object(ops, '_account', return_value='acc2'):
+            with self.assertRaisesRegex(CycleError, 'provenance_mismatch'):
+                ops.sync(self.root, transport_factory=sessions)
+        self.assertEqual(self.store.db.execute('SELECT count(*) FROM sample_sync').fetchone()[0], 0)
+
+    def test_snapshot_cannot_reuse_old_account_binding_contract_or_member_count(self):
+        ops.record_capability(self.store, 'br', 'acc2', 'readonly', 'test-read', contract=read_contract(), binding=BINDING)
+        application = normalize_record(br_raw(), contract=read_contract())
+        result = ops.store_records(self.store, 'br', 'acc2', [application], evidence_ref='current', complete=True,
+            binding=BINDING, contract=read_contract(), read_scope='all_states', platform_counts={'TO_REVIEW_1': 1})
+        self.assertIsNotNone(ops.read_snapshot(self.store))
+        self.store.db.execute('DELETE FROM sample_sync_member WHERE sync_id=?', (result['syncId'],))
+        self.assertIsNone(ops.read_snapshot(self.store))
+        self.store.db.execute('INSERT INTO sample_sync_member VALUES(?,?)', (result['syncId'], application['applicationId']))
+        self.store.db.execute("UPDATE sample_sync SET contract_fingerprint='old-contract'")
+        self.assertIsNone(ops.read_snapshot(self.store))
+
+    def test_named_platform_counts_must_match_complete_membership(self):
+        ops.record_capability(self.store, 'br', 'acc2', 'readonly', 'test-read', contract=read_contract(), binding=BINDING)
+        for counters, complete in (({'TO_REVIEW_1': 2}, True), ({'TO_REVIEW_1': 1}, False)):
+            with self.assertRaisesRegex(CycleError, 'counts_incomplete'):
+                ops.store_records(self.store, 'br', 'acc2', [self.application], evidence_ref='bad-counts', complete=complete,
+                    binding=BINDING, contract=read_contract(), read_scope='all_states', platform_counts=counters)
 
     def test_verified_full_sync_records_current_binding_and_contract_provenance(self):
         from lib.second_cycle import digest
