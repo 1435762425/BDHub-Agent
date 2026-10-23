@@ -64,6 +64,21 @@ def claim_profile_read(store,job_id,owner_id,resources,*,lease_seconds=240,worke
    raise CycleError('workflow_resource_busy')
   return _allocate(store,request,owner_id,normalized,lease_seconds,worker_pid)
 
+def claim_auxiliary(store,job_id,owner_id,resources,*,lease_seconds=120,worker_pid=None):
+ """An auxiliary first-outreach operation shares existing workflow resource slots.
+
+ Its business request lives in its own durable queue. Claiming resources neither
+ creates a workflow stage nor grants permission for any platform operation.
+ """
+ _required(store)
+ if not isinstance(job_id,str) or not re.fullmatch(r'first-[A-Za-z0-9][A-Za-z0-9._:-]{6,110}',job_id):raise CycleError('workflow_resource_claim_invalid')
+ request='auxiliary:'+job_id
+ normalized=_normalize(request,owner_id,resources,lease_seconds)
+ with store.tx():
+  if store.db.execute('SELECT 1 FROM workflow_stage_claim WHERE stage_run_id=?',(request,)).fetchone():
+   raise CycleError('workflow_resource_busy')
+  return _allocate(store,request,owner_id,normalized,lease_seconds,worker_pid)
+
 def heartbeat(store,stage_run_id,owner_id,fence,*,lease_seconds=60):
  _required(store);now=store.clock();lease=now+lease_seconds
  with store.tx():
