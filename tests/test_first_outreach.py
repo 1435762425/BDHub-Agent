@@ -27,24 +27,15 @@ class FirstOutreachTests(unittest.TestCase):
         self.person = self.profile('123')
         self.s.publish(self.plan, 'catalog', self.now, [self.offer()])
         self.d = Deliveries(self.s)
-        self.s.db.execute('CREATE TABLE cycle_product_name(id TEXT,pid TEXT,locale TEXT,payload TEXT)')
-        self.s.db.execute('INSERT INTO cycle_product_name VALUES(?,?,?,?)', ('name1', '1', 'pt-BR', encoded({'mention': 'produto', 'shortNameZh': '商品'})))
+        self.s.db.execute('CREATE TABLE cycle_product_name(id TEXT,pid TEXT,locale TEXT,source_title TEXT,payload TEXT)')
+        from lib.cycle_materials import name_key
+        self.s.db.execute('INSERT INTO cycle_product_name VALUES(?,?,?,?,?)', (name_key(self.offer(), 'br'), '1', 'pt-BR', self.offer()['title'], encoded({'mention': 'produto', 'shortNameZh': '商品'})))
         self.links = sqlite3.connect(self.root / 'var/catalog-links.sqlite')
         self.links.execute('CREATE TABLE catalog_current_binding(market TEXT,catalog_source TEXT,pid TEXT,campaign_id TEXT,state TEXT,offer_fingerprint TEXT,card_payload TEXT)')
         self.links.execute('INSERT INTO catalog_current_binding VALUES(?,?,?,?,?,?,?)', ('br', 'selected', '1', 'campaign1', 'active', offer_fingerprint(self.offer()), encoded({'listId': '100'})))
         self.links.commit()
-        self.patches = [
-            patch('lib.template_library.require_send_template_approval', return_value={'ready': True}),
-            patch('lib.template_library.next_approved_send_template', return_value={'id': 'standard', 'revision': 1}),
-            patch('lib.template_library.render_send_template', side_effect=lambda spec, name, offer, handle, market: {'version': 4, 'deliveryOrder': 'card_then_text', 'textIt': 'Hello ' + handle}),
-            patch('lib.market_registry.market', return_value={'locale': 'pt-BR'}),
-        ]
-        for mock in self.patches:
-            mock.start()
 
     def tearDown(self):
-        for mock in self.patches:
-            mock.stop()
         self.identities.close()
         self.links.close()
         self.s.close()
@@ -296,6 +287,34 @@ class FirstOutreachTests(unittest.TestCase):
         self.s.db.execute("UPDATE cycle_delivery_part SET state='unknown' WHERE delivery_id=? AND kind='card'", (delivery['id'],))
         self.assertEqual(first._unknown(self.s, self.plan), 0)
         self.assertIsNone(self.get_candidate())
+
+    def test_mixed_first_markers_cannot_bypass_first_start_authorization(self):
+        delivery, candidate = self.make_delivery()
+        for changes in ({'executionMode': 'market-continuous-v1'}, {'outreachPurpose': 'second'},
+                        {'source': {'kind': 'second'}}):
+            with self.assertRaisesRegex(CycleError, 'first_outreach_source_invalid'):
+                first.require_delivery(self.s, candidate | changes, delivery['id'])
+        with self.assertRaisesRegex(CycleError, 'first_outreach_plan_changed'):
+            first.require_delivery(self.s, candidate, delivery['id'], plan='another-plan')
+
+    def test_missing_exact_name_or_card_is_explicitly_not_ready_and_start_refused(self):
+        self.prepare()
+        self.s.db.execute('DELETE FROM cycle_product_name')
+        state = first.status(self.root)
+        self.assertIn('first_outreach_materials_unavailable', state['readiness']['blockers'])
+        self.assertEqual(state['materials']['missingNames'], 1)
+        self.assertTrue(state['candidates'][0]['message'])
+        with self.assertRaisesRegex(CycleError, 'first_outreach_materials_unavailable'):
+            self.start()
+        self.assertEqual(first.control(self.s)['mode'], 'stopped')
+
+    def test_name_from_previous_product_title_is_not_used_as_current_material(self):
+        changed = self.offer(title='New product title')
+        self.s.publish(self.plan, 'catalog', self.now + 1, [changed])
+        self.prepare()
+        self.assertIsNone(first._localized_name(self.s, changed))
+        with self.assertRaisesRegex(CycleError, 'first_outreach_materials_unavailable'):
+            self.start()
 
 
 if __name__ == '__main__':

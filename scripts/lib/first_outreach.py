@@ -232,6 +232,54 @@ def _offer_rank(offer):
             -offer['sample']['quota'], offer['pid'], offer['campaignId'], offer['offerKey'])
 
 
+def _localized_name(store, offer, market='br'):
+    if not _table(store, 'cycle_product_name') or not isinstance(offer.get('title'), str):
+        return None
+    from lib.cycle_materials import market_locale, name_key
+    row = store.db.execute('SELECT payload FROM cycle_product_name WHERE id=? AND pid=? AND locale=? AND source_title=?',
+                           (name_key(offer, market), offer['pid'], market_locale(market), offer['title'])).fetchone()
+    if not row:
+        return None
+    try:
+        name = json.loads(row[0])
+    except (ValueError, TypeError):
+        return None
+    return name if isinstance(name, dict) and isinstance(name.get('mention'), str) and name['mention'].strip() else None
+
+
+def _materials(root, store, market, offers):
+    """Read only exact current names and TapLink bindings; never create either."""
+    from lib.catalog_binding import offer_fingerprint
+    result = {'readyOfferKeys': set(), 'missingLinks': 0, 'missingNames': 0}
+    eligible = [offer for offer in offers if assess_first_offer(offer, store.clock())['eligible']]
+    path = Path(root) / 'var/catalog-links.sqlite'
+    connection = None
+    try:
+        if path.exists():
+            connection = sqlite3.connect(path.resolve().as_uri() + '?mode=ro', uri=True)
+            if not connection.execute("SELECT 1 FROM sqlite_master WHERE name='catalog_current_binding'").fetchone():
+                connection.close()
+                connection = None
+        for offer in eligible:
+            row = connection.execute("SELECT offer_fingerprint,card_payload FROM catalog_current_binding WHERE market=? AND catalog_source=? AND pid=? AND campaign_id=? AND state='active'",
+                                     (market, offer.get('catalogSource'), offer['pid'], offer['campaignId'])).fetchone() if connection else None
+            linked = False
+            try:
+                card = json.loads(row[1]) if row else None
+                linked = bool(row and row[0] == offer_fingerprint(offer) and isinstance(card, dict) and card.get('listId'))
+            except (ValueError, TypeError):
+                pass
+            named = _localized_name(store, offer, market) is not None
+            result['missingLinks'] += int(not linked)
+            result['missingNames'] += int(not named)
+            if linked and named:
+                result['readyOfferKeys'].add(offer['offerKey'])
+    finally:
+        if connection:
+            connection.close()
+    return result
+
+
 def prepare(root, market='br', *, store=None, should_stop=None, max_pages=None):
     _market(market)
     if store is None:
@@ -354,6 +402,11 @@ def change_control(store, root, market, request_id, action, expected_revision, *
                 raise CycleError('first_outreach_catalog_changed')
             if _unknown(store, plan):
                 raise CycleError('first_outreach_result_unknown')
+            materials = _materials(root, store, market, [offer for _, offer in _offers(store, plan)])
+            material_match = store.db.execute('SELECT 1 FROM first_outreach_candidate WHERE generation_id=? AND offer_key IN (SELECT value FROM json_each(?)) LIMIT 1',
+                                              (head['id'], encoded(sorted(materials['readyOfferKeys'])))).fetchone()
+            if not material_match:
+                raise CycleError('first_outreach_materials_unavailable')
             if action == 'continue' and not cfg['canaryDeliveryId']:
                 raise CycleError('first_outreach_canary_required')
             cfg['mode'] = 'continuous' if action == 'continue' else 'canary'
@@ -400,15 +453,18 @@ def _root(store):
     return Path(store.db.execute('PRAGMA database_list').fetchone()[2]).resolve().parent.parent
 
 
-def require_delivery(store, candidate, current_delivery_id=None):
-    if candidate.get('executionMode') != MODE:
+def require_delivery(store, candidate, current_delivery_id=None, *, plan=None):
+    source = candidate.get('source', {})
+    first_marked = candidate.get('executionMode') == MODE or candidate.get('outreachPurpose') == 'first' or source.get('kind') == 'first_category'
+    if not first_marked:
         return
+    if candidate.get('executionMode') != MODE or candidate.get('outreachPurpose') != 'first' or source.get('kind') != 'first_category':
+        raise CycleError('first_outreach_source_invalid')
     cfg = dispatch_allowed(store, candidate.get('market'))
+    if plan is not None and cfg['planId'] != plan:
+        raise CycleError('first_outreach_plan_changed')
     if candidate.get('firstStart') != cfg['firstStart']:
         raise CycleError('first_outreach_authorization_changed')
-    source = candidate.get('source', {})
-    if source.get('kind') != 'first_category' or candidate.get('outreachPurpose') != 'first':
-        raise CycleError('first_outreach_source_invalid')
     if not assess_first_offer(candidate.get('offer'), store.clock())['eligible']:
         raise CycleError('first_outreach_offer_ineligible')
     current = {offer['offerKey']: offer for _, offer in _offers(store, cfg['planId'])}.get(candidate['offer']['offerKey'])
@@ -455,7 +511,6 @@ def candidate(root, market, store, plan, initial):
         return None
     from lib.catalog_binding import offer_fingerprint
     from lib.cycle_delivery import capacity_for_candidate
-    from lib.market_registry import market as market_record
     conversations = {str(row['oecId']): row for row in initial.get('conversations', [])}
     with closing(sqlite3.connect(path.resolve().as_uri() + '?mode=ro', uri=True)) as links, closing(_identity_connection(root)) as identities:
         links.row_factory = sqlite3.Row
@@ -483,11 +538,9 @@ def candidate(root, market, store, plan, initial):
             binding = links.execute("SELECT * FROM catalog_current_binding WHERE market=? AND catalog_source=? AND pid=? AND campaign_id=? AND state='active'", (market, offer.get('catalogSource'), offer['pid'], offer['campaignId'])).fetchone()
             if not binding or binding['offer_fingerprint'] != offer_fingerprint(offer):
                 continue
-            locale = market_record(root, market)['locale']
-            named = store.db.execute('SELECT payload FROM cycle_product_name WHERE pid=? AND locale=? ORDER BY rowid DESC LIMIT 1', (offer['pid'], locale)).fetchone()
-            if not named:
+            name = _localized_name(store, offer, market)
+            if not name:
                 continue
-            name = json.loads(named[0])
             with store.tx():
                 store.db.execute('INSERT OR IGNORE INTO relationship(plan_id,creator_id,oec) VALUES(?,?,?)', (plan, profile['creatorId'], profile['oecId']))
             relation = store.db.execute('SELECT * FROM relationship WHERE plan_id=? AND creator_id=?', (plan, profile['creatorId'])).fetchone()
@@ -560,6 +613,7 @@ def status(root, market='br', limit=20):
         blockers = []
         offers = [offer for _, offer in _offers(store, plan)]
         empty['counts']['products'] = sum(assess_first_offer(offer, store.clock())['eligible'] for offer in offers)
+        materials = _materials(root, store, market, offers)
         if not empty['counts']['products']:
             blockers.append('sample_products_unavailable')
         if not head:
@@ -570,13 +624,17 @@ def status(root, market='br', limit=20):
             empty['counts']['matchedCreators'] = head['matched']
             if not head['matched']:
                 blockers.append('first_outreach_matches_unavailable')
+            material_match = store.db.execute('SELECT 1 FROM first_outreach_candidate WHERE generation_id=? AND offer_key IN (SELECT value FROM json_each(?)) LIMIT 1',
+                                              (head['id'], encoded(sorted(materials['readyOfferKeys'])))).fetchone()
+            if head['matched'] and not material_match:
+                blockers.append('first_outreach_materials_unavailable')
             by_key = {offer['offerKey']: offer for offer in offers}
             for row in store.db.execute('SELECT * FROM first_outreach_candidate WHERE generation_id=? ORDER BY gmv_window DESC,gmv_key DESC,creator_id LIMIT ?', (head['id'], limit)):
                 payload = json.loads(row['payload'])
                 offer = by_key.get(row['offer_key'], {})
                 empty['candidates'].append({'creatorId': row['creator_id'], 'handle': payload['handle'], 'pid': row['pid'],
                                             'productName': offer.get('title') or row['pid'], 'categoryName': payload['category']['name'],
-                                            'gmv': payload['gmv'], 'message': _message(offer, {'mention': offer.get('title') or row['pid']}, payload['handle'])['text']})
+                                            'gmv': payload['gmv'], 'message': _message(offer, _localized_name(store, offer, market) or {'mention': offer.get('title') or row['pid']}, payload['handle'])['text']})
         if _table(store, 'cycle_delivery'):
             empty['counts']['sent'] = store.db.execute("SELECT count(*) FROM cycle_delivery WHERE plan_id=? AND state='confirmed' AND json_extract(snapshot,'$.executionMode')=?", (plan, MODE)).fetchone()[0]
             empty['counts']['unknown'] = _unknown(store, plan)
@@ -588,4 +646,6 @@ def status(root, market='br', limit=20):
         if head:
             empty['generation'] = {'id': head['id'], 'createdAt': head['created'], 'completedAt': head['completed'],
                                    'scanned': head['scanned'], 'waiting': json.loads(head['waiting'])}
+        empty['materials'] = {'readyProducts': len(materials['readyOfferKeys']),
+                              'missingLinks': materials['missingLinks'], 'missingNames': materials['missingNames']}
         return empty
