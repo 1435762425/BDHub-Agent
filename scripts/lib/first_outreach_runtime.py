@@ -296,12 +296,22 @@ def _coverage_snapshot(root, store):
         if cap['state'] != 'verified':
             return None
         contract = samples.validate_contract(cap.get('contract'))
+        snapshot = samples.read_snapshot(store, 'br', account_name=account)
+        if snapshot is not None:
+            if 'TO_REVIEW_1' not in snapshot['platformCounts'] or not _sample_binding_current(root, account, cap.get('binding')) or \
+                    snapshot['observedAt'] > store.clock() + 30 or store.clock() - snapshot['observedAt'] > samples.MAX_FACT_AGE:
+                return None
+            return {'id': snapshot['syncId'], 'observed': snapshot['observedAt'],
+                    'platformCounts': snapshot['platformCounts'], 'scopedCounts': True, 'readonly': False}
+        if contract.get('readScope') == 'all_states':
+            return None
     except (OSError, ValueError, KeyError, TypeError):
         return None
     if not _sample_binding_current(root, account, cap.get('binding')):
         return None
     row = store.db.execute("""SELECT id,observed,record_count,binding_fingerprint,contract_fingerprint FROM sample_sync
-     WHERE market='br' AND account_name=? AND complete=1 ORDER BY observed DESC,rowid DESC LIMIT 1""", (account,)).fetchone()
+     WHERE market='br' AND account_name=? AND complete=1 AND binding_fingerprint=? AND contract_fingerprint=?
+     ORDER BY observed DESC,rowid DESC LIMIT 1""", (account, digest(cap['binding']), digest(contract))).fetchone()
     if not row or not cap.get('observed') or not cap['observed'] <= row['observed'] <= store.clock() + 30 or store.clock() - row['observed'] > samples.MAX_FACT_AGE:
         return None
     if row['binding_fingerprint'] != digest(cap['binding']) or row['contract_fingerprint'] != digest(contract):
@@ -345,7 +355,7 @@ def status(root, market='br'):
         counts['unknown'] += sum(sample['counts'].get(key, 0) for key in ('inflight', 'accepted', 'unknown', 'quarantined_unknown'))
         applications, assessed_count = [], 0
         lifecycle = {row['applicationId']: row for row in sample.get('tracking', [])
-                     if row.get('reviewState') == 'approved'}
+                     if row.get('reviewState') in {'approved', 'goal_observed'}}
         parsed = [(row, json.loads(row['payload'])) for row in _application_rows(store, sync_id)]
         names = _identity_names(root, [app.get('oecId') for _, app in parsed])
         from lib.first_catalog import offers
@@ -364,7 +374,7 @@ def status(root, market='br'):
             pid = app.get('pid') or '商品身份待核对'
             public_state = row['review_state'] or app.get('state') or 'unknown'
             stage = lifecycle.get(row['application_id'], {}).get('platformStage')
-            if row['review_state'] == 'approved' and stage in {'seller_pending', 'ready_to_ship', 'shipped', 'content_pending', 'completed', 'cancelled', 'rejected'}:
+            if row['review_state'] in {'approved', 'goal_observed'} and stage in {'seller_pending', 'ready_to_ship', 'shipped', 'content_pending', 'completed', 'cancelled', 'rejected'}:
                 public_state = stage
             if public_state == 'unknown' and scoped:
                 public_state = 'sample_application_state_unverified'
@@ -427,12 +437,21 @@ def _automation_status(store, cfg):
             waiting = row['state'] in {'queued', 'running'} and row.get('next_attempt', 0) > store.clock()
             state = 'waiting' if waiting else 'attention' if row['state'] == 'error' else row['state']
             supply = {'state': state, 'reason': row['error'], 'updatedAt': row['updated'],
-                      'nextRunAt': row.get('next_attempt') if row['state'] in {'queued', 'running'} else None}
-        if cfg['mode'] == 'continuous' and supply['nextRunAt'] is None:
+                      'nextRunAt': row.get('next_attempt') if waiting else None}
+        if cfg['mode'] == 'continuous' and supply['nextRunAt'] is None and supply['state'] not in {'queued', 'running'}:
             catalog = store.db.execute('SELECT max(c.observed) FROM catalog_head h JOIN catalog c ON c.id=h.snapshot_id WHERE h.plan_id=?', (cfg['planId'],)).fetchone()[0]
             supply['nextRunAt'] = (catalog + SUPPLY_REFRESH_SECONDS) if catalog else store.clock()
     if cfg['mode'] == 'stopped':
         supply.update(state='stopped', nextRunAt=None)
+    else:
+        from lib.first_catalog import model_recovery_status
+        recovery = model_recovery_status(store)
+        count = recovery['isolatedBatches'] or recovery['retryableBatches']
+        if count:
+            reason = 'first_model_batches_isolated:' if recovery['isolatedBatches'] else 'first_model_batches_retrying:'
+            supply.update(state='partial', reason=reason + str(count))
+            if recovery['nextRetryAt']:
+                supply['nextRunAt'] = recovery['nextRetryAt']
     if _table(store, 'first_outreach_runtime'):
         row = store.db.execute('SELECT * FROM first_outreach_runtime WHERE plan_id=?', (cfg['planId'],)).fetchone()
         if row and 'sample_state' in row.keys():
@@ -509,6 +528,8 @@ def _queue_supply(root, reason=None):
             if prior:
                 return dict(prior)
             now = store.clock()
+            from lib.first_catalog import model_recovery_status
+            recovery = model_recovery_status(store)
             catalog = store.db.execute('SELECT max(c.observed) FROM catalog_head h JOIN catalog c ON c.id=h.snapshot_id WHERE h.plan_id=?', (cfg['planId'],)).fetchone()[0]
             head = first._head(store, cfg['planId'])
             last_sync = store.db.execute("SELECT max(created) FROM first_outreach_job WHERE plan_id=? AND action='sync' AND json_extract(payload,'$.origin')='automatic_supply'", (cfg['planId'],)).fetchone()[0] or 0
@@ -517,7 +538,7 @@ def _queue_supply(root, reason=None):
             stale = not catalog or now - catalog >= SUPPLY_REFRESH_SECONDS
             if stale or exhausted and now - max(catalog or 0, last_sync) >= SUPPLY_EXHAUSTED_RECHECK_SECONDS:
                 action, trigger = 'sync', 'catalog_stale' if stale else 'candidates_exhausted'
-            elif reason in {'first_outreach_prepare_required', 'first_outreach_catalog_changed'} or not head or catalog and catalog > head['created'] or now - head['completed'] >= SUPPLY_REFRESH_SECONDS:
+            elif recovery['nextRetryAt'] and recovery['nextRetryAt'] <= now or reason in {'first_outreach_prepare_required', 'first_outreach_catalog_changed'} or not head or catalog and catalog > head['created'] or now - head['completed'] >= SUPPLY_REFRESH_SECONDS:
                 action, trigger = 'prepare', 'matching_stale'
             elif exhausted and now - max(head['completed'], last_prepare) >= SUPPLY_EXHAUSTED_RECHECK_SECONDS:
                 action, trigger = 'prepare', 'candidates_exhausted'
@@ -544,9 +565,9 @@ def _job_stopped(root, job, stopped):
         return any(json.loads(row[0])[1] == 'stop' for row in rows)
 
 
-def _enrich(root, stopped, *, bounded=False):
+def _enrich(root, stopped, *, bounded=False, retry_cycle='initial'):
     from lib.first_catalog import enrich
-    return enrich(root, 'br', stopped=stopped, **({'max_batches': 1} if bounded else {}))
+    return enrich(root, 'br', stopped=stopped, retry_cycle=retry_cycle, **({'max_batches': 1} if bounded else {}))
 
 
 def _refresh(root, request, stopped, *, bounded=False):
@@ -555,9 +576,16 @@ def _refresh(root, request, stopped, *, bounded=False):
                    **({'max_chunks': 1, 'max_requests': 5, 'timeout': 180} if bounded else {}))
 
 
-def _names(root, stopped):
+def _names(root, stopped, *, retry_cycle='initial'):
     from lib.first_catalog import prepare_names
-    return prepare_names(root, 'br', stopped=stopped)
+    return prepare_names(root, 'br', stopped=stopped, retry_cycle=retry_cycle)
+
+
+def _model_cycle(root):
+    with CycleStore(_path(root), readonly=True) as store:
+        cfg = first.control(store)
+        heads = [list(row) for row in store.db.execute('SELECT source,snapshot_id FROM catalog_head WHERE plan_id=? ORDER BY source', (cfg['planId'],))]
+        return 'first-model-cycle-' + digest([cfg['planId'], heads])[:32]
 
 
 def _cards(root, job, action, stopped):
@@ -621,9 +649,9 @@ def process_job(root, job, *, stopped=lambda: False):
             result = samples.sync(root, 'br', stopped=cancel)
             _publish(root, 'syncing', request=job['request_id'], sample_sync=True)
         elif name == 'enrich':
-            result = _enrich(root, cancel, **({'bounded': True} if automatic else {}))
+            result = _enrich(root, cancel, **({'bounded': True, 'retry_cycle': _model_cycle(root)} if automatic else {}))
         elif name == 'names':
-            result = _names(root, cancel)
+            result = _names(root, cancel, retry_cycle=_model_cycle(root))
         elif name.startswith('cards_'):
             result = _cards(root, job, name.removeprefix('cards_'), cancel)
         elif name == 'prepare':
@@ -705,6 +733,12 @@ def worker_tick(root, *, stopped=lambda: False):
     if not stopped():
         if automatic:
             try:
+                from lib.first_catalog import model_recovery_status
+                with CycleStore(_path(root), readonly=True) as store:
+                    recovery = model_recovery_status(store)
+                if recovery['nextRetryAt'] and recovery['nextRetryAt'] <= time.time() and job['stage'] >= (3 if job['action'] == 'sync' else 2):
+                    job['stage'] = 1 if job['action'] == 'sync' else 0
+                    _job_update(root, job, stage=job['stage'])
                 if result.get('reason') in {'first_outreach_prepare_required', 'first_outreach_catalog_changed'} and job['stage'] >= (4 if job['action'] == 'sync' else 3):
                     job['stage'] = 1 if job['action'] == 'sync' else 0
                     _job_update(root, job, stage=job['stage'])

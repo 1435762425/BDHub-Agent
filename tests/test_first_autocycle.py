@@ -56,6 +56,7 @@ class FirstAutocycleTests(unittest.TestCase):
         with CycleStore(self.path, readonly=True) as store:
             self.assertEqual(store.db.execute('SELECT count(*) FROM first_outreach_request').fetchone()[0], 1)
             self.assertEqual(store.db.execute('SELECT count(*) FROM first_outreach_job').fetchone()[0], 1)
+            self.assertIsNone(runtime._automation_status(store, first.control(store))['supply']['nextRunAt'])
 
     def test_automatic_supply_does_not_start_while_manually_stopped_or_in_canary(self):
         for mode in ('stopped', 'canary'):
@@ -236,6 +237,29 @@ class FirstAutocycleTests(unittest.TestCase):
         result = first_catalog.prepare_cards(self.root, 'original-auto-job', self.start, 'seed', runner=runner)
         self.assertEqual(result['reason'], 'first_material_waiting_workflow')
         runner.assert_not_called()
+
+    def test_no_executable_products_still_allows_original_card_verification(self):
+        calls = []
+        def runner(command, **kwargs):
+            calls.append(command)
+            return SimpleNamespace(returncode=0, stdout=encoded({'state': 'completed', 'platformWrites': 0}))
+        self.assertEqual(first_catalog.prepare_cards(self.root, 'original-card-followup', self.start, 'verify', runner=runner)['state'], 'complete')
+        self.assertEqual(calls[0][2], 'verify')
+        self.assertNotIn('--pids', calls[0])
+        first_catalog.prepare_cards(self.root, 'original-card-followup', self.start, 'create', runner=runner)
+        self.assertEqual(len(calls), 1)
+
+    def test_model_attempt_cycle_does_not_reset_for_each_retry_job(self):
+        self.fresh_supply()
+        first_cycle = runtime._model_cycle(self.root)
+        a = runtime._queue_supply(self.root, 'first_outreach_prepare_required')
+        runtime._job_update(self.root, a, state='complete')
+        b = runtime._queue_supply(self.root, 'first_outreach_prepare_required')
+        self.assertNotEqual(a['request_id'], b['request_id'])
+        self.assertEqual(runtime._model_cycle(self.root), first_cycle)
+        with CycleStore(self.path) as store:
+            store.publish(self.plan, 'live-br-campaign', self.now + 1, [])
+        self.assertNotEqual(runtime._model_cycle(self.root), first_cycle)
 
     def test_one_catalog_read_fragment_preserves_original_run_path(self):
         calls = []

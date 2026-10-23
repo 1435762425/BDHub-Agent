@@ -68,6 +68,26 @@ class FirstOutreachRuntimeTests(unittest.TestCase):
                 store.db.execute("UPDATE sample_sync SET platform_counts=?", (encoded({'UNRECOGNIZED': 22}),))
                 self.assertEqual(runtime._application_coverage(self.root, store), 'unverified')
 
+    def test_verified_all_state_proof_survives_later_unproved_observation(self):
+        from tests.test_sample_transport import contract, read_contract, br_raw, seller_policy
+        from lib.sample_transport import normalize_record
+        binding = {'market': 'br', 'account': 'acc2', 'institutionFingerprint': 'agency', 'identitySha256': 'current-headers'}
+        verified = contract() | {'readScope': 'all_states', 'recordPaths': read_contract(binding)['recordPaths'],
+                                 'statusMap': {'10': 'pending', '100': 'completed'}, 'costPolicy': seller_policy()}
+        rows = [normalize_record(br_raw(i, status=10 if i < 6 else 52), contract=verified) for i in range(22)]
+        with CycleStore(self.root / 'var/second-cycle.sqlite') as store:
+            samples.record_capability(store, 'br', 'acc2', 'verified', 'verified-proof', contract=verified, binding=binding)
+            proof = samples.store_records(store, 'br', 'acc2', rows, evidence_ref='all-state-proof', complete=True,
+                    binding=binding, contract=verified, read_scope='all_states', platform_counts={'TO_REVIEW_1': 6, 'CANCELED': 16})
+            samples.store_records(store, 'br', 'acc2', rows, evidence_ref='later-run-one-observation', complete=True)
+            with patch.object(samples, '_account', return_value='acc2'), patch.object(runtime, '_sample_binding_current', return_value=True):
+                snapshot = runtime._coverage_snapshot(self.root, store)
+                self.assertEqual((snapshot['id'], snapshot['platformCounts']['TO_REVIEW_1']), (proof['syncId'], 6))
+                result = runtime.status(self.root)
+        self.assertEqual(result['applicationCoverage'], 'complete')
+        self.assertEqual(result['counts']['pendingApplications'], 6)
+        self.assertEqual(result['counts']['needsReview'], 6)
+
     def test_unclassified_product_does_not_block_other_ready_matches(self):
         base = first.status(self.root)
         base['readiness'] = {'ready': True, 'blockers': []}

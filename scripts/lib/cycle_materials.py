@@ -144,7 +144,8 @@ class Materials:
   except (TypeError,ValueError):return False
   return isinstance(value,str) and 1<=len(value)<=30
 
- def prepare_names(self,offers,call):
+ def prepare_names(self,offers,call,*,recover=False,job_id=None,cycle_id='initial'):
+  if recover:return self._recover_names(offers,call,job_id=job_id,cycle_id=cycle_id)
   missing=[o for o in offers if not self.usable_cached(o)]
   if not missing:return {'modelCalls':0,'cached':len(offers)}
   if len(missing)>5:raise CycleError('names_batch_limit')
@@ -178,6 +179,44 @@ class Materials:
     self.store.db.execute('INSERT INTO cycle_product_name VALUES(?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET pid=excluded.pid,locale=excluded.locale,source_title=excluded.source_title,payload=excluded.payload,job_id=excluded.job_id',(name_key(o,self.market),o['pid'],market_locale(self.market),o['title'],encoded(parsed[str(i)]),jid))
    self.store.db.execute("UPDATE cycle_name_job SET state='ready' WHERE id=?",(jid,))
   return {'modelCalls':0 if row else 1,'prepared':len(missing),'jobId':jid,'usage':response.get('usage'),'cost':response.get('cost')}
+ def _recover_names(self,offers,call,*,job_id=None,cycle_id='initial'):
+  """First-outreach opt-in: retry/replay only the original reserved batch.
+
+  The default protocol above and its five-column table remain compatible with
+  resident workers. Retry attempts live in metadata keyed by this original id.
+  """
+  from lib.model_preparation_retry import call_original,legacy_names_executor_alive
+  if job_id:
+   original=self.store.db.execute('SELECT * FROM cycle_name_job WHERE id=?',(job_id,)).fetchone()
+   if not original:raise CycleError('names_original_job_missing')
+   frozen=json.loads(original['inputs'])
+   if not isinstance(frozen,list) or job_id!='names-'+digest([name_key(o,self.market) for o in frozen]):raise CycleError('names_original_batch_invalid')
+  else:
+   frozen=[o for o in offers if not self.usable_cached(o)]
+   if not frozen:return {'state':'ready','modelCalls':0,'prepared':0}
+   job_id='names-'+digest([name_key(o,self.market) for o in frozen])
+   original=self.store.db.execute('SELECT * FROM cycle_name_job WHERE id=?',(job_id,)).fetchone()
+   if original:frozen=json.loads(original['inputs'])
+  if not 1<=len(frozen)<=5:raise CycleError('names_batch_limit')
+  with self.store.tx():
+   for offer in frozen:
+    prior=self.store.db.execute('SELECT job_id FROM cycle_name_reservation WHERE id=?',(name_key(offer,self.market),)).fetchone()
+    if prior and prior[0]!=job_id:raise CycleError('names_reserved_by_other_batch')
+    self.store.db.execute('INSERT OR IGNORE INTO cycle_name_reservation VALUES(?,?)',(name_key(offer,self.market),job_id))
+   if not original:self.store.db.execute('INSERT INTO cycle_name_job VALUES(?,?,?,?,?)',(job_id,'recovery_pending',encoded(frozen),None,None))
+  prompt={'items':[{'ref':str(i),'title':o['title']} for i,o in enumerate(frozen)]}
+  result=call_original(self.store,'cycle_name_job',job_id,
+    lambda:call([{'role':'system','content':names_prompt(self.market)},{'role':'user','content':encoded(prompt)}],max_output_tokens=1000),
+    lambda receipt:checked_names(json.loads(receipt['content']),frozen,self.market),cycle_id=cycle_id,
+    active_original=lambda:legacy_names_executor_alive(Path(self.store.db.execute('PRAGMA database_list').fetchone()[2]).resolve().parent.parent))
+  if result['state']!='ready':return result|{'prepared':0}
+  receipt=result['receipt'];parsed=checked_names(json.loads(receipt['content']),frozen,self.market)
+  with self.store.tx():
+   for index,offer in enumerate(frozen):
+    self.store.db.execute('INSERT INTO cycle_product_name VALUES(?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET pid=excluded.pid,locale=excluded.locale,source_title=excluded.source_title,payload=excluded.payload,job_id=excluded.job_id',
+      (name_key(offer,self.market),offer['pid'],market_locale(self.market),offer['title'],encoded(parsed[str(index)]),job_id))
+   self.store.db.execute("UPDATE cycle_name_job SET state='ready',error=NULL WHERE id=?",(job_id,))
+  return {'state':'ready','prepared':len(frozen),'modelCalls':result['modelCalls'],'jobId':job_id}
  def name(self,offer):
   r=self.store.db.execute('SELECT payload FROM cycle_product_name WHERE id=?',(name_key(offer,self.market),)).fetchone()
   return json.loads(r[0]) if r else None

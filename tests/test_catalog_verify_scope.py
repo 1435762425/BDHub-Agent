@@ -4,6 +4,7 @@ import json
 import sqlite3
 import sys
 import tempfile
+import time
 import unittest
 from contextlib import contextmanager
 from pathlib import Path
@@ -315,6 +316,85 @@ class VerifyScopeTests(unittest.TestCase):
     def test_creation_receipt_readback_preserves_actual_read_scope(self):
         result, _ = self.exercise_create('created')
         self.assertEqual(result['created'][0]['state'], 'verified')
+
+    def test_first_sample_short_campaign_low_stock_creates_and_reads_back_without_second_thresholds(self):
+        sqlite3.connect(self.root / 'var/second-cycle.sqlite').close()
+        apply_database(self.root, 'second-cycle')
+        now = time.time()
+        run_id, intent_id = self.add_intent(account='acc6', state='prepared')
+        from bdhub.send.taplink.protocol import create_payload
+        payload = create_payload(pid='123', campaign_id='456', creator_pct='13', name='BJN test', route='campaign')
+        original = self.ledger.get(intent_id)
+        offer = original['spec']['offer'] | {'catalogSource': 'campaign', 'offerKey': 'campaign:123:456',
+                'firstSampleMaterial': True, 'title': 'sample', 'stock': '1', 'available': True, 'endAt': now + 86400,
+                'sample': {'supported': True, 'quota': 3, 'observedAt': now, 'evidenceRef': 'sample-proof'}}
+        spec = original['spec'] | {'route': 'campaign', 'offer': offer, 'payload': payload}
+        with self.prep.db:
+            scope = {'market': 'it', 'account': 'acc6', 'route': 'campaign'}
+            self.prep.db.execute('UPDATE catalog_prepare_run SET scope=? WHERE id=?', (json.dumps(scope), run_id))
+            self.prep.db.execute("UPDATE catalog_prepare_item SET state='prepared',catalog_source='campaign',listing=? WHERE run_id=?", (json.dumps(offer), run_id))
+            self.prep.db.execute('UPDATE catalog_link_intent SET spec=?,receipt=NULL,readback=NULL WHERE id=?', (json.dumps(spec), intent_id))
+        prepare.SCOPE.update(account='acc6', route='campaign')
+        self.prep.policy['unknownReadbackDelaysSeconds'] = [0, 0]
+
+        class SampleTransport(CreateTransport):
+            stock = 1
+            sample_quota = 3
+            def _xhr(self, **kwargs):
+                from lib.cycle_catalog import CAMPAIGNS, PRODUCTS
+                if kwargs['path'] == CAMPAIGNS:
+                    return SimpleNamespace(payload={'code': 0, 'data': {'total_num': 1, 'campaign': [{
+                        'campaign_id': '456', 'crs_campaign_type': '7', 'promotion_end_time': int(now + 86400)}]}})
+                if kwargs['path'] == PRODUCTS:
+                    return SimpleNamespace(payload={'code': 0, 'data': {'total_num': 1, 'campaign_product': [{
+                        'product_id': '123', 'product_name': 'sample', 'total_commission_percent': 1500,
+                        'plan_commission_percent': 1000, 'stock': self.stock, 'sample_quota': self.sample_quota, 'product_status': 2}]}})
+                response = super()._xhr(**kwargs)
+                if kwargs['path'] == MEMBERS:
+                    for row in response.payload['data'].get('campaign_products', []):
+                        row['stock'] = self.stock
+                if kwargs['path'] == CARD:
+                    for row in response.payload['data'].get('list', []):
+                        row['campaign_id'] = '456'
+                return response
+        transport = SampleTransport('created')
+
+        @contextmanager
+        def creator(*args, **kwargs):
+            yield transport
+        with patch.object(prepare, 'FIRST_START', None):
+            self.assertEqual(prepare.campaign_fresh_offers(transport, [offer], now), {})
+        with patch.object(prepare, 'FIRST_START', {'requestId': 'original-continue', 'revision': 1}):
+            fresh = prepare.campaign_fresh_offers(transport, [offer], now)
+            self.assertEqual((fresh['123']['sample']['quota'], fresh['123']['stock']), (3, '1'))
+            self.assertTrue(prepare.plan_bounds(fresh['123'])['firstSampleMaterial'])
+            with patch.object(prepare, 'opportunity_card_creator_batch', creator), patch.object(prepare.time, 'sleep', lambda _: None):
+                result = prepare.step_create(self.prep, run_id, 1, {'platformWrites': 0})
+        self.assertEqual(result['created'][0]['state'], 'verified')
+        self.assertEqual(transport.writes, [payload])
+        after = self.ledger.get(intent_id)
+        self.assertEqual(after['state'], 'verified')
+        self.assertFalse(after['readback']['stockRequired'])
+        self.assertEqual(self.prep.item(run_id, '123', '456', 'campaign')['state'], 'ready')
+        # The frozen marker also governs original-intent recovery after this
+        # first worker exits; an ordinary intent retains the stock threshold.
+        def read(path, params):
+            response = transport._xhr(method='GET', path=path, params=params, payload=None, write=False)
+            return response.payload, 'same-original-read'
+        ordinary = dict(after)
+        ordinary['spec'] = after['spec'] | {'offer': {k: v for k, v in after['spec']['offer'].items() if k != 'firstSampleMaterial'}}
+        self.assertIsNone(prepare.verify_created_card(read, ordinary, after['receipt'], read_scope={'market': 'it', 'readAccount': 'acc6'}))
+        for stock in (None, 0):
+            transport.stock = stock
+            with patch.object(prepare, 'FIRST_START', {'requestId': 'original-continue', 'revision': 1}):
+                fresh = prepare.campaign_fresh_offers(transport, [offer], now)
+            self.assertEqual(fresh['123']['sample']['quota'], 3)
+            self.assertIsNotNone(prepare.verify_created_card(read, after, after['receipt'], read_scope={'market': 'it', 'readAccount': 'acc6'}))
+            self.assertEqual(prepare.inspection.inspect_card(after['spec']['offer'], read, expected_list_id='789', expected_name='BJN test')['state'], 'verified_read_only')
+            self.assertIsNone(prepare.verify_created_card(read, ordinary, after['receipt'], read_scope={'market': 'it', 'readAccount': 'acc6'}))
+        transport.sample_quota = 0
+        with patch.object(prepare, 'FIRST_START', {'requestId': 'original-continue', 'revision': 1}):
+            self.assertEqual(prepare.campaign_fresh_offers(transport, [offer], now), {})
 
     def test_creation_batch_unknown_readback_preserves_actual_read_scope_without_repost(self):
         _, report = self.exercise_create('unknown')

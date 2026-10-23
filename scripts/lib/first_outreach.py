@@ -178,6 +178,7 @@ def latest_profile(root, market, oec):
 def _catalog_fingerprint(store, plan):
     return digest({'policy': 'first-category-content-v2',
                    'heads': [list(row) for row in store.db.execute('SELECT source,snapshot_id FROM catalog_head WHERE plan_id=? ORDER BY source', (plan,))],
+                   'materialHolds': sorted(material_holds(store, store._plan(plan)['market'])),
                    'offers': sorted((offer['offerKey'], digest(offer)) for _, offer in _offers(store, plan))})
 
 
@@ -256,11 +257,23 @@ def _offer_rank(offer):
 def material_offers(store, market='br'):
     """Only the current best offer of each actual category needs a send card."""
     plan = _plan(store, market)
+    held = material_holds(store, market)
     selected = {}
     for offer in sorted((offer for _, offer in _offers(store, plan)
-                         if assess_first_offer(offer, store.clock())['eligible']), key=_offer_rank):
+                         if offer['pid'] not in held and assess_first_offer(offer, store.clock())['eligible']), key=_offer_rank):
         selected.setdefault(offer['categoryId'], offer)
     return list(selected.values())
+
+
+def material_holds(store, market='br'):
+    """Original unconfirmed card writes isolate their PID, never their category."""
+    path = _root(store) / 'var/catalog-links.sqlite'
+    if not path.is_file():
+        return set()
+    with closing(sqlite3.connect(path.resolve().as_uri() + '?mode=ro', uri=True)) as db:
+        if not db.execute("SELECT 1 FROM sqlite_master WHERE name='catalog_link_intent'").fetchone():
+            return set()
+        return {str(row[0]) for row in db.execute("SELECT pid FROM catalog_link_intent WHERE state IN ('submitted','receipt_saved','unknown') AND json_extract(spec,'$.market')=?", (market,))}
 
 
 def require_material_grant(store, expected_start, market='br'):
@@ -336,9 +349,7 @@ def prepare(root, market='br', *, store=None, should_stop=None, max_pages=None):
     fingerprint = _catalog_fingerprint(store, plan)
     offers = [offer for _, offer in _offers(store, plan)]
     available = [offer for offer in offers if assess_first_offer(offer, store.clock())['eligible']]
-    by_category = {}
-    for offer in sorted(available, key=_offer_rank):
-        by_category.setdefault(offer['categoryId'], offer)
+    by_category = {offer['categoryId']: offer for offer in material_offers(store, market)}
     resumed = store.db.execute("SELECT * FROM first_outreach_generation WHERE plan_id=? AND catalog_fingerprint=? AND state IN ('building','paused') ORDER BY created DESC LIMIT 1", (plan, fingerprint)).fetchone()
     generation = resumed['id'] if resumed else 'first-generation-' + uuid.uuid4().hex
     if not resumed:

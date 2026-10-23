@@ -118,6 +118,43 @@ class FirstOutreachTests(unittest.TestCase):
         payload['fields']['industry_groups']['value'][0] = {'id': '602000', 'weight': '.3'}
         self.assertIsNone(first.main_category(payload))
 
+    def test_unknown_card_isolates_only_original_pid_and_next_product_matches_without_new_grant(self):
+        alternative = self.offer('2', creatorPercent='11')
+        self.s.publish(self.plan, 'catalog', self.now + 1, [self.offer(), alternative])
+        from lib.cycle_materials import name_key
+        self.s.db.execute('INSERT INTO cycle_product_name VALUES(?,?,?,?,?)',
+                          (name_key(alternative, 'br'), '2', 'pt-BR', alternative['title'], encoded({'mention': 'alternativa', 'shortNameZh': '备用品'})))
+        self.links.execute('INSERT INTO catalog_current_binding VALUES(?,?,?,?,?,?,?)',
+                           ('br', 'selected', '2', alternative['campaignId'], 'active', offer_fingerprint(alternative), encoded({'listId': '200'})))
+        self.links.commit()
+        self.prepare()
+        grant = self.start()
+        original_fingerprint = first._catalog_fingerprint(self.s, self.plan)
+        self.links.execute('CREATE TABLE catalog_link_intent(id TEXT PRIMARY KEY,pid TEXT,state TEXT,spec TEXT)')
+        original = ('original-card', '1', 'unknown', encoded({'market': 'br', 'account': 'acc2', 'campaignId': 'campaign1'}))
+        self.links.execute('INSERT INTO catalog_link_intent VALUES(?,?,?,?)', original)
+        self.links.execute('INSERT INTO catalog_link_intent VALUES(?,?,?,?)', ('foreign-card', '2', 'unknown', encoded({'market': 'fr'})))
+        self.links.commit()
+        self.assertNotEqual(first._catalog_fingerprint(self.s, self.plan), original_fingerprint)
+        self.assertEqual([offer['pid'] for offer in first.material_offers(self.s)], ['2'])
+        with self.assertRaisesRegex(CycleError, 'prepare_required'):
+            self.get_candidate()
+        self.prepare()
+        self.assertEqual(self.get_candidate()['pid'], '2')
+        self.assertEqual(first.control(self.s)['firstStart'], grant['firstStart'])
+        self.assertEqual(tuple(self.links.execute("SELECT * FROM catalog_link_intent WHERE id='original-card'").fetchone()), original)
+        # Only real settlement releases the original material. Its old unknown
+        # request is never replaced as a way to use another product.
+        self.links.execute("UPDATE catalog_link_intent SET state='verified' WHERE id='original-card'")
+        self.links.commit()
+        with self.assertRaisesRegex(CycleError, 'prepare_required'):
+            self.get_candidate()
+        self.prepare()
+        self.assertEqual(self.get_candidate()['pid'], '1')
+        self.links.execute("UPDATE catalog_link_intent SET state='prepared' WHERE id='original-card'")
+        self.links.commit()
+        self.assertEqual([offer['pid'] for offer in first.material_offers(self.s)], ['1'])
+
     def test_latest_unauthorized_snapshot_does_not_borrow_old_category(self):
         self.profile('123', status='unauthorized', timestamp=self.now + 1)
         self.assertEqual(self.prepare()['matchedCreators'], 0)

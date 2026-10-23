@@ -85,11 +85,13 @@ def require_verification_scope(prep,item,intent,expected):
 def plan_bounds(offer):
     """Full binding used by creation, card inspection and the material consumer."""
     return {'pid':offer['pid'],'campaignId':offer['campaignId'],'catalogSource':offer['catalogSource'],'creatorPercent':offer['creatorPercent'],
-            'publicPercent':offer['publicPercent'],'totalPercent':offer['totalPercent'],'agencyPercent':offer['agencyPercent'],'title':offer['title'],
+            'publicPercent':offer['publicPercent'],'totalPercent':offer['totalPercent'],
+            'agencyPercent':offer.get('agencyPercent') or format(Decimal(str(offer['totalPercent']))-Decimal(str(offer['creatorPercent'])),'f'),'title':offer['title'],
             # Carry the full-managed evidence: without it a verification would wrongly re-apply
             # the stock quantity gate that the confirmed policy cancelled for full-managed items.
             'managementType':offer.get('managementType'),'managementEvidenceRef':offer.get('managementEvidenceRef'),
-            'planFingerprint':digest({k:offer.get(k) for k in ('pid','campaignId','catalogSource','creatorPercent','publicPercent','totalPercent')})}
+            'planFingerprint':digest({k:offer.get(k) for k in ('pid','campaignId','catalogSource','creatorPercent','publicPercent','totalPercent')}),
+            **({'firstSampleMaterial':True} if FIRST_START is not None or offer.get('firstSampleMaterial') is True else {})}
 
 def read_selected_pool(transport,max_pages=120):
     """The live selected pool, page by page. No silent partial view: the running total must agree."""
@@ -557,7 +559,12 @@ def campaign_fresh_offers(transport,offers,at=None):
                     found.add(pid)
                     fresh[pid]=normalize(row,campaign,'campaign',rule,calculator,sha,at)
             if len(found)==len(pids) or page*100>=_total(data,'total_num'):break
-    # 资格用与池子同一个闸门复判：平台把商品改下线/降佣/改期限，都在这里被挡下。
+    # Each purpose keeps its own actual product contract. Sample outreach has
+    # no second-outreach stock/45-day threshold; raw sample facts stay intact.
+    if FIRST_START is not None:
+        from lib.first_outreach import assess_first_offer
+        return {pid:offer for pid,offer in fresh.items()
+                if assess_first_offer({**offer,'categoryId':offer.get('categoryId') or 'material-only'},at)['eligible']}
     return {pid:offer for pid,offer in fresh.items() if assess_offer(offer,at)['eligible']}
 
 def step_verify(prep,report,limit=None):
@@ -663,7 +670,7 @@ def verify_created_card(read,intent,receipt,*,read_scope):
     else:
         merged=offer
     if not unavailable_allowed(member.get('unavailable_type'),merged):return None
-    needs_stock=require_stock(merged)
+    needs_stock=require_stock(merged) and offer.get('firstSampleMaterial') is not True
     if needs_stock and (member.get('stock') is None or Decimal(str(member.get('stock')))<=100):return None
     public=member.get('plan_commission_percent')
     return {'state':'verified_read_only','pid':pid,'verifiedListName':spec['listName'],'listName':spec['listName'],

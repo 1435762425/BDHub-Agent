@@ -44,8 +44,9 @@ def inspect_card(offer,read,*,expected_list_id=None,expected_name=None):
   rates.append(format(rate,'f'))
   if rate!=Decimal(offer['creatorPercent']):continue
   if str(p.get('product_status'))!='2' or p.get('is_under_governed') is True or not unavailable_allowed(p.get('unavailable_type'),offer):continue
-  if require_stock(offer) and (p.get('stock') is None or Decimal(str(p.get('stock')))<=100):continue
-  return {'state':'verified_read_only','pid':offer['pid'],'verifiedListName':expected_name,'listName':str(card_row.get('product_list_name') or ''),'campaignName':str(card_row.get('campaign_name') or ''),'stock':str(p.get('stock')) if require_stock(offer) else None,'stockRequired':require_stock(offer),'publicPercent':format(Decimal(str(p['plan_commission_percent']))/100,'f') if p.get('plan_commission_percent') is not None else None,'listId':lid,'wireCampaignId':wire,'sourceCampaignId':wanted,'creatorPercent':format(rate,'f'),'checkedAt':time.time(),'evidenceRefs':[imsha,sha],'executionAllowed':False}
+  needs_stock=require_stock(offer) and offer.get('firstSampleMaterial') is not True
+  if needs_stock and (p.get('stock') is None or Decimal(str(p.get('stock')))<=100):continue
+  return {'state':'verified_read_only','pid':offer['pid'],'verifiedListName':expected_name,'listName':str(card_row.get('product_list_name') or ''),'campaignName':str(card_row.get('campaign_name') or ''),'stock':str(p.get('stock')) if needs_stock else None,'stockRequired':needs_stock,'publicPercent':format(Decimal(str(p['plan_commission_percent']))/100,'f') if p.get('plan_commission_percent') is not None else None,'listId':lid,'wireCampaignId':wire,'sourceCampaignId':wanted,'creatorPercent':format(rate,'f'),'checkedAt':time.time(),'evidenceRefs':[imsha,sha],'executionAllowed':False}
  if len(candidates)>3:raise CycleError('card_candidates_incomplete')
  return {'state':'needs_card_preparation','checkedAt':time.time(),'observedCreatorRates':sorted(set(rates)),'candidateListsChecked':min(len(candidates),3),'executionAllowed':False}
 

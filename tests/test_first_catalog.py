@@ -86,9 +86,8 @@ class FirstCatalogTests(unittest.TestCase):
         def lost(*a, **k):
             self.calls.append('lost')
             raise LostResponse()
-        with self.assertRaisesRegex(CycleError, 'provider_timeout'):
-            first_catalog.enrich(self.root, model=lost)
-        first_catalog.enrich(self.root, model=lost)
+        self.assertEqual(first_catalog.enrich(self.root, model=lost)['state'], 'partial')
+        self.assertEqual(first_catalog.enrich(self.root, model=lost)['state'], 'partial')
         self.assertEqual(self.calls, ['lost'])
 
     def test_refresh_resumes_exact_original_run_and_never_joins_campaigns(self):
@@ -139,8 +138,7 @@ class FirstCatalogTests(unittest.TestCase):
         def lost(*args, **kwargs):
             unknown.append('submitted')
             raise RuntimeError('response unavailable')
-        with self.assertRaisesRegex(CycleError, 'names_request_unresolved'):
-            first_catalog.prepare_names(self.root, model=lost)
+        self.assertEqual(first_catalog.prepare_names(self.root, model=lost)['state'], 'partial')
         resumed = first_catalog.prepare_names(self.root, model=lost)
         self.assertEqual((unknown, resumed['unresolvedNames']), (['submitted'], 1))
 
