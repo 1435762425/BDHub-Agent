@@ -314,7 +314,10 @@ def status(root, market='br'):
             applications.append({'id': row['application_id'], 'handle': names.get(app.get('oecId')) or '身份待核对',
                                  'pid': pid, 'productName': product_names.get((app.get('pid'), app.get('campaignId'))) or str(pid),
                                  'state': row['review_state'] or app.get('state') or 'unknown', 'reason': reason})
-        blockers = list(dict.fromkeys(base['readiness']['blockers'] + _category_blockers(store, cfg['planId'])))
+        category_wait = _category_blockers(store, cfg['planId'])
+        # Unclassified products stay out of the pool; they do not hold ready
+        # products and their fully matched creators behind an unrelated item.
+        blockers = list(dict.fromkeys(base['readiness']['blockers'] + (category_wait if not base['counts']['products'] else [])))
         if not _send_capability(root, store):
             blockers.append('first_outreach_send_capability_unverified')
         if send_unknown and 'first_outreach_result_unknown' not in blockers:
@@ -343,6 +346,8 @@ def status(root, market='br'):
             runtime['reason'] = 'sample_application_assessment_incomplete'
         if not runtime['reason'] and cfg['approvalsEnabled'] and sample['capability']['state'] != 'verified':
             runtime['reason'] = sample['capability'].get('reason') or 'sample_review_contract_unverified'
+        if not runtime['reason'] and category_wait:
+            runtime['reason'] = category_wait[0]
         generation = base.get('generation') or {}
         return {'schemaVersion': 'bdhub.first-outreach.v1', 'market': market,
                 'control': {key: cfg[key] for key in ('revision', 'mode', 'approvalsEnabled', 'updatedAt')},

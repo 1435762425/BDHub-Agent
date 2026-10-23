@@ -17,6 +17,17 @@ from lib.second_cycle import CycleError, CycleStore, digest, encoded
 
 
 class FirstOutreachRuntimeTests(unittest.TestCase):
+    def test_unclassified_product_does_not_block_other_ready_matches(self):
+        base = first.status(self.root)
+        base['readiness'] = {'ready': True, 'blockers': []}
+        base['counts']['products'] = 1
+        base['counts']['matchedCreators'] = 1
+        base['runtime']['reason'] = None
+        with patch.object(first, 'status', return_value=base), patch.object(runtime, '_category_blockers', return_value=['first_category_incomplete']), patch.object(runtime, '_send_capability', return_value=True):
+            value = runtime.status(self.root)
+        self.assertTrue(value['readiness']['ready'])
+        self.assertEqual(value['runtime']['reason'], 'first_category_incomplete')
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.root = Path(self.temp.name)
