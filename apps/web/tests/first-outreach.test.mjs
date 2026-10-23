@@ -56,6 +56,6 @@ test("page gates BR, presents real data gaps, separate approval and explicit fir
  const page=readFileSync(new URL("../src/features/first-outreach/FirstOutreachWorkspace.tsx",import.meta.url),"utf8");
  const shell=readFileSync(new URL("../src/features/shell/AppShell.tsx",import.meta.url),"utf8");
  assert.match(route,/market!=="br"\)notFound\(\)/);assert.match(shell,/currentMarket.key==="br"\?\[\{href:`\$\{base\}\/first-outreach/);
- for(const text of ["可推荐商品","匹配达人","成功推送","自动审批通过","待处理申请","当前等待","葡语邀约预览","确认发送首条","继续持续推送","自动审批已关闭","停止新动作"])assert.ok(page.includes(text)||text==="自动审批已关闭"&&page.includes('"已关闭"'),text);
+ for(const text of ["可推荐商品","匹配达人","成功推送","自动审批通过","待处理申请","当前等待","葡语邀约预览","确认发送首条","继续持续推送","自动审批已关闭","停止持续推送"])assert.ok(page.includes(text)||text==="自动审批已关闭"&&page.includes('"已关闭"'),text);
  assert.match(page,/value=\{data\.counts\.products\}/);assert.match(page,/lang="pt-BR"/);assert.match(page,/setConfirmation\("start"\)/);assert.doesNotMatch(page,/sqlite|demo|mockData/i);
 });

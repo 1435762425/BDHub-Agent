@@ -35,7 +35,7 @@ export function useFirstOutreach(){
    }
    if(!response.ok){if(response.status===409){pending.current.delete(key);await reload();}throw Error(typeof value.error==="string"?value.error:"first_outreach_unavailable");}
    receive(value as FirstOutreachState);pending.current.delete(key);
-   if(alive.current)setMessage(action==="start"?"已启动首条验证；确认首条结果后会停止，等待你继续。":action==="continue"?"已请求持续推送，实际进度会自动刷新。":action==="stop"?"已停止新推送和审批；在途结果保留，等待原操作核验。":action==="set-approvals"?(approvalsEnabled?"已开启自动审批，仅处理本功能成功推荐且仍合格的申请。":"已关闭自动审批。"):action==="prepare"?"已请求准备匹配，进度会自动刷新。":action==="sync"?"已请求同步样品申请，进度会自动刷新。":"已请求核验原操作结果，进度会自动刷新。");
+   if(alive.current)setMessage(action==="start"?"已启动首条验证；确认首条结果后会停止，等待你继续。":action==="continue"?"已请求持续推送，实际进度会自动刷新。":action==="stop"?"已停止新的推送；自动审批由独立开关控制，在途结果按原操作核验。":action==="set-approvals"?(approvalsEnabled?"已开启自动审批，仅处理本功能成功推荐且仍合格的申请。":"已关闭自动审批。"):action==="prepare"?"已请求准备匹配，进度会自动刷新。":action==="sync"?"已请求同步商品与样品申请，进度会自动刷新。":"已请求核验原操作结果，进度会自动刷新。");
    return true;
   }catch(error){if(alive.current)setMessage(firstOutreachError(error instanceof Error?error.message:"first_outreach_unavailable"));return false;}
   finally{active.current.delete(action);if(alive.current)setBusy([...active.current].at(-1)??null);}
