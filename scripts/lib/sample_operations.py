@@ -175,6 +175,8 @@ def store_records(store, market, account_name, records, *, observed_at=None, evi
                     raise CycleError('sample_sync_provenance_mismatch')
             else:
                 validate_contract(contract)
+            # Sync provenance binds the full authority, including costPolicy.
+            # Application row fingerprints describe the platform schema separately.
             binding_fingerprint, contract_fingerprint = digest(binding), digest(contract)
             if current['state'] in {'readonly', 'canary'} and any(row.get('contractFingerprint') != record_contract_fingerprint(contract) or
                     any(not isinstance(row.get(key), str) or not row[key].isascii() or not row[key].isdigit() or int(row[key]) <= 0
@@ -453,7 +455,7 @@ def _check_application_duplicates(store, market, application):
     # A new application ID is not permission to sample the same triple again.
     for row in store.db.execute("SELECT application_id,payload FROM sample_application WHERE market=? AND application_id<>?", (market, application['applicationId'])):
         observed = json.loads(row['payload'])
-        if (observed.get('oecId'), observed.get('pid'), observed.get('campaignId')) == (application.get('oecId'), application.get('pid'), application.get('campaignId')) and observed.get('state') in {'pending', 'seller_pending', 'approved', 'shipped', 'completed'}:
+        if (observed.get('oecId'), observed.get('pid'), observed.get('campaignId')) == (application.get('oecId'), application.get('pid'), application.get('campaignId')) and observed.get('state') in {'unknown', 'pending', 'seller_pending', 'approved', 'shipped', 'completed'}:
             raise CycleError('sample_duplicate_application')
 
 

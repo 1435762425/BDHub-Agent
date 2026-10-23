@@ -475,6 +475,16 @@ class SampleOperationsTest(unittest.TestCase):
         self.assertFalse(sessions.writes)
         self.assertEqual(self.store.db.execute('SELECT count(*) FROM sample_review_intent').fetchone()[0], 0)
 
+    def test_canary_old_unknown_same_triple_blocks_new_pending_without_write(self):
+        self.setup_canary()
+        older = self.application | {'applicationId': '99999', 'state': 'unknown', 'nativeStatus': 100}
+        sessions = FakeSessions([self.application, older])
+        result = self.run_one(sessions)
+        self.assertEqual(result['state'], 'waiting_eligible_application')
+        self.assertEqual(result['waiting'], [{'applicationId': self.application['applicationId'], 'reason': 'sample_duplicate_application'}])
+        self.assertFalse(sessions.writes)
+        self.assertEqual(self.store.db.execute('SELECT count(*) FROM sample_review_intent').fetchone()[0], 0)
+
     def test_canary_accepted_receipt_does_not_invent_lifecycle_or_verified_capability(self):
         candidate = self.setup_canary()
         sessions = FakeSessions([self.application], after='approved')
@@ -563,6 +573,42 @@ class SampleOperationsTest(unittest.TestCase):
         sessions.records = [self.application | {'state': 'completed', 'nativeStatus': 100}]
         self.assertEqual(ops.promote_canary(self.root, 'br', 'acc2', verified, transport_factory=sessions)['state'], 'verified')
         self.assertEqual(ops.capability(self.store, 'br', 'acc2')['state'], 'verified')
+        self.assertFalse(sessions.writes)
+
+    def test_promoted_cost_policy_contract_sync_keeps_complete_snapshot_provenance(self):
+        from lib.sample_transport import READ_PATHS, OBSERVED_READ_BODY, record_contract_fingerprint
+        from lib.second_cycle import digest
+        candidate = self.setup_canary()
+        proof = self.offer['sample'] | {'pid': self.application['pid'], 'campaignId': self.application['campaignId'], 'available': True}
+        intent, _ = ops._prepare(self.store, self.root, 'br', 'acc2', self.application, BINDING,
+                                contract=candidate, quota_proof=proof, assessor=self.assess)
+        ops._begin(self.store, intent, self.application, root=self.root)
+        self.store.db.execute('UPDATE sample_review_intent SET receipt=? WHERE id=?',
+                              (encoded({'http': 200, 'code': 0}), intent['id']))
+        verified = contract() | {'recordPaths': dict(READ_PATHS), 'readBody': copy.deepcopy(OBSERVED_READ_BODY),
+                                'readScope': 'all_states', 'statusCountersPath': 'sample_status_num_map',
+                                'statusMap': {'10': 'pending', '100': 'completed'}, 'costPolicy': seller_policy()}
+        terminal = normalize_record(br_raw(status=100), contract=verified)
+        sessions = FakeSessions([terminal])
+        sessions.platform_counts = {'COMPLETED': 1}
+        self.assertEqual(ops.promote_canary(self.root, 'br', 'acc2', verified, transport_factory=sessions)['state'], 'verified')
+        promoted = ops.capability(self.store, 'br', 'acc2')['contract']
+        self.assertEqual(promoted['costPolicy'], seller_policy())
+        with patch.object(ops, '_account', return_value='acc2'):
+            result = ops.sync(self.root, transport_factory=sessions)
+        row = self.store.db.execute('SELECT * FROM sample_sync WHERE id=?', (result['syncId'],)).fetchone()
+        self.assertEqual(row['contract_fingerprint'], digest(promoted))
+        application = json.loads(self.store.db.execute('SELECT payload FROM sample_application').fetchone()[0])
+        self.assertEqual(application['contractFingerprint'], record_contract_fingerprint(promoted))
+        self.assertNotEqual(application['contractFingerprint'], row['contract_fingerprint'])
+        snapshot = ops.read_snapshot(self.store, account_name='acc2')
+        self.assertEqual((snapshot['complete'], snapshot['total'], snapshot['syncId']), (True, 1, result['syncId']))
+        self.assertEqual(snapshot['contractFingerprint'], digest(promoted))
+        self.assertEqual(snapshot['platformCounts'], {'COMPLETED': 1})
+        self.store.clock = lambda: row['observed']
+        ops.record_capability(self.store, 'br', 'acc2', 'verified', 'policy-revision',
+            contract=promoted | {'costPolicy': seller_policy() | {'revision': 2}}, binding=BINDING)
+        self.assertIsNone(ops.read_snapshot(self.store, account_name='acc2'))
         self.assertFalse(sessions.writes)
 
     def test_immutable_intent_and_original_account_cannot_change(self):
