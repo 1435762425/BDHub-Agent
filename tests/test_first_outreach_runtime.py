@@ -17,6 +17,34 @@ from lib.second_cycle import CycleError, CycleStore, digest, encoded
 
 
 class FirstOutreachRuntimeTests(unittest.TestCase):
+    def test_canary_policy_assesses_only_observed_pending_without_counting_other_states(self):
+        from tests.test_sample_transport import read_contract, br_raw, seller_policy
+        from lib.sample_transport import normalize_record, build_canary_contract
+        from lib.sample_cost_policy import POLICY_PATH
+        binding = {'market': 'br', 'account': 'acc2', 'institutionFingerprint': 'agency', 'identitySha256': 'current-headers'}
+        policy = seller_policy()
+        policy_path = self.root / POLICY_PATH
+        policy_path.parent.mkdir(parents=True)
+        policy_path.write_text(encoded(policy))
+        observed = build_canary_contract(read_contract(binding), policy,
+            pending_ui_evidence_ref='observed:pending-ui', request_candidate_ref='documented:review')
+        rows = [normalize_record(br_raw(i, status=10 if i < 6 else 100), contract=observed) for i in range(22)]
+        with CycleStore(self.root / 'var/second-cycle.sqlite') as store:
+            samples.record_capability(store, 'br', 'acc2', 'canary', 'canary-proof', contract=observed, binding=binding)
+            samples.store_records(store, 'br', 'acc2', rows, evidence_ref='all-state-proof', complete=True,
+                binding=binding, contract=observed, read_scope='all_states', platform_counts={'TO_REVIEW_1': 6, 'COMPLETED': 16})
+        with patch.object(samples, '_account', return_value='acc2'), patch.object(runtime, '_sample_binding_current', return_value=True), \
+                patch.object(first, 'assess_application', return_value={'eligible': False, 'reason': 'sample_not_recommended_by_first_outreach'}):
+            value = runtime.status(self.root)
+        self.assertEqual(value['applicationCoverage'], 'complete')
+        self.assertEqual((value['counts']['pendingApplications'], value['counts']['needsReview']), (6, 6))
+        self.assertEqual(value['counts']['unknown'], 0)
+        self.assertEqual(sum(row['state'] == 'pending' for row in value['applications']), 6)
+        self.assertEqual(sum(row['state'] == 'sample_application_state_unverified' for row in value['applications']), 16)
+        self.assertTrue(all(row['reason'] == 'sample_not_recommended_by_first_outreach'
+                            for row in value['applications'] if row['state'] == 'pending'))
+        self.assertFalse(value['control']['approvalsEnabled'])
+
     def test_current_readonly_all_state_counts_do_not_grant_approval_or_guess_row_status(self):
         from tests.test_sample_transport import read_contract, br_raw
         from lib.sample_transport import normalize_record

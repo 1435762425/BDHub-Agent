@@ -165,7 +165,7 @@ worker 在等待窗口、池或容量时常驻退避；同账号在途写串行�
 
 `market_send_canary.run(... purpose='first')` 复用原市场串行执行锁、原 `cycle_delivery` 及卡文回读；`outreachPurpose='first'`、`executionMode='market-first-v1'` 与 `source.kind='first_category'` 必须同时匹配，冻结 `firstStart`，发送资格在 prepare/begin 事务内复核当前授权、主类目和材料。卡文确认与首条授权消费同事务，暂停不妨碍原意图只读核验。一发不用二发 A/B 来源或模板冒充来源证据。
 
-`sample_operations.py` 与 `sample_transport.py` 在原库保存申请、能力证据、审批意图和核验记录；审批控制读取同一 `first_outreach_control.approvals_enabled`。实时精确 Campaign/PID 复核样品额度，提交前原子预留并复核当前授权与申请。请求只使用已核实的平台 creator_id，绝不以 OEC 替代。巴西全状态读取使用独立的 `bdhub.br-sample-read-contract.v1`，绑定当前 acc2 身份/机构与真实分页证明，记录平台命名状态汇总；这份只读合同不包含付款或批准语义，不能用于任何审批写入。审批仍要求独立完整写合同。已受理仍需申请生命周期回读，unknown 保留原账号/请求，商家待确认不算平台批准。实际巴西验证边界见[交付说明](implementation/br-first-outreach-20261023.md)。
+`sample_operations.py` 与 `sample_transport.py` 在原库保存申请、能力证据、审批意图和核验记录；审批控制读取同一 `first_outreach_control.approvals_enabled`。实时精确 Campaign/PID 复核样品额度，提交前原子预留并复核当前授权与申请。请求只使用已核实的平台 creator_id，绝不以 OEC 替代。巴西全状态读取使用独立的 `bdhub.br-sample-read-contract.v1`，绑定当前 acc2 身份/机构与真实分页证明，记录平台命名状态汇总；这份只读合同不能用于审批写入。`bdhub.br-sample-canary-contract.v1` 另绑定真实 BR 待审页面和已文档化请求候选，只认已核实的 `10 → pending`，不含审批成功或生命周期已验收证明；复用同一审批意图且同身份最多启动一次，未知业务码保留 unknown。`sample_cost_policy.py` 读取私有用户政策 `private-data/business-policy/br-sample-cost.json`；平台付款事实缺失保持 null，用户已确认商家承担时冻结政策，并在提交前和实际请求入口复核；明确机构付款始终阻止。完整审批合同只能在原回执及同申请真实生命周期回读确认后晋升。已受理仍需申请生命周期回读，unknown 保留原账号/请求，商家待确认不算平台批准。实际巴西验证边界见[交付说明](implementation/br-first-outreach-20261023.md)。
 
 新一发快照冻结 `imUseEnvironmentProxy=false`，使用与本项目货盘读取相同的直连模式；该选择来自同 acc1、同 IM 身份的只读对照（环境代理读取失败、直连成功），真实写入另由首条验证。原投递核验沿冻结设置，旧快照缺省仍使用原代理模式，既有二发和 AI 默认连接方式不变。
 

@@ -170,21 +170,24 @@ def _application_rows(store, sync_id=None):
      WHERE a.market='br' ''' + scope + ' ORDER BY a.observed DESC,a.application_id LIMIT 100', (sync_id,) if sync_id else ()).fetchall()
 
 
-def _application_counts(store, sync_id=None):
+def _application_counts(store, sync_id=None, *, cost_policy=None, include_unknown=True):
     if not _table(store, 'sample_application'):
         return 0, 0, 0
     pending = manual = assessable = 0
     scope = ' AND EXISTS(SELECT 1 FROM sample_sync_member m WHERE m.sync_id=? AND m.application_id=a.application_id)' if sync_id else ''
     for state, review, payment, count in store.db.execute('''SELECT json_extract(a.payload,'$.state'),i.state,
-     CASE WHEN json_type(a.payload,'$.paymentRequired')='false' THEN 0 ELSE 1 END,count(*)
+     json_type(a.payload,'$.paymentRequired'),count(*)
      FROM sample_application a LEFT JOIN sample_review_intent i ON i.market=a.market AND i.application_id=a.application_id
      WHERE a.market='br' ''' + scope + ' GROUP BY 1,2,3', (sync_id,) if sync_id else ()):
         if state not in {'pending', 'unknown'} or review in {'approved', 'seller_pending', 'closed_externally'}:
             continue
+        if state == 'unknown' and not include_unknown:
+            continue
         pending += count
         if review in {'inflight', 'accepted', 'unknown', 'quarantined_unknown'}:
             continue
-        if state == 'unknown' or payment or review == 'rejected':
+        free = payment == 'false' or payment in {None, 'null'} and cost_policy is not None
+        if state == 'unknown' or not free or review == 'rejected':
             manual += count
         else:
             assessable += count
@@ -198,8 +201,11 @@ def _application_reason(store, root, application, review_state):
         return None
     if application.get('state') == 'unknown':
         return 'sample_application_state_unverified'
-    if application.get('paymentRequired') is not False:
-        return 'sample_payment_requires_handling'
+    from lib.sample_cost_policy import load_cost_policy, payment_basis
+    try:
+        payment_basis(application, load_cost_policy(root, now=store.clock()), now=store.clock())
+    except CycleError as error:
+        return str(error)
     if review_state == 'rejected':
         return 'sample_review_rejected'
     assessed = first.assess_application(store, root, 'br', application)
@@ -263,14 +269,18 @@ def _coverage_snapshot(root, store):
     try:
         account = samples._account(root, 'br')
         cap = samples.capability(store, 'br', account)
-        if cap['state'] == 'readonly':
-            samples.validate_read_contract(cap.get('contract'), binding=cap.get('binding'))
+        if cap['state'] in {'readonly', 'canary'}:
+            if cap['state'] == 'readonly':
+                samples.validate_read_contract(cap.get('contract'), binding=cap.get('binding'))
+            else:
+                samples.validate_canary_contract(cap.get('contract'), binding=cap.get('binding'))
             snapshot = samples.read_snapshot(store, 'br', account_name=account)
             if not snapshot or 'TO_REVIEW_1' not in snapshot['platformCounts'] or not _sample_binding_current(root, account, cap.get('binding')) or \
                     snapshot['observedAt'] > store.clock() + 30 or store.clock() - snapshot['observedAt'] > samples.MAX_FACT_AGE:
                 return None
             return {'id': snapshot['syncId'], 'observed': snapshot['observedAt'],
-                    'platformCounts': snapshot['platformCounts'], 'readonly': True}
+                    'platformCounts': snapshot['platformCounts'], 'scopedCounts': True,
+                    'readonly': cap['state'] == 'readonly'}
         if cap['state'] != 'verified':
             return None
         contract = samples.validate_contract(cap.get('contract'))
@@ -282,7 +292,7 @@ def _coverage_snapshot(root, store):
      WHERE market='br' AND account_name=? AND complete=1 ORDER BY observed DESC,rowid DESC LIMIT 1""", (account,)).fetchone()
     if not row or not cap.get('observed') or not cap['observed'] <= row['observed'] <= store.clock() + 30 or store.clock() - row['observed'] > samples.MAX_FACT_AGE:
         return None
-    if row['binding_fingerprint'] != digest(cap['binding']) or row['contract_fingerprint'] != digest(contract):
+    if row['binding_fingerprint'] != digest(cap['binding']) or row['contract_fingerprint'] != samples.record_contract_fingerprint(contract):
         return None
     members = store.db.execute("""SELECT count(*) FROM sample_sync_member m JOIN sample_application a
      ON a.application_id=m.application_id AND a.market='br' AND a.account_name=? WHERE m.sync_id=?""", (account, row['id'])).fetchone()[0]
@@ -304,12 +314,20 @@ def status(root, market='br'):
         sync_id = snapshot['id'] if snapshot is not None else None
         counts = {key: base['counts'][key] for key in ('products', 'matchedCreators', 'sent', 'pendingApplications', 'approved', 'needsReview', 'unknown')}
         send_unknown = base['counts']['unknown']
-        pending_count, manual_count, assessable_count = _application_counts(store, sync_id)
-        if snapshot is not None and isinstance(snapshot, dict) and snapshot.get('readonly'):
+        from lib.sample_cost_policy import load_cost_policy, payment_basis
+        try:
+            cost_policy = load_cost_policy(root, now=store.clock())
+        except CycleError:
+            cost_policy = None
+        scoped = snapshot is not None and isinstance(snapshot, dict) and snapshot.get('scopedCounts')
+        pending_count, manual_count, assessable_count = _application_counts(
+            store, sync_id, cost_policy=cost_policy, include_unknown=not scoped)
+        if scoped:
             # The named platform total proves the pending count without guessing
             # how native numeric row statuses map to lifecycle actions.
             pending_count = snapshot['platformCounts'].get('TO_REVIEW_1', 0)
-            manual_count, assessable_count = pending_count, 0
+            if snapshot.get('readonly'):
+                manual_count, assessable_count = pending_count, 0
         counts.update(pendingApplications=pending_count, approved=sample['counts'].get('approved', 0), needsReview=manual_count)
         counts['unknown'] += sum(sample['counts'].get(key, 0) for key in ('inflight', 'accepted', 'unknown', 'quarantined_unknown'))
         applications, assessed_count = [], 0
@@ -320,12 +338,17 @@ def status(root, market='br'):
         for row, app in parsed:
             reason = _application_reason(store, root, app, row['review_state'])
             pending = app.get('state') in {'pending', 'unknown'} and row['review_state'] not in {'approved', 'seller_pending', 'closed_externally'}
-            assessable = pending and app.get('state') == 'pending' and app.get('paymentRequired') is False and row['review_state'] not in {'inflight', 'accepted', 'unknown', 'quarantined_unknown', 'rejected'}
+            try:
+                payment_basis(app, cost_policy, now=store.clock())
+                cost_allowed = True
+            except CycleError:
+                cost_allowed = False
+            assessable = pending and app.get('state') == 'pending' and cost_allowed and row['review_state'] not in {'inflight', 'accepted', 'unknown', 'quarantined_unknown', 'rejected'}
             assessed_count += int(assessable)
             counts['needsReview'] += int(assessable and reason is not None)
             pid = app.get('pid') or '商品身份待核对'
             public_state = row['review_state'] or app.get('state') or 'unknown'
-            if public_state == 'unknown' and snapshot is not None and isinstance(snapshot, dict) and snapshot.get('readonly'):
+            if public_state == 'unknown' and scoped:
                 public_state = 'sample_application_state_unverified'
             applications.append({'id': row['application_id'], 'handle': names.get(app.get('oecId')) or '身份待核对',
                                  'pid': pid, 'productName': product_names.get((app.get('pid'), app.get('campaignId'))) or str(pid),
