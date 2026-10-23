@@ -1,3 +1,4 @@
+from contextlib import closing
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -6,7 +7,7 @@ import unittest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts'))
 from lib.sample_transport import (CONTRACT_SCHEMA, READ_CONTRACT_SCHEMA, CANARY_CONTRACT_SCHEMA, READ_EVIDENCE, READ_PATHS,
                                   OBSERVED_READ_BODY, LIST, REVIEW, SampleAdapter, normalize_record,
-                                  observed_read_contract, review_payload, validate_contract, validate_read_contract, build_canary_contract, validate_canary_contract, extend_canary_contract, validate_status_evidence, observed_status_evidence, read_failure, receipt_accepted)
+                                  observed_read_contract, review_payload, validate_contract, validate_read_contract, build_canary_contract, validate_canary_contract, extend_canary_contract, validate_status_evidence, observed_status_evidence, read_failure, receipt_accepted, scope_snapshot, derive_status_transition)
 from lib.second_cycle import CycleError
 
 
@@ -302,7 +303,7 @@ class SampleTransportTest(unittest.TestCase):
                 (folder / name).write_text('Brazil\n1 row\n2 text ID : 4000000000000000001\n3 text ID: 5000000000000000001\n4 文本 ' + label + '\n5 text @ ' + handle + '\n')
             # Same PID/Campaign occurs twice: labels alone cannot assign either state.
             self.assertIsNone(observed_status_evidence(root, binding))
-            with sqlite3.connect(root / 'var/creator-identities.sqlite') as db:
+            with closing(sqlite3.connect(root / 'var/creator-identities.sqlite')) as db, db:
                 db.execute('CREATE TABLE creator_identity(market TEXT,oec_id TEXT,current_handle TEXT,handle_conflict INTEGER)')
                 db.executemany('INSERT INTO creator_identity VALUES(?,?,?,0)', [('br', rows[0]['oecId'], 'done_creator'), ('br', rows[1]['oecId'], 'waiting_creator')])
             result = observed_status_evidence(root, binding)
@@ -337,6 +338,59 @@ class SampleTransportTest(unittest.TestCase):
         with self.assertRaisesRegex(CycleError, 'sample_network_unavailable'):
             SampleAdapter(transport, {}, sleep=sleeps.append).read_page()
         self.assertEqual((len(transport.calls), sleeps), (2, [.5]))
+
+    def test_strict_single_application_delta_proves_only_one_named_transfer(self):
+        import copy
+        binding = read_contract()['binding']
+        target = normalize_record(br_raw(), contract=canary_contract())
+        other = normalize_record(br_raw(1, status=100), contract=canary_contract())
+        mapping = {'10': 'pending', '100': 'completed'}
+        before = scope_snapshot(binding, [target, other], {'TO_REVIEW_1': 1, 'COMPLETED': 1}, 'observed:before', complete=True)
+        after = scope_snapshot(binding, [target | {'nativeStatus': 20}, other], {'TO_REVIEW_1': 0, 'READY_TO_SHIP_1': 1, 'COMPLETED': 1}, 'observed:after', complete=True)
+        proven = derive_status_transition(before, after, mapping, target_id=target['applicationId'])
+        self.assertEqual((proven['nativeStatus'], proven['state'], proven['sourceKind']), (20, 'ready_to_ship', 'single_application_delta'))
+        evidence = status_evidence()
+        evidence['observations'].append(proven)
+        self.assertEqual(extend_canary_contract(canary_contract(), evidence)['statusMap']['20'], 'ready_to_ship')
+        witnessed = extend_canary_contract(canary_contract(), evidence)
+        verified = contract() | {'recordPaths': dict(READ_PATHS), 'costPolicy': seller_policy(),
+            'binding': binding, 'statusMap': witnessed['statusMap'], 'statusEvidence': witnessed['statusEvidence']}
+        validate_contract(verified)
+        with self.assertRaisesRegex(CycleError, 'status_evidence_mismatch'):
+            validate_contract(verified | {'statusMap': verified['statusMap'] | {'20': 'shipped'}})
+        variants = []
+        changed = copy.deepcopy(after)
+        changed['binding']['identitySha256'] = 'different-session'
+        variants.append(changed)
+        changed = copy.deepcopy(after)
+        changed['members'][0]['oecId'] = '999999'
+        variants.append(changed)
+        changed = copy.deepcopy(after)
+        changed['members'].append(target | {'applicationId': '999999', 'nativeStatus': 10})
+        changed['platformCounts']['TO_REVIEW_1'] = 1
+        variants.append(changed)
+        changed = copy.deepcopy(after)
+        changed['members'][1]['nativeStatus'] = 40
+        changed['platformCounts'] = {'READY_TO_SHIP_1': 1, 'CONTENT_PENDING': 1}
+        variants.append(changed)
+        changed = copy.deepcopy(after)
+        changed['platformCounts']['READY_TO_SHIP_1'] = 2
+        variants.append(changed)
+        changed = copy.deepcopy(after)
+        changed['platformCounts'] = {'TO_REVIEW_1': 1, 'SHIPPED': 1}
+        variants.append(changed)
+        for changed in variants:
+            with self.subTest(changed=changed):
+                self.assertIsNone(derive_status_transition(before, changed, mapping, target_id=target['applicationId']))
+        self.assertIsNone(derive_status_transition(before, after, mapping | {'20': 'shipped'}))
+        self.assertIsNone(derive_status_transition(before, after | {'evidenceRef': before['evidenceRef']}, mapping))
+        self.assertIsNone(derive_status_transition(before, after, mapping, target_id=other['applicationId']))
+        self.assertIsNone(scope_snapshot(binding, [target], {'TO_REVIEW_1': 1}, 'partial', complete=False))
+        wrong_before = copy.deepcopy(before)
+        wrong_before['platformCounts'] = {'TO_REVIEW_1': 2, 'COMPLETED': 0}
+        wrong_after = copy.deepcopy(after)
+        wrong_after['platformCounts'] = {'TO_REVIEW_1': 1, 'READY_TO_SHIP_1': 1}
+        self.assertIsNone(derive_status_transition(wrong_before, wrong_after, mapping))
 
     def test_receipt_permission_requires_an_unambiguous_accepted_response(self):
         accepted = {'status': 'accepted', 'http': 200, 'code': 0, 'ambiguous': False, 'verificationRequired': False, 'systemError3': False}

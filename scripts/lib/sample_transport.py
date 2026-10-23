@@ -31,6 +31,9 @@ CANARY_CONTRACT_SCHEMA = 'bdhub.br-sample-canary-contract.v1'
 STATUS_EVIDENCE_SCHEMA = 'bdhub.br-sample-status-evidence.v1'
 UI_STAGES = {'To review': 'pending', 'Ready to ship': 'ready_to_ship', 'Shipped': 'shipped',
              'Content pending': 'content_pending', 'Completed': 'completed', 'Canceled': 'cancelled'}
+COUNTER_STAGES = {'TO_REVIEW_1': ('pending', 'To review'), 'READY_TO_SHIP_1': ('ready_to_ship', 'Ready to ship'),
+                  'SHIPPED': ('shipped', 'Shipped'), 'CONTENT_PENDING': ('content_pending', 'Content pending'),
+                  'COMPLETED': ('completed', 'Completed'), 'CANCELED': ('cancelled', 'Canceled')}
 UI_FILES = {'Ready to ship': 'sample-ready-to-ship-ui.private.txt', 'Shipped': 'sample-shipped-ui.private.txt',
             'Content pending': 'sample-content-pending-ui.private.txt', 'Completed': 'sample-completed-ui.private.txt',
             'Canceled': 'sample-canceled-ui.private.txt'}
@@ -125,6 +128,10 @@ def validate_contract(contract):
         raise CycleError('sample_contract_status_missing')
     if policy is None and contract.get('paymentFreeValue') is not False:
         raise CycleError('sample_contract_payment_unverified')
+    if contract.get('statusEvidence'):
+        observed = validate_status_evidence(contract['statusEvidence'], binding=contract.get('binding'))
+        if any(statuses.get(native) != state for native, state in observed.items()):
+            raise CycleError('sample_contract_status_evidence_mismatch')
     body = contract.get('readBody')
     if not isinstance(body, dict) or any(k not in {'search_params', 'order_params', 'page_size', 'cur_page'} for k in body):
         raise CycleError('sample_contract_read_shape_invalid')
@@ -148,6 +155,69 @@ def build_canary_contract(read_contract, cost_policy, *, pending_ui_evidence_ref
     return validate_canary_contract(result)
 
 
+def scope_snapshot(binding, records, counters, evidence_ref, *, complete):
+    """Only a complete same-reader API scope can witness an enum transition."""
+    if complete is not True or not isinstance(records, list) or not isinstance(binding, dict) or any(not isinstance(binding.get(key), str) or not binding[key] for key in ('market', 'account', 'institutionFingerprint', 'identitySha256')) or not isinstance(counters, dict) or any(not isinstance(k, str) or not k or type(v) is not int or v < 0 for k, v in counters.items()) or sum(counters.values()) != len(records) or not isinstance(evidence_ref, str) or not evidence_ref:
+        return None
+    members = []
+    for row in records:
+        member = {key: row.get(key) for key in ('applicationId', 'oecId', 'platformCreatorId', 'pid', 'campaignId', 'nativeStatus')}
+        if any(not isinstance(member[key], str) or not member[key].isascii() or not member[key].isdigit() or int(member[key]) <= 0 for key in ('applicationId', 'oecId', 'platformCreatorId', 'pid', 'campaignId')) or type(member['nativeStatus']) is not int or member['nativeStatus'] < 0:
+            return None
+        members.append(member)
+    if len({row['applicationId'] for row in members}) != len(members):
+        return None
+    return {'binding': deepcopy(binding), 'members': sorted(members, key=lambda row: row['applicationId']),
+            'platformCounts': deepcopy(counters), 'evidenceRef': evidence_ref}
+
+
+def derive_status_transition(before, after, known_map, *, target_id=None):
+    """Prove one changed application and exactly one named-counter transfer; otherwise learn nothing."""
+    if not isinstance(known_map, dict) or not isinstance(before, dict) or not isinstance(after, dict) or before.get('binding') != after.get('binding') or before.get('evidenceRef') == after.get('evidenceRef'):
+        return None
+    for snapshot in (before, after):
+        if scope_snapshot(snapshot.get('binding'), snapshot.get('members', []), snapshot.get('platformCounts'), snapshot.get('evidenceRef'), complete=True) is None:
+            return None
+    old = {row['applicationId']: row for row in before['members']}
+    new = {row['applicationId']: row for row in after['members']}
+    if old.keys() != new.keys():
+        return None
+    changes = []
+    for application_id in old:
+        if {k:v for k,v in old[application_id].items() if k != 'nativeStatus'} != {k:v for k,v in new[application_id].items() if k != 'nativeStatus'}:
+            return None
+        if old[application_id]['nativeStatus'] != new[application_id]['nativeStatus']:
+            changes.append(application_id)
+    if len(changes) != 1 or target_id is not None and changes[0] != target_id:
+        return None
+    application_id = changes[0]
+    original, current = old[application_id], new[application_id]
+    previous = known_map.get(str(original['nativeStatus']))
+    old_keys = [key for key, (state, _) in COUNTER_STAGES.items() if state == previous]
+    if len(old_keys) != 1:
+        return None
+    counts_before, counts_after = before['platformCounts'], after['platformCounts']
+    deltas = {key: counts_after.get(key, 0) - counts_before.get(key, 0) for key in counts_before.keys() | counts_after.keys()}
+    changed = {key: delta for key, delta in deltas.items() if delta}
+    additions = [key for key, delta in changed.items() if delta == 1 and key in COUNTER_STAGES]
+    if len(additions) != 1 or changed != {old_keys[0]: -1, additions[0]: 1}:
+        return None
+    new_key = additions[0]
+    state, label = COUNTER_STAGES[new_key]
+    existing = known_map.get(str(current['nativeStatus']))
+    if existing is not None and existing != state:
+        return None
+    # Named totals must also cover every row whose native meaning is already known.
+    for snapshot, mapping in ((before, known_map), (after, known_map | {str(current['nativeStatus']): state})):
+        for counter, (canonical, _) in COUNTER_STAGES.items():
+            known_count = sum(mapping.get(str(row['nativeStatus'])) == canonical for row in snapshot['members'])
+            if snapshot['platformCounts'].get(counter, 0) < known_count:
+                return None
+    return current | {'state': state, 'sourceKind': 'single_application_delta', 'platformCounter': new_key,
+                      'apiEvidenceRef': after['evidenceRef'], 'delta': {'before': deepcopy(before), 'after': deepcopy(after),
+                       'knownStatusMap': deepcopy(known_map), 'targetId': application_id}, 'platformLabel': label}
+
+
 def validate_status_evidence(evidence, *, binding=None):
     if not isinstance(evidence, dict) or set(evidence) - {'sourceBinding', 'revalidatedBy'} != {'schema', 'market', 'binding', 'observations'} or evidence.get('schema') != STATUS_EVIDENCE_SCHEMA or evidence.get('market') != 'br' or not isinstance(evidence.get('observations'), list) or not evidence['observations']:
         raise CycleError('sample_status_evidence_invalid')
@@ -159,7 +229,14 @@ def validate_status_evidence(evidence, *, binding=None):
             raise CycleError('sample_status_evidence_binding_invalid')
     statuses = {}
     for row in evidence['observations']:
-        if not isinstance(row, dict) or type(row.get('nativeStatus')) is not int or row['nativeStatus'] < 0 or UI_STAGES.get(row.get('uiLabel')) != row.get('state') or any(not isinstance(row.get(key), str) or not row[key] for key in ('uiEvidenceRef', 'apiEvidenceRef')):
+        if not isinstance(row, dict) or type(row.get('nativeStatus')) is not int or row['nativeStatus'] < 0 or not isinstance(row.get('apiEvidenceRef'), str) or not row['apiEvidenceRef']:
+            raise CycleError('sample_status_evidence_invalid')
+        if row.get('sourceKind') == 'single_application_delta':
+            delta = row.get('delta') or {}
+            proven = derive_status_transition(delta.get('before'), delta.get('after'), delta.get('knownStatusMap', {}), target_id=delta.get('targetId'))
+            if proven != row or (delta.get('before') or {}).get('binding') != evidence.get('binding'):
+                raise CycleError('sample_status_delta_unproven')
+        elif UI_STAGES.get(row.get('uiLabel')) != row.get('state') or not isinstance(row.get('uiEvidenceRef'), str) or not row['uiEvidenceRef']:
             raise CycleError('sample_status_evidence_invalid')
         for key in ('applicationId', 'platformCreatorId', 'oecId', 'pid', 'campaignId'):
             if not isinstance(row.get(key), str) or not row[key].isascii() or not row[key].isdigit() or int(row[key]) <= 0:
@@ -168,6 +245,13 @@ def validate_status_evidence(evidence, *, binding=None):
         if native == '10' and row['state'] != 'pending' or native in statuses and statuses[native] != row['state']:
             raise CycleError('sample_status_evidence_conflict')
         statuses[native] = row['state']
+    for row in evidence['observations']:
+        if row.get('sourceKind') == 'single_application_delta':
+            delta = row['delta']
+            original = next(item for item in delta['before']['members'] if item['applicationId'] == delta['targetId'])
+            native = str(original['nativeStatus'])
+            if ({'10': 'pending'} | statuses).get(native) != delta['knownStatusMap'].get(native):
+                raise CycleError('sample_status_delta_parent_unproven')
     return statuses
 
 
@@ -260,7 +344,12 @@ def validate_canary_contract(contract, *, binding=None):
 
 
 def validate_execution_contract(contract, *, binding=None):
-    return validate_canary_contract(contract, binding=binding) if isinstance(contract, dict) and contract.get('schema') == CANARY_CONTRACT_SCHEMA else validate_contract(contract)
+    if isinstance(contract, dict) and contract.get('schema') == CANARY_CONTRACT_SCHEMA:
+        return validate_canary_contract(contract, binding=binding)
+    result = validate_contract(contract)
+    if binding is not None and result.get('binding') is not None and result['binding'] != binding:
+        raise CycleError('sample_original_identity_changed')
+    return result
 
 
 def validate_any_contract(contract, *, binding=None):

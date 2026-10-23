@@ -13,7 +13,7 @@ import uuid
 
 from lib.second_cycle import CycleError, CycleStore, digest, encoded, epoch
 from lib.sample_transport import (CONTRACT_SCHEMA, READ_CONTRACT_SCHEMA, CANARY_CONTRACT_SCHEMA, READ_PATHS, OBSERVED_READ_BODY, build_canary_contract,
-                                 observed_status_evidence, extend_canary_contract, validate_status_evidence, receipt_accepted,
+                                 observed_status_evidence, extend_canary_contract, validate_status_evidence, receipt_accepted, scope_snapshot, derive_status_transition, STATUS_EVIDENCE_SCHEMA,
                                  review_payload, sample_session, validate_contract, validate_read_contract,
                                  validate_canary_contract, validate_execution_contract, validate_any_contract,
                                  require_current_cost_policy, record_contract_fingerprint)
@@ -437,6 +437,48 @@ def _auto_promote(store, root, market, account):
     return True
 
 
+def _record_scope(store, market, account, binding, records, summary, evidence_ref, *, complete, anchor_id=None):
+    current = scope_snapshot(binding, records, summary.get('platformCounts'), evidence_ref, complete=complete)
+    if current is None:
+        return capability(store, market, account)['contract']
+    cap = capability(store, market, account)
+    if cap['state'] not in {'canary', 'verified'} or cap.get('binding') != binding:
+        return cap.get('contract')
+    previous = store.db.execute("SELECT c.intent_id,c.payload FROM sample_review_check c JOIN sample_review_intent i ON i.id=c.intent_id WHERE i.market=? AND i.account_name=? AND i.binding=? AND json_extract(c.payload,'$.kind')='scope_snapshot' ORDER BY c.id DESC LIMIT 1",
+                                (market, account, encoded(binding))).fetchone()
+    before = json.loads(previous['payload'])['scope'] if previous else None
+    if before is not None:
+        observation = derive_status_transition(before, current, cap['contract']['statusMap'])
+        if observation and str(observation['nativeStatus']) not in cap['contract']['statusMap']:
+            target = store.db.execute('SELECT id,contract FROM sample_review_intent WHERE market=? AND account_name=? AND binding=? AND application_id=? AND started IS NOT NULL',
+                                     (market, account, encoded(binding), observation['applicationId'])).fetchone()
+            if target:
+                proof = deepcopy(cap['contract'].get('statusEvidence') or {'schema': STATUS_EVIDENCE_SCHEMA, 'market': market, 'binding': binding, 'observations': []})
+                proof['observations'].append(observation)
+                statuses = validate_status_evidence(proof, binding=binding)
+                updated = extend_canary_contract(cap['contract'], proof) if cap['state'] == 'canary' else deepcopy(cap['contract'])
+                if cap['state'] == 'verified':
+                    updated.update(statusEvidence=proof, statusMap=updated['statusMap'] | statuses)
+                    validate_contract(updated)
+                _require_lifecycle_extension(json.loads(target['contract']), updated)
+                record_capability(store, market, account, cap['state'], 'sample-status-delta:' + digest(observation), contract=updated, binding=binding)
+                store.db.execute('INSERT INTO sample_review_check(intent_id,observed,payload) VALUES(?,?,?)',
+                                 (target['id'], store.clock(), encoded({'kind': 'status_mapping', 'observation': observation})))
+                cap = capability(store, market, account)
+    anchor = anchor_id or (previous['intent_id'] if previous else None)
+    if anchor:
+        semantic = lambda scope: {key: value for key, value in scope.items() if key != 'evidenceRef'}
+        if before is None or semantic(before) != semantic(current):
+            store.db.execute('INSERT INTO sample_review_check(intent_id,observed,payload) VALUES(?,?,?)',
+                             (anchor, store.clock(), encoded({'kind': 'scope_snapshot', 'scope': current})))
+    return cap['contract']
+
+
+def _remap_records(records, contract):
+    return [row | {'state': contract.get('statusMap', {}).get(str(row.get('nativeStatus')), 'unknown'),
+                   'contractFingerprint': record_contract_fingerprint(contract)} for row in records]
+
+
 def _rebind_reader(store, root, market, account, cap, factory, report, stopped):
     summary = {}
     with factory(root, market, account, report, contract=None, expected_binding=None, stopped=stopped,
@@ -501,6 +543,11 @@ def sync(root, market='br', *, transport_factory=None, stopped=lambda: False):
             contract = actual_contract
         elif actual_contract:
             validate_any_contract(actual_contract, binding=binding)
+        if actual_contract and cap['state'] in {'canary', 'verified'}:
+            learned_contract = _record_scope(store, market, account, binding, rows, summary, ref, complete=complete)
+            if learned_contract != actual_contract:
+                actual_contract = learned_contract
+                rows = _remap_records(rows, actual_contract)
         result = store_records(store, market, account, rows, evidence_ref=ref, complete=complete, binding=binding, contract=actual_contract,
                                read_scope=summary.get('readScope'),
                                platform_counts=summary.get('platformCounts') if summary.get('readScope') == 'all_states' else None)
@@ -685,7 +732,7 @@ def _confirm_from_records(store, intent, rows, evidence_ref, *, lifecycle_contra
         if stage in APPROVAL_STAGES:
             receipt = json.loads(intent['receipt']) if intent.get('receipt') else {}
             acknowledged = receipt_accepted(receipt)
-            outcome = 'goal_observed' if frozen_contract.get('schema') == CANARY_CONTRACT_SCHEMA and not acknowledged else 'approved'
+            outcome = 'approved' if acknowledged else 'goal_observed'
         elif stage == 'seller_pending':
             outcome = 'seller_pending'
         elif stage in {'rejected', 'cancelled'}:
@@ -757,7 +804,11 @@ def reconcile(store, root, intent, *, transport_factory=None, stopped=lambda: Fa
         contract = validate_execution_contract(_reader_contract(store, intent))
         with factory(root, intent['market'], intent['account_name'], report, contract=contract,
                      expected_binding=json.loads(intent['binding']), stopped=stopped) as adapter:
-            rows, _, evidence = _pages(adapter)
+            summary = {}
+            rows, complete, evidence = _pages(adapter, summary=summary)
+        learned_contract = _record_scope(store, intent['market'], intent['account_name'], json.loads(intent['binding']), rows, summary, evidence, complete=complete, anchor_id=intent['id'])
+        if learned_contract and learned_contract != contract and capability(store, intent['market'], intent['account_name']).get('binding') == json.loads(intent['binding']):
+            rows = _remap_records(rows, learned_contract)
         store_records(store, intent['market'], intent['account_name'], rows, evidence_ref=evidence, complete=False, binding=json.loads(intent['binding']))
         state = _confirm_from_records(store, _intent(store, intent['id']), rows, evidence)
         if attempt is not None:
@@ -853,7 +904,10 @@ def run_one(root, market='br', *, transport_factory=None, stopped=lambda: False,
             # closes the gap between the readonly session and the write session.
             with factory(root, market, account, report, contract=json.loads(selected['contract']), frozen=json.loads(selected['payload']),
                          expected_binding=json.loads(selected['binding']), stopped=lambda: stopped() or not _enabled(store, market)) as writer:
-                fresh, _, evidence = _pages(writer)
+                before_summary = {}
+                fresh, before_complete, evidence = _pages(writer, summary=before_summary)
+                if not before_complete:
+                    return report | {'state': 'waiting_sample_sync', 'reason': 'sample_sync_incomplete', 'intentId': selected['id']}
                 store_records(store, market, account, fresh, evidence_ref=evidence, complete=False)
                 original = json.loads(selected['application'])
                 matches = [r for r in fresh if r.get('applicationId') == original['applicationId']]
@@ -867,6 +921,7 @@ def run_one(root, market='br', *, transport_factory=None, stopped=lambda: False,
                         store.db.execute("UPDATE sample_review_intent SET state='cancelled' WHERE id=? AND state='ready'", (selected['id'],))
                     return report | {'state': 'facts_changed', 'intentId': selected['id']}
                 quota_proof = writer.refresh_sample_quota(assessed['offer'])
+                _record_scope(store, market, account, json.loads(selected['binding']), fresh, before_summary, evidence, complete=before_complete, anchor_id=selected['id'])
                 selected = _begin(store, selected, matches[0], quota_proof=quota_proof, root=root, assessor=assessor, stopped=stopped)
                 try:
                     receipt = writer.approve_once(json.loads(selected['payload']))
@@ -875,7 +930,11 @@ def run_one(root, market='br', *, transport_factory=None, stopped=lambda: False,
                         store.db.execute('UPDATE sample_review_intent SET state=?,receipt=?,lease_owner=NULL,lease_until=0 WHERE id=?', (state, encoded(receipt), selected['id']))
                     if state == 'rejected':
                         return report | {'state': 'rejected', 'intentId': selected['id']}
-                    fresh, _, evidence = _pages(writer)
+                    after_summary = {}
+                    fresh, after_complete, evidence = _pages(writer, summary=after_summary)
+                    learned_contract = _record_scope(store, market, account, json.loads(selected['binding']), fresh, after_summary, evidence, complete=after_complete, anchor_id=selected['id'])
+                    if learned_contract and learned_contract != json.loads(selected['contract']):
+                        fresh = _remap_records(fresh, learned_contract)
                     store_records(store, market, account, fresh, evidence_ref=evidence, complete=False)
                     state = _confirm_from_records(store, _intent(store, selected['id']), fresh, evidence)
                     _auto_promote(store, root, market, account)

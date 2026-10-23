@@ -35,7 +35,8 @@ class FakeSessions:
         self.platform_counts = None
         self.raw_records = None
         self.after_native = None
-        self.receipt = {'status': 'accepted', 'evidenceRef': 'test-accepted'}
+        self.counter_by_native = None
+        self.receipt = {'status': 'accepted', 'http': 200, 'code': 0, 'evidenceRef': 'test-accepted'}
 
     @contextmanager
     def __call__(self, root, market, account, report, **options):
@@ -49,9 +50,16 @@ class FakeSessions:
                     raise owner.read_failure
                 size = (self.contract or {}).get('readBody', {}).get('page_size', 5)
                 records = [normalize_record(item, contract=self.contract) for item in owner.raw_records] if owner.raw_records is not None else owner.records
+                counters = owner.platform_counts
+                if owner.raw_records is not None and owner.counter_by_native is not None:
+                    counters = {}
+                    for item in owner.raw_records:
+                        key = owner.counter_by_native[item['sample_status']]
+                        counters[key] = counters.get(key, 0) + 1
+                from lib.second_cycle import digest
                 return {'records': copy.deepcopy(records[(page - 1) * size:page * size]), 'total': len(records), 'page': page,
-                        'pageSize': size, 'evidenceRef': 'test-read:' + str(len(owner.writes)),
-                        'platformCounts': owner.platform_counts, 'readScope': (self.contract or {}).get('readScope')}
+                        'pageSize': size, 'evidenceRef': 'test-read:' + digest([owner.raw_records if owner.raw_records is not None else records, counters, page, size]),
+                        'platformCounts': counters, 'readScope': (self.contract or {}).get('readScope')}
             def refresh_sample_quota(self, offer):
                 return offer['sample'] | {'pid': offer['pid'], 'campaignId': offer['campaignId'], 'available': True, 'quota': owner.quota, 'observedAt': time.time()}
             def approve_once(self, payload):
@@ -169,7 +177,7 @@ class SampleOperationsTest(unittest.TestCase):
         sessions.records[0]['state'] = 'approved'
         self.store.db.execute('UPDATE sample_review_check SET observed=observed-61')
         self.store.db.execute('UPDATE sample_review_intent SET started=started-61')
-        self.assertEqual(self.run_one(sessions)['state'], 'approved')
+        self.assertEqual(self.run_one(sessions)['state'], 'goal_observed')
         self.assertEqual(len(sessions.writes), 1)
         self.assertEqual(self.store.db.execute('SELECT request_ref FROM sample_review_intent').fetchone()[0], original_ref)
         self.assertEqual(sessions.sessions[-1]['account'], 'acc2')
@@ -445,7 +453,7 @@ class SampleOperationsTest(unittest.TestCase):
         sessions = FakeSessions([exact])
         with patch.object(ops, '_account', return_value='acc2'):
             ops.sync(self.root, transport_factory=sessions)
-        self.assertEqual(ops._intent(self.store, intent['id'])['state'], 'approved')
+        self.assertEqual(ops._intent(self.store, intent['id'])['state'], 'goal_observed')
         self.assertFalse(sessions.writes)
 
     def setup_canary(self):
@@ -698,6 +706,56 @@ class SampleOperationsTest(unittest.TestCase):
         self.assertEqual(self.run_one(sessions)['state'], 'goal_observed')
         self.assertEqual(ops.capability(self.store, 'br', 'acc2')['state'], 'canary')
         self.assertFalse(ops.tracking(self.store)[0]['receiptConfirmed'])
+        self.assertEqual(len(sessions.writes), 1)
+
+    def test_strict_delta_automatically_proves_ready_shipping_completion_without_ui_enum_guesses(self):
+        self.setup_canary()
+        sessions = FakeSessions([])
+        sessions.raw_records = [br_raw() | {'is_posted': False, 'video_count': 0, 'room_count': 0}]
+        sessions.counter_by_native = {10: 'TO_REVIEW_1', 20: 'READY_TO_SHIP_1', 30: 'SHIPPED', 100: 'COMPLETED'}
+        sessions.after_native = 20
+        sessions.receipt = {'status': 'accepted', 'http': 200, 'code': 0, 'evidenceRef': 'observed:review-accepted'}
+        with patch.object(ops, 'observed_status_evidence', return_value=None), patch.object(ops, '_account', return_value='acc2'):
+            ops.sync(self.root, transport_factory=sessions)
+        self.assertEqual(self.run_one(sessions)['state'], 'approved')
+        current = ops.capability(self.store, 'br', 'acc2')
+        self.assertEqual(current['state'], 'verified')
+        self.assertEqual(current['contract']['statusMap'], {'10': 'pending', '20': 'ready_to_ship'})
+        self.assertEqual(ops.tracking(self.store)[0]['platformStage'], 'ready_to_ship')
+        ops.authorize(self.store, 'br', False, 'read-followup-only', root=self.root)
+        sessions.raw_records[0]['sample_status'] = 30
+        with patch.object(ops, '_account', return_value='acc2'):
+            ops.sync(self.root, transport_factory=sessions)
+        self.assertEqual(ops.tracking(self.store)[0]['platformStage'], 'shipped')
+        self.assertTrue(ops.has_followups(self.root))
+        sessions.raw_records[0].update(sample_status=100, is_posted=True, video_count=1)
+        with patch.object(ops, '_account', return_value='acc2'):
+            ops.sync(self.root, transport_factory=sessions)
+        final = ops.tracking(self.store)[0]
+        self.assertEqual((final['platformStage'], final['isPosted'], final['videoCount']), ('completed', True, 1))
+        self.assertFalse(ops.has_followups(self.root))
+        self.assertEqual(len(sessions.writes), 1)
+        mappings = self.store.db.execute("SELECT payload FROM sample_review_check WHERE json_extract(payload,'$.kind')='status_mapping'").fetchall()
+        self.assertEqual(len(mappings), 3)
+        for row in mappings:
+            observation = json.loads(row[0])['observation']
+            self.assertEqual(observation['sourceKind'], 'single_application_delta')
+            self.assertEqual(observation['delta']['before']['binding'], BINDING)
+            self.assertEqual(observation['delta']['after']['binding'], BINDING)
+
+    def test_concurrent_scope_change_does_not_learn_canary_lifecycle_or_promote(self):
+        self.setup_canary()
+        sessions = FakeSessions([])
+        sessions.raw_records = [br_raw(), br_raw(1)]
+        sessions.counter_by_native = {10: 'TO_REVIEW_1', 20: 'READY_TO_SHIP_1'}
+        sessions.after_native = 20  # The fake changes both applications in the same response.
+        sessions.receipt = {'status': 'accepted', 'http': 200, 'code': 0, 'evidenceRef': 'observed:accepted'}
+        with patch.object(ops, 'observed_status_evidence', return_value=None), patch.object(ops, '_account', return_value='acc2'):
+            ops.sync(self.root, transport_factory=sessions)
+        self.assertEqual(self.run_one(sessions)['state'], 'unknown')
+        current = ops.capability(self.store, 'br', 'acc2')
+        self.assertEqual((current['state'], current['contract']['statusMap']), ('canary', {'10': 'pending'}))
+        self.assertEqual(self.store.db.execute("SELECT count(*) FROM sample_review_check WHERE json_extract(payload,'$.kind')='status_mapping'").fetchone()[0], 0)
         self.assertEqual(len(sessions.writes), 1)
 
     def test_identity_rotation_revalidates_new_reads_without_settling_original_unknown(self):
