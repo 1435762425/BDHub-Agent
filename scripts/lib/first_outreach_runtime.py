@@ -776,7 +776,12 @@ def worker_tick(root, *, stopped=lambda: False):
                 sample_state = 'waiting' if str(review.get('state', '')).startswith(('waiting', 'capability', 'unknown')) else 'idle' if review.get('state') == 'idle' else 'complete'
                 _publish_sample(root, sample_state, review.get('reason'))
             except Exception as error:
-                _publish_sample(root, 'attention', _code(error), failed=True)
+                code = _code(error)
+                if code == 'sample_authentication_required':
+                    from lib.login_recovery import request_recovery
+                    with CycleStore(_path(root)) as store:
+                        request_recovery(store, root, 'br', 'supply', source='first-samples')
+                _publish_sample(root, 'attention', code, failed=True)
     return result
 
 
