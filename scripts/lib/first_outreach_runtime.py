@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from contextlib import closing
 import fcntl
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -20,7 +21,7 @@ import uuid
 from lib import first_outreach as first
 from lib import sample_operations as samples
 from lib.process_liveness import record_alive
-from lib.second_cycle import CycleError, CycleStore, encoded
+from lib.second_cycle import CycleError, CycleStore, digest, encoded
 
 ACTIONS = {'prepare', 'sync', 'start', 'continue', 'stop', 'set-approvals', 'reconcile'}
 JOBS = {'prepare', 'sync', 'reconcile'}
@@ -158,28 +159,30 @@ def mutate(root, action, market, body, *, launcher=None):
     return status(root)
 
 
-def _application_rows(store):
+def _application_rows(store, sync_id=None):
     if not _table(store, 'sample_application'):
         return []
     if not _table(store, 'sample_review_intent'):
         raise CycleError('first_outreach_sample_state_unavailable')
+    scope = ' AND EXISTS(SELECT 1 FROM sample_sync_member m WHERE m.sync_id=? AND m.application_id=a.application_id)' if sync_id else ''
     return store.db.execute('''SELECT a.application_id,a.payload,a.observed,i.state review_state
      FROM sample_application a LEFT JOIN sample_review_intent i ON i.market=a.market AND i.application_id=a.application_id
-     WHERE a.market='br' ORDER BY a.observed DESC,a.application_id LIMIT 100''').fetchall()
+     WHERE a.market='br' ''' + scope + ' ORDER BY a.observed DESC,a.application_id LIMIT 100', (sync_id,) if sync_id else ()).fetchall()
 
 
-def _application_counts(store):
+def _application_counts(store, sync_id=None):
     if not _table(store, 'sample_application'):
         return 0, 0, 0
     pending = manual = assessable = 0
+    scope = ' AND EXISTS(SELECT 1 FROM sample_sync_member m WHERE m.sync_id=? AND m.application_id=a.application_id)' if sync_id else ''
     for state, review, payment, count in store.db.execute('''SELECT json_extract(a.payload,'$.state'),i.state,
      CASE WHEN json_type(a.payload,'$.paymentRequired')='false' THEN 0 ELSE 1 END,count(*)
      FROM sample_application a LEFT JOIN sample_review_intent i ON i.market=a.market AND i.application_id=a.application_id
-     WHERE a.market='br' GROUP BY 1,2,3'''):
+     WHERE a.market='br' ''' + scope + ' GROUP BY 1,2,3', (sync_id,) if sync_id else ()):
         if state not in {'pending', 'unknown'} or review in {'approved', 'seller_pending', 'closed_externally'}:
             continue
         pending += count
-        if review in {'inflight', 'accepted', 'unknown'}:
+        if review in {'inflight', 'accepted', 'unknown', 'quarantined_unknown'}:
             continue
         if state == 'unknown' or payment or review == 'rejected':
             manual += count
@@ -189,7 +192,7 @@ def _application_counts(store):
 
 
 def _application_reason(store, root, application, review_state):
-    if review_state in {'inflight', 'accepted', 'unknown'}:
+    if review_state in {'inflight', 'accepted', 'unknown', 'quarantined_unknown'}:
         return 'sample_review_result_unknown'
     if application.get('state') not in {'pending', 'unknown'} or review_state in {'approved', 'seller_pending', 'closed_externally'}:
         return None
@@ -236,6 +239,52 @@ def _send_capability(root, store):
     return (generation or {}).get('capabilities', {}).get('message_send', {}).get('state') == 'verified'
 
 
+def _sample_binding_current(root, account, binding):
+    """Check the active project identity without opening a platform session."""
+    from lib.legacy_runtime import project_identity_paths
+    if not isinstance(binding, dict) or binding.get('market') != 'br' or binding.get('account') != account or not binding.get('institutionFingerprint'):
+        return False
+    paths = project_identity_paths(root, account)
+    if not paths or paths.get('market') != 'br':
+        return False
+    try:
+        return hashlib.sha256(Path(paths['headersJson']).read_bytes()).hexdigest() == binding.get('identitySha256')
+    except (OSError, KeyError, TypeError):
+        return False
+
+
+def _coverage_snapshot(root, store):
+    """A historical filtered empty read cannot prove the current pending scope."""
+    if not _table(store, 'sample_sync') or not _table(store, 'sample_capability') or not _table(store, 'sample_sync_member'):
+        return None
+    columns = {row[1] for row in store.db.execute('PRAGMA table_info(sample_sync)')}
+    if not {'binding_fingerprint', 'contract_fingerprint'} <= columns:
+        return None
+    try:
+        account = samples._account(root, 'br')
+        cap = samples.capability(store, 'br', account)
+        if cap['state'] != 'verified':
+            return None
+        contract = samples.validate_contract(cap.get('contract'))
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+    if not _sample_binding_current(root, account, cap.get('binding')):
+        return None
+    row = store.db.execute("""SELECT id,observed,record_count,binding_fingerprint,contract_fingerprint FROM sample_sync
+     WHERE market='br' AND account_name=? AND complete=1 ORDER BY observed DESC,rowid DESC LIMIT 1""", (account,)).fetchone()
+    if not row or not cap.get('observed') or not cap['observed'] <= row['observed'] <= store.clock() + 30 or store.clock() - row['observed'] > samples.MAX_FACT_AGE:
+        return None
+    if row['binding_fingerprint'] != digest(cap['binding']) or row['contract_fingerprint'] != digest(contract):
+        return None
+    members = store.db.execute("""SELECT count(*) FROM sample_sync_member m JOIN sample_application a
+     ON a.application_id=m.application_id AND a.market='br' AND a.account_name=? WHERE m.sync_id=?""", (account, row['id'])).fetchone()[0]
+    return row if members == row['record_count'] else None
+
+
+def _application_coverage(root, store):
+    return 'complete' if _coverage_snapshot(root, store) is not None else 'unverified'
+
+
 def status(root, market='br'):
     if market != 'br':
         raise CycleError('first_outreach_market_unsupported')
@@ -243,19 +292,22 @@ def status(root, market='br'):
     with CycleStore(path, readonly=True) as store:
         cfg = first.control(store, market)
         base, sample = first.status(root, market), samples.status(root, market)
+        snapshot = _coverage_snapshot(root, store)
+        sync_id = snapshot['id'] if snapshot is not None else None
         counts = {key: base['counts'][key] for key in ('products', 'matchedCreators', 'sent', 'pendingApplications', 'approved', 'needsReview', 'unknown')}
-        pending_count, manual_count, assessable_count = _application_counts(store)
+        send_unknown = base['counts']['unknown']
+        pending_count, manual_count, assessable_count = _application_counts(store, sync_id)
         counts.update(pendingApplications=pending_count, approved=sample['counts'].get('approved', 0), needsReview=manual_count)
-        counts['unknown'] += sum(sample['counts'].get(key, 0) for key in ('inflight', 'accepted', 'unknown'))
+        counts['unknown'] += sum(sample['counts'].get(key, 0) for key in ('inflight', 'accepted', 'unknown', 'quarantined_unknown'))
         applications, assessed_count = [], 0
-        parsed = [(row, json.loads(row['payload'])) for row in _application_rows(store)]
+        parsed = [(row, json.loads(row['payload'])) for row in _application_rows(store, sync_id)]
         names = _identity_names(root, [app.get('oecId') for _, app in parsed])
         from lib.first_catalog import offers
         product_names = {(offer['pid'], offer.get('campaignId')): offer.get('title') or offer['pid'] for _, offer in offers(store, cfg['planId'])}
         for row, app in parsed:
             reason = _application_reason(store, root, app, row['review_state'])
             pending = app.get('state') in {'pending', 'unknown'} and row['review_state'] not in {'approved', 'seller_pending', 'closed_externally'}
-            assessable = pending and app.get('state') == 'pending' and app.get('paymentRequired') is False and row['review_state'] not in {'inflight', 'accepted', 'unknown', 'rejected'}
+            assessable = pending and app.get('state') == 'pending' and app.get('paymentRequired') is False and row['review_state'] not in {'inflight', 'accepted', 'unknown', 'quarantined_unknown', 'rejected'}
             assessed_count += int(assessable)
             counts['needsReview'] += int(assessable and reason is not None)
             pid = app.get('pid') or '商品身份待核对'
@@ -265,7 +317,7 @@ def status(root, market='br'):
         blockers = list(dict.fromkeys(base['readiness']['blockers'] + _category_blockers(store, cfg['planId'])))
         if not _send_capability(root, store):
             blockers.append('first_outreach_send_capability_unverified')
-        if counts['unknown'] and 'first_outreach_result_unknown' not in blockers:
+        if send_unknown and 'first_outreach_result_unknown' not in blockers:
             blockers.append('first_outreach_result_unknown')
         runtime = dict(base['runtime'])
         if _table(store, 'first_outreach_runtime'):
@@ -281,13 +333,13 @@ def status(root, market='br'):
         if queued:
             waiting = runtime['state'] in {'waiting_account', 'waiting_capacity'}
             runtime = {'state': runtime['state'] if waiting else {'prepare': 'preparing', 'sync': 'syncing', 'reconcile': 'waiting_reconciliation'}[queued['action']], 'reason': runtime['reason'] if waiting else None, 'updatedAt': queued['updated']}
-        elif counts['unknown']:
+        elif send_unknown:
             runtime['state'], runtime['reason'] = 'waiting_reconciliation', 'first_outreach_result_unknown'
         elif cfg['mode'] == 'stopped' and runtime['state'] in {'sending', 'continuous', 'canary', 'starting'}:
             runtime['state'], runtime['reason'] = ('canary_confirmed' if cfg.get('canaryDeliveryId') else 'stopped'), None
         if (queued or cfg['mode'] != 'stopped' or cfg['approvalsEnabled']) and not worker_state(root)['running']:
             runtime['reason'] = 'first_outreach_worker_unavailable'
-        if assessed_count < assessable_count and not queued and not counts['unknown'] and runtime['state'] != 'attention' and runtime['reason'] != 'first_outreach_worker_unavailable':
+        if assessed_count < assessable_count and not queued and not send_unknown and runtime['state'] != 'attention' and runtime['reason'] != 'first_outreach_worker_unavailable':
             runtime['reason'] = 'sample_application_assessment_incomplete'
         if not runtime['reason'] and cfg['approvalsEnabled'] and sample['capability']['state'] != 'verified':
             runtime['reason'] = sample['capability'].get('reason') or 'sample_review_contract_unverified'
@@ -295,6 +347,7 @@ def status(root, market='br'):
         return {'schemaVersion': 'bdhub.first-outreach.v1', 'market': market,
                 'control': {key: cfg[key] for key in ('revision', 'mode', 'approvalsEnabled', 'updatedAt')},
                 'readiness': {'ready': not blockers, 'blockers': blockers}, 'counts': counts,
+                'applicationCoverage': 'complete' if snapshot is not None else 'unverified',
                 'candidates': [{key: row[key] for key in ('creatorId', 'handle', 'pid', 'productName', 'categoryName', 'gmv', 'message')} for row in base['candidates']],
                 'applications': applications, 'runtime': runtime, 'platformWrites': 0,
                 'sourceUpdatedAt': generation.get('completedAt')}

@@ -2,10 +2,10 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {readFileSync} from "node:fs";
 import {firstOutreachArgv,validateFirstOutreach,validateFirstOutreachRequest} from "../src/server/first-outreach/bridge.ts";
-import {firstOutreachCanContinue} from "../src/features/first-outreach/presentation.ts";
+import {firstApplicationSummary,firstOutreachCanContinue,firstOutreachLabel} from "../src/features/first-outreach/presentation.ts";
 import {GET,POST} from "../src/app/api/first-outreach/route.ts";
 
-const payload={schemaVersion:"bdhub.first-outreach.v1",market:"br",control:{revision:1,mode:"stopped",approvalsEnabled:false,updatedAt:1},readiness:{ready:false,blockers:["sample_facts_unavailable"]},counts:{products:0,matchedCreators:0,sent:0,pendingApplications:0,approved:0,needsReview:0,unknown:0},candidates:[],applications:[],runtime:{state:"blocked",reason:"sample_facts_unavailable",updatedAt:null},platformWrites:0,sourceUpdatedAt:null};
+const payload={schemaVersion:"bdhub.first-outreach.v1",market:"br",applicationCoverage:"unverified",control:{revision:1,mode:"stopped",approvalsEnabled:false,updatedAt:1},readiness:{ready:false,blockers:["sample_facts_unavailable"]},counts:{products:0,matchedCreators:0,sent:0,pendingApplications:0,approved:0,needsReview:0,unknown:0},candidates:[],applications:[],runtime:{state:"blocked",reason:"sample_facts_unavailable",updatedAt:null},platformWrites:0,sourceUpdatedAt:null};
 const request={action:"start",market:"br",requestId:"first-request-0001",expectedRevision:1};
 const local={host:"127.0.0.1:5198",origin:"http://127.0.0.1:5198","content-type":"application/json"};
 const mutate=(body,query="?market=br",headers=local)=>POST(new Request(`http://127.0.0.1:5198/api/first-outreach${query}`,{method:"POST",headers,body:JSON.stringify(body)}));
@@ -15,6 +15,24 @@ test("BR state preserves explicit data gaps and real candidate previews",()=>{
  const value=validateFirstOutreach({...payload,readiness:{ready:true,blockers:[]},counts:{...payload.counts,products:1,matchedCreators:1},candidates:[{creatorId:"creator-01",handle:"alice",pid:"1729571380453480878",productName:"Creme",categoryName:"Beleza",gmv:null,message:"Olá @alice!"}]});
  assert.equal(value.candidates[0].message,"Olá @alice!");assert.equal(value.candidates[0].gmv,null);
  for(const bad of [{...payload,market:"it"},{...payload,platformWrites:1},{...payload,counts:undefined},{...payload,counts:{...payload.counts,products:-1}},{...payload,readiness:{ready:true,blockers:["missing"]}},{...payload,credentials:"private"},{...payload,control:{...payload.control,cookie:"secret"}},{...payload,applications:[{id:"1",handle:"a",pid:"1",productName:"p",state:"pending",reason:null,raw:{secret:1}}]}])assert.throws(()=>validateFirstOutreach(bad),/invalid_first_outreach/);
+});
+
+test("application coverage is explicit and old empty reads never become zero pending",()=>{
+ assert.equal(validateFirstOutreach(payload).applicationCoverage,"unverified");
+ assert.equal(validateFirstOutreach({...payload,applicationCoverage:"complete"}).applicationCoverage,"complete");
+ for(const coverage of [undefined,null,"readonly",true])assert.throws(()=>validateFirstOutreach({...payload,applicationCoverage:coverage}),/invalid_first_outreach/);
+ const ledger={pendingApplications:12,needsReview:2,approved:5,unknown:1};
+ assert.deepEqual(firstApplicationSummary({applicationCoverage:"unverified",counts:ledger}),{value:"—",hint:"待审批范围尚未核实"});
+ assert.deepEqual(firstApplicationSummary({counts:ledger}),{value:"—",hint:"待审批范围尚未核实"});
+ assert.equal(firstApplicationSummary({applicationCoverage:"complete",counts:{...ledger,pendingApplications:0}}).value,0);
+ const state=validateFirstOutreach({...payload,counts:{...payload.counts,...ledger}});
+ assert.equal(state.counts.approved,5);assert.equal(state.counts.unknown,1);
+});
+
+test("waiting reasons use plain language and unknown codes never leak into the page",()=>{
+ assert.equal(firstOutreachLabel("account_busy"),"等待账号空闲后继续");
+ assert.equal(firstOutreachLabel("workflow_resource_busy"),"等待平台读取资源空闲后继续");
+ assert.equal(firstOutreachLabel("private_technical_code:/secret/path"),"当前步骤尚未完成，请查看运行记录");
 });
 
 test("every mutation requires an idempotency key, revision and the exact BR action shape",()=>{
@@ -45,10 +63,10 @@ test("API requires local origin and JSON for all mutations",async()=>{
  assert.equal((await mutate(request,"?market=br",{...local,"content-type":"text/plain"})).status,415);
 });
 
-test("continuous mode waits for a confirmed canary and stops on unknown",()=>{
+test("continuous mode waits for a confirmed canary while readiness handles send unknown",()=>{
  const confirmed={control:{mode:"stopped"},runtime:{state:"canary_confirmed"},counts:{sent:1,unknown:0}};
- assert.equal(firstOutreachCanContinue(confirmed),true);
- for(const row of [{...confirmed,counts:{sent:0,unknown:0}},{...confirmed,counts:{sent:1,unknown:1}},{...confirmed,runtime:{state:"sending"}},{...confirmed,control:{mode:"continuous"}}])assert.equal(firstOutreachCanContinue(row),false);
+ assert.equal(firstOutreachCanContinue(confirmed),true);assert.equal(firstOutreachCanContinue({...confirmed,counts:{sent:1,unknown:1}}),true);
+ for(const row of [{...confirmed,counts:{sent:0,unknown:0}},{...confirmed,runtime:{state:"sending"}},{...confirmed,control:{mode:"continuous"}}])assert.equal(firstOutreachCanContinue(row),false);
 });
 
 test("page gates BR, presents real data gaps, separate approval and explicit first send",()=>{

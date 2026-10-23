@@ -13,7 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts'))
 from lib import first_outreach as first
 from lib import first_outreach_runtime as runtime
 from lib import sample_operations as samples
-from lib.second_cycle import CycleError, CycleStore, encoded
+from lib.second_cycle import CycleError, CycleStore, digest, encoded
 
 
 class FirstOutreachRuntimeTests(unittest.TestCase):
@@ -61,6 +61,7 @@ class FirstOutreachRuntimeTests(unittest.TestCase):
         with patch.object(runtime, 'launch_worker') as launch, patch.object(samples, 'sync') as sync:
             result = runtime.status(self.root)
         self.assertEqual(result['platformWrites'], 0)
+        self.assertEqual(result['applicationCoverage'], 'unverified')
         self.assertFalse(result['readiness']['ready'])
         self.assertEqual(result['control'], {'revision': 0, 'mode': 'stopped', 'approvalsEnabled': False, 'updatedAt': 0})
         self.assertEqual(hashlib.sha256(path.read_bytes()).hexdigest(), before)
@@ -177,7 +178,101 @@ class FirstOutreachRuntimeTests(unittest.TestCase):
         with patch.object(first, 'status', return_value=base), patch.object(runtime, '_send_capability', return_value=True):
             value = runtime.status(self.root)
         self.assertTrue(value['readiness']['ready'])
+        self.assertEqual(value['applicationCoverage'], 'unverified')
         self.assertIsNone(value['runtime']['reason'])
+
+    def test_application_coverage_requires_current_verified_contract_and_sync_provenance(self):
+        from tests.test_sample_transport import contract
+        binding = {'market': 'br', 'account': 'acc11', 'institutionFingerprint': 'agency', 'identitySha256': 'current-headers'}
+        with CycleStore(self.root / 'var/second-cycle.sqlite') as store:
+            samples.ensure_schema(store)
+            # Columns may be absent on a pre-upgrade ledger; they never imply coverage.
+            self.assertEqual(runtime._application_coverage(self.root, store), 'unverified')
+            samples.record_capability(store, 'br', 'acc11', 'verified', 'verified-contract', contract=contract(), binding=binding)
+            samples.store_records(store, 'br', 'acc11', [], evidence_ref='old-filtered-empty', complete=True)
+            with patch.object(samples, '_account', return_value='acc11'), patch.object(runtime, '_sample_binding_current', return_value=True):
+                self.assertEqual(runtime._application_coverage(self.root, store), 'unverified')
+                columns = {row[1] for row in store.db.execute('PRAGMA table_info(sample_sync)')}
+                for column in ('binding_fingerprint', 'contract_fingerprint'):
+                    if column not in columns:
+                        store.db.execute('ALTER TABLE sample_sync ADD COLUMN ' + column + ' TEXT')
+                store.db.execute("UPDATE sample_sync SET binding_fingerprint=?,contract_fingerprint=?", (digest(binding), digest(contract())))
+                self.assertEqual(runtime._application_coverage(self.root, store), 'complete')
+                store.db.execute("UPDATE sample_sync SET contract_fingerprint='older-contract'")
+                self.assertEqual(runtime._application_coverage(self.root, store), 'unverified')
+                store.db.execute('UPDATE sample_sync SET contract_fingerprint=?', (digest(contract()),))
+                with patch.object(runtime, '_sample_binding_current', return_value=False):
+                    self.assertEqual(runtime._application_coverage(self.root, store), 'unverified')
+                samples.record_capability(store, 'br', 'acc11', 'readonly', 'readonly-filtered')
+                self.assertEqual(runtime._application_coverage(self.root, store), 'unverified')
+
+    def test_application_coverage_rejects_stale_or_different_account_sync(self):
+        from tests.test_sample_transport import contract
+        binding = {'market': 'br', 'account': 'acc11', 'institutionFingerprint': 'agency', 'identitySha256': 'current-headers'}
+        with CycleStore(self.root / 'var/second-cycle.sqlite') as store:
+            samples.record_capability(store, 'br', 'acc11', 'verified', 'verified-contract', contract=contract(), binding=binding)
+            samples.store_records(store, 'br', 'acc11', [], evidence_ref='stale-sync', complete=True)
+            columns = {row[1] for row in store.db.execute('PRAGMA table_info(sample_sync)')}
+            for column in ('binding_fingerprint', 'contract_fingerprint'):
+                if column not in columns:
+                    store.db.execute('ALTER TABLE sample_sync ADD COLUMN ' + column + ' TEXT')
+            store.db.execute('UPDATE sample_sync SET binding_fingerprint=?,contract_fingerprint=?,observed=?', (digest(binding), digest(contract()), time.time() - 3600))
+            with patch.object(samples, '_account', return_value='acc11'), patch.object(runtime, '_sample_binding_current', return_value=True):
+                self.assertEqual(runtime._application_coverage(self.root, store), 'unverified')
+                store.db.execute("UPDATE sample_sync SET observed=?,account_name='acc2'", (time.time(),))
+                self.assertEqual(runtime._application_coverage(self.root, store), 'unverified')
+
+    def test_binding_coverage_checks_current_project_headers_without_platform_session(self):
+        headers = self.root / 'test-current-headers.json'
+        headers.write_bytes(b'local-test-header')
+        binding = {'market': 'br', 'account': 'acc11', 'institutionFingerprint': 'agency', 'identitySha256': hashlib.sha256(headers.read_bytes()).hexdigest()}
+        with patch('lib.legacy_runtime.project_identity_paths', return_value={'market': 'br', 'headersJson': headers}):
+            self.assertTrue(runtime._sample_binding_current(self.root, 'acc11', binding))
+            headers.write_bytes(b'new-local-test-header')
+            self.assertFalse(runtime._sample_binding_current(self.root, 'acc11', binding))
+
+    def test_isolated_unknown_approval_stays_unknown_in_public_ledger(self):
+        snapshot = samples.status(self.root)
+        snapshot['counts'] = {'quarantined_unknown': 2, 'approved': 3}
+        with patch.object(samples, 'status', return_value=snapshot):
+            value = runtime.status(self.root)
+        self.assertEqual(value['counts']['unknown'], 2)
+        self.assertEqual(value['counts']['approved'], 3)
+        self.assertEqual(value['applicationCoverage'], 'unverified')
+
+    def test_sample_unknown_does_not_block_independent_first_send_readiness(self):
+        snapshot = samples.status(self.root)
+        snapshot['counts'] = {'quarantined_unknown': 2, 'unknown': 1}
+        base = first.status(self.root)
+        base['readiness'] = {'ready': True, 'blockers': []}
+        base['runtime'] = {'state': 'stopped', 'reason': None, 'updatedAt': None}
+        with patch.object(samples, 'status', return_value=snapshot), patch.object(first, 'status', return_value=base), patch.object(runtime, '_send_capability', return_value=True):
+            value = runtime.status(self.root)
+        self.assertEqual(value['counts']['unknown'], 3)
+        self.assertTrue(value['readiness']['ready'])
+        self.assertEqual(value['runtime']['state'], 'stopped')
+
+    def test_complete_current_snapshot_excludes_historical_pending_applications(self):
+        from tests.test_sample_transport import contract
+        binding = {'market': 'br', 'account': 'acc11', 'institutionFingerprint': 'agency', 'identitySha256': 'current-headers'}
+        application = {'applicationId': '1', 'oecId': '100', 'pid': '200', 'campaignId': '300', 'state': 'pending', 'paymentRequired': False}
+        with CycleStore(self.root / 'var/second-cycle.sqlite') as store:
+            samples.record_capability(store, 'br', 'acc11', 'verified', 'verified-contract', contract=contract(), binding=binding)
+            now = time.time()
+            samples.store_records(store, 'br', 'acc11', [application], observed_at=now, evidence_ref='earlier-pending', complete=True, binding=binding, contract=contract())
+            samples.store_records(store, 'br', 'acc11', [{**application, 'applicationId': '2'}], observed_at=now + .01, evidence_ref='current-pending', complete=True, binding=binding, contract=contract())
+        with patch.object(samples, '_account', return_value='acc11'), patch.object(runtime, '_sample_binding_current', return_value=True):
+            value = runtime.status(self.root)
+            self.assertEqual(value['applicationCoverage'], 'complete')
+            self.assertEqual(value['counts']['pendingApplications'], 1)
+            self.assertEqual([row['id'] for row in value['applications']], ['2'])
+            with CycleStore(self.root / 'var/second-cycle.sqlite') as store:
+                samples.store_records(store, 'br', 'acc11', [], observed_at=now + .02, evidence_ref='current-empty', complete=True, binding=binding, contract=contract())
+                self.assertEqual(store.db.execute('SELECT count(*) FROM sample_application').fetchone()[0], 2)
+            value = runtime.status(self.root)
+        self.assertEqual(value['applicationCoverage'], 'complete')
+        self.assertEqual(value['counts']['pendingApplications'], 0)
+        self.assertEqual(value['applications'], [])
 
     def test_public_status_projects_no_private_fields_and_counts_all_applications(self):
         applications = [{'applicationId': str(index), 'oecId': '100', 'pid': '200', 'campaignId': '300',
