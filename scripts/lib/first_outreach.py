@@ -33,13 +33,16 @@ CREATE TABLE IF NOT EXISTS first_outreach_head(plan_id TEXT PRIMARY KEY,generati
 CREATE TABLE IF NOT EXISTS first_outreach_candidate(
  generation_id TEXT NOT NULL,creator_id TEXT NOT NULL,oec TEXT NOT NULL,pid TEXT NOT NULL,
  offer_key TEXT NOT NULL,gmv TEXT,payload TEXT NOT NULL,gmv_window REAL,gmv_key TEXT NOT NULL DEFAULT '',
+ content_gmv_key TEXT NOT NULL DEFAULT '',
  PRIMARY KEY(generation_id,creator_id));
-CREATE INDEX IF NOT EXISTS first_outreach_rank ON first_outreach_candidate(generation_id,gmv_window DESC,gmv_key DESC,creator_id);
 '''
 
 
 def ensure_schema(store):
     store.db.executescript(SCHEMA)
+    if 'content_gmv_key' not in {row['name'] for row in store.db.execute('PRAGMA table_info(first_outreach_candidate)')}:
+        store.db.execute("ALTER TABLE first_outreach_candidate ADD COLUMN content_gmv_key TEXT NOT NULL DEFAULT ''")
+    store.db.execute('CREATE INDEX IF NOT EXISTS first_outreach_rank_v2 ON first_outreach_candidate(generation_id,gmv_window DESC,content_gmv_key DESC,gmv_key DESC,creator_id)')
 
 
 def _table(store, name):
@@ -173,7 +176,8 @@ def latest_profile(root, market, oec):
 
 
 def _catalog_fingerprint(store, plan):
-    return digest({'heads': [list(row) for row in store.db.execute('SELECT source,snapshot_id FROM catalog_head WHERE plan_id=? ORDER BY source', (plan,))],
+    return digest({'policy': 'first-category-content-v2',
+                   'heads': [list(row) for row in store.db.execute('SELECT source,snapshot_id FROM catalog_head WHERE plan_id=? ORDER BY source', (plan,))],
                    'offers': sorted((offer['offerKey'], digest(offer)) for _, offer in _offers(store, plan))})
 
 
@@ -187,9 +191,9 @@ def _offers(store, plan):
     return offers(store, plan)
 
 
-def _gmv(profile):
+def _amount(profile, field):
     """Amounts are comparable only within their actual BRL performance window."""
-    raw = _field(profile['payload'], 'med_gmv_revenue')
+    raw = _field(profile['payload'], field)
     amount = _number(raw)
     symbol = raw.get('rawSymbol') if isinstance(raw, dict) else None
     currency = raw.get('currency') if isinstance(raw, dict) else None
@@ -201,13 +205,30 @@ def _gmv(profile):
         window = epoch(end)
     except (ValueError, TypeError, AttributeError, OverflowError):
         window = None
-    if amount is None or (currency != 'BRL' and symbol != 'R$') or window is None:
+    if amount is None or currency not in (None, 'BRL') or (currency != 'BRL' and symbol != 'R$') or window is None:
         return None, None, ''
     text = format(amount, 'f')
     if '.' in text:
         text = text.rstrip('0').rstrip('.')
     integer = text.split('.')[0]
     return text, window, str(len(integer)).zfill(3) + ':' + text
+
+
+def _gmv(profile):
+    return _amount(profile, 'med_gmv_revenue')
+
+
+def _performance(profile):
+    total, total_window, total_key = _gmv(profile)
+    video, video_window, video_key = _amount(profile, 'video_gmv')
+    live, live_window, live_key = _amount(profile, 'live_gmv')
+    verified = [(Decimal(amount), amount, window, key) for amount, window, key in
+                ((video, video_window, video_key), (live, live_window, live_key)) if amount is not None]
+    content = max(verified) if verified else None
+    return {'gmv': total, 'gmvKey': total_key, 'videoGmv': video, 'liveGmv': live,
+            'contentGmv': content[1] if content else None,
+            'window': content[2] if content else total_window,
+            'contentKey': content[3] if content else total_key}
 
 
 def _message(offer, name, handle):
@@ -334,15 +355,17 @@ def prepare(root, market='br', *, store=None, should_stop=None, max_pages=None):
                         offer = by_category.get(category['id'])
                         if not offer:
                             continue
-                        gmv, gmv_window, gmv_key = _gmv(profile)
+                        performance = _performance(profile)
                         payload = {key: profile[key] for key in ('creatorId', 'oecId', 'handle', 'observedAt', 'evidenceRef', 'fingerprint')}
-                        payload.update(category=category, gmv=gmv, gmvWindowEnd=gmv_window,
-                                       gmvCurrency='BRL' if gmv is not None else None)
+                        payload.update(category=category, gmv=performance['gmv'],
+                                       videoGmv=performance['videoGmv'], liveGmv=performance['liveGmv'],
+                                       contentGmv=performance['contentGmv'], gmvWindowEnd=performance['window'],
+                                       gmvCurrency='BRL' if performance['window'] is not None else None)
                         records.append((generation, profile['creatorId'], profile['oecId'], offer['pid'], offer['offerKey'],
-                                        gmv, encoded(payload), gmv_window, gmv_key))
+                                        performance['gmv'], encoded(payload), performance['window'], performance['gmvKey'], performance['contentKey']))
                     identities.execute('COMMIT')
                     with store.tx():
-                        store.db.executemany('INSERT OR IGNORE INTO first_outreach_candidate VALUES(?,?,?,?,?,?,?,?,?)', records)
+                        store.db.executemany('INSERT OR IGNORE INTO first_outreach_candidate VALUES(?,?,?,?,?,?,?,?,?,?)', records)
                         matched += len(records)
                         store.db.execute('UPDATE first_outreach_generation SET scanned=?,matched=?,last_oec=?,waiting=? WHERE id=?', (scanned, matched, people[-1]['oec_id'], encoded(waiting), generation))
                     cursor = people[-1]['oec_id']
@@ -526,7 +549,7 @@ def candidate(root, market, store, plan, initial):
         rows = store.db.execute('''SELECT c.* FROM first_outreach_candidate c
              LEFT JOIN relationship r ON r.plan_id=? AND r.creator_id=c.creator_id
              WHERE c.generation_id=? AND (r.creator_id IS NULL OR r.mode='auto' AND r.rejected=0 AND r.inbox_until=0)
-             ''' + skip_sent + ' ORDER BY c.gmv_window DESC,c.gmv_key DESC,c.creator_id', arguments)
+             ''' + skip_sent + ' ORDER BY c.gmv_window DESC,c.content_gmv_key DESC,c.gmv_key DESC,c.creator_id', arguments)
         for row in rows:
             offer = offers.get(row['offer_key'])
             if not offer or not assess_first_offer(offer, store.clock())['eligible']:
@@ -629,7 +652,7 @@ def status(root, market='br', limit=20):
             if head['matched'] and not material_match:
                 blockers.append('first_outreach_materials_unavailable')
             by_key = {offer['offerKey']: offer for offer in offers}
-            for row in store.db.execute('SELECT * FROM first_outreach_candidate WHERE generation_id=? ORDER BY gmv_window DESC,gmv_key DESC,creator_id LIMIT ?', (head['id'], limit)):
+            for row in store.db.execute('SELECT * FROM first_outreach_candidate WHERE generation_id=? ORDER BY gmv_window DESC,content_gmv_key DESC,gmv_key DESC,creator_id LIMIT ?', (head['id'], limit)):
                 payload = json.loads(row['payload'])
                 offer = by_key.get(row['offer_key'], {})
                 empty['candidates'].append({'creatorId': row['creator_id'], 'handle': payload['handle'], 'pid': row['pid'],

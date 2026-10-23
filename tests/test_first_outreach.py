@@ -49,14 +49,17 @@ class FirstOutreachTests(unittest.TestCase):
                      'sample': {'supported': True, 'quota': 3, 'observedAt': self.now, 'evidenceRef': 'sample-current'},
                      'evidenceRef': 'catalog-current'}, **changes)
 
-    def profile(self, oec, *, category='601450', gmv='0', timestamp=None, status='value'):
+    def profile(self, oec, *, category='601450', gmv='0', timestamp=None, status='value', video=None, live=None,
+                window=None, video_currency='R$', live_currency='R$'):
         observed = timestamp if timestamp is not None else self.now
         from datetime import datetime, timezone
         date = datetime.fromtimestamp(observed, timezone.utc).isoformat()
-        return self.identities.observe_profile('br', oec, 'creator' + oec, date, 'evidence-' + oec + '-' + str(observed),
-                    {'fields': {'industry_groups': {'status': status, 'value': [{'id': category, 'label': 'Beauty', 'weight': '1'}]},
-                                'med_gmv_revenue': {'status': 'zero' if gmv == '0' else 'value', 'value': {'decimal': gmv, 'rawSymbol': 'R$'}},
-                                'sales_performance_end_time': {'status': 'value', 'value': self.now}}})
+        fields = {'industry_groups': {'status': status, 'value': [{'id': category, 'label': 'Beauty', 'weight': '1'}]},
+                  'med_gmv_revenue': {'status': 'zero' if gmv == '0' else 'value', 'value': {'decimal': gmv, 'rawSymbol': 'R$'}},
+                  'sales_performance_end_time': {'status': 'value', 'value': self.now if window is None else window}}
+        for name, amount, currency in (('video_gmv', video, video_currency), ('live_gmv', live, live_currency)):
+            fields[name] = {'status': 'absent'} if amount is None else {'status': 'zero' if amount == '0' else 'value', 'value': {'decimal': amount, 'rawSymbol': currency}}
+        return self.identities.observe_profile('br', oec, 'creator' + oec, date, 'evidence-' + oec + '-' + str(observed), {'fields': fields})
 
     def prepare(self):
         return first.prepare(self.root, store=self.s)
@@ -315,6 +318,60 @@ class FirstOutreachTests(unittest.TestCase):
         self.assertIsNone(first._localized_name(self.s, changed))
         with self.assertRaisesRegex(CycleError, 'first_outreach_materials_unavailable'):
             self.start()
+
+    def test_content_performance_ranks_before_total_within_same_window_and_category(self):
+        self.profile('234', gmv='1000', video='80', live='30')
+        self.profile('345', gmv='200', video='20', live='90')
+        self.profile('456', category='602000', gmv='900000', video='900000')
+        self.prepare()
+        self.start()
+        self.assertEqual(self.get_candidate()['oecId'], '345')
+        self.assertEqual(self.s.db.execute('SELECT count(*) FROM first_outreach_candidate').fetchone()[0], 3)
+
+    def test_content_tie_uses_exact_total_gmv_and_missing_content_falls_back_without_zero(self):
+        self.profile('234', gmv='200', video='90')
+        self.profile('345', gmv='100', live='90')
+        self.profile('567', gmv='91')
+        self.prepare()
+        self.start()
+        self.assertEqual(self.get_candidate()['oecId'], '567')
+        row = self.s.db.execute("SELECT payload FROM first_outreach_candidate WHERE oec='567'").fetchone()
+        value = json.loads(row[0])
+        self.assertIsNone(value['videoGmv'])
+        self.assertIsNone(value['liveGmv'])
+        self.assertIsNone(value['contentGmv'])
+        self.s.db.execute("UPDATE relationship SET mode='human' WHERE oec='567'")
+        self.assertEqual(self.get_candidate()['oecId'], '234')
+
+    def test_other_window_or_currency_content_is_not_compared_as_current_brl(self):
+        self.profile('234', gmv='2', video='1', window=self.now)
+        self.profile('345', gmv='9000', live='8000', window=self.now - 86400)
+        self.profile('456', gmv='0', video='900000', video_currency='$')
+        self.prepare()
+        self.start()
+        self.assertEqual(self.get_candidate()['oecId'], '234')
+        foreign = json.loads(self.s.db.execute("SELECT payload FROM first_outreach_candidate WHERE oec='456'").fetchone()[0])
+        self.assertIsNone(foreign['videoGmv'])
+        self.assertIsNone(foreign['contentGmv'])
+
+    def test_unauthorized_latest_content_does_not_restore_older_performance(self):
+        profile = first.latest_profile(self.root, 'br', '123')
+        profile['payload']['fields']['video_gmv'] = {'status': 'unauthorized', 'value': {'decimal': '90000', 'rawSymbol': 'R$'}}
+        profile['payload']['fields']['live_gmv'] = {'status': 'absent'}
+        performance = first._performance(profile)
+        self.assertIsNone(performance['contentGmv'])
+        self.assertEqual(performance['gmv'], '0')
+        self.assertEqual(performance['contentKey'], performance['gmvKey'])
+
+    def test_existing_local_candidate_projection_can_add_content_sort_key(self):
+        self.s.db.execute('DROP TABLE first_outreach_candidate')
+        self.s.db.execute('''CREATE TABLE first_outreach_candidate(
+          generation_id TEXT NOT NULL,creator_id TEXT NOT NULL,oec TEXT NOT NULL,pid TEXT NOT NULL,
+          offer_key TEXT NOT NULL,gmv TEXT,payload TEXT NOT NULL,gmv_window REAL,gmv_key TEXT NOT NULL DEFAULT '',
+          PRIMARY KEY(generation_id,creator_id))''')
+        first.ensure_schema(self.s)
+        self.assertIn('content_gmv_key', {row['name'] for row in self.s.db.execute('PRAGMA table_info(first_outreach_candidate)')})
+        self.assertEqual(self.prepare()['matchedCreators'], 1)
 
 
 if __name__ == '__main__':
