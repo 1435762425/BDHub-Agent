@@ -15,7 +15,7 @@ from lib.second_cycle import CycleStore, CycleError, encoded
 from lib import sample_operations as ops
 from lib import first_outreach
 from lib.sample_transport import normalize_record
-from test_sample_transport import br_raw, contract, raw, read_contract
+from test_sample_transport import br_raw, contract, raw, read_contract, seller_policy, canary_contract
 
 BINDING = {'market': 'br', 'account': 'acc2', 'institutionFingerprint': 'test-agency', 'identitySha256': 'test-generation'}
 
@@ -439,6 +439,130 @@ class SampleOperationsTest(unittest.TestCase):
         with patch.object(ops, '_account', return_value='acc2'):
             ops.sync(self.root, transport_factory=sessions)
         self.assertEqual(ops._intent(self.store, intent['id'])['state'], 'approved')
+        self.assertFalse(sessions.writes)
+
+    def setup_canary(self):
+        from lib.sample_cost_policy import POLICY_PATH
+        path = self.root / POLICY_PATH
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(seller_policy()))
+        candidate = canary_contract()
+        ops.record_capability(self.store, 'br', 'acc2', 'canary', 'observed:pending-ui', contract=candidate, binding=BINDING)
+        self.application = normalize_record(br_raw(), contract=candidate)
+        self.offer.update(pid=self.application['pid'], campaignId=self.application['campaignId'])
+        return candidate
+
+    def test_arming_canary_keeps_existing_authorization_and_has_no_review_success_evidence(self):
+        from lib.sample_cost_policy import POLICY_PATH
+        path = self.root / POLICY_PATH
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(seller_policy()))
+        ops.record_capability(self.store, 'br', 'acc2', 'readonly', 'read-evidence', contract=read_contract(), binding=BINDING)
+        ops.authorize(self.store, 'br', False, 'test-stop-canary', root=self.root)
+        cap = ops.arm_canary(self.store, self.root, 'br', 'acc2', pending_ui_evidence_ref='observed:pending-ui', request_candidate_ref='historical:review-source')
+        self.assertEqual(cap['state'], 'canary')
+        self.assertNotIn('review', cap['contract']['evidence'])
+        self.assertFalse(first_outreach.control(self.store)['approvalsEnabled'])
+        self.assertTrue(ops.arm_canary(self.store, self.root, 'br', 'acc2', pending_ui_evidence_ref='same', request_candidate_ref='same')['duplicate'])
+
+    def test_canary_no_successful_recommendation_waits_without_a_write(self):
+        self.setup_canary()
+        sessions = FakeSessions([self.application])
+        with patch.object(ops, '_account', return_value='acc2'):
+            result = ops.run_one(self.root, transport_factory=sessions,
+                                 assessor=lambda *args: {'eligible': False, 'reason': 'sample_not_recommended_by_first_outreach'})
+        self.assertEqual(result['state'], 'waiting_eligible_application')
+        self.assertFalse(sessions.writes)
+        self.assertEqual(self.store.db.execute('SELECT count(*) FROM sample_review_intent').fetchone()[0], 0)
+
+    def test_canary_accepted_receipt_does_not_invent_lifecycle_or_verified_capability(self):
+        candidate = self.setup_canary()
+        sessions = FakeSessions([self.application], after='approved')
+        result = self.run_one(sessions)
+        self.assertEqual(result['state'], 'unknown')
+        self.assertEqual(ops.capability(self.store, 'br', 'acc2')['state'], 'canary')
+        self.assertEqual(len(sessions.writes), 1)
+        intent = self.store.db.execute('SELECT * FROM sample_review_intent').fetchone()
+        self.assertEqual(json.loads(intent['contract'])['costPolicy'], seller_policy())
+        self.assertIsNone(json.loads(intent['application'])['paymentRequired'])
+        self.assertNotIn('payment', json.loads(intent['payload']))
+
+    def test_same_binding_canary_budget_cannot_be_rearmed_or_change_application(self):
+        candidate = self.setup_canary()
+        proof = self.offer['sample'] | {'pid': self.application['pid'], 'campaignId': self.application['campaignId'], 'available': True}
+        intent, _ = ops._prepare(self.store, self.root, 'br', 'acc2', self.application, BINDING, contract=candidate, quota_proof=proof, assessor=self.assess)
+        ops._begin(self.store, intent, self.application, root=self.root)
+        self.store.db.execute("UPDATE sample_review_intent SET state='quarantined_unknown' WHERE id=?", (intent['id'],))
+        other = self.application | {'applicationId': '999', 'oecId': '998', 'platformCreatorId': '997'}
+        self.offer['sample']['quota'] = 100
+        with self.assertRaisesRegex(CycleError, 'canary_already_started'):
+            ops._prepare(self.store, self.root, 'br', 'acc2', other, BINDING, contract=candidate, quota_proof=proof, assessor=self.assess)
+        self.assertEqual(self.run_one(FakeSessions([other]))['state'], 'waiting_canary_verification')
+
+    def test_two_prepared_canaries_share_one_atomic_start_budget(self):
+        candidate = self.setup_canary()
+        self.offer['sample']['quota'] = 5
+        proof = self.offer['sample'] | {'pid': self.application['pid'], 'campaignId': self.application['campaignId'], 'available': True}
+        first, _ = ops._prepare(self.store, self.root, 'br', 'acc2', self.application, BINDING, contract=candidate, quota_proof=proof, assessor=self.assess)
+        other = self.application | {'applicationId': '999', 'oecId': '998', 'platformCreatorId': '997'}
+        second, _ = ops._prepare(self.store, self.root, 'br', 'acc2', other, BINDING, contract=candidate, quota_proof=proof, assessor=self.assess)
+        ops._begin(self.store, first, self.application, root=self.root)
+        with CycleStore(self.path) as another:
+            with self.assertRaisesRegex(CycleError, 'canary_already_started'):
+                ops._begin(another, second, other, root=self.root)
+        self.assertEqual(self.store.db.execute('SELECT count(*) FROM sample_review_intent WHERE started IS NOT NULL').fetchone()[0], 1)
+
+    def test_canary_pause_and_requeued_started_intent_cannot_send(self):
+        candidate = self.setup_canary()
+        sessions = FakeSessions([self.application])
+        ops.authorize(self.store, 'br', False, 'stop-canary-before-write', root=self.root)
+        self.assertEqual(self.run_one(sessions)['state'], 'paused')
+        self.assertFalse(sessions.sessions)
+        ops.authorize(self.store, 'br', True, 'start-canary-again', root=self.root)
+        proof = self.offer['sample'] | {'pid': self.application['pid'], 'campaignId': self.application['campaignId'], 'available': True}
+        intent, _ = ops._prepare(self.store, self.root, 'br', 'acc2', self.application, BINDING, contract=candidate, quota_proof=proof, assessor=self.assess)
+        ops._begin(self.store, intent, self.application, root=self.root)
+        self.store.db.execute("UPDATE sample_review_intent SET state='ready' WHERE id=?", (intent['id'],))
+        with self.assertRaisesRegex(CycleError, 'already_attempted'):
+            ops._begin(self.store, intent, self.application, root=self.root)
+        self.assertFalse(sessions.writes)
+
+    def test_cost_policy_change_between_read_and_permit_prevents_canary_write(self):
+        from lib.sample_cost_policy import POLICY_PATH
+        self.setup_canary()
+        path = self.root / POLICY_PATH
+        sessions = FakeSessions([self.application], stopped_on_write=lambda: path.write_text(json.dumps(seller_policy() | {'revision': 2})))
+        with self.assertRaisesRegex(CycleError, 'cost_policy_changed'):
+            self.run_one(sessions)
+        self.assertFalse(sessions.writes)
+        self.assertEqual(ops.status(self.root)['counts'], {'ready': 1})
+
+    def test_canary_promotion_requires_accepted_receipt_and_actual_exact_final_read(self):
+        candidate = self.setup_canary()
+        proof = self.offer['sample'] | {'pid': self.application['pid'], 'campaignId': self.application['campaignId'], 'available': True}
+        intent, _ = ops._prepare(self.store, self.root, 'br', 'acc2', self.application, BINDING, contract=candidate, quota_proof=proof, assessor=self.assess)
+        ops._begin(self.store, intent, self.application, root=self.root)
+        from lib.sample_transport import READ_PATHS
+        verified = contract() | {'recordPaths': dict(READ_PATHS), 'statusMap': {'10': 'pending', '100': 'completed'}, 'costPolicy': seller_policy()}
+        sessions = FakeSessions([self.application | {'state': 'completed', 'nativeStatus': 100}])
+        with self.assertRaisesRegex(CycleError, 'review_unconfirmed'):
+            ops.promote_canary(self.root, 'br', 'acc2', verified, transport_factory=sessions)
+        self.assertFalse(sessions.sessions)
+        self.store.db.execute("UPDATE sample_review_intent SET receipt=? WHERE id=?", (encoded({'http': 200, 'code': 0}), intent['id']))
+        for wrong in (verified | {'statusMap': {'10': 'approved', '99': 'pending'}},
+                      verified | {'recordPaths': verified['recordPaths'] | {'platformCreatorId': 'creator_info.oec_id'}}):
+            with self.assertRaisesRegex(CycleError, 'lifecycle_contract_mismatch'):
+                ops.promote_canary(self.root, 'br', 'acc2', wrong, transport_factory=sessions)
+        sessions.records = [self.application | {'state': 'approved', 'nativeStatus': 10}]
+        self.assertEqual(ops.promote_canary(self.root, 'br', 'acc2', verified, transport_factory=sessions)['state'], 'waiting_canary_verification')
+        sessions.records = [self.application | {'state': 'pending'}]
+        self.assertEqual(ops.promote_canary(self.root, 'br', 'acc2', verified, transport_factory=sessions)['state'], 'waiting_canary_verification')
+        self.assertEqual(ops.capability(self.store, 'br', 'acc2')['state'], 'canary')
+        sessions.records = [self.application | {'state': 'completed', 'nativeStatus': 100, 'platformCreatorId': 'wrong'}]
+        self.assertEqual(ops.promote_canary(self.root, 'br', 'acc2', verified, transport_factory=sessions)['state'], 'waiting_canary_verification')
+        sessions.records = [self.application | {'state': 'completed', 'nativeStatus': 100}]
+        self.assertEqual(ops.promote_canary(self.root, 'br', 'acc2', verified, transport_factory=sessions)['state'], 'verified')
+        self.assertEqual(ops.capability(self.store, 'br', 'acc2')['state'], 'verified')
         self.assertFalse(sessions.writes)
 
     def test_immutable_intent_and_original_account_cannot_change(self):

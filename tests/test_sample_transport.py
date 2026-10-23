@@ -4,9 +4,9 @@ from types import SimpleNamespace
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts'))
-from lib.sample_transport import (CONTRACT_SCHEMA, READ_CONTRACT_SCHEMA, READ_EVIDENCE, READ_PATHS,
+from lib.sample_transport import (CONTRACT_SCHEMA, READ_CONTRACT_SCHEMA, CANARY_CONTRACT_SCHEMA, READ_EVIDENCE, READ_PATHS,
                                   OBSERVED_READ_BODY, LIST, REVIEW, SampleAdapter, normalize_record,
-                                  observed_read_contract, review_payload, validate_contract, validate_read_contract)
+                                  observed_read_contract, review_payload, validate_contract, validate_read_contract, build_canary_contract, validate_canary_contract)
 from lib.second_cycle import CycleError
 
 
@@ -37,6 +37,18 @@ def read_contract(binding=None):
             'recordPaths': copy.deepcopy(READ_PATHS), 'readBody': copy.deepcopy(OBSERVED_READ_BODY),
             'statusCountersPath': 'sample_status_num_map',
             'binding': binding or {'market': 'br', 'account': 'acc2', 'institutionFingerprint': 'test-agency', 'identitySha256': 'test-generation'}}
+
+
+def seller_policy():
+    from lib.sample_cost_policy import POLICY_SCHEMA, USER_CONFIRMATION
+    return {'schema': POLICY_SCHEMA, 'market': 'br', 'payer': 'seller', 'agencyPaymentAllowed': False,
+            'requestPayment': 'omit', 'authority': 'user', 'authorityEvidence': USER_CONFIRMATION,
+            'confirmedAt': '2026-01-01T00:00:00Z', 'revision': 1}
+
+
+def canary_contract():
+    return build_canary_contract(read_contract(), seller_policy(), pending_ui_evidence_ref='observed:br-pending-ui',
+                                  request_candidate_ref='docs/contracts/tiktok/business-catalog.md:TK-010')
 
 
 def br_raw(index=0, status=10):
@@ -224,6 +236,54 @@ class SampleTransportTest(unittest.TestCase):
         with self.assertRaisesRegex(CycleError, 'pagination_incomplete'):
             SampleAdapter(transport, {}).refresh_sample_quota({'pid': '401', 'campaignId': '501'})
         self.assertEqual(len(transport.calls), 1)
+
+    def test_canary_contract_proves_only_pending_and_keeps_review_lifecycle_unverified(self):
+        value = canary_contract()
+        self.assertEqual(value['statusMap'], {'10': 'pending'})
+        self.assertNotIn('review', value['evidence'])
+        self.assertNotIn('lifecycle', value['evidence'])
+        with self.assertRaises(CycleError):
+            validate_contract(value)
+        row = normalize_record(br_raw(), contract=value)
+        self.assertEqual(row['state'], 'pending')
+        self.assertIsNone(row['paymentRequired'])
+        self.assertEqual(normalize_record(br_raw(status=99), contract=value)['state'], 'unknown')
+        self.assertNotIn('payment', review_payload(row, value['costPolicy']))
+
+    def test_canary_rejects_unproven_approved_status_and_forged_success_evidence(self):
+        value = canary_contract()
+        for changed in (value | {'statusMap': {'10': 'pending', '99': 'approved'}},
+                        value | {'evidence': value['evidence'] | {'review': 'not-real'}},
+                        value | {'request': value['request'] | {'requestPayment': 0}}):
+            with self.assertRaises(CycleError):
+                validate_canary_contract(changed)
+
+    def test_verified_user_cost_authority_does_not_require_a_fabricated_payment_field(self):
+        value = contract() | {'costPolicy': seller_policy(), 'recordPaths': dict(READ_PATHS), 'statusMap': {'10': 'pending', '100': 'completed'}}
+        value.pop('paymentFreeValue')
+        validate_contract(value)
+        row = normalize_record(br_raw(), contract=value)
+        self.assertIsNone(row['paymentRequired'])
+        self.assertEqual(review_payload(row, value['costPolicy'])['is_approved'], True)
+        self.assertNotIn('payment', review_payload(row, value['costPolicy']))
+
+    def test_canary_nonzero_business_code_is_unknown_and_never_replayed(self):
+        value = canary_contract()
+        payload = review_payload(normalize_record(br_raw(), contract=value), value['costPolicy'])
+        transport = Transport()
+        transport.result.code = 12345
+        adapter = SampleAdapter(transport, {}, contract=value, frozen=payload)
+        self.assertEqual(adapter.approve_once(payload)['status'], 'unknown')
+        with self.assertRaises(CycleError):
+            adapter.approve_once(payload)
+        self.assertEqual(len(transport.calls), 1)
+
+    def test_canary_cannot_add_any_payment_to_frozen_payload(self):
+        value = canary_contract()
+        payload = review_payload(normalize_record(br_raw(), contract=value), value['costPolicy'])
+        for changed in (payload | {'payment': 0}, payload | {'is_approved': False}):
+            with self.assertRaisesRegex(CycleError, 'canary_payload_invalid'):
+                SampleAdapter(Transport(), {}, contract=value, frozen=changed)
 
     def test_success_response_is_accepted_never_platform_approved(self):
         row = normalize_record(raw(), contract=contract())

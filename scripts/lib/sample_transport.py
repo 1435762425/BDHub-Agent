@@ -24,6 +24,7 @@ OBSERVED_READ_BODY = {'search_params': [],
                       'order_params': [{'order_key': 9, 'order_type': 2}], 'page_size': 20, 'cur_page': 1}
 CONTRACT_SCHEMA = 'bdhub.br-sample-contract.v1'
 READ_CONTRACT_SCHEMA = 'bdhub.br-sample-read-contract.v1'
+CANARY_CONTRACT_SCHEMA = 'bdhub.br-sample-canary-contract.v1'
 READ_EVIDENCE = 'var/br-sample-allstate-readonly-20261023-complete.private.json'
 READ_PATHS = {'applicationId': 'apply_id', 'oecId': 'creator_info.oec_id',
               'platformCreatorId': 'creator_info.id', 'pid': 'product_info.product_id',
@@ -99,17 +100,21 @@ def validate_contract(contract):
     if any(not isinstance(proofs.get(key), str) or not proofs[key] for key in
            ('records', 'creatorIdentity', 'payment', 'review', 'lifecycle')):
         raise CycleError('sample_contract_evidence_missing')
+    policy = contract.get('costPolicy')
+    if policy is not None:
+        from lib.sample_cost_policy import validate_cost_policy
+        validate_cost_policy(policy)
     paths = contract.get('recordPaths') or {}
-    if any(not isinstance(paths.get(key), str) or not paths[key] for key in
-           ('applicationId', 'oecId', 'platformCreatorId', 'pid', 'campaignId', 'status', 'paymentRequired')):
+    required_paths = ('applicationId', 'oecId', 'platformCreatorId', 'pid', 'campaignId', 'status') + (() if policy else ('paymentRequired',))
+    if any(not isinstance(paths.get(key), str) or not paths[key] for key in required_paths):
         raise CycleError('sample_contract_fields_missing')
     statuses = contract.get('statusMap')
     if not isinstance(statuses, dict) or not statuses or not all(isinstance(k, str) and v in
             {'pending', 'seller_pending', 'approved', 'rejected', 'shipped', 'completed', 'cancelled'} for k, v in statuses.items()):
         raise CycleError('sample_contract_status_missing')
-    if not {'pending', 'approved'} <= set(statuses.values()):
+    if 'pending' not in statuses.values() or not {'approved', 'shipped', 'completed'}.intersection(statuses.values()):
         raise CycleError('sample_contract_status_missing')
-    if contract.get('paymentFreeValue') is not False:
+    if policy is None and contract.get('paymentFreeValue') is not False:
         raise CycleError('sample_contract_payment_unverified')
     body = contract.get('readBody')
     if not isinstance(body, dict) or any(k not in {'search_params', 'order_params', 'page_size', 'cur_page'} for k in body):
@@ -119,6 +124,64 @@ def validate_contract(contract):
     if contract.get('reviewSuccessCode') != 0 or type(contract.get('reviewSuccessCode')) is not int:
         raise CycleError('sample_contract_review_unverified')
     return deepcopy(contract)
+
+
+def build_canary_contract(read_contract, cost_policy, *, pending_ui_evidence_ref, request_candidate_ref):
+    """Arm the documented one-shot request without claiming review/lifecycle success."""
+    from lib.sample_cost_policy import validate_cost_policy
+    read = validate_read_contract(read_contract)
+    result = deepcopy(read)
+    result.update(schema=CANARY_CONTRACT_SCHEMA, statusMap={'10': 'pending'},
+                  costPolicy=validate_cost_policy(cost_policy),
+                  request={'method': 'POST', 'path': REVIEW, 'fields': ['campaign_id', 'creator_id', 'product_id', 'is_approved'],
+                           'requestPayment': 'omit'},
+                  evidence=read['evidence'] | {'pendingUi': pending_ui_evidence_ref, 'requestCandidate': request_candidate_ref})
+    return validate_canary_contract(result)
+
+
+def validate_canary_contract(contract, *, binding=None):
+    if not isinstance(contract, dict) or set(contract) != {'schema', 'market', 'readScope', 'evidence', 'recordPaths', 'readBody', 'statusCountersPath', 'binding', 'statusMap', 'costPolicy', 'request'} or contract.get('schema') != CANARY_CONTRACT_SCHEMA:
+        raise CycleError('sample_canary_contract_invalid')
+    if contract.get('statusMap') != {'10': 'pending'} or contract.get('request') != {
+            'method': 'POST', 'path': REVIEW, 'fields': ['campaign_id', 'creator_id', 'product_id', 'is_approved'], 'requestPayment': 'omit'}:
+        raise CycleError('sample_canary_unobserved_semantics')
+    evidence = contract.get('evidence')
+    if not isinstance(evidence, dict) or set(evidence) != {'records', 'creatorIdentity', 'pendingUi', 'requestCandidate'} or any(not isinstance(ref, str) or not ref for ref in evidence.values()):
+        raise CycleError('sample_canary_evidence_missing')
+    read = {key: deepcopy(value) for key, value in contract.items() if key not in {'statusMap', 'costPolicy', 'request'}}
+    read['schema'] = READ_CONTRACT_SCHEMA
+    read['evidence'] = {key: evidence[key] for key in ('records', 'creatorIdentity')}
+    validate_read_contract(read, binding=binding)
+    from lib.sample_cost_policy import validate_cost_policy
+    validate_cost_policy(contract['costPolicy'])
+    return deepcopy(contract)
+
+
+def validate_execution_contract(contract, *, binding=None):
+    return validate_canary_contract(contract, binding=binding) if isinstance(contract, dict) and contract.get('schema') == CANARY_CONTRACT_SCHEMA else validate_contract(contract)
+
+
+def validate_any_contract(contract, *, binding=None):
+    return validate_read_contract(contract, binding=binding) if isinstance(contract, dict) and contract.get('schema') == READ_CONTRACT_SCHEMA else validate_execution_contract(contract, binding=binding)
+
+
+def record_contract_fingerprint(contract):
+    # A frozen user cost policy is execution authority, not a different platform row schema.
+    value = deepcopy(contract)
+    if value and value.get('schema') == CONTRACT_SCHEMA:
+        value.pop('costPolicy', None)
+    return digest(value)
+
+
+def require_current_cost_policy(root, contract):
+    from lib.sample_cost_policy import load_cost_policy, validate_cost_policy
+    frozen = contract.get('costPolicy') if contract else None
+    if frozen is not None:
+        validate_cost_policy(frozen)
+    current = load_cost_policy(root) if root is not None else None
+    if current != frozen:
+        raise CycleError('sample_cost_policy_changed')
+    return frozen
 
 
 def _path(row, path):
@@ -146,22 +209,23 @@ def normalize_record(raw, *, contract=None):
         raise CycleError('sample_application_id_missing')
     status = _path(raw, paths.get('status', ''))
     writable = bool(contract and contract.get('schema') == CONTRACT_SCHEMA)
+    canary = bool(contract and contract.get('schema') == CANARY_CONTRACT_SCHEMA)
     payment = _path(raw, paths.get('paymentRequired', '')) if writable else None
     return {'applicationId': application, 'oecId': ident('oecId'), 'pid': ident('pid'),
             'campaignId': ident('campaignId'), 'platformCreatorId': ident('platformCreatorId') if contract else None,
-            'state': (contract or {}).get('statusMap', {}).get(str(status), 'unknown') if writable else 'unknown',
+            'state': (contract or {}).get('statusMap', {}).get(str(status), 'unknown') if writable or canary else 'unknown',
             'nativeStatus': status if type(status) in (str, int) else None,
             'paymentRequired': payment if type(payment) is bool else None,
-            'contractFingerprint': digest(contract) if contract else None}
+            'contractFingerprint': record_contract_fingerprint(contract) if contract else None}
 
 
-def review_payload(application):
+def review_payload(application, policy=None):
     """Only the observed platform creator ID is allowed; never substitute OEC."""
     values = [application.get(key) for key in ('campaignId', 'platformCreatorId', 'pid')]
     if any(not isinstance(v, str) or not v.isascii() or not v.isdigit() or int(v) <= 0 for v in values):
         raise CycleError('sample_review_identity_unverified')
-    if application.get('paymentRequired') is not False:
-        raise CycleError('sample_payment_requires_handling')
+    from lib.sample_cost_policy import payment_basis
+    payment_basis(application, policy)
     return dict(zip(('campaign_id', 'creator_id', 'product_id'), values)) | {'is_approved': True}
 
 
@@ -171,9 +235,10 @@ class SampleAdapter:
         self.transport = transport
         self.report = report
         if frozen is not None:
-            validate_contract(contract)
-        self.contract = (validate_read_contract(contract) if contract.get('schema') == READ_CONTRACT_SCHEMA else
-                         validate_contract(contract)) if contract is not None else None
+            validate_execution_contract(contract)
+        self.contract = validate_any_contract(contract) if contract is not None else None
+        if frozen is not None and self.contract.get('schema') == CANARY_CONTRACT_SCHEMA and (set(frozen) != set(self.contract['request']['fields']) or frozen.get('is_approved') is not True or any(not isinstance(frozen.get(key), str) or not frozen[key].isascii() or not frozen[key].isdigit() for key in ('campaign_id', 'creator_id', 'product_id'))):
+            raise CycleError('sample_canary_payload_invalid')
         self.frozen = deepcopy(frozen)
         self.stopped = stopped
         self.used = False
@@ -201,7 +266,7 @@ class SampleAdapter:
         if counters is not None and (not isinstance(counters, dict) or any(not isinstance(k, str) or not k or
                 type(v) is not int or v < 0 for k, v in counters.items())):
             raise CycleError('sample_records_response_invalid')
-        if self.contract and self.contract.get('schema') == READ_CONTRACT_SCHEMA and \
+        if self.contract and self.contract.get('schema') in {READ_CONTRACT_SCHEMA, CANARY_CONTRACT_SCHEMA} and \
                 (counters is None or sum(counters.values()) != total):
             raise CycleError('sample_records_counters_incomplete')
         self.report['readRequests'] = self.report.get('readRequests', 0) + 1
@@ -264,7 +329,7 @@ class SampleAdapter:
     def approve_once(self, payload):
         if self.stopped():
             raise CycleError('sample_stopped')
-        if not self.contract or self.contract.get('schema') != CONTRACT_SCHEMA or self.frozen is None or payload != self.frozen or self.used:
+        if not self.contract or self.contract.get('schema') not in {CONTRACT_SCHEMA, CANARY_CONTRACT_SCHEMA} or self.frozen is None or payload != self.frozen or self.used:
             raise CycleError('sample_review_outside_intent')
         # Claim the attempt before transport entry: network failure is never replayable.
         self.used = True
@@ -276,6 +341,8 @@ class SampleAdapter:
                    'evidenceRef': 'sample-review:' + digest(result.payload)}
         if result.ambiguous or result.http_status != 200 or result.has_turing or result.system_error_3 or type(result.code) is not int:
             return receipt | {'status': 'unknown'}
+        if self.contract.get('schema') == CANARY_CONTRACT_SCHEMA:
+            return receipt | {'status': 'accepted' if result.code == 0 else 'unknown'}
         if result.code != self.contract['reviewSuccessCode']:
             return receipt | {'status': 'rejected'}
         # A success response is an agency decision receipt. Only a lifecycle read
@@ -314,7 +381,7 @@ def _account_sample_session(root, market, account_name, report, *, contract=None
     if catalog_read_account(root, account_name, market) != account_name:
         raise CycleError('sample_account_unverified')
     if frozen is not None:
-        contract = validate_contract(contract)
+        contract = validate_execution_contract(contract)
     from lib.legacy_runtime import configure_vendored_bdhub
     configure_vendored_bdhub(root=root)
     from bdhub import scheduled_relogin
@@ -331,11 +398,13 @@ def _account_sample_session(root, market, account_name, report, *, contract=None
                'institutionFingerprint': digest(str(identity.im_market_partner_id)), 'identitySha256': before}
     if expected_binding is not None and binding != expected_binding:
         raise CycleError('sample_original_identity_changed')
-    if contract is not None and contract.get('schema') == READ_CONTRACT_SCHEMA:
-        contract = validate_read_contract(contract, binding=binding)
+    if contract is not None:
+        contract = validate_any_contract(contract, binding=binding)
     elif contract is None:
         contract = observed_read_contract(root, binding)
     def check():
+        if frozen is not None:
+            require_current_cost_policy(root, contract)
         if stopped():
             raise CycleError('sample_stopped')
         if scheduled_relogin.maintenance_due(account, initialize=False, ignore_retry_throttle=True):

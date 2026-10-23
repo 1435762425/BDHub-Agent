@@ -5,14 +5,18 @@ and code deployment cannot grant that authorization. Unknown intents are read on
 """
 from __future__ import annotations
 
+from copy import deepcopy
 import fcntl
 import json
 from pathlib import Path
 import uuid
 
 from lib.second_cycle import CycleError, CycleStore, digest, encoded, epoch
-from lib.sample_transport import (READ_CONTRACT_SCHEMA, review_payload, sample_session,
-                                 validate_contract, validate_read_contract)
+from lib.sample_transport import (READ_CONTRACT_SCHEMA, CANARY_CONTRACT_SCHEMA, build_canary_contract,
+                                 review_payload, sample_session, validate_contract, validate_read_contract,
+                                 validate_canary_contract, validate_execution_contract, validate_any_contract,
+                                 require_current_cost_policy, record_contract_fingerprint)
+from lib.sample_cost_policy import load_cost_policy, payment_basis
 
 SCHEMA = '''
 CREATE TABLE IF NOT EXISTS sample_capability(market TEXT NOT NULL,account_name TEXT NOT NULL,state TEXT NOT NULL,evidence_ref TEXT NOT NULL,observed REAL NOT NULL,binding TEXT,contract TEXT,PRIMARY KEY(market,account_name));
@@ -55,12 +59,13 @@ def authorize(store, market, enabled, event_id, *, root=None, expected_revision=
 
 
 def record_capability(store, market, account_name, state, evidence_ref, *, contract=None, binding=None):
-    """Store verified canary evidence; no approval authorization is created here."""
+    """Store the account-bound protocol phase; never create approval authorization."""
     require_market(market)
-    if state not in {'unknown', 'readonly', 'verified', 'blocked'} or not isinstance(evidence_ref, str) or not evidence_ref:
+    if state not in {'unknown', 'readonly', 'canary', 'verified', 'blocked'} or not isinstance(evidence_ref, str) or not evidence_ref:
         raise CycleError('sample_capability_invalid')
-    if state in {'verified', 'readonly'}:
-        contract = validate_contract(contract) if state == 'verified' else validate_read_contract(contract, binding=binding)
+    if state in {'verified', 'readonly', 'canary'}:
+        validator = {'verified': validate_contract, 'readonly': validate_read_contract, 'canary': validate_canary_contract}[state]
+        contract = validator(contract) if state == 'verified' else validator(contract, binding=binding)
         if not isinstance(binding, dict) or binding.get('market') != market or binding.get('account') != account_name or \
                 not binding.get('institutionFingerprint') or not binding.get('identitySha256'):
             raise CycleError('sample_capability_binding_missing')
@@ -68,6 +73,67 @@ def record_capability(store, market, account_name, state, evidence_ref, *, contr
     with store.tx():
         store.db.execute('INSERT INTO sample_capability VALUES(?,?,?,?,?,?,?) ON CONFLICT(market,account_name) DO UPDATE SET state=excluded.state,evidence_ref=excluded.evidence_ref,observed=excluded.observed,binding=excluded.binding,contract=excluded.contract',
                          (market, account_name, state, evidence_ref, store.clock(), encoded(binding) if binding else None, encoded(contract) if contract else None))
+
+
+def arm_canary(store, root, market, account_name, *, pending_ui_evidence_ref, request_candidate_ref):
+    """Register one-shot capability; existing page approval authorization stays separate."""
+    require_market(market)
+    ensure_schema(store)
+    current = capability(store, market, account_name)
+    if current['state'] == 'canary':
+        validate_canary_contract(current['contract'], binding=current['binding'])
+        require_current_cost_policy(root, current['contract'])
+        return current | {'duplicate': True}
+    if current['state'] != 'readonly':
+        raise CycleError('sample_canary_requires_read_contract')
+    policy = load_cost_policy(root)
+    contract = build_canary_contract(current['contract'], policy, pending_ui_evidence_ref=pending_ui_evidence_ref,
+                                     request_candidate_ref=request_candidate_ref)
+    record_capability(store, market, account_name, 'canary', pending_ui_evidence_ref,
+                      contract=contract, binding=current['binding'])
+    return capability(store, market, account_name) | {'duplicate': False}
+
+
+def promote_canary(root, market, account_name, verified_contract, *, transport_factory=None, stopped=lambda: False):
+    """Promote only after an accepted canary and a real exact terminal lifecycle read.
+
+    The supplied full contract must cite newly obtained review/lifecycle evidence;
+    the bootstrap contract itself never invents those missing semantics.
+    """
+    require_market(market)
+    verified = validate_contract(verified_contract)
+    root = Path(root)
+    factory = transport_factory or sample_session
+    with (root / f'var/sample-review-{market}.lock').open('a') as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        with CycleStore(root / 'var/second-cycle.sqlite') as store:
+            ensure_schema(store)
+            current = capability(store, market, account_name)
+            if current['state'] != 'canary':
+                raise CycleError('sample_canary_not_armed')
+            validate_canary_contract(current['contract'], binding=current['binding'])
+            _require_lifecycle_extension(current['contract'], verified)
+            require_current_cost_policy(root, current['contract'])
+            started = _started_canary(store, market, current['binding'])
+            if not started:
+                raise CycleError('sample_canary_not_started')
+            intent = _intent(store, started['id'])
+            receipt = json.loads(intent['receipt']) if intent['receipt'] else {}
+            if receipt.get('http') != 200 or type(receipt.get('code')) is not int or receipt['code'] != 0:
+                raise CycleError('sample_canary_review_unconfirmed')
+            verified['costPolicy'] = deepcopy(current['contract']['costPolicy'])
+            report = {'platformWrites': 0}
+            with factory(root, market, account_name, report, contract=verified,
+                         expected_binding=json.loads(intent['binding']), stopped=stopped) as reader:
+                records, _, evidence = _pages(reader)
+            original = json.loads(intent['application'])
+            matches = [row for row in records if _identity(row) == _identity(original)]
+            if len(matches) != 1 or matches[0].get('nativeStatus') == original.get('nativeStatus') or matches[0].get('state') not in {'approved', 'shipped', 'completed'}:
+                return report | {'state': 'waiting_canary_verification', 'reason': 'sample_canary_lifecycle_unconfirmed', 'intentId': intent['id']}
+            _confirm_from_records(store, intent, matches, evidence, lifecycle_contract=verified)
+            record_capability(store, market, account_name, 'verified', evidence,
+                              contract=verified, binding=current['binding'])
+            return report | {'state': 'verified', 'intentId': intent['id']}
 
 
 def capability(store, market, account_name):
@@ -101,16 +167,16 @@ def store_records(store, market, account_name, records, *, observed_at=None, evi
         binding_fingerprint = contract_fingerprint = None
         if complete and (binding is not None or contract is not None):
             current = capability(store, market, account_name)
-            if current['state'] not in {'verified', 'readonly'} or current.get('binding') != binding or current.get('contract') != contract or at < current['observed']:
+            if current['state'] not in {'verified', 'readonly', 'canary'} or current.get('binding') != binding or current.get('contract') != contract or at < current['observed']:
                 raise CycleError('sample_sync_provenance_mismatch')
-            if current['state'] == 'readonly':
-                validate_read_contract(contract, binding=binding)
+            if current['state'] in {'readonly', 'canary'}:
+                validate_any_contract(contract, binding=binding)
                 if read_scope != contract['readScope']:
                     raise CycleError('sample_sync_provenance_mismatch')
             else:
                 validate_contract(contract)
             binding_fingerprint, contract_fingerprint = digest(binding), digest(contract)
-            if current['state'] == 'readonly' and any(row.get('contractFingerprint') != contract_fingerprint or
+            if current['state'] in {'readonly', 'canary'} and any(row.get('contractFingerprint') != record_contract_fingerprint(contract) or
                     any(not isinstance(row.get(key), str) or not row[key].isascii() or not row[key].isdigit() or int(row[key]) <= 0
                         for key in ('applicationId', 'platformCreatorId', 'oecId', 'pid', 'campaignId')) for row in records):
                 raise CycleError('sample_sync_provenance_mismatch')
@@ -168,12 +234,12 @@ def read_snapshot(store, market='br', *, account_name=None):
                             (market, account_name) if account_name else (market,)).fetchall()
     for row in rows:
         current = capability(store, market, row['account_name'])
-        if current['state'] not in {'readonly', 'verified'} or row['observed'] < current['observed'] or \
+        if current['state'] not in {'readonly', 'verified', 'canary'} or row['observed'] < current['observed'] or \
                 row['binding_fingerprint'] != digest(current.get('binding')) or row['contract_fingerprint'] != digest(current.get('contract')):
             continue
         try:
-            if current['state'] == 'readonly':
-                validate_read_contract(current['contract'], binding=current['binding'])
+            if current['state'] in {'readonly', 'canary'}:
+                validate_any_contract(current['contract'], binding=current['binding'])
             else:
                 validate_contract(current['contract'])
             counters = json.loads(row['platform_counts']) if row['platform_counts'] else None
@@ -285,7 +351,7 @@ def sync(root, market='br', *, transport_factory=None, stopped=lambda: False):
     with CycleStore(root / 'var/second-cycle.sqlite') as store:
         ensure_schema(store)
         cap = capability(store, market, account)
-        contract = cap.get('contract') if cap['state'] in {'verified', 'readonly'} else None
+        contract = cap.get('contract') if cap['state'] in {'verified', 'readonly', 'canary'} else None
         summary = {}
         with factory(root, market, account, report, contract=contract, expected_binding=cap.get('binding') if contract else None, stopped=stopped) as adapter:
             rows, complete, ref = _pages(adapter, summary=summary)
@@ -299,7 +365,7 @@ def sync(root, market='br', *, transport_factory=None, stopped=lambda: False):
                 record_capability(store, market, account, 'readonly', ref, contract=actual_contract, binding=binding)
             contract = actual_contract
         elif actual_contract:
-            validate_contract(actual_contract)
+            validate_any_contract(actual_contract, binding=binding)
         result = store_records(store, market, account, rows, evidence_ref=ref, complete=complete, binding=binding, contract=actual_contract,
                                read_scope=summary.get('readScope'),
                                platform_counts=summary.get('platformCounts') if summary.get('readScope') == 'all_states' else None)
@@ -337,6 +403,16 @@ def _identity(application):
     return tuple(application.get(k) for k in ('applicationId', 'oecId', 'platformCreatorId', 'pid', 'campaignId'))
 
 
+def _started_canary(store, market, binding, *, exclude_id=None):
+    return store.db.execute("SELECT id,state FROM sample_review_intent WHERE market=? AND binding=? AND started IS NOT NULL AND json_extract(contract,'$.schema')=? AND id<>? LIMIT 1",
+                            (market, encoded(binding), CANARY_CONTRACT_SCHEMA, exclude_id or '')).fetchone()
+
+
+def _require_canary_slot(store, market, contract, binding, *, exclude_id=None):
+    if contract.get('schema') == CANARY_CONTRACT_SCHEMA and _started_canary(store, market, binding, exclude_id=exclude_id):
+        raise CycleError('sample_canary_already_started')
+
+
 def _prepare(store, root, market, account, application, binding, *, contract, quota_proof, assessor=_assess):
     """Atomic sample reservation and duplicate intent protection, using current domain rules."""
     id = 'sample-review-' + digest([market, application['applicationId']])[:32]
@@ -352,9 +428,11 @@ def _prepare(store, root, market, account, application, binding, *, contract, qu
             raise CycleError('sample_approval_paused')
         if application.get('state') != 'pending':
             raise CycleError('sample_application_not_pending')
-        if application.get('paymentRequired') is not False:
-            raise CycleError('sample_payment_requires_handling')
-        payload = review_payload(application)
+        validate_execution_contract(contract, binding=binding)
+        policy = require_current_cost_policy(root, contract)
+        payment_basis(application, policy, now=store.clock())
+        _require_canary_slot(store, market, contract, binding, exclude_id=id)
+        payload = review_payload(application, policy)
         assessed = assessor(store, root, market, application)
         if not assessed.get('eligible'):
             raise CycleError(assessed.get('reason') or 'sample_application_ineligible')
@@ -405,12 +483,16 @@ def _quota_capacity(store, market, application, proof, *, exclude_id):
 def _begin(store, intent, application, *, quota_proof=None, root=None, assessor=None, stopped=lambda: False):
     with store.tx():
         current = _intent(store, intent['id'])
-        if current['state'] != 'ready':
+        if current['state'] != 'ready' or current['started'] is not None:
             raise CycleError('sample_intent_already_attempted')
         if stopped() or not _enabled(store, intent['market']):
             raise CycleError('sample_approval_paused')
         if application != json.loads(current['application']):
             raise CycleError('sample_application_changed')
+        contract = json.loads(current['contract'])
+        policy = require_current_cost_policy(root, contract)
+        payment_basis(application, policy, now=store.clock())
+        _require_canary_slot(store, intent['market'], contract, json.loads(current['binding']), exclude_id=current['id'])
         if assessor is not None:
             assessed = assessor(store, root, intent['market'], application)
             if not assessed.get('eligible') or assessed.get('deliveryId') != current['delivery_id'] or digest(assessed.get('offer')) != digest(json.loads(current['offer'])):
@@ -425,11 +507,24 @@ def _begin(store, intent, application, *, quota_proof=None, root=None, assessor=
     return _intent(store, intent['id'])
 
 
-def _confirm_from_records(store, intent, rows, evidence_ref):
+def _require_lifecycle_extension(frozen, verified):
+    validate_contract(verified)
+    if frozen.get('schema') == CANARY_CONTRACT_SCHEMA and (
+            any(verified['recordPaths'].get(key) != value for key, value in frozen['recordPaths'].items()) or
+            any(verified['statusMap'].get(key) != value for key, value in frozen['statusMap'].items())):
+        raise CycleError('sample_canary_lifecycle_contract_mismatch')
+
+
+def _confirm_from_records(store, intent, rows, evidence_ref, *, lifecycle_contract=None):
     original = json.loads(intent['application'])
     matches = [r for r in rows if r.get('applicationId') == original['applicationId']]
     outcome = 'unknown'
-    if len(matches) == 1 and _identity(matches[0]) == _identity(original):
+    frozen_contract = json.loads(intent['contract'])
+    lifecycle_known = frozen_contract.get('schema') != CANARY_CONTRACT_SCHEMA
+    if lifecycle_contract is not None:
+        _require_lifecycle_extension(frozen_contract, lifecycle_contract)
+        lifecycle_known = True
+    if lifecycle_known and len(matches) == 1 and _identity(matches[0]) == _identity(original):
         stage = matches[0].get('state')
         if stage in {'approved', 'shipped', 'completed'}:
             outcome = 'approved'
@@ -449,7 +544,7 @@ def _passive_confirm(store, market, records, evidence_ref):
     current = {row['applicationId']: row for row in records}
     for row in store.db.execute("SELECT * FROM sample_review_intent WHERE market=? AND state IN ('inflight','accepted','unknown','quarantined_unknown','seller_pending')", (market,)).fetchall():
         actual = current.get(row['application_id'])
-        if actual and _identity(actual) == _identity(json.loads(row['application'])) and actual.get('state') in {'approved', 'shipped', 'completed', 'seller_pending', 'rejected', 'cancelled'} and actual.get('contractFingerprint') == digest(json.loads(row['contract'])):
+        if actual and _identity(actual) == _identity(json.loads(row['application'])) and actual.get('state') in {'approved', 'shipped', 'completed', 'seller_pending', 'rejected', 'cancelled'} and actual.get('contractFingerprint') == record_contract_fingerprint(json.loads(row['contract'])):
             _confirm_from_records(store, dict(row), [actual], evidence_ref)
 
 
@@ -487,7 +582,7 @@ def reconcile(store, root, intent, *, transport_factory=None, stopped=lambda: Fa
                     'intentId': intent['id'], 'nextCheckAt': last_started + MIN_RECONCILE_INTERVAL, 'platformWrites': 0}
     report = {'platformWrites': 0}
     try:
-        contract = validate_contract(json.loads(intent['contract']))
+        contract = validate_execution_contract(json.loads(intent['contract']))
         with factory(root, intent['market'], intent['account_name'], report, contract=contract,
                      expected_binding=json.loads(intent['binding']), stopped=stopped) as adapter:
             rows, _, evidence = _pages(adapter)
@@ -535,12 +630,21 @@ def run_one(root, market='br', *, transport_factory=None, stopped=lambda: False,
                 return {'state': 'paused', 'platformWrites': 0}
             account = _account(root, market)
             cap = capability(store, market, account)
-            if cap['state'] != 'verified':
+            if cap['state'] not in {'verified', 'canary'}:
                 return {'state': 'capability_unverified', 'reason': 'sample_review_contract_unverified', 'platformWrites': 0}
-            validate_contract(cap['contract'])
+            contract = validate_execution_contract(cap['contract'], binding=cap['binding'])
+            if cap['state'] == 'canary':
+                require_current_cost_policy(root, contract)
+                if _started_canary(store, market, cap['binding']):
+                    return {'state': 'waiting_canary_verification', 'reason': 'sample_canary_already_started', 'platformWrites': 0}
+            else:
+                policy = load_cost_policy(root)
+                if policy is not None:
+                    contract['costPolicy'] = policy
+                require_current_cost_policy(root, contract)
             report = {'platformWrites': 0}
             # Read application facts and reserve the exact intent before opening a write scope.
-            with factory(root, market, account, report, contract=cap['contract'], expected_binding=cap['binding'], stopped=stopped) as reader:
+            with factory(root, market, account, report, contract=contract, expected_binding=cap['binding'], stopped=stopped) as reader:
                 rows, complete, evidence = _pages(reader)
                 store_records(store, market, account, rows, evidence_ref=evidence, complete=complete)
                 _settle_unsubmitted(store, market, rows, complete=complete)
@@ -550,13 +654,12 @@ def run_one(root, market='br', *, transport_factory=None, stopped=lambda: False,
                     if application.get('state') != 'pending':
                         continue
                     try:
-                        if application.get('paymentRequired') is not False:
-                            raise CycleError('sample_payment_requires_handling')
+                        payment_basis(application, contract.get('costPolicy'), now=store.clock())
                         assessed = assessor(store, root, market, application)
                         if not assessed.get('eligible'):
                             raise CycleError(assessed.get('reason') or 'sample_application_ineligible')
                         quota_proof = reader.refresh_sample_quota(assessed['offer'])
-                        selected, created = _prepare(store, root, market, account, application, reader.binding, contract=cap['contract'], quota_proof=quota_proof, assessor=assessor)
+                        selected, created = _prepare(store, root, market, account, application, reader.binding, contract=contract, quota_proof=quota_proof, assessor=assessor)
                     except (CycleError, ValueError) as error:
                         _cancel_ready(store, market, application['applicationId'], str(error))
                         waiting.append({'applicationId': application['applicationId'], 'reason': str(error)})
@@ -566,10 +669,10 @@ def run_one(root, market='br', *, transport_factory=None, stopped=lambda: False,
                         continue
                     break
             if selected is None:
-                return report | {'state': 'idle', 'waiting': waiting}
+                return report | {'state': 'waiting_eligible_application' if cap['state'] == 'canary' else 'idle', 'reason': 'sample_no_eligible_first_application' if cap['state'] == 'canary' else None, 'waiting': waiting}
             # Reacquire the same account with a frozen write scope. The second read
             # closes the gap between the readonly session and the write session.
-            with factory(root, market, account, report, contract=cap['contract'], frozen=json.loads(selected['payload']),
+            with factory(root, market, account, report, contract=json.loads(selected['contract']), frozen=json.loads(selected['payload']),
                          expected_binding=json.loads(selected['binding']), stopped=lambda: stopped() or not _enabled(store, market)) as writer:
                 fresh, _, evidence = _pages(writer)
                 store_records(store, market, account, fresh, evidence_ref=evidence, complete=False)
