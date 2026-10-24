@@ -409,7 +409,7 @@ def conversation_detail(root,store,cid,market='it',before=None):
                       "WHERE e.plan_id=? AND e.cid=? AND e.kind='ourMessages' LIMIT 1",(plan,cid)).fetchone()
   if not observed:raise CycleError('conversation_missing')
   creator=observed[0]
- rel=db.execute('SELECT * FROM relationship WHERE plan_id=? AND creator_id=?',(plan,creator)).fetchone();handles=_handles(root,market)
+ rel=db.execute('SELECT * FROM relationship WHERE plan_id=? AND creator_id=?',(plan,creator)).fetchone();handles=_handles(root,market,[creator])
  timeline=[]
  for row in db.execute('SELECT * FROM inbound_turn WHERE plan_id=? AND cid=? ORDER BY coalesce(occurred_ms,observed_at*1000),message_id',(plan,cid)):
   timeline.append({'id':row['turn_id'],'direction':'inbound','kind':row['format'],'text':row['text'],'occurredAt':(row['occurred_ms']/1000 if row['occurred_ms'] else row['observed_at']),'status':'received','source':'creator'})
