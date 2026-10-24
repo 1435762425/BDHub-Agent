@@ -1,10 +1,10 @@
-import tempfile,unittest,sys
+import os,subprocess,tempfile,time,unittest,sys
 from pathlib import Path
 
 ROOT=Path(__file__).resolve().parents[1];sys.path.insert(0,str(ROOT/'scripts'))
 from lib.schema_migrations import apply_database  # noqa:E402
 from lib.second_cycle import CycleError,CycleStore  # noqa:E402
-from lib.workflow_resources import assert_current,assert_owned,claim,heartbeat,record_late_result,recover_expired,release  # noqa:E402
+from lib.workflow_resources import adopt_worker,assert_current,assert_owned,claim,heartbeat,record_late_result,recover_expired,release  # noqa:E402
 
 class WorkflowResourceTests(unittest.TestCase):
  def setUp(self):
@@ -61,6 +61,39 @@ class WorkflowResourceTests(unittest.TestCase):
    claim(self.store,'stage-1','scheduler-owner-b',[('supply:acc9',1)],worker_pid=99999)
   self.assertEqual(recover_expired(self.store,pid_alive=lambda _pid:False),['stage-0'])
   claim(self.store,'stage-1','scheduler-owner-b',[('supply:acc9',1)],worker_pid=99999)
+
+ def test_child_started_after_old_heartbeat_retains_expired_slots_until_it_exits(self):
+  self.now[0]=time.time()-30
+  ticket=claim(self.store,'stage-0','scheduler-owner-a',[('platform:global',1)],lease_seconds=5,worker_pid=os.getpid())
+  child=subprocess.Popen([sys.executable,'-c','import time; time.sleep(30)'])
+  try:
+   self.now[0]=time.time()
+   adopt_worker(self.store,'stage-0','scheduler-owner-a',ticket['fence'],child.pid)
+   self.assertEqual(recover_expired(self.store),[])
+   self.assertIsNone(child.poll())
+   with self.assertRaisesRegex(CycleError,'resource_busy'):
+    claim(self.store,'stage-1','scheduler-owner-b',[('platform:global',1)])
+   row=self.store.db.execute("SELECT heartbeat_at,lease_until FROM workflow_stage_claim WHERE stage_run_id='stage-0'").fetchone()
+   self.assertEqual(row['lease_until'],ticket['leaseUntil'])
+   self.assertEqual(row['heartbeat_at'],self.now[0])
+  finally:
+   child.terminate();child.wait(timeout=5)
+  self.assertEqual(recover_expired(self.store),['stage-0'])
+  replacement=claim(self.store,'stage-0','scheduler-owner-b',[('platform:global',1)])
+  self.assertGreater(replacement['fence'],ticket['fence'])
+
+ def test_adopting_a_process_rejects_stale_fences_and_invalid_pids(self):
+  ticket=claim(self.store,'stage-0','scheduler-owner-a',[('platform:global',1)],worker_pid=999)
+  self.now[0]+=2
+  for owner,fence in [('scheduler-owner-b',ticket['fence']),('scheduler-owner-a',ticket['fence']+1)]:
+   with self.assertRaisesRegex(CycleError,'fence_stale'):
+    adopt_worker(self.store,'stage-0',owner,fence,os.getpid())
+  for pid in (0,-1,True,'123'):
+   with self.assertRaisesRegex(CycleError,'worker_invalid'):
+    adopt_worker(self.store,'stage-0','scheduler-owner-a',ticket['fence'],pid)
+  row=self.store.db.execute("SELECT worker_pid,heartbeat_at FROM workflow_stage_claim WHERE stage_run_id='stage-0'").fetchone()
+  self.assertEqual(tuple(row),(999,100.0))
+  self.assertEqual(self.store.db.execute('SELECT heartbeat_at FROM workflow_resource_slot').fetchone()[0],100.0)
 
 
  def test_a_lapsed_but_unrecovered_fence_still_settles_and_a_recovered_one_keeps_evidence(self):

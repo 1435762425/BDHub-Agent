@@ -114,9 +114,19 @@ def record_late_result(store,stage_run_id,owner_id,fence,result):
                    (stage_run_id,fence,owner_id,json.dumps(result,ensure_ascii=False,sort_keys=True,default=str),store.clock()))
 
 def adopt_worker(store,stage_run_id,owner_id,fence,pid):
- """Point the claim back at the supervising process once a child has exited."""
+ """Hand this fence to a process and record when that process was observed.
+
+ Recovery compares the PID's start time with heartbeat_at to reject reused PIDs.
+ A newly spawned child may start after the previous heartbeat, so both fields
+ must change together before that child is allowed to run. The lease stays as-is.
+ """
+ _required(store)
+ if type(pid) is not int or pid<=0:raise CycleError('workflow_resource_worker_invalid')
+ now=store.clock()
  with store.tx():
-  store.db.execute('UPDATE workflow_stage_claim SET worker_pid=? WHERE stage_run_id=? AND owner_id=? AND fence=?',(pid,stage_run_id,owner_id,fence))
+  store.db.execute('UPDATE workflow_stage_claim SET worker_pid=?,heartbeat_at=? WHERE stage_run_id=? AND owner_id=? AND fence=?',(pid,now,stage_run_id,owner_id,fence))
+  if store.db.execute('SELECT changes()').fetchone()[0]!=1:raise CycleError('workflow_stage_fence_stale')
+  store.db.execute('UPDATE workflow_resource_slot SET heartbeat_at=? WHERE owner_stage_run_id=? AND fence=?',(now,stage_run_id,fence))
 
 def lend_slot(store,stage_run_id,owner_id,fence,key):
  """Give one held slot back while this stage waits on something that does not need it (H14).

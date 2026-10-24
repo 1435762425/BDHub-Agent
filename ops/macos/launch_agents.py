@@ -31,11 +31,13 @@ def ensure_scheduler(root, state=None, start=None):
     if (root / 'var/operations-scheduler.stop').exists():
         return {'state': 'operator_stopped'}
     try:
-        current = start(root)
+        current = start(root, preserve_stop=True)
     except ValueError as error:
         if str(error) != 'scheduler_already_running':
             raise
         return {'state': 'running'}
+    if current.get('reason') == 'operator_stopped':
+        return {'state': 'operator_stopped'}
     return {'state': 'started', 'pid': current['pid']}
 
 

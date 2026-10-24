@@ -191,6 +191,75 @@ class ContinuousSendTests(unittest.TestCase):
         self.assertEqual(read.call_args.args[3],'card')
         self.assertEqual(self.store.db.execute("SELECT state FROM cycle_delivery_part WHERE delivery_id='delivery-unknown' AND kind='text'").fetchone()[0],'cancelled')
 
+    def test_ordinary_tick_reconciles_submitted_card_while_stopped_outside_window(self):
+        base=candidate('c1','1729480061238089885')
+        base.update(executionMode='continuous-v1',conversationId='88',senderBindingHash='a'*64)
+        with self.store.tx():
+            self.store.db.execute('INSERT INTO cycle_delivery VALUES(?,?,?,?,?,?,?,?,?,?)',
+                ('delivery-stopped',self.plan,'c1',base['oecId'],base['pid'],base['source']['sourceId'],
+                 json.dumps(base),NOW,NOW+1800,'unknown'))
+            self.store.db.execute("INSERT INTO cycle_delivery_part(delivery_id,kind,request_ref,state) VALUES('delivery-stopped','card','card-ref','unknown')")
+            self.store.db.execute("INSERT INTO cycle_delivery_part(delivery_id,kind,request_ref,state) VALUES('delivery-stopped','text','text-ref','ready')")
+        mutate_control(self.store,self.root,action='stop',request_id='continuous-stop-readback',expected_revision=0)
+        before=control(self.store,self.root)
+        with patch('lib.delivery_reconciliation.read_original',return_value={
+                'status':'confirmed','messageId':'123','evidenceRef':'original-read'}) as read, \
+             patch.object(continuous,'window_state',side_effect=AssertionError('readback_must_ignore_window')), \
+             patch.object(continuous,'execute',side_effect=AssertionError('dispatch_must_not_run')), \
+             patch.object(continuous,'_candidate',side_effect=AssertionError('candidate_must_not_run')):
+            result=continuous.execute_once(self.root,self.store)
+        self.assertEqual(result['stopReason'],'partial_delivery')
+        read.assert_called_once()
+        self.assertEqual(control(self.store,self.root),before)
+        self.assertEqual([r[0] for r in self.store.db.execute(
+            "SELECT state FROM cycle_delivery_part WHERE delivery_id='delivery-stopped' ORDER BY kind")],
+            ['confirmed','cancelled'])
+
+    def test_stopped_unsubmitted_delivery_is_not_advanced_by_recovery(self):
+        base=candidate('c1','1729480061238089885');base['executionMode']='continuous-v1'
+        with self.store.tx():
+            self.store.db.execute('INSERT INTO cycle_delivery VALUES(?,?,?,?,?,?,?,?,?,?)',
+                ('delivery-ready',self.plan,'c1',base['oecId'],base['pid'],base['source']['sourceId'],
+                 json.dumps(base),NOW,NOW+1800,'ready'))
+            for kind in ('card','text'):
+                self.store.db.execute('INSERT INTO cycle_delivery_part(delivery_id,kind,request_ref,state) VALUES(?,?,?,?)',
+                    ('delivery-ready',kind,kind+'-ref','ready'))
+        with patch.object(continuous,'reconcile_delivery',side_effect=AssertionError('unsubmitted_must_not_read')), \
+             patch.object(continuous,'execute',side_effect=AssertionError('unsubmitted_must_not_dispatch')):
+            result=continuous.execute_once(self.root,self.store)
+        self.assertEqual(result['state'],'off')
+        self.assertEqual(self.store.db.execute("SELECT state FROM cycle_delivery WHERE id='delivery-ready'").fetchone()[0],'ready')
+
+    def test_paused_plan_allows_only_original_intent_reconciliation(self):
+        self.store.db.execute("UPDATE plan SET state='paused' WHERE id=?",(self.plan,))
+        with patch.object(continuous,'_reconcile_delivery',return_value={'id':'original-submission'}), \
+             patch.object(continuous,'reconciliation_target',return_value='card'), \
+             patch.object(continuous,'reconcile_delivery',return_value={'state':'quarantined_unknown','platformWrites':0,'realSends':0}) as read, \
+             patch.object(continuous,'_candidate',side_effect=AssertionError('paused_plan_must_not_claim')):
+            self.assertEqual(continuous.reconcile_once(self.root,self.store)['state'],'quarantined_unknown')
+        read.assert_called_once()
+        self.assertEqual(self.store._plan(self.plan)['state'],'paused')
+        with self.assertRaisesRegex(continuous.CycleError,'plan_paused'):
+            continuous.execute_once(self.root,self.store)
+
+    def test_it_worker_preserves_only_the_readback_loop_after_manual_stop(self):
+        import importlib.util
+        spec=importlib.util.spec_from_file_location('continuous_worker_recovery',ROOT/'scripts/continuous-send-worker.py')
+        worker=importlib.util.module_from_spec(spec);spec.loader.exec_module(worker)
+        before=control(self.store,self.root)
+        with patch.object(worker,'ROOT',self.root), \
+             patch.object(worker,'CycleStore') as store_type, \
+             patch.object(worker,'control',return_value=before|{'stopRequested':True}), \
+             patch.object(worker,'has_pending_reconciliation',return_value=True), \
+             patch.object(worker,'execute_once',return_value={'state':'waiting_reconciliation'}) as execute, \
+             patch.object(worker,'publish_runtime',return_value={'state':'waiting_reconciliation'}), \
+             patch.object(worker,'print'), \
+             patch('sys.argv',['continuous-send-worker.py','--once']):
+            store_type.return_value.__enter__.return_value=self.store
+            self.assertEqual(worker.main(),0)
+        execute.assert_called_once_with(self.root,self.store,reconcile_only=True)
+        self.assertEqual(control(self.store,self.root),before)
+
     def test_live_history_uses_current_cooldown_not_the_retired_32_day_canary_rule(self):
         base={'identityVerified':True,'hasMore':False,'senderCounts':{
           'ourMessages':1,'creatorReplies':1,'showcaseNotifications':1,'otherOrUnknown':0},

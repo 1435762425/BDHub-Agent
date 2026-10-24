@@ -12,6 +12,7 @@ ROOT=Path(__file__).resolve().parents[1];sys.dont_write_bytecode=True;sys.path.i
 from lib.continuous_send import control,execute_once,publish_runtime  # noqa:E402
 from lib.second_cycle import CycleError,CycleStore  # noqa:E402
 from lib.second_live_runtime import SecondLiveRuntimeError  # noqa:E402
+from lib.market_send_worker import has_pending_reconciliation  # noqa:E402
 
 STOP=False
 def stop(*_):
@@ -28,9 +29,17 @@ def main():
             register(ROOT,'continuous-send-it')
         plan=store.db.execute("SELECT id FROM plan WHERE institution='bjn-local-research' AND market='it'").fetchone()[0]
         while not STOP:
-            cfg=control(store,ROOT)
-            if cfg['stopRequested'] or not (cfg['runRequested'] or cfg['automaticEnabled']):break
-            try:state=execute_once(ROOT,store)
+            cfg=control(store,ROOT,allow_paused=True)
+            plan_active=store._plan(plan)['state']=='active'
+            recovering=has_pending_reconciliation(store,'it')
+            if not recovering and (not plan_active or cfg['stopRequested'] or not (cfg['runRequested'] or cfg['automaticEnabled'])):break
+            try:
+                if recovering:
+                    result=execute_once(ROOT,store,reconcile_only=True)
+                    waiting=result['state']=='waiting_reconciliation'
+                    state=publish_runtime(store,plan,'waiting_reconciliation' if waiting else 'sending',
+                        stop_reason=result['state'],unknown=int(waiting))
+                else:state=execute_once(ROOT,store)
             except CycleError as error:
                 if str(error) not in ('delivery_executor_busy','outreach_allocation_stale','outreach_recipient_already_allocated'):raise
                 state=publish_runtime(store,plan,'waiting_reconciliation' if str(error)=='delivery_executor_busy' else 'sending',stop_reason=str(error))
@@ -52,9 +61,10 @@ def main():
             until=time.monotonic()+delay
             while not STOP and time.monotonic()<until:
                 time.sleep(max(0,min(1,until-time.monotonic())))
-        current=control(store,ROOT)
-        if STOP or current['stopRequested'] or not (current['runRequested'] or current['automaticEnabled']):
-            publish_runtime(store,plan,'stopped',stop_reason='stop_requested' if STOP or current['stopRequested'] else 'disabled')
+        current=control(store,ROOT,allow_paused=True)
+        plan_active=store._plan(plan)['state']=='active'
+        if STOP or not plan_active or current['stopRequested'] or not (current['runRequested'] or current['automaticEnabled']):
+            publish_runtime(store,plan,'stopped',stop_reason='stop_requested' if STOP or current['stopRequested'] else 'plan_paused' if not plan_active else 'disabled')
     return 0
 
 if __name__=='__main__':

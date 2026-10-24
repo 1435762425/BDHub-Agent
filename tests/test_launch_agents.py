@@ -126,7 +126,15 @@ class LaunchAgentsTest(unittest.TestCase):
             start = Mock(return_value={'pid': 42})
             self.assertEqual(launch.ensure_scheduler(root, state, start), {'state': 'started', 'pid': 42})
             self.assertEqual(launch.ensure_scheduler(root, state, start), {'state': 'running', 'pid': 42})
-            start.assert_called_once_with(root)
+            start.assert_called_once_with(root, preserve_stop=True)
+
+    def test_stop_detected_by_locked_start_is_reported_without_claiming_a_restart(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory).resolve();(root/'var').mkdir();(root/'var/second-cycle.sqlite').touch()
+            state=Mock(return_value={'running':False})
+            start=Mock(return_value={'running':False,'reason':'operator_stopped'})
+            self.assertEqual(launch.ensure_scheduler(root,state,start),{'state':'operator_stopped'})
+            start.assert_called_once_with(root,preserve_stop=True)
 
     def test_launchd_uses_fixed_commands_and_preserves_network_route(self):
         configs = launch.jobs(Path('/tmp/project with spaces'), '/opt/homebrew/bin/node',

@@ -67,14 +67,14 @@ def _required(store):
     if not required<=present:raise CycleError('continuous_send_schema_migration_required')
 
 
-def _plan(store):
-    row=store.db.execute("SELECT id FROM plan WHERE institution='bjn-local-research' AND market='it' AND state='active'").fetchone()
-    if not row:raise CycleError('plan_paused')
+def _plan(store,*,allow_paused=False):
+    row=store.db.execute("SELECT id,state FROM plan WHERE institution='bjn-local-research' AND market='it'").fetchone()
+    if not row or not allow_paused and row['state']!='active':raise CycleError('plan_paused')
     return row[0]
 
 
-def control(store,root):
-    _required(store);plan=_plan(store);row=store.db.execute('SELECT * FROM continuous_send_control WHERE plan_id=?',(plan,)).fetchone()
+def control(store,root,*,allow_paused=False):
+    _required(store);plan=_plan(store,allow_paused=allow_paused);row=store.db.execute('SELECT * FROM continuous_send_control WHERE plan_id=?',(plan,)).fetchone()
     if not row:
         config=load_config(root)
         return {'planId':plan,'automaticEnabled':False,'runRequested':False,'stopRequested':False,
@@ -258,35 +258,33 @@ from lib.delivery_reconciliation import serialized, reconcile as reconcile_deliv
 @serialized('it')
 def execute_once(root,store,*,authenticated=None,authorized_now=None,reconcile_only=False):
     """Advance at most one delivery. Tests can inject an authenticated context; status calls never enter."""
-    root=Path(root);_required(store);plan=_plan(store);cfg=control(store,root);now=store.clock()
+    root=Path(root);_required(store);plan=_plan(store,allow_paused=True);now=store.clock()
     if authorized_now is not None:_request(authorized_now)
-    if not reconcile_only and (cfg['stopRequested'] or not (cfg['runRequested'] or cfg['automaticEnabled'])):
-        return publish_runtime(store,plan,'off',stop_reason='disabled')
-    window=window_state(cfg['window'],now) if not reconcile_only else {'open':False}
-    if not reconcile_only and not window['open'] and authorized_now is None:
-        return publish_runtime(store,plan,'waiting_window',stop_reason='outside_send_window')
-    if not reconcile_only and _legacy_batch_active(store):return publish_runtime(store,plan,'paused',stop_reason='legacy_batch_active')
-    if not reconcile_only:
-        Deliveries(store).cancel_expired_unsubmitted(plan,('continuous-v1',))
-        Deliveries(store).quarantine_refused_creates(plan,('continuous-v1',))
-    active=_reconcile_delivery(store,plan) if reconcile_only else _active_delivery(store,plan)
-    if reconcile_only and active is None:return {'state':'nothing_to_reconcile','platformWrites':0,'realSends':0}
+    # A stopped/out-of-window sender may only finish bounded reads of its original
+    # submitted intent. Never reach candidate selection or the dispatch runtime here.
+    active=_reconcile_delivery(store,plan)
     if active and reconciliation_target(Deliveries(store),active['id']):
         result=reconcile_delivery(root,'it',Deliveries(store),active['id'])
         if reconcile_only:return result
         waiting=result['state']=='waiting_reconciliation'
         return publish_runtime(store,plan,'waiting_reconciliation' if waiting else 'sending',
             delivery=active if waiting else None,stop_reason=result['state'],unknown=int(waiting))
+    if reconcile_only:return {'state':'nothing_to_reconcile','platformWrites':0,'realSends':0}
+    cfg=control(store,root)  # An inactive plan still has no new-send authority.
+    if cfg['stopRequested'] or not (cfg['runRequested'] or cfg['automaticEnabled']):
+        return publish_runtime(store,plan,'off',stop_reason='disabled')
+    window=window_state(cfg['window'],now)
+    if not window['open'] and authorized_now is None:
+        return publish_runtime(store,plan,'waiting_window',stop_reason='outside_send_window')
+    if _legacy_batch_active(store):return publish_runtime(store,plan,'paused',stop_reason='legacy_batch_active')
+    Deliveries(store).cancel_expired_unsubmitted(plan,('continuous-v1',))
+    Deliveries(store).quarantine_refused_creates(plan,('continuous-v1',))
+    active=_active_delivery(store,plan)
     candidate=None
     if active:
         delivery=Deliveries(store).get(active['id']);candidate=delivery['snapshot']
-        if not reconcile_only and candidate.get('authorizedNowRequestId')!=authorized_now:
+        if candidate.get('authorizedNowRequestId')!=authorized_now:
             raise CycleError('continuous_send_authorization_changed')
-        if reconcile_only and not candidate.get('conversationId'):
-            intent=Deliveries(store).conversation_intent(active['id'])
-            if not intent or intent['state'] not in ('received','confirmed') or not intent['cid']:
-                return {'state':'waiting_reconciliation','deliveryId':active['id'],
-                        'stopReason':'conversation_result_unknown','platformWrites':0,'realSends':0}
     else:
         try:candidate,pool_state=_candidate(root,store,plan,cfg)
         except CycleError as error:
@@ -298,8 +296,7 @@ def execute_once(root,store,*,authenticated=None,authorized_now=None,reconcile_o
     from lib.request_budget import RequestBudget
     transport_report={} if authorized_now is None else {'authorizedSendRequestId':authorized_now}
     auth_context=authenticated or _authenticated(transport_report,
-        stopped=(lambda:False) if reconcile_only else (lambda:control(store,root)['stopRequested']),
-        read_only=reconcile_only)
+        stopped=lambda:control(store,root)['stopRequested'],read_only=False)
     with auth_context as context:
         account,identity,headers,auth,maintenance,available=context
         if active is None:
@@ -316,7 +313,7 @@ def execute_once(root,store,*,authenticated=None,authorized_now=None,reconcile_o
             active={'id':delivery['id'],'creator_id':delivery['creator_id'],'pid':delivery['pid']}
         else:delivery=Deliveries(store).get(active['id'])
         deliveries=Deliveries(store)
-        if not reconcile_only:publish_runtime(store,plan,'sending',delivery=active,worker_pid=os.getpid())
+        publish_runtime(store,plan,'sending',delivery=active,worker_pid=os.getpid())
         @contextmanager
         def runtime(c,read_only=False):
             previous=descriptor(c['card'])
@@ -328,11 +325,10 @@ def execute_once(root,store,*,authenticated=None,authorized_now=None,reconcile_o
             # send capability.  A fresh empty dict would erase that proof and make every real send
             # fail closed as live_market_send_unavailable after authentication succeeded.
             with live_runtime(c['senderBindingHash'],transport_report,authenticated_context=context,card_validator=validator,
-                              stopped=(lambda:False) if reconcile_only else (lambda:control(store,root)['stopRequested']),send_interval=0.75,
-                              request_budget=RequestBudget(qps=3),read_only=reconcile_only) as rt:
+                              stopped=lambda:control(store,root)['stopRequested'],send_interval=0.75,
+                              request_budget=RequestBudget(qps=3),read_only=False) as rt:
                 yield {**rt,'card':previous}
         def authorize(c):
-            if reconcile_only:raise CycleError('reconcile_dispatch_forbidden')
             current=control(store,root)
             if current['stopRequested'] or not (current['runRequested'] or current['automaticEnabled']):raise CycleError('continuous_send_stopped')
             if c.get('continuousControlRevision')>current['revision'] or c.get('executionMode')!='continuous-v1':raise CycleError('continuous_send_scope_changed')
@@ -363,7 +359,7 @@ def execute_once(root,store,*,authenticated=None,authorized_now=None,reconcile_o
                 raise CycleError('conversation_needs_content_review')
         try:
             result=execute(deliveries,delivery['id'],runtime,authorize,preflight,
-                           verify_only=reconcile_only or delivery['state']=='unknown')
+                           verify_only=delivery['state']=='unknown')
         except BaseException as error:
             latest=deliveries.get(delivery['id']);code=getattr(error,'code',None) or (str(error) if isinstance(error,CycleError) else type(error).__name__)
             intent=deliveries.conversation_intent(delivery['id'])
@@ -375,9 +371,7 @@ def execute_once(root,store,*,authenticated=None,authorized_now=None,reconcile_o
                 store.db.execute('INSERT INTO cycle_platform_signal(delivery_id,at,outcome,code,native_status,check_code,check_message,response_ref) VALUES(?,?,?,?,?,?,?,?)',
                   (delivery['id'],store.clock(),*[getattr(error,key,None) for key in ('outcome','code','native_status','check_code','check_message','response_ref')]))
             if latest['state']=='unknown':
-                if reconcile_only:return {'state':'waiting_reconciliation','deliveryId':active['id'],'stopReason':code,'platformWrites':0,'realSends':0}
                 return publish_runtime(store,plan,'waiting_reconciliation',delivery=active,stop_reason=code,unknown=1)
-            if reconcile_only:raise
             if code in PREFLIGHT_TERMINAL and latest['parts'][0]['state']=='confirmed' and \
                latest['parts'][1]['state']=='ready':
                 deliveries.cancel_pending_text(delivery['id'],code)
@@ -391,8 +385,6 @@ def execute_once(root,store,*,authenticated=None,authorized_now=None,reconcile_o
                 except CycleError:pass
                 else:return publish_runtime(store,plan,'sending',delivery=None,stop_reason=code,failed_delta=1)
             return publish_runtime(store,plan,'paused',delivery=active,stop_reason=code,failed_delta=1)
-    if reconcile_only:
-        return {'state':result['state'],'deliveryId':active['id'],'platformWrites':0,'realSends':0}
     if result['state']=='confirmed':return publish_runtime(store,plan,'sending',delivery=None,confirmed_delta=1,unknown=0)
     if result['state']=='unknown':return publish_runtime(store,plan,'waiting_reconciliation',delivery=active,stop_reason='result_unknown',unknown=1)
     if result['state']=='quarantined_unknown':return publish_runtime(store,plan,'sending',delivery=None,stop_reason='card_result_unknown')

@@ -6,21 +6,29 @@ ROOT=Path(__file__).resolve().parents[1];sys.dont_write_bytecode=True;sys.path.i
 from lib.market_registry import market_path_keys
 from lib.market_send_canary import run
 from lib.operations_workflow import setting
-from lib.second_cycle import CycleStore
+from lib.second_cycle import CycleError,CycleStore
 from lib.send_batch import window_state
+from lib.market_send_worker import has_pending_reconciliation,write_state
 
 STOP=False
 def stop(*_):
  global STOP;STOP=True
 
-def state_path(market):return ROOT/f'var/market-send-worker-{market}.json'
 def write(market,value):
- path=state_path(market);tmp=path.with_suffix('.tmp');tmp.write_text(json.dumps(value,ensure_ascii=False,indent=2)+'\n');tmp.replace(path)
+ write_state(ROOT,market,value)
+
+TRANSIENT_READ_ERRORS=frozenset({'im_transport_error','wall_timeout'})
+SUBMISSION_UNKNOWN_ERRORS=frozenset({'it_delivery_send_unknown','it_delivery_create_unknown','it_delivery_wall_timeout'})
+TRANSIENT_DELAYS=(3,15,60,300)
+
+def transport_retry_delay(code,failures):
+ """Only classified read transport failures receive a bounded in-process retry budget."""
+ if code not in TRANSIENT_READ_ERRORS or not 1<=failures<=len(TRANSIENT_DELAYS):return None
+ return TRANSIENT_DELAYS[failures-1]
 
 def expected_wait_state(code):
  if code in ('market_send_candidate_missing','outreach_allocation_stale','outreach_recipient_already_allocated'):return 'waiting_pool'
- # Stay alive and re-read the original request every five minutes: the readback confirms the card or, after two
- # reads that find it absent, isolates the creator.  The scheduler does not relaunch a sender stopped on unknown.
+ # Stay alive for bounded original-intent readback; no waiting state grants new send authority.
  if code in ('market_send_result_unknown','market_send_conversation_result_unknown'):return 'waiting_reconciliation'
  if code in ('canary_authorization_unbound','canary_authorization_changed'):return 'waiting_canary_authorization'
  if code=='new_contact_capacity_reached':return 'waiting_capacity'
@@ -59,23 +67,31 @@ def main():
  p=argparse.ArgumentParser(description=__doc__);p.add_argument('--market',required=True,choices=market_path_keys(ROOT));p.add_argument('--once',action='store_true');p.add_argument('--interval',type=int,default=30);a=p.parse_args()
  if not 5<=a.interval<=300:p.error('interval 5..300')
  signal.signal(signal.SIGTERM,stop);signal.signal(signal.SIGINT,stop)
- lock=(ROOT/f'var/market-send-worker-{a.market}.lock').open('a')
- try:fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
- except BlockingIOError:raise SystemExit('market_send_worker_busy')
+ with (ROOT/f'var/market-send-worker-{a.market}.lock').open('a') as lock:
+  try:fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+  except BlockingIOError:raise SystemExit('market_send_worker_busy')
+  return run_loop(a)
+
+def run_loop(a):
  from lib.runtime_release import register
  register(ROOT,f'market-send-{a.market}')
+ transport_failures=0
  while not STOP:
-  waiting=None;sent=False
+  waiting=None;sent=False;retry_delay=None
   try:
    with CycleStore(ROOT/'var/second-cycle.sqlite') as store:
-    from lib.market_send_control import control as send_control,settle_confirmed_canaries
+    from lib.market_send_control import control as send_control,_control_for_plan,settle_confirmed_canaries
     from lib.account_identity import current_generation
     from lib.market_accounts import load_config
     account=load_config(ROOT)['markets'][a.market]['roles']['communications']
-    completed=settle_confirmed_canaries(store,a.market,account)
-    control=setting(store,a.market);send=send_control(store,a.market)
+    plan=store.db.execute("SELECT id,state FROM plan WHERE institution='bjn-local-research' AND market=?",(a.market,)).fetchone()
+    if not plan:raise CycleError('plan_missing')
+    plan_active=plan['state']=='active'
+    completed=settle_confirmed_canaries(store,a.market,account) if plan_active else []
+    control=setting(store,a.market);send=send_control(store,a.market) if plan_active else _control_for_plan(store,plan['id'])
     generation=current_generation(store,a.market,account)
     canary=first_send_canary(generation)
+    recovering=has_pending_reconciliation(store,a.market)
   except sqlite3.OperationalError as error:
    # Opening the shared ledger while many processes start can hit a lock; wait instead of crashing.
    if 'locked' not in str(error) and 'busy' not in str(error):raise
@@ -83,18 +99,20 @@ def main():
    until=time.monotonic()+3
    while not STOP and time.monotonic()<until:time.sleep(0.25)
    continue
-  if send['stopRequested'] or not (control['continuousSendEnabled'] or send['automaticEnabled'] or send['runRequested']):
+  if not recovering and (not plan_active or send['stopRequested'] or not (control['continuousSendEnabled'] or send['automaticEnabled'] or send['runRequested'])):
    write(a.market,{'running':False,'state':'canary_confirmed' if completed else 'off','pid':os.getpid(),'checkedAt':time.time()});break
   window=window_state(send['window'],time.time())
-  if canary and not send['runRequested']:
+  if not recovering and canary and not send['runRequested']:
    write(a.market,{'running':True,'state':'first_send_requires_page_start','pid':os.getpid(),'checkedAt':time.time()})
-  elif not window['open']:
+  elif not recovering and not window['open']:
    write(a.market,{'running':True,'state':'waiting_window','pid':os.getpid(),'checkedAt':time.time()})
   else:
    request=f"market-continuous-{a.market}-{int(time.time())}"
    try:
     started=time.monotonic()
-    result=run(ROOT,a.market,request,canary=canary,page_control=True)
+    # Recovery has no authority to create an intent or submit either unsent component.
+    result=run(ROOT,a.market,request,canary=canary,page_control=True,reconcile_only=recovering)
+    transport_failures=0
     waiting='waiting_reconciliation' if result.get('state')=='waiting_reconciliation' else None
     sent=result.get('state')=='confirmed' and result.get('realSends',0)>0
     write(a.market,{'running':True,'state':result.get('state') or result.get('stopped') or 'idle','pid':os.getpid(),
@@ -104,6 +122,13 @@ def main():
      break
    except Exception as error:
     code=error_code(error);waiting=expected_wait_state(code)
+    if code in SUBMISSION_UNKNOWN_ERRORS:
+     with CycleStore(ROOT/'var/second-cycle.sqlite',readonly=True) as store:
+      if has_pending_reconciliation(store,a.market):waiting='waiting_reconciliation'
+    if code in TRANSIENT_READ_ERRORS:
+     transport_failures+=1;retry_delay=transport_retry_delay(code,transport_failures)
+     if retry_delay is not None:waiting='waiting_transport'
+    else:transport_failures=0
     if waiting:write(a.market,{'running':True,'state':waiting,'pid':os.getpid(),'checkedAt':time.time(),'reason':code})
     else:
      # The state file is overwritten by the next launch; the log keeps why this worker stopped.
@@ -114,7 +139,7 @@ def main():
    handoff_until=time.monotonic()+8
    while not STOP and inbox_waiting(a.market) and time.monotonic()<handoff_until:
     time.sleep(0.25)
-  delay=next_delay(sent=sent,waiting=waiting,interval=a.interval,inbox_waiting_now=inbox_waiting(a.market))
+  delay=retry_delay if retry_delay is not None else next_delay(sent=sent,waiting=waiting,interval=a.interval,inbox_waiting_now=inbox_waiting(a.market))
   until=time.monotonic()+delay
   while not STOP and time.monotonic()<until:
    time.sleep(max(0,min(0.25,until-time.monotonic())))

@@ -3,10 +3,12 @@ import os
 import sqlite3
 import subprocess
 import tempfile
+import time
 import unittest
 import sys
 import threading
-from contextlib import closing
+from contextlib import closing,ExitStack
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
 from unittest.mock import patch
@@ -62,6 +64,63 @@ class SchedulerFlow(unittest.TestCase):
         self.assertEqual(json.loads((self.root/'var/operations-scheduler-status.json').read_text())['state'],'waiting_database')
         with patch('lib.operations_scheduler.CycleStore',side_effect=sqlite3.OperationalError('database disk image is malformed')):
             with self.assertRaises(sqlite3.OperationalError):tick(self.root,now=NOW,executor=executor)
+
+    def test_child_is_observed_under_its_fence_before_the_executor_unblocks_it(self):
+        from lib.operations_workflow import create_run
+        from lib.workflow_resources import claim
+        run=create_run(self.store,market='it',trigger_source='manual',scheduled_at=NOW,
+                       request_id='child-handoff-regression',only_stage='oecid',sources=['campaign'])
+        stage=next(row for row in run['stages'] if row['stage']=='oecid')
+        ticket=claim(self.store,stage['stageRunId'],'scheduler-handoff-owner',[('platform:global',1)])
+        scripts=self.root/'scripts';scripts.mkdir()
+        python=self.root/'.venv/bin/python';python.parent.mkdir(parents=True);python.symlink_to(sys.executable)
+        earliest=time.time()-1
+        (scripts/'handoff-fixture.py').write_text(
+            "import json,os,sqlite3\n"
+            "db=sqlite3.connect('file:var/second-cycle.sqlite?mode=ro',uri=True)\n"
+            "pid,observed=db.execute('SELECT worker_pid,heartbeat_at FROM workflow_stage_claim').fetchone()\n"
+            f"assert pid==os.getpid() and observed>={earliest!r}, (pid,observed)\n"
+            "print(json.dumps({'state':'completed','platformWrites':0}))\n")
+        executor=SubprocessStageExecutor(self.root);executor._claims.ticket=ticket
+        executor._claims.ledger={'launched':0,'writes':0,'uncertain':False}
+        result=executor._call(['scripts/handoff-fixture.py'],'handoff-fixture',timeout=5)
+        self.assertEqual(result['state'],'completed')
+        row=self.store.db.execute('SELECT worker_pid,heartbeat_at FROM workflow_stage_claim').fetchone()
+        self.assertEqual(row['worker_pid'],os.getpid())
+        self.assertGreaterEqual(row['heartbeat_at'],earliest)
+
+    def test_stopped_senders_resume_only_original_reconciliation_and_live_workers_are_kept(self):
+        from lib.cycle_delivery import Deliveries
+        from lib.jobs import load
+        from lib.operations_scheduler import _background
+        Deliveries(self.store)
+        self.store.plan('bjn-local-research','br')
+        paused={'automaticEnabled':False,'runRequested':False,'stopRequested':True}
+        for pending,alive,plan_active in ((None,False,True),('it',False,True),('br',False,True),('br',True,True),
+                                          ('it',False,False),('br',False,False),(None,False,False)):
+            with self.subTest(pending=pending,alive=alive,plan_active=plan_active),ExitStack() as stack:
+                self.store.db.execute("UPDATE plan SET state=?",('active' if plan_active else 'paused',))
+                stack.enter_context(patch('lib.market_registry.enabled_market_keys',return_value=['it','br']))
+                stack.enter_context(patch('lib.im_session_owner.enabled',return_value=True))
+                session=stack.enter_context(patch('lib.im_session_owner.launch'))
+                stack.enter_context(patch('lib.template_library.agent_setting',return_value={'enabled':not plan_active}))
+                agent=stack.enter_context(patch('lib.job_run.start'))
+                stack.enter_context(patch('lib.continuous_send.control',return_value=paused))
+                stack.enter_context(patch('lib.continuous_send.worker_state',return_value={'running':alive}))
+                italy=stack.enter_context(patch('lib.continuous_send.launch_worker'))
+                stack.enter_context(patch('lib.market_send_control.control',return_value=paused))
+                stack.enter_context(patch('lib.market_send_worker.state',return_value={'running':alive,'state':'off'}))
+                market=stack.enter_context(patch('lib.market_send_worker.launch'))
+                stack.enter_context(patch('lib.market_send_worker.has_pending_reconciliation',
+                                          side_effect=lambda _store,key:key==pending))
+                _background(self.root,self.store,load(self.root),{'automaticOperationsEnabled':False},NOW,
+                            maintenance_enabled=False)
+                self.assertEqual(italy.call_count,1 if pending=='it' and not alive else 0)
+                self.assertEqual(market.call_count,1 if pending=='br' and not alive else 0)
+                if pending=='br' and not alive:market.assert_called_once_with(self.root,'br')
+                self.assertEqual(session.call_count,1 if pending=='br' else 0)
+                agent.assert_not_called()
+                self.assertEqual(paused,{'automaticEnabled':False,'runRequested':False,'stopRequested':True})
 
     def test_master_switch_alone_runs_the_monday_chain_in_order(self):
         save(self.root,{'jobs':{}})
@@ -1002,6 +1061,56 @@ class SchedulerControl(unittest.TestCase):
             self.assertTrue(started['running']);self.assertFalse(started['stopping'])
             self.assertTrue(stop_scheduler(root)['stopping'])
             with self.assertRaisesRegex(ValueError,'already_running'):start_scheduler(root,spawn=Spawn())
+
+    def test_parallel_starts_spawn_only_one_scheduler(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder);barrier=threading.Barrier(2);calls=[]
+            def spawn(*_args,**_kwargs):
+                calls.append(True);time.sleep(.05)
+                return FakeChild()
+            def start():
+                barrier.wait(timeout=2)
+                try:return start_scheduler(root,spawn=spawn)
+                except ValueError as error:return str(error)
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                futures=[pool.submit(start) for _ in range(2)]
+                results=[future.result(timeout=3) for future in futures]
+            self.assertEqual(len(calls),1)
+            self.assertIn('scheduler_already_running',results)
+
+    def test_recovery_preserves_stop_arriving_during_the_locked_liveness_check(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder)
+            def state(_root):
+                (root/'var/operations-scheduler.stop').write_text('operator stop')
+                return {'running':False}
+            with patch('lib.operations_scheduler.scheduler_state',side_effect=state), \
+                 patch('lib.operations_scheduler.subprocess.Popen') as spawn:
+                result=start_scheduler(root,preserve_stop=True,spawn=spawn)
+            self.assertEqual(result['reason'],'operator_stopped');spawn.assert_not_called()
+            self.assertEqual((root/'var/operations-scheduler.stop').read_text(),'operator stop')
+
+    def test_stop_during_recovery_is_retained_and_only_explicit_start_clears_it(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder);entered=threading.Event();release=threading.Event()
+            def spawn(*_args,**_kwargs):
+                entered.set()
+                if not release.wait(2):raise AssertionError('launch fixture timed out')
+                return FakeChild()
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                start=pool.submit(start_scheduler,root,preserve_stop=True,spawn=spawn)
+                try:
+                    self.assertTrue(entered.wait(1))
+                    stop=pool.submit(stop_scheduler,root)
+                finally:release.set()
+                start.result(timeout=2);stop.result(timeout=2)
+            self.assertTrue((root/'var/operations-scheduler.stop').is_file())
+            # An exited scheduler can still be paused before the next watcher checks.
+            (root/'var/operations-scheduler.json').unlink()
+            self.assertFalse(stop_scheduler(root)['running'])
+            self.assertEqual(start_scheduler(root,preserve_stop=True,spawn=Spawn())['reason'],'operator_stopped')
+            self.assertTrue(start_scheduler(root,spawn=Spawn())['running'])
+            self.assertFalse((root/'var/operations-scheduler.stop').exists())
 
 
 if __name__=='__main__':unittest.main()

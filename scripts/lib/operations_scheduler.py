@@ -18,9 +18,10 @@ from zoneinfo import ZoneInfo
 from lib.operations_workflow import create_run,finish_stage,retry_failed_stage,status as workflow_status
 from lib.market_registry import operational_market_keys
 from lib.process_liveness import record_alive
+from lib.runtime_files import atomic_json,launch_guard
 from lib.second_cycle import CycleError, CycleStore, digest, encoded
 from lib.workflow_dispatch import claim_ready
-from lib.workflow_resources import heartbeat,record_late_result,release
+from lib.workflow_resources import adopt_worker,heartbeat,record_late_result,release
 
 
 BEIJING = ZoneInfo('Asia/Shanghai')
@@ -39,8 +40,7 @@ def _read(path,default):
 
 
 def _write(path,value):
-    path=Path(path);path.parent.mkdir(parents=True,exist_ok=True);temporary=path.with_suffix(path.suffix+'.tmp')
-    temporary.write_text(json.dumps(value,ensure_ascii=False,indent=2)+'\n',encoding='utf-8');temporary.replace(path)
+    atomic_json(path,value)
 
 
 def _project_read_models(root,targets,progress):
@@ -307,24 +307,28 @@ def scheduler_state(root):
       'error':progress.get('error')}
 
 
-def start_scheduler(root,*,clock=time.time,spawn=subprocess.Popen):
-    root=Path(root);state=scheduler_state(root)
-    if state['running']:raise ValueError('scheduler_already_running')
-    try:stop_path(root).unlink()
-    except OSError:pass
-    log=root/'var/operations-scheduler.log';log.parent.mkdir(parents=True,exist_ok=True)
-    with log.open('a',encoding='utf-8') as handle:
-        child=spawn([str(root/'.venv/bin/python'),str(root/'scripts/operations-scheduler.py'),'--worker'],
-          cwd=str(root),stdin=subprocess.DEVNULL,stdout=handle,stderr=subprocess.STDOUT,
-          start_new_session=True,env={**os.environ,'PYTHONDONTWRITEBYTECODE':'1'})
-    _write(run_path(root),{'pid':child.pid,'startedAt':clock(),'log':str(log)})
-    return scheduler_state(root)
+def start_scheduler(root,*,clock=time.time,spawn=subprocess.Popen,preserve_stop=False):
+    root=Path(root)
+    with launch_guard(root/'var/operations-scheduler-launch.lock'):
+        state=scheduler_state(root)
+        if state['running']:raise ValueError('scheduler_already_running')
+        if preserve_stop and stop_path(root).exists():return state|{'reason':'operator_stopped'}
+        if not preserve_stop:
+            try:stop_path(root).unlink()
+            except FileNotFoundError:pass
+        log=root/'var/operations-scheduler.log'
+        with log.open('a',encoding='utf-8') as handle:
+            child=spawn([str(root/'.venv/bin/python'),str(root/'scripts/operations-scheduler.py'),'--worker'],
+              cwd=str(root),stdin=subprocess.DEVNULL,stdout=handle,stderr=subprocess.STDOUT,
+              start_new_session=True,env={**os.environ,'PYTHONDONTWRITEBYTECODE':'1'})
+        _write(run_path(root),{'pid':child.pid,'startedAt':clock(),'log':str(log)})
+        return scheduler_state(root)
 
 
 def stop_scheduler(root):
-    state=scheduler_state(root)
-    if not state['running']:raise ValueError('scheduler_not_running')
-    _write(stop_path(root),{'requestedAt':time.time()});return scheduler_state(root)
+    with launch_guard(Path(root)/'var/operations-scheduler-launch.lock'):
+        _write(stop_path(root),{'requestedAt':time.time()})
+        return scheduler_state(root)
 
 
 def due_slot(root,now,automation):
@@ -334,11 +338,6 @@ def due_slot(root,now,automation):
     selected=jobs['taplink_clean'] if local.weekday()==weekly_day and automation.get('fullCatalogWeeklyEnabled') else jobs['campaign_catalog_update']
     hour,minute=map(int,selected['at'].split(':'))
     return local.replace(hour=hour,minute=minute,second=0,microsecond=0).timestamp()
-
-
-def _day_start(stamp):
-    local=datetime.fromtimestamp(stamp,BEIJING)
-    return local.replace(hour=0,minute=0,second=0,microsecond=0).timestamp()
 
 
 def _source_success(store,market,source):
@@ -429,11 +428,7 @@ class SubprocessStageExecutor:
             finally:os.close(read_fd)
             try:
                 with CycleStore(self.root/'var/second-cycle.sqlite') as claim_store:
-                    with claim_store.tx():
-                        claim_store.db.execute("UPDATE workflow_stage_claim SET worker_pid=? WHERE stage_run_id=? AND owner_id=? AND fence=?",
-                            (process.pid,ticket['stageRunId'],ticket['ownerId'],ticket['fence']))
-                        if claim_store.db.execute('SELECT changes()').fetchone()[0]!=1:
-                            raise CycleError('workflow_stage_fence_stale')
+                    adopt_worker(claim_store,ticket['stageRunId'],ticket['ownerId'],ticket['fence'],process.pid)
                 os.write(write_fd,b'1')
                 if ledger is not None:ledger['launched']+=1
                 try:stdout,stderr=process.communicate(timeout=timeout)
@@ -456,7 +451,6 @@ class SubprocessStageExecutor:
                 # lease is not mistaken for a dead owner while the result is still being settled.
                 if process.poll() is not None:
                     try:
-                        from lib.workflow_resources import adopt_worker
                         with CycleStore(self.root/'var/second-cycle.sqlite') as claim_store:
                             adopt_worker(claim_store,ticket['stageRunId'],ticket['ownerId'],ticket['fence'],os.getpid())
                     except (CycleError,sqlite3.Error,OSError):pass
@@ -1155,33 +1149,37 @@ def _background(root,store,jobs,automation,stamp,maintenance_enabled=None):
         try:start_job(root,'inbox',{'limit':12,'interval':30})
         except (ValueError,OSError):pass
     from lib.template_library import agent_setting
-    plan=store.db.execute("SELECT id FROM plan WHERE institution='bjn-local-research' AND market='it'").fetchone()
-    if plan and agent_setting(store,plan[0])['enabled'] and not (job_state(root,'agentReply') or {}).get('running'):
+    plan=store.db.execute("SELECT id,state FROM plan WHERE institution='bjn-local-research' AND market='it'").fetchone()
+    if plan and plan['state']=='active' and agent_setting(store,plan['id'])['enabled'] and not (job_state(root,'agentReply') or {}).get('running'):
         try:start_job(root,'agentReply',{'interval':60})
         except (ValueError,OSError):pass
     tables={row[0] for row in store.db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     if {'continuous_send_control','cycle_delivery','cycle_delivery_part'}<=tables:
         from lib.continuous_send import control as send_control,launch_worker,worker_state
-        control=send_control(store,root)
-        if (enabled['continuous_send']['enabled'] or control['automaticEnabled'] or control['runRequested']) and \
-           (control['automaticEnabled'] or control['runRequested']) and \
-           not control['stopRequested'] and not worker_state(root)['running']:
+        from lib.market_send_worker import has_pending_reconciliation
+        control=send_control(store,root) if plan and plan['state']=='active' else None
+        authorized=control is not None and (control['automaticEnabled'] or control['runRequested']) and not control['stopRequested']
+        if (authorized or has_pending_reconciliation(store,'it')) and not worker_state(root)['running']:
             launch_worker(root)
     from lib.operations_workflow import setting as market_setting
     from lib.market_registry import enabled_market_keys
-    from lib.market_send_worker import launch as launch_market_sender,state as market_sender_state
+    from lib.market_send_worker import has_pending_reconciliation,launch as launch_market_sender,state as market_sender_state
     for market in enabled_market_keys(root):
         if market=='it':continue
-        plan_row=store.db.execute("SELECT id FROM plan WHERE market=? AND institution='bjn-local-research' AND state='active'",(market,)).fetchone()
+        plan_row=store.db.execute("SELECT id,state FROM plan WHERE market=? AND institution='bjn-local-research'",(market,)).fetchone()
         if not plan_row:continue
+        recovering=has_pending_reconciliation(store,market)
+        plan_active=plan_row['state']=='active'
+        if not plan_active and not recovering:continue
         current=market_setting(store,market)
-        sender_control=__import__('lib.market_send_control',fromlist=['control']).control(store,market)
-        agent_enabled=agent_setting(store,plan_row[0])['enabled']
+        from lib.market_send_control import control as market_send_control,_control_for_plan
+        sender_control=market_send_control(store,market) if plan_active else _control_for_plan(store,plan_row['id'])
+        agent_enabled=plan_active and agent_setting(store,plan_row['id'])['enabled']
         # Inbox is part of the authorized send/reply loop even when the broader
         # catalog automation switch is off (MY is currently operated this way).
-        if current['automaticOperationsEnabled'] or agent_enabled or (
+        if recovering or plan_active and (current['automaticOperationsEnabled'] or agent_enabled or (
             not sender_control['stopRequested'] and
-            (current['continuousSendEnabled'] or sender_control['automaticEnabled'] or sender_control['runRequested'])):
+            (current['continuousSendEnabled'] or sender_control['automaticEnabled'] or sender_control['runRequested']))):
             inbox_state=_read(Path(root)/f'var/market-inbox-{market}.json',{})
             inbox_alive=record_alive(inbox_state)
             if sdk_enabled(root,market):
@@ -1212,9 +1210,9 @@ def _background(root,store,jobs,automation,stamp,maintenance_enabled=None):
                     _write(Path(root)/f'var/agent-reply-status-{market}.json',
                            {'pid':child.pid,'state':'starting','checkedAt':time.time()})
                 except OSError:pass
-        if (current['continuousSendEnabled'] or sender_control['automaticEnabled'] or sender_control['runRequested']) and \
-           not sender_control['stopRequested'] and not market_sender_state(root,market)['running']:
-            sender=market_sender_state(root,market)
+        authorized=plan_active and (current['continuousSendEnabled'] or sender_control['automaticEnabled'] or sender_control['runRequested']) and not sender_control['stopRequested']
+        sender=market_sender_state(root,market)
+        if (authorized or recovering) and not sender['running']:
             # Restart keeps the existing authorization and enters bounded original-intent reads.
             cooling=sender.get('state')=='attention' and stamp-float(sender.get('checkedAt') or stamp)<300
             if not cooling:
