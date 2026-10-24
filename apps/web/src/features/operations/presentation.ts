@@ -6,6 +6,12 @@ export function operatorQueueSummary(queue:OperatorQueue):{value:number|null;tex
  return {value:queue.human,text:queue.human?`${queue.human.toLocaleString()} 位达人需要你判断合作事项`:"暂无人工会话待办"};
 }
 
+export function runtimeIssuePresentation(issue:OperationsHome["issues"][number]){
+ const fullReviewLag=issue.kind==="inbox"&&issue.id.endsWith("-inbox-lag");
+ return {...issue,title:fullReviewLag?"全量会话复查较慢":issue.title,
+  note:fullReviewLag?"新来信优先检查，全量复查按队列推进。":null};
+}
+
 const minute=(text:string,end=false)=>{
  if(end&&text==="24:00")return 1440;
  const match=/^(\d{2}):(\d{2})$/.exec(text);if(!match||+match[1]>23||+match[2]>59)return null;

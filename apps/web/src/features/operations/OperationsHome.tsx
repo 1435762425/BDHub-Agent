@@ -1,7 +1,7 @@
 "use client";
 import Link from "next/link";
 import MarketOverview from "./MarketOverview";
-import {operationsActivity} from "./presentation";
+import {operationsActivity,runtimeIssuePresentation} from "./presentation";
 import {useCallback,useEffect,useRef,useState} from "react";
 import {Button,Card,Notice,PageHeading,Pill,Toggle} from "../bdhub/ui";
 import type {OperationsHome as State,OperationsStage,SaveCommit} from "../../server/operations-home/bridge";
@@ -73,7 +73,7 @@ export default function OperationsHome({market,marketLabel,fullManagedCatalog,ru
  const activationPending=data.issues.some(issue=>issue.kind==="activation");
  const templatePending=!data.templateReview.ready;
  const attentionStages=data.stages.filter(stage=>["failed","needs_human","waiting_reconciliation"].includes(stage.state)||stage.runtime?.fresh===false||!stateLabel[stage.state]||stage.writes?.availability==="uncertain");
- const runtimeIssues=data.issues.filter(issue=>issue.kind!=="conversation");
+ const runtimeIssues=data.issues.filter(issue=>issue.kind!=="conversation").map(runtimeIssuePresentation);
  const controls=<>
   <Card title="运行设置" action={<div className="flex items-center gap-4"><Link href={`/${market}/ops/jobs`} className="text-sm font-medium text-brand-500">作业与时间 →</Link>{active&&<Button size="sm" variant="outline" disabled={busy!==null} onClick={()=>void workflow("stop")}>安全停止</Button>}</div>}>
    <details className="border-t border-gray-100 dark:border-gray-800"><summary className="cursor-pointer px-5 py-3 text-sm font-medium text-gray-600 dark:text-gray-300">自动运营设置<span className="ml-3 text-xs font-normal text-gray-500">总开关{data.setting.automaticOperationsEnabled?"开启":"关闭"} · 自动发送{data.setting.continuousSendEnabled?"开启":"关闭"}</span></summary>
@@ -85,7 +85,7 @@ export default function OperationsHome({market,marketLabel,fullManagedCatalog,ru
    </details>
   </Card>
   {message&&<Notice tone={message.includes("已")?"success":"warning"}>{message}</Notice>}
-  {runtimeIssues.length>0&&<Card title="需要关注的运行状态"><div className="divide-y divide-gray-100 px-5 dark:divide-gray-800">{runtimeIssues.map(issue=><Link key={issue.id} href={`/${market}/${issue.kind==="conversation"?"conversations":issue.kind==="account"?"ops/accounts":"ops/jobs"}`} className="group flex items-start justify-between gap-4 py-4"><div><p className="text-sm font-medium text-gray-800 group-hover:text-brand-600 dark:text-gray-200">{issue.title}</p><p className="mt-1 text-xs leading-5 text-gray-500">{issue.reason}</p></div><span className="shrink-0 text-sm text-brand-600">查看 →</span></Link>)}</div></Card>}
+  {runtimeIssues.length>0&&<Card title="需要关注的运行状态"><div className="divide-y divide-gray-100 px-5 dark:divide-gray-800">{runtimeIssues.map(issue=><Link key={issue.id} href={`/${market}/${issue.kind==="conversation"?"conversations":issue.kind==="account"?"ops/accounts":"ops/jobs"}`} className="group flex items-start justify-between gap-4 py-4"><div><p className={`text-sm font-medium ${issue.note?"text-warning-700 dark:text-warning-400":"text-gray-800 group-hover:text-brand-600 dark:text-gray-200"}`}>{issue.title}</p><p className="mt-1 text-xs leading-5 text-gray-500">{issue.reason}</p>{issue.note&&<p className="mt-1 text-xs leading-5 text-warning-700 dark:text-warning-400">{issue.note}</p>}</div><span className="shrink-0 text-sm text-brand-600">查看 →</span></Link>)}</div></Card>}
  </>;
  return <div className="space-y-5">
   <PageHeading title="运营首页" action={<div className="flex flex-wrap items-center gap-2">{readError?<Pill tone="warning">刷新失败 · 上次读取 {stamp(readAt)}</Pill>:runtimeIssues.length?<Pill tone="warning">{runtimeIssues.length} 组运行提示</Pill>:<span className="text-xs text-gray-400">更新于 {stamp(readAt)}</span>}</div>}/>

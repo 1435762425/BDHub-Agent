@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {operatorQueueSummary,nextWindowText,operationsActivity} from '../src/features/operations/presentation.ts';
+import {operatorQueueSummary,runtimeIssuePresentation,nextWindowText,operationsActivity} from '../src/features/operations/presentation.ts';
 
 const NOW=Date.parse('2026-10-24T07:00:00Z');
 const base={market:'br',setting:{automaticOperationsEnabled:true,continuousSendEnabled:true},workflow:{state:'completed'},stages:[{id:'catalog',label:'货盘',state:'completed'},{id:'continuous_send',state:'waiting_window'},{id:'agent_reply',state:'outside_reply_window'}],continuousSend:{control:{window:['16:30','24:00'],automaticEnabled:false,runRequested:false,stopRequested:false}},agent:{enabled:true,replyWindow:['00:30','08:00']}};
@@ -8,6 +8,14 @@ test('the human queue keeps missing counts distinct from a real empty queue',()=
  for(const queue of [undefined,null])assert.equal(operatorQueueSummary(queue).value,null);
  assert.deepEqual(operatorQueueSummary({human:0,technical:4}),{value:0,text:'暂无人工会话待办'});
  assert.equal(operatorQueueSummary({human:36,technical:1}).value,36);
+});
+test('only the full inbox review lag gets a clearer label while its original counts and age remain',()=>{
+ const reason='5149 个会话中最旧检查已过去 138 分钟';
+ const lag={id:'br-inbox-lag',kind:'inbox',title:'收信覆盖落后',reason};
+ assert.deepEqual(runtimeIssuePresentation(lag),{...lag,title:'全量会话复查较慢',note:'新来信优先检查，全量复查按队列推进。'});
+ for(const issue of [{...lag,id:'br-inbox-gap'},{...lag,id:'br-inbox-failed'},{...lag,id:'br-inbox-lag-extra'},{...lag,id:'inbox-lag'},{...lag,kind:'account'}]){
+  assert.deepEqual(runtimeIssuePresentation(issue),{...issue,note:null});
+ }
 });
 test('next windows use Beijing configuration and never guess absent or invalid clocks',()=>{
  assert.equal(nextWindowText(['16:30','24:00'],NOW),'今天 16:30（北京时间）');
