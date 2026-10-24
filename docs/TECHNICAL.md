@@ -193,6 +193,8 @@ BR `pure_http` 处于 `canary`，只接通既有 Commerce 的只读挑战验证�
 
 来源刷新与样品 session 经 `first_resources.platform_read` 复用 `platform:global`、原供给账号与 `workflow:br` 资源槽及 lease/fence；子进程领取原 claim，父进程退出不释放仍活着的子任务资源。样品 unknown 主动核验间隔至少 60 秒、累计最多 3 次，耗尽后技术隔离并保留原额度占位；后续正常同步的精确终态可被动确认。申请当前计数只取当前账号身份/合同证明下完整同步的成员，未验证范围显示未知，不用历史空过滤返回业务零。
 
+BR 一发的本地匹配按原 OEC 游标读取画像页，批量与单人 fresh 读取共用过滤、最新观测排序及 creator/handle/conflict 绑定。仍用原 generation、候选事务、页大小和发布前指纹复核。worker 只有明确本地匹配有 scanned/游标前进且有下一页时短延续；无进度、停止、账号/额度及原未知等待沿原节奏，发送前资格不复用旧页快照。
+
 ### 2.6 双向消息与会话
 
 四市场当前采用 `market-accounts.json.imSessionMode=sdk_http`：每市场 `im-session-worker.py` 持通讯账号原 ProfileLease，负责浏览器 SDK 收信和现有 HTTP 会话的私有 IPC 借用。HTTP 已认证后即可服务原二发、AI 和回查；浏览器初始化不阻塞 HTTP。发送仍走原 HTTP 执行器、逐写门禁、原账号与 requestRef，SDK 不承担发送。
@@ -297,7 +299,7 @@ Web 展示层按操作优先组织：`OperationsConsole` 在桌面并列市场�
 
 `GET /api/market-overview?market=<market>` → 固定 argv `market-overview.py` → `lib/market_overview.py`，只读现有台账，不初始化库或发布持久投影；同市场 singleflight 加 30 秒进程内缓存。页面分当前库存、近 7 日事件、等待和人工事项，身份来源行/去重 handle 分区对账。`lead_pool.counts.queued` 与别名 `candidateQueued` 均指发送候选，`identityQueued` 指身份等待；不改变发送资格。旧 B 表只认 IT，未接通或缺台账的指标显示不可用。
 
-`creator_identity_lookup.current_handle_owners` 按当前 B 作者的小集合复用 `identity_alias_lookup(market,handle)` 定位候选，再按 creator 主键核对 current_handle、market 和 conflict；历史别名只用于定位，歧义 handle 不路由。总览与发送池共用该只读 helper，不扫描整市场身份，也不要求读取时迁移生产库。`identity_market_recent(market,last_observed_us DESC,creator_id)` 由正常 IdentityStore 打开时幂等增量创建，用于最近身份读取。总览各 panel 独立计算期限，嵌套身份查询单独限时；某项超时或缺库只使该项不可用，不把后续指标连带判零。历史验收见[只读运营面板](implementation/readonly-operations-overview-20260925.md)，当前性能与加载状态见交接。
+`creator_identity_lookup.current_handle_owners` 按当前 B 作者的小集合复用 `identity_alias_lookup(market,handle)` 定位候选，再按 creator 主键核对 current_handle、market 和 conflict；历史别名只用于定位，歧义 handle 不路由。总览与发送池共用该只读 helper，不扫描整市场身份，也不要求读取时迁移生产库。`identity_market_recent(market,last_observed_us DESC,creator_id)` 用于最近身份读取，正常 IdentityStore 打开时幂等创建；已有库部署需实际核对并在备份后补齐，GET 不初始化或迁移。总览各 panel 独立计算期限，嵌套身份查询单独限时；某项超时或缺库只使该项不可用，不把后续指标连带判零。历史验收见[只读运营面板](implementation/readonly-operations-overview-20260925.md)，当前性能与加载状态见交接。
 
 首页开关保存返回提交回执（requestId、实际设置与 revision、worker 启动错误）；回执在提交事务内写入 `market_automation_receipt`，重放同一 requestId 先于开启前置条件返回原回执（旧请求只有修订号时标 `originalAvailable=false`），页面对同一开关冻结取值与预期修订号并丢弃晚到的旧读取；保存后读模型投影或页面重读失败只标记 `projectionStale/refreshFailed`，不再报“未保存”，关闭开关不受开启前置条件限制。首页与告警条读取失败时显示“状态不可确认”及上次成功时间，不沿用旧的“运行正常/无告警”。
 
@@ -320,9 +322,11 @@ AI 模型调用按错误分型：本地输入无效记 `input_blocked`，请求�
 | `/api/account-registry` | 账号登记（新增、改登录信息；不回显密码） |
 | `/api/ops-alerts` | 跨市场告警条（只读，无参数） |
 
-会话详情请求绑定 market/cid/请求代次，迟到结果不能覆盖新选择；刷新替换当前队列页，追加才合并。unknown 人工回复保留原 requestId/正文供核验；只有确认终态才清理草稿。轮询不得覆盖未保存设置；市场 Agent 时间独立保存，不写共享 jobs。resolve_manual 校验最新 turn/case/pending/control/合作状态 revision，幂等且平台写入 0。
+会话详情请求绑定 market/cid/请求代次，迟到结果不能覆盖新选择；同选择的轮询复用在途详情，不周期取消慢读取。详情加载、失败和旧详情时效独立反馈，切换选择仍取消旧请求；刷新替换当前队列页，追加才合并。unknown 人工回复保留原 requestId/正文供核验；只有确认终态才清理草稿。轮询不得覆盖未保存设置；市场 Agent 时间独立保存，不写共享 jobs。resolve_manual 校验最新 turn/case/pending/control/合作状态 revision，幂等且平台写入 0。
 
 控制台和巡检的人工/技术挂起数量由 `operator_queue_counts` 读取原分类事实，与会话列表共用前两级分类及人工优先顺序。候选覆盖人工关系、开放案件、人工 pending、历史来信、isolated 回复和 gap/backfilling；不为计数构建外发消息、解释、名字、排序或分页。必要分类表缺失仍为不可用，展示字段损坏不影响已经可确定的数量；不缓存或另存队列状态。
+
+首页 `humanQueue` 复用同一只读分类器，缺失/不可读为 null，人工问题条目也用同一达人数量，不混用 service_case 行数。全局状态条明确市场/提醒分组单位，来信积压与人工决策分开；独立发送/回复通道的窗口等待与主工作流等待一并解释。会话详情只取所选 creator 的 handle，画像指标同时绑定 market/creator/OEC，复用已有身份历史索引，不按 creator 条件全扫市场。
 
 inbox 趋势和日明细使用同一账本，totals 等于每日求和，文字跟随卡不重复计达人；缺失或恒等式失败不显示业务 0。Profile 指标与 PID 线索 GMV 分开展示来源/时间。旧 demo、matching、frozen 批次路由不再构建。
 
@@ -394,6 +398,10 @@ PYTHONDONTWRITEBYTECODE=1 .venv/bin/python scripts/check-docs.py
 交付分别报告：合同测试、类型/构建、本机 API、只读真实数据、平台回执、业务结果。不把历史测试数、旧吞吐或存活进程当当前验收。结构改进与历史实测限制见[项目审计与清理](implementation/project-audit-20260924.md)。
 
 **登录自动恢复：** 本机 Web 与 scheduler-watch 的生成和安装见 [macOS 启动恢复](implementation/macos-startup-recovery.md)。watch 每 60 秒检查 scheduler 与 BR 一发；缺库不启动，已有 worker 保留，原授权、准备任务或原投递/样品回查有工作才恢复一发。scheduler 的显式启动和停止共用 launch mutex；只有显式启动可清既有 stop，watch 用 `preserve_stop=True` 并在同一锁内复核，stop 在进程已退出时也持久保存。`runtime_files` 为启动者和 worker 复用稳定锁与唯一临时文件原子发布，避免并发写坏状态或重复启动。scheduler 可在发送暂停后拉起只读原意图核验，核验结束即按原暂停退出，不授予新发送。
+
+IT 持续发送的 launcher、子进程心跳和退出观察也复用稳定 launch guard 与原子 JSON；运行 flock 已占用但观察缺失时不重复 spawn。观察记录不改业务 stop/授权，显式 start 仍走原页面事务。
+
+Agent 回复启动把原已提交回复与新工作分开：仅有 `inflight/accepted/unknown` 原账时可恢复 `--reconcile-only`，先沿原账号、请求、次数和期限有限核验，ready 草稿不进入此模式，停止、窗口或 paused 不授予新模型/发送权限。IT 的 job stop 文件保持；若收信 owner 也被手动停止，平台读取可能不可用，此时只凭原本地证据结算或按原期限隔离，不强行恢复 owner。
 
 LaunchAgent 配置保存本机路径与代理，不入 Git。macOS ProfileLease 使用硬件 UUID 的哈希识别本机；同机且早于本次开机的锁可回收，旧主机名、格式错误和其他机器的锁仍保留，核对进程与 profile 占用后人工恢复。
 

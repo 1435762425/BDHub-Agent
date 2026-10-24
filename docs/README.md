@@ -6,7 +6,7 @@
 | --- | --- |
 | 业务规则、自动执行范围和完成标准 | [PROJECT.md](PROJECT.md) |
 | 当前模块、数据与并发合同、接口、运行方法、验证边界 | [TECHNICAL.md](TECHNICAL.md)；关键文件表在 §1 |
-| 生产发布、进程、实际开关和当前阻塞 | [当前交接](handoff/current.md)；最新补充：[2026-10-24 发布核验](handoff/optimization-20261024.md)，均为带时间快照 |
+| 生产发布、进程、实际开关和当前阻塞 | [当前交接](handoff/current.md)；最新补充：[第二轮自主运行与体验核验](handoff/autonomous-design-20261024.md)，均为带时间快照 |
 | Agent 修改与执行边界 | [AGENTS.md](../AGENTS.md) |
 
 日期化 implementation/research 证明当时范围和结果，不提供新授权。模块方案与 AI 审查页顶部实施表覆盖其早期“待实施”描述，最终以主文档和代码合同为准。
@@ -15,7 +15,7 @@
 
 | 问题 | 资料 |
 | --- | --- |
-| 本批自主运行、发送冲突与前端精简 | [2026-10-24 优化与验收](implementation/project-optimization-20261024.md) |
+| 自主运行模式、读取成本与经营工作台 | [第二轮改进与验收](implementation/autonomous-design-20261024.md)、[后续架构候选](architecture/autonomous-runtime-evolution-20261024.md)；前一批见[运行恢复与页面精简](implementation/project-optimization-20261024.md) |
 | 分市场经营日报、累计指标和 Codex 定时通报 | [每日经营日报](implementation/business-daily-mail.md) |
 | 审计修复与发布验证 | [审计修复](implementation/audit-fixes-20261003.md)：首发授权、证据归属、市场隔离、总览时效和备份恢复 |
 | 下一步改进、缺陷与验收指标 | [各模块优化方案](implementation/module-optimization-plan-20260925.md)（已审查，主体业务已逐项确认，§10 汇总实施边界）、[项目审计与清理](implementation/project-audit-20260924.md) |
