@@ -166,6 +166,37 @@ class AgentReplyAuthorizationTests(unittest.TestCase):
  def confirm(self,q):
   self.replies.confirm(q['id'],{'status':'confirmed','requestRef':q['request_ref'],
    'conversationId':q['cid'],'messageId':'90','evidenceRef':'exact-proof'})
+ def failed_tick(self,error,expected):
+  draft=self.ready(1);self.pilot()
+  self.store.db.execute("INSERT INTO agent_reply_run VALUES('historical-failed',?,'failed',?,?,0,0,0,0,0,0,NULL)",
+                       (self.plan,self.now-10,self.now-9))
+  # Failure status, finish time and safe reason must be visible in the same update.
+  self.store.db.execute("""CREATE TRIGGER complete_failure_reason BEFORE UPDATE OF state ON agent_reply_run
+   WHEN NEW.state='failed' AND (NEW.error IS NULL OR NEW.finished_at IS NULL)
+   BEGIN SELECT RAISE(ABORT,'incomplete_failure_record'); END""")
+  @contextmanager
+  def opened(*_a,**_kw):yield self.store
+  with patch.object(WORKER,'CycleStore',opened),patch.object(WORKER,'ROOT',self.root), \
+       patch.object(WORKER,'backfill',return_value={}), \
+       patch.object(WORKER,'generate',side_effect=AssertionError('existing_draft_must_not_regenerate')), \
+       patch.object(WORKER,'run_existing',side_effect=error):
+   with self.assertRaises(type(error)) as caught:WORKER.tick('page-error-test-0001','it')
+  self.assertIs(caught.exception,error)
+  row=self.store.db.execute("SELECT * FROM agent_reply_run WHERE run_id<>'historical-failed'").fetchone()
+  self.assertEqual((row['state'],row['finished_at'],row['error']),('failed',self.now,expected))
+  self.assertIsNone(self.store.db.execute("SELECT error FROM agent_reply_run WHERE run_id='historical-failed'").fetchone()[0])
+  self.assertEqual(self.replies.get(draft['id']),draft)
+  self.assertEqual(self.store.db.execute('SELECT count(*) FROM service_reply').fetchone()[0],1)
+  return row['error']
+ def test_typed_failure_records_safe_code_atomically_without_changing_original_draft(self):
+  from lib.italy_im_session import ItalyImReadError
+  error=ItalyImReadError('im_transport_error');error.args=('Authorization: Bearer secret-token; prompt=private-content',)
+  self.assertEqual(self.failed_tick(error,'im_transport_error'),'im_transport_error')
+ def test_untyped_failure_records_only_its_class_without_reading_sensitive_message(self):
+  class SensitiveFailure(RuntimeError):
+   code='Authorization: Bearer secret-token; prompt=private-content'
+   def __str__(self):raise AssertionError('raw_exception_message_must_not_be_read')
+  self.assertEqual(self.failed_tick(SensitiveFailure(),'SensitiveFailure'),'SensitiveFailure')
  def test_no_page_grant_cannot_begin_a_v2_reply(self):
   from lib.second_cycle import CycleError
   q=self.ready(1)

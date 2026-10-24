@@ -35,6 +35,10 @@ def authorized_request(value):
  if value is None:return None
  if not isinstance(value,str) or not REQUEST_ID.fullmatch(value):raise CycleError('agent_reply_authorization_invalid')
  return value
+def safe_error_code(error):
+ """Persist typed error codes only; raw exception messages may contain credentials or prompts."""
+ code=getattr(error,'code',None)
+ return code if isinstance(code,str) and re.fullmatch(r'[A-Za-z][A-Za-z0-9_]{0,99}',code) else type(error).__name__
 def send_dispatch_active(store,market='it'):
  tables={row[0] for row in store.db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
  if 'cycle_delivery_part' in tables and {'cycle_delivery','plan'}<=tables:
@@ -227,7 +231,7 @@ def tick(authorized_now=None,market="it"):
     report['realSends']=result['realSends'];report['platformWrites']=result['platformWrites']
     report['confirmed']+=int(result['state']=='confirmed');report['unknown']+=int(result['state']=='unknown')
   except BaseException as error:
-   store.db.execute("UPDATE agent_reply_run SET state='failed',finished_at=? WHERE run_id=?",(store.clock(),run_id))
+   store.db.execute("UPDATE agent_reply_run SET state='failed',finished_at=?,error=? WHERE run_id=?",(store.clock(),safe_error_code(error),run_id))
    raise
   report['state']='completed'
   store.db.execute("UPDATE agent_reply_run SET state='completed',finished_at=?,claimed=?,no_reply=?,prepared=?,human=?,confirmed=?,unknown=? WHERE run_id=?",(store.clock(),report['claimed'],report['noReply'],report['prepared'],report['human'],report['confirmed'],report['unknown'],run_id))
