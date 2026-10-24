@@ -24,6 +24,11 @@ export function firstApplicationSummary(data:{applicationCoverage?:string;counts
  if(data.applicationCoverage!=="complete")return {value:"—",hint:"待审批范围尚未核实"};
  return {value:data.counts.pendingApplications,hint:`已确认需人工 ${data.counts.needsReview.toLocaleString()} · 结果未知 ${data.counts.unknown.toLocaleString()}`};
 }
+export function firstMatchedCreatorSummary(data:{readiness:{blockers:string[]};counts:{matchedCreators:number}}):{value:number|string;hint:string}{
+ if(data.readiness.blockers.includes("first_outreach_catalog_changed"))return {value:"待更新",hint:"货盘已变化，等待匹配结果更新"};
+ if(data.readiness.blockers.includes("first_outreach_prepare_required"))return {value:"待更新",hint:"当前货盘的匹配结果尚未准备完成"};
+ return {value:data.counts.matchedCreators,hint:"主营类目一致 · GMV排序"};
+}
 export function firstOutreachError(code:string):string{
  if(/conflict/.test(code))return "状态已在另一窗口变化，请按最新状态重新操作。";
  if(code==="invalid_first_outreach_request"||code==="invalid_query"||code==="market_mismatch")return "请求不符合巴西一发规则，请刷新后重试。";

@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {readFileSync} from "node:fs";
 import {firstOutreachArgv,validateFirstOutreach,validateFirstOutreachRequest} from "../src/server/first-outreach/bridge.ts";
-import {firstApplicationGroups,firstApplicationSummary,firstOutreachActions,firstOutreachCanContinue,firstOutreachCycleLabel,firstOutreachLabel,firstOutreachWaitingReasons} from "../src/features/first-outreach/presentation.ts";
+import {firstApplicationGroups,firstApplicationSummary,firstMatchedCreatorSummary,firstOutreachActions,firstOutreachCanContinue,firstOutreachCycleLabel,firstOutreachLabel,firstOutreachWaitingReasons} from "../src/features/first-outreach/presentation.ts";
 import {GET,POST} from "../src/app/api/first-outreach/route.ts";
 
 const payload={schemaVersion:"bdhub.first-outreach.v1",market:"br",applicationCoverage:"unverified",control:{revision:1,mode:"stopped",approvalsEnabled:false,updatedAt:1},readiness:{ready:false,blockers:["sample_facts_unavailable"]},counts:{products:0,matchedCreators:0,sent:0,pendingApplications:0,approved:0,needsReview:0,unknown:0},candidates:[],applications:[],runtime:{state:"blocked",reason:"sample_facts_unavailable",updatedAt:null},platformWrites:0,sourceUpdatedAt:null};
@@ -27,6 +27,18 @@ test("application coverage is explicit and old empty reads never become zero pen
  assert.equal(firstApplicationSummary({applicationCoverage:"complete",counts:{...ledger,pendingApplications:0}}).value,0);
  const state=validateFirstOutreach({...payload,counts:{...payload.counts,...ledger}});
  assert.equal(state.counts.approved,5);assert.equal(state.counts.unknown,1);
+});
+
+test("matching being rebuilt for the current catalog is pending rather than a real zero",()=>{
+ for(const reason of ["first_outreach_catalog_changed","first_outreach_prepare_required"]){
+  const state={readiness:{blockers:[reason,"first_outreach_worker_unavailable"]},counts:{matchedCreators:0}};
+  const before=structuredClone(state),summary=firstMatchedCreatorSummary(state);
+  assert.equal(summary.value,"待更新");assert.match(summary.hint,/匹配结果/);assert.deepEqual(state,before);
+ }
+ for(const blockers of [[],["no_matched_creators"],["first_outreach_result_unknown"],["first_outreach_matches_unavailable"],["unknown_technical_failure"]]){
+  assert.deepEqual(firstMatchedCreatorSummary({readiness:{blockers},counts:{matchedCreators:0}}),{value:0,hint:"主营类目一致 · GMV排序"});
+ }
+ assert.equal(firstMatchedCreatorSummary({readiness:{blockers:[]},counts:{matchedCreators:12302}}).value,12302);
 });
 
 test("waiting reasons use plain language and unknown codes never leak into the page",()=>{

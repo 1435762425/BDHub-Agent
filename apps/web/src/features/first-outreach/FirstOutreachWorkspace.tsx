@@ -2,7 +2,7 @@
 import {useState} from "react";
 import {Button,Card,Dialog,EmptyState,Notice,PageHeading,Pill,StatTile,Toggle} from "../bdhub/ui";
 import {useFirstOutreach} from "./useFirstOutreach";
-import {firstApplicationGroups,firstApplicationSummary,firstOutreachActions,firstOutreachCycleLabel,firstOutreachLabel,firstOutreachWaitingReasons} from "./presentation";
+import {firstApplicationGroups,firstApplicationSummary,firstMatchedCreatorSummary,firstOutreachActions,firstOutreachCycleLabel,firstOutreachLabel,firstOutreachWaitingReasons} from "./presentation";
 import type {FirstOutreachState} from "./contracts";
 
 const time=(value:number|null|undefined)=>value==null?"尚未读取":new Date(value*1000).toLocaleString("zh-CN",{timeZone:"Asia/Shanghai",hour12:false});
@@ -26,6 +26,7 @@ export default function FirstOutreachWorkspace(){
  const [confirmation,setConfirmation]=useState<"start"|"continue"|"approvals"|null>(null);
  const unavailable=!data||!!error,processing=!!data&&["preparing","syncing"].includes(data.runtime.state),actions=new Set(data?firstOutreachActions(data):[]);
  const applicationSummary=data?firstApplicationSummary(data):{value:"—",hint:"待审批范围尚未核实"};
+ const matchedSummary=data?firstMatchedCreatorSummary(data):{value:"—",hint:"匹配状态尚未读取"};
  const groups=firstApplicationGroups(data?.applications??[]),waitingReasons=data?firstOutreachWaitingReasons(data):[];
  const attention=!!data&&(data.counts.unknown>0||["attention","failed","waiting_reconciliation"].includes(data.runtime.state));
  const confirm=async()=>{if(!confirmation)return;const ok=await call(confirmation==="approvals"?"set-approvals":confirmation,confirmation==="approvals"?true:undefined);if(ok)setConfirmation(null);};
@@ -37,7 +38,7 @@ export default function FirstOutreachWorkspace(){
    <Card title="推送进度" action={<div className="flex flex-wrap items-center gap-3"><Pill tone={attention?"warning":data.runtime.state==="sending"?"success":"neutral"}>{firstOutreachLabel(data.runtime.state)}</Pill>{actions.has("stop")&&<Button variant="outline" size="sm" disabled={busy==="stop"} onClick={()=>void call("stop")}>停止持续推送</Button>}</div>}>
     <div className="space-y-4 p-5">
      {waitingReasons.length>0&&(attention?<Notice tone="warning"><p className="font-medium">当前等待</p>{waitingReasons.map(reason=><p key={reason}>{reason}</p>)}</Notice>:<div className="space-y-1 text-sm leading-6 text-gray-500">{waitingReasons.map(reason=><p key={reason}>{reason}</p>)}</div>)}
-     <div className="grid grid-cols-2 gap-3 lg:grid-cols-4"><StatTile label="成功推送" value={data.counts.sent} hint="已确认成功的推荐" brand/><StatTile label="自动审批通过" value={data.counts.approved} hint="已确认平台通过"/><StatTile label="可推荐商品" value={data.counts.products} hint="有效免费样品且有额度"/><StatTile label="匹配达人" value={data.counts.matchedCreators} hint="主营类目一致 · GMV排序"/></div>
+     <div className="grid grid-cols-2 gap-3 lg:grid-cols-4"><StatTile label="成功推送" value={data.counts.sent} hint="已确认成功的推荐" brand/><StatTile label="自动审批通过" value={data.counts.approved} hint="已确认平台通过"/><StatTile label="可推荐商品" value={data.counts.products} hint="有效免费样品且有额度"/><StatTile label="匹配达人" value={matchedSummary.value} hint={matchedSummary.hint}/></div>
      {Array.from(actions).some(action=>action!=="stop")&&<div className="flex flex-wrap gap-3">
       {actions.has("prepare")&&<Button variant="outline" disabled={!!busy||unavailable||processing} onClick={()=>void call("prepare")}>{busy==="prepare"?"准备中…":"准备匹配"}</Button>}
       {actions.has("continue")?<Button disabled={!!busy||unavailable||processing||!data.readiness.ready} onClick={()=>setConfirmation("continue")}>继续持续推送</Button>:actions.has("start")&&<Button disabled={!!busy||unavailable||processing||!data.readiness.ready} onClick={()=>setConfirmation("start")}>验证首条</Button>}
