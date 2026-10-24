@@ -17,6 +17,13 @@ IDENTITY_STATES = ('resolved', 'notFound', 'queued', 'blocked', 'isolated', 'noR
 TECHNICAL_CASES = ('card_result_unknown', 'conversation_business_rejected', 'conversation_create_unknown')
 
 
+def reset_read_budget(db):
+    # A panel can read another database or compute in Python. Its elapsed time must not
+    # consume the query budget of the next, independent panel on this connection.
+    deadline = time.monotonic() + 8
+    db.set_progress_handler(lambda: int(time.monotonic() > deadline), 10000)
+
+
 @contextmanager
 def read_db(path):
     db = sqlite3.connect(Path(path).resolve().as_uri() + '?mode=ro', uri=True, timeout=2)
@@ -24,8 +31,7 @@ def read_db(path):
         db.row_factory = sqlite3.Row
         db.execute('PRAGMA query_only=ON')
         db.execute('BEGIN')
-        deadline = time.monotonic() + 8
-        db.set_progress_handler(lambda: int(time.monotonic() > deadline), 10000)
+        reset_read_budget(db)
         yield db
     finally:
         db.close()
@@ -161,10 +167,8 @@ def video_counts(root, db, market):
         raise ValueError('video_market_not_implemented')
     rows = list(db.execute('SELECT handle FROM video_lead_current' + (' WHERE market=?' if 'market' in columns else ''),
                            (market,) if 'market' in columns else ()))
-    with read_db(Path(root) / 'var/creator-identities.sqlite') as ids:
-        require_tables(ids, 'creator_identity')
-        owners = {str(r[0]).lower() for r in ids.execute('''SELECT current_handle FROM creator_identity
-            WHERE market=? AND handle_conflict=0 AND current_handle IS NOT NULL''', (market,))}
+    from lib.creator_identity_lookup import current_handle_owners
+    owners = current_handle_owners(root, market, (r['handle'] for r in rows))
     known = sum(str(r['handle']).lower() in owners for r in rows)
     # An unmatched author is either already judged "not found" by the OECID search (final, not
     # re-queried) or still waiting for resolution; the two were once shown together as "待匹配".
@@ -275,8 +279,11 @@ def overview(root, market, *, now=None):
                 ('handling', '技术状态与人工事项', 'cycle_delivery / service_reply / service_case / account_maintenance_intent', lambda: handling(db, plan, market, now)),
                 ('inbox', '来信等待', 'conversation_workbench.unread_backlog', lambda: inbox(db, market, now)),
             ]
-            result['panels'] = [panel(key, title, source, reader, now) for key, title, source, reader in readers]
+            for key, title, source, reader in readers:
+                reset_read_budget(db)
+                result['panels'].append(panel(key, title, source, reader, now))
             try:
+                reset_read_budget(db)
                 result['waits'] = waits(db, plan, market)
             except (sqlite3.Error, ValueError):
                 result['waitsUnavailable'] = True

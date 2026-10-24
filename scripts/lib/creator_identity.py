@@ -32,6 +32,8 @@ CREATE TABLE IF NOT EXISTS creator_identity(
     last_observed_at TEXT NOT NULL, last_observed_us INTEGER NOT NULL,
     created_at TEXT NOT NULL, UNIQUE(market, oec_id)
 );
+CREATE INDEX IF NOT EXISTS identity_market_recent
+    ON creator_identity(market,last_observed_us DESC,creator_id);
 CREATE TABLE IF NOT EXISTS identity_observation(
     event_id TEXT PRIMARY KEY, creator_id TEXT REFERENCES creator_identity(creator_id),
     market TEXT NOT NULL, oec_id TEXT NOT NULL, kind TEXT NOT NULL,

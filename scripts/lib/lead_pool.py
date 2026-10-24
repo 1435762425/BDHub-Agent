@@ -99,14 +99,12 @@ def lead_strength(row):
     except (TypeError,ValueError):released=0
     return (1,-(row.get('videoViews') or 0),-released,row['pid'],row['creatorId'])
 
-def _video_owner(root,market='it'):
+def _video_owner(root,market='it',handles=()):
     path=Path(root)/'var/creator-identities.sqlite'
     if not path.exists():return {}
     try:
-        with closing(sqlite3.connect(path.resolve().as_uri()+'?mode=ro',uri=True)) as db:
-            return {str(row[1]).lower():str(row[0]) for row in db.execute(
-                "SELECT creator_id,current_handle FROM creator_identity WHERE market=? "
-                "AND handle_conflict=0 AND current_handle IS NOT NULL",(market,))}
+        from lib.creator_identity_lookup import current_handle_owners
+        return current_handle_owners(root,market,handles)
     except sqlite3.Error:return {}
 
 
@@ -158,7 +156,7 @@ def _build(conn, now, limit, eligible_pids=None,root=None,market='it'):
         positions = []
     video_rows=_rows(conn,'SELECT * FROM video_lead_current WHERE market=?',(market,)) if conn.execute(
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name='video_lead_current'").fetchone() else []
-    video_owner=_video_owner(root,market) if root else {};video_unresolved=0
+    video_owner=_video_owner(root,market,(row['handle'] for row in video_rows)) if root else {};video_unresolved=0
     from lib.video_window import current as video_current
     for row in video_rows:
         if not video_current(row['released_at'],now):continue

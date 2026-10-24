@@ -7,11 +7,12 @@ import sqlite3
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 from contextlib import closing
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'scripts'))
-from lib.market_overview import overview, identity_counts, read_db, handling, inventory, video_counts
+from lib.market_overview import overview, identity_counts, read_db, reset_read_budget, handling, inventory, video_counts
 from test_cycle_stats import fixture as stats_fixture, NOON
 
 
@@ -30,6 +31,23 @@ class OverviewTests(unittest.TestCase):
         for key in ('', 'IT', 'be', '../it'):
             with self.subTest(key=key), self.assertRaises(ValueError):
                 overview(self.root, key, now=NOON)
+
+    def test_one_expired_query_budget_does_not_cancel_the_next_panel(self):
+        (self.root / 'var').mkdir()
+        path = self.root / 'var/second-cycle.sqlite'
+        with closing(sqlite3.connect(path)) as db:
+            db.execute('CREATE TABLE existing(value)')
+        costly = '''WITH RECURSIVE numbers(n) AS (
+            SELECT 1 UNION ALL SELECT n+1 FROM numbers WHERE n<10000)
+            SELECT sum(n) FROM numbers'''
+        with patch('lib.market_overview.time.monotonic', return_value=0) as clock, read_db(path) as db:
+            clock.return_value = 9
+            with self.assertRaisesRegex(sqlite3.OperationalError, 'interrupted'):
+                db.execute(costly).fetchone()
+            reset_read_budget(db)
+            self.assertEqual(db.execute(costly).fetchone()[0], 50005000)
+            with self.assertRaises(sqlite3.OperationalError):
+                db.execute('DELETE FROM existing')
 
     def test_daily_matches_existing_stats_and_read_never_mutates_the_database(self):
         from lib.cycle_stats import daily
@@ -131,8 +149,11 @@ class OverviewTests(unittest.TestCase):
     def test_legacy_video_scope_never_leaks_into_other_markets(self):
         (self.root/'var').mkdir()
         with closing(sqlite3.connect(self.root/'var/creator-identities.sqlite')) as ids, ids:
-            ids.execute('CREATE TABLE creator_identity(market,current_handle,handle_conflict)')
-            ids.executemany('INSERT INTO creator_identity VALUES(?,?,?)',[('it','known',0),('br','unknown',0)])
+            ids.execute('CREATE TABLE creator_identity(market,current_handle,handle_conflict,creator_id)')
+            ids.executemany('INSERT INTO creator_identity VALUES(?,?,?,?)',[('it','known',0,'creator-it'),('br','unknown',0,'creator-br')])
+            ids.execute('CREATE TABLE identity_observation(creator_id,market,handle,kind)')
+            ids.executemany('INSERT INTO identity_observation VALUES(?,?,?,?)',
+                            [('creator-it','it','known','profile'),('creator-br','br','unknown','profile')])
         with closing(sqlite3.connect(':memory:')) as db, db:
             db.row_factory=sqlite3.Row
             db.execute('CREATE TABLE video_lead_current(handle)')
