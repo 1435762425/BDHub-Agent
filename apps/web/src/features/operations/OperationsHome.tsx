@@ -5,7 +5,7 @@ import {useCallback,useEffect,useRef,useState} from "react";
 import {Button,Card,Notice,PageHeading,Pill,Toggle} from "../bdhub/ui";
 import type {OperationsHome as State,OperationsStage,SaveCommit} from "../../server/operations-home/bridge";
 
-const stateLabel:Record<string,string>={disabled:"未启用",waiting_upstream:"等待上游",queued:"排队",running:"运行中",completed:"已完成",quota_exhausted:"额度耗尽",needs_human:"需人工",failed:"失败",skipped:"本轮跳过",off:"关闭",waiting_window:"等待窗口",sending:"发送中",waiting_capacity:"等待可用额度",waiting_reconciliation:"待核验",paused:"暂停",stopped:"已停止",waiting_pool:"等待发送池",idle:"空闲"};
+const stateLabel:Record<string,string>={disabled:"未启用",waiting_upstream:"等待上游",queued:"排队",running:"运行中",completed:"已完成",quota_exhausted:"额度耗尽",needs_human:"需人工",failed:"失败",skipped:"本轮跳过",off:"关闭",waiting_window:"等待窗口",sending:"发送中",waiting_capacity:"等待可用额度",waiting_transport:"连接恢复中",waiting_reconciliation:"待核验",paused:"暂停",stopped:"已停止",waiting_pool:"等待发送池",idle:"空闲"};
 // Unknown codes never pass as a business state: they read "状态待核实" and keep the machine code as a tooltip.
 const label=(state:string)=>stateLabel[state]??"状态待核实";
 const REASONS:Record<string,string>={identity_lane_waiting_recovery:"身份解析通道等待恢复",source_stopped:"数据源已停止",
@@ -74,19 +74,21 @@ export default function OperationsHome({market,marketLabel,fullManagedCatalog,ru
  const attentionStages=data.stages.filter(stage=>["failed","needs_human","waiting_reconciliation"].includes(stage.state)||!stateLabel[stage.state]||stage.writes?.availability==="uncertain");
  const controls=<>
   <Card title="自动运营" action={<div className="flex items-center gap-4"><Link href={`/${market}/ops/jobs`} className="text-sm font-medium text-brand-500">作业与时间 →</Link>{active&&<Button size="sm" variant="outline" disabled={busy!==null} onClick={()=>void workflow("stop")}>安全停止</Button>}</div>}>
+   <div className="flex flex-wrap items-center gap-x-6 gap-y-3 px-5 py-3 text-xs dark:border-gray-800">
+    <span className="flex items-center gap-2"><span className="text-gray-500">经营主链</span><span title={data.workflow.state}><Pill tone={tone(data.workflow.state)}>{label(data.workflow.state)}</Pill></span></span>
+    {data.stages.filter(stage=>LANES.has(stage.id)).map(stage=><span key={stage.id} className="flex items-center gap-2"><span className="text-gray-500">{stage.label}</span><span title={stage.state}><Pill tone={tone(stage.state)}>{label(stage.state)}</Pill></span></span>)}
+    <span className="text-gray-500">回复设置：{data.agent.enabled?"开启":"关闭"} · {data.agent.replyWindow.join("–")}</span>
+   </div>
+   <details className="border-t border-gray-100 dark:border-gray-800"><summary className="cursor-pointer px-5 py-3 text-sm font-medium text-gray-600 dark:text-gray-300">自动运营设置<span className="ml-3 text-xs font-normal text-gray-500">总开关{data.setting.automaticOperationsEnabled?"开启":"关闭"} · 自动发送{data.setting.continuousSendEnabled?"开启":"关闭"}</span></summary>
    <div className="grid gap-x-8 px-5 py-2 lg:grid-cols-3">
     <Toggle label="自动运营总开关" description={activationPending?"市场能力验证完成后可开启。":"自动推进货盘、链接、达人线索与身份解析。"} checked={data.setting.automaticOperationsEnabled} disabled={busy!==null||activationPending&&!data.setting.automaticOperationsEnabled} onChange={value=>void toggle("automaticOperationsEnabled",value)}/>
     {fullManagedCatalog===true?<Toggle label="全托商品发现" description="首次及每 15 天发现新商品。" checked={data.setting.fullCatalogWeeklyEnabled} disabled={busy!==null} onChange={value=>void toggle("fullCatalogWeeklyEnabled",value)}/>:<div className="py-3"><p className="text-sm font-medium">全托商品发现</p><p className="mt-1 text-xs leading-5 text-gray-500">{fullManagedCatalog===false?"当前市场不支持全托商品。":"全托能力待验证，暂不可用。"}</p></div>}
     <Toggle label="持续自动发送" description={templatePending?`需审核至少 ${data.templateReview.minimumApproved} 条话术，当前 ${data.templateReview.approved}/${data.templateReview.total}。`:"在发送窗口内触达可发达人。"} checked={data.setting.continuousSendEnabled} disabled={busy!==null||(activationPending||templatePending)&&!data.setting.continuousSendEnabled} onChange={value=>void toggle("continuousSendEnabled",value)}/>
    </div>
-   <div className="flex flex-wrap items-center gap-x-6 gap-y-3 border-t border-gray-100 px-5 py-3 text-xs dark:border-gray-800">
-    <span className="flex items-center gap-2"><span className="text-gray-500">经营主链</span><span title={data.workflow.state}><Pill tone={tone(data.workflow.state)}>{label(data.workflow.state)}</Pill></span></span>
-    {data.stages.filter(stage=>LANES.has(stage.id)).map(stage=><span key={stage.id} className="flex items-center gap-2"><span className="text-gray-500">{stage.label}</span><span title={stage.state}><Pill tone={tone(stage.state)}>{label(stage.state)}</Pill></span></span>)}
-    <span className="text-gray-500">回复设置：{data.agent.enabled?"开启":"关闭"} · {data.agent.replyWindow.join("–")}</span>
-   </div>
+   </details>
   </Card>
   {message&&<Notice tone={message.includes("已")?"success":"warning"}>{message}</Notice>}
-  {data.issues.length>0&&<Card title="运行事项"><div className="divide-y divide-gray-100 px-5 dark:divide-gray-800">{data.issues.map(issue=><div key={issue.id} className="flex items-start justify-between gap-4 py-4"><div><p className="text-sm font-medium text-gray-800 dark:text-gray-200">{issue.title}</p><p className="mt-1 text-xs leading-5 text-gray-500">{issue.reason}</p></div><Pill tone="warning">{issue.kind==="conversation"?"会话":"待关注"}</Pill></div>)}</div></Card>}
+  {data.issues.length>0&&<Card title="运行事项"><div className="divide-y divide-gray-100 px-5 dark:divide-gray-800">{data.issues.map(issue=><Link key={issue.id} href={`/${market}/${issue.kind==="conversation"?"conversations":issue.kind==="account"?"ops/accounts":"ops/jobs"}`} className="group flex items-start justify-between gap-4 py-4"><div><p className="text-sm font-medium text-gray-800 group-hover:text-brand-600 dark:text-gray-200">{issue.title}</p><p className="mt-1 text-xs leading-5 text-gray-500">{issue.reason}</p></div><span className="shrink-0 text-sm text-brand-600">查看 →</span></Link>)}</div></Card>}
  </>;
  return <div className="space-y-5">
   <PageHeading title="运营首页" action={<div className="flex flex-wrap items-center gap-2">{readError?<Pill tone="warning">刷新失败 · 上次读取 {stamp(readAt)}</Pill>:data.issues.length?<Pill tone="warning">{data.issues.length} 项待关注</Pill>:<span className="text-xs text-gray-400">更新于 {stamp(readAt)}</span>}</div>}/>

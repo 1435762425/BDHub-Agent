@@ -1,5 +1,5 @@
 const labels:Record<string,string>={
- queued:"已排队",waiting:"等待后自动继续",complete:"本轮已完成",partial:"部分商品等待，其他继续",ready_to_ship:"等待商家发货",content_pending:"等待达人发布",completed:"已完成",shipped:"已发货",cancelled:"已取消",goal_observed:"平台已进入后续阶段，原审批回执未确认",
+ queued:"已排队",waiting:"等待后自动继续",waiting_transport:"连接恢复中",inflight:"原申请提交中",accepted:"平台已受理，等待核验",rejected:"平台未通过原审批，留待处理",complete:"本轮已完成",partial:"部分商品等待，其他继续",ready_to_ship:"等待商家发货",content_pending:"等待达人发布",completed:"已完成",shipped:"已发货",cancelled:"已取消",goal_observed:"平台已进入后续阶段，原审批回执未确认",
  sample_authentication_required:"等待账号恢复登录",sample_network_unavailable:"平台连接暂不可用，将自动重试",sample_permission_denied:"平台尚未授予当前账号权限",sample_remote_read_failed:"样品读取暂时失败，将自动重试",waiting_original_identity:"等待原审批账号身份恢复后核验",sample_canary_lifecycle_pending:"首条审批正在等待平台后续状态",first_supply_workflow_busy:"原商品任务正在执行，完成后自动继续",first_supply_workflow_running:"原商品任务正在执行，完成后自动继续",first_category_read_budget:"分类正按批次自动推进",first_prepare_read_budget:"达人匹配正按批次自动推进",
  first_material_waiting_workflow:"原商品任务正在执行，完成后自动继续",first_material_timeout:"推荐卡准备暂未完成，将核验原记录后继续",first_material_response_invalid:"推荐卡准备暂未完成，将核验原记录后继续",first_material_incomplete:"推荐卡正在按批次自动准备",first_names_read_budget:"葡语商品名正在按批次自动准备",first_catalog_chunk_incomplete:"商品信息正在按批次自动更新",first_catalog_read_budget:"商品信息正在按批次自动更新",
  sample_no_eligible_first_application:"等待本功能成功推荐且仍符合规则的新申请",sample_canary_already_started:"首条审批正在核验，确认后自动继续",sample_canary_lifecycle_unconfirmed:"首条审批已提交，等待平台后续状态",sample_verification_required:"平台验证尚未完成，将自动重试",sample_login_required:"等待账号自动恢复登录",sample_rate_limited:"平台暂时限流，将稍后重试",sample_network_error:"平台连接暂不可用，将自动重试",sample_waiting_original_identity:"等待原审批账号身份恢复后核验",sample_original_identity_changed:"等待原审批账号身份恢复后核验",taplink_remote_read_failed:"平台读取暂时失败，将自动重试",market_send_result_unknown:"正在核验巴西原操作，核验后自动继续",sample_read_failed:"样品同步暂时失败，将自动重试",sample_read_verification_required:"平台验证尚未完成，将自动重试",sample_read_network_error:"平台连接暂不可用，将自动重试",
@@ -31,4 +31,37 @@ export function firstOutreachError(code:string):string{
 }
 export function firstOutreachCanContinue(data:{control:{mode:string};runtime:{state:string};counts:{sent:number;unknown:number}}):boolean{
  return data.control.mode!=="continuous"&&data.counts.sent>0&&["canary_confirmed","canary_complete","canary_completed","stopped","idle","ready"].includes(data.runtime.state);
+}
+
+export function firstOutreachActions(data:Parameters<typeof firstOutreachCanContinue>[0]):("prepare"|"start"|"continue"|"stop"|"reconcile")[]{
+ const actions:("prepare"|"start"|"continue"|"stop"|"reconcile")[]=[];
+ const stopped=data.control.mode==="stopped";
+ if(stopped)actions.push("prepare");
+ if(firstOutreachCanContinue(data))actions.push("continue");
+ else if(stopped)actions.push("start");
+ if(!stopped)actions.push("stop");
+ if(data.counts.unknown>0)actions.push("reconcile");
+ return actions;
+}
+
+// These are display groups for the rows returned by the API, never eligibility or approval rules.
+// Unrecognised lifecycle states remain visible in the group that needs a closer look.
+const finishedApplications=new Set(["completed","cancelled","closed_externally"]);
+const waitingApplications=new Set(["approved","approved_confirmed","seller_pending","ready_to_ship","shipped","content_pending","in_progress"]);
+const unknownApplications=new Set(["unknown","approval_unknown","send_unknown","waiting_reconciliation","quarantined_unknown","inflight","accepted","goal_observed"]);
+export function firstApplicationGroups<T extends {state:string}>(applications:T[]):{attention:T[];waiting:T[];finished:T[]}{
+ const groups:{attention:T[];waiting:T[];finished:T[]}={attention:[],waiting:[],finished:[]};
+ for(const row of applications){
+  if(finishedApplications.has(row.state))groups.finished.push(row);
+  else if(waitingApplications.has(row.state))groups.waiting.push(row);
+  else groups.attention.push(row);
+ }
+ const priority=(row:T)=>unknownApplications.has(row.state)?0:row.state==="sample_application_state_unverified"?2:1;
+ groups.attention.sort((a,b)=>priority(a)-priority(b));
+ return groups;
+}
+
+export function firstOutreachWaitingReasons(data:{runtime:{state:string;reason:string|null};readiness:{blockers:string[]}}):string[]{
+ const state=firstOutreachLabel(data.runtime.state);
+ return Array.from(new Set([...(data.runtime.reason?[data.runtime.reason]:[]),...data.readiness.blockers].map(firstOutreachLabel))).filter(reason=>reason!==state);
 }

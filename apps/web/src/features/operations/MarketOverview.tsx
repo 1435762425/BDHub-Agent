@@ -6,7 +6,7 @@ import type {MarketOverview as Overview,OverviewPanel,Metric} from "../../server
 
 const format=(value:number|null|undefined)=>value==null?"不可用":value.toLocaleString("zh-CN");
 const time=(value:number|null)=>value?new Date(value*1000).toLocaleString("zh-CN",{timeZone:"Asia/Shanghai",hour12:false}):"未记录";
-const labels:Record<string,string>={queued:"排队",waiting_upstream:"等待上游",running:"运行中",failed:"失败待恢复",needs_human:"当前需核对",stopped:"已停止",stop_requested:"正在停止",quota_exhausted:"等待额度",waiting_capacity:"等待额度",waiting_window:"等待窗口",waiting_pool:"等待候选",waiting_reconciliation:"等待核验",paused:"已暂停",off:"未启用",idle:"空闲"};
+const labels:Record<string,string>={queued:"排队",waiting_upstream:"等待上游",running:"运行中",failed:"失败待恢复",needs_human:"当前需核对",stopped:"已停止",stop_requested:"正在停止",quota_exhausted:"等待额度",waiting_capacity:"等待额度",waiting_transport:"连接恢复中",waiting_window:"等待窗口",waiting_pool:"等待候选",waiting_reconciliation:"等待核验",paused:"已暂停",off:"未启用",idle:"空闲"};
 const sources:Record<string,string>={inventory:"已发布货盘与链接台账",identity:"当前 A 类线索与身份记录",video:"当前视频线索与作者记录",pool:"当前发送池",handling:"投递、回复、案件及账号台账",inbox:"会话未回统计"};
 const disclosure="rounded-2xl border border-gray-200 bg-white dark:border-gray-800 dark:bg-white/[0.025]";
 const summary="cursor-pointer rounded-2xl px-5 py-4 text-sm font-semibold text-gray-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 dark:text-gray-200";
@@ -30,8 +30,8 @@ export default function MarketOverview({market,controls}:{market:string;controls
  if(!data.available)return <section className="min-w-0 space-y-5"><Card title="经营概览"><div className="p-5 text-sm text-gray-500">当前市场数据不可用。</div></Card>{controls}</section>;
  const get=(id:string)=>data.panels.find(p=>p.id===id);
  const metric=(id:string,key:string):Metric|undefined=>get(id)?.available?get(id)?.metrics.find(m=>m.key===key):undefined;
- const highlights=[metric("inventory","catalogPids"),metric("inventory","activeBindings"),metric("pool","ready"),metric("inbox","unread")];
- const titles=["当前货盘商品","当前有效链接绑定","当前可发达人","未处理达人来信"];
+ const highlights=[metric("inbox","unread"),metric("pool","ready"),metric("inventory","catalogPids"),metric("inventory","activeBindings")];
+ const titles=["未处理达人来信","当前可发达人","当前货盘商品","当前有效链接绑定"];
  const identity=get("identity"),handling=get("handling"),inbox=get("inbox");
  const human=metric("handling","humanCases"),account=metric("handling","accountNeedsHuman");
  const humanRows=[{title:"业务及其他人工事项",metric:human},{title:"账号需处理",metric:account}];
@@ -49,7 +49,10 @@ export default function MarketOverview({market,controls}:{market:string;controls
   </div>
   {controls}
   <div className="grid gap-5 xl:grid-cols-3">
-   <Card className="min-w-0" title="近 7 天结果" subtitle={range}><div className="p-5">{data.activity.available?<dl className="space-y-2.5 text-sm">{[["完整触达","creators","人次"],["达人来信","replies","条"],["来信达人","replyCreators","人次"],["加橱窗通知","showcase","条事件"],["确认服务回复","autoReplies","条"]].map(([label,key,unit])=><div className="flex justify-between gap-3" key={key}><dt className="text-gray-500">{label}</dt><dd className="text-right tabular-nums">{format(data.activity.totals[key]??null)} {data.activity.totals[key]==null?"":unit}{key==="autoReplies"&&data.activity.totals.serviceRepliesAi!=null&&<span className="ml-1 text-xs text-gray-400">（AI {format(data.activity.totals.serviceRepliesAi)} · 人工 {format(data.activity.totals.serviceRepliesManual??null)}）</span>}</dd></div>)}</dl>:<p className="text-sm text-gray-500">每日事件数据不可用</p>}</div></Card>
+   <Card className="min-w-0" title="需要人工"><div className="space-y-4 p-5">
+    {noHumanTasks?<p className="text-sm text-gray-500">暂无人工待办</p>:<dl className="space-y-3 text-sm">{humanRows.map(({title,metric:m})=>m?.value===0?null:<div key={title} className="flex justify-between gap-3"><dt className="text-gray-500">{title}</dt><dd className="font-semibold tabular-nums">{format(m?.value)}{m?.value!=null?` ${m.unit}`:""}</dd></div>)}</dl>}
+    <div className="flex flex-wrap gap-x-4 gap-y-2 text-sm"><Link className="font-medium text-brand-500" href={`/${market}/conversations`}>查看会话 →</Link><Link className="font-medium text-brand-500" href={`/${market}/ops/accounts`}>查看账号 →</Link></div>
+   </div></Card>
    <Card className="min-w-0" title="正在等待"><div className="space-y-3 p-5">
     {data.waitsUnavailable?<p className="text-sm text-warning-600">等待状态读取失败</p>:data.waits.length?data.waits.map(w=><div key={w.id} className="flex items-start justify-between gap-3 text-sm"><span>{w.label}<span className="mt-1 block text-[11px] text-gray-400">记录于 {time(w.observedAt)}</span></span><Pill tone={w.state==="failed"||w.state==="needs_human"||w.state==="waiting_reconciliation"?"warning":"neutral"}>{labels[w.state]??"状态待核实"}</Pill></div>):<p className="text-sm text-gray-500">暂无等待记录</p>}
     {unresolved.map(m=><div key={m.key} className="flex justify-between gap-3 text-sm text-warning-600"><span>{m.label}</span><strong className="tabular-nums">{format(m.value)} {m.unit}</strong></div>)}
@@ -57,10 +60,7 @@ export default function MarketOverview({market,controls}:{market:string;controls
     {isolated.length>0&&<p className="text-xs leading-5 text-gray-500">{isolated.map(m=>`${m.label} ${format(m.value)} ${m.unit}`).join(" · ")}</p>}
     {inbox?.available?<>{unread?.value!=null&&unread.value>0&&<div className="flex flex-wrap items-center justify-between gap-2 border-t border-gray-100 pt-3 text-sm dark:border-gray-800"><span className="text-gray-500">来信最久等待 <strong className="font-medium text-gray-700 dark:text-gray-200">{format(oldest?.value)}{oldest?.value!=null?` ${oldest.unit}`:""}</strong></span><Link className="font-medium text-brand-500" href={`/${market}/conversations`}>处理来信 →</Link></div>}</>:<p className="text-sm text-warning-600">来信等待数据不可用</p>}
    </div></Card>
-   <Card className="min-w-0" title="需要人工"><div className="space-y-4 p-5">
-    {noHumanTasks?<p className="text-sm text-gray-500">暂无人工待办</p>:<dl className="space-y-3 text-sm">{humanRows.map(({title,metric:m})=>m?.value===0?null:<div key={title} className="flex justify-between gap-3"><dt className="text-gray-500">{title}</dt><dd className="font-semibold tabular-nums">{format(m?.value)}{m?.value!=null?` ${m.unit}`:""}</dd></div>)}</dl>}
-    <div className="flex flex-wrap gap-x-4 gap-y-2 text-sm"><Link className="font-medium text-brand-500" href={`/${market}/conversations`}>查看会话 →</Link><Link className="font-medium text-brand-500" href={`/${market}/ops/accounts`}>查看账号 →</Link></div>
-   </div></Card>
+   <Card className="min-w-0" title="近 7 天结果" subtitle={range}><div className="p-5">{data.activity.available?<dl className="space-y-2.5 text-sm">{[["完整触达","creators","人次"],["达人来信","replies","条"],["来信达人","replyCreators","人次"],["加橱窗通知","showcase","条事件"],["确认服务回复","autoReplies","条"]].map(([label,key,unit])=><div className="flex justify-between gap-3" key={key}><dt className="text-gray-500">{label}</dt><dd className="text-right tabular-nums">{format(data.activity.totals[key]??null)} {data.activity.totals[key]==null?"":unit}{key==="autoReplies"&&data.activity.totals.serviceRepliesAi!=null&&<span className="ml-1 text-xs text-gray-400">（AI {format(data.activity.totals.serviceRepliesAi)} · 人工 {format(data.activity.totals.serviceRepliesManual??null)}）</span>}</dd></div>)}</dl>:<p className="text-sm text-gray-500">每日事件数据不可用</p>}</div></Card>
   </div>
   <details className={disclosure}><summary className={summary}>近 7 天明细</summary><div className="border-t border-gray-100 px-5 pb-5 pt-4 dark:border-gray-800">
    <p className="mb-4 text-xs text-gray-500">{range}；每日达人为当日去重人数，跨日合计为人次。</p>

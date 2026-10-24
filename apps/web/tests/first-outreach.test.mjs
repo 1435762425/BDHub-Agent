@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {readFileSync} from "node:fs";
 import {firstOutreachArgv,validateFirstOutreach,validateFirstOutreachRequest} from "../src/server/first-outreach/bridge.ts";
-import {firstApplicationSummary,firstOutreachCanContinue,firstOutreachLabel} from "../src/features/first-outreach/presentation.ts";
+import {firstApplicationGroups,firstApplicationSummary,firstOutreachActions,firstOutreachCanContinue,firstOutreachLabel,firstOutreachWaitingReasons} from "../src/features/first-outreach/presentation.ts";
 import {GET,POST} from "../src/app/api/first-outreach/route.ts";
 
 const payload={schemaVersion:"bdhub.first-outreach.v1",market:"br",applicationCoverage:"unverified",control:{revision:1,mode:"stopped",approvalsEnabled:false,updatedAt:1},readiness:{ready:false,blockers:["sample_facts_unavailable"]},counts:{products:0,matchedCreators:0,sent:0,pendingApplications:0,approved:0,needsReview:0,unknown:0},candidates:[],applications:[],runtime:{state:"blocked",reason:"sample_facts_unavailable",updatedAt:null},platformWrites:0,sourceUpdatedAt:null};
@@ -88,4 +88,29 @@ test("page gates BR, presents real data gaps, separate approval and explicit fir
  assert.match(route,/market!=="br"\)notFound\(\)/);assert.match(shell,/currentMarket.key==="br"\?\[\{href:`\$\{base\}\/first-outreach/);
  for(const text of ["可推荐商品","匹配达人","成功推送","自动审批通过","待处理申请","当前等待","葡语邀约预览","确认发送首条","继续持续推送","自动审批已关闭","停止持续推送"])assert.ok(page.includes(text)||text==="自动审批已关闭"&&page.includes('"已关闭"'),text);
  assert.match(page,/value=\{data\.counts\.products\}/);assert.match(page,/lang="pt-BR"/);assert.match(page,/setConfirmation\("start"\)/);assert.doesNotMatch(page,/sqlite|demo|mockData/i);
+});
+
+
+test("application display keeps unknowns and new states out of finished history",()=>{
+ const rows=[{id:"history",state:"completed"},{id:"unmapped",state:"sample_application_state_unverified"},{id:"pending",state:"pending"},{id:"waiting",state:"content_pending"},{id:"unknown",state:"unknown"},{id:"new",state:"new_platform_state"},{id:"receipt",state:"goal_observed"},{id:"closed",state:"cancelled"}];
+ const groups=firstApplicationGroups(rows);
+ assert.deepEqual(groups.attention.map(row=>row.id),["unknown","receipt","pending","new","unmapped"]);
+ assert.deepEqual(groups.waiting.map(row=>row.id),["waiting"]);
+ assert.deepEqual(groups.finished.map(row=>row.id),["history","closed"]);
+ assert.deepEqual(rows.map(row=>row.id),["history","unmapped","pending","waiting","unknown","new","receipt","closed"]);
+ assert.equal(Object.values(groups).flat().length,rows.length);
+});
+
+test("normal waits are not repeated while distinct readiness blockers stay visible",()=>{
+ assert.deepEqual(firstOutreachWaitingReasons({runtime:{state:"waiting_window",reason:"outside_send_window"},readiness:{blockers:["outside_send_window"]}}),[]);
+ assert.deepEqual(firstOutreachWaitingReasons({runtime:{state:"waiting_window",reason:"outside_send_window"},readiness:{blockers:["first_outreach_materials_unavailable","first_outreach_materials_unavailable","first_outreach_result_unknown"]}}),["匹配商品的推荐链接或葡语商品名尚未就绪","有结果未知的原操作，等待核验"]);
+ assert.equal(firstOutreachLabel("waiting_transport"),"连接恢复中");
+});
+
+
+test("first-send controls preserve explicit continuation after a confirmed canary",()=>{
+ const canary={control:{mode:"canary"},runtime:{state:"canary_confirmed"},counts:{sent:1,unknown:0}};
+ assert.deepEqual(firstOutreachActions(canary),["continue","stop"]);
+ assert.deepEqual(firstOutreachActions({...canary,control:{mode:"continuous"},runtime:{state:"waiting_window"}}),["stop"]);
+ assert.deepEqual(firstOutreachActions({...canary,control:{mode:"stopped"},counts:{sent:0,unknown:1}}),["prepare","start","reconcile"]);
 });
