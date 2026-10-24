@@ -27,6 +27,9 @@ ACTIONS = {'prepare', 'sync', 'start', 'continue', 'stop', 'set-approvals', 'rec
 JOBS = {'prepare', 'sync', 'reconcile'}
 SUPPLY_REFRESH_SECONDS = 6 * 60 * 60
 SUPPLY_EXHAUSTED_RECHECK_SECONDS = 30 * 60
+MATERIAL_GAPS = ('commission_terms_unavailable', 'prior_intent_superseded', 'binding_not_current',
+                 'localized_name_missing', 'material_preparation_pending', 'original_intent_pending')
+MATERIAL_ACTIONABLE = ('localized_name_missing', 'material_preparation_pending', 'original_intent_pending')
 SCHEMA = '''
 CREATE TABLE IF NOT EXISTS first_outreach_job(
  request_id TEXT PRIMARY KEY,plan_id TEXT NOT NULL,action TEXT NOT NULL,payload TEXT NOT NULL,
@@ -56,7 +59,8 @@ def ensure_schema(store):
     first.ensure_schema(store)
     store.db.executescript(SCHEMA)
     columns = {row['name'] for row in store.db.execute('PRAGMA table_info(first_outreach_job)')}
-    for name, definition in (('next_attempt', 'REAL NOT NULL DEFAULT 0'), ('failures', 'INTEGER NOT NULL DEFAULT 0')):
+    for name, definition in (('next_attempt', 'REAL NOT NULL DEFAULT 0'), ('failures', 'INTEGER NOT NULL DEFAULT 0'),
+                             ('material_progress', 'TEXT')):
         if name not in columns:
             store.db.execute(f'ALTER TABLE first_outreach_job ADD COLUMN {name} {definition}')
     runtime_columns = {row['name'] for row in store.db.execute('PRAGMA table_info(first_outreach_runtime)')}
@@ -438,6 +442,11 @@ def _automation_status(store, cfg):
             state = 'waiting' if waiting else 'attention' if row['state'] == 'error' else row['state']
             supply = {'state': state, 'reason': row['error'], 'updatedAt': row['updated'],
                       'nextRunAt': row.get('next_attempt') if waiting else None}
+            progress = json.loads(row.get('material_progress') or '{}')
+            if progress.get('remaining'):
+                supply['materials'] = _material_summary(progress)
+                if row['state'] == 'complete':
+                    supply['state'] = 'partial'
         if cfg['mode'] == 'continuous' and supply['nextRunAt'] is None and supply['state'] not in {'queued', 'running'}:
             catalog = store.db.execute('SELECT max(c.observed) FROM catalog_head h JOIN catalog c ON c.id=h.snapshot_id WHERE h.plan_id=?', (cfg['planId'],)).fetchone()[0]
             supply['nextRunAt'] = (catalog + SUPPLY_REFRESH_SECONDS) if catalog else store.clock()
@@ -499,13 +508,94 @@ def _claim(root):
             return dict(store.db.execute('SELECT * FROM first_outreach_job WHERE request_id=?', (row['request_id'],)).fetchone())
 
 
-def _job_update(root, job, *, stage=None, state=None, error=None, delay=0, failure=False):
+def _job_update(root, job, *, stage=None, state=None, error=None, delay=0, failure=False, progress=None):
     with CycleStore(_path(root)) as store:
         store.db.execute('''UPDATE first_outreach_job SET stage=COALESCE(?,stage),state=COALESCE(?,state),
          updated=?,finished=CASE WHEN ? IN ('complete','error') THEN ? ELSE finished END,error=?,
-         next_attempt=?,failures=CASE WHEN ? THEN failures+1 ELSE 0 END WHERE request_id=?''',
+         next_attempt=?,failures=CASE WHEN ? THEN failures+1 ELSE 0 END,
+         material_progress=CASE WHEN ? THEN ? ELSE material_progress END WHERE request_id=?''',
                          (stage, state, store.clock(), state, store.clock(), error,
-                          store.clock() + delay, int(failure), job['request_id']))
+                          store.clock() + delay, int(failure), int(progress is not None),
+                          encoded(progress) if progress is not None else None, job['request_id']))
+
+
+def _material_summary(progress):
+    return {key: progress[key] for key in ('remaining', 'readyOffers', 'gapCounts', 'actionable', 'unchanged')}
+
+
+def _material_snapshot(root, job, result):
+    """Classify this original pass from local facts; never changes eligibility or a card intent."""
+    root = Path(root)
+    prior = json.loads(job.get('material_progress') or '{}')
+    run_id = prior.get('runId')
+    reference = result.get('reportRef')
+    if isinstance(reference, str):
+        report = (root / reference).resolve()
+        if report.is_relative_to((root / 'var/first-outreach').resolve()):
+            try:
+                run_id = json.loads(report.read_text()).get('summary', {}).get('runId') or run_id
+            except (OSError, ValueError, AttributeError):
+                pass
+    items = {}
+    path = root / 'var/catalog-links.sqlite'
+    if run_id and path.is_file():
+        with closing(sqlite3.connect(path.resolve().as_uri() + '?mode=ro', uri=True, timeout=3)) as db:
+            db.row_factory = sqlite3.Row
+            tables = {r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+            if {'catalog_prepare_item', 'catalog_link_intent'} <= tables:
+                rows = db.execute('''SELECT i.pid,i.campaign_id,i.catalog_source,i.state,i.error,i.blocker,i.intent_id,
+                    l.state intent_state,l.receipt,l.readback FROM catalog_prepare_item i
+                    LEFT JOIN catalog_link_intent l ON l.id=i.intent_id WHERE i.run_id=?
+                    ORDER BY i.pid,i.campaign_id,i.catalog_source''', (run_id,))
+                items = {(r['pid'], r['campaign_id'], r['catalog_source']): dict(r) for r in rows}
+    gaps, ready, counts = [], set(), dict.fromkeys(MATERIAL_GAPS, 0)
+    def gap(reason, offer=None, item=None):
+        counts[reason] += 1
+        gaps.append({'reason': reason, 'offerKey': (offer or {}).get('offerKey'),
+                     'pid': (offer or {}).get('pid') or (item or {}).get('pid'),
+                     'campaignId': (offer or {}).get('campaignId') or (item or {}).get('campaign_id'),
+                     'intentId': (item or {}).get('intent_id'), 'intentState': (item or {}).get('intent_state')})
+    with CycleStore(_path(root), readonly=True) as store:
+        catalog = first._catalog_fingerprint(store, job['plan_id'])
+        for offer in first.material_offers(store):
+            coverage = first._materials(root, store, 'br', [offer])
+            ready.update(coverage['readyOfferKeys'])
+            if coverage['missingNames']:
+                gap('localized_name_missing', offer)
+            if not coverage['missingLinks']:
+                continue
+            item = items.get((offer['pid'], offer['campaignId'], offer.get('catalogSource')), {})
+            if item.get('intent_state') in {'submitted', 'receipt_saved', 'unknown'}:
+                reason = 'original_intent_pending'
+            elif offer.get('creatorPercent') in (None, '') and not item.get('intent_id'):
+                reason = 'commission_terms_unavailable'
+            elif item.get('intent_state') == 'superseded' and item.get('receipt') is None:
+                try:
+                    proof = json.loads(item.get('readback') or '{}')
+                except (ValueError, TypeError):
+                    proof = {}
+                if not isinstance(proof, dict):
+                    proof = {}
+                reason = 'prior_intent_superseded' if proof.get('reason') == 'superseded_by_live_offer_change' and \
+                    type(proof.get('platformCreateAttempts')) is int and proof['platformCreateAttempts'] == 0 else 'material_preparation_pending'
+            elif item.get('state') == 'ready':
+                reason = 'binding_not_current'
+            else:
+                reason = 'material_preparation_pending'
+            gap(reason, offer, item)
+        # A held PID may have left the current best-offer set. Keep its original
+        # submitted intent in the readback scope instead of declaring it closed.
+        known_intents = {entry['intentId'] for entry in gaps}
+        for item in items.values():
+            if item.get('intent_state') in {'submitted', 'receipt_saved', 'unknown'} and item.get('intent_id') not in known_intents:
+                gap('original_intent_pending', item=item)
+        for _ in range(max(0, int(result.get('remaining') or 0) - sum(counts.values()))):
+            gap('material_preparation_pending')
+    signature = digest({'catalog': catalog, 'runId': run_id, 'gaps': gaps, 'readyOfferKeys': sorted(ready)})
+    unchanged = int(prior.get('unchanged') or 0) + 1 if prior.get('signature') == signature else 0
+    return {'signature': signature, 'runId': run_id, 'remaining': sum(counts.values()), 'readyOffers': len(ready),
+            'gapCounts': counts, 'actionable': sum(counts[key] for key in MATERIAL_ACTIONABLE),
+            'unchanged': unchanged, 'gaps': gaps}
 
 
 def _automatic(job):
@@ -675,12 +765,23 @@ def process_job(root, job, *, stopped=lambda: False):
                 # failure even when the whole stage still has more pages.
                 _job_update(root, job, state='running')
             return result
-        if automatic and name == 'cards_create' and result.get('remaining', 0) > 0 and time.time() - job['created'] < SUPPLY_REFRESH_SECONDS:
+        if automatic and name == 'cards_create' and result.get('remaining', 0) > 0:
             # Ready cards are usable immediately. Other products retain their
             # original card intents while one later bounded pass advances them.
-            _job_update(root, job, stage=stages.index('cards_read'), delay=30,
-                        error='first_outreach_materials_unavailable')
-            return {'state': 'paused', 'reason': 'first_outreach_materials_unavailable'}
+            if cancel():
+                return {'state': 'paused', 'reason': 'first_outreach_job_stopped'}
+            progress = _material_snapshot(root, job, result)
+            if not progress['actionable'] or time.time() - job['created'] >= SUPPLY_REFRESH_SECONDS:
+                reason = 'first_outreach_materials_waiting_evidence'
+                _job_update(root, job, stage=len(stages), state='complete', error=reason, progress=progress)
+                return {'state': 'partial', 'reason': reason, 'materials': _material_summary(progress)}
+            delay = min(3600, 30 * 2 ** min(progress['unchanged'], 7))
+            reason = 'first_outreach_materials_no_progress' if progress['unchanged'] else 'first_outreach_materials_unavailable'
+            _job_update(root, job, stage=stages.index('cards_read'), state='running', delay=delay, error=reason, progress=progress)
+            return {'state': 'paused', 'reason': reason, 'retryAfterSeconds': delay,
+                    'materials': _material_summary(progress)}
+        if automatic and name == 'cards_create':
+            _job_update(root, job, progress={})
         _job_update(root, job, stage=index + 1)
         if automatic and index + 1 < len(stages):
             return {'state': 'paused', 'reason': 'first_outreach_maintenance_yield'}

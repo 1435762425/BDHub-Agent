@@ -1,10 +1,12 @@
 """The durable first-outreach loop advances without creating a new grant."""
 import importlib.util
 import json
+import sqlite3
 from pathlib import Path
 import sys
 import tempfile
 import time
+from contextlib import closing
 from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
@@ -145,6 +147,176 @@ class FirstAutocycleTests(unittest.TestCase):
         self.assertGreater(self.record()['next_attempt'], time.time())
         cards.assert_called_once()
         self.assertEqual(cards.call_args.args[2], 'create')
+
+    def test_unchanged_materials_back_off_persistently_without_new_intents_or_grants(self):
+        self.fresh_supply()
+        original = runtime._queue_supply(self.root, 'first_outreach_prepare_required')
+        control = runtime._cfg(self.root)
+        with patch.object(runtime, '_cards', return_value={'state': 'complete', 'remaining': 2}):
+            for unchanged, delay in enumerate((30, 60, 120, 240, 480, 960, 1920, 3600, 3600)):
+                runtime._job_update(self.root, self.record(), stage=6)
+                result = runtime.process_job(self.root, self.record())
+                saved = self.record()  # Reopen the database, as after a worker restart.
+                progress = json.loads(saved['material_progress'])
+                self.assertEqual((result['retryAfterSeconds'], progress['unchanged']), (delay, unchanged))
+                self.assertEqual((saved['request_id'], saved['payload']), (original['request_id'], original['payload']))
+                self.assertGreater(saved['next_attempt'], time.time())
+                self.assertIsNone(runtime._claim(self.root))
+        self.assertEqual(runtime._cfg(self.root), control)
+        self.assertEqual(saved['error'], 'first_outreach_materials_no_progress')
+        with CycleStore(self.path, readonly=True) as store:
+            self.assertEqual(store.db.execute('SELECT count(*) FROM first_outreach_job').fetchone()[0], 1)
+            self.assertEqual(store.db.execute('SELECT count(*) FROM first_outreach_request').fetchone()[0], 1)
+
+    def test_material_progress_or_new_catalog_evidence_restores_normal_delay(self):
+        self.fresh_supply()
+        runtime._queue_supply(self.root, 'first_outreach_prepare_required')
+        with patch.object(runtime, '_cards', return_value={'state': 'complete', 'remaining': 2}) as cards:
+            for _ in range(2):
+                runtime._job_update(self.root, self.record(), stage=6)
+                runtime.process_job(self.root, self.record())
+            self.assertEqual(json.loads(self.record()['material_progress'])['unchanged'], 1)
+            cards.return_value = {'state': 'complete', 'remaining': 1}
+            runtime._job_update(self.root, self.record(), stage=6)
+            self.assertEqual(runtime.process_job(self.root, self.record())['retryAfterSeconds'], 30)
+            runtime._job_update(self.root, self.record(), stage=6)
+            self.assertEqual(runtime.process_job(self.root, self.record())['retryAfterSeconds'], 60)
+            with CycleStore(self.path) as store:
+                store.publish(self.plan, 'live-br-campaign', self.now + 1, [])
+            runtime._job_update(self.root, self.record(), stage=6)
+            self.assertEqual(runtime.process_job(self.root, self.record())['retryAfterSeconds'], 30)
+
+    def classified_materials(self):
+        self.fresh_supply()
+        job = runtime._queue_supply(self.root, 'first_outreach_prepare_required')
+        runtime._job_update(self.root, job, stage=6)
+        folder = self.root / 'var/first-outreach';folder.mkdir()
+        report = folder / 'original-materials.json'
+        report.write_text(json.dumps({'summary': {'runId': 'original-material-run'}}))
+        offers = [{'pid': str(100 + n), 'campaignId': str(200 + n), 'catalogSource': 'campaign',
+                   'offerKey': 'offer-' + str(n), 'creatorPercent': None if n == 0 else '13'} for n in range(4)]
+        with closing(sqlite3.connect(self.root / 'var/catalog-links.sqlite')) as db, db:
+            db.executescript('''CREATE TABLE catalog_prepare_item(run_id,pid,campaign_id,catalog_source,state,error,blocker,intent_id,updated);
+                CREATE TABLE catalog_link_intent(id,pid,spec,state,receipt,readback);''')
+            proof = {'reason': 'superseded_by_live_offer_change', 'platformCreateAttempts': 0, 'observedAt': self.now}
+            db.execute('INSERT INTO catalog_link_intent VALUES(?,?,?,?,?,?)',
+                       ('original-intent', offers[1]['pid'], json.dumps({'market': 'br'}), 'superseded', None, json.dumps(proof)))
+            for number, offer in enumerate(offers):
+                db.execute('INSERT INTO catalog_prepare_item VALUES(?,?,?,?,?,?,?,?,?)',
+                           ('original-material-run', offer['pid'], offer['campaignId'], 'campaign',
+                            'missing' if number < 2 else 'ready', 'original-error', None,
+                            'original-intent' if number == 1 else None, self.now))
+        result = {'state': 'complete', 'remaining': 3, 'reportRef': str(report.relative_to(self.root))}
+        def coverage(_root, _store, _market, targets):
+            ready = {offer['offerKey'] for offer in targets if offer['offerKey'] == 'offer-3'}
+            return {'readyOfferKeys': ready, 'missingNames': 0, 'missingLinks': len(targets) - len(ready)}
+        return offers, result, coverage
+
+    def test_classified_gaps_close_only_the_pass_and_keep_intents_and_eligibility(self):
+        offers, result, coverage = self.classified_materials()
+        before = runtime._cfg(self.root);job = self.record()
+        with closing(sqlite3.connect(self.root / 'var/catalog-links.sqlite')) as db, db:
+            original = db.execute('SELECT * FROM catalog_link_intent').fetchall()
+        with patch.object(first, 'material_offers', return_value=offers), \
+             patch.object(first, '_materials', side_effect=coverage), patch.object(runtime, '_cards', return_value=result):
+            outcome = runtime.process_job(self.root, job)
+            with CycleStore(self.path, readonly=True) as store:
+                supply = runtime._automation_status(store, first.control(store))['supply']
+        self.assertEqual(outcome['state'], 'partial')
+        self.assertEqual((self.record()['state'], self.record()['error']),
+                         ('complete', 'first_outreach_materials_waiting_evidence'))
+        self.assertEqual((supply['state'], supply['materials']['readyOffers'], supply['materials']['remaining']), ('partial', 1, 3))
+        self.assertEqual(supply['materials']['actionable'], 0)
+        self.assertEqual(sum(supply['materials']['gapCounts'].values()), 3)
+        self.assertEqual(supply['materials']['gapCounts']['commission_terms_unavailable'], 1)
+        self.assertEqual(supply['materials']['gapCounts']['prior_intent_superseded'], 1)
+        self.assertEqual(supply['materials']['gapCounts']['binding_not_current'], 1)
+        self.assertEqual((self.record()['request_id'], self.record()['payload']), (job['request_id'], job['payload']))
+        self.assertEqual(runtime._cfg(self.root), before)
+        with closing(sqlite3.connect(self.root / 'var/catalog-links.sqlite')) as db, db:
+            self.assertEqual(db.execute('SELECT * FROM catalog_link_intent').fetchall(), original)
+
+    def test_submitted_original_intent_never_closes_as_a_classified_terminal_gap(self):
+        offers, result, coverage = self.classified_materials()
+        with closing(sqlite3.connect(self.root / 'var/catalog-links.sqlite')) as db, db:
+            db.execute("UPDATE catalog_link_intent SET state='unknown'")
+        with patch.object(first, 'material_offers', return_value=offers), \
+             patch.object(first, '_materials', side_effect=coverage), patch.object(runtime, '_cards', return_value=result):
+            outcome = runtime.process_job(self.root, self.record())
+        self.assertEqual(outcome['state'], 'paused')
+        self.assertEqual(self.record()['state'], 'running')
+        self.assertEqual(outcome['materials']['gapCounts']['original_intent_pending'], 1)
+        self.assertEqual(outcome['materials']['actionable'], 1)
+        with closing(sqlite3.connect(self.root / 'var/catalog-links.sqlite')) as db, db:
+            self.assertEqual(db.execute('SELECT state FROM catalog_link_intent').fetchone()[0], 'unknown')
+
+    def test_known_zero_commission_is_not_classified_as_a_missing_field(self):
+        offers, result, coverage = self.classified_materials()
+        for value in (0, '0'):
+            with self.subTest(value=value), patch.object(first, 'material_offers', return_value=offers), \
+                 patch.object(first, '_materials', side_effect=coverage), patch.object(runtime, '_cards', return_value=result):
+                offers[0]['creatorPercent'] = value
+                runtime._job_update(self.root, self.record(), stage=6)
+                outcome = runtime.process_job(self.root, self.record())
+            self.assertEqual(outcome['materials']['gapCounts']['commission_terms_unavailable'], 0)
+            self.assertEqual(outcome['materials']['gapCounts']['material_preparation_pending'], 1)
+            self.assertEqual(self.record()['state'], 'running')
+
+    def test_material_signature_ignores_repeated_read_timestamps_but_stop_takes_precedence(self):
+        offers, result, coverage = self.classified_materials()
+        with patch.object(first, 'material_offers', return_value=offers), patch.object(first, '_materials', side_effect=coverage):
+            before = runtime._material_snapshot(self.root, self.record(), result)
+            with closing(sqlite3.connect(self.root / 'var/catalog-links.sqlite')) as db, db:
+                db.execute('UPDATE catalog_prepare_item SET updated=updated+300')
+                proof = {'reason': 'superseded_by_live_offer_change', 'platformCreateAttempts': 0, 'observedAt': self.now + 300}
+                db.execute('UPDATE catalog_link_intent SET readback=?', (json.dumps(proof),))
+            after = runtime._material_snapshot(self.root, self.record(), result)
+        self.assertEqual(before['signature'], after['signature'])
+        stopped = [False];job = self.record()
+        def cards(*_args):
+            stopped[0] = True
+            return result
+        with patch.object(runtime, '_cards', side_effect=cards), \
+             patch.object(runtime, '_material_snapshot', side_effect=AssertionError('stopped_must_not_advance')):
+            outcome = runtime.process_job(self.root, job, stopped=lambda: stopped[0])
+        self.assertEqual(outcome['reason'], 'first_outreach_job_stopped')
+        self.assertEqual(self.record()['stage'], job['stage'])
+        self.assertIsNone(self.record()['material_progress'])
+
+    def test_original_six_hour_bound_retains_remaining_gap_evidence(self):
+        self.fresh_supply()
+        runtime._queue_supply(self.root, 'first_outreach_prepare_required')
+        runtime._job_update(self.root, self.record(), stage=6)
+        with CycleStore(self.path) as store:
+            store.db.execute('UPDATE first_outreach_job SET created=created-?', (runtime.SUPPLY_REFRESH_SECONDS + 1,))
+        with patch.object(runtime, '_cards', return_value={'state': 'complete', 'remaining': 2}):
+            outcome = runtime.process_job(self.root, self.record())
+        self.assertEqual((outcome['state'], self.record()['state']), ('partial', 'complete'))
+        self.assertEqual(json.loads(self.record()['material_progress'])['remaining'], 2)
+
+    def test_six_hour_pass_can_close_but_next_maintenance_keeps_original_unknown_for_verify(self):
+        offers, result, coverage = self.classified_materials()
+        with closing(sqlite3.connect(self.root / 'var/catalog-links.sqlite')) as db, db:
+            db.execute("UPDATE catalog_link_intent SET state='unknown'")
+            original = db.execute('SELECT * FROM catalog_link_intent').fetchall()
+        with CycleStore(self.path) as store:
+            store.db.execute('UPDATE first_outreach_job SET created=created-?', (runtime.SUPPLY_REFRESH_SECONDS + 1,))
+        with patch.object(first, 'material_offers', return_value=offers), \
+             patch.object(first, '_materials', side_effect=coverage), patch.object(runtime, '_cards', return_value=result):
+            outcome = runtime.process_job(self.root, self.record())
+        prior = self.record()
+        self.assertEqual((outcome['state'], prior['state']), ('partial', 'complete'))
+        self.assertEqual(outcome['materials']['gapCounts']['original_intent_pending'], 1)
+        with CycleStore(self.path) as store:
+            store.publish(self.plan, 'live-br-campaign', self.now + 1, [])
+        following = runtime._queue_supply(self.root)
+        self.assertEqual(json.loads(following['payload'])['firstStart'], self.start)
+        runtime._job_update(self.root, following, stage=5)
+        with patch.object(runtime, '_cards', return_value={'state': 'complete', 'remaining': 3}) as cards:
+            runtime.process_job(self.root, self.record())
+        self.assertEqual(cards.call_args.args[2], 'verify')
+        with closing(sqlite3.connect(self.root / 'var/catalog-links.sqlite')) as db:
+            self.assertEqual(db.execute('SELECT * FROM catalog_link_intent').fetchall(), original)
 
     def test_sample_failures_have_separate_backoff_and_do_not_overwrite_sends(self):
         self.fresh_supply()

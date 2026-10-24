@@ -172,6 +172,27 @@ class VerifyScopeTests(unittest.TestCase):
         self.assertEqual((result, report['verifyItems'], opened, transport.requests), ({}, 0, [], []))
         self.assertEqual(self.snapshot(*target), before)
 
+    def test_new_preparation_scope_verifies_original_unknown_without_replacing_its_intent(self):
+        target = self.add_intent()
+        before = self.snapshot(*target)
+        # A later source has its own preparation run. Verification still owns
+        # the older run's exact intent and receipt, without returning to POST.
+        scope = {'market': 'it', 'account': 'acc9', 'route': 'selected', 'sourceRun': 'new-source'}
+        with self.prep.db:
+            self.prep.db.execute('INSERT INTO catalog_prepare_run VALUES(?,?,?,?,?,?)',
+                                 ('new-preparation-run', 'fixture', 'it', 'new-source', json.dumps(scope), 2))
+        prepare.SCOPE['sourceRun'] = 'new-source'
+        with patch.object(CatalogLinks, 'prepare', side_effect=AssertionError('must_not_replace_original_intent')):
+            result, report, _, transport = self.verify()
+        self.assertEqual(result, {'verified': 1})
+        self.assertEqual(report['platformWrites'], 0)
+        after_item, after_intent = self.snapshot(*target)
+        self.assertEqual((after_item['state'], after_intent['state']), ('ready', 'verified'))
+        self.assertEqual(after_intent['receipt'], before[1]['receipt'])
+        self.assertEqual(after_intent['spec'], before[1]['spec'])
+        self.assertEqual(self.prep.db.execute('SELECT count(*) FROM catalog_link_intent').fetchone()[0], 1)
+        self.assertTrue(transport.requests)
+
     def test_only_foreign_market_does_not_open_platform_session(self):
         target = self.add_intent(market='br', account='acc2')
         before = self.snapshot(*target)
