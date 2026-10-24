@@ -37,6 +37,20 @@ class ConversationWorkbenchTests(unittest.TestCase):
  def test_default_human_queue_explains_reason(self):
   result=list_conversations(self.root,self.store,'human')
   self.assertEqual(result['total'],1);self.assertEqual(result['items'][0]['humanReasonLabel'],'链接打不开')
+ def test_creator_metrics_use_the_conversations_exact_oec_and_keep_current_no_value(self):
+  with closing(sqlite3.connect(self.root/'var/creator-identities.sqlite')) as db,db:
+   db.execute('CREATE TABLE identity_observation(event_id,creator_id,market,oec_id,kind,payload_json,observed_us,observed_at)')
+   def profile(event,oec,at,fields,market='it',creator='creator-1'):
+    db.execute("INSERT INTO identity_observation VALUES(?,?,?,?,'profile',?,?,?)",
+     (event,creator,market,oec,json.dumps({'fields':fields}),int(at*1000000),str(at)))
+   profile('old','123',NOW-10,{'med_gmv_revenue':{'status':'value','value':{'decimal':'100.00'}}})
+   profile('current','123',NOW,{'med_gmv_revenue':{'status':'no_value'},'follower_cnt':{'status':'zero','value':0}})
+   profile('wrong-oec','456',NOW+10,{'med_gmv_revenue':{'status':'value','value':{'decimal':'999.00'}}})
+   profile('other-market','123',NOW+20,{'follower_cnt':{'status':'value','value':999}},market='br')
+   profile('other-creator','123',NOW+30,{'follower_cnt':{'status':'value','value':999}},creator='creator-other')
+  metrics=conversation_detail(self.root,self.store,'999')['metrics']
+  self.assertIsNone(metrics['gmv']);self.assertEqual(metrics['followers'],0)
+  self.assertEqual(metrics['observedAt'],str(NOW))
  def test_paged_handles_keep_search_counts_and_market_isolation(self):
   with closing(sqlite3.connect(self.root/'var/creator-identities.sqlite')) as db,db:
    db.execute("INSERT INTO creator_identity VALUES('creator-1','123','br','other-market',0)")

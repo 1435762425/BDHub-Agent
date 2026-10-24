@@ -129,8 +129,8 @@ def _creator_metrics(root,db,plan,creator,oec,market):
  if path.exists():
   with closing(sqlite3.connect(path.resolve().as_uri()+'?mode=ro',uri=True)) as identities:
    row=identities.execute("""SELECT payload_json,observed_at FROM identity_observation
-    WHERE market=? AND creator_id=? AND kind='profile' AND json_type(payload_json,'$.fields')='object'
-    ORDER BY observed_us DESC,length(payload_json) DESC,event_id LIMIT 1""",(market,creator)).fetchone() if identities.execute("SELECT 1 FROM sqlite_master WHERE name='identity_observation'").fetchone() else None
+    WHERE market=? AND creator_id=? AND oec_id=? AND kind='profile' AND json_type(payload_json,'$.fields')='object'
+    ORDER BY observed_us DESC,length(payload_json) DESC,event_id LIMIT 1""",(market,creator,str(oec))).fetchone() if identities.execute("SELECT 1 FROM sqlite_master WHERE name='identity_observation'").fetchone() else None
    if row:
     try:fields=json.loads(row[0]).get('fields') or {}
     except (TypeError,ValueError):fields={}

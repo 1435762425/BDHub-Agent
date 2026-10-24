@@ -104,7 +104,8 @@ export class CreatorIdentityReadStore {
       count(DISTINCT CASE WHEN e.kind='creatorReplies' THEN r.creator_id END) replied,
       count(DISTINCT CASE WHEN e.kind='showcaseNotifications' THEN r.creator_id END) showcase
       FROM inbox_event e JOIN relationship r ON r.plan_id=e.plan_id AND r.oec=e.oec
-      JOIN plan p ON p.id=e.plan_id WHERE p.market=? AND e.historical=0`).get(market)!;
+      JOIN plan p ON p.id=e.plan_id WHERE p.market=? AND e.historical=0
+       AND e.kind IN ('creatorReplies','showcaseNotifications')`).get(market)!;
     return {repliedCreators:Number(row.replied||0),showcaseCreators:Number(row.showcase||0)};
   }
   private hasCycleTables(names:string[]){if(!this.cycle)return false;const found=new Set(this.cycle.prepare("SELECT name FROM sqlite_master WHERE type='table'").all().map(row=>String(row.name)));return names.every(name=>found.has(name));}

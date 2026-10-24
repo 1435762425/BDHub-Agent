@@ -41,7 +41,9 @@ test("overview counts replies and showcase adoption by distinct creator",t=>{
   const f=fixture(t),cyclePath=join(f.dir,"cycle.sqlite"),cycle=new DatabaseSync(cyclePath);
   cycle.exec("CREATE TABLE plan(id TEXT,market TEXT);CREATE TABLE relationship(plan_id TEXT,creator_id TEXT,oec TEXT);CREATE TABLE inbox_event(plan_id TEXT,oec TEXT,kind TEXT,historical INTEGER)");
   cycle.prepare("INSERT INTO plan VALUES('p','it')").run();cycle.prepare("INSERT INTO relationship VALUES('p',?,'111')").run(IDS[0]);cycle.prepare("INSERT INTO relationship VALUES('p',?,'222')").run(IDS[1]);
-  const event=cycle.prepare("INSERT INTO inbox_event VALUES('p',?,?,?)");event.run('111','creatorReplies',0);event.run('111','creatorReplies',0);event.run('111','showcaseNotifications',0);event.run('222','showcaseNotifications',0);event.run('222','creatorReplies',1);cycle.close();
+  const event=cycle.prepare("INSERT INTO inbox_event VALUES('p',?,?,?)");event.run('111','creatorReplies',0);event.run('111','creatorReplies',0);event.run('111','showcaseNotifications',0);event.run('222','showcaseNotifications',0);event.run('222','creatorReplies',1);
+  event.run('222','ourMessages',0);event.run('222','unrecognizedNotification',0);
+  cycle.close();
   const overview=f.open(cyclePath).overview('it');assert.equal(overview.repliedCreators,1);assert.equal(overview.showcaseCreators,2);
 });
 test("BR and MY identity cards and current product GMV use only their own selected lead evidence",t=>{
