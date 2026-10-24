@@ -6,7 +6,7 @@
 | --- | --- |
 | 业务规则、自动执行范围和完成标准 | [PROJECT.md](PROJECT.md) |
 | 当前模块、数据与并发合同、接口、运行方法、验证边界 | [TECHNICAL.md](TECHNICAL.md)；关键文件表在 §1 |
-| 生产发布、进程、实际开关和当前阻塞 | [当前交接](handoff/current.md)，仅保存带时间快照 |
+| 生产发布、进程、实际开关和当前阻塞 | [当前交接](handoff/current.md)；最新补充：[2026-10-24 发布核验](handoff/optimization-20261024.md)，均为带时间快照 |
 | Agent 修改与执行边界 | [AGENTS.md](../AGENTS.md) |
 
 日期化 implementation/research 证明当时范围和结果，不提供新授权。模块方案与 AI 审查页顶部实施表覆盖其早期“待实施”描述，最终以主文档和代码合同为准。
