@@ -10,7 +10,7 @@
 
 - [项目文档](docs/PROJECT.md)：唯一产品真相源，定义目标、范围、业务流程、规则和完成标准。
 - [技术文档](docs/TECHNICAL.md)：唯一技术真相源，定义架构、模块、数据、接口、运行和验证。
-- [当前交接](docs/handoff/current.md)：当前 Git 基线、运行状态、已完成能力、阻塞和下一步。
+- [当前交接](docs/handoff/current.md)与[最新发布核验](docs/handoff/optimization-20261024.md)：带时间的 Git 基线、运行状态、已完成能力、阻塞和下一步。
 - [总控制台](http://127.0.0.1:5198/br/console)：跨市场结果、等待和人工事项。
 - [巴西合作工作台](http://127.0.0.1:5198/br/workspace/send)、[货盘](http://127.0.0.1:5198/br/catalog)、[一发与样品](http://127.0.0.1:5198/br/first-outreach)：其他市场替换路径中的市场键。
 - [文档管理](docs/README.md)：旧 PRD、决策、架构、实现证据、研究与归档的层级。
