@@ -202,6 +202,53 @@ class FirstOutreachTests(unittest.TestCase):
         self.start()
         self.assertEqual(self.get_candidate()['oecId'], '234')
 
+    def test_profile_page_matches_fresh_bindings_latest_ties_and_market_scope(self):
+        for oec in ('234', '345', '456', '567', '678'):
+            self.profile(oec)
+        db = self.identities._db
+        def observation(oec, evidence, *, payload=None, creator=None, seconds=20):
+            row = dict(db.execute("SELECT * FROM identity_observation WHERE market='br' AND oec_id=? ORDER BY rowid LIMIT 1", (oec,)).fetchone())
+            row.update(event_id='event-' + evidence, evidence_ref=evidence,
+                       observed_at='same-time-' + str(seconds), observed_us=row['observed_us'] + seconds * 1_000_000,
+                       fingerprint='fingerprint-' + evidence)
+            if payload is not None:
+                row['payload_json'] = payload
+            if creator is not None:
+                row['creator_id'] = creator
+            db.execute('INSERT INTO identity_observation(' + ','.join(row) + ') VALUES(' + ','.join('?' for _ in row) + ')', tuple(row.values()))
+        observation('123', 'first-tie:profile')
+        observation('123', 'last-tie:profile')
+        observation('123', 'later-row:find-profile')
+        observation('234', 'invalid-json', payload='{bad', seconds=30)
+        observation('234', 'not-core-fields', payload='{"fields":[]}', seconds=40)
+        observation('678', 'wrong-creator', creator=self.person['creatorId'], seconds=30)
+        db.execute("UPDATE creator_identity SET handle_conflict=1 WHERE market='br' AND oec_id='345'")
+        db.execute("UPDATE creator_identity SET current_handle=NULL WHERE market='br' AND oec_id='456'")
+        db.execute("UPDATE creator_identity SET current_handle='' WHERE market='br' AND oec_id='567'")
+        person = dict(db.execute("SELECT * FROM creator_identity WHERE market='br' AND oec_id='123'").fetchone())
+        person.update(creator_id='person-without-profile', oec_id='789', current_handle='without-profile')
+        db.execute('INSERT INTO creator_identity(' + ','.join(person) + ') VALUES(' + ','.join('?' for _ in person) + ')', tuple(person.values()))
+        db.commit()
+        from datetime import datetime, timezone
+        self.identities.observe_profile('my', '123', 'other_market', datetime.fromtimestamp(self.now, timezone.utc).isoformat(),
+                                        'other-market-profile', {'fields': {}})
+        expected = {oec: first._profile(db, 'br', oec) for oec in ('123', '234', '345', '456', '567', '678', '789')}
+        statements = [];db.set_trace_callback(statements.append)
+        try:
+            page = first._profile_page(db, 'br', '', 100)
+        finally:
+            db.set_trace_callback(None)
+        self.assertEqual(len(statements), 1)
+        self.assertEqual({row['oec_id']: row['profile'] for row in page}, expected)
+        self.assertEqual(expected['123']['evidenceRef'], 'last-tie:profile')
+        self.assertEqual(expected['234']['evidenceRef'], 'evidence-234-' + str(self.now))
+        self.assertTrue(all(expected[oec] is None for oec in ('345', '456', '567', '678', '789')))
+        self.assertEqual([row['oec_id'] for row in first._profile_page(db, 'br', '123', 2)], ['234', '345'])
+        other = first._profile_page(db, 'my', '', 100)
+        self.assertEqual(len(other), 1)
+        self.assertEqual(other[0]['profile']['handle'], 'other_market')
+        self.assertNotEqual(other[0]['profile']['creatorId'], expected['123']['creatorId'])
+
     def test_generation_published_only_when_complete_and_catalog_drift_keeps_old_head(self):
         first_head = self.prepare()['generationId']
         original = first._catalog_fingerprint
@@ -333,8 +380,10 @@ class FirstOutreachTests(unittest.TestCase):
         with patch.object(first, 'PAGE_SIZE', 1):
             paused = first.prepare(self.root, store=self.s, max_pages=1)
             self.assertEqual((paused['state'], paused['scanned']), ('paused', 1))
+            self.assertTrue(paused['hasMoreLocalWork'])
+            self.assertEqual(paused['localProgress'], {'fromOec': '', 'toOec': '123', 'scanned': 1})
             self.assertIsNone(first._head(self.s, self.plan))
-            resumed = first.prepare(self.root, store=self.s)
+            resumed = first.prepare(self.root, store=self.s, max_pages=2)
         self.assertEqual(resumed['generationId'], paused['generationId'])
         self.assertEqual((resumed['state'], resumed['scanned'], resumed['matchedCreators']), ('complete', 3, 3))
         self.assertEqual(self.s.db.execute('SELECT count(*) FROM first_outreach_candidate').fetchone()[0], 3)
@@ -343,6 +392,8 @@ class FirstOutreachTests(unittest.TestCase):
         result = first.prepare(self.root, store=self.s, should_stop=lambda: True)
         self.assertEqual(result['state'], 'paused')
         self.assertEqual(result['scanned'], 0)
+        self.assertFalse(result['hasMoreLocalWork'])
+        self.assertEqual(result['localProgress']['scanned'], 0)
         self.assertIsNone(first._head(self.s, self.plan))
         self.assertEqual(first.prepare(self.root, store=self.s)['generationId'], result['generationId'])
 

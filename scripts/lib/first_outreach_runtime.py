@@ -886,6 +886,24 @@ def worker_tick(root, *, stopped=lambda: False):
     return result
 
 
+def worker_delay(result, interval):
+    """Only verified forward local-matching progress gets a short continuation."""
+    if result.get('realSends'):
+        return 0.5
+    if result.get('state') == 'waiting_reconciliation':
+        return 60
+    supply = result.get('supply') or {}
+    progress = supply.get('localProgress') or {}
+    local_wait = result.get('state') in {'waiting_window', 'waiting_candidates', 'continuous', 'idle'} or \
+        result.get('state') == 'attention' and result.get('reason') in {'first_outreach_prepare_required', 'first_outreach_catalog_changed'}
+    if local_wait and supply.get('state') == 'paused' and supply.get('hasMoreLocalWork') is True and \
+            type(progress.get('scanned')) is int and progress['scanned'] > 0 and \
+            isinstance(progress.get('fromOec'), str) and isinstance(progress.get('toOec'), str) and \
+            progress['toOec'] > progress['fromOec']:
+        return 0.25
+    return interval
+
+
 def worker(root, *, once=False, stopped=None, interval=5):
     root = Path(root)
     _path(root)
@@ -925,7 +943,7 @@ def worker(root, *, once=False, stopped=None, interval=5):
                         _record_worker(root, {'pid': None, 'startedAt': started, 'checkedAt': time.time(), 'state': 'stopped'})
                         released = True
                         break
-                delay = 0.5 if result.get('realSends') else 60 if result.get('state') == 'waiting_reconciliation' else interval
+                delay = worker_delay(result, interval)
                 until = time.monotonic() + delay
                 while not check() and time.monotonic() < until:
                     time.sleep(min(0.25, max(0, until - time.monotonic())))

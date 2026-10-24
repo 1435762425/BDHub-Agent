@@ -122,6 +122,27 @@ class FirstAutocycleTests(unittest.TestCase):
         refresh.assert_not_called()
         enrich.assert_not_called()
 
+    def test_only_forward_local_matching_with_another_page_gets_a_short_continuation(self):
+        supply = {'state': 'paused', 'hasMoreLocalWork': True,
+                  'localProgress': {'fromOec': '100', 'toOec': '200', 'scanned': 500}}
+        result = {'state': 'waiting_window', 'supply': supply}
+        self.assertEqual(runtime.worker_delay(result, 5), 0.25)
+        self.assertEqual(runtime.worker_delay(result | {'state': 'attention', 'reason': 'first_outreach_catalog_changed'}, 5), 0.25)
+        self.assertEqual(runtime.worker_delay(result | {'realSends': 1}, 5), 0.5)
+        for state in ('stopped', 'paused', 'waiting_account', 'waiting_capacity', 'confirmed'):
+            with self.subTest(state=state):
+                self.assertEqual(runtime.worker_delay(result | {'state': state}, 5), 5)
+        self.assertEqual(runtime.worker_delay(result | {'state': 'waiting_reconciliation'}, 5), 60)
+        self.assertEqual(runtime.worker_delay(result | {'state': 'attention', 'reason': 'first_outreach_result_unknown'}, 5), 5)
+        for progress in ({'fromOec': '100', 'toOec': '200', 'scanned': 0},
+                         {'fromOec': '100', 'toOec': '100', 'scanned': 500},
+                         {'fromOec': '200', 'toOec': '100', 'scanned': 500},
+                         {'fromOec': '100', 'toOec': '200', 'scanned': True}):
+            with self.subTest(progress=progress):
+                self.assertEqual(runtime.worker_delay(result | {'supply': supply | {'localProgress': progress}}, 5), 5)
+        self.assertEqual(runtime.worker_delay(result | {'supply': supply | {'hasMoreLocalWork': False}}, 5), 5)
+        self.assertEqual(runtime.worker_delay(result | {'supply': supply | {'state': 'complete'}}, 5), 5)
+
     def test_stop_invalidates_queued_automatic_work_without_touching_approval_switch(self):
         runtime._queue_supply(self.root)
         with CycleStore(self.path) as store:

@@ -151,23 +151,53 @@ def _identity_connection(root):
     return connection
 
 
-_LATEST = """SELECT * FROM identity_observation WHERE market=? AND oec_id=?
- AND kind='profile' AND outcome='observed' AND json_valid(payload_json)
- AND json_type(payload_json,'$.fields')='object'
- ORDER BY observed_us DESC,CASE WHEN evidence_ref LIKE '%:profile' THEN 2
- WHEN evidence_ref LIKE '%:find-profile' THEN 1 ELSE 0 END DESC,rowid DESC LIMIT 1"""
+_PROFILE_FILTER = """kind='profile' AND outcome='observed' AND json_valid(payload_json)
+ AND json_type(payload_json,'$.fields')='object'"""
+_PROFILE_ORDER = """observed_us DESC,CASE WHEN evidence_ref LIKE '%:profile' THEN 2
+ WHEN evidence_ref LIKE '%:find-profile' THEN 1 ELSE 0 END DESC,rowid DESC"""
+_LATEST = f'SELECT * FROM identity_observation WHERE market=? AND oec_id=? AND {_PROFILE_FILTER} ORDER BY {_PROFILE_ORDER} LIMIT 1'
 
 
-def _profile(connection, market, oec):
-    person = connection.execute('SELECT * FROM creator_identity WHERE market=? AND oec_id=?', (market, str(oec))).fetchone()
-    if not person or person['handle_conflict'] or not person['current_handle']:
-        return None
-    row = connection.execute(_LATEST, (market, str(oec))).fetchone()
-    if not row or row['creator_id'] != person['creator_id']:
+def _usable_profile_person(person):
+    return bool(person and not person['handle_conflict'] and person['current_handle'])
+
+
+def _profile_record(person, row, oec):
+    """Decode the same current-person/observed-profile binding for batch and fresh reads."""
+    if not _usable_profile_person(person) or not row or row['creator_id'] != person['creator_id']:
         return None
     return {'creatorId': person['creator_id'], 'oecId': str(oec), 'handle': person['current_handle'],
             'observedAt': row['observed_us'] / 1_000_000, 'evidenceRef': row['evidence_ref'],
             'fingerprint': row['fingerprint'], 'payload': json.loads(row['payload_json'])}
+
+
+def _profile(connection, market, oec):
+    person = connection.execute('SELECT * FROM creator_identity WHERE market=? AND oec_id=?', (market, str(oec))).fetchone()
+    if not _usable_profile_person(person):
+        return None
+    row = connection.execute(_LATEST, (market, str(oec))).fetchone()
+    return _profile_record(person, row, oec)
+
+
+def _profile_page(connection, market, after, limit):
+    """Read one original OEC page with its exact latest profiles in one statement.
+
+    Invalid or missing profiles keep their place in the scan and cursor. They
+    cannot become candidates, and a mismatched latest creator never falls back
+    to an older observation belonging to the current person.
+    """
+    rows = connection.execute(f'''SELECT p.creator_id person_creator_id,p.oec_id,p.current_handle,p.handle_conflict,
+        o.creator_id,o.observed_us,o.evidence_ref,o.fingerprint,o.payload_json
+        FROM creator_identity p LEFT JOIN identity_observation o ON o.rowid=(
+            SELECT rowid FROM identity_observation WHERE market=p.market AND oec_id=p.oec_id
+            AND {_PROFILE_FILTER} ORDER BY {_PROFILE_ORDER} LIMIT 1)
+        WHERE p.market=? AND p.oec_id>? ORDER BY p.oec_id LIMIT ?''', (market, after, limit)).fetchall()
+    result = []
+    for row in rows:
+        person = {'creator_id': row['person_creator_id'], 'current_handle': row['current_handle'],
+                  'handle_conflict': row['handle_conflict']}
+        result.append({'oec_id': row['oec_id'], 'profile': _profile_record(person, row, row['oec_id'])})
+    return result
 
 
 def latest_profile(root, market, oec):
@@ -370,26 +400,36 @@ def prepare(root, market='br', *, store=None, should_stop=None, max_pages=None):
                 waiting[reason] = waiting.get(reason, 0) + 1
     scanned = resumed['scanned'] if resumed else 0
     matched = resumed['matched'] if resumed else 0
+    initial_scanned = scanned
     pages = 0
     try:
         if by_category:
             with closing(_identity_connection(root)) as identities:
                 cursor = resumed['last_oec'] if resumed else ''
+                initial_cursor = cursor
                 while True:
-                    if (should_stop and should_stop()) or max_pages is not None and pages >= max_pages:
+                    stopped = bool(should_stop and should_stop())
+                    budget = max_pages is not None and pages >= max_pages
+                    more = bool(identities.execute('SELECT 1 FROM creator_identity WHERE market=? AND oec_id>? LIMIT 1',
+                                                  (market, cursor)).fetchone()) if budget and not stopped else False
+                    if stopped or budget and more:
                         store.db.execute("UPDATE first_outreach_generation SET state='paused',waiting=? WHERE id=?", (encoded(waiting), generation))
                         return {'generationId': generation, 'products': len(available), 'scanned': scanned,
                                 'matchedCreators': matched, 'waiting': waiting, 'state': 'paused', 'completed': False,
-                                'platformWrites': 0, 'realSends': 0}
-                    people = identities.execute('SELECT oec_id FROM creator_identity WHERE market=? AND oec_id>? ORDER BY oec_id LIMIT ?',
-                                                 (market, cursor, PAGE_SIZE)).fetchall()
-                    if not people:
+                                'platformWrites': 0, 'realSends': 0, 'hasMoreLocalWork': more,
+                                'localProgress': {'fromOec': initial_cursor, 'toOec': cursor,
+                                                  'scanned': scanned - initial_scanned}}
+                    if budget:
                         break
                     identities.execute('BEGIN')
+                    people = _profile_page(identities, market, cursor, PAGE_SIZE)
+                    if not people:
+                        identities.execute('COMMIT')
+                        break
                     records = []
                     for person in people:
                         scanned += 1
-                        profile = _profile(identities, market, person['oec_id'])
+                        profile = person['profile']
                         category = main_category(profile['payload']) if profile else None
                         if not category:
                             waiting['creator_primary_category_unknown'] = waiting.get('creator_primary_category_unknown', 0) + 1
