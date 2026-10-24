@@ -273,7 +273,8 @@ def material_holds(store, market='br'):
     with closing(sqlite3.connect(path.resolve().as_uri() + '?mode=ro', uri=True)) as db:
         if not db.execute("SELECT 1 FROM sqlite_master WHERE name='catalog_link_intent'").fetchone():
             return set()
-        return {str(row[0]) for row in db.execute("SELECT pid FROM catalog_link_intent WHERE state IN ('submitted','receipt_saved','unknown') AND json_extract(spec,'$.market')=?", (market,))}
+        # Match the existing partial index predicate, while prepared writes remain unheld.
+        return {str(row[0]) for row in db.execute("SELECT pid FROM catalog_link_intent WHERE state IN ('prepared','submitted','receipt_saved','unknown') AND state<>'prepared' AND json_extract(spec,'$.market')=?", (market,))}
 
 
 def require_material_grant(store, expected_start, market='br'):
@@ -291,12 +292,14 @@ def require_material_grant(store, expected_start, market='br'):
     return cfg
 
 
-def _localized_name(store, offer, market='br'):
+def _localized_name(store, offer, market='br', *, locale=None):
     if not _table(store, 'cycle_product_name') or not isinstance(offer.get('title'), str):
         return None
     from lib.cycle_materials import market_locale, name_key
+    if locale is None:
+        locale = market_locale(market)
     row = store.db.execute('SELECT payload FROM cycle_product_name WHERE id=? AND pid=? AND locale=? AND source_title=?',
-                           (name_key(offer, market), offer['pid'], market_locale(market), offer['title'])).fetchone()
+                           (name_key(offer, market, locale=locale), offer['pid'], locale, offer['title'])).fetchone()
     if not row:
         return None
     try:
@@ -306,11 +309,14 @@ def _localized_name(store, offer, market='br'):
     return name if isinstance(name, dict) and isinstance(name.get('mention'), str) and name['mention'].strip() else None
 
 
-def _materials(root, store, market, offers):
+def _materials(root, store, market, offers, *, locale=None):
     """Read only exact current names and TapLink bindings; never create either."""
     from lib.catalog_binding import offer_fingerprint
     result = {'readyOfferKeys': set(), 'missingLinks': 0, 'missingNames': 0}
     eligible = [offer for offer in offers if assess_first_offer(offer, store.clock())['eligible']]
+    if eligible and locale is None:
+        from lib.cycle_materials import market_locale
+        locale = market_locale(market)
     path = Path(root) / 'var/catalog-links.sqlite'
     connection = None
     try:
@@ -328,7 +334,7 @@ def _materials(root, store, market, offers):
                 linked = bool(row and row[0] == offer_fingerprint(offer) and isinstance(card, dict) and card.get('listId'))
             except (ValueError, TypeError):
                 pass
-            named = _localized_name(store, offer, market) is not None
+            named = _localized_name(store, offer, market, locale=locale) is not None
             result['missingLinks'] += int(not linked)
             result['missingNames'] += int(not named)
             if linked and named:
@@ -675,7 +681,9 @@ def status(root, market='br', limit=20):
         # separate qualification evidence and must not count the product twice.
         empty['counts']['products'] = len({offer['pid'] for offer in offers
                                           if assess_first_offer(offer, store.clock())['eligible']})
-        materials = _materials(root, store, market, offers)
+        from lib.cycle_materials import market_locale
+        locale = market_locale(market) if offers else None
+        materials = _materials(root, store, market, offers, locale=locale)
         if not empty['counts']['products']:
             blockers.append('sample_products_unavailable')
         if not head:
@@ -696,7 +704,7 @@ def status(root, market='br', limit=20):
                 offer = by_key.get(row['offer_key'], {})
                 empty['candidates'].append({'creatorId': row['creator_id'], 'handle': payload['handle'], 'pid': row['pid'],
                                             'productName': offer.get('title') or row['pid'], 'categoryName': payload['category']['name'],
-                                            'gmv': payload['gmv'], 'message': _message(offer, _localized_name(store, offer, market) or {'mention': offer.get('title') or row['pid']}, payload['handle'])['text']})
+                                            'gmv': payload['gmv'], 'message': _message(offer, _localized_name(store, offer, market, locale=locale) or {'mention': offer.get('title') or row['pid']}, payload['handle'])['text']})
         if _table(store, 'cycle_delivery'):
             empty['counts']['sent'] = store.db.execute("SELECT count(*) FROM cycle_delivery WHERE plan_id=? AND state='confirmed' AND json_extract(snapshot,'$.executionMode')=?", (plan, MODE)).fetchone()[0]
             empty['counts']['unknown'] = _unknown(store, plan)

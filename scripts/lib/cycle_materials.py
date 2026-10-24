@@ -43,9 +43,9 @@ def market_locale(market='it'):
  from lib.market_content import market_content
  return market_content(ROOT,market)['locale']
 
-def name_key(offer,market='it'):
+def name_key(offer,market='it',*,locale=None):
  if market=='it':return digest(['product-short-name-v1','it-IT',offer['pid'],offer['title']])
- return digest(['product-short-name-v2',market,market_locale(market),offer['pid'],offer['title']])
+ return digest(['product-short-name-v2',market,locale if locale is not None else market_locale(market),offer['pid'],offer['title']])
 
 def checked_names(body,inputs,market='it'):
  if not isinstance(body,dict) or set(body)!={'items'} or not isinstance(body['items'],list) or len(body['items'])!=len(inputs):raise CycleError('names_invalid')

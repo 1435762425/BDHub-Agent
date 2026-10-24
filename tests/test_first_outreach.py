@@ -16,6 +16,40 @@ from lib.second_cycle import CycleError, CycleStore, digest, encoded
 
 
 class FirstOutreachTests(unittest.TestCase):
+    def test_status_reuses_locale_only_within_one_request_and_preserves_name_keys(self):
+        from lib.cycle_materials import market_locale, name_key
+        self.prepare()
+        expected = name_key(self.offer(), 'br')
+        with patch('lib.cycle_materials.market_locale', wraps=market_locale) as locale:
+            state = first.status(self.root)
+            self.assertEqual(locale.call_count, 1)
+        self.assertEqual(state['materials']['missingNames'], 0)
+        with patch('lib.cycle_materials.market_locale', side_effect=AssertionError('locale_already_resolved')):
+            self.assertEqual(name_key(self.offer(), 'br', locale='pt-BR'), expected)
+            self.assertIsNotNone(first._localized_name(self.s, self.offer(), locale='pt-BR'))
+        # A later request still reads current configuration rather than retaining a global cache.
+        with patch('lib.cycle_materials.market_locale', return_value='changed-locale') as locale:
+            state = first.status(self.root)
+            self.assertEqual(locale.call_count, 1)
+        self.assertEqual(state['materials']['missingNames'], 1)
+
+    def test_material_holds_excludes_prepared_and_other_markets_using_existing_partial_index(self):
+        self.links.execute('CREATE TABLE catalog_link_intent(pid TEXT,state TEXT,spec TEXT)')
+        self.links.execute("CREATE UNIQUE INDEX catalog_link_open_market_pid ON catalog_link_intent(json_extract(spec,'$.market'),pid) WHERE state IN ('prepared','submitted','receipt_saved','unknown')")
+        rows=[('1','prepared','br'),('2','submitted','br'),('3','receipt_saved','br'),
+              ('4','unknown','br'),('5','unknown','my'),('6','confirmed','br')]
+        self.links.executemany('INSERT INTO catalog_link_intent VALUES(?,?,?)',
+            [(pid,state,encoded({'market':market})) for pid,state,market in rows])
+        self.links.commit()
+        statements=[];connect=sqlite3.connect
+        def traced(*args,**kwargs):
+            connection=connect(*args,**kwargs);connection.set_trace_callback(statements.append);return connection
+        with patch.object(first.sqlite3,'connect',side_effect=traced):
+            self.assertEqual(first.material_holds(self.s), {'2','3','4'})
+        query=next(statement for statement in statements if statement.startswith('SELECT pid FROM catalog_link_intent'))
+        plan=[row[3] for row in self.links.execute('EXPLAIN QUERY PLAN '+query)]
+        self.assertTrue(any('USING INDEX catalog_link_open_market_pid' in step for step in plan),plan)
+
     def test_public_products_count_deduplicates_alternate_campaign_offers(self):
         original = self.offer()
         alternative = self.offer(campaignId='other-campaign', offerKey='other-offer')
