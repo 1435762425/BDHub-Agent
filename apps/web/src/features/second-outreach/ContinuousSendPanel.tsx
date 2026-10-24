@@ -3,7 +3,7 @@ import {Button,Card,Field,Input,Notice,Pill,StatTile,Toggle} from "../bdhub/ui";
 import type {SendController} from "./useContinuousSend";
 import SendTemplateManager from "./SendTemplateManager";
 
-const labels:Record<string,string>={off:"未开启",stopped:"已停止",starting:"启动中",confirmed:"已确认",waiting_window:"等待发送窗口",waiting_pool:"等待可发达人",waiting_account:"等待账号空闲",waiting_transport:"连接恢复中",sending:"发送中",waiting_capacity:"等待可用额度",waiting_platform_refusal:"平台拒绝该达人，继续发送",paused:"已暂停",attention:"发送已停止，需关注",waiting_reconciliation:"等待核验",first_send_requires_page_start:"等待首次启动",canary_confirmed:"首条已确认，等待继续",waiting_canary_authorization:"等待首发授权核对"};
+const labels:Record<string,string>={off:"未开启",stopped:"已停止",starting:"启动中",confirmed:"已确认",waiting_window:"等待发送窗口",waiting_pool:"等待可发达人",waiting_account:"等待账号空闲",waiting_transport:"连接恢复中",plan_paused:"计划已暂停",sending:"发送中",waiting_capacity:"等待可用额度",waiting_platform_refusal:"平台拒绝该达人，继续发送",paused:"已暂停",attention:"发送已停止，需关注",waiting_reconciliation:"等待核验",first_send_requires_page_start:"等待首次启动",canary_confirmed:"首条已确认，等待继续",waiting_canary_authorization:"等待首发授权核对"};
 const number=(value:number|null|undefined)=>value==null?"—":value.toLocaleString("zh-CN");
 const time=(value:number|null)=>value?new Date(value*1000).toLocaleString("zh-CN",{timeZone:"Asia/Shanghai",hour12:false}):"—";
 

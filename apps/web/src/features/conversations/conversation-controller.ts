@@ -6,7 +6,8 @@ export type DecisionTrace = {decisionId:string;input:{prompt:string;context:unkn
 type ManualOutcome = "normal" | "paid" | "rejected";
 type Snapshot = {
   view:ConversationView;query:string;list:ConversationList|null;selected:string|null;
-  detail:ConversationDetail|null;draft:string;busy:boolean;error:string;
+  detail:ConversationDetail|null;draft:string;busy:boolean;error:string;listLoading:boolean;
+  detailLoading:boolean;detailError:string;detailStale:boolean;detailReadAt:number|null;
   translations:Record<string,string>;translationBusy:string|null;manualOutcome:ManualOutcome;
   trace:DecisionTrace|null;pendingManualReplies:PendingManualReply[];
   olderTimeline:TimelineItem[];olderCursor:string|null;olderBusy:boolean;draftNotice:string;
@@ -34,7 +35,8 @@ const refusal = (code:string) => ({
 /** Owns the page's asynchronous interaction state. Every response belongs to one selection. */
 export class ConversationController {
   private snapshot:Snapshot = {
-    view:"human",query:"",list:null,selected:null,detail:null,draft:"",busy:false,error:"",
+    view:"human",query:"",list:null,selected:null,detail:null,draft:"",busy:false,error:"",listLoading:false,
+    detailLoading:false,detailError:"",detailStale:false,detailReadAt:null,
     translations:{},translationBusy:null,manualOutcome:"normal",trace:null,pendingManualReplies:[],
     olderTimeline:[],olderCursor:null,olderBusy:false,draftNotice:"",
   };
@@ -47,6 +49,8 @@ export class ConversationController {
   private disposed = false;
   private listAbort:AbortController|null = null;
   private detailAbort:AbortController|null = null;
+  private listInFlight:{key:string;version:number;promise:Promise<void>}|null=null;
+  private detailInFlight:{cid:string;selection:number;version:number;promise:Promise<void>}|null=null;
   private pending = new Map<string, PendingManualReply[]>();
   private mutationIds = new Map<string, string>();
   readonly market:string;
@@ -73,6 +77,7 @@ export class ConversationController {
     this.disposed = true;
     this.listVersion++;this.detailVersion++;this.selectionVersion++;
     this.listAbort?.abort();this.detailAbort?.abort();
+    this.listInFlight=null;this.detailInFlight=null;
   }
   private current(cid:string, version:number) {
     return !this.disposed && this.snapshot.selected === cid && this.selectionVersion === version;
@@ -90,9 +95,10 @@ export class ConversationController {
   select = (cid:string|null) => {
     this.selectionVersion++;this.detailVersion++;this.draftVersion++;
     this.detailAbort?.abort();
+    this.detailInFlight=null;
     const kept = cid ? this.drafts.get(cid) : undefined;
     this.update({selected:cid,detail:null,draft:kept?.dirty ? kept.text : "",translations:{},translationBusy:null,trace:null,
-      error:"",draftNotice:"",olderTimeline:[],olderCursor:null,olderBusy:false,
+      error:"",detailLoading:!!cid,detailError:"",detailStale:false,detailReadAt:null,draftNotice:"",olderTimeline:[],olderCursor:null,olderBusy:false,
       pendingManualReplies:cid ? this.pending.get(cid) ?? [] : []});
     if(cid)void this.loadDetail(cid);
   };
@@ -103,11 +109,19 @@ export class ConversationController {
     void this.loadList();
   };
 
-  loadList = async () => {
+  loadList = (reuse = false):Promise<void> => {
+    const {view,query}=this.snapshot,key=JSON.stringify([view,query]);
+    if(reuse&&this.listInFlight?.key===key&&!this.listAbort?.signal.aborted)return this.listInFlight.promise;
     const version = ++this.listVersion;
     this.listAbort?.abort();
     const abort = new AbortController();this.listAbort = abort;
-    const {view,query} = this.snapshot;
+    this.update({listLoading:true});
+    const promise=this.readList(view,query,version,abort).finally(()=>{
+      if(this.listInFlight?.version===version)this.listInFlight=null;
+    });
+    this.listInFlight={key,version,promise};return promise;
+  };
+  private async readList(view:ConversationView,query:string,version:number,abort:AbortController){
     try {
       const params = new URLSearchParams({market:this.market,view,query});
       const response = await this.fetcher(`/api/conversations?${params}`,{cache:"no-store",signal:abort.signal});
@@ -121,8 +135,10 @@ export class ConversationController {
       else if(!this.snapshot.selected && list.items[0]?.conversationId)this.select(list.items[0].conversationId);
     } catch {
       if(!abort.signal.aborted && version === this.listVersion)this.update({error:"暂时无法读取会话队列。"});
+    } finally {
+      if(!abort.signal.aborted&&version===this.listVersion)this.update({listLoading:false});
     }
-  };
+  }
 
   loadMore = async () => {
     const initial = this.snapshot.list;
@@ -152,8 +168,8 @@ export class ConversationController {
   /** Periodic refresh: queue plus the open conversation's facts; never the local draft. */
   refresh = async () => {
     const cid = this.snapshot.selected;
-    await this.loadList();
-    if(cid && this.snapshot.selected === cid && !this.snapshot.busy)await this.loadDetail(cid,true);
+    await this.loadList(true);
+    if(cid && this.snapshot.selected === cid && !this.snapshot.busy)await this.loadDetail(cid,true,true);
   };
   loadOlder = async () => {
     const {selected:cid,olderCursor,olderBusy} = this.snapshot;
@@ -173,11 +189,21 @@ export class ConversationController {
     } catch {if(this.current(cid,selection))this.update({error:"更早的消息暂时无法读取；当前消息和发送状态不受影响。"});}
     finally {if(this.current(cid,selection))this.update({olderBusy:false});}
   };
-  private async loadDetail(cid:string, refresh = false) {
-    if(this.snapshot.selected !== cid)return;
+  retryDetail = () => this.snapshot.selected?this.loadDetail(this.snapshot.selected,!!this.snapshot.detail):Promise.resolve();
+  private loadDetail(cid:string, refresh = false, reuse = false):Promise<void> {
+    if(this.snapshot.selected !== cid)return Promise.resolve();
+    // Only passive polls share reads. A successful mutation must supersede any pre-mutation read.
+    if(reuse&&this.detailInFlight?.cid===cid&&this.detailInFlight.selection===this.selectionVersion&&!this.detailAbort?.signal.aborted)return this.detailInFlight.promise;
     const version = ++this.detailVersion, selection = this.selectionVersion;
     this.detailAbort?.abort();
     const abort = new AbortController();this.detailAbort = abort;
+    this.update({detailLoading:true,detailError:""});
+    const promise=this.readDetail(cid,refresh,version,selection,abort).finally(()=>{
+      if(this.detailInFlight?.version===version)this.detailInFlight=null;
+    });
+    this.detailInFlight={cid,selection,version,promise};return promise;
+  }
+  private async readDetail(cid:string,refresh:boolean,version:number,selection:number,abort:AbortController){
     try {
       const response = await this.fetcher(`/api/conversations?market=${encodeURIComponent(this.market)}&cid=${cid}`,
         {cache:"no-store",signal:abort.signal});
@@ -198,17 +224,19 @@ export class ConversationController {
         this.drafts.set(cid,{text:draft,dirty:false,serverRevision:detail.draft.revision});
         if(draft !== this.snapshot.draft)this.draftVersion++;
       }
-      if(refresh) {
+      if(refresh&&this.snapshot.detail) {
         // The open page keeps its translations, trace, chosen outcome and loaded history.
-        this.update({detail,draft,draftNotice,olderCursor:this.snapshot.olderTimeline.length ? this.snapshot.olderCursor : detail.timelineCursor});
+        this.update({detail,draft,draftNotice,detailError:"",detailStale:false,detailReadAt:Date.now()/1000,olderCursor:this.snapshot.olderTimeline.length ? this.snapshot.olderCursor : detail.timelineCursor});
       } else {
-        this.update({detail,draft,draftNotice,translations:{},trace:null,olderTimeline:[],olderCursor:detail.timelineCursor,
+        this.update({detail,draft,draftNotice,detailError:"",detailStale:false,detailReadAt:Date.now()/1000,translations:{},trace:null,olderTimeline:[],olderCursor:detail.timelineCursor,
           manualOutcome:detail.creator.collaboration.status === "paid" ? "paid" :
             detail.creator.collaboration.status === "rejected" ? "rejected" : "normal"});
       }
     } catch {
-      if(!abort.signal.aborted && this.current(cid,selection))
-        this.update({error:refresh ? "会话内容暂时无法刷新，正在显示上次读取的内容。" : "暂时无法读取会话内容。"});
+      if(!abort.signal.aborted && this.current(cid,selection)&&version===this.detailVersion)
+        this.update({detailError:this.snapshot.detail?"会话内容暂时无法刷新，正在显示上次读取的内容。":"暂时无法读取会话内容。",detailStale:!!this.snapshot.detail});
+    } finally {
+      if(this.current(cid,selection)&&version===this.detailVersion)this.update({detailLoading:false});
     }
   }
 

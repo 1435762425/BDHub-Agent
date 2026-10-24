@@ -14,7 +14,7 @@ const minutes=(since:number|null,now:number)=>since?`${Math.max(0,Math.round((no
 const num=(value:number|null|undefined,unit:string)=>value==null?"—":`${value.toLocaleString()} ${unit}`;
 const STATE:Record<string,string>={completed:"已完成",quota_exhausted:"额度用尽，断点保留",failed:"失败",needs_human:"需核对",stopped:"已停止",
  skipped:"本轮跳过",running:"运行中",queued:"排队",sending:"发送中",waiting_window:"等待发送窗口",waiting_pool:"暂无可发达人",
- waiting_capacity:"等待可用额度",waiting_transport:"连接恢复中",waiting_reconciliation:"待核验",outside_reply_window:"回复窗口外",disabled:"未启用",off:"关闭",idle:"空闲",paused:"暂停",
+ waiting_capacity:"等待可用额度",waiting_transport:"连接恢复中",plan_paused:"计划已暂停",waiting_reconciliation:"待核验",outside_reply_window:"回复窗口外",disabled:"未启用",off:"关闭",idle:"空闲",paused:"暂停",
  attention:"已停止，需关注",first_send_requires_page_start:"首发需在页面启动",confirmed:"已确认",cancelled:"已取消",partial_delivery:"部分送达",waiting_account:"等待账号",
  starting:"启动中",unverified:"状态待核实",waiting_send_window:"等待二发窗口结束",send_dispatch_active:"等待二发请求收口",waiting_dispatch:"等待在途核验",
  canary_confirmed:"首条已确认，已停止",pilot_complete_waiting_resume:"首条已确认，等待页面继续",pilot_waiting_confirmation:"首条结果尚未确认",waiting_canary_authorization:"首条授权归属待确认",original_intent_rechecked:"已核验原回复",waiting_reply_check:"等待原回复核验",reply_check_deferred:"回复核验暂缓"};

@@ -20,11 +20,109 @@ test('rapid selection clears the previous editor and ignores an out-of-order det
  },()=> 'original-request');
  controller.select('1');controller.select('2');
  assert.equal(controller.getSnapshot().detail,null);
+ assert.equal(controller.getSnapshot().detailLoading,true);
  await controller.sendText();assert.equal(writes.length,0);
  reads.get('2').resolve(response(detail('2')));await flush();
  reads.get('1').resolve(response(detail('1')));await flush();
  assert.equal(controller.getSnapshot().detail.conversationId,'2');
+ assert.equal(controller.getSnapshot().detailLoading,false);
  await controller.sendText();assert.equal(writes[0].cid,'2');
+});
+
+test('polls reuse a pending selected detail instead of aborting and restarting it',async()=>{
+ const pending=deferred();let reads=0,detailSignal;
+ const controller=new ConversationController('br',async(url,init)=>{
+  if(new URL(url,'http://local').searchParams.has('cid')){reads++;detailSignal=init.signal;return pending.promise;}
+  return response(queue(['1']));
+ });
+ controller.select('1');assert.equal(controller.getSnapshot().detailLoading,true);
+ const firstPoll=controller.refresh(),secondPoll=controller.refresh();await flush();
+ assert.equal(reads,1);assert.equal(detailSignal.aborted,false);
+ pending.resolve(response(detail('1')));await Promise.all([firstPoll,secondPoll]);await flush();
+ assert.equal(controller.getSnapshot().detail.conversationId,'1');assert.equal(controller.getSnapshot().detailLoading,false);
+});
+
+test('passive polls reuse a pending queue read',async()=>{
+ const pending=deferred();let reads=0,signal;
+ const controller=new ConversationController('br',async(url,init)=>{
+  if(new URL(url,'http://local').searchParams.has('cid'))return response(detail('1'));
+  reads++;signal=init.signal;return pending.promise;
+ });
+ const firstPoll=controller.refresh(),secondPoll=controller.refresh();await flush();
+ assert.equal(reads,1);assert.equal(signal.aborted,false);
+ pending.resolve(response(queue(['1'])));await Promise.all([firstPoll,secondPoll]);await flush();
+ assert.equal(controller.getSnapshot().selected,'1');assert.equal(controller.getSnapshot().listLoading,false);
+});
+
+for(const action of ['save_draft','reconcile_manual'])test(`${action} success supersedes a pending pre-mutation detail read`,async()=>{
+ const stale=deferred(),fresh=deferred(),held={requestId:'original-held',state:'unknown'};
+ let reads=0,staleSignal;const writes=[];
+ const controller=new ConversationController('br',async(url,init)=>{
+  if(init?.method==='POST'){
+   const input=body(init);writes.push(input);
+   return response(action==='save_draft'?{revision:1}:{state:'confirmed',requestRef:held.requestId});
+  }
+  if(!new URL(url,'http://local').searchParams.has('cid'))return response(queue(['1']));
+  reads++;
+  if(reads===1)return response(detail('1',{heldReplies:[held]}));
+  if(reads===2){staleSignal=init.signal;return stale.promise;}
+  return fresh.promise;
+ });
+ controller.select('1');await flush();controller.setDraft('saved text');
+ const poll=controller.refresh();await flush();assert.equal(reads,2);
+ const mutation=action==='save_draft'?controller.saveDraft():controller.reconcileHeld(held.requestId);
+ await flush();assert.equal(reads,3);assert.equal(staleSignal.aborted,true);
+ fresh.resolve(response(detail('1',{draft:{text:'saved text',revision:1},heldReplies:[]})));await mutation;
+ stale.resolve(response(detail('1',{draft:{text:'stale text',revision:0},heldReplies:[held]})));await poll;
+ assert.equal(controller.getSnapshot().detail.draft.revision,1);assert.deepEqual(controller.getSnapshot().detail.heldReplies,[]);
+ assert.equal(controller.getSnapshot().draft,'saved text');assert.equal(writes.length,1);assert.equal(writes[0].action,action);
+ if(action==='reconcile_manual')assert.equal(writes[0].requestId,held.requestId);
+});
+
+test('resolving a human case supersedes a pending queue read without reselecting the closed case',async()=>{
+ const stale=deferred(),fresh=deferred();let reads=0,staleSignal;const writes=[];
+ const controller=new ConversationController('br',async(url,init)=>{
+  if(init?.method==='POST'){writes.push(body(init));return response({ok:true});}
+  if(new URL(url,'http://local').searchParams.has('cid'))return response(detail('1',{case:{id:'case-1',pendingRevision:2}}));
+  reads++;
+  if(reads===1)return response(queue(['1']));
+  if(reads===2){staleSignal=init.signal;return stale.promise;}
+  return fresh.promise;
+ });
+ await controller.loadList();await flush();
+ const poll=controller.refresh();await flush();assert.equal(reads,2);
+ const resolving=controller.resolveManual();await flush();
+ assert.equal(reads,3);assert.equal(staleSignal.aborted,true);
+ fresh.resolve(response(queue([])));await resolving;
+ stale.resolve(response(queue(['1'])));await poll;
+ assert.equal(controller.getSnapshot().selected,null);assert.deepEqual(controller.getSnapshot().list.items,[]);
+ assert.equal(writes.length,1);assert.equal(writes[0].action,'resolve_manual');assert.equal(writes[0].caseId,'case-1');
+});
+
+test('detail failure survives an unrelated queue read and retry restores its own state',async()=>{
+ let fail=true;
+ const controller=new ConversationController('br',async url=>{
+  if(!new URL(url,'http://local').searchParams.has('cid'))return response(queue(['1']));
+  if(fail)throw Error('read failed');return response(detail('1'));
+ });
+ controller.select('1');await flush();assert.match(controller.getSnapshot().detailError,/无法读取/);
+ assert.equal(controller.getSnapshot().detailLoading,false);assert.equal(controller.getSnapshot().detail,null);
+ await controller.loadList();assert.match(controller.getSnapshot().detailError,/无法读取/);
+ fail=false;await controller.retryDetail();assert.equal(controller.getSnapshot().detailError,'');assert.equal(controller.getSnapshot().detailStale,false);
+ assert.equal(controller.getSnapshot().detail.conversationId,'1');
+});
+
+test('a failed refresh preserves the old detail and draft with an explicit stale marker',async()=>{
+ let failed=false,revision=1;
+ const controller=new ConversationController('br',async url=>{
+  if(!new URL(url,'http://local').searchParams.has('cid'))return response(queue(['1']));
+  if(failed)throw Error('read failed');return response(detail('1',{creator:{creatorId:'creator-1',revision,collaboration:{status:'normal',revision:0}}}));
+ });
+ controller.select('1');await flush();controller.setDraft('unsaved');const old=controller.getSnapshot().detail,readAt=controller.getSnapshot().detailReadAt;
+ failed=true;await controller.refresh();assert.equal(controller.getSnapshot().detail,old);assert.equal(controller.getSnapshot().detailStale,true);
+ assert.equal(controller.getSnapshot().detailReadAt,readAt);assert.equal(controller.getSnapshot().draft,'unsaved');assert.match(controller.getSnapshot().detailError,/上次读取/);
+ failed=false;revision=2;await controller.retryDetail();assert.equal(controller.getSnapshot().detailStale,false);assert.equal(controller.getSnapshot().detail.creator.revision,2);
+ assert.equal(controller.getSnapshot().draft,'unsaved');
 });
 
 test('translation and mutation completion cannot overwrite a newly selected conversation',async()=>{
