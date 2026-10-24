@@ -35,6 +35,15 @@ def reply_blocker(db,plan,creator=None):
   return 'reply_isolated'
  return None
 
+def has_pending_reply_reconciliation(store,market):
+ """Read only the original submitted reply states; ready drafts grant no recovery work."""
+ tables={row[0] for row in store.db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+ if not {'plan','service_reply'}<=tables:return False
+ return store.db.execute("""SELECT 1 FROM service_reply q JOIN plan p ON p.id=q.plan_id
+   WHERE p.institution='bjn-local-research' AND p.market=? AND q.state IN ('inflight','accepted','unknown')
+     AND (?='it' OR q.kind IN ('agent_generated_v2','agent_request_detail_v2','agent_handoff_v2')) LIMIT 1""",
+   (market,market)).fetchone() is not None
+
 
 def _decision_wait_for(db,reply_id):
  row=db.execute("SELECT output_json FROM agent_reply_decision_v2 WHERE service_reply_id=? AND state='ready' ORDER BY created_at DESC LIMIT 1",(reply_id,)).fetchone()

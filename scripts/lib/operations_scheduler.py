@@ -1140,9 +1140,11 @@ def _background(root,store,jobs,automation,stamp,maintenance_enabled=None):
     """Keep independent monitors/runtimes alive without treating them as serial workflow stages."""
     enabled=jobs['jobs']
     from lib.im_session_owner import enabled as sdk_enabled,launch as launch_session
-    from lib.job_run import start as start_job,state as job_state
+    from lib.job_run import start as start_job,state as job_state,stop_path as job_stop_path
+    from lib.cycle_auto_reply import has_pending_reply_reconciliation
+    italy_reply_recovering=has_pending_reply_reconciliation(store,'it')
     if sdk_enabled(root,'it'):
-        if (automation['automaticOperationsEnabled'] or enabled['inbox_monitor']['enabled']) and not (Path(root)/'var/job-inbox.stop').exists():
+        if (automation['automaticOperationsEnabled'] or enabled['inbox_monitor']['enabled'] or italy_reply_recovering) and not (Path(root)/'var/job-inbox.stop').exists():
             try:launch_session(root,'it')
             except OSError:pass
     elif (automation['automaticOperationsEnabled'] or enabled['inbox_monitor']['enabled']) and not (job_state(root,'inbox') or {}).get('running'):
@@ -1150,8 +1152,9 @@ def _background(root,store,jobs,automation,stamp,maintenance_enabled=None):
         except (ValueError,OSError):pass
     from lib.template_library import agent_setting
     plan=store.db.execute("SELECT id,state FROM plan WHERE institution='bjn-local-research' AND market='it'").fetchone()
-    if plan and plan['state']=='active' and agent_setting(store,plan['id'])['enabled'] and not (job_state(root,'agentReply') or {}).get('running'):
-        try:start_job(root,'agentReply',{'interval':60})
+    italy_agent_enabled=bool(plan and plan['state']=='active' and agent_setting(store,plan['id'])['enabled'] and not job_stop_path(root,'agentReply').exists())
+    if plan and (italy_agent_enabled or italy_reply_recovering) and not (job_state(root,'agentReply') or {}).get('running'):
+        try:start_job(root,'agentReply',{'interval':60},preserve_stop=True,reconcile_only=not italy_agent_enabled)
         except (ValueError,OSError):pass
     tables={row[0] for row in store.db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     if {'continuous_send_control','cycle_delivery','cycle_delivery_part'}<=tables:
@@ -1169,15 +1172,16 @@ def _background(root,store,jobs,automation,stamp,maintenance_enabled=None):
         plan_row=store.db.execute("SELECT id,state FROM plan WHERE market=? AND institution='bjn-local-research'",(market,)).fetchone()
         if not plan_row:continue
         recovering=has_pending_reconciliation(store,market)
+        reply_recovering=has_pending_reply_reconciliation(store,market)
         plan_active=plan_row['state']=='active'
-        if not plan_active and not recovering:continue
+        if not plan_active and not (recovering or reply_recovering):continue
         current=market_setting(store,market)
         from lib.market_send_control import control as market_send_control,_control_for_plan
         sender_control=market_send_control(store,market) if plan_active else _control_for_plan(store,plan_row['id'])
         agent_enabled=plan_active and agent_setting(store,plan_row['id'])['enabled']
         # Inbox is part of the authorized send/reply loop even when the broader
         # catalog automation switch is off (MY is currently operated this way).
-        if recovering or plan_active and (current['automaticOperationsEnabled'] or agent_enabled or (
+        if recovering or reply_recovering or plan_active and (current['automaticOperationsEnabled'] or agent_enabled or (
             not sender_control['stopRequested'] and
             (current['continuousSendEnabled'] or sender_control['automaticEnabled'] or sender_control['runRequested']))):
             inbox_state=_read(Path(root)/f'var/market-inbox-{market}.json',{})
@@ -1196,7 +1200,7 @@ def _background(root,store,jobs,automation,stamp,maintenance_enabled=None):
                     _write(Path(root)/f'var/market-inbox-{market}.json',
                            {'pid':child.pid,'running':True,'state':'starting','startedAt':time.time()})
                 except OSError:pass
-        if agent_enabled:
+        if agent_enabled or reply_recovering:
             reply_state=_read(Path(root)/f'var/agent-reply-status-{market}.json',{})
             reply_alive=record_alive(reply_state)
             if not reply_alive:
@@ -1204,7 +1208,7 @@ def _background(root,store,jobs,automation,stamp,maintenance_enabled=None):
                 try:
                     with log.open('a',encoding='utf-8') as handle:
                         child=subprocess.Popen([str(Path(root)/'.venv/bin/python'),str(Path(root)/'scripts/run-agent-replies.py'),
-                            '--worker','--market',market],cwd=str(root),stdin=subprocess.DEVNULL,
+                            '--worker','--market',market]+(['--reconcile-only'] if not agent_enabled else []),cwd=str(root),stdin=subprocess.DEVNULL,
                             stdout=handle,stderr=subprocess.STDOUT,start_new_session=True,
                             env={**os.environ,'PYTHONDONTWRITEBYTECODE':'1'})
                     _write(Path(root)/f'var/agent-reply-status-{market}.json',

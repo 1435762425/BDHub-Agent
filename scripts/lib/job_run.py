@@ -345,11 +345,16 @@ def command_for(root, name, config, stamp):
             '--seed', '--report', str(report)]
 
 
-def start(root, name, raw=None, *, clock=time.time, spawn=subprocess.Popen):
+def start(root, name, raw=None, *, clock=time.time, spawn=subprocess.Popen,preserve_stop=False,reconcile_only=False):
     """Launch the job detached. Refuses to start a second copy of the same job."""
     root = Path(root)
     if name not in JOBS:
         raise ValueError('job_unknown')
+    if type(preserve_stop) is not bool or type(reconcile_only) is not bool or reconcile_only and name!='agentReply':
+        raise ValueError('job_runtime_mode_invalid')
+    preserve_stop=preserve_stop or reconcile_only
+    if preserve_stop and stop_path(root,name).exists() and not reconcile_only:
+        raise ValueError('job_stop_requested')
     current = state(root, name)
     if current and current.get('running'):
         raise ValueError('job_already_running')
@@ -376,15 +381,18 @@ def start(root, name, raw=None, *, clock=time.time, spawn=subprocess.Popen):
     with log.open('a', encoding='utf-8') as handle:
         handle.write(f"\n=== {name} 开始 {time.strftime('%Y-%m-%d %H:%M:%S')} ===\n")
         handle.flush()
-        child = spawn(command_for(root, name, config, stamp), cwd=str(root), stdin=subprocess.DEVNULL,
+        command=command_for(root,name,config,stamp)+(['--reconcile-only'] if reconcile_only else [])
+        child = spawn(command, cwd=str(root), stdin=subprocess.DEVNULL,
                       stdout=handle, stderr=subprocess.STDOUT, start_new_session=True,
                       env={**os.environ, 'PYTHONDONTWRITEBYTECODE': '1'})
     record = {'name': name, 'label': JOBS[name]['label'], 'pid': child.pid, 'startedAt': clock(),
               'config': config, 'log': str(log),
-              'platformWrites': name == 'agentReply' or (name in LINK_JOBS and config['creates'] > 0)}
-    # Clear the previous run's step and any stop request: the new process publishes its own step,
-    # and a leftover stop file would end this run before its first round.
+              'platformWrites': not reconcile_only and (name == 'agentReply' or (name in LINK_JOBS and config['creates'] > 0)),
+              **({'reconcileOnly':True} if reconcile_only else {})}
+    # The new process publishes its own progress. Explicit starts may clear an old stop;
+    # original-intent recovery retains that marker and receives no new send authority.
     for stale in (progress_path(root, name), stop_path(root, name)):
+        if preserve_stop and stale==stop_path(root,name):continue
         try:
             stale.unlink()
         except OSError:

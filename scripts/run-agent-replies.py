@@ -156,10 +156,11 @@ def pending_rows(store,plan,now,limit=20):
   result.append(pending)
   if len(result)>=limit:break
  return result
-def tick(authorized_now=None,market="it"):
+def tick(authorized_now=None,market="it",*,reconcile_only=False):
  authorized_now=authorized_request(authorized_now)
+ if reconcile_only and authorized_now is not None:raise CycleError('agent_reply_reconcile_authorization_invalid')
  with CycleStore(ROOT/'var/second-cycle.sqlite') as store:
-  plan_row=store.db.execute("SELECT id FROM plan WHERE market=? AND institution='bjn-local-research'",(market,)).fetchone()
+  plan_row=store.db.execute("SELECT id,state FROM plan WHERE market=? AND institution='bjn-local-research'",(market,)).fetchone()
   if not plan_row:raise CycleError('plan_missing')
   plan=plan_row[0];setting=agent_setting(store,plan);now=store.clock()
   stage=rollout_stage(store,plan,market)
@@ -168,9 +169,11 @@ def tick(authorized_now=None,market="it"):
   recovered=recover_unresolved(store,plan,market,stage)
   settle_pilot_capability(ROOT,store,plan,market)
   if recovered:return recovered
+  if reconcile_only:return {'state':'nothing_to_reconcile','platformWrites':0,'realSends':0}
   # Passive inbox evidence may have completed the first reply during either recovery path.
   # Its single-send authorization is durable; the pre-recovery stage is no longer current.
   stage=rollout_stage(store,plan,market)
+  if plan_row['state']!='active':return {'state':'plan_paused','platformWrites':0,'realSends':0}
   if not setting['enabled']:return {'state':'disabled','platformWrites':0,'realSends':0}
   if send_dispatch_active(store,market):return {'state':'send_dispatch_active','platformWrites':0,'realSends':0}
   if stage in ('pilot_required','pilot_complete'):
@@ -243,23 +246,25 @@ def worker_delay(result,interval):
  return 1 if progressed or reconciled else max(30,interval)
 
 def main():
- p=argparse.ArgumentParser();p.add_argument('--worker',action='store_true');p.add_argument('--interval',type=int,default=60);p.add_argument('--stop',type=Path);p.add_argument('--authorized-now');p.add_argument('--market',default='it');a=p.parse_args();signal.signal(signal.SIGTERM,stop);signal.signal(signal.SIGINT,stop)
+ p=argparse.ArgumentParser();p.add_argument('--worker',action='store_true');p.add_argument('--interval',type=int,default=60);p.add_argument('--stop',type=Path);p.add_argument('--authorized-now');p.add_argument('--market',default='it');p.add_argument('--reconcile-only',action='store_true');a=p.parse_args();signal.signal(signal.SIGTERM,stop);signal.signal(signal.SIGINT,stop)
  if a.worker and a.authorized_now:p.error('--authorized-now cannot be used with --worker')
+ if a.reconcile_only and a.authorized_now:p.error('--authorized-now cannot be used with --reconcile-only')
  with (ROOT/'var'/('agent-reply-worker.lock' if a.market=='it' else f'agent-reply-worker-{a.market}.lock')).open('a') as lock:
   fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
   if a.worker:
    from lib.runtime_release import register
    register(ROOT,f'agent-reply-{a.market}')
-  while not STOP and not (a.stop and a.stop.exists()):
-   try:result=tick(a.authorized_now,a.market)
+  while not STOP and (a.reconcile_only or not (a.stop and a.stop.exists())):
+   try:result=tick(a.authorized_now,a.market,reconcile_only=True) if a.reconcile_only else tick(a.authorized_now,a.market)
    except Exception as e:result={'state':'failed','error':str(e) if isinstance(e,CycleError) else type(e).__name__,'platformWrites':0,'realSends':0}
    status_path=ROOT/'var'/('agent-reply-status.json' if a.market=='it' else f'agent-reply-status-{a.market}.json')
    status_path.write_text(json.dumps(result|{'pid':__import__('os').getpid(),'checkedAt':time.time()},ensure_ascii=False,indent=2)+'\n')
    print(json.dumps(result,ensure_ascii=False),flush=True)
    if not a.worker:break
-   if a.market!='it' and result.get('state')=='disabled':break
+   if a.reconcile_only and result.get('state')=='nothing_to_reconcile':break
+   if a.market!='it' and result.get('state') in ('disabled','plan_paused'):break
    a.authorized_now=None
    for _ in range(worker_delay(result,a.interval)):
-    if STOP or (a.stop and a.stop.exists()):break
+    if STOP or (not a.reconcile_only and a.stop and a.stop.exists()):break
     time.sleep(1)
 if __name__=='__main__':raise SystemExit(main())

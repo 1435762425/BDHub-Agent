@@ -122,6 +122,52 @@ class SchedulerFlow(unittest.TestCase):
                 agent.assert_not_called()
                 self.assertEqual(paused,{'automaticEnabled':False,'runRequested':False,'stopRequested':True})
 
+    def test_disabled_agents_recover_only_submitted_replies_without_clearing_manual_stop(self):
+        from types import SimpleNamespace
+        from lib.cycle_auto_reply import AutoReplies
+        from lib.cycle_delivery import Deliveries
+        from lib.jobs import load
+        from lib.operations_scheduler import _background
+        Deliveries(self.store);AutoReplies(self.store)
+        plans={'it':self.store.plan('bjn-local-research','it'),'br':self.store.plan('bjn-local-research','br')}
+        manual_stop=self.root/'var/job-agentReply.stop';manual_stop.write_text('{"requestedAt":1}')
+        before_stop=manual_stop.read_bytes()
+        for market,state,pending,alive in [('it','active',True,False),('it','paused',True,False),
+                ('it','active',False,False),('it','paused',False,False),('it','active',True,True),
+                ('br','active',True,False),('br','paused',True,False),('br','active',False,False),('br','active',True,True)]:
+            with self.subTest(market=market,state=state,pending=pending,alive=alive),ExitStack() as stack:
+                self.store.db.execute("UPDATE plan SET state='active'")
+                self.store.db.execute('UPDATE plan SET state=? WHERE id=?',(state,plans[market]))
+                self.store.db.execute('DELETE FROM service_reply')
+                # A ready draft is present even when there is no submitted work to recover.
+                self.store.db.execute("""INSERT INTO service_reply(id,plan_id,creator_id,pending_revision,oec,cid,kind,text,
+                  context_hash,state,request_ref,created,started) VALUES('original-reply',?,'c',1,'123','456',
+                  'agent_generated_v2','frozen body','hash',?,'original-request',?,?)""",
+                  (plans[market],'unknown' if pending else 'ready',NOW-1000,NOW-1000 if pending else None))
+                stack.enter_context(patch('lib.market_registry.enabled_market_keys',return_value=['it','br']))
+                stack.enter_context(patch('lib.im_session_owner.enabled',return_value=True))
+                stack.enter_context(patch('lib.im_session_owner.launch'))
+                stack.enter_context(patch('lib.template_library.agent_setting',return_value={'enabled':False}))
+                stack.enter_context(patch('lib.job_run.state',return_value={'running':alive}))
+                job=stack.enter_context(patch('lib.job_run.start'))
+                process=stack.enter_context(patch('lib.operations_scheduler.subprocess.Popen',return_value=SimpleNamespace(pid=1234567)))
+                stack.enter_context(patch('lib.operations_scheduler.record_alive',return_value=alive))
+                stack.enter_context(patch('lib.market_send_worker.has_pending_reconciliation',return_value=False))
+                stack.enter_context(patch('lib.continuous_send.worker_state',return_value={'running':False}))
+                sender=stack.enter_context(patch('lib.continuous_send.launch_worker'))
+                market_sender=stack.enter_context(patch('lib.market_send_worker.launch'))
+                _background(self.root,self.store,load(self.root),{'automaticOperationsEnabled':False},NOW,maintenance_enabled=False)
+                expected=pending and not alive
+                self.assertEqual(job.call_count,int(expected and market=='it'))
+                self.assertEqual(process.call_count,int(expected and market=='br'))
+                if expected and market=='it':
+                    job.assert_called_once_with(self.root,'agentReply',{'interval':60},preserve_stop=True,reconcile_only=True)
+                if expected and market=='br':self.assertIn('--reconcile-only',process.call_args.args[0])
+                sender.assert_not_called();market_sender.assert_not_called()
+                self.assertEqual(manual_stop.read_bytes(),before_stop)
+                self.assertEqual(self.store.db.execute('SELECT state,request_ref FROM service_reply').fetchone()[:],
+                                 ('unknown' if pending else 'ready','original-request'))
+
     def test_master_switch_alone_runs_the_monday_chain_in_order(self):
         save(self.root,{'jobs':{}})
         save_setting(self.store,'it','automation-setting-request',0,

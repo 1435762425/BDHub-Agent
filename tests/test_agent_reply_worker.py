@@ -38,6 +38,33 @@ class AgentReplyWorkerTests(unittest.TestCase):
   self.assertEqual(WORKER.authorized_request('agent-now-0001'),'agent-now-0001')
   with self.assertRaisesRegex(Exception,'agent_reply_authorization_invalid'):
    WORKER.authorized_request('../unsafe')
+ def test_reconciliation_detection_keeps_the_existing_market_and_reply_kind_scope(self):
+  from lib.cycle_auto_reply import has_pending_reply_reconciliation
+  self.store.db.executescript("""CREATE TABLE plan(id,institution,market,state);
+   CREATE TABLE service_reply(plan_id,state,kind);
+   INSERT INTO plan VALUES('it-plan','bjn-local-research','it','paused');
+   INSERT INTO plan VALUES('br-plan','bjn-local-research','br','paused');
+   INSERT INTO service_reply VALUES('it-plan','ready','agent_generated_v2');
+   INSERT INTO service_reply VALUES('br-plan','unknown','manual');""")
+  self.assertFalse(has_pending_reply_reconciliation(self.store,'it'))
+  self.assertFalse(has_pending_reply_reconciliation(self.store,'br'))
+  self.store.db.execute("UPDATE service_reply SET state='unknown' WHERE plan_id='it-plan'")
+  self.assertTrue(has_pending_reply_reconciliation(self.store,'it'))
+  self.store.db.execute("UPDATE service_reply SET kind='agent_generated_v2' WHERE plan_id='br-plan'")
+  self.assertTrue(has_pending_reply_reconciliation(self.store,'br'))
+  self.store.db.execute("UPDATE service_reply SET state='isolated'")
+  self.assertFalse(has_pending_reply_reconciliation(self.store,'it'))
+  self.assertFalse(has_pending_reply_reconciliation(self.store,'br'))
+ def test_recovery_worker_reads_through_manual_stop_then_exits_without_deleting_it(self):
+  with tempfile.TemporaryDirectory() as folder:
+   root=Path(folder);(root/'var').mkdir();marker=root/'var/job-agentReply.stop';marker.write_text('manual stop')
+   with patch.object(WORKER,'ROOT',root),patch.object(WORKER,'STOP',False), \
+        patch.object(WORKER,'tick',return_value={'state':'nothing_to_reconcile','platformWrites':0,'realSends':0}) as tick, \
+        patch.object(WORKER,'print'),patch('lib.runtime_release.register'), \
+        patch('sys.argv',['run-agent-replies.py','--worker','--market','it','--reconcile-only','--stop',str(marker)]):
+    self.assertEqual(WORKER.main(),None)
+   tick.assert_called_once_with(None,'it',reconcile_only=True)
+   self.assertEqual(marker.read_text(),'manual stop')
  def test_due_pending_survives_the_old_short_freeze_deadline(self):
   db=self.store.db
   db.execute('CREATE TABLE inbox_pending(plan_id TEXT,creator_id TEXT,state TEXT,due_at REAL)')
@@ -166,6 +193,72 @@ class AgentReplyAuthorizationTests(unittest.TestCase):
  def confirm(self,q):
   self.replies.confirm(q['id'],{'status':'confirmed','requestRef':q['request_ref'],
    'conversationId':q['cid'],'messageId':'90','evidenceRef':'exact-proof'})
+ def test_reconcile_only_preserves_disabled_paused_controls_and_original_reply_budget(self):
+  from lib.cycle_auto_reply import has_pending_reply_reconciliation,REPLY_CHECK_INTERVAL,REPLY_CHECK_DEADLINE
+  first=self.ready(1);draft=self.ready(2);self.pilot()
+  self.replies.begin(first['id'],{'account':'acc6','identity':'b'*64});self.replies.unknown(first['id'])
+  original=self.replies.get(first['id'])
+  self.store.db.execute('UPDATE agent_reply_setting SET enabled=0 WHERE plan_id=?',(self.plan,))
+  self.store.db.execute("UPDATE plan SET state='paused' WHERE id=?",(self.plan,))
+  controls=[tuple(row) for row in self.store.db.execute('SELECT * FROM control_event')]
+  self.now+=REPLY_CHECK_INTERVAL+1
+  @contextmanager
+  def opened(*_a,**_kw):yield self.store
+  def read(_store,replies,reply,_market,_stage,**kwargs):
+   kwargs['read_started']()
+   self.assertEqual((reply['request_ref'],reply['sender_account'],reply['sender_identity']),
+                    (original['request_ref'],'acc6','b'*64))
+   return {'state':'unknown','platformWrites':0,'realSends':0}
+  with patch.object(WORKER,'CycleStore',opened),patch.object(WORKER,'ROOT',self.root), \
+       patch.object(WORKER,'generate',side_effect=AssertionError('recovery_must_not_generate')), \
+       patch.object(WORKER,'production_context',side_effect=AssertionError('recovery_must_not_prepare')), \
+       patch.object(WORKER,'run_existing',side_effect=read) as transport:
+   self.assertTrue(has_pending_reply_reconciliation(self.store,'it'))
+   self.assertFalse(has_pending_reply_reconciliation(self.store,'br'))
+   result=WORKER.tick(market='it',reconcile_only=True)
+   self.assertEqual((result['state'],result['platformWrites'],result['realSends']),('original_intent_rechecked',0,0))
+   self.assertIs(type(result['platformWrites']),int);self.assertIs(type(result['realSends']),int)
+   self.assertEqual(self.replies.get(first['id'])['check_attempts'],1)
+   self.now=original['started']+REPLY_CHECK_DEADLINE+1
+   finished=WORKER.tick(market='it',reconcile_only=True)
+   self.assertEqual(finished['state'],'nothing_to_reconcile')
+   self.assertIs(type(finished['platformWrites']),int);self.assertIs(type(finished['realSends']),int)
+   transport.assert_called_once()
+  isolated=self.replies.get(first['id'])
+  self.assertEqual((isolated['state'],isolated['check_attempts']),('isolated',1))
+  for key in ('request_ref','text','started','sender_account','sender_identity'):
+   self.assertEqual(isolated[key],original[key])
+  self.assertEqual(self.replies.get(draft['id']),draft)
+  self.assertFalse(has_pending_reply_reconciliation(self.store,'it'))
+  self.assertEqual([tuple(row) for row in self.store.db.execute('SELECT * FROM control_event')],controls)
+  self.assertEqual(self.store._plan(self.plan)['state'],'paused')
+  self.assertEqual(self.store.db.execute('SELECT enabled FROM agent_reply_setting WHERE plan_id=?',(self.plan,)).fetchone()[0],0)
+  self.assertEqual(self.store.db.execute('SELECT count(*) FROM agent_reply_run').fetchone()[0],0)
+ def test_reconcile_only_never_submits_a_ready_draft_or_borrows_new_authorization(self):
+  from lib.cycle_auto_reply import has_pending_reply_reconciliation
+  draft=self.ready(1)
+  @contextmanager
+  def opened(*_a,**_kw):yield self.store
+  with patch.object(WORKER,'CycleStore',opened),patch.object(WORKER,'ROOT',self.root), \
+       patch.object(WORKER,'generate',side_effect=AssertionError('ready_must_not_generate')), \
+       patch.object(WORKER,'run_existing',side_effect=AssertionError('ready_must_not_dispatch')):
+   self.assertFalse(has_pending_reply_reconciliation(self.store,'it'))
+   self.assertEqual(WORKER.tick(market='it',reconcile_only=True)['state'],'nothing_to_reconcile')
+   with self.assertRaisesRegex(WORKER.CycleError,'reconcile_authorization_invalid'):
+    WORKER.tick('page-authorized-now','it',reconcile_only=True)
+  self.assertEqual(self.replies.get(draft['id']),draft)
+  with self.assertRaisesRegex(WORKER.CycleError,'agent_rollout_authorization_required'):
+   self.replies.begin(draft['id'])
+ def test_paused_plan_does_not_generate_or_submit_after_recovery_finishes(self):
+  draft=self.ready(1);self.pilot()
+  self.store.db.execute("UPDATE plan SET state='paused' WHERE id=?",(self.plan,))
+  @contextmanager
+  def opened(*_a,**_kw):yield self.store
+  with patch.object(WORKER,'CycleStore',opened),patch.object(WORKER,'ROOT',self.root), \
+       patch.object(WORKER,'generate',side_effect=AssertionError('paused_must_not_generate')), \
+       patch.object(WORKER,'run_existing',side_effect=AssertionError('paused_must_not_dispatch')):
+   self.assertEqual(WORKER.tick('page-authorized-now','it')['state'],'plan_paused')
+  self.assertEqual(self.replies.get(draft['id']),draft)
  def failed_tick(self,error,expected):
   draft=self.ready(1);self.pilot()
   self.store.db.execute("INSERT INTO agent_reply_run VALUES('historical-failed',?,'failed',?,?,0,0,0,0,0,0,NULL)",

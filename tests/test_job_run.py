@@ -117,6 +117,25 @@ class Launch(unittest.TestCase):
             self.assertTrue(command[1].endswith('scripts/run-agent-replies.py'))
             self.assertIn('--worker',command)
 
+    def test_agent_recovery_preserves_manual_stop_and_has_no_platform_write_permission(self):
+        with tempfile.TemporaryDirectory() as folder:
+            (Path(folder)/'var').mkdir()
+            marker=stop_path(folder,'agentReply');marker.write_text('{"requestedAt":123}')
+            before=marker.read_bytes();spawn=Spawn()
+            record=start(folder,'agentReply',{'interval':60},spawn=spawn,reconcile_only=True)
+            self.assertIn('--reconcile-only',spawn.calls[0][0])
+            self.assertFalse(record['platformWrites']);self.assertTrue(record['reconcileOnly'])
+            self.assertEqual(marker.read_bytes(),before)
+
+    def test_automatic_restart_without_original_reconciliation_cannot_clear_manual_stop(self):
+        with tempfile.TemporaryDirectory() as folder:
+            (Path(folder)/'var').mkdir()
+            marker=stop_path(folder,'agentReply');marker.write_text('{"requestedAt":123}')
+            spawn=Spawn()
+            with self.assertRaisesRegex(ValueError,'job_stop_requested'):
+                start(folder,'agentReply',{'interval':60},spawn=spawn,preserve_stop=True)
+            self.assertEqual(spawn.calls,[]);self.assertTrue(marker.exists())
+
     def test_a_second_copy_of_the_same_job_is_refused(self):
         with tempfile.TemporaryDirectory() as folder:
             spawn = Spawn()
