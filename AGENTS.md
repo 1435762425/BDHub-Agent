@@ -18,7 +18,7 @@
 ## 实现与交付
 
 - 确定性代码和台账保证身份、金额、资格、额度、去重、暂停、授权及结果状态；模型处理受控语义任务。
-- 页面沿 Route → server bridge → 固定 argv CLI → `scripts/lib` 访问状态和平台；React 不操作 SQLite 或实现资格规则（已知例外：`/api/creator-identities` 只读直连 SQLite，待迁回 bridge）。
+- 页面沿 Route → server bridge → 固定 argv CLI → `scripts/lib` 访问状态和平台；React 不操作 SQLite 或实现资格规则。达人身份读取也经只读 Node CLI 执行，不在 Web 主进程同步查询 SQLite。
 - 复用现有配置、状态机、锁、lease/fence 与持久意图；不建立平行状态源，不删库或重建任务解决一致性问题。
 - 保留无关改动，使用 `codex/` 分支和逻辑提交，不用 reset/checkout 清理他人改动。
 - Python 按范围运行 `unittest`；Web 运行相关 Node 测试、build 和 typecheck（tsc 读取 `.next/types`，先 build）。数量恒等式、幂等、unknown、暂停、账号调度和恢复需覆盖正反合同。

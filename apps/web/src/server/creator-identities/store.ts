@@ -1,6 +1,8 @@
 import {existsSync} from "node:fs";
 import {DatabaseSync} from "node:sqlite";
 import {profileObservationOrder} from "./observation-order.ts";
+import {CreatorIdentityError} from "./errors.ts";
+export {CreatorIdentityError} from "./errors.ts";
 import type {CreatorIdentityDetail,CreatorIdentityList,CreatorIdentityOverview,CreatorIdentitySummary,CreatorLeadGmv,IdentityMarket,IdentityOverviewCounts,IdentityProfileField,IdentitySourceResolution,ProfileFieldStatus,ProfileFieldValue} from "../../features/creator-identities/contracts.ts";
 
 export const PROFILE_FIELDS=["handle","creator_oecuid","selection_region","follower_cnt","med_gmv_revenue","video_gmv","live_gmv","units_sold","video_avg_view_cnt","industry_groups","content_groups","top_video_data","product_price_range","video_publish_cnt_30d","ec_video_publish_cnt_30d","live_streaming_cnt_30d","ec_live_streaming_cnt_30d","gpm","ec_live_gpm","ec_video_gpm","partnered_brand","sales_performance_end_time"] as const;
@@ -11,10 +13,6 @@ const TABLES:Record<string,string[]>={identity_store_meta:["version"],creator_id
 const ID_COLUMNS="i.creator_id,i.market,i.oec_id,i.current_handle,i.handle_observed_at,i.handle_conflict,i.last_observed_at";
 type Row=Record<string,unknown>;
 type SafeObject=Record<string,ProfileFieldValue>;
-export class CreatorIdentityError extends Error {
-  readonly status:number;readonly code:string;
-  constructor(status:number,code:string,message:string){super(message);this.name="CreatorIdentityError";this.status=status;this.code=code;}
-}
 const invalid=()=>new CreatorIdentityError(503,"identity_schema_mismatch","身份资料格式不兼容，请检查导入结果。");
 const obj=(value:unknown):Record<string,unknown>|null=>value!==null&&typeof value==="object"&&!Array.isArray(value)?value as Row:null;
 function text(value:unknown,max=512):string|null{return typeof value==="string"&&value.trim()&&value.length<=max&&!/[\u0000-\u001f\u007f]|https?:|javascript:|data:|www\./i.test(value)?value:null;}

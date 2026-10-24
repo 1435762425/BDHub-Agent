@@ -303,7 +303,7 @@ Web 展示层按操作优先组织：`OperationsConsole` 在桌面并列市场�
 
 AI 模型调用按错误分型：本地输入无效记 `input_blocked`，请求未发出记 `not_sent`（不占同输入 3 次），已调用失败记 `unknown`。同一模型服务连续 3 次服务级失败（配置/运行时、超时、网络、HTTP 错误）即在 `agent_model_service` 暂停，5 分钟起翻倍至 1 小时，暂停期间不外调、不扣任何达人的次数，到期只放行一个探测；列表显示“模型服务暂停，问题已保留”，告警条同步提示。这些退避值为工程值。常驻进程启动时把载入的提交登记到 `var/runtime-loaded/<角色>.json`；告警条比较存活进程所载提交与当前 HEAD 的 `scripts`、`vendor` 两棵 git 树（只改文档的提交不算版本差异；不比较页面改写的配置文件），并比较这两个目录未提交改动（含未跟踪文件）的摘要 `runtimeDirty`；工作区有未提交的运行代码改动时另报 `runtime-code-uncommitted`，未登记该摘要的旧进程只在工作区干净时算作当前代码。不一致提示按流程重启。`/api/ops-alerts` 同时返回只读 `evidence`（各进程载入提交与是否为当前代码、调度器心跳、模型服务暂停、最近恢复演练），“运行与设置 → 运行证据”页展示；读取失败显示“状态待核实”，不显示无条件“运行正常”。
 
-全部 `/api/*` 限本机；写请求校验 Origin/Host、JSON 大小、market、revision、字段白名单和范围。bridge 固定 argv/cwd，不拼 shell；返回 decoder 复核枚举、ID、数量恒等式，available=false 与 0 分开。本机校验只接受 Host `127.0.0.1:5198`/`localhost:5198`，在其他端口起开发服务时全部 API 返回 403。已知例外：`/api/creator-identities` 由 Node 只读直连 `creator-identities.sqlite` 与 `second-cycle.sqlite`，并在 SQL 中计算投影，待迁回 CLI bridge。
+全部 `/api/*` 限本机；写请求校验 Origin/Host、JSON 大小、market、revision、字段白名单和范围。bridge 固定 argv/cwd，不拼 shell；返回 decoder 复核枚举、ID、数量恒等式，available=false 与 0 分开。本机校验只接受 Host `127.0.0.1:5198`/`localhost:5198`，在其他端口起开发服务时全部 API 返回 403。`/api/creator-identities` 经 bridge 固定 argv 调用 Node 只读 CLI；stdin 只接收白名单查询，`scripts/lib/creator_identity_read.mjs` 复用原 ReadStore 与只读投影。Web 主进程不构造 SQLite store；子进程有超时、输出上限与取消终止，返回值复核市场、视图、身份和数量。缺库不初始化，原 404/503 与数据缺失语义保持。
 
 | API | 用途 |
 | --- | --- |
