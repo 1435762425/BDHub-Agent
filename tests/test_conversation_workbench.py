@@ -208,6 +208,29 @@ class ConversationWorkbenchTests(unittest.TestCase):
   # Classification must not acquire one receipt query per observed conversation.
   self.assertLess(len(statements),10)
   self.assertEqual(sum('FROM cycle_delivery_part' in sql for sql in statements),1)
+ def test_boolean_receipt_ids_do_not_own_numeric_observed_messages(self):
+  from lib.conversation_workbench import _candidate_creators
+  from lib.cycle_delivery import Deliveries
+  from lib.observed_messages import recorded_message_ids
+  Deliveries(self.store)
+  cases=[(True,'1',True),(False,'0',True),(1,'1',False),(0,'0',False),
+         ('1','1',False),('0','0',False),(None,'1',True),('bad-json','1',True)]
+  expected={'creator-1'}
+  for number,(value,mid,external) in enumerate(cases):
+   creator=f'creator-id-type-{number}';oec=str(41000+number);cid=str(42000+number);delivery=f'id-type-{number}'
+   self.store.db.execute("INSERT INTO relationship VALUES(?,?,?,'auto',0,1,0,1)",(self.plan,creator,oec))
+   self.store.db.execute("INSERT INTO inbox_event VALUES(?,?,?,?,?,?,?,0,?)",
+    (self.plan,cid,mid,oec,'ourMessages',int(NOW*1000),json.dumps({'messageId':mid}),NOW))
+   Service(self.store).capture(self.plan,cid,oec,[{'messageId':mid,'format':'text','text':'Ciao','nativeType':'text','rawSha256':delivery}])
+   self.store.db.execute("INSERT INTO cycle_delivery(id,plan_id,creator_id,oec,pid,source_id,snapshot,created,expires,state) VALUES(?,?,?,?,?,?,?,?,?,'confirmed')",
+    (delivery,self.plan,creator,oec,'1','s-'+delivery,json.dumps({'conversationId':cid}),NOW,NOW+1))
+   receipt='{bad' if value=='bad-json' else json.dumps({'messageId':value})
+   self.store.db.execute("INSERT INTO cycle_delivery_part(delivery_id,kind,request_ref,state,receipt) VALUES(?,?,?,'confirmed',?)",
+    (delivery,'card','ref-'+delivery,receipt))
+   # Native message ids stay strings: JSON true/false must not become 1/0.
+   self.assertEqual(mid not in recorded_message_ids(self.store.db,self.plan,oec,cid),external)
+   if external:expected.add(creator)
+  self.assertEqual(_candidate_creators(self.store.db,self.plan),expected)
  def test_platform_messages_beyond_one_source_page_are_reachable(self):
   from lib.conversation_workbench import TIMELINE_PAGE
   total=TIMELINE_PAGE+101

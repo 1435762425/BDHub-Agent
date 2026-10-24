@@ -193,10 +193,11 @@ def _candidate_creators(db,plan):
    if (str(oec),str(cid),str(message_id)) not in recorded:creators.add(creator)
  return creators
 
-# messageId of a stored receipt, extracted by SQLite: equivalent to json.loads(raw).get('messageId')
-# for an object (invalid JSON, non-objects and null ids give NULL) and an order of magnitude cheaper
-# than decoding every receipt in Python as delivery history grows (H11).
-_MESSAGE_ID="CASE WHEN json_valid({0}) THEN json_extract({0},'$.messageId') END"
+# Extract receipt ids without decoding each body in Python. SQLite maps JSON
+# booleans to integers; an invalid true/false id must never prove ownership of
+# a native message whose id is "1"/"0". Missing, invalid and null ids stay NULL.
+_MESSAGE_ID=("CASE WHEN json_valid({0}) THEN CASE WHEN json_type({0},'$.messageId') NOT IN ('true','false') "
+             "THEN json_extract({0},'$.messageId') END END")
 
 def _recorded_messages(db,plan,tables):
  """(oec, cid, messageId) of this application's own receipts, resolved as recorded_message_ids does."""
