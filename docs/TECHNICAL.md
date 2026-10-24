@@ -32,7 +32,7 @@ Web 使用 Next.js 16、React 19、TypeScript 5.9，Node ≥22.18.0；业务使�
 
 表中未带目录的 Python 文件均位于 `scripts/lib/`。主链只发布完整或已明确接受的范围；持续通道按独立授权推进，单项等待不阻断无依赖的工作。
 
-Web 路由与 bridge 显式携带 market，URL/body/CLI/返回值一致；约 10 个 CLI 的 `--market` 仍缺省为 `it`，手工调用必须显式传参。`markets.json` 是唯一市场注册表，未验收能力拒绝动作，空市场不回退 IT。注册表只登记 `campaignCatalog`、`fullManagedCatalog` 两个能力位；TapLink 清理、会话页人工文本/卡片、身份队列/精确发现、Kalodata 身份和全托作业页目前只在 IT 实现；画像刷新通过固定 CLI 接入七个运营市场，由代码直接拒绝其他市场。自动 A/B 线索读取、身份衔接与发送按注册表支持全部运营市场，不能由手动页面入口限制推断后台未接入。首页使用 `market_read_head → market_read_generation` 只读快照，同市场 GET 由 singleflight 合并；缺失/过期才本地聚合。快照失败不修改 workflow 结果，筛分摘要必须匹配当前来源 head。
+Web 路由与 bridge 显式携带 market，URL/body/CLI/返回值一致；约 10 个 CLI 的 `--market` 仍缺省为 `it`，手工调用必须显式传参。`markets.json` 是唯一市场注册表，未验收能力拒绝动作，空市场不回退 IT。注册表只登记 `campaignCatalog`、`fullManagedCatalog` 两个能力位；TapLink 清理、会话页人工文本/卡片、身份队列/精确发现、Kalodata 身份和全托作业页目前只在 IT 实现；画像刷新通过固定 CLI 接入七个运营市场，由代码直接拒绝其他市场。自动 A/B 线索读取、身份衔接与发送按注册表支持全部运营市场，不能由手动页面入口限制推断后台未接入。首页通过 `operations-home.py status` 实时读取当前状态，同市场 GET 由 singleflight 合并；Agent 当前状态复用总控制台的 worker/control 时效校验，最近一次执行结果另存 `lastRun`。缺失、过期或死进程保持待核实，窗口外等待不会继承历史失败。`market_read_head → market_read_generation` 继续供货盘读取和保存后的投影使用。快照失败不修改 workflow 结果，筛分摘要必须匹配当前来源 head。
 
 ## 2. 领域模块与合同
 
@@ -182,6 +182,8 @@ worker 在等待窗口、池或容量时常驻退避；同账号在途写串行�
 BR 新一发和新二发快照冻结 `imUseEnvironmentProxy=false`，使用与本项目货盘读取相同的直连模式；该选择来自同 acc1、同 IM 身份的只读对照（环境代理读取失败、直连成功），真实写入另由首条验证。原投递核验沿冻结设置，旧快照缺省仍使用原代理模式；其他市场和 AI 默认连接方式不变。同一 BR plan 的一发、二发共享串行执行锁与原投递核验预算，任一执行器可只读收口另一用途的原未知，不依赖原 worker 仍存活；新发送始终检查各用途原授权，暂停后只允许原操作核验。
 
 持续模式复用 `first_outreach_job` 排程自动供给，常规每 6 小时刷新货盘和匹配，候选耗尽至少间隔 30 分钟再重查整货盘。刷新每片最多 5 请求、类目每片 1 批、匹配每片 4 页；短名和卡沿原材料台账，卡创建每片最多 1 次。`catalog-link-prepare.py --first-request --first-revision` 逐次写前核对原持续推送收据，原 workflow 正在供给时让路，未知卡只验证原意图。自动 job 不修改控制修订；失败在同 request/stage 持久退避。样品同步与发送分别保存状态和下次检查时间，页面 `automation.supply/samples` 显示各自进度，单个读取故障不覆盖整个发送状态。
+
+材料任务在原 job 的可空 `material_progress` JSON 中保存本代签名、缺口类别和无进展次数，复用 `next_attempt` 持久退避。相同证据按 30/60/120 秒递增至 1 小时；材料进展或来源变化重置间隔。无可执行动作的已分类缺口可按部分完成收口准备轮，现有有效材料继续使用，下一代来源再评估；佣金未提供、已取代的零提交意图和旧卡不匹配不通过重建意图解决。已提交未知保留原意图，由跨 run 的原 verify 路径接续，准备轮收口不代表平台结果已结清。`readyOffers` 只计名称与当前绑定均有效的方案；`remaining` 计材料缺口项，等于六类 `gapCounts` 之和；`actionable` 等于缺名、待准备及原意图待核验三类之和。方案、缺口项和无进展轮次分别计数，页面严格解码且不相加。
 
 一发材料以已证样品额度判断资格，不沿用二发普通库存数量或剩余 45 天门槛；`firstSampleMaterial` 随原卡意图冻结，不能冒充全托。未决建卡 PID 在原 `CatalogLinks` 台账只读核验，同类可执行的下一品继续准备；材料 hold 加入匹配指纹，结清后自动重匹配。模型准备在 `first_model_retry` 追加原 batch 的尝试历史与退避元数据，不改变其他常驻调用的原表结构；保存过的响应先本地重放，同一供给快照每批最多 3 次已送出的模型尝试，下轮真实供给更新后仍沿原 batch 继续。未知模型尝试的原回执不改判成功，其他商品继续；该重试政策不适用于平台写入。
 
