@@ -180,17 +180,17 @@ def _candidate_creators(db,plan):
    "ON c.plan_id=r.plan_id AND c.oec=r.oec WHERE r.plan_id=:plan AND c.state IN ('gap','backfilling')")
  creators={row[0] for row in db.execute(' UNION '.join(parts),{'plan':plan})}
  if {'inbox_event','inbox_content_head'}<=tables:
-  # Read receipts only for observed conversations not already included by another rule.
-  from lib.observed_messages import recorded_message_ids
-  recorded={}
+  # Match this request's observed messages against one plan-scoped receipt set.
+  # Per-conversation lookups repeat JSON decoding and indexed queries for tens
+  # of thousands of already recorded sends whenever the alert bar polls.
+  recorded=None
   for creator,oec,cid,message_id in db.execute("""SELECT r.creator_id,e.oec,e.cid,e.message_id FROM relationship r
     JOIN inbox_event e ON e.plan_id=r.plan_id AND e.oec=r.oec AND e.kind='ourMessages'
     JOIN inbox_content_head h ON h.plan_id=e.plan_id AND h.cid=e.cid AND h.message_id=e.message_id
     WHERE r.plan_id=?""",(plan,)):
    if creator in creators:continue
-   key=(str(oec),str(cid))
-   if key not in recorded:recorded[key]=recorded_message_ids(db,plan,oec,cid,tables=tables)
-   if str(message_id) not in recorded[key]:creators.add(creator)
+   if recorded is None:recorded=_recorded_messages(db,plan,tables)
+   if (str(oec),str(cid),str(message_id)) not in recorded:creators.add(creator)
  return creators
 
 # messageId of a stored receipt, extracted by SQLite: equivalent to json.loads(raw).get('messageId')

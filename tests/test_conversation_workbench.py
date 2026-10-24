@@ -177,6 +177,37 @@ class ConversationWorkbenchTests(unittest.TestCase):
   tables={r[0] for r in self.store.db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
   self.assertEqual({row for row in _recorded_messages(self.store.db,self.plan,tables) if row[2].startswith('900')},
                    {('123','501','9001'),('123','501','9002'),('123','777','9004')})
+ def test_observed_candidates_batch_receipts_and_keep_plan_oec_and_cid_bound(self):
+  from lib.conversation_workbench import _candidate_creators
+  from lib.cycle_delivery import Deliveries
+  Deliveries(self.store)
+  other=self.store.plan('bjn-local-research','br')
+  expected={'creator-1'}
+  for number in range(60):
+   creator=f'creator-observed-{number}';oec=str(10000+number);cid=str(20000+number);mid=str(30000+number)
+   self.store.db.execute("INSERT INTO relationship VALUES(?,?,?,'auto',0,1,0,1)",(self.plan,creator,oec))
+   self.store.db.execute("INSERT INTO inbox_event VALUES(?,?,?,?,?,?,?,0,?)",
+    (self.plan,cid,mid,oec,'ourMessages',int(NOW*1000),json.dumps({'messageId':mid}),NOW))
+   Service(self.store).capture(self.plan,cid,oec,[{'messageId':mid,'format':'text','text':'Ciao','nativeType':'text','rawSha256':mid}])
+   # Only the matching scope belongs to this same plan, OEC and CID. A receipt in
+   # another scope or with a missing/invalid message id must remain external.
+   scope=number%6
+   receipt_plan=other if scope==1 else self.plan
+   receipt_oec='other-oec' if scope==2 else oec
+   snapshot=json.dumps({'conversationId':'other-cid' if scope==3 else cid})
+   receipt=json.dumps({'messageId':None}) if scope==4 else '{bad' if scope==5 else json.dumps({'messageId':mid})
+   self.store.db.execute("INSERT INTO cycle_delivery(id,plan_id,creator_id,oec,pid,source_id,snapshot,created,expires,state) VALUES(?,?,?,?,?,?,?,?,?,'confirmed')",
+    ('observed-'+mid,receipt_plan,creator,receipt_oec,'1','s-'+mid,snapshot,NOW,NOW+1))
+   self.store.db.execute("INSERT INTO cycle_delivery_part(delivery_id,kind,request_ref,state,receipt) VALUES(?,?,?,'confirmed',?)",
+    ('observed-'+mid,'card','ref-'+mid,receipt))
+   if scope:expected.add(creator)
+  statements=[];self.store.db.set_trace_callback(statements.append)
+  try:actual=_candidate_creators(self.store.db,self.plan)
+  finally:self.store.db.set_trace_callback(None)
+  self.assertEqual(actual,expected)
+  # Classification must not acquire one receipt query per observed conversation.
+  self.assertLess(len(statements),10)
+  self.assertEqual(sum('FROM cycle_delivery_part' in sql for sql in statements),1)
  def test_platform_messages_beyond_one_source_page_are_reachable(self):
   from lib.conversation_workbench import TIMELINE_PAGE
   total=TIMELINE_PAGE+101
