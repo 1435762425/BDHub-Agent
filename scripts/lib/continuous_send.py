@@ -6,6 +6,7 @@ that delivery may execute or be reconciled.
 """
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import re
@@ -16,6 +17,7 @@ from contextlib import closing, contextmanager
 from dataclasses import asdict
 from pathlib import Path
 from lib.outreach_policy import MARKETING_COOLDOWN_SECONDS
+from lib.runtime_files import atomic_json,launch_guard
 
 from lib.cycle_delivery import Deliveries
 from lib.cycle_executor import execute
@@ -431,21 +433,38 @@ def status(root,store=None,*,include_preview=True):
         if owned:store.close()
 
 
+def _worker_launch_guard(root):
+    return launch_guard(Path(root)/'var/continuous-send-launch.lock')
+
+def write_worker_state(root,value):
+    """Process observations only; the delivery runtime and authorization stay in their ledger."""
+    with _worker_launch_guard(root):
+        atomic_json(Path(root)/'var/continuous-send-worker.json',value)
+
 def launch_worker(root):
-    root=Path(root);existing=worker_state(root)
-    if existing['running']:return existing['pid']
-    log=root/'var/continuous-send.log';log.parent.mkdir(parents=True,exist_ok=True)
-    with log.open('a',encoding='utf-8') as handle:
-        child=subprocess.Popen([str(root/'.venv/bin/python'),str(root/'scripts/continuous-send-worker.py')],cwd=str(root),
-          stdin=subprocess.DEVNULL,stdout=handle,stderr=subprocess.STDOUT,start_new_session=True,
-          env={**os.environ,'PYTHONDONTWRITEBYTECODE':'1'})
-    path=root/'var/continuous-send-worker.json';temporary=path.with_suffix('.tmp')
-    temporary.write_text(json.dumps({'pid':child.pid,'startedAt':time.time()},ensure_ascii=False)+'\n');temporary.replace(path)
-    return child.pid
+    root=Path(root)
+    with _worker_launch_guard(root):
+        existing=worker_state(root)
+        if existing['running']:return existing['pid']
+        # The child owns this OS lock throughout execution; a missing/stale JSON is no permission
+        # to start a second child or replace its identity record with an unproven PID.
+        with (root/'var/continuous-send.lock').open('a') as worker_lock:
+            try:fcntl.flock(worker_lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+            except BlockingIOError:return None
+            fcntl.flock(worker_lock,fcntl.LOCK_UN)
+        log=root/'var/continuous-send.log'
+        with log.open('a',encoding='utf-8') as handle:
+            child=subprocess.Popen([str(root/'.venv/bin/python'),str(root/'scripts/continuous-send-worker.py')],cwd=str(root),
+              stdin=subprocess.DEVNULL,stdout=handle,stderr=subprocess.STDOUT,start_new_session=True,
+              env={**os.environ,'PYTHONDONTWRITEBYTECODE':'1'})
+        atomic_json(root/'var/continuous-send-worker.json',
+                    {'pid':child.pid,'startedAt':time.time(),'running':True})
+        return child.pid
 
 def worker_state(root):
     try:value=json.loads((Path(root)/'var/continuous-send-worker.json').read_text(encoding='utf-8'))
     except (OSError,ValueError):value={}
+    if not isinstance(value,dict):value={}
     from lib.process_liveness import record_alive
-    pid=value.get('pid');running=record_alive(value)
+    pid=value.get('pid');running=value.get('running',True) is not False and record_alive(value)
     return {'pid':pid if type(pid) is int else None,'running':running,'startedAt':value.get('startedAt')}

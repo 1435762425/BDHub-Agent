@@ -3,13 +3,15 @@
 import argparse
 import fcntl
 import json
+import os
 import signal
 import sys
 import time
+from contextlib import contextmanager
 from pathlib import Path
 
 ROOT=Path(__file__).resolve().parents[1];sys.dont_write_bytecode=True;sys.path.insert(0,str(ROOT/'scripts'))
-from lib.continuous_send import control,execute_once,publish_runtime  # noqa:E402
+from lib.continuous_send import control,execute_once,publish_runtime,write_worker_state  # noqa:E402
 from lib.second_cycle import CycleError,CycleStore  # noqa:E402
 from lib.second_live_runtime import SecondLiveRuntimeError  # noqa:E402
 from lib.market_send_worker import has_pending_reconciliation  # noqa:E402
@@ -18,17 +20,32 @@ STOP=False
 def stop(*_):
     global STOP;STOP=True
 
+@contextmanager
+def worker_observation():
+    started=time.time()
+    def heartbeat(running=True):
+        write_worker_state(ROOT,{'pid':os.getpid(),'startedAt':started,
+                                 'checkedAt':time.time(),'running':running})
+    heartbeat()
+    try:yield heartbeat
+    finally:heartbeat(False)
+
 def main():
     parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--once',action='store_true');args=parser.parse_args()
     signal.signal(signal.SIGTERM,stop);signal.signal(signal.SIGINT,stop)
     lock_path=ROOT/'var/continuous-send.lock';lock_path.parent.mkdir(parents=True,exist_ok=True)
-    with lock_path.open('a') as lock,CycleStore(ROOT/'var/second-cycle.sqlite') as store:
+    with lock_path.open('a') as lock:
         fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+        return run_worker(args)
+
+def run_worker(args):
+    with worker_observation() as heartbeat,CycleStore(ROOT/'var/second-cycle.sqlite') as store:
         if not args.once:
             from lib.runtime_release import register
             register(ROOT,'continuous-send-it')
         plan=store.db.execute("SELECT id FROM plan WHERE institution='bjn-local-research' AND market='it'").fetchone()[0]
         while not STOP:
+            heartbeat()
             cfg=control(store,ROOT,allow_paused=True)
             plan_active=store._plan(plan)['state']=='active'
             recovering=has_pending_reconciliation(store,'it')

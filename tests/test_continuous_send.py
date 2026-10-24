@@ -1,6 +1,9 @@
 import json
+import fcntl
+import os
 import sqlite3
 import tempfile
+import threading
 import unittest
 import sys
 from contextlib import closing,contextmanager
@@ -260,6 +263,15 @@ class ContinuousSendTests(unittest.TestCase):
         execute.assert_called_once_with(self.root,self.store,reconcile_only=True)
         self.assertEqual(control(self.store,self.root),before)
 
+    def test_launch_observation_cannot_consume_the_persistent_stop_or_grant_sending(self):
+        mutate_control(self.store,self.root,action='stop',request_id='continuous-stop-launch-test',expected_revision=0)
+        stopped=control(self.store,self.root)
+        with patch.object(continuous.subprocess,'Popen',return_value=SimpleNamespace(pid=os.getpid())):
+            self.assertEqual(continuous.launch_worker(self.root),os.getpid())
+        self.assertEqual(control(self.store,self.root),stopped)
+        started=mutate_control(self.store,self.root,action='start',request_id='continuous-page-start-test',expected_revision=1)
+        self.assertFalse(started['stopRequested']);self.assertTrue(started['runRequested'])
+
     def test_live_history_uses_current_cooldown_not_the_retired_32_day_canary_rule(self):
         base={'identityVerified':True,'hasMore':False,'senderCounts':{
           'ourMessages':1,'creatorReplies':1,'showcaseNotifications':1,'otherOrUnknown':0},
@@ -352,6 +364,75 @@ class ContinuousSendTests(unittest.TestCase):
             result=continuous.execute_once(
                 self.root,self.store,authorized_now='continuous-canary-report-0001')
         self.assertEqual(result['state'],'sending',{'result':result,'seen':seen})
+
+
+class ContinuousWorkerLifecycleTests(unittest.TestCase):
+    def setUp(self):
+        self.temp=tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup)
+        self.root=Path(self.temp.name);(self.root/'var').mkdir()
+
+    def worker(self):
+        import importlib.util
+        spec=importlib.util.spec_from_file_location('continuous_worker_lifecycle',ROOT/'scripts/continuous-send-worker.py')
+        worker=importlib.util.module_from_spec(spec);spec.loader.exec_module(worker)
+        return worker
+
+    def test_parallel_launches_spawn_once_without_a_shared_temporary_file_race(self):
+        barrier=threading.Barrier(2);results=[];errors=[]
+        def launch():
+            try:barrier.wait(timeout=3);results.append(continuous.launch_worker(self.root))
+            except BaseException as error:errors.append(error)
+        with patch.object(continuous.subprocess,'Popen',return_value=SimpleNamespace(pid=os.getpid())) as spawn, \
+             patch('lib.process_liveness.record_alive',side_effect=lambda value:value.get('pid')==os.getpid()):
+            threads=[threading.Thread(target=launch) for _ in range(2)]
+            for thread in threads:thread.start()
+            for thread in threads:thread.join(timeout=5)
+        self.assertFalse(errors);self.assertTrue(all(not thread.is_alive() for thread in threads))
+        spawn.assert_called_once();self.assertEqual(results,[os.getpid(),os.getpid()])
+        self.assertFalse((self.root/'var/continuous-send-worker.tmp').exists())
+
+    def test_held_runtime_lock_prevents_spawning_or_overwriting_a_missing_identity(self):
+        with (self.root/'var/continuous-send.lock').open('a') as lock:
+            fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+            with patch.object(continuous.subprocess,'Popen') as spawn:
+                self.assertIsNone(continuous.launch_worker(self.root))
+        spawn.assert_not_called()
+        self.assertFalse((self.root/'var/continuous-send-worker.json').exists())
+
+    def test_fast_child_heartbeat_is_not_overwritten_by_the_parent_start_record(self):
+        children=[];entered=threading.Event()
+        observation={'pid':os.getpid(),'startedAt':123,'checkedAt':456,'running':True}
+        def heartbeat():
+            entered.set();continuous.write_worker_state(self.root,observation)
+        def spawn(*_args,**_kwargs):
+            child=threading.Thread(target=heartbeat);child.start();children.append(child)
+            self.assertTrue(entered.wait(timeout=2));child.join(timeout=.05)
+            return SimpleNamespace(pid=os.getpid())
+        with patch.object(continuous.subprocess,'Popen',side_effect=spawn):continuous.launch_worker(self.root)
+        for child in children:child.join(timeout=5)
+        self.assertTrue(all(not child.is_alive() for child in children))
+        self.assertEqual(json.loads((self.root/'var/continuous-send-worker.json').read_text()),observation)
+
+    def test_duplicate_child_checks_the_runtime_lock_before_opening_any_store(self):
+        worker=self.worker()
+        with (self.root/'var/continuous-send.lock').open('a') as lock:
+            fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+            with patch.object(worker,'ROOT',self.root),patch.object(worker,'CycleStore') as store, \
+                 patch('sys.argv',['continuous-send-worker.py','--once']):
+                with self.assertRaises(BlockingIOError):worker.main()
+        store.assert_not_called()
+        self.assertFalse((self.root/'var/continuous-send-worker.json').exists())
+
+    def test_child_publishes_a_terminal_process_observation_when_store_open_fails(self):
+        worker=self.worker()
+        with patch.object(worker,'ROOT',self.root), \
+             patch.object(worker,'CycleStore',side_effect=RuntimeError('fixture-store-failure')), \
+             patch('sys.argv',['continuous-send-worker.py','--once']):
+            with self.assertRaisesRegex(RuntimeError,'fixture-store-failure'):worker.main()
+        value=json.loads((self.root/'var/continuous-send-worker.json').read_text())
+        self.assertFalse(value['running']);self.assertEqual(value['pid'],os.getpid())
+        self.assertGreaterEqual(value['checkedAt'],value['startedAt'])
+        self.assertFalse(continuous.worker_state(self.root)['running'])
 
 
 if __name__=='__main__':unittest.main()
