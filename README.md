@@ -1,18 +1,18 @@
 # BDHub-Agent
 
-独立的 Agent 驱动达人经营系统。市场注册表已接入 IT、BR、MY、UK、DE、FR、TH，按各市场已验证能力开放货盘、线索、身份、持续发送、收信和服务处理流程；账号、语言、能力和台账按市场隔离。IT/UK 当前只保留收信与 AI 回复；TapLink 清理、会话页人工发送和身份/画像页面操作仍仅支持 IT（见技术文档）。
+独立的 Agent 驱动达人经营系统，按已确认规则和持久授权持续处理商品、达人、发送、收信和回复。市场注册表覆盖 IT、BR、MY、UK、DE、FR、TH，能力与台账按市场隔离；实际运营范围以市场配置和[当前交接](docs/handoff/current.md)为准。
 
 实际开关、进程和断点以[当前交接](docs/handoff/current.md)及本机台账为准。打开页面、预检、构建与重启不产生发送授权，也不改变已有开关。
 
-完整经营市场采用固定双账号分工：通讯账号负责 SDK 收信及原 HTTP 二发/AI 回复，供给账号负责 Campaign、商品、TapLink 和 OECID；仅收信与 AI 回复的 IT/UK 各使用一个通讯账号。具备全托能力的市场首次及每 15 天按类目发现，候选增量累积；A/B 持久队列每 7 天到期重查，发送按 4 A / 1 B 分配机会。具体例外与未完成范围见主文档。
+供给主链为 Campaign/全托 → 标准 TapLink → A/B 线索 → 稳定身份 → 发送池；持续发送、收信、回复和账号维护按各自条件运行。巴西一发与样品审批使用独立页面授权。系统自动等待窗口、供给和额度，按原断点恢复；未知写入只核验原意图，规则之外的事项交给人处理。
 
 ## 当前入口
 
 - [项目文档](docs/PROJECT.md)：唯一产品真相源，定义目标、范围、业务流程、规则和完成标准。
 - [技术文档](docs/TECHNICAL.md)：唯一技术真相源，定义架构、模块、数据、接口、运行和验证。
 - [当前交接](docs/handoff/current.md)：当前 Git 基线、运行状态、已完成能力、阻塞和下一步。
-- [意大利合作工作台](http://127.0.0.1:5198/it/workspace/send)：持续发送控制、逐达人不可变 delivery、明确启动与原意图核验；其他已接入市场使用对应市场路径。
-- [意大利货盘与材料](http://127.0.0.1:5198/it/catalog)：全托/Campaign、标准 TapLink、A/B 线索和 OECID 准备。
+- [总控制台](http://127.0.0.1:5198/br/console)：跨市场结果、等待和人工事项。
+- [巴西合作工作台](http://127.0.0.1:5198/br/workspace/send)、[货盘](http://127.0.0.1:5198/br/catalog)、[一发与样品](http://127.0.0.1:5198/br/first-outreach)：其他市场替换路径中的市场键。
 - [文档管理](docs/README.md)：旧 PRD、决策、架构、实现证据、研究与归档的层级。
 - [项目约定](AGENTS.md)：Agent 的执行边界和阅读路由。
 
@@ -50,7 +50,7 @@ python3 -m venv .venv
 PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m unittest discover -s tests
 ```
 
-文档变更运行 `PYTHONDONTWRITEBYTECODE=1 .venv/bin/python scripts/check-docs.py` 与 `git diff --check`。按改动范围选择测试；真实发送、建链、选入和外部结果必须另行以持久意图和平台回执验收，不能由离线测试替代。
+按改动范围选择测试。文档运行 `PYTHONDONTWRITEBYTECODE=1 .venv/bin/python scripts/check-docs.py` 与 `git diff --check`；迁移、vendor 与发布检查见[技术文档 §7](docs/TECHNICAL.md#7-运行与验证)。真实发送、建链、选入和合作结果分别用原意图及平台证据验收。
 
 ## 本地配置与状态
 
@@ -66,6 +66,6 @@ chmod 600 config/kalodata-identity.json config/campaign-join.json
 
 ## GitHub 与恢复
 
-代码仓库：[1435762425/BDHub-Agent](https://github.com/1435762425/BDHub-Agent)，远端默认分支为 `main`；本机生产检出分支为 `codex/v1-runtime-alignment`。开发使用独立 `codex/` worktree，验证后合入，再显式推送正式分支到远端 `main`，不推送全部实验分支。
+代码仓库：[1435762425/BDHub-Agent](https://github.com/1435762425/BDHub-Agent)，远端默认分支为 `main`。开发使用独立 `codex/` worktree，验证后合入；生产分支与发布基线记录在[当前交接](docs/handoff/current.md)。
 
-SDK 切换前代码标签为 `pre-sdk-rollout-20260926`，已验收的 SDK/HTTP 版本标签为 `sdk-http-four-market-20260926`；标签固定对应发布时的代码，不随后续文档提交移动。GitHub 保存代码和文档，SQLite、身份材料和本机备份仍在 Git 之外。克隆代码不等于恢复可运行生产环境：还需要本项目真实状态、`private-data/` 中的私有配置及签名运行资源，账号身份按账号页重新建立。普通状态备份不含凭据，异机加密备份另包含私有配置；恢复不读取原始项目。回退须保留切换后新消息，按[上线与回退步骤](docs/implementation/sdk-http-rollout-20260926.md)操作。
+GitHub 保存代码和文档；恢复生产还需真实 SQLite、证据、`private-data/` 配置及签名资源，账号身份按账号页重建。普通状态备份不含凭据，异机加密备份包含私有配置。回退保留新消息与原请求，历史 SDK 切换标签和步骤见[上线与回退](docs/implementation/sdk-http-rollout-20260926.md)。

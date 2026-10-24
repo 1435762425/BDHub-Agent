@@ -1,6 +1,6 @@
 # BDHub-Agent 技术文档
 
-当前实现合同；发布基线见[当前交接](handoff/current.md)。产品规则见 [PROJECT.md](PROJECT.md)，运行快照见[当前交接](handoff/current.md)。本文保留模块入口、状态边界及恢复方法，实验数值与事故流水只链接证据。
+当前实现合同；产品规则见 [PROJECT.md](PROJECT.md)，发布基线和运行快照见[当前交接](handoff/current.md)。本文维护模块入口、状态边界及恢复方法，实验和事故细节保留在[文档导航](README.md)所列证据中。
 
 ## 1. 架构与环境
 
@@ -19,6 +19,18 @@ Web 使用 Next.js 16、React 19、TypeScript 5.9，Node ≥22.18.0；业务使�
 - `scripts/`：CLI/worker；`scripts/lib/`：业务合同、台账、调度和适配。
 - `config/`：业务参数和敏感配置样例；`var/`：真实状态/证据；`vendor/`：本仓协议闭包。
 - `tests/` 与 `apps/web/tests/`：状态机、恢复、API 和显示合同。
+
+| 要改的功能 | 先读的关键文件 |
+| --- | --- |
+| 市场与账号职责 | `config/markets.json`、`config/market-accounts.json`、`scripts/lib/market_registry.py` |
+| 主链与资源冲突 | `operations_workflow.py`、`operations_scheduler.py`、`workflow_dispatch.py`、`workflow_resources.py` |
+| 持续二发与原意图核验 | `continuous_send.py`、`market_send_worker.py`、`market_send_canary.py`、`cycle_delivery.py`、`cycle_executor.py` |
+| 巴西一发与样品 | `first_outreach.py`、`first_outreach_runtime.py`、`first_resources.py`、`sample_operations.py` |
+| 账号自动恢复 | `login_recovery.py`、`account_identity.py`、`im_session_owner.py` |
+| 只读总览与告警 | `market_overview.py`、`operations_console.py`、`ops_alerts.py`；Web 对应 feature 与 server bridge |
+| 本机进程与发布 | `runtime_files.py`、`process_liveness.py`、`runtime_release.py`、`ops/macos/launch_agents.py` |
+
+表中未带目录的 Python 文件均位于 `scripts/lib/`。主链只发布完整或已明确接受的范围；持续通道按独立授权推进，单项等待不阻断无依赖的工作。
 
 Web 路由与 bridge 显式携带 market，URL/body/CLI/返回值一致；约 10 个 CLI 的 `--market` 仍缺省为 `it`，手工调用必须显式传参。`markets.json` 是唯一市场注册表，未验收能力拒绝动作，空市场不回退 IT。注册表只登记 `campaignCatalog`、`fullManagedCatalog` 两个能力位；TapLink 清理、会话页人工文本/卡片、身份队列/精确发现、Kalodata 身份和全托作业页目前只在 IT 实现；画像刷新通过固定 CLI 接入七个运营市场，由代码直接拒绝其他市场。自动 A/B 线索读取、身份衔接与发送按注册表支持全部运营市场，不能由手动页面入口限制推断后台未接入。首页使用 `market_read_head → market_read_generation` 只读快照，同市场 GET 由 singleflight 合并；缺失/过期才本地聚合。快照失败不修改 workflow 结果，筛分摘要必须匹配当前来源 head。
 
@@ -68,7 +80,7 @@ Campaign 核验最多首次加 3 次补查，同市场整批共享 300 秒墙钟
 `operations_workflow.py` 保存不可变 run/stage/generation/checkpoint，`operations_scheduler.py` 执行和监督。开关来自市场 durable setting，共享供给时间来自 `jobs.json`，市场发送/Agent 窗口来自各自持久控制。`jobs.json` 各阶段的 `enabled` 已无读取方；`inbox_monitor.enabled` 仍可单独拉起 IT 收信（与自动运营总开关任一为真即启动），`continuous_send.enabled` 被 `jobs.save` 拒绝修改。`taplink_clean` 只在 `jobs.json` 所选维护日进入 run，且同一市场当天已有一次成功清理后，当天后续 run（如货盘失败后的重试）跳过该阶段；失败的清理不计。全托发现每 15 天到期，与 `taplink_clean` 原每周维护分别计算：维护到期但发现未到期时复用已发布来源，不重扫全市场。持久开关 `fullCatalogWeeklyEnabled` 保留字段名及原值，页面改称“全托商品发现”；`full_catalog_update` 显示固定天数间隔，旧无效时刻字段保留兼容但拒绝再修改。
 
 - 同市场按上游 generation 串行。TikTok 平台上的重型阶段（catalog、taplink_clean、taplink_prepare、oecid）额外占用全局槽 `platform:global`，容量取 `operations-policy.json.platformMaxParallelMarkets`（1–2，2026-09-27 起为 2），所以同一时间最多两个市场做平台重型读取，其余市场排队；同一账号仍由各自 supply/communications 槽保证不并用；容量调低后，编号超出新容量的在用槽仍计入占用，占用数降到新容量以下前不分配新槽（领取与借槽取回同一规则）；Kalodata 用自己的 `kalodata:global` 两槽，可与另一市场的平台阶段并行。排队顺序按市场轮流：最久没领到阶段的市场先领（`workflow_dispatch._last_served`），同等时有断点的先续；不再按“该阶段最近一次成功”排序（那会让新开市场从未成功过的阶段一直抢先）。正在运行的阶段不会被中途让出。
-- `workflow_stage_claim/workflow_resource_slot` 短事务领取 owner/fence/300 秒 lease，执行每 30 秒续租；确认 owner 已退出才回收。子进程先登记真实 PID 再执行，父死子活仍占槽；子进程结束后 claim 的 PID 改回监督进程。阶段结算只要求本 owner 的 fence 仍持有 claim（`assert_owned`），租约过期但未被回收时照常结算；已被回收的迟到结果写入 `workflow_late_result` 作为待核对证据，不发布 generation。过期回收时，可写平台的 taplink_clean/catalog/taplink_prepare 转 `needs_human`（`recovery_claim_expired_write_unknown`，写入证据记 uncertain），只读阶段才回到 queued 从断点续。读模型投影在监督循环旁的线程里跑，不阻塞续租与结算。
+- `workflow_stage_claim/workflow_resource_slot` 短事务领取 owner/fence/300 秒 lease，执行每 30 秒续租；确认 owner 已退出才回收。`adopt_worker` 在同一事务登记真实 PID 与观测时间，成功后才放行子进程，父死子活仍占槽；子进程结束后同样交回监督进程。交接保留原 lease，旧 owner/fence 拒绝修改；PID 复用按该观测时间判断。阶段结算只要求本 owner 的 fence 仍持有 claim（`assert_owned`），租约过期但未回收仍可结算；已回收的迟到结果写入 `workflow_late_result`，不发布 generation。过期回收时，可写平台的 taplink_clean/catalog/taplink_prepare 转 `needs_human`（`recovery_claim_expired_write_unknown`、写入证据 uncertain），只读阶段才回到 queued 从断点续。读模型投影在旁线程运行，不阻塞续租与结算。
 - 锁占用、无效 CLI 输出、部分范围失败、pending、stuck 不能报 completed。外层平台写入数汇总内部 pass，item count 取最终 summary，不能把重复 pass 累加。
 - 仅零平台写入、无 unknown/unresolved/ambiguous、claim 已释放的失败阶段，才在原 run/上游 generation 间隔 ≥1 小时重排，最多三次；不重跑完成的上游，不依赖来源下一次到期。其余转 needs_human。可写平台的 taplink_clean/catalog/taplink_prepare 另需阶段 `counts.writeEvidence='zero'`：执行器按阶段累计每个子进程报告的写入，子进程已放行后 stdout 丢失/损坏、超时或异常记 `uncertain` 并保留报告中的写入数；旧记录没有该证据也不视为零写。会写平台的子命令必须在报告中给出整数 `platformWrites`（或 `writeEvidence`），缺失、非整数即 `uncertain`；只有按 CLI 合同只读的命令（`_zero_write_contract`，如 select verify、catalog-clean check-bindings、`--creates 0` 的建链批次）可以缺省为零。批处理报告内任何失败/无结果的子步骤都使阶段失败（`nested_<label>_<state>`），`catalog-link-batch.py` 另输出顶层 state/writeEvidence。只读阶段（kalodata/oecid/send_pool）维持原规则。
 - OECID 阶段在 `counts.identityAccount` 记录实际执行账号；`rolling_leads.identity_hold` 只用该账号（旧记录用同一 `identity_account` 解析）的新身份代次或更晚成功的 OECID 阶段解除等待。四市场 `market-identity.py` 有界切片（含 IT 的 `account_wait`/`nothing_pending`）走同一归一化，仍核对命令市场、零写入、零发送。
@@ -237,7 +249,7 @@ schema v25 追加处理证据，并在已有模块上建立 inbox 按市场/OEC/
 | `kalodata-leads[-{m}].sqlite` | 查询窗口、分页回执与尝试 |
 | `creator-discovery.sqlite` / `creator-identities.sqlite` | 精确发现、OECID、别名、观测 |
 | `creator-profile-refresh.sqlite` | 画像 job/request/heartbeat |
-| `second-cycle.sqlite` | 四市场共用主库：关系、delivery、inbox、service_reply、Agent、workflow、控制，以及 A/B 线索 head、身份 outbox、首页只读快照 |
+| `second-cycle.sqlite` | 运营市场共用主库：关系、delivery、inbox、service_reply、Agent、workflow、控制，以及 A/B 线索 head、身份 outbox、首页只读快照 |
 | `it-conversations.sqlite` | IT 会话索引；建表定义只在 `cycle_conversations.py`，IT 发送直接读写 |
 | `batch-tasks.sqlite` | 仍被读取：身份运行策略 `identity_runtime_policy`（`identity_acceptance.production_policy`）与 A 类旧来源作业（`leads_queue.py`） |
 | `{m}-global-onboarding-canary.sqlite` | 市场接入 canary 证据，`market-catalog-status.py` 读取 |
@@ -251,7 +263,9 @@ IT 使用无后缀文件名，其他市场加 `-{market}` 后缀。`state-backup
 
 `state-retention.py` 执行历史保留：Campaign/全托货盘快照保留当前加最近 2 个完整版本；Campaign 采集 JSON 每组只留最新一份用于重同步；每轮报告 JSON 与 `var/cycle-scheduler/` 阶段日志保留 14 天；账号身份目录保留当前与上一代（72 小时内的目录不动；时间取 headers.json、Local State、Preferences、Cookies 的修改时间，不取目录 mtime，避免 Finder 写 .DS_Store 让旧代一直显得新）；新代次复制 profile 时跳过 Chromium 可重建缓存（`PROFILE_CACHE_DIRS`），登录态仍完整复制；超过 20MB 的日志轮转：仍有进程打开（`lsof` 判定，判定不了按有人写）的日志先跳过、记在清单 `skippedLogs`，等写入进程退出后再轮转；超过 100MB 才强制复制后截断，截断前补抄尾部并标 `mayMissTail`，不作审计日志用。当前 head、head 覆盖引用的基线/刷新轮次、未结束 workflow 对应的来源轮次、未完成轮次和被未结束阶段记录引用的文件一律保留。累计候选及其自包含资格/分页证据不参与来源版本轮换；历史来源明细归档后候选事实和原选入意图仍保留。`plan` 只读；`apply --confirm [--vacuum]` 先把候选写入仓库外 `../BDHub-Agent-backups/retention/<时间>/` 并校验，再删除原件；全托轮次只删明细行，保留轮次记录；`restore --archive <目录> --confirm` 补回缺失的行和文件。应在 worker 暂停或空闲时执行。
 
-`state-backup.py` 按 `config/state-backup.json` 显式清单执行 SQLite online backup（每库在单个读事务内一步复制，业务 worker 持续写入时也能完成一致快照，无需停机；开始前按各库及 WAL 实测体积×1.2＋512MB 检查剩余空间，不足即拒绝，不删除旧备份腾空间），保存 hash、quick_check、schema；新业务库未入清单则失败。备份目录/文件为 0700/0600，敏感配置独立管理。restore 只接受空目标并生成回执；跨机器切换需排空写 worker 后最终备份，多库备份不声称跨库单事务。`retention-plan` 校验现存备份并只生成保留建议（默认 7 天全部、30 天每日、84 天每周，每种库清单至少 3 份）；迁移标签、损坏和不明文件保留，无删除操作。`drill --backup <目录> [--database …]`（`lib/restore_drill.py`）是离线恢复演练：把备份恢复到新建的临时目录，所有副本只读打开，不启动进程、不联网、平台写入 0，结束后删除副本（`--keep` 保留）。它检查备份本身与恢复路径；声明的跨库引用（关系/投递达人→creator_identity，建链准备→Campaign 筛选或全托来源 run，全托选入→来源 run），父库复制开始后才写入的子行缺父记录判为复制时差并阻断，更早的只算历史孤儿警告；库 schema 新于代码时阻断；未决发送意图所在市场须有已发布身份代次（身份文件本不在备份内，列为外部依赖）。部分库演练缺父库时阻断。演练还逐条核对未决意图：AI/人工回复冻结了发送账号与 IM 身份，备份中该账号须有已发布代次（与当天配置账号无关），缺失即阻断；二发投递组件没有冻结发送身份，只能记为 `identity_not_frozen` 警告。报告 `layers` 分层说明快照、schema、跨库引用、原意图依赖（complete/partial）和外部身份文件（external_required）各自证明到哪一步，`businessResumeProven` 始终为 false。报告写在 `var/backups/drills/`，不放进备份目录；最近一次未通过时告警条提示。跨库引用按备份内的市场记录和库名确定，包含新接入市场；不以固定四市场名单跳过检查。复制顺序先取引用库（second-cycle/catalog-links），再取追加式父库（身份/来源），避免持续导入时较新的子库引用缺失于较早父库快照；仍不宣称跨库原子性，必须以恢复演练验证引用完整。
+`state-backup.py` 按 `config/state-backup.json` 清单执行 SQLite online backup；每库使用单个读事务，保存 hash、quick_check 和 schema，目录/文件权限为 0700/0600。新库未列入清单即失败；按各库及 WAL 实测体积×1.2＋512MB 检查空间，不足不删除旧备份。restore 只接受空目标；换机最终备份前排空写 worker，多库副本不声称跨库原子性。`retention-plan` 只生成保留建议：7 天全部、30 天每日、84 天每周，每种清单至少 3 份，迁移标签、损坏及不明文件保留。
+
+`drill --backup <目录> [--database …]`（`restore_drill.py`）离线恢复到临时目录并只读验证，默认结束即删除（`--keep` 保留），无网络或平台操作。检查 schema、声明的跨库引用、原未决意图的冻结账号和已发布身份代次；缺父库、复制时差造成的新引用缺失或 schema 新于代码时阻断，历史孤儿单列警告。未冻结发送身份的旧组件记 `identity_not_frozen`，身份文件列外部依赖。备份先复制引用库再复制追加式父库，演练仍检查实际引用完整性。报告写入 `var/backups/drills/`，以 `layers` 区分快照、schema、跨库引用、原意图依赖与外部身份，`businessResumeProven=false`；最近一次失败由告警条提示。详细验收见[审计修复](implementation/audit-fixes-20261003.md)。
 
 `offsite-backup.py` 把代码、当前状态和本机专有配置加密写到外接盘。每次先按 `state-backup.json` 做一份全量 online backup 到临时目录，连同 `git bundle --all`、未提交改动补丁、`../BDHub-Agent-backups/` 下的归档（git 离线包与密钥目录除外）、3 个被忽略的敏感配置和 `private-data/` 打成 tar.gz，经 openssl AES-256-CBC（PBKDF2 20 万次）直接写入 `<盘>/BDHub-Agent-offsite/<UTC 时间>/`；刷到设备后解密回读，核对明文 hash 与成员，最后写 manifest 表示完成，失败则删除本次目录。盘上只动这个文件夹，保留最近 3 份。密钥 `../BDHub-Agent-backups/offsite/offsite.key` 只在本机，须另存一份到密码管理器，丢失则副本无法解开。账号浏览器身份与 `var/` 运行文件不在副本内，换机后按账号页重登重建；恢复不依赖原始项目。`plan` 只读，`run --confirm` 写入，`verify` 从盘上重读最新一份；`auto` 供插盘触发，只处理已有该文件夹的卷，先校验最新一份，超过 20 小时或校验失败才写新的，并发系统通知。每次写入成功后，在本机 `offsite/latest.json` 记下这份副本，告警条据此判断备份是否过期。
 
@@ -279,7 +293,9 @@ Web 展示层按操作优先组织：`OperationsConsole` 在桌面并列市场�
 
 ## 4. API 与 Web
 
-2026-09-25 首批只读运营概览代码已合入：`GET /api/market-overview?market=<market>` → 固定 argv `market-overview.py` → `lib/market_overview.py`。直接只读现有台账，不初始化 Store/库、不发布新持久投影；同市场 singleflight 加 30 秒进程内缓存。页面分当前库存、近 7 日事件、等待和人工事项，身份来源行/去重 handle 分区对账，历史技术案件保留真实锁定状态。原 `lead_pool.counts.queued` 保持发送候选排队含义，新增 `candidateQueued` 别名与 `identityQueued`，不改变发送资格。B 旧表只认 IT，其他市场在实现接通前显示不可用；累计候选没有台账也显示不可用。生产 Web 切换状态和验证见[首批交付报告](implementation/readonly-operations-overview-20260925.md)，不把代码合入当成运行页面已更新。
+`GET /api/market-overview?market=<market>` → 固定 argv `market-overview.py` → `lib/market_overview.py`，只读现有台账，不初始化库或发布持久投影；同市场 singleflight 加 30 秒进程内缓存。页面分当前库存、近 7 日事件、等待和人工事项，身份来源行/去重 handle 分区对账。`lead_pool.counts.queued` 与别名 `candidateQueued` 均指发送候选，`identityQueued` 指身份等待；不改变发送资格。旧 B 表只认 IT，未接通或缺台账的指标显示不可用。
+
+`creator_identity_lookup.current_handle_owners` 按当前 B 作者的小集合复用 `identity_alias_lookup(market,handle)` 定位候选，再按 creator 主键核对 current_handle、market 和 conflict；历史别名只用于定位，歧义 handle 不路由。总览与发送池共用该只读 helper，不扫描整市场身份，也不要求读取时迁移生产库。`identity_market_recent(market,last_observed_us DESC,creator_id)` 由正常 IdentityStore 打开时幂等增量创建，用于最近身份读取。总览各 panel 独立计算期限，嵌套身份查询单独限时；某项超时或缺库只使该项不可用，不把后续指标连带判零。历史验收见[只读运营面板](implementation/readonly-operations-overview-20260925.md)，当前性能与加载状态见交接。
 
 首页开关保存返回提交回执（requestId、实际设置与 revision、worker 启动错误）；回执在提交事务内写入 `market_automation_receipt`，重放同一 requestId 先于开启前置条件返回原回执（旧请求只有修订号时标 `originalAvailable=false`），页面对同一开关冻结取值与预期修订号并丢弃晚到的旧读取；保存后读模型投影或页面重读失败只标记 `projectionStale/refreshFailed`，不再报“未保存”，关闭开关不受开启前置条件限制。首页与告警条读取失败时显示“状态不可确认”及上次成功时间，不沿用旧的“运行正常/无告警”。
 
@@ -304,17 +320,21 @@ AI 模型调用按错误分型：本地输入无效记 `input_blocked`，请求�
 
 会话详情请求绑定 market/cid/请求代次，迟到结果不能覆盖新选择；刷新替换当前队列页，追加才合并。unknown 人工回复保留原 requestId/正文供核验；只有确认终态才清理草稿。轮询不得覆盖未保存设置；市场 Agent 时间独立保存，不写共享 jobs。resolve_manual 校验最新 turn/case/pending/control/合作状态 revision，幂等且平台写入 0。
 
-inbox 趋势和日明细使用同一账本，totals 等于每日求和，文字跟随卡不重复计达人；缺失或恒等式失败不显示业务 0。Profile 指标与 PID 线索 GMV 分开展示来源/时间。旧 demo、matching、frozen 批次路由不再构建；2026-09-24 删除了页面已不调用的 reply-review、global-source、catalog-screen、cycle-service 路由。
+inbox 趋势和日明细使用同一账本，totals 等于每日求和，文字跟随卡不重复计达人；缺失或恒等式失败不显示业务 0。Profile 指标与 PID 线索 GMV 分开展示来源/时间。旧 demo、matching、frozen 批次路由不再构建。
 
 ## 5. 账号、配置与 vendor
 
 每日经营日报由 `scripts/business-daily.py preview` → `lib/business_daily.py` 只读既有台账生成市场表格及汇总。当前投递由 Codex 对话内每日 09:00 心跳执行，读取生成的 JSON／文字稿并在当前对话完整展示表格；库存标实际读取时间。`conversation_workbench.unread_items` 与原 `unread_backlog` 共用未回口径；业务库始终 `mode=ro`，不初始化 Store、不做平台／模型调用。历史邮件模块 `lib/business_daily_mail.py` 保留，但私有配置 `enabled=false`，邮件 LaunchAgent 已卸载，不调用 `tick` 或操作 Gmail。详见[每日经营日报](implementation/business-daily-mail.md)。
 
-通信/货盘固定为 BR ACC1/ACC2、MY ACC8/ACC5；IT ACC6、UK ACC11 为单账号市场（`accounts` 只列一个，两个角色指向同一账号，`markets.json` 同样），acc9、acc4 已释放。DE（ACC12 通讯/ACC13 供给，`de-DE`，`link-naming-de.json`，审阅稿 implementation/de-content-review-20261002.md）与 FR（ACC16/ACC17，地区 17，机构编号经合作伙伴信息只读查得，地区 14 为西班牙；法语审阅稿 implementation/fr-content-review-20261003.md；欧洲区 IM 地区列表含 17）均为 `ready`、全托（`fullManagedCatalog=true`）且协议层 Campaign/加入 enabled，自动运营、全托周更、持续发送与 AI 回复由用户打开。TH（ACC14 通讯/ACC15 供给，地区 5，SG 区，协议形态同 MY；泰语审阅稿 implementation/th-content-review-20261003.md）为 `ready`，全托列表为空（`fullManagedCatalog=false`），AI 全量回复及独立持续发送已授权；ACC15 Campaign 加入已通过单条提交与新子活动回读验收，协议层 `campaign`/`campaign_join` 均 enabled。`operations_workflow.save` 仍要求 campaign、campaign_join、catalog_read、inbox_read、message_send、oecid_find、taplink 全部 verified 后才允许打开首页自动运营与持续发送，全托市场另加 product_select。非 IT 市场的 canary 范围按 `market_path_keys()`（注册表中除 IT 外的运营市场）判定；通讯账号 `message_send` 未验证的市场只能由页面启动单条首发 canary，确认后 worker 自动发起 stop 并退出（`canary_confirmed`），继续发送需页面再次启动；`paused` 允许内容与能力未验收，`ready` 才要求两者齐备，发送等业务入口仍只认 `ready`。新市场接入后用 `scripts/onboard-markets.py apply --confirmed` 为其建 plan 行（只建本地容器，开关默认全关）。线索队列、Kalodata 视频扫描、IM 会话、收信历史等的市场范围按注册表 `operational_market_keys`/`known_market` 判定，不再写死四个市场；Kalodata 区域取市场键大写（UK 为 GB）、币种取注册表。单账号市场按通讯角色只登记一次维护，职责为两角色之和；OECID 路由按 `identityAccountRole` 取角色，不再按账号是否等于供给账号推断。`market-accounts.json` 定角色，`account_runtime_setting` 和已发布 generation 定当前能力；不继承原始项目停用状态。账号登录记录（名称、市场、partner_id、用户名、密码及账号策略字段）只在本项目 `private-data/secrets/accounts.json`，经账号页“账号登记”或 `scripts/account-registry.py list|add|update`（`lib/account_registry.py`）读写：密码经 stdin 传入、只写不回显，文件原子替换、权限 0600；登记不等于分配，新账号分配到市场角色后才能首次重登与能力验证。
+账号分配以 `market-accounts.json` 为准，市场范围、语言、地区、币种和能力以 `markets.json` 与本项目协议配置为准；账号页只读取项目内登记，不继承原始项目状态。双账号市场按通讯/供给分工，单账号市场两个角色指向同一账号并只维护一次，OECID 按 `identityAccountRole` 选实际账号。`account_runtime_setting` 与已发布 generation 决定当前可用性；新增账号登记不等于角色分配、登录或能力验收。
 
-能力验收发布使用 `reason=capability`，不推迟维护时钟；`identity_baseline` 取该账号最近一次真实登录（`relogin`，或导入的 `baseline`）的发布时间。`refresh` 只用无头浏览器重读现有登录，不延长平台登录：实测登录在真实登录后约 72 小时 6–11 分钟失效（acc8、acc1 在 refresh 后仍按上次重登时间过期）。
+`operations_workflow.save_setting` 打开自动运营/持续发送前要求 campaign、campaign_join、catalog_read、inbox_read、message_send、oecid_find、taplink 已验证，全托市场另需 product_select。市场状态 `paused` 可保留未验收内容/能力，业务入口只认 `ready`。通讯账号尚无 message_send 验证时，只能由页面授权单条 canary；卡文确认后自动停止，继续发送需要页面再次启动。`onboard-markets.py apply --confirmed` 只创建本地 plan，开关默认关闭。
 
-账号定期串行维护：`next_due` 取登录失效（真实登录 +72 小时）前至少 30 分钟（`LOGIN_MARGIN_SECONDS`）的最后一个角色时段（通讯 14:30、供给 14:40），由 `request_scheduled_maintenance` 登记 `relogin`；在时段后才完成的登录因此约 48 小时重登一次。此前按 +72 小时再往后取时段，维护总落在失效之后，欧洲站通讯账号因此每轮断收信 14–21 小时（10-01 IT/UK 复现）。可见浏览器读取本项目登记的账号密码，候选 browser/HTTP/IM 联合验证后发布项目内新代次，失败保留上一代。重登不自动把未验收能力变 verified。同市场/账号/机构的新身份可继承已验证能力，新的 failed/blocked 观察优先。
+账号登录记录由 `account_registry.py` 在 `private-data/secrets/accounts.json` 维护，账号页或 `account-registry.py list|add|update` 访问；密码经 stdin 传入、只写不回显，原子保存且权限 0600。新市场接入和语言审阅证据按[文档导航](README.md)查询，不在主文档重复发布流水。
+
+能力验收发布使用 `reason=capability`，不推迟维护时钟。`identity_baseline` 取最近真实登录（`relogin` 或导入 `baseline`）的发布时间；`refresh` 只重读已有登录，不延长约 72 小时的登录有效期。
+
+账号定期串行维护：`next_due` 取真实登录 +72 小时前至少 30 分钟（`LOGIN_MARGIN_SECONDS`）的最后一个角色时段（通讯 14:30、供给 14:40），由 `request_scheduled_maintenance` 登记 relogin；时段后完成的登录可能约 48 小时再次维护。可见浏览器使用本项目登记信息，候选 browser/HTTP/IM 联合验证后发布新代次，失败保留上一代。重登不自动验收能力；同市场、账号、机构可继承旧 verified 能力，更新的 failed/blocked 观察优先。
 
 | 配置 | 权威用途 |
 | --- | --- |
@@ -342,8 +362,8 @@ inbox 趋势和日明细使用同一账本，totals 等于每日求和，文字�
 - **二发隔离后的服务：** `quarantined_unknown` 已释放二发派发槽；新来信的独立 AI 服务许可（模块方案 §9.19，G13）经用户决定不做，因此不能由“不再阻塞二发”推导“新来信必然可自动回复”。
 - **上下文：** 全部当前未答消息范围、生产 live 模式和超长输入拦截已接入；长期提醒记忆、自动分段以及严格按历史指南/关系/事实回放尚未完成。
 - **账号恢复：** 认证错误判定与恢复请求已统一到 `login_recovery`（见上文）；刷新/重登仍串行执行，SDK owner 在维护前排空借用客户端，真实维护与写入交错尚无业务样本。
-- **规模：** 会话队列已有游标与索引。生产实测的主要耗时来自按市场全量解析投递回执（随发送历史每天增长），现改由 SQLite `json_extract` 读取 messageId，生产备份上 24 个视图结果与旧实现一致，单次读取约减半（IT 约 0.36→0.2 秒）；AI 待办 `pending_rows` 实测 7–25 毫秒。按候选逐行分类仍在，增量队列读模型等回执或候选规模再增长时再做。
-- **调度粒度：** 市场轮流已实施；阶段在等待账号恢复时把 `platform:global` 借给其他市场（账号槽与市场主链槽保留），恢复后取回再继续读取，取不回 1 小时即以 `platform_slot_reclaim_timeout` 失败，不会无槽读取平台。重阶段（如一次 Campaign 采集约 20–30 分钟、首次建链 30–60 分钟）按设计跑完再让出，不中途让槽：评估后认为被挡住的主要是 OECID，晚一段时间进发送池对当天发送影响很小，而中途暂停会拉长长任务、引入分页状态失效与“取不回槽”的新失败方式（2026-09-26 用户确认不做）。
+- **规模：** 会话队列已有游标和索引，历史投递回执由 SQLite `json_extract` 读取 messageId；总览有 panel 级读取期限及按候选定位身份的只读 helper。按候选逐行分类仍在，跨进程账号总请求限速和增量队列读模型尚未接通。
+- **调度粒度：** 按市场轮流领取；等待账号恢复时只借出 `platform:global`，保留账号与市场槽。恢复后先取回平台槽，1 小时仍取不回即以 `platform_slot_reclaim_timeout` 失败。重阶段按设计完成后让槽；用户确认不实施中途切片抢占。
 - **Kalodata 贡献：** 每次 A/B 发布在同一事务内、写入前记一条 `lead_publication_contribution`（本 PID 新增的达人×商品、刷新的已有组合、该市场从未出现过的达人；重复发布不重计），最近一次抓取汇总其时间窗内的贡献。线索状态另给出近 7 天发布的 A/B 线索后来被采用、确认发出、触达达人数与卡片后回复的达人数（`later_outcomes`）：每次发送只归到它发送时冻结的来源，属观察窗口内的相关统计，不是因果转化，也不含成交金额；“首次达到可发送条件”仍未单独记录。
 - **收信/吞吐：** SDK 初始化成功和周期续期已验证，HTTP 借用仍可能在续期交接时短暂等待；四市场自然新来信时延、正式二发窗口卡文吞吐和完整维护故障交错仍需实际业务样本。账号内 HTTP 预算当前按进程设置，尚无统一的账号总请求限速器。
 
@@ -351,24 +371,14 @@ inbox 趋势和日明细使用同一账本，totals 等于每日求和，文字�
 
 ## 7. 运行与验证
 
+基础 Python/Web 环境和验证顺序见[仓库说明](../README.md#开发与验证)。额外合同检查在独立 worktree 执行：
+
 ```bash
-# 项目根目录
-python3 -m venv .venv
-.venv/bin/python -m pip install -r requirements.lock
 PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m unittest discover -s tests
 PYTHONDONTWRITEBYTECODE=1 .venv/bin/python scripts/check-docs.py
 .venv/bin/python scripts/vendor-legacy-bdhub.py --check
 .venv/bin/python scripts/migrate-agent.py check
 .venv/bin/python scripts/migrate-lead-receipts.py check
-```
-
-```bash
-# apps/web
-npm ci
-npm test
-npm run build
-npm run typecheck
-npm run dev   # 开发；生产使用 npm run start，不能同时占用 5198
 ```
 
 本工作目录就是生产：scheduler 按路径拉起子脚本，`io.bdhub.agent.web`（用户 LaunchAgent）在 `apps/web` 运行 `next start`。开发与验证在 `/Users/bjn00003/` 下的独立 git worktree（`BDHub-Agent-<主题>`）进行（`.venv`、`apps/web/node_modules` 可软链生产目录，提交前移除软链），备份目录为同级的 `BDHub-Agent-backups`，不在生产目录 build 或 dev，也不要同时起第二个 5198。`tsc` 会读取 `.next/types`，删改路由后先 build 再 typecheck。部署前核对 PID/cwd/worker 依赖，替换后回读 API；源码变更不自动重启持久 worker 或改授权。状态查询使用 CLI status/check，不用 run-agent-replies 等执行入口探测状态。手动作业优先页面/job-run，不绕过同名作业锁另开底层 CLI。
@@ -379,6 +389,8 @@ npm run dev   # 开发；生产使用 npm run start，不能同时占用 5198
 
 交付分别报告：合同测试、类型/构建、本机 API、只读真实数据、平台回执、业务结果。不把历史测试数、旧吞吐或存活进程当当前验收。结构改进与历史实测限制见[项目审计与清理](implementation/project-audit-20260924.md)。
 
-**登录自动恢复：** `ops/macos/launch_agents.py render --node <absolute-node> --output-dir <local-directory>` 生成本机 Web 与 scheduler-watch 两份 LaunchAgent（安装说明见 [macOS 启动恢复](implementation/macos-startup-recovery.md)）。Web 登录即启动，退出后由 launchd 恢复；watch 登录及每 60 秒检查 scheduler 与 BR 一发，缺失时调用各自原启动入口。一发仅在原持续/首条/审批授权、未完成准备任务或原投递/样品回查仍有工作时恢复，不修改授权或创建新业务意图；启动前再次核对暂停状态。scheduler 的持久停止标记及各功能自己的手工暂停保持，缺少真实数据库时不启动；其他 worker 仍由原 scheduler 按持久开关管理。生成配置保存当前代理环境，属于本机私有运行配置，不入 Git。 macOS ProfileLease 使用硬件 UUID 的哈希识别本机，避免 DHCP 主机名变化把本机旧锁判成远程占用；同机锁早于系统本次开机时间时可回收，PID 复用不再阻止恢复。旧版不同主机名、格式错误或其他机器的锁仍保守保留，须核对进程与 profile 占用后人工归档恢复。
+**登录自动恢复：** 本机 Web 与 scheduler-watch 的生成和安装见 [macOS 启动恢复](implementation/macos-startup-recovery.md)。watch 每 60 秒检查 scheduler 与 BR 一发；缺库不启动，已有 worker 保留，原授权、准备任务或原投递/样品回查有工作才恢复一发。scheduler 的显式启动和停止共用 launch mutex；只有显式启动可清既有 stop，watch 用 `preserve_stop=True` 并在同一锁内复核，stop 在进程已退出时也持久保存。`runtime_files` 为启动者和 worker 复用稳定锁与唯一临时文件原子发布，避免并发写坏状态或重复启动。scheduler 可在发送暂停后拉起只读原意图核验，核验结束即按原暂停退出，不授予新发送。
 
-**重启检查（只读）：** `scripts/ops-restart-check.py preflight|drained|postflight --release-id <id>` 只读各库、只写 `var/releases/<id>/restart-<phase>.json`。preflight 记录控制七表摘要、`(delivery, kind, request_ref)` 映射摘要（按基线 rowid）、在途（投递部件、服务回复、打开会话意图）与存活进程；drained 要求 scheduler 已停、无阶段 claim、在途为零（`--workers-stopped` 另要求无常驻进程）；postflight 比对控制摘要、基线 requestRef 映射未被替换且全表唯一、`quick_check`、无未提交运行代码、全部存活进程载入 HEAD 代码且角色与基线一致、四个会话 owner 在 120 秒内 ready。通过 0、失败 1、读不到 2；它不停止或启动任何进程，不清除 unknown/gap/requestRef。
+LaunchAgent 配置保存本机路径与代理，不入 Git。macOS ProfileLease 使用硬件 UUID 的哈希识别本机；同机且早于本次开机的锁可回收，旧主机名、格式错误和其他机器的锁仍保留，核对进程与 profile 占用后人工恢复。
+
+**重启检查（只读）：** `scripts/ops-restart-check.py preflight|drained|postflight --release-id <id>` 只读各库、只写 `var/releases/<id>/restart-<phase>.json`。preflight 记录控制七表摘要、`(delivery, kind, request_ref)` 映射摘要（按基线 rowid）、在途（投递部件、服务回复、打开会话意图）与存活进程；drained 要求 scheduler 已停、无阶段 claim、在途为零（`--workers-stopped` 另要求无常驻进程）；postflight 比对控制摘要、基线 requestRef 映射未被替换且全表唯一、`quick_check`、无未提交运行代码、全部存活进程载入 HEAD 代码且角色与基线一致、应有会话 owner 在 120 秒内 ready。通过 0、失败 1、读不到 2；它不停止或启动任何进程，不清除 unknown/gap/requestRef。
