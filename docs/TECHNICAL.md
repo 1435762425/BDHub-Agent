@@ -5,7 +5,7 @@
 ## 1. 架构与环境
 
 ```text
-React feature → App Router Route → server bridge → 固定 argv Python CLI
+React feature → App Router Route → server bridge → 固定 argv CLI（Python / Node）
                                                        ↓
 持久 worker ────────────────────────────────────── scripts/lib
                                                        ↓
@@ -321,6 +321,8 @@ AI 模型调用按错误分型：本地输入无效记 `input_blocked`，请求�
 | `/api/ops-alerts` | 跨市场告警条（只读，无参数） |
 
 会话详情请求绑定 market/cid/请求代次，迟到结果不能覆盖新选择；刷新替换当前队列页，追加才合并。unknown 人工回复保留原 requestId/正文供核验；只有确认终态才清理草稿。轮询不得覆盖未保存设置；市场 Agent 时间独立保存，不写共享 jobs。resolve_manual 校验最新 turn/case/pending/control/合作状态 revision，幂等且平台写入 0。
+
+控制台和巡检的人工/技术挂起数量由 `operator_queue_counts` 读取原分类事实，与会话列表共用前两级分类及人工优先顺序。候选覆盖人工关系、开放案件、人工 pending、历史来信、isolated 回复和 gap/backfilling；不为计数构建外发消息、解释、名字、排序或分页。必要分类表缺失仍为不可用，展示字段损坏不影响已经可确定的数量；不缓存或另存队列状态。
 
 inbox 趋势和日明细使用同一账本，totals 等于每日求和，文字跟随卡不重复计达人；缺失或恒等式失败不显示业务 0。Profile 指标与 PID 线索 GMV 分开展示来源/时间。旧 demo、matching、frozen 批次路由不再构建。
 
