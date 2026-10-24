@@ -166,6 +166,42 @@ def _human_reason(decision):
  if not decision:return 'human'
  return INTENT_REASONS.get(decision.get('intentCode'),decision.get('intentCode') if decision.get('intentCode') in HUMAN_REASONS else 'human')
 
+def _operator_state(rel,case,pending,decision,technical):
+ """The first two queue priorities, shared by the page and operator-only dashboard counts."""
+ action=decision.get('action') if decision else None
+ if case or rel['mode']=='human' or (action=='human' and pending and pending['state']!='resolved_by_human') or (pending and pending['state']=='human'):
+  return 'human'
+ if technical:return 'technical'
+ return None
+
+def operator_queue_counts(store,market='it'):
+ """Count operator queues from their classification facts, without constructing display rows.
+
+ Outbound receipts, messages, names, model explanations and sorting cannot change the first
+ two queue priorities. Their display-only candidates and projections are deliberately absent.
+ """
+ db=store.db;plan=_plan_id(store,market)
+ tables={row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type IN ('table','view')")}
+ required={'relationship','inbound_turn','service_case','inbox_pending','inbox_checkpoint','turn_review','reply_classification'}
+ if not required<=tables:raise CycleError('conversation_queue_unavailable')
+ parts=["SELECT creator_id FROM relationship WHERE plan_id=:plan AND mode='human'",
+        "SELECT creator_id FROM service_case WHERE plan_id=:plan AND state='open'",
+        "SELECT creator_id FROM inbox_pending WHERE plan_id=:plan AND state='human'",
+        "SELECT creator_id FROM inbound_turn WHERE plan_id=:plan",
+        "SELECT r.creator_id FROM relationship r JOIN inbox_checkpoint c ON c.plan_id=r.plan_id AND c.oec=r.oec "
+        "WHERE r.plan_id=:plan AND c.state IN ('gap','backfilling')"]
+ if 'service_reply' in tables:parts.append("SELECT creator_id FROM service_reply WHERE plan_id=:plan AND state='isolated'")
+ sql='WITH candidates AS ('+' UNION '.join(parts)+') SELECT r.* FROM candidates c JOIN relationship r ON r.plan_id=:plan AND r.creator_id=c.creator_id'
+ counts={'human':0,'technical':0}
+ for rel in db.execute(sql,{'plan':plan}):
+  latest=_latest_turn(db,plan,rel['creator_id'])
+  decision=_latest_decision(db,latest['turn_id']) if latest else None
+  case=db.execute("SELECT * FROM service_case WHERE plan_id=? AND creator_id=? AND state='open' ORDER BY updated DESC LIMIT 1",(plan,rel['creator_id'])).fetchone()
+  pending=db.execute('SELECT * FROM inbox_pending WHERE plan_id=? AND creator_id=?',(plan,rel['creator_id'])).fetchone()
+  state=_operator_state(rel,case,pending,decision,_technical_hold(db,plan,rel,tables))
+  if state:counts[state]+=1
+ return counts
+
 def _candidate_creators(db,plan):
  """Creators that can produce a queue row. Everyone else reaches the loop's final ``continue``
  (no inbound turn, case, pending, reply, human mode, technical hold or observed outbound), so
@@ -275,8 +311,8 @@ def _list(root,store,view,query,limit,offset,market,cursor,started,statements):
                            "AND mode='production' AND state='unknown'",(plan,latest['turn_id'])).fetchone()[0]>=3
   meaning=(json.loads(v2[0]).get('meaningZh') if v2 else decision.get('meaningZh') if decision else None)
   technical=_technical_hold(db,plan,rel,tables)
-  if case or rel['mode']=='human' or (action=='human' and pending and pending['state']!='resolved_by_human') or (pending and pending['state']=='human'):state='human'
-  elif technical:state='technical'
+  operator_state=_operator_state(rel,case,pending,decision,technical)
+  if operator_state:state=operator_state
   elif externally_answered:state='waiting'
   elif pending and pending['state'] in ('waiting_contact','waiting_clarification'):state='waiting'
   elif pending and pending['state'] in ('awaiting_content','awaiting_classification','review_partial','template_ready','policy_review','facts_ready_for_review','needs_facts'):state='agent'

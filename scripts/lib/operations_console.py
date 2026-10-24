@@ -208,9 +208,9 @@ def _selection_paused(root, db, market):
 
 def _human_queue(root, store, market):
     """Creators in the conversation page's human queue, by the same classifier (I02); None if unreadable."""
-    from lib.conversation_workbench import list_conversations
+    from lib.conversation_workbench import operator_queue_counts
     try:
-        counts = list_conversations(root, store, "human", limit=1, market=market)["counts"]
+        counts = operator_queue_counts(store, market)
     except (CycleError, KeyError, TypeError, ValueError, sqlite3.Error):
         return None
     return {"human": counts.get("human"), "technical": counts.get("technical")}
