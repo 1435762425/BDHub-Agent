@@ -263,9 +263,12 @@ class ItalyImReadSession:
         except ItalyImReadError as error:
             entry["errorCode"] = error.code
             raise
-        except Exception:
+        except Exception as error:
             code = "im_response_invalid" if response_received else "im_transport_error"
             entry.update(status="error", errorCode=code)
+            if not response_received:
+                # Keep only the class: exception messages can contain URLs or proxy credentials.
+                entry["transportErrorType"] = type(error).__name__
             raise ItalyImReadError(code) from None
         finally:
             entry["latencyMs"] = round(max(0, self.monotonic() - start) * 1000, 1)

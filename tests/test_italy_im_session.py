@@ -201,4 +201,14 @@ class ItalyImSessionTests(unittest.TestCase):
         with self.assertRaises(ItalyImReadError) as found:s.initialize()
         self.assertEqual(found.exception.code,"im_auth_expired")
 
+    def test_transport_diagnostic_keeps_only_the_exception_class(self):
+        from requests.exceptions import SSLError
+        def failed(*_):raise SSLError('PRIVATE_PROXY_CREDENTIAL_AND_URL')
+        s,report,http,_=session(HTTP(failed))
+        with self.assertRaisesRegex(ItalyImReadError,'im_transport_error'):
+            s.initialize()
+        self.assertEqual(report['imReads'][-1]['transportErrorType'],'SSLError')
+        self.assertNotIn('PRIVATE',json.dumps(report))
+        self.assertEqual(len(http.calls),1)
+
 if __name__=="__main__":unittest.main()

@@ -117,6 +117,9 @@ class Receiver:
                         self.publish(store)
                     except Exception as error:
                         code=getattr(error,'code',None) or type(error).__name__
+                        if code=='im_transport_error' and session.report.get('imReads'):
+                            kind=session.report['imReads'][-1].get('transportErrorType')
+                            if kind:self.state['lastTransportErrorType']=kind
                         self.state['consecutiveErrors']=self.state.get('consecutiveErrors',0)+1
                         if 'target' in locals() and target:
                             store.db.execute('UPDATE im_receive_signal SET next_at=?+min(300,30*attempts),error_code=? WHERE market=? AND account=? AND cid=? AND done=0',(time.time(),code,self.market,self.auth.account_name,target[0][0]))
