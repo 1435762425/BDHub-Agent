@@ -50,6 +50,9 @@ const lane=(raw:unknown,legacyObservedAt:unknown):Lane|null=>{if(raw==null)retur
   statusReason:maybeText(v.statusReason??(v.fresh==null?"legacy_snapshot":null),40),
   value:count(v.value),label:maybeText(v.label,40),unit:maybeText(v.unit,20),scope:maybeText(v.scope,20),lastSuccessAt:time(v.lastSuccessAt),stopReason:maybeText(v.stopReason)};};
 
+// Home and console consume the same current-worker evidence and must reject the same contradictions.
+export {lane as validateLane};
+
 export function validateOperationsConsole(raw:unknown):OperationsConsole{
  const v=object(raw);
  if(v.schemaVersion!=="bdhub.operations-console.v1"||v.readOnly!==true||v.platformWrites!==0)fail();

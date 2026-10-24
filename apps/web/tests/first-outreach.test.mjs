@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {readFileSync} from "node:fs";
 import {firstOutreachArgv,validateFirstOutreach,validateFirstOutreachRequest} from "../src/server/first-outreach/bridge.ts";
-import {firstApplicationGroups,firstApplicationSummary,firstOutreachActions,firstOutreachCanContinue,firstOutreachLabel,firstOutreachWaitingReasons} from "../src/features/first-outreach/presentation.ts";
+import {firstApplicationGroups,firstApplicationSummary,firstOutreachActions,firstOutreachCanContinue,firstOutreachCycleLabel,firstOutreachLabel,firstOutreachWaitingReasons} from "../src/features/first-outreach/presentation.ts";
 import {GET,POST} from "../src/app/api/first-outreach/route.ts";
 
 const payload={schemaVersion:"bdhub.first-outreach.v1",market:"br",applicationCoverage:"unverified",control:{revision:1,mode:"stopped",approvalsEnabled:false,updatedAt:1},readiness:{ready:false,blockers:["sample_facts_unavailable"]},counts:{products:0,matchedCreators:0,sent:0,pendingApplications:0,approved:0,needsReview:0,unknown:0},candidates:[],applications:[],runtime:{state:"blocked",reason:"sample_facts_unavailable",updatedAt:null},platformWrites:0,sourceUpdatedAt:null};
@@ -113,4 +113,24 @@ test("first-send controls preserve explicit continuation after a confirmed canar
  assert.deepEqual(firstOutreachActions(canary),["continue","stop"]);
  assert.deepEqual(firstOutreachActions({...canary,control:{mode:"continuous"},runtime:{state:"waiting_window"}}),["stop"]);
  assert.deepEqual(firstOutreachActions({...canary,control:{mode:"stopped"},counts:{sent:0,unknown:1}}),["prepare","start","reconcile"]);
+});
+
+
+test("optional material progress preserves old cycles and validates gap arithmetic independently from ready offers",()=>{
+ const cycle={state:"complete",reason:"first_outreach_materials_waiting_evidence",updatedAt:123,nextRunAt:183};
+ const materials={remaining:11,readyOffers:9,gapCounts:{commission_terms_unavailable:3,prior_intent_superseded:2,binding_not_current:3,localized_name_missing:1,material_preparation_pending:1,original_intent_pending:1},actionable:3,unchanged:14};
+ const state=automation=>({...payload,automation});
+ const plain=validateFirstOutreach(state({supply:cycle,samples:cycle}));
+ assert.equal(plain.automation.supply.materials,undefined);
+ const complete=validateFirstOutreach(state({supply:{...cycle,materials},samples:cycle}));
+ assert.deepEqual(complete.automation.supply.materials,materials);
+ assert.equal(complete.automation.supply.materials.readyOffers,9);
+ assert.equal(firstOutreachCycleLabel(complete.automation.supply),"部分材料等待");
+ assert.equal(firstOutreachCycleLabel({...cycle,materials:{...materials,remaining:0}}),"本轮已完成");
+ assert.equal(firstOutreachLabel("first_outreach_materials_no_progress"),"部分材料暂无进展，按原任务退避核查");
+ assert.equal(firstOutreachLabel(cycle.reason),"部分材料等待原来源更新");
+ for(const bad of [null,{...materials,remaining:12},{...materials,actionable:4},{...materials,unchanged:-1},{...materials,readyOffers:true},{...materials,gapCounts:{...materials.gapCounts,unknown_reason:1}},{...materials,gapCounts:{...materials.gapCounts,localized_name_missing:undefined}}]){
+  assert.throws(()=>validateFirstOutreach(state({supply:{...cycle,materials:bad},samples:cycle})),/invalid_first_outreach/);
+ }
+ assert.throws(()=>validateFirstOutreach(state({supply:cycle,samples:{...cycle,materials}})),/invalid_first_outreach/);
 });

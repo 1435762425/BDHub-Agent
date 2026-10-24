@@ -3,6 +3,7 @@
 import Link from "next/link";
 import {useEffect,useState} from "react";
 import type {OpsAlert,OpsAlerts} from "@/server/ops-alerts/bridge";
+import {opsAlertKind as kind,type OpsAlertKind as Kind} from "./alert-kind";
 
 const time=(value:number)=>new Date(value*1000).toLocaleString("zh-CN",{timeZone:"Asia/Shanghai",hour12:false,month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit"});
 const DOT={critical:"bg-error-500",warning:"bg-warning-500",info:"bg-gray-400"} as const;
@@ -11,10 +12,6 @@ const HEADLINES=["scheduler-down","production-paused"];
 // Three kinds, derived from the alert id (H15): system faults that affect every market, work a person
 // must do (the same items the overview lists under "需要我处理"), and normal waits or notices that
 // the system is already handling. Only the first two make the bar orange or count as "需处理".
-type Kind="system"|"people"|"waiting";
-const PEOPLE=/-(human|unread|needs-human|identity-overdue|send-unknown|agent-failed|agent-first-send|agent-pilot-complete|selection-isolated)$|-stage-/;
-const WAITING=/-(platform-rejected|send-quarantined|inbox-stopped)$|^production-paused$/;
-const kind=(alert:OpsAlert):Kind=>WAITING.test(alert.id)?"waiting":PEOPLE.test(alert.id)?"people":"system";
 const GROUPS:{kind:Kind;title:string}[]=[{kind:"system",title:"系统异常"},{kind:"people",title:"待处理事项"},{kind:"waiting",title:"等待与提示"}];
 
 function Row({alert}:{alert:OpsAlert}){

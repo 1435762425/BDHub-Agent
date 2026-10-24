@@ -12,3 +12,24 @@ test('stage figures survive validation and malformed ones are refused',()=>{
  assert.equal(value.stages[1].metric,undefined);
  assert.throws(()=>validateOperationsHome({...payload,stages:stages.map((s,i)=>i===0?{...s,metric:{...s.metric,scope:'forever'}}:s)}),/invalid_operations_home/);
 });
+
+const runtime={state:'outside_reply_window',reportedState:'outside_reply_window',observedAt:100,fresh:true,running:true,enabled:true,statusReason:null,statusSource:'worker',workerObservedAt:100,controlUpdatedAt:10,value:null,label:null,unit:null,scope:null,lastSuccessAt:null,stopReason:null};
+const lastRun={runId:'reply-run-failed',state:'failed',startedAt:40,finishedAt:50,errorCode:'model_unavailable'};
+const withAgent=changes=>({...payload,stages:payload.stages.map(row=>row.id==='agent_reply'?{...row,...changes}:row)});
+test('home retains current window wait and a separate failed execution history',()=>{
+ const row=validateOperationsHome(withAgent({state:runtime.state,runtime,lastRun})).stages.at(-1);
+ assert.equal(row.state,'outside_reply_window');assert.equal(row.runtime.fresh,true);
+ assert.deepEqual(row.lastRun,lastRun);
+ const missing=validateOperationsHome(withAgent({state:'unverified',runtime:{...runtime,state:'unverified',fresh:false,statusReason:'status_stale'},lastRun:null})).stages.at(-1);
+ assert.equal(missing.state,'unverified');assert.equal(missing.runtime.statusReason,'status_stale');assert.equal(missing.lastRun,null);
+});
+test('home reuses worker freshness and control proofs instead of accepting contradictory healthy states',()=>{
+ for(const changes of [
+  {state:'outside_reply_window',runtime:{...runtime,fresh:false}},
+  {state:'outside_reply_window',runtime:{...runtime,running:false}},
+  {state:'outside_reply_window',runtime:{...runtime,observedAt:null}},
+  {state:'outside_reply_window',runtime,lastRun:{...lastRun,finishedAt:-1}},
+ ])assert.throws(()=>validateOperationsHome(withAgent(changes)),/invalid_operations_/);
+ const off={...runtime,state:'disabled',reportedState:'failed',fresh:true,running:false,enabled:false,statusSource:'control'};
+ assert.equal(validateOperationsHome(withAgent({state:'disabled',runtime:off,lastRun})).stages.at(-1).state,'disabled');
+});

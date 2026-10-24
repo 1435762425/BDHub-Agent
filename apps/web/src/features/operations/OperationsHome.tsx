@@ -5,7 +5,7 @@ import {useCallback,useEffect,useRef,useState} from "react";
 import {Button,Card,Notice,PageHeading,Pill,Toggle} from "../bdhub/ui";
 import type {OperationsHome as State,OperationsStage,SaveCommit} from "../../server/operations-home/bridge";
 
-const stateLabel:Record<string,string>={disabled:"未启用",waiting_upstream:"等待上游",queued:"排队",running:"运行中",completed:"已完成",quota_exhausted:"额度耗尽",needs_human:"需人工",failed:"失败",skipped:"本轮跳过",off:"关闭",waiting_window:"等待窗口",sending:"发送中",waiting_capacity:"等待可用额度",waiting_transport:"连接恢复中",waiting_reconciliation:"待核验",paused:"暂停",stopped:"已停止",waiting_pool:"等待发送池",idle:"空闲"};
+const stateLabel:Record<string,string>={disabled:"未启用",waiting_upstream:"等待上游",queued:"排队",running:"运行中",completed:"已完成",quota_exhausted:"额度耗尽",needs_human:"需人工",failed:"失败",skipped:"本轮跳过",off:"关闭",waiting_window:"等待窗口",sending:"发送中",waiting_capacity:"等待可用额度",waiting_transport:"连接恢复中",waiting_reconciliation:"待核验",paused:"暂停",stopped:"已停止",waiting_pool:"等待发送池",idle:"暂无待办",unverified:"状态待核实",outside_reply_window:"回复窗口外",waiting_account:"等待账号",waiting_dispatch:"等待在途核验",waiting_send_window:"等待二发窗口结束",send_dispatch_active:"等待二发请求收口",waiting_reply_check:"等待原回复核验",reply_check_deferred:"回复核验暂缓",original_intent_rechecked:"已核验原回复",first_send_requires_page_start:"首发需在页面启动",pilot_complete_waiting_resume:"首条已确认，等待页面继续",pilot_waiting_confirmation:"首条结果待核验"};
 // Unknown codes never pass as a business state: they read "状态待核实" and keep the machine code as a tooltip.
 const label=(state:string)=>stateLabel[state]??"状态待核实";
 const REASONS:Record<string,string>={identity_lane_waiting_recovery:"身份解析通道等待恢复",source_stopped:"数据源已停止",
@@ -13,14 +13,14 @@ const REASONS:Record<string,string>={identity_lane_waiting_recovery:"身份解�
  global_selection_progress_unknown:"全托选入进度不明，本轮已停",global_catalog_not_published:"全托货盘尚未发布",market_identity_report_invalid:"身份解析报告无效",
  market_identity_blocked:"身份解析被平台拦截",market_identity_auth_required:"账号登录失效，已进入统一恢复",auth_recovery_wait_timeout:"账号恢复等待超时",
  selection_relogin_not_published:"账号恢复未产生新身份",identity_queue_stalled:"身份解析队列无进展",kalodata_daily_quota_exhausted:"Kalodata 当日额度用尽",
- scan_already_collecting:"已有采集在进行",nothing_pending:"没有待处理项",TimeoutExpired:"子任务超时",account_maintenance_active:"账号维护进行中"};
+ scan_already_collecting:"已有采集在进行",nothing_pending:"没有待处理项",TimeoutExpired:"子任务超时",account_maintenance_active:"账号维护进行中",status_missing:"尚无当前运行采样",status_stale:"运行采样已过期",previous_worker_sample:"等待新进程采样",worker_not_running:"执行进程未运行",worker_unknown:"执行进程状态待核实",control_changed:"等待设置生效后的采样",control_unavailable:"授权状态暂未核实"};
 // A reason the page cannot explain is shown as such, with the machine code behind a diagnostics toggle.
 function Reason({code}:{code:string|null}){
  if(!code)return null;
  const known=REASONS[code]??(code.endsWith("_failed")?"子任务失败":null);
  return <div><p title={code}>原因：{known??"需核对的技术原因"}</p>{!known&&<details><summary className="cursor-pointer text-gray-400">诊断</summary><code className="break-all">{code}</code></details>}</div>;
 }
-const tone=(state:string)=>state==="completed"||state==="sending"?"success":state==="failed"||state==="needs_human"||state==="waiting_reconciliation"?"warning":state==="running"||state==="queued"?"brand":"neutral";
+const tone=(state:string)=>state==="completed"||state==="sending"?"success":state==="failed"||state==="needs_human"||state==="waiting_reconciliation"||state==="unverified"?"warning":state==="running"||state==="queued"?"brand":"neutral";
 const stamp=(value:number|null)=>value?new Date(value*1000).toLocaleString("zh-CN",{timeZone:"Asia/Shanghai",hour12:false}):"—";
 const LANES=new Set(["continuous_send","agent_reply"]);
 const SCOPE:Record<string,string>={run:"本轮",today:"今日（北京时间）",last_run:"最近一轮"};
@@ -32,7 +32,7 @@ function StageCard({stage,index}:{stage:OperationsStage;index:number}){
  const value=metric?metric.value:typeof stage.counts.items==="number"?stage.processed:null;
  const caption=metric?`${metric.label}${metric.availability==="known"?"":"（未记录）"}`:"处理数未记录";
  const writeText=!writes?`平台写入 ${stage.platformWrites}`:writes.availability==="known"?`平台写入 ${writes.value}`:writes.availability==="uncertain"?"平台写入 未确认":null;
- return <article className="min-w-0 rounded-2xl border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-white/[0.025]"><div className="flex items-start justify-between gap-2"><div>{!LANES.has(stage.id)&&<p className="text-[11px] font-medium text-gray-400">{String(index+1).padStart(2,"0")}</p>}<h3 className="mt-1 text-sm font-semibold text-gray-800 dark:text-white">{stage.label}</h3></div><span title={stage.state}><Pill tone={tone(stage.state)}>{label(stage.state)}</Pill></span></div><p className="mt-4 text-2xl font-semibold tabular-nums">{value==null?"—":value.toLocaleString()}{value!=null&&metric&&UNIT[metric.unit]&&<span className="ml-1 text-sm font-normal text-gray-400">{UNIT[metric.unit]}</span>}</p><p className="mt-1 text-xs text-gray-400">{caption}{metric?` · ${SCOPE[metric.scope]??"范围未记录"}`:""}{writeText?` · ${writeText}`:""}</p><div className="mt-4 space-y-1 text-[11px] leading-5 text-gray-500"><p>上次成功 {stamp(stage.lastSuccessAt)}</p><Reason code={stage.stopReason}/></div></article>}
+ return <article className="min-w-0 rounded-2xl border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-white/[0.025]"><div className="flex items-start justify-between gap-2"><div>{!LANES.has(stage.id)&&<p className="text-[11px] font-medium text-gray-400">{String(index+1).padStart(2,"0")}</p>}<h3 className="mt-1 text-sm font-semibold text-gray-800 dark:text-white">{stage.label}</h3></div><span title={stage.state}><Pill tone={tone(stage.state)}>{label(stage.state)}</Pill></span></div><p className="mt-4 text-2xl font-semibold tabular-nums">{value==null?"—":value.toLocaleString()}{value!=null&&metric&&UNIT[metric.unit]&&<span className="ml-1 text-sm font-normal text-gray-400">{UNIT[metric.unit]}</span>}</p><p className="mt-1 text-xs text-gray-400">{caption}{metric?` · ${SCOPE[metric.scope]??"范围未记录"}`:""}{writeText?` · ${writeText}`:""}</p><div className="mt-4 space-y-1 text-[11px] leading-5 text-gray-500"><p>上次成功 {stamp(stage.lastSuccessAt)}</p><Reason code={stage.stopReason}/>{stage.runtime&&<p>当前采样 {stamp(stage.runtime.observedAt)}{stage.runtime.fresh?"":" · 待核实"}</p>}{stage.lastRun&&<details className="pt-2"><summary className="cursor-pointer text-gray-600 dark:text-gray-300">最近执行记录 · {label(stage.lastRun.state)}</summary><p className="mt-1">{stamp(stage.lastRun.startedAt)} → {stamp(stage.lastRun.finishedAt)}</p><Reason code={stage.lastRun.errorCode}/><p className="break-all">运行编号：{stage.lastRun.runId}</p></details>}</div></article>}
 
 export default function OperationsHome({market,marketLabel,fullManagedCatalog,runtimeAvailable}:{market:string;marketLabel:string;fullManagedCatalog:boolean|null;runtimeAvailable:boolean}){
  const [data,setData]=useState<State|null>(null),[busy,setBusy]=useState<string|null>(null),[message,setMessage]=useState("");// One frozen command per switch: a retry after an unknown result reuses the same id, value and base revision.
@@ -71,7 +71,7 @@ export default function OperationsHome({market,marketLabel,fullManagedCatalog,ru
  const active=["queued","running","stop_requested"].includes(data.workflow.state);
  const activationPending=data.issues.some(issue=>issue.kind==="activation");
  const templatePending=!data.templateReview.ready;
- const attentionStages=data.stages.filter(stage=>["failed","needs_human","waiting_reconciliation"].includes(stage.state)||!stateLabel[stage.state]||stage.writes?.availability==="uncertain");
+ const attentionStages=data.stages.filter(stage=>["failed","needs_human","waiting_reconciliation"].includes(stage.state)||stage.runtime?.fresh===false||!stateLabel[stage.state]||stage.writes?.availability==="uncertain");
  const controls=<>
   <Card title="自动运营" action={<div className="flex items-center gap-4"><Link href={`/${market}/ops/jobs`} className="text-sm font-medium text-brand-500">作业与时间 →</Link>{active&&<Button size="sm" variant="outline" disabled={busy!==null} onClick={()=>void workflow("stop")}>安全停止</Button>}</div>}>
    <div className="flex flex-wrap items-center gap-x-6 gap-y-3 px-5 py-3 text-xs dark:border-gray-800">

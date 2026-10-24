@@ -28,6 +28,24 @@ STAGE_METRICS={'taplink_clean':('本轮核查链接','item'),'catalog':('本轮�
 def _metric(label,unit,scope,value):
  return {'label':label,'unit':unit,'scope':scope,'value':value,'availability':'known' if value is not None else 'not_recorded'}
 
+def _agent_stage(root,store,market,plan,automation):
+ # The current worker and the last executed batch are separate facts. In particular, an old
+ # failed batch does not mean the recovered worker is failing while outside its reply window.
+ from lib.operations_console import _lanes
+ runtime=_lanes(root,store,market,automation)['agentReply']
+ latest=store.db.execute('SELECT * FROM agent_reply_run WHERE plan_id=? ORDER BY started_at DESC LIMIT 1',(plan,)).fetchone()
+ last_success=store.db.execute("SELECT max(finished_at) FROM agent_reply_run WHERE plan_id=? AND state='completed'",(plan,)).fetchone()[0]
+ counts={key:int(latest[key] or 0) for key in ('claimed','no_reply','prepared','human','confirmed','unknown')} if latest else {}
+ return {'id':'agent_reply','label':'Agent 回复','state':runtime['state'],
+  'counts':counts,'processed':int(latest['confirmed'] or 0) if latest else 0,
+  'lastSuccessAt':last_success,'nextAt':None,'checkpoint':{},
+  'stopReason':runtime['stopReason'] if runtime['fresh'] else runtime['statusReason'],
+  'platformWrites':0,'generationId':None,'runtime':runtime,
+  'lastRun':{'runId':latest['run_id'],'state':latest['state'],'startedAt':latest['started_at'],
+             'finishedAt':latest['finished_at'],'errorCode':latest['error']} if latest else None,
+  'metric':_metric('最近一轮确认回复','message','last_run',int(latest['confirmed'] or 0) if latest else None),
+  'writes':{'value':None,'availability':'not_recorded'}}
+
 def home(store,market='it'):
  workflow=workflow_status(store,market);current=workflow['current']
  all_accounts=account_status(store,ROOT);accounts={**all_accounts,
@@ -37,7 +55,7 @@ def home(store,market='it'):
   market,next(row['account'] for row in accounts['accounts']
               if row['market']==market and row['role']=='communications'))
  jobs=jobs_status(ROOT,market);plan=store.db.execute("SELECT id FROM plan WHERE institution='bjn-local-research' AND market=?",(market,)).fetchone()[0]
- agent=agent_setting(store,plan);latest_agent=store.db.execute('SELECT * FROM agent_reply_run WHERE plan_id=? ORDER BY started_at DESC LIMIT 1',(plan,)).fetchone()
+ agent=agent_setting(store,plan)
  by_stage={row['stage']:row for row in (current or {}).get('stages',[])}
  stages=[]
  for key,label in LABELS.items():
@@ -59,14 +77,7 @@ def home(store,market='it'):
   'stopReason':continuous['runtime']['stopReason'],'platformWrites':0,'generationId':None,
   'metric':_metric('今日确认触达','delivery','today',continuous['runtime']['confirmedToday']),
   'writes':{'value':None,'availability':'not_recorded'}})
- agent_counts={key:int(latest_agent[key] or 0) for key in ('claimed','no_reply','prepared','human','confirmed','unknown')} if latest_agent else {}
- stages.append({'id':'agent_reply','label':'Agent 回复','state':'disabled' if not agent['enabled'] else latest_agent['state'] if latest_agent else 'queued',
-  'counts':agent_counts,'processed':latest_agent['confirmed'] if latest_agent else 0,
-  'lastSuccessAt':latest_agent['finished_at'] if latest_agent and latest_agent['state']=='completed' else None,
-  'nextAt':None,'checkpoint':{},'stopReason':latest_agent['error'] if latest_agent else None,
-  'platformWrites':0,'generationId':None,
-  'metric':_metric('最近一轮确认回复','message','last_run',int(latest_agent['confirmed'] or 0) if latest_agent else None),
-  'writes':{'value':None,'availability':'not_recorded'}})
+ stages.append(_agent_stage(ROOT,store,market,plan,workflow['setting']))
  issues=[]
  template_review=send_template_reviews(store,ROOT,market)
  if not template_review['ready']:
