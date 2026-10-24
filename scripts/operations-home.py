@@ -107,14 +107,16 @@ def home(store,market='it'):
   missing=sorted(required-verified)
   if missing:issues.append({'kind':'activation','id':f'{market}-activation','title':'市场接入尚未闭环',
    'reason':'待验证能力：'+', '.join(missing)})
- human=store.db.execute("SELECT count(*) FROM service_case WHERE plan_id=? AND state='open'",(plan,)).fetchone()[0] if store.db.execute("SELECT 1 FROM sqlite_master WHERE name='service_case'").fetchone() else 0
- if human:issues.append({'kind':'conversation','id':'human-conversations','title':'人工会话','reason':f'{human} 条待处理'})
+ from lib.operations_console import _human_queue
+ human_queue=_human_queue(ROOT,store,market)
+ if human_queue and human_queue['human']:
+  issues.append({'kind':'conversation','id':'human-conversations','title':'人工会话','reason':f"{human_queue['human']} 位达人待处理"})
  return {'schemaVersion':'bdhub.operations-home.v1','market':market,'setting':workflow['setting'],
   'workflow':{'runId':current['runId'] if current else None,'state':current['state'] if current else 'idle',
               'startedAt':current['startedAt'] if current else None,'finishedAt':current['finishedAt'] if current else None},
   'stages':stages,'issues':issues,'jobs':jobs,'accounts':accounts,'continuousSend':continuous,
   'agent':{'enabled':agent['enabled'],'revision':agent['revision'],'replyWindow':[agent['replyStart'],agent['replyEnd']]},
-  'templateReview':template_review,
+  'templateReview':template_review,'humanQueue':human_queue,
   'readOnly':True,'platformWrites':0,'realSends':0}
 
 def main():
