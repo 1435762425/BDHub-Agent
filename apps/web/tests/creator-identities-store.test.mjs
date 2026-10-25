@@ -137,6 +137,27 @@ test("repeated name observations update alias dates without duplicating it or ch
   f.db.prepare("UPDATE creator_identity SET handle_observed_at=?,handle_observed_us=2,last_observed_at=?,last_observed_us=2 WHERE creator_id=?").run(TIMES[2],TIMES[2],IDS[0]);
   const detail=f.open().detail("it",IDS[0]);assert.equal(detail.creator.creatorId,IDS[0]);assert.equal(detail.aliases.length,2);assert.equal(detail.aliases[0].firstObservedAt,TIMES[1]);assert.equal(detail.aliases[0].lastObservedAt,TIMES[2]);assert.equal(detail.creator.currentHandleVerifiedAt,TIMES[2]);
 });
+test("detail bounds alias history by canonical market and OEC before grouping a large market",t=>{
+  const f=fixture(t),other="creator_"+"4".repeat(32);
+  f.create(other,"it","444","old_name",TIMES[2]);
+  const insert=f.db.prepare("INSERT INTO identity_observation VALUES(?,?,?,?,?,?,?,?,?,?,?,?)");
+  f.db.exec("BEGIN");
+  for(let i=0;i<2000;i++)insert.run(`noise-${i}`,other,"it","444","profile",`noise_${i}`,"observed",TIMES[2],i,`noise-${i}:profile`,"fingerprint","{}");
+  f.db.exec("COMMIT");
+  const store=f.open(),prepare=store.db.prepare.bind(store.db);let aliasQuery;
+  store.db.prepare=sql=>{if(sql.includes("min(observed_at) first_at"))aliasQuery=sql;return prepare(sql);};
+  const detail=store.detail("it",IDS[0]);
+  assert.deepEqual(detail.aliases,[
+    {handle:"new_name",firstObservedAt:TIMES[1],lastObservedAt:TIMES[1],isCurrent:true},
+    {handle:"old_name",firstObservedAt:TIMES[0],lastObservedAt:TIMES[0],isCurrent:false},
+  ]);
+  // The regression is a market-wide alias-index scan, which tiny fixtures can return quickly.
+  // Check the actual executed query's access path instead of relying on a machine-speed limit.
+  assert.equal(typeof aliasQuery,"string");
+  const plan=prepare(`EXPLAIN QUERY PLAN ${aliasQuery}`).all("it","111").map(row=>row.detail).join("\n");
+  assert.match(plan,/identity_history_lookup \(market=\? AND oec_id=\?\)/);
+  assert.doesNotMatch(plan,/identity_alias_lookup/);
+});
 test("field projection keeps only allowed typed values and discards unauthorized and external URLs",()=>{
   assert.equal(PROFILE_FIELDS.length,22);
   assert.deepEqual(sanitizeProfileField("gpm",{status:"unauthorized",value:{decimal:"SECRET"}},TIMES[0]),{name:"gpm",status:"unauthorized",observedAt:TIMES[0]});

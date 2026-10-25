@@ -169,7 +169,13 @@ export class CreatorIdentityReadStore {
     const row=this.db.prepare(`SELECT ${ID_COLUMNS} FROM creator_identity i WHERE i.market=? AND i.creator_id=?`).get(market,creatorId);
     if(!row)return empty;
     const scope=[String(row.market),String(row.oec_id)];
-    const aliases=this.db.prepare("SELECT handle,min(observed_at) first_at,max(observed_at) last_at FROM identity_observation WHERE market=? AND oec_id=? AND kind='profile' AND handle IS NOT NULL GROUP BY handle ORDER BY max(observed_us) DESC,handle").all(...scope).map(alias=>({handle:String(alias.handle),firstObservedAt:String(alias.first_at),lastObservedAt:String(alias.last_at),isCurrent:alias.handle===row.current_handle}));
+    // Bound the history before grouping aliases: grouping the market table lets SQLite
+    // prefer its handle index and scan every creator instead of this canonical OEC.
+    const aliases=this.db.prepare(`WITH scoped AS MATERIALIZED (
+      SELECT handle,observed_at,observed_us FROM identity_observation
+      WHERE market=? AND oec_id=? AND kind='profile')
+      SELECT handle,min(observed_at) first_at,max(observed_at) last_at FROM scoped
+      WHERE handle IS NOT NULL GROUP BY handle ORDER BY max(observed_us) DESC,handle`).all(...scope).map(alias=>({handle:String(alias.handle),firstObservedAt:String(alias.first_at),lastObservedAt:String(alias.last_at),isCurrent:alias.handle===row.current_handle}));
     const latest=this.db.prepare(`SELECT e.observed_at,json_extract(${safePayload},'$.fields') fields_json FROM identity_observation e WHERE e.market=? AND e.oec_id=? AND e.kind='profile' AND json_type(${safePayload},'$.fields')='object' ORDER BY ${profileObservationOrder()} LIMIT 1`).get(...scope);
     const fieldsObject=latest?obj(JSON.parse(String(latest.fields_json))):null;
     const observedAt=latest?String(latest.observed_at):null;
