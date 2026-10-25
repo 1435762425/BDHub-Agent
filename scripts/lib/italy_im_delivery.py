@@ -18,6 +18,7 @@ from uuid import UUID
 
 from lib.italy_im_auth import ItalyImAuthContext, ImProbeDeadline, PARTNER_HOST
 from lib.italy_im_session import ItalyImReadSession, ItalyImReadError, VerifiedConversation, IM_HOST,SG_IM_HOST,EU_IM_REGIONS, _proto
+from lib.im_text_contract import encode_text
 
 CREATE_PATH = "/api/v1/im/conversation/create"
 SEND_PATH = "/v1/message/send"
@@ -74,13 +75,8 @@ def _uuid(value):
 
 def _text(value):
     try:
-        if not isinstance(value, str) or not value.strip() or len(value) > 900 or "\x00" in value:
-            raise ValueError()
-        encoded = value.encode("utf-8")
-        if len(encoded) > 4096:
-            raise ValueError()
-        return encoded
-    except (ValueError, UnicodeError):
+        return encode_text(value)
+    except ValueError:
         raise ItalyImDeliveryError("it_delivery_input_invalid") from None
 
 

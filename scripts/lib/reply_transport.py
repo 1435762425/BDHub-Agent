@@ -26,6 +26,12 @@ def run_reply(store,replies,reply,*,root=ROOT,authorized_now=False,stopped=lambd
               read_binding=read_sender_binding,live=live_runtime,refresh=None):
     """Send once if ready; otherwise read back only the original requestRef."""
     root=Path(root);report={};recovering=reply['state'] in ('inflight','accepted','unknown','isolated')
+    if not recovering and reply['kind'] in ('agent_generated_v2','agent_request_detail_v2','agent_handoff_v2'):
+        from lib.im_text_contract import encode_text
+        try:encode_text(reply['text'])
+        except ValueError:
+            if replies.cancel_invalid_generated(reply['id']):return 'cancelled'
+            raise CycleError('reply_text_not_submittable') from None
     card=None
     if reply['kind']=='manual_card':
         from lib.cycle_send_runtime import descriptor

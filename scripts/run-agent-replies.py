@@ -61,6 +61,7 @@ def decision_retry_ready(store,plan,turn_id,now):
    (plan,turn_id)).fetchall()
  attempts=[row for row in attempts if row['state']!='not_sent']  # Never-sent calls cost no attempt.
  if not attempts:return True
+ if any(row['state']=='input_blocked' for row in attempts):return False
  if any(row['state']=='ready' for row in attempts):return True
  if len(attempts)>=3:return False
  return now-attempts[0]['created_at']>=3600
@@ -193,6 +194,7 @@ def tick(authorized_now=None,market="it",*,reconcile_only=False):
    'unknown':0,'deferred':0,'platformWrites':0,'realSends':0}
   store.db.execute("INSERT OR IGNORE INTO agent_reply_run VALUES(?,?,\'running\',?,NULL,0,0,0,0,0,0,NULL)",(run_id,plan,now))
   try:
+   report['deferred']+=len(replies.settle_invalid_unsubmitted(plan))
    outstanding=store.db.execute("SELECT 1 FROM service_reply WHERE plan_id=? AND kind IN ('agent_generated_v2','agent_request_detail_v2','agent_handoff_v2') AND state='ready' LIMIT 1",(plan,)).fetchone()
    candidates=[] if outstanding else pending_rows(store,plan,now)
    if stage=='pilot_running':candidates=candidates[:1]

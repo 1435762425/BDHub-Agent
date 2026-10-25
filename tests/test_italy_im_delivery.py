@@ -281,6 +281,17 @@ class ItalyImDeliveryTests(unittest.TestCase):
         with self.assertRaises(ValueError):W.validate_packet("https://" + IM_HOST + SEND_PATH, {}, packet.data, cid="10", text=TEXT)
         with self.assertRaises(ItalyImReadError):session._read(100, b"")
 
+    def test_original_thousand_character_reply_uses_the_shared_contract_without_rewriting_or_http(self):
+        context,session,_,http,_,_=fixture();conversation=session.conversation('10','100');before=len(http.calls)
+        for body in ('a'*900,'a'*901,'a'*1000,'a'*1200,'😀'*1024):
+            packet=build_text_packet(context,conversation,body,REQUEST,sequence=200)
+            self.assertEqual(packet.text,body.encode('utf-8'));self.assertEqual(packet.request_ref,REQUEST)
+        for body in ('a'*1201,'😀'*1025,'abc\x00def','\ud800'):
+            with self.subTest(size=len(body)),self.assertRaises(ItalyImDeliveryError) as error:
+                build_text_packet(context,conversation,body,REQUEST,sequence=200)
+            self.assertEqual(error.exception.outcome,'not_submitted')
+        self.assertEqual(len(http.calls),before)
+
     def test_create_and_send_need_exact_last_moment_acknowledgement(self):
         gates = (None, lambda _: None, lambda _: {"dispatchAllowed": False, "requestRef": REQUEST, "stage": "create_conversation"},
                  lambda _: {"dispatchAllowed": 1, "requestRef": REQUEST, "stage": "create_conversation"},

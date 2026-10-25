@@ -11,6 +11,88 @@ from lib.agent_reply_v2 import production_context,generate,apply_production
 spec=importlib.util.spec_from_file_location('scope_worker',ROOT/'scripts/run-agent-replies.py');worker=importlib.util.module_from_spec(spec);spec.loader.exec_module(worker)
 
 class ReplyScopeTests(unittest.TestCase):
+ def invalid_legacy_draft(self):
+  self.add('1','First question');ctx=self.context();reply_id=self.prepare(ctx)
+  draft=self.replies.get(reply_id);bad='😀'*1100
+  decision=self.s.db.execute('SELECT decision_id,output_json FROM agent_reply_decision_v2 WHERE service_reply_id=?',(reply_id,)).fetchone()
+  output=json.loads(decision['output_json']);output['replyText']=bad;frozen=json.dumps(output)
+  # Simulate a draft created under a previously mismatched local contract, without submitting it.
+  self.s.db.execute('UPDATE service_reply SET text=? WHERE id=?',(bad,reply_id))
+  self.s.db.execute('UPDATE agent_reply_decision_v2 SET output_json=? WHERE decision_id=?',(frozen,decision['decision_id']))
+  return ctx,self.replies.get(reply_id),decision['decision_id'],frozen
+
+ def test_invalid_unsubmitted_draft_closes_only_its_input_and_does_not_starve_next_creator(self):
+  ctx,original,decision_id,output=self.invalid_legacy_draft()
+  self.seed('d','456','888');self.add('2','Another question',creator='d',oec='456',cid='888')
+  before_scope=freeze(unresolved(self.s,self.plan,'c'))
+  self.assertEqual(self.replies.settle_invalid_unsubmitted(self.plan),[original['id']])
+  closed=self.replies.get(original['id'])
+  self.assertEqual(closed['state'],'cancelled');self.assertEqual(closed['started'],None)
+  for key in ('id','request_ref','text','creator_id','oec','cid','context_hash','check_attempts','sender_account','sender_identity'):
+   self.assertEqual(closed[key],original[key])
+  proof=json.loads(closed['proof']);self.assertEqual((proof['outcome'],proof['platformWrites'],proof['realSends']),('not_submitted',0,0))
+  decision=self.s.db.execute('SELECT state,output_json FROM agent_reply_decision_v2 WHERE decision_id=?',(decision_id,)).fetchone()
+  self.assertEqual((decision['state'],decision['output_json']),('input_blocked',output))
+  self.assertEqual(freeze(unresolved(self.s,self.plan,'c')),before_scope)
+  for _ in range(2):
+   self.assertEqual(self.replies.settle_invalid_unsubmitted(self.plan),[])
+   self.assertEqual([row['creator_id'] for row in worker.pending_rows(self.s,self.plan,self.now[0])],['d'])
+   with self.assertRaisesRegex(CycleError,'agent_decision_unresolved'):
+    generate(ROOT,self.s,self.plan,'it',ctx,mode='production',call=lambda *_a,**_k:self.fail('same input must not call model'))
+  self.add('3','A new question')
+  self.assertIn('c',[row['creator_id'] for row in worker.pending_rows(self.s,self.plan,self.now[0])])
+
+ def test_explicit_guide_revision_allows_a_new_decision_after_local_input_block(self):
+  from lib.agent_reply_v2 import guide,save_guide
+  _ctx,original,_decision,_output=self.invalid_legacy_draft()
+  self.assertTrue(self.replies.cancel_invalid_generated(original['id']))
+  self.assertEqual(worker.pending_rows(self.s,self.plan,self.now[0]),[])
+  current=guide(ROOT,self.s,self.plan)
+  save_guide(ROOT,self.s,self.plan,current['revision'],current['body']+'\nKeep replies within the verified local text contract.')
+  self.assertEqual([row['creator_id'] for row in worker.pending_rows(self.s,self.plan,self.now[0])],['c'])
+
+ def test_worker_skips_invalid_ready_and_prepares_the_next_creator_in_the_same_tick(self):
+  from contextlib import contextmanager
+  from unittest.mock import patch
+  _ctx,original,_decision,_output=self.invalid_legacy_draft()
+  self.seed('d','456','888');self.add('2','Another question',creator='d',oec='456',cid='888')
+  @contextmanager
+  def opened(*_a,**_k):yield self.s
+  setting={'enabled':True,'revision':1,'replyStart':'00:00','replyEnd':'24:00','bufferMinutes':30}
+  creators=[]
+  def model(_root,_store,_plan,_market,context,**_kwargs):
+   creators.append(context['creatorId']);return self.generate(context)
+  with patch.object(worker,'CycleStore',opened),patch.object(worker,'agent_setting',return_value=setting), \
+       patch.object(worker,'generate',side_effect=model), \
+       patch.object(worker,'run_existing',return_value={'state':'ready','platformWrites':0,'realSends':0}) as transport:
+   result=worker.tick('fixture-window-override','it')
+  self.assertEqual((result['state'],result['prepared'],result['deferred']),('completed',1,1))
+  self.assertEqual(creators,['d']);self.assertEqual(transport.call_args.args[2]['creator_id'],'d')
+  self.assertEqual(self.replies.get(original['id'])['state'],'cancelled')
+
+ def test_submitted_invalid_body_is_not_reclassified_as_a_cancelled_draft(self):
+  ctx,original,_decision,_output=self.invalid_legacy_draft()
+  self.s.db.execute("UPDATE service_reply SET state='unknown',started=?,sender_account='acc6',sender_identity='original' WHERE id=?",(self.now[0],original['id']))
+  before=self.replies.get(original['id'])
+  self.assertFalse(self.replies.cancel_invalid_generated(original['id']))
+  self.assertEqual(self.replies.get(original['id']),before)
+
+ def test_it_invalid_draft_is_closed_before_opening_any_platform_runtime(self):
+  from unittest.mock import Mock
+  from lib.reply_transport import run_reply
+  _ctx,original,_decision,_output=self.invalid_legacy_draft()
+  binding=Mock(side_effect=AssertionError('invalid draft must not authenticate'))
+  live=Mock(side_effect=AssertionError('invalid draft must not open transport'))
+  self.assertEqual(run_reply(self.s,self.replies,original,root=self.root,read_binding=binding,live=live),'cancelled')
+  binding.assert_not_called();live.assert_not_called()
+  self.assertEqual(self.replies.get(original['id'])['state'],'cancelled')
+
+ def test_thousand_character_ready_body_is_kept_for_its_original_request(self):
+  self.add('1','Question');ctx=self.context();generated=self.generate(ctx)
+  generated['decision']['replyText']='a'*1000
+  reply_id=apply_production(self.s,self.plan,ctx,generated)['replyId'];original=self.replies.get(reply_id)
+  self.assertFalse(self.replies.cancel_invalid_generated(reply_id))
+  self.assertEqual(self.replies.get(reply_id),original)
  def setUp(self):
   self.tmp=tempfile.TemporaryDirectory();self.root=Path(self.tmp.name);self.now=[time.time()-1000]
   self.s=CycleStore(self.root/'var/second-cycle.sqlite',lambda:self.now[0]);self.plan=self.s.plan('bjn-local-research','it')

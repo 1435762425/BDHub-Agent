@@ -17,6 +17,27 @@ from lib.template_library import DEFAULT_AGENT_SETTING,save_agent_setting
 
 
 class AgentReplyV2Tests(unittest.TestCase):
+ def test_invalid_cached_output_is_blocked_without_repeating_a_model_call(self):
+  context=simulation_context('it','it-IT',[{'direction':'inbound','text':'Question'}])
+  generated=generate(ROOT,self.store,self.plan,'it',context,
+    call=lambda *_a,**_k:{'content':json.dumps(self.decision())})
+  invalid=json.dumps(self.decision(body='😀'*1100))
+  self.store.db.execute('UPDATE agent_reply_decision_v2 SET output_json=? WHERE decision_id=?',(invalid,generated['decisionId']))
+  for _ in range(2):
+   with self.assertRaisesRegex(CycleError,'agent_decision_unresolved'):
+    generate(ROOT,self.store,self.plan,'it',context,call=lambda *_a,**_k:self.fail('blocked cache must not call provider'))
+  row=self.store.db.execute('SELECT state,output_json FROM agent_reply_decision_v2 WHERE decision_id=?',(generated['decisionId'],)).fetchone()
+  self.assertEqual((row['state'],row['output_json']),('input_blocked',invalid))
+ def test_generated_text_and_transport_share_character_byte_and_nul_limits(self):
+  from lib.agent_reply_v2 import validate_decision
+  from lib.italy_im_delivery import _text
+  context=simulation_context('it','it-IT',[{'direction':'inbound','text':'Question'}])
+  for body in ('a'*1000,'a'*1200,'😀'*1024):
+   self.assertEqual(validate_decision(self.decision(body=body),context)['replyText'],body)
+   self.assertEqual(_text(body),body.encode())
+  for body in ('a'*1201,'😀'*1025,'abc\x00def','\ud800'):
+   with self.subTest(chars=len(body)),self.assertRaisesRegex(CycleError,'agent_decision_invalid'):
+    validate_decision(self.decision(body=body),context)
  def setUp(self):
   self.tmp=tempfile.TemporaryDirectory();self.path=Path(self.tmp.name)
   with CycleStore(self.path/'var/second-cycle.sqlite') as store:self.plan=store.plan('bjn-local-research','it')

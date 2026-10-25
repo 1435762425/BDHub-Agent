@@ -24,6 +24,12 @@ def run_reply(root,store,replies,reply,market,*,pilot=False,authorized_now=False
  if reply['kind'] not in ('agent_generated_v2','agent_request_detail_v2','agent_handoff_v2'):
   raise CycleError('market_agent_reply_kind_invalid')
  recovering=reply['state'] in ('inflight','accepted','unknown','isolated')
+ if not recovering:
+  from lib.im_text_contract import encode_text
+  try:encode_text(reply['text'])
+  except ValueError:
+   if replies.cancel_invalid_generated(reply['id']):return report|{'state':'cancelled'}
+   raise CycleError('reply_text_not_submittable') from None
  if not recovering and not agent_setting(store,reply['plan_id'])['enabled']:
   raise CycleError('agent_reply_disabled')
  if recovering:

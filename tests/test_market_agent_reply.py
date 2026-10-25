@@ -45,6 +45,18 @@ class MarketAgentReplyTests(unittest.TestCase):
   self.replies=Replies(self.store,self.reply)
  def tearDown(self):self.store.close()
 
+ def test_invalid_generated_body_closes_before_auth_or_network_reads(self):
+  self.reply['text']='😀'*1100
+  def cancel(_id):
+   self.store.db.execute("UPDATE service_reply SET state='cancelled' WHERE id='reply-1'")
+   return True
+  self.replies.cancel_invalid_generated=cancel
+  with patch.object(M,'authenticated',side_effect=AssertionError('invalid text must not authenticate')), \
+       patch.object(M,'write_gate',side_effect=AssertionError('invalid text must not dispatch')):
+   result=M.run_reply(ROOT,self.store,self.replies,self.reply,'br')
+  self.assertEqual((result['state'],result['platformWrites'],result['realSends']),('cancelled',0,0))
+  self.assertEqual(self.replies.get('reply-1')['state'],'cancelled')
+
  def test_stale_ready_reply_is_settled_without_a_platform_write(self):
   conversation=SimpleNamespace(conversation_id='123')
   session=SimpleNamespace(conversation=lambda *_:conversation,

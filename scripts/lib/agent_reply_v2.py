@@ -8,6 +8,7 @@ from pathlib import Path
 from lib.draft_provider import ENDPOINT, MODEL
 from lib.market_content import market_content
 from lib.second_cycle import CycleError, digest, encoded
+from lib.im_text_contract import MAX_TEXT_CHARACTERS,MAX_TEXT_BYTES,encode_text
 
 ROUTES = frozenset({'reply', 'no_reply', 'request_detail', 'handoff'})
 WAIT_FOR = frozenset({'none', 'contact', 'clarification'})
@@ -308,7 +309,7 @@ def prompt(root, store, plan, market):
               "对应 waitFor=contact 或 clarification；已经收到联系方式才 handoff，且 waitFor=none。"
               "no_reply 时 replyText=null，waitFor=none，或保持输入 previousWaitFor 的原等待值。"
               "handoffReason 在 handoff 时是非空中文原因，所有其他路线必须明确为 null。"
-              "replyText非空时最多1200字符。"
+              f"replyText非空时最多{MAX_TEXT_CHARACTERS}字符、UTF-8最多{MAX_TEXT_BYTES}字节，不含NUL。"
               "evidenceMessageIds 可引用输入消息的 id（包括已发邀请的 episode id），至少包含一条达人入站。"
               "若 previousWaitFor 表示刚向达人索取联系方式或澄清，而达人只说好的或谢谢、没有提供信息，route=no_reply；系统继续等待原信息。"
               "不输出 Markdown。\n\n业务指南：\n" + current['body'])
@@ -345,8 +346,9 @@ def validate_decision(raw, context):
     if raw['route'] == 'no_reply':
         if body is not None or raw['waitFor'] not in ('none', context.get('previousWaitFor')):
             raise CycleError('agent_decision_invalid')
-    elif not isinstance(body, str) or not body.strip() or len(body) > 1200:
-        raise CycleError('agent_decision_invalid')
+    else:
+        try:encode_text(body)
+        except ValueError:raise CycleError('agent_decision_invalid') from None
     if raw['route'] == 'request_detail' and raw['waitFor'] == 'none' or \
             raw['route'] not in ('request_detail','no_reply') and raw['waitFor'] != 'none':
         raise CycleError('agent_decision_invalid')
@@ -391,9 +393,15 @@ def generate(root, store, plan, market, context, mode='simulation', call=None):
     attempts=list(store.db.execute('SELECT decision_id,state,output_json,created_at FROM agent_reply_decision_v2 '
                                    'WHERE plan_id=? AND mode=? AND input_hash=? ORDER BY created_at',
                                    (plan,mode,input_hash)))
+    if any(row['state']=='input_blocked' for row in attempts):
+        raise CycleError('agent_decision_unresolved')
     ready=next((row for row in attempts if row['state']=='ready'),None)
     if ready:
-        return {'decisionId': ready['decision_id'], 'decision': json.loads(ready['output_json']),
+        try:decision=validate_decision(json.loads(ready['output_json']),context)
+        except (CycleError,ValueError,TypeError):
+            store.db.execute("UPDATE agent_reply_decision_v2 SET state='input_blocked' WHERE decision_id=? AND state='ready'",(ready['decision_id'],))
+            raise CycleError('agent_decision_unresolved') from None
+        return {'decisionId': ready['decision_id'], 'decision': decision,
                 'cached': True, 'input': input_value}
     active=[row for row in attempts if row['state']=='request_started']
     if any(store.clock()-row['created_at']<120 for row in active):

@@ -3,6 +3,7 @@ import json,re,uuid
 from contextlib import nullcontext
 from lib.second_cycle import CycleError,digest,encoded
 from lib.cycle_service import Service
+from lib.im_text_contract import encode_text
 SCHEMA='''CREATE TABLE IF NOT EXISTS service_reply_fact_failure(plan_id TEXT NOT NULL,creator_id TEXT NOT NULL,revision INTEGER NOT NULL,attempts INTEGER NOT NULL,PRIMARY KEY(plan_id,creator_id,revision));
 CREATE TABLE IF NOT EXISTS service_reply_fact(reply_id TEXT PRIMARY KEY,payload TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS service_reply_config(plan_id TEXT PRIMARY KEY,enabled INTEGER NOT NULL,authorization TEXT NOT NULL);
@@ -65,6 +66,29 @@ class AutoReplies:
   self.s.db.execute('INSERT INTO service_reply_config VALUES(?,1,?) ON CONFLICT(plan_id) DO UPDATE SET enabled=1,authorization=excluded.authorization',(plan,authorization))
  def get(self,id):
   r=self.s.db.execute('SELECT * FROM service_reply WHERE id=?',(id,)).fetchone();return dict(r) if r else None
+ def cancel_invalid_generated(self,id):
+  """Close only a provably unsubmitted invalid draft; preserve its body, request and input evidence."""
+  q=self.get(id)
+  if not q or q['kind'] not in ('agent_generated_v2','agent_request_detail_v2','agent_handoff_v2'):return False
+  try:encode_text(q['text']);return False
+  except ValueError:pass
+  with self.s.tx():
+   q=self.get(id)
+   if q['state']!='ready' or q['started'] is not None or q['receipt'] or q['proof'] or q.get('sender_account') or q.get('sender_identity'):return False
+   try:encode_text(q['text']);return False
+   except ValueError:pass
+   proof={'status':'cancelled','outcome':'not_submitted','reason':'reply_text_not_submittable',
+          'checkedAt':self.s.clock(),'platformWrites':0,'realSends':0}
+   self.s.db.execute("UPDATE service_reply SET state='cancelled',proof=? WHERE id=?",(encoded(proof),id))
+   if self.s.db.execute("SELECT 1 FROM sqlite_master WHERE name='agent_reply_decision_v2'").fetchone():
+    # The original frozen replyScope/guide blocks this same input on later ticks. Keep the
+    # original output JSON as evidence, and let a new inbound scope or guide qualify normally.
+    self.s.db.execute("UPDATE agent_reply_decision_v2 SET state='input_blocked' WHERE service_reply_id=? AND state='ready'",(id,))
+  return True
+ def settle_invalid_unsubmitted(self,plan,limit=20):
+  rows=self.s.db.execute("""SELECT id FROM service_reply WHERE plan_id=? AND state='ready'
+    AND kind IN ('agent_generated_v2','agent_request_detail_v2','agent_handoff_v2') ORDER BY created LIMIT ?""",(plan,limit)).fetchall()
+  return [row['id'] for row in rows if self.cancel_invalid_generated(row['id'])]
  def prepare(self,plan,creator,facts=None):
   if not self.enabled(plan) or self.s._plan(plan)['state']!='active':return None
   with self.s.tx():
@@ -154,8 +178,9 @@ class AutoReplies:
   """Freeze one generated body under the same receipt and context fence as legacy replies."""
   kind=('agent_handoff_v2' if handoff_case_id else
         'agent_request_detail_v2' if wait_for in ('contact','clarification') else 'agent_generated_v2')
-  if not isinstance(text,str) or not text.strip() or len(text)>1200 or \
-     not isinstance(decision_id,str) or not decision_id.startswith('agent-decision-'):
+  try:encode_text(text)
+  except ValueError:raise CycleError('agent_generated_reply_invalid') from None
+  if not isinstance(decision_id,str) or not decision_id.startswith('agent-decision-'):
    raise CycleError('agent_generated_reply_invalid')
   if in_transaction and not self.s.db.in_transaction:raise CycleError('reply_prepare_transaction_required')
   with nullcontext() if in_transaction else self.s.tx():
