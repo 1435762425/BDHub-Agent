@@ -229,6 +229,8 @@ schema v25 追加处理证据，并在已有模块上建立 inbox 按市场/OEC/
 
 输入先用 provider 同一序列化/24,000 字节规则检查，优先裁可选旧历史，当前未答问题和保留的邀请不裁。仍超限保存原 decision 台账的 input_blocked、modelCalls=0，并保留待答范围；同范围/指南不反复进入队头或消耗模型尝试，新问题/指南变化重新评估。页面显示“上下文过长，待答问题已保留”。这不是超长诉求自动分段，也不是 §9.17 全部错误分类/通道退避已完成。
 
+生成回复的本地文本合同统一由 `im_text_contract.encode_text` 定义：非空、最多 1,200 个字符、UTF-8 最多 4,096 字节，拒绝 NUL 与非法 Unicode；不截断、规范化或改写正文。模型新输出、缓存 ready 输出、回复冻结与 IM adapter 共用校验。这个上限沿用本地上游合同，不表示平台已验证全部长度。确定无效的生成草稿，只有 `ready`、未 started、无 sender、receipt 或 proof 时，才能在原事务记 `cancelled/not_submitted`，关联 decision 转 `input_blocked`；原正文、requestRef、输入输出、待答范围与商业 handoff 保留。同范围/指南不重复模型调用或阻塞其他达人，新消息或指南修订仍按原合同处理。已提交或结果未知的回复继续原核验流程。
+
 指南包含肯定合作但未观察到当前商品橱窗证据时的加橱窗提醒，要求已有真实卡、不重复已提醒内容，并按市场语言说明下一个视频/直播生效。上下文提供实际观察事实；“未观察到”不升级成“核实没有”。
 
 `run-agent-replies.py` 先回查 inflight/accepted/unknown，再处理新 turn；`begin()` 在转 inflight 的同一事务冻结 `sender_account`/`sender_identity`（非 IT 为 IM id，IT 为 sender binding hash），恢复时通讯角色或身份与冻结值不同即拒绝读取，旧记录缺失时不以当前账号补。未知回复最多 3 次只读核验（间隔 ≥120 秒），计数在读取前持久化，读取未能开始（发送锁/账号不可用）退还次数但不延长期限：提交起 900 秒截止，与读取是否完成无关，一轮内一条回复被推迟时继续检查其他回复；`service_reply` 新列在 `BEGIN IMMEDIATE` 内复查后追加，多进程首次启动每列只加一次；只有读取尚未访问平台（传输层 `read_started` 回调未触发）的失败才退还次数；正常收信已存下与平台受理回执同一 messageId、同会话/OEC 且正文逐字相同的我方消息时，`settle_observed` 本地幂等结算 accepted/unknown/isolated 回复（不做平台读取、不耗预算，回执无 messageId 的仍保持未知）；耗尽转 `isolated`，保留原正文/requestRef/证据，只暂停该达人的自动回复和主动推品（并入 `outreach_policy` 营销隔离），其他达人继续，精确迟到证据仍可幂等结算，商业 handoff 案件保留。模型失败逐达人隔离，同输入最多三次。确定未提交而上下文过期的 ready 可审计终结，已提交只核验。IT 人工/Agent 共用 `reply_transport.py`，其他市场用 `market_agent_reply.py`，均冻结唯一 `service_reply` 正文/requestRef 再发送。Agent 生成第一份可发送回复后立即进入执行，不再批量积压 20 份草稿；有处理进展时短间隔继续，等待/错误/未知保持轮询退避。每次生成前重查停止、窗口与缓冲。
@@ -299,6 +301,8 @@ Web 展示层按操作优先组织：`OperationsConsole` 在桌面并列市场�
 
 `GET /api/market-overview?market=<market>` → 固定 argv `market-overview.py` → `lib/market_overview.py`，只读现有台账，不初始化库或发布持久投影；同市场 singleflight 加 30 秒进程内缓存。页面分当前库存、近 7 日事件、等待和人工事项，身份来源行/去重 handle 分区对账。`lead_pool.counts.queued` 与别名 `candidateQueued` 均指发送候选，`identityQueued` 指身份等待；不改变发送资格。旧 B 表只认 IT，未接通或缺台账的指标显示不可用。
 
+`poolRemaining` 沿用 `pool.layers.ready` 的本地位置统计；首页称“候选达人”，发送页称“发送候选位置”，不把该值解释成最终可发送能力。实际领取还会检查 queued、当日安排、历史去重、身份、材料、模板和容量，之后仍需平台发送预检；文案不修改字段、数量或业务门禁。
+
 `creator_identity_lookup.current_handle_owners` 按当前 B 作者的小集合复用 `identity_alias_lookup(market,handle)` 定位候选，再按 creator 主键核对 current_handle、market 和 conflict；历史别名只用于定位，歧义 handle 不路由。总览与发送池共用该只读 helper，不扫描整市场身份，也不要求读取时迁移生产库。`identity_market_recent(market,last_observed_us DESC,creator_id)` 用于最近身份读取，正常 IdentityStore 打开时幂等创建；已有库部署需实际核对并在备份后补齐，GET 不初始化或迁移。总览各 panel 独立计算期限，嵌套身份查询单独限时；某项超时或缺库只使该项不可用，不把后续指标连带判零。历史验收见[只读运营面板](implementation/readonly-operations-overview-20260925.md)，当前性能与加载状态见交接。
 
 首页开关保存返回提交回执（requestId、实际设置与 revision、worker 启动错误）；回执在提交事务内写入 `market_automation_receipt`，重放同一 requestId 先于开启前置条件返回原回执（旧请求只有修订号时标 `originalAvailable=false`），页面对同一开关冻结取值与预期修订号并丢弃晚到的旧读取；保存后读模型投影或页面重读失败只标记 `projectionStale/refreshFailed`，不再报“未保存”，关闭开关不受开启前置条件限制。首页与告警条读取失败时显示“状态不可确认”及上次成功时间，不沿用旧的“运行正常/无告警”。
@@ -306,6 +310,8 @@ Web 展示层按操作优先组织：`OperationsConsole` 在桌面并列市场�
 AI 模型调用按错误分型：本地输入无效记 `input_blocked`，请求未发出记 `not_sent`（不占同输入 3 次），已调用失败记 `unknown`。同一模型服务连续 3 次服务级失败（配置/运行时、超时、网络、HTTP 错误）即在 `agent_model_service` 暂停，5 分钟起翻倍至 1 小时，暂停期间不外调、不扣任何达人的次数，到期只放行一个探测；列表显示“模型服务暂停，问题已保留”，告警条同步提示。这些退避值为工程值。常驻进程启动时把载入的提交登记到 `var/runtime-loaded/<角色>.json`；告警条比较存活进程所载提交与当前 HEAD 的 `scripts`、`vendor` 两棵 git 树（只改文档的提交不算版本差异；不比较页面改写的配置文件），并比较这两个目录未提交改动（含未跟踪文件）的摘要 `runtimeDirty`；工作区有未提交的运行代码改动时另报 `runtime-code-uncommitted`，未登记该摘要的旧进程只在工作区干净时算作当前代码。不一致提示按流程重启。`/api/ops-alerts` 同时返回只读 `evidence`（各进程载入提交与是否为当前代码、调度器心跳、模型服务暂停、最近恢复演练），“运行与设置 → 运行证据”页展示；读取失败显示“状态待核实”，不显示无条件“运行正常”。
 
 全部 `/api/*` 限本机；写请求校验 Origin/Host、JSON 大小、market、revision、字段白名单和范围。bridge 固定 argv/cwd，不拼 shell；返回 decoder 复核枚举、ID、数量恒等式，available=false 与 0 分开。本机校验只接受 Host `127.0.0.1:5198`/`localhost:5198`，在其他端口起开发服务时全部 API 返回 403。`/api/creator-identities` 经 bridge 固定 argv 调用 Node 只读 CLI；stdin 只接收白名单查询，`scripts/lib/creator_identity_read.mjs` 复用原 ReadStore 与只读投影。Web 主进程不构造 SQLite store；子进程有超时、输出上限与取消终止，返回值复核市场、视图、身份和数量。缺库不初始化，原 404/503 与数据缺失语义保持。
+
+达人详情的名字历史先以 `WITH scoped AS MATERIALIZED` 按原 market/OEC/kind 限定观测，再按原 handle 聚合、排序，避免 SQLite 为 `GROUP BY handle` 选择市场级别名索引后扫描整个市场。返回字段、身份归属与 GMV 的缺失/零值语义保持，不以超时后省略字段代替查询修复。
 
 | API | 用途 |
 | --- | --- |
