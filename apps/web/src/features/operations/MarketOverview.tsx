@@ -13,7 +13,7 @@ const disclosure="rounded-2xl border border-gray-200 bg-white dark:border-gray-8
 const summary="cursor-pointer rounded-2xl px-5 py-4 text-sm font-semibold text-gray-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 dark:text-gray-200";
 function Facts({panel}:{panel:OverviewPanel|undefined}){
  if(!panel?.available)return <p className="text-sm text-gray-500">{panel?.reason??"数据不可用"}</p>;
- return <><dl className="space-y-2">{panel.metrics.map(m=><div key={m.key} className="flex justify-between gap-4 text-sm" title={m.note}><dt className="text-gray-500">{m.label}</dt><dd className="font-medium tabular-nums">{format(m.value)}{m.value!==null&&<span className="ml-1 text-xs font-normal text-gray-400">{m.unit}</span>}</dd></div>)}</dl>{panel.note&&<p className="mt-3 text-xs leading-5 text-gray-400">{panel.note}</p>}<p className="mt-3 text-[11px] text-gray-400">来源：{sources[panel.id]??panel.title} · {time(panel.observedAt)}</p></>;
+ return <><dl className="space-y-2">{panel.metrics.map(m=><div key={m.key} className="flex justify-between gap-4 text-sm" title={m.note}><dt className="text-gray-500">{panel.id==="pool"&&m.key==="ready"?"候选达人":m.label}</dt><dd className="font-medium tabular-nums">{format(m.value)}{m.value!==null&&<span className="ml-1 text-xs font-normal text-gray-400">{m.unit}</span>}</dd></div>)}</dl>{panel.note&&<p className="mt-3 text-xs leading-5 text-gray-400">{panel.note}</p>}<p className="mt-3 text-[11px] text-gray-400">来源：{sources[panel.id]??panel.title} · {time(panel.observedAt)}</p></>;
 }
 export default function MarketOverview({market,controls,operatorQueue,activity,activityStale=false}:{market:string;controls?:ReactNode;operatorQueue?:OperatorQueue;activity?:ActivityRow[];activityStale?:boolean}){
  const [state,setState]=useState<{market:string;data:Overview}|null>(null),[failed,setFailed]=useState(false);
@@ -32,7 +32,7 @@ export default function MarketOverview({market,controls,operatorQueue,activity,a
  const get=(id:string)=>data.panels.find(p=>p.id===id);
  const metric=(id:string,key:string):Metric|undefined=>get(id)?.available?get(id)?.metrics.find(m=>m.key===key):undefined;
  const highlights=[metric("inbox","unread"),metric("pool","ready"),metric("inventory","catalogPids"),metric("inventory","activeBindings")];
- const titles=["待回复来信（含系统队列）","当前可发达人","当前货盘商品","当前有效链接绑定"];
+ const titles=["待回复来信（含系统队列）","候选达人","当前货盘商品","当前有效链接绑定"];
  const identity=get("identity"),handling=get("handling"),inbox=get("inbox");
  const account=metric("handling","accountNeedsHuman"),operator=operatorQueueSummary(operatorQueue);
  const verification=[metric("handling","deliveryUnknown"),metric("handling","replyUnknown")];
