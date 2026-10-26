@@ -509,13 +509,14 @@ def _claim(root):
 
 
 def _job_update(root, job, *, stage=None, state=None, error=None, delay=0, failure=False, progress=None):
+    """Successful updates reset failures; ``None`` preserves a resource wait's budget."""
     with CycleStore(_path(root)) as store:
         store.db.execute('''UPDATE first_outreach_job SET stage=COALESCE(?,stage),state=COALESCE(?,state),
          updated=?,finished=CASE WHEN ? IN ('complete','error') THEN ? ELSE finished END,error=?,
-         next_attempt=?,failures=CASE WHEN ? THEN failures+1 ELSE 0 END,
+         next_attempt=?,failures=CASE ? WHEN 1 THEN failures+1 WHEN 0 THEN 0 ELSE failures END,
          material_progress=CASE WHEN ? THEN ? ELSE material_progress END WHERE request_id=?''',
                          (stage, state, store.clock(), state, store.clock(), error,
-                          store.clock() + delay, int(failure), int(progress is not None),
+                          store.clock() + delay, None if failure is None else int(failure), int(progress is not None),
                           encoded(progress) if progress is not None else None, job['request_id']))
 
 
@@ -853,8 +854,10 @@ def worker_tick(root, *, stopped=lambda: False):
                 code = _code(error)
                 # A read/material failure never drops the original request or
                 # stops independent sends and sample lifecycle reads.
-                delay = min(3600, 30 * 2 ** min(job.get('failures', 0), 7))
-                _job_update(root, job, state='running', error=code, delay=delay, failure=True)
+                resource_wait = _wait_state(code) == 'waiting_account'
+                delay = 5 if resource_wait else min(3600, 30 * 2 ** min(job.get('failures', 0), 7))
+                _job_update(root, job, state='running', error=code, delay=delay,
+                            failure=None if resource_wait else True)
                 result['supply'] = {'state': 'waiting', 'reason': code, 'retryAfterSeconds': delay}
         else:
             _queue_supply(root, result.get('stopReason') or result.get('reason'))

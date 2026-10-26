@@ -76,7 +76,7 @@ class FirstAutocycleTests(unittest.TestCase):
         original = runtime._queue_supply(self.root)
         with patch.object(runtime, '_send_unknown', return_value=0), \
                 patch.object(runtime, '_send', return_value={'state': 'continuous', 'realSends': 1}) as send, \
-                patch.object(runtime, '_refresh', side_effect=CycleError('account_busy')) as refresh:
+                patch.object(runtime, '_refresh', side_effect=CycleError('first_catalog_refresh_failed')) as refresh:
             first_tick = runtime.worker_tick(self.root)
             second_tick = runtime.worker_tick(self.root)
         job = self.record()
@@ -87,6 +87,61 @@ class FirstAutocycleTests(unittest.TestCase):
         self.assertEqual(second_tick['state'], 'continuous')
         self.assertEqual(send.call_count, 2)
         refresh.assert_called_once()
+
+    def test_resource_wait_preserves_original_failure_budget_and_does_not_duplicate_job(self):
+        original = runtime._queue_supply(self.root)
+        control = runtime._cfg(self.root)
+        with CycleStore(self.path) as store:
+            store.db.execute('UPDATE first_outreach_job SET failures=6')
+        for code in ('workflow_resource_busy', 'account_busy', 'first_resource_child_running', 'local_store_busy'):
+            with self.subTest(code=code):
+                with CycleStore(self.path) as store:
+                    store.db.execute('UPDATE first_outreach_job SET next_attempt=0')
+                before = time.time()
+                with patch.object(runtime, '_send_unknown', return_value=0), \
+                     patch.object(runtime, '_send', return_value={'state': 'continuous'}) as send, \
+                     patch.object(runtime, '_refresh', side_effect=CycleError(code)) as refresh, \
+                     patch.object(runtime.subprocess, 'Popen') as spawn, \
+                     patch.object(runtime, 'launch_worker') as launch:
+                    result = runtime.worker_tick(self.root)
+                    runtime.worker_tick(self.root)
+                job = self.record()
+                self.assertEqual(result['supply'], {'state': 'waiting', 'reason': code, 'retryAfterSeconds': 5})
+                self.assertEqual((job['request_id'], job['stage'], job['state'], job['failures']),
+                                 (original['request_id'], original['stage'], 'running', 6))
+                self.assertEqual(job['payload'], original['payload'])
+                self.assertGreaterEqual(job['next_attempt'], before + 5)
+                self.assertLessEqual(job['next_attempt'], time.time() + 5)
+                self.assertEqual(runtime._cfg(self.root), control)
+                with CycleStore(self.path, readonly=True) as store:
+                    self.assertEqual(store.db.execute('SELECT count(*) FROM first_outreach_job').fetchone()[0], 1)
+                    self.assertEqual(store.db.execute('SELECT count(*) FROM first_outreach_request').fetchone()[0], 1)
+                refresh.assert_called_once()
+                self.assertEqual(send.call_count, 2)
+                spawn.assert_not_called()
+                launch.assert_not_called()
+
+    def test_real_supply_errors_still_increment_budget_and_use_exponential_backoff(self):
+        original = runtime._queue_supply(self.root)
+        control = runtime._cfg(self.root)
+        with CycleStore(self.path) as store:
+            store.db.execute('UPDATE first_outreach_job SET failures=6')
+        for code, failures, delay in (('first_catalog_refresh_failed', 7, 1920),
+                                      ('first_catalog_refresh_failed', 8, 3600),
+                                      ('new_contact_capacity_reached', 9, 3600)):
+            with self.subTest(code=code, failures=failures):
+                with CycleStore(self.path) as store:
+                    store.db.execute('UPDATE first_outreach_job SET next_attempt=0')
+                with patch.object(runtime, '_send_unknown', return_value=0), \
+                     patch.object(runtime, '_send', return_value={'state': 'continuous'}), \
+                     patch.object(runtime, '_refresh', side_effect=CycleError(code)):
+                    result = runtime.worker_tick(self.root)
+                job = self.record()
+                self.assertEqual(result['supply']['retryAfterSeconds'], delay)
+                self.assertEqual((job['request_id'], job['stage'], job['failures']),
+                                 (original['request_id'], original['stage'], failures))
+                self.assertEqual(job['payload'], original['payload'])
+                self.assertEqual(runtime._cfg(self.root), control)
 
     def test_successful_read_slice_clears_old_failure_without_restarting_stage(self):
         job = runtime._queue_supply(self.root)
