@@ -1,4 +1,5 @@
 import json
+from contextlib import closing
 from pathlib import Path
 import sqlite3
 import sys
@@ -110,6 +111,128 @@ class FirstOutreachTests(unittest.TestCase):
 
     def get_candidate(self):
         return first.candidate(self.root, 'br', self.s, self.plan, {'conversations': []})
+
+    def test_candidate_stream_does_not_pin_writable_snapshot_across_other_writer_commit(self):
+        self.profile('234', gmv='1000')
+        self.prepare()
+        self.start()
+        original_profile = first._profile
+        committed = []
+        with closing(sqlite3.connect(self.root / 'var/second-cycle.sqlite', isolation_level=None)) as writer:
+            def after_stream_read(*args):
+                if not committed:
+                    writer.execute('UPDATE first_outreach_control SET updated_at=updated_at+1 WHERE plan_id=?',
+                                   (self.plan,))
+                    committed.append(True)
+                return original_profile(*args)
+            with patch.object(first, '_profile', side_effect=after_stream_read):
+                candidate = self.get_candidate()
+        self.assertEqual(candidate['oecId'], '234')
+        self.assertTrue(committed)
+        self.assertFalse(self.s.db.in_transaction)
+        delivery = self.d.prepare(self.plan, candidate)
+        self.assertEqual(delivery['state'], 'ready')
+
+    def test_candidate_stream_rechecks_manual_takeover_committed_after_relation_read(self):
+        person = self.profile('234', gmv='1000')
+        self.prepare()
+        self.start()
+        self.s.db.execute('INSERT INTO relationship(plan_id,creator_id,oec) VALUES(?,?,?)',
+                          (self.plan, person['creatorId'], '234'))
+        original_name = first._localized_name
+        committed = []
+        with closing(sqlite3.connect(self.root / 'var/second-cycle.sqlite', isolation_level=None)) as writer:
+            def after_relation_read(*args, **kwargs):
+                if not committed:
+                    writer.execute("UPDATE relationship SET mode='human',revision=revision+1 WHERE plan_id=? AND oec='234'",
+                                   (self.plan,))
+                    committed.append(True)
+                return original_name(*args, **kwargs)
+            with patch.object(first, '_localized_name', side_effect=after_relation_read):
+                candidate = self.get_candidate()
+        self.assertEqual(candidate['oecId'], '123')
+        self.assertEqual(self.s.db.execute("SELECT mode FROM relationship WHERE oec='234'").fetchone()[0], 'human')
+        self.assertEqual(self.s.db.execute('SELECT count(*) FROM cycle_delivery').fetchone()[0], 0)
+
+    def test_candidate_stream_rejects_generation_replaced_by_another_writer(self):
+        self.profile('234', gmv='1000')
+        self.prepare()
+        self.start()
+        original_profile = first._profile
+        committed = []
+        with closing(sqlite3.connect(self.root / 'var/second-cycle.sqlite', isolation_level=None)) as writer:
+            def replace_generation(*args):
+                if not committed:
+                    generation = list(writer.execute('SELECT * FROM first_outreach_generation').fetchone())
+                    generation[0] += '-next'
+                    writer.execute('INSERT INTO first_outreach_generation VALUES(?,?,?,?,?,?,?,?,?,?,?)', generation)
+                    writer.execute('UPDATE first_outreach_head SET generation_id=? WHERE plan_id=?',
+                                   (generation[0], self.plan))
+                    committed.append(True)
+                return original_profile(*args)
+            with patch.object(first, '_profile', side_effect=replace_generation), \
+                 self.assertRaisesRegex(CycleError, 'first_outreach_prepare_required'):
+                self.get_candidate()
+        self.assertEqual(self.s.db.execute('SELECT count(*) FROM relationship').fetchone()[0], 0)
+        self.assertFalse(self.s.db.in_transaction)
+
+    def test_candidate_stream_observes_concurrent_stop_before_returning_candidate(self):
+        self.profile('234', gmv='1000')
+        self.prepare()
+        self.start()
+        original_profile = first._profile
+        committed = []
+        with closing(sqlite3.connect(self.root / 'var/second-cycle.sqlite', isolation_level=None)) as writer:
+            def stop_during_scan(*args):
+                if not committed:
+                    writer.execute("UPDATE first_outreach_control SET mode='stopped' WHERE plan_id=?", (self.plan,))
+                    committed.append(True)
+                return original_profile(*args)
+            with patch.object(first, '_profile', side_effect=stop_during_scan), \
+                 self.assertRaisesRegex(CycleError, 'first_outreach_stopped'):
+                self.get_candidate()
+        self.assertEqual(first.control(self.s)['mode'], 'stopped')
+        self.assertEqual(self.s.db.execute('SELECT count(*) FROM cycle_delivery').fetchone()[0], 0)
+
+    def test_candidate_stream_keeps_large_ranked_tail_unloaded_and_closes_reader(self):
+        self.prepare()
+        self.start()
+        template = tuple(self.s.db.execute('SELECT * FROM first_outreach_candidate').fetchone())
+        def tail():
+            for index in range(10000):
+                row = list(template)
+                row[1] = 'tail-' + str(index)
+                row[2] = 'unresolved-' + str(index)
+                row[7] = 0
+                yield row
+        self.s.db.executemany('INSERT INTO first_outreach_candidate VALUES(?,?,?,?,?,?,?,?,?,?)', tail())
+        consumed, closed = [], []
+        class StreamCursor(sqlite3.Cursor):
+            def __next__(self):
+                row = super().__next__()
+                consumed.append(True)
+                return row
+            def fetchall(self):
+                raise AssertionError('ranked_candidate_tail_must_not_be_materialized')
+        class StreamConnection(sqlite3.Connection):
+            def execute(self, sql, parameters=()):
+                if sql.startswith('SELECT c.* FROM first_outreach_candidate'):
+                    return self.cursor(StreamCursor).execute(sql, parameters)
+                return super().execute(sql, parameters)
+            def close(self):
+                closed.append(True)
+                return super().close()
+        real_connect = sqlite3.connect
+        expected = (self.root / 'var/second-cycle.sqlite').resolve().as_uri() + '?mode=ro'
+        def connect(path, *args, **kwargs):
+            if path == expected:
+                self.assertTrue(kwargs.get('uri'))
+                kwargs['factory'] = StreamConnection
+            return real_connect(path, *args, **kwargs)
+        with patch.object(first.sqlite3, 'connect', side_effect=connect):
+            candidate = self.get_candidate()
+        self.assertEqual(candidate['oecId'], '123')
+        self.assertEqual((len(consumed), len(closed)), (1, 1))
 
     def test_known_recipient_message_space_skips_top_creator_before_freezing(self):
         from lib.cycle_inbox import Inbox

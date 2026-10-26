@@ -620,10 +620,16 @@ def candidate(root, market, store, plan, initial):
     conversations = {str(row['oecId']): row for row in initial.get('conversations', [])}
     recipient_limited = recipient_limited_creators(store.db, plan, conversation_ids={
         oec: row['conversationId'] for oec, row in conversations.items()})
-    with closing(sqlite3.connect(path.resolve().as_uri() + '?mode=ro', uri=True)) as links, closing(_identity_connection(root)) as identities:
+    ledger_path = Path(store.db.execute('PRAGMA database_list').fetchone()[2])
+    with closing(sqlite3.connect(path.resolve().as_uri() + '?mode=ro', uri=True)) as links, \
+         closing(_identity_connection(root)) as identities, \
+         closing(sqlite3.connect(ledger_path.resolve().as_uri() + '?mode=ro', uri=True)) as candidates:
         links.row_factory = sqlite3.Row
+        candidates.row_factory = sqlite3.Row
         # Stream the ranked index: earlier sent/cooling creators must not starve
-        # the rest of a large batch. No all-creator list is materialized here.
+        # the rest of a large batch. Keep its snapshot off the writable store:
+        # a concurrent commit otherwise makes BEGIN IMMEDIATE fail with
+        # SQLITE_BUSY_SNAPSHOT when the selected relationship is inserted.
         skip_sent = ''
         arguments = [plan, head['id']]
         if _table(store, 'cycle_delivery'):
@@ -631,7 +637,7 @@ def candidate(root, market, store, plan, initial):
                 AND (d.state IN ('ready','running','unknown','quarantined_unknown')
                   OR d.pid=c.pid AND d.state NOT IN ('cancelled','failed_known','rejected')))"""
             arguments.append(plan)
-        rows = store.db.execute('''SELECT c.* FROM first_outreach_candidate c
+        rows = candidates.execute('''SELECT c.* FROM first_outreach_candidate c
              LEFT JOIN relationship r ON r.plan_id=? AND r.creator_id=c.creator_id
              WHERE c.generation_id=? AND (r.creator_id IS NULL OR r.mode='auto' AND r.rejected=0 AND r.inbox_until=0)
              ''' + skip_sent + ' ORDER BY c.gmv_window DESC,c.content_gmv_key DESC,c.gmv_key DESC,c.creator_id', arguments)
@@ -652,6 +658,12 @@ def candidate(root, market, store, plan, initial):
             if not name:
                 continue
             with store.tx():
+                current_head = _head(store, plan)
+                if not current_head or current_head['id'] != head['id'] or \
+                        current_head['catalog_fingerprint'] != _catalog_fingerprint(store, plan):
+                    raise CycleError('first_outreach_prepare_required')
+                if not _relation_eligible(store, plan, profile):
+                    continue
                 store.db.execute('INSERT OR IGNORE INTO relationship(plan_id,creator_id,oec) VALUES(?,?,?)', (plan, profile['creatorId'], profile['oecId']))
             relation = store.db.execute('SELECT * FROM relationship WHERE plan_id=? AND creator_id=?', (plan, profile['creatorId'])).fetchone()
             value = {'creatorId': profile['creatorId'], 'oecId': profile['oecId'], 'handle': profile['handle'], 'pid': offer['pid'],
