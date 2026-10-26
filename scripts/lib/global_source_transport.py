@@ -244,6 +244,12 @@ def _opportunity_transport(report,*,market='it',stopped=lambda:False,extra_read_
     class Scoped(CommerceTransport):
         WRITE_ENDPOINTS=frozenset({(CREATE,'POST')}) if creation_scope is not None else frozenset({(DELETE,'POST')}) if deletion_scope is not None else frozenset({(CAMPAIGN_JOIN,'POST')}) if campaign_scope is not None else frozenset({(SELECT,'POST')}) if selection_scope is not None else frozenset()
         READ_ENDPOINTS=frozenset({(LIST,'POST'),(DETAIL,'GET'),(CATEGORY,'POST'),(SELECTED,'POST')})|frozenset(extra_read_endpoints)
+        def __init__(self,*args,**kwargs):
+            super().__init__(*args,**kwargs)
+            if market=='br':self.session.trust_env=True
+        def copy_session_from(self,source):
+            super().copy_session_from(source)
+            if market=='br':self.session.trust_env=source.session.trust_env
         def fork_lane(self,pace):
             # Read-only tasks may fork lanes too; writes stay blocked because WRITE_ENDPOINTS
             # is empty and Scoped._xhr rejects any write when no scope was declared.

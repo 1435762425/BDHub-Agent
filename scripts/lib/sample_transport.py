@@ -680,6 +680,7 @@ def _account_sample_session(root, market, account_name, report, *, contract=None
     try:
         check()
         transport = Scoped(identity, account, allow_write=frozen is not None)
+        transport.session.trust_env = True
         report.update(binding=binding, platformWriteAttempts=0, platformWrites=0)
         adapter = SampleAdapter(transport, report, contract=contract, frozen=frozen, stopped=stopped, probe_binding=binding if contract is None else None)
         adapter.binding = binding
