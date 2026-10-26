@@ -14,7 +14,8 @@ import sqlite3
 import uuid
 
 from lib.second_cycle import CycleError, CycleStore, digest, encoded, epoch
-from lib.outreach_policy import MARKETING_COOLDOWN_SECONDS, last_contact_by_creator, marketing_isolated
+from lib.outreach_policy import (MARKETING_COOLDOWN_SECONDS, last_contact_by_creator,
+                                 marketing_isolated, recipient_limited_creators)
 
 MODE = 'market-first-v1'
 PAGE_SIZE = 500
@@ -617,6 +618,8 @@ def candidate(root, market, store, plan, initial):
     from lib.catalog_binding import offer_fingerprint
     from lib.cycle_delivery import capacity_for_candidate
     conversations = {str(row['oecId']): row for row in initial.get('conversations', [])}
+    recipient_limited = recipient_limited_creators(store.db, plan, conversation_ids={
+        oec: row['conversationId'] for oec, row in conversations.items()})
     with closing(sqlite3.connect(path.resolve().as_uri() + '?mode=ro', uri=True)) as links, closing(_identity_connection(root)) as identities:
         links.row_factory = sqlite3.Row
         # Stream the ranked index: earlier sent/cooling creators must not starve
@@ -633,6 +636,8 @@ def candidate(root, market, store, plan, initial):
              WHERE c.generation_id=? AND (r.creator_id IS NULL OR r.mode='auto' AND r.rejected=0 AND r.inbox_until=0)
              ''' + skip_sent + ' ORDER BY c.gmv_window DESC,c.content_gmv_key DESC,c.gmv_key DESC,c.creator_id', arguments)
         for row in rows:
+            if row['creator_id'] in recipient_limited:
+                continue
             offer = offers.get(row['offer_key'])
             if not offer or not assess_first_offer(offer, store.clock())['eligible']:
                 continue

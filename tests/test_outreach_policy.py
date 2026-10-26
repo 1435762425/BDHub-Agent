@@ -1,5 +1,6 @@
 """Creator-level 72-hour policy across the pool, candidate and dispatch contracts."""
 import json
+import sqlite3
 import sys
 import tempfile
 import unittest
@@ -10,7 +11,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts'))
 from lib.cycle_delivery import Deliveries
 from lib.cycle_inbox import Inbox
 from lib.cycle_review import choose_candidates
-from lib.outreach_policy import MARKETING_COOLDOWN_SECONDS, last_contact_by_creator
+from lib.outreach_policy import (MARKETING_COOLDOWN_SECONDS, last_contact_by_creator,
+                                 recipient_limited_creators)
 from lib.second_cycle import CycleError, CycleStore, digest
 from test_second_cycle import NOW, edge, offer
 
@@ -105,6 +107,60 @@ class OutreachPolicyTests(unittest.TestCase):
         self.outbound(plan=other)
         self.assertEqual(last_contact_by_creator(self.store.db, self.plan), {})
         self.assertEqual(last_contact_by_creator(self.store.db, other), {'c1': NOW})
+
+
+class RecipientMessageSpaceTests(unittest.TestCase):
+    def setUp(self):
+        self.db = sqlite3.connect(':memory:')
+        # No unique key here: replayed metadata must not consume space twice.
+        self.db.executescript('''CREATE TABLE relationship(plan_id,creator_id,oec,unlocked);
+            CREATE TABLE inbox_event(plan_id,cid,message_id,oec,kind);
+            INSERT INTO relationship VALUES('p','c','oec',0);''')
+
+    def tearDown(self):
+        self.db.close()
+
+    def messages(self, ids, *, plan='p', cid='88', oec='oec', kind='ourMessages'):
+        self.db.executemany('INSERT INTO inbox_event VALUES(?,?,?,?,?)',
+                            [(plan, cid, mid, oec, kind) for mid in ids])
+
+    def limited(self, **kwargs):
+        changes = self.db.total_changes
+        value = recipient_limited_creators(self.db, 'p', **kwargs)
+        self.assertEqual(self.db.total_changes, changes)
+        return value
+
+    def test_partial_history_four_exact_ids_blocks_pair_and_unlock_removes_filter(self):
+        self.messages(['1', '2', '3'])
+        self.assertEqual(self.limited(), set())
+        self.messages(['4'])
+        self.assertEqual(self.limited(), {'c'})
+        self.db.execute('UPDATE relationship SET unlocked=1')
+        self.assertEqual(self.limited(), set())
+
+    def test_replays_missing_and_nonexact_ids_do_not_inflate_message_space(self):
+        self.messages(['1', '1', '2', '3', None, '', ' ', 'unknown', '0'])
+        self.assertEqual(self.limited(), set())
+        self.messages(['4'], kind='otherOrUnknown')
+        self.messages(['5'], kind='creatorReplies')
+        self.assertEqual(self.limited(), set())
+
+    def test_never_combines_cids_plans_or_oecs_and_prefers_current_cid(self):
+        self.messages(['1', '2'])
+        self.messages(['3', '4'], cid='99')
+        self.messages(['5', '6', '7', '8'], plan='other')
+        self.messages(['5', '6', '7', '8'], oec='other')
+        self.assertEqual(self.limited(), set())
+        self.messages(['3', '4'])
+        # Two local CIDs remain ambiguous until the current conversation is known.
+        self.assertEqual(self.limited(), set())
+        self.assertEqual(self.limited(conversation_ids={'oec': '88'}), {'c'})
+        self.assertEqual(self.limited(conversation_ids={'oec': '99'}), set())
+        self.assertEqual(self.limited(conversation_ids={'oec': '100'}), set())
+
+    def test_absent_inbox_ledger_does_not_invent_a_message_count(self):
+        self.db.execute('DROP TABLE inbox_event')
+        self.assertEqual(self.limited(), set())
 
 
 if __name__ == '__main__':

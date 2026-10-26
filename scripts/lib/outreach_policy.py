@@ -4,6 +4,42 @@ import json
 MARKETING_COOLDOWN_SECONDS = 72 * 60 * 60
 
 
+def recipient_limited_creators(db, plan_id, *, conversation_ids=None):
+    """Known insufficient space for a new card/text pair, before freezing intent.
+
+    Four exact institution message IDs in one still-locked conversation already
+    prove the pair cannot fit the five-message allowance. Partial history is a
+    sufficient lower bound; missing IDs and other senders are not evidence.
+    Live dispatch still performs its full history/allowance check. This reads
+    existing evidence only, and unlocking a relationship removes this filter.
+
+    When the current conversation is known, count only that CID. Otherwise use
+    local evidence only if its CID is unambiguous; never combine conversations.
+    """
+    if not db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='inbox_event'").fetchone():
+        return set()
+    by_creator = {}
+    rows = db.execute("""SELECT r.creator_id,r.oec,e.cid,count(DISTINCT e.message_id)
+        FROM relationship r JOIN inbox_event e ON e.plan_id=r.plan_id AND e.oec=r.oec
+        WHERE r.plan_id=? AND r.unlocked=0 AND e.kind='ourMessages'
+          AND e.cid IS NOT NULL AND length(trim(e.cid))>0
+          AND e.message_id IS NOT NULL AND length(trim(e.message_id))>0
+          AND e.message_id NOT GLOB '*[^0-9]*' AND ltrim(e.message_id,'0')<>''
+        GROUP BY r.creator_id,r.oec,e.cid""", (plan_id,))
+    for creator, oec, cid, count in rows:
+        by_creator.setdefault(creator, []).append((oec, cid, count))
+    limited = set()
+    for creator, conversations in by_creator.items():
+        current = (conversation_ids or {}).get(str(conversations[0][0]))
+        if current is not None:
+            conversations = [row for row in conversations if str(row[1]) == str(current)]
+        elif len(conversations) != 1:
+            continue
+        if any(row[2] >= 4 for row in conversations):
+            limited.add(creator)
+    return limited
+
+
 def last_contact_by_creator(db, plan_id=None, *, creator_id=None, current_delivery_id=None):
     """Read local delivery and observed institution outbounds without creating state.
 

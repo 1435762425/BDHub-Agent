@@ -111,6 +111,29 @@ class FirstOutreachTests(unittest.TestCase):
     def get_candidate(self):
         return first.candidate(self.root, 'br', self.s, self.plan, {'conversations': []})
 
+    def test_known_recipient_message_space_skips_top_creator_before_freezing(self):
+        from lib.cycle_inbox import Inbox
+        person = self.profile('234', gmv='1000')
+        self.prepare()
+        self.start()
+        self.s.db.execute('INSERT INTO relationship(plan_id,creator_id,oec) VALUES(?,?,?)',
+                          (self.plan, person['creatorId'], '234'))
+        inbox = Inbox(self.s)
+        def ingest(ids):
+            inbox.ingest(self.plan, '88', '234', {'identityVerified': True, 'hasMore': False,
+                'events': [{'conversationId': '88', 'oecId': '234', 'kind': 'ourMessages',
+                            'messageId': mid, 'createTimeRaw': int((self.now - 259201) * 1000)}
+                           for mid in ids]})
+        ingest(['1', '2', '3'])
+        self.assertEqual(self.get_candidate()['oecId'], '234')
+        ingest(['1', '2', '3', '4'])
+        before = self.s.db.execute('SELECT count(*) FROM cycle_delivery').fetchone()[0]
+        self.assertEqual(self.get_candidate()['oecId'], '123')
+        self.assertEqual(self.s.db.execute('SELECT count(*) FROM cycle_delivery').fetchone()[0], before)
+        self.s.db.execute('UPDATE relationship SET unlocked=1 WHERE plan_id=? AND oec=?',
+                          (self.plan, '234'))
+        self.assertEqual(self.get_candidate()['oecId'], '234')
+
     def make_delivery(self):
         self.prepare()
         self.start()
