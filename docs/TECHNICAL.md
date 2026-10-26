@@ -179,7 +179,7 @@ worker 在等待窗口、池或容量时常驻退避；同账号在途写串行�
 
 `sample_operations.py` 与 `sample_transport.py` 在原库保存申请、能力证据、审批意图和核验记录；审批控制读取同一 `first_outreach_control.approvals_enabled`。实时精确 Campaign/PID 复核样品额度，提交前原子预留并复核当前授权与申请。请求只使用已核实的平台 creator_id，绝不以 OEC 替代。巴西全状态读取使用独立的 `bdhub.br-sample-read-contract.v1`，绑定当前 acc2 身份/机构与真实分页证明，记录平台命名状态汇总；这份只读合同不能用于审批写入。`bdhub.br-sample-canary-contract.v1` 另绑定真实 BR 待审页面和已文档化请求候选，只认已核实的 `10 → pending`，不含审批成功或生命周期已验收证明；复用同一审批意图，同账号机构最多一条尚未结清的首条审批，未知业务码保留 unknown；凭精确原申请的正向阶段结清业务但回执丢失时，仍保持未验收能力，下一合格新申请继续单条验证。`sample_cost_policy.py` 读取私有用户政策 `private-data/business-policy/br-sample-cost.json`；平台付款事实缺失保持 null，用户已确认商家承担时冻结政策，并在提交前和实际请求入口复核；明确机构付款始终阻止。完整审批合同只能在原回执及同申请真实生命周期回读确认后晋升。已受理仍需申请生命周期回读，unknown 保留原账号/请求，商家待确认不算平台批准。实际巴西验证边界见[交付说明](implementation/br-first-outreach-20261023.md)。
 
-BR 新一发和新二发快照冻结 `imUseEnvironmentProxy=false`，使用与本项目货盘读取相同的直连模式；该选择来自同 acc1、同 IM 身份的只读对照（环境代理读取失败、直连成功），真实写入另由首条验证。原投递核验沿冻结设置，旧快照缺省仍使用原代理模式；其他市场和 AI 默认连接方式不变。同一 BR plan 的一发、二发共享串行执行锁与原投递核验预算，任一执行器可只读收口另一用途的原未知，不依赖原 worker 仍存活；新发送始终检查各用途原授权，暂停后只允许原操作核验。
+BR 新一发和新二发沿用现有环境代理，快照冻结实际使用的 `imUseEnvironmentProxy=true`；不再按市场硬编码直连，因为网络出口变化后直连可能无法解析 IM 域名。原投递核验沿冻结设置，旧快照缺省仍使用原代理模式；其他市场和 AI 默认连接方式不变。同一 BR plan 的一发、二发共享串行执行锁与原投递核验预算，任一执行器可只读收口另一用途的原未知，不依赖原 worker 仍存活；新发送始终检查各用途原授权，暂停后只允许原操作核验。
 
 持续模式复用 `first_outreach_job` 排程自动供给，常规每 6 小时刷新货盘和匹配，候选耗尽至少间隔 30 分钟再重查整货盘。刷新每片最多 5 请求、类目每片 1 批、匹配每片 4 页；短名和卡沿原材料台账，卡创建每片最多 1 次。`catalog-link-prepare.py --first-request --first-revision` 逐次写前核对原持续推送收据，原 workflow 正在供给时让路，未知卡只验证原意图。自动 job 不修改控制修订；失败在同 request/stage 持久退避。样品同步与发送分别保存状态和下次检查时间，页面 `automation.supply/samples` 显示各自进度，单个读取故障不覆盖整个发送状态。
 

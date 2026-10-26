@@ -41,17 +41,17 @@ def capture_connection():
 
 
 class FirstImTransportTests(unittest.TestCase):
-    def test_first_uses_direct_connection_and_freezes_it_with_the_original_sender(self):
+    def test_first_uses_environment_proxy_and_freezes_it_with_the_original_sender(self):
         with fixture(first_tests.FirstDeliveryRuntimeTests) as case:
             case.prepare(); case.start()
             with case.runtime(), capture_connection() as calls:
-                result = market_send_canary.run(case.root, 'br', 'first-direct-transport',
+                result = market_send_canary.run(case.root, 'br', 'first-proxy-transport',
                                                canary=False, page_control=True, purpose='first')
             self.assertEqual(result['state'], 'confirmed')
-            self.assertIs(calls[0]['use_environment_proxy'], False)
+            self.assertIs(calls[0]['use_environment_proxy'], True)
             snapshot = json.loads(case.s.db.execute('SELECT snapshot FROM cycle_delivery WHERE id=?',
                                                    (result['deliveryId'],)).fetchone()[0])
-            self.assertIs(snapshot['imUseEnvironmentProxy'], False)
+            self.assertIs(snapshot['imUseEnvironmentProxy'], True)
             self.assertEqual((snapshot['senderAccount'], snapshot['senderImId']), ('acc1', '777'))
 
     def test_other_market_second_sender_keeps_environment_proxy_and_no_new_frozen_override(self):
@@ -63,8 +63,8 @@ class FirstImTransportTests(unittest.TestCase):
             snapshot = case.deliveries.get(result['deliveryId'])['snapshot']
             self.assertNotIn('imUseEnvironmentProxy', snapshot)
 
-    def test_new_br_second_freezes_direct_but_legacy_ready_second_keeps_environment_proxy(self):
-        for existing, expected in ((False, False), (True, True)):
+    def test_new_and_legacy_br_second_use_environment_proxy(self):
+        for existing, expected in ((False, True), (True, True)):
             with self.subTest(existing=existing), fixture(first_tests.FirstDeliveryRuntimeTests) as case:
                 case.prepare(); case.start()
                 candidate = case.get_candidate()
@@ -91,7 +91,7 @@ class FirstImTransportTests(unittest.TestCase):
                     self.assertEqual(snapshot, original['snapshot'])
                     self.assertNotIn('imUseEnvironmentProxy', snapshot)
                 else:
-                    self.assertIs(snapshot['imUseEnvironmentProxy'], False)
+                    self.assertIs(snapshot['imUseEnvironmentProxy'], True)
 
     def test_existing_first_delivery_keeps_its_frozen_connection_or_legacy_default(self):
         for frozen, expected in (({'imUseEnvironmentProxy': False}, False), ({}, True)):
