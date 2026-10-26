@@ -18,6 +18,7 @@
 | 自主运行模式、读取成本与经营工作台 | [第二轮改进与验收](implementation/autonomous-design-20261024.md)、[后续架构候选](architecture/autonomous-runtime-evolution-20261024.md)；前一批见[运行恢复与页面精简](implementation/project-optimization-20261024.md) |
 | BR 回复输入冲突、达人详情 503 与候选统计口径 | [运行修复、上线核验及备份压缩映射](handoff/runtime-health-20261025.md) |
 | 分市场经营日报、累计指标和 Codex 定时通报 | [每日经营日报](implementation/business-daily-mail.md) |
+| 每日发送量下降、Kalodata 供给与巴西发送恢复 | [发送量排查与恢复](handoff/send-volume-20261026.md) |
 | 审计修复与发布验证 | [审计修复](implementation/audit-fixes-20261003.md)：首发授权、证据归属、市场隔离、总览时效和备份恢复 |
 | 下一步改进、缺陷与验收指标 | [各模块优化方案](implementation/module-optimization-plan-20260925.md)（已审查，主体业务已逐项确认，§10 汇总实施边界）、[项目审计与清理](implementation/project-audit-20260924.md) |
 | 调度/B 类连续性与 Agent 执行修复 | [验证、加载与剩余范围](implementation/continuity-agent-runtime-20260925.md) |
