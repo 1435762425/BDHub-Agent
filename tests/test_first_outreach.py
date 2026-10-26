@@ -452,6 +452,56 @@ class FirstOutreachTests(unittest.TestCase):
         self.assertEqual(self.start('continue')['mode'], 'continuous')
         self.assertIsNone(self.get_candidate())
 
+    def test_cancelled_first_source_does_not_pin_top_creator_or_change_original_intent(self):
+        self.profile('234', gmv='1000')
+        self.prepare()
+        self.start()
+        top = self.get_candidate()
+        self.assertEqual(top['oecId'], '234')
+        delivery = self.d.prepare(self.plan, top)
+        self.d.cancel_unsubmitted(delivery['id'], 'history_incomplete')
+        original = self.d.get(delivery['id'])
+        checks = [tuple(row) for row in self.s.db.execute('SELECT * FROM cycle_delivery_check WHERE delivery_id=?',
+                                                         (delivery['id'],))]
+        for _ in range(3):
+            next_candidate = self.get_candidate()
+            self.assertEqual(next_candidate['oecId'], '123')
+        next_delivery = self.d.prepare(self.plan, next_candidate)
+        self.assertNotEqual(next_delivery['id'], delivery['id'])
+        self.assertEqual(next_delivery['state'], 'ready')
+        self.assertEqual(self.d.get(delivery['id']), original)
+        self.assertEqual([tuple(row) for row in self.s.db.execute('SELECT * FROM cycle_delivery_check WHERE delivery_id=?',
+                                                                (delivery['id'],))], checks)
+        self.assertEqual(self.s.db.execute('SELECT count(*) FROM cycle_delivery').fetchone()[0], 2)
+
+    def test_cancelled_source_is_reconsidered_only_under_a_new_published_generation(self):
+        delivery, candidate = self.make_delivery()
+        self.d.cancel_unsubmitted(delivery['id'], 'history_incomplete')
+        original = self.d.get(delivery['id'])
+        self.assertIsNone(self.get_candidate())
+        self.prepare()
+        replacement = self.get_candidate()
+        self.assertEqual(replacement['creatorId'], candidate['creatorId'])
+        self.assertNotEqual(replacement['source']['generationId'], candidate['source']['generationId'])
+        self.assertNotEqual(replacement['source']['sourceId'], candidate['source']['sourceId'])
+        self.assertEqual(self.d.get(delivery['id']), original)
+        self.assertEqual(self.s.db.execute('SELECT count(*) FROM cycle_delivery').fetchone()[0], 1)
+
+    def test_new_generation_does_not_bypass_original_unknown_or_technical_isolation(self):
+        delivery, candidate = self.make_delivery()
+        self.d.begin(delivery['id'], 'card', authorized_snapshot_hash=digest(candidate),
+                     recipient_verified=True, allowance_verified=True)
+        self.d.unknown(delivery['id'], 'card')
+        for isolated in (False, True):
+            with self.subTest(isolated=isolated):
+                if isolated:
+                    self.d.isolate_technical(delivery['id'], 'card', 'verification_budget_exhausted')
+                original = self.d.get(delivery['id'])
+                self.prepare()
+                self.assertIsNone(self.get_candidate())
+                self.assertEqual(self.d.get(delivery['id']), original)
+                self.assertEqual(self.s.db.execute('SELECT count(*) FROM cycle_delivery').fetchone()[0], 1)
+
     def test_unknown_is_not_confirmed_or_resent_and_does_not_allow_continue(self):
         delivery, c = self.make_delivery()
         self.d.begin(delivery['id'], 'card', authorized_snapshot_hash=digest(c), recipient_verified=True, allowance_verified=True)

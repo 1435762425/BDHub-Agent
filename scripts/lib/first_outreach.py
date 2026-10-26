@@ -651,6 +651,12 @@ def candidate(root, market, store, plan, initial):
             category = main_category(profile['payload']) if profile else None
             if not profile or not category or category['id'] != offer['categoryId'] or not _relation_eligible(store, plan, profile):
                 continue
+            source_id = 'first-' + digest([head['id'], profile['creatorId'], offer['offerKey']])[:32]
+            # Preparing is idempotent even for a closed intent. Do not select
+            # the same generation/source again and pin the loop to its result.
+            if store.db.execute('SELECT 1 FROM cycle_delivery WHERE plan_id=? AND creator_id=? AND pid=? AND source_id=?',
+                                (plan, profile['creatorId'], offer['pid'], source_id)).fetchone():
+                continue
             binding = links.execute("SELECT * FROM catalog_current_binding WHERE market=? AND catalog_source=? AND pid=? AND campaign_id=? AND state='active'", (market, offer.get('catalogSource'), offer['pid'], offer['campaignId'])).fetchone()
             if not binding or binding['offer_fingerprint'] != offer_fingerprint(offer):
                 continue
@@ -667,7 +673,7 @@ def candidate(root, market, store, plan, initial):
                 store.db.execute('INSERT OR IGNORE INTO relationship(plan_id,creator_id,oec) VALUES(?,?,?)', (plan, profile['creatorId'], profile['oecId']))
             relation = store.db.execute('SELECT * FROM relationship WHERE plan_id=? AND creator_id=?', (plan, profile['creatorId'])).fetchone()
             value = {'creatorId': profile['creatorId'], 'oecId': profile['oecId'], 'handle': profile['handle'], 'pid': offer['pid'],
-                     'source': {'sourceId': 'first-' + digest([head['id'], profile['creatorId'], offer['offerKey']])[:32],
+                     'source': {'sourceId': source_id,
                                 'kind': 'first_category', 'categoryId': category['id'], 'profileEvidenceRef': profile['evidenceRef'],
                                 'profileFingerprint': profile['fingerprint'], 'generationId': head['id']},
                      'offer': offer, 'offerFingerprint': digest(offer), 'name': name, 'card': json.loads(binding['card_payload']),
