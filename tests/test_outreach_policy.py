@@ -158,6 +158,29 @@ class RecipientMessageSpaceTests(unittest.TestCase):
         self.assertEqual(self.limited(conversation_ids={'oec': '99'}), set())
         self.assertEqual(self.limited(conversation_ids={'oec': '100'}), set())
 
+    def test_reply_or_unknown_only_conversation_disproves_unique_outbound_cid(self):
+        self.messages(['1', '2', '3', '4'])
+        self.messages(['5'], kind='creatorReplies')
+        self.assertEqual(self.limited(), {'c'})
+        for kind in ('creatorReplies', 'otherOrUnknown'):
+            with self.subTest(kind=kind):
+                self.messages(['6'], cid='99', kind=kind)
+                self.assertEqual(self.limited(), set())
+                self.assertEqual(self.limited(conversation_ids={'oec': '88'}), {'c'})
+                self.assertEqual(self.limited(conversation_ids={'oec': '99'}), set())
+                self.db.execute("DELETE FROM inbox_event WHERE cid='99'")
+
+    def test_empty_checkpoint_disproves_uniqueness_without_crossing_plan_or_oec(self):
+        self.messages(['1', '2', '3', '4'])
+        self.db.execute('CREATE TABLE inbox_checkpoint(plan_id,cid,oec)')
+        self.db.executemany('INSERT INTO inbox_checkpoint VALUES(?,?,?)',
+                            [('p', '88', 'oec'), ('other', '99', 'oec'), ('p', '99', 'other')])
+        self.assertEqual(self.limited(), {'c'})
+        self.db.execute("INSERT INTO inbox_checkpoint VALUES('p','99','oec')")
+        self.assertEqual(self.limited(), set())
+        self.assertEqual(self.limited(conversation_ids={'oec': '88'}), {'c'})
+        self.assertEqual(self.limited(conversation_ids={'oec': '99'}), set())
+
     def test_absent_inbox_ledger_does_not_invent_a_message_count(self):
         self.db.execute('DROP TABLE inbox_event')
         self.assertEqual(self.limited(), set())

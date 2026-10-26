@@ -16,20 +16,29 @@ def recipient_limited_creators(db, plan_id, *, conversation_ids=None):
     When the current conversation is known, count only that CID. Otherwise use
     local evidence only if its CID is unambiguous; never combine conversations.
     """
-    if not db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='inbox_event'").fetchone():
+    tables = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    if 'inbox_event' not in tables:
         return set()
     by_creator = {}
-    rows = db.execute("""SELECT r.creator_id,r.oec,e.cid,count(DISTINCT e.message_id)
+    rows = db.execute("""SELECT r.creator_id,r.oec,e.cid,count(DISTINCT CASE
+          WHEN e.kind='ourMessages' AND e.message_id IS NOT NULL AND length(trim(e.message_id))>0
+            AND e.message_id NOT GLOB '*[^0-9]*' AND ltrim(e.message_id,'0')<>''
+          THEN e.message_id END)
         FROM relationship r JOIN inbox_event e ON e.plan_id=r.plan_id AND e.oec=r.oec
-        WHERE r.plan_id=? AND r.unlocked=0 AND e.kind='ourMessages'
+        WHERE r.plan_id=? AND r.unlocked=0
           AND e.cid IS NOT NULL AND length(trim(e.cid))>0
-          AND e.message_id IS NOT NULL AND length(trim(e.message_id))>0
-          AND e.message_id NOT GLOB '*[^0-9]*' AND ltrim(e.message_id,'0')<>''
         GROUP BY r.creator_id,r.oec,e.cid""", (plan_id,))
     for creator, oec, cid, count in rows:
-        by_creator.setdefault(creator, []).append((oec, cid, count))
+        by_creator.setdefault(creator, {})[(oec, cid)] = count
+    if 'inbox_checkpoint' in tables:
+        # An empty tracked conversation still disproves a unique local CID.
+        for creator, oec, cid in db.execute("""SELECT r.creator_id,r.oec,c.cid
+            FROM relationship r JOIN inbox_checkpoint c ON c.plan_id=r.plan_id AND c.oec=r.oec
+            WHERE r.plan_id=? AND r.unlocked=0 AND c.cid IS NOT NULL AND length(trim(c.cid))>0""", (plan_id,)):
+            by_creator.setdefault(creator, {}).setdefault((oec, cid), 0)
     limited = set()
-    for creator, conversations in by_creator.items():
+    for creator, counts in by_creator.items():
+        conversations = [(oec, cid, count) for (oec, cid), count in counts.items()]
         current = (conversation_ids or {}).get(str(conversations[0][0]))
         if current is not None:
             conversations = [row for row in conversations if str(row[1]) == str(current)]
