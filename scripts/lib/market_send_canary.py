@@ -181,9 +181,12 @@ def _settle_create_refusal(store,did,error):
 
 def _candidate(root,market,store,plan,initial,require_new_conversation=True):
  from lib.outreach_allocation import select
+ from lib.outreach_policy import recipient_limited_creators
  from lib.cycle_delivery import capacity_for_candidate,collaboration_blocked
  state=pool(root,market=market,now=store.clock(),limit=None,cache_eligible_seconds=30)
  conversations={row['oecId']:row for row in initial.get('conversations',[])}
+ recipient_limited=recipient_limited_creators(store.db,plan,conversation_ids={
+   str(oec):row['conversationId'] for oec,row in conversations.items()})
  offers_by_pid={}
  for _,offer in store._offers(plan):offers_by_pid.setdefault(str(offer['pid']),[]).append(offer)
  with closing(sqlite3.connect((Path(root)/'var/creator-identities.sqlite').resolve().as_uri()+'?mode=ro',uri=True)) as identities,closing(sqlite3.connect((Path(root)/'var/catalog-links.sqlite').resolve().as_uri()+'?mode=ro',uri=True)) as links:
@@ -191,6 +194,7 @@ def _candidate(root,market,store,plan,initial,require_new_conversation=True):
   capacity_blocked=False
   def build(slot):
    nonlocal capacity_blocked
+   if slot['creatorId'] in recipient_limited:return None
    relation=store.db.execute('SELECT * FROM relationship WHERE plan_id=? AND creator_id=?',(plan,slot['creatorId'])).fetchone()
    if not relation or require_new_conversation and relation['oec'] in conversations:return None
    if collaboration_blocked(store,plan,slot['creatorId']):return None
