@@ -759,8 +759,10 @@ def process_job(root, job, *, stopped=lambda: False):
                 _publish(root, waiting if waiting != 'attention' else 'syncing' if job['action'] == 'sync' else 'preparing', result['reason'], job['request_id'])
             elif automatic and result.get('reason') and result['reason'] not in {
                     'first_catalog_read_budget', 'first_category_read_budget', 'first_names_read_budget'}:
-                delay = min(3600, 30 * 2 ** min(job.get('failures', 0), 7))
-                _job_update(root, job, state='running', error=result['reason'], delay=delay, failure=True)
+                resource_wait = _wait_state(result['reason']) == 'waiting_account'
+                delay = 5 if resource_wait else min(3600, 30 * 2 ** min(job.get('failures', 0), 7))
+                _job_update(root, job, state='running', error=result['reason'], delay=delay,
+                            failure=None if resource_wait else True)
             elif automatic:
                 # A successful bounded slice has recovered the earlier read
                 # failure even when the whole stage still has more pages.

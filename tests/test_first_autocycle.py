@@ -156,6 +156,34 @@ class FirstAutocycleTests(unittest.TestCase):
         self.assertLessEqual(current['next_attempt'], time.time())
         self.assertEqual(runtime._cfg(self.root), original)
 
+    def test_paused_supply_reason_preserves_resource_budget_but_not_real_failure_backoff(self):
+        original = runtime._queue_supply(self.root)
+        control = runtime._cfg(self.root)
+        for reason, failures, delay in (('account_busy', 6, 5), ('workflow_resource_busy', 6, 5),
+                                        ('first_catalog_refresh_failed', 7, 1920),
+                                        ('first_catalog_read_budget', 0, 0),
+                                        ('first_category_read_budget', 0, 0),
+                                        ('first_names_read_budget', 0, 0)):
+            with self.subTest(reason=reason):
+                with CycleStore(self.path) as store:
+                    store.db.execute('UPDATE first_outreach_job SET failures=6,next_attempt=0')
+                before = time.time()
+                paused = {'state': 'paused', 'reason': reason}
+                with patch.object(runtime, '_send_unknown', return_value=0), \
+                     patch.object(runtime, '_send', return_value={'state': 'continuous'}), \
+                     patch.object(runtime, '_refresh', return_value=paused) as refresh:
+                    result = runtime.worker_tick(self.root)
+                job = self.record()
+                self.assertEqual(result['supply'], paused)
+                self.assertEqual((job['request_id'], job['stage'], job['state'], job['failures']),
+                                 (original['request_id'], original['stage'], 'running', failures))
+                self.assertEqual(job['payload'], original['payload'])
+                self.assertGreaterEqual(job['next_attempt'], before + delay)
+                self.assertLessEqual(job['next_attempt'], time.time() + delay)
+                self.assertEqual(job['error'], reason if failures else None)
+                self.assertEqual(runtime._cfg(self.root), control)
+                refresh.assert_called_once()
+
     def test_bounded_prepare_resumes_exact_stage_and_leaves_time_for_samples(self):
         self.fresh_supply()
         job = runtime._queue_supply(self.root, 'first_outreach_prepare_required')
