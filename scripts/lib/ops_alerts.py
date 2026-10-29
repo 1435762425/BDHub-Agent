@@ -58,7 +58,20 @@ def _selection_isolated(root, market, now):
         return None
 
 
-def _market_facts(root, store, market, accounts):
+def _delivery_counts(store):
+    """Read every plan's unsettled history once, without the plan/OEC random row lookups."""
+    if not _has(store.db, "cycle_delivery"):
+        return {}
+    counts = {}
+    for plan, state, count, oldest in store.db.execute(
+        "SELECT plan_id,state,count(*),min(created) FROM cycle_delivery NOT INDEXED "
+        "WHERE state IN ('unknown','quarantined_unknown') GROUP BY plan_id,state"
+    ):
+        counts.setdefault(plan, {})[state] = {"count": count, "oldestAt": _stamp(oldest)}
+    return counts
+
+
+def _market_facts(root, store, market, accounts, delivery_counts):
     from lib.operations_console import _human_queue
     from lib.agent_reply_v2 import rollout_stage
     from lib.conversation_workbench import unread_backlog
@@ -79,9 +92,7 @@ def _market_facts(root, store, market, accounts):
                "at": _stamp(stage["finished_at"]) or _stamp(stage["started_at"])}
               for stage in db.execute("SELECT stage,state,error_code,started_at,finished_at FROM workflow_stage_run "
                                       "WHERE run_id=? ORDER BY position", (latest_run[0],))] if latest_run else []
-    deliveries = {state: {"count": count, "oldestAt": _stamp(oldest)} for state, count, oldest in db.execute(
-        "SELECT state,count(*),min(created) FROM cycle_delivery WHERE plan_id=? "
-        "AND state IN ('unknown','quarantined_unknown') GROUP BY state", (plan,))} if _has(db, "cycle_delivery") else {}
+    deliveries = delivery_counts.get(plan, {})
     cases = db.execute("SELECT count(*),min(created) FROM service_case WHERE plan_id=? AND state='open'", (plan,)).fetchone() \
         if _has(db, "service_case") else (0, None)
     day = datetime.fromtimestamp(store.clock(), BEIJING).replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
@@ -209,9 +220,16 @@ def gather(root, store):
         accounts = account_status(store, root)
     except Exception as error:  # noqa: BLE001 - one unreadable ledger must not hide the other alerts
         accounts, facts["accountError"] = {"accounts": [], "queue": []}, _reason(error)
+    delivery_error = None
+    try:
+        deliveries = _delivery_counts(store)
+    except Exception as error:  # noqa: BLE001 - unreadable counts must not become zero
+        delivery_error = _reason(error)
     for market in operational_market_keys(root):
         try:
-            entry = _market_facts(root, store, market, accounts)
+            if delivery_error is not None:
+                raise ValueError(delivery_error)
+            entry = _market_facts(root, store, market, accounts, deliveries)
         except Exception as error:  # noqa: BLE001
             entry = {"market": market, "error": _reason(error)}
         facts["markets"].append(entry)

@@ -295,7 +295,7 @@ IT 使用无后缀文件名，其他市场加 `-{market}` 后缀。`state-backup
 
 Web 展示层按操作优先组织：`OperationsConsole` 在桌面并列市场表与人工待办，窄屏前置待办并使用市场卡片；健康采样、供给明细与运行记录默认折叠，不新鲜通道保留原因和采样时间。`MarketOverview` 在库存后呈现原控制组件和运行事项，七天明细与统计口径折叠；`ContinuousSendPanel` 将原开始/停止/核验操作与状态集中，设置有未保存更改时自动展开；货盘保留同范围摘要并前置商品查询。告警摘要与分类使用相同计数，暂停提示并存时仍显示其他异常数量；仅全市场数据完整且刷新成功时显示“暂无未回来信”。展示调整不改变 bridge、CLI、授权和 worker。
 
-`ops-alerts.py`（`lib/ops_alerts.py`）为页面顶部告警条汇总异常，只读、不启动或重试任何作业，只读 SQLite。人工告警按会话页同一分类器计“N 位达人在人工队列”（与总控一致）；人工队列读不到时才退回“N 条未关闭人工工单”，不把工单数称作会话数。总控读不到运营策略时，依赖容量的等待原因显示待核实，不代入默认容量。`gather` 读取页面本来就用的台账和状态文件：调度器运行态与停止文件、各市场收信状态文件、最新一轮 workflow 各阶段、`unknown`/`quarantined_unknown` 发送、未结人工 case、账号维护队列与下次维护时间、Agent 设置与首发阶段、当前状态库备份 inventory、`offsite/latest.json`。`evaluate` 把这些事实转成告警，分 critical/warning/info 三级：
+`ops-alerts.py`（`lib/ops_alerts.py`）为页面顶部告警条汇总异常，只读、不启动或重试任何作业，只读 SQLite。人工告警按会话页同一分类器计“N 位达人在人工队列”（与总控一致）；人工队列读不到时才退回“N 条未关闭人工工单”，不把工单数称作会话数。总控读不到运营策略时，依赖容量的等待原因显示待核实，不代入默认容量。`gather` 读取页面本来就用的台账和状态文件：调度器运行态与停止文件、各市场收信状态文件、最新一轮 workflow 各阶段、`unknown`/`quarantined_unknown` 发送、未结人工 case、账号维护队列与下次维护时间、Agent 设置与首发阶段、当前状态库备份 inventory、`offsite/latest.json`。未知与隔离投递按 plan/state 一次只读汇总，各市场读取各自结果，避免逐市场沿 OEC 索引回读历史大行；读取失败仍报告状态待核实。`evaluate` 把这些事实转成告警，分 critical/warning/info 三级：
 - 调度器没有停止请求却不在运行 → critical；有停止请求 → “生产已暂停”提示，暂停直接造成的收信停滞不报，身份维护逾期降为提示。
 - 收信错误码（`live_guard_busy` 与停止请求触发的 `stopped` 除外）且最后成功超过 10 分钟 → 运行中为 critical、暂停时为 warning，详情附带自动刷新的结果；运行中收信超过 15 分钟没有新记录 → critical。
 - 未回来信用会话列表 unread 标记的同一规则（`conversation_workbench.UNREAD_PENDING` 且机构后台未在达人最新消息后回复），最早一条超过 26 小时（错过一个每日回复窗口）才升为 warning。

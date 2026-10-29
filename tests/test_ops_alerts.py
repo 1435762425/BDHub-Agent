@@ -192,6 +192,33 @@ class EvaluateTests(unittest.TestCase):
 
 
 class GatherTests(unittest.TestCase):
+    def test_delivery_counts_match_original_queries_and_preserve_plan_scope(self):
+        import sqlite3
+        from types import SimpleNamespace
+        from lib.ops_alerts import _delivery_counts
+
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "deliveries.sqlite"
+            with sqlite3.connect(path) as db:
+                db.execute("CREATE TABLE cycle_delivery(plan_id TEXT,state TEXT,created REAL)")
+                db.executemany("INSERT INTO cycle_delivery VALUES(?,?,?)", [
+                    ("br", "unknown", NOW - 10), ("br", "unknown", NOW - 20),
+                    ("br", "quarantined_unknown", NOW - 30), ("fr", "unknown", NOW - 40),
+                    ("fr", "confirmed", NOW - 50), ("paused", "quarantined_unknown", NOW - 60),
+                    ("foreign", "unknown", NOW - 70), ("br", "cancelled", NOW - 80),
+                ])
+            with sqlite3.connect(path.as_uri() + "?mode=ro", uri=True) as db:
+                actual = _delivery_counts(SimpleNamespace(db=db))
+                expected = {}
+                for plan in ("br", "fr", "paused", "foreign"):
+                    expected[plan] = {state: {"count": count, "oldestAt": oldest}
+                                      for state, count, oldest in db.execute(
+                        "SELECT state,count(*),min(created) FROM cycle_delivery WHERE plan_id=? "
+                        "AND state IN ('unknown','quarantined_unknown') GROUP BY state", (plan,))}
+                self.assertEqual(actual, expected)
+                self.assertEqual(actual["br"]["unknown"], {"count": 2, "oldestAt": NOW - 20})
+                self.assertEqual(db.total_changes, 0)
+
     def test_empty_install_reads_every_market_without_errors(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -211,6 +238,15 @@ class GatherTests(unittest.TestCase):
             self.assertEqual([entry.get("error") for entry in gathered["markets"]], [None] * len(gathered["markets"]))
             self.assertEqual(levels(evaluate(gathered)), {"offsite-missing": "warning",
                                                         "state-backup-blocked": "warning"})
+            from unittest.mock import patch
+            import sqlite3
+            with CycleStore(path, lambda: NOW, readonly=True) as store, patch(
+                "lib.ops_alerts._delivery_counts", side_effect=sqlite3.DatabaseError("delivery_read_failed")
+            ):
+                failed = gather(root, store)
+            self.assertTrue(all(entry.get("error") == "delivery_read_failed" for entry in failed["markets"]))
+            self.assertTrue(all(entry["market"] + "-read-failed" in levels(evaluate(failed))
+                                for entry in failed["markets"]))
 
     def test_backup_inventory_is_read_only_and_identifies_unregistered_market_ledger(self):
         import json
