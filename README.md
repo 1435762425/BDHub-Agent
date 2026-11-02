@@ -8,6 +8,7 @@
 
 ## 当前入口
 
+- [另一台电脑 / Claude 开发接手](docs/handoff/development-20261102.md)：克隆、环境安装、阅读顺序和生产状态边界。
 - [项目文档](docs/PROJECT.md)：唯一产品真相源，定义目标、范围、业务流程、规则和完成标准。
 - [技术文档](docs/TECHNICAL.md)：唯一技术真相源，定义架构、模块、数据、接口、运行和验证。
 - [当前交接](docs/handoff/current.md)与[最新运行修复核验](docs/handoff/runtime-health-20261025.md)：带时间的 Git 基线、运行状态、已完成能力、阻塞和下一步。
