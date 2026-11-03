@@ -346,6 +346,8 @@ inbox 趋势和日明细使用同一账本，totals 等于每日求和，文字�
 
 ## 5. 账号、配置与 vendor
 
+新电脑的 Kalodata 激活配置、干净登录器/扩展和路径安装见 [Kalodata 配置教程](setup/kalodata.md)。用户授权的激活信息由独立私有交接仓库提供，不进入本公开代码仓库；安装不改变生产持久授权或启动新执行器。
+
 每日经营日报由 `scripts/business-daily.py preview` → `lib/business_daily.py` 只读既有台账生成市场表格及汇总。当前投递由 Codex 对话内每日 09:00 心跳执行，读取生成的 JSON／文字稿并在当前对话完整展示表格；库存标实际读取时间。`conversation_workbench.unread_items` 与原 `unread_backlog` 共用未回口径；业务库始终 `mode=ro`，不初始化 Store、不做平台／模型调用。历史邮件模块 `lib/business_daily_mail.py` 保留，但私有配置 `enabled=false`，邮件 LaunchAgent 已卸载，不调用 `tick` 或操作 Gmail。详见[每日经营日报](implementation/business-daily-mail.md)。
 
 账号分配以 `market-accounts.json` 为准，市场范围、语言、地区、币种和能力以 `markets.json` 与本项目协议配置为准；账号页只读取项目内登记，不继承原始项目状态。双账号市场按通讯/供给分工，单账号市场两个角色指向同一账号并只维护一次，OECID 按 `identityAccountRole` 选实际账号。`account_runtime_setting` 与已发布 generation 决定当前可用性；新增账号登记不等于角色分配、登录或能力验收。

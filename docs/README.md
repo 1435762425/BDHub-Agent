@@ -16,6 +16,7 @@
 | 问题 | 资料 |
 | --- | --- |
 | 另一台电脑的 Claude 继续开发 | [开发接手说明](handoff/development-20261102.md)：代码基线、环境、阅读顺序及未迁移的生产资源 |
+| 新电脑配置 Kalodata 激活码、登录器和扩展 | [Kalodata 配置教程](setup/kalodata.md)：私有交接仓库、路径安装及正式 provider 验收 |
 | 自主运行模式、读取成本与经营工作台 | [第二轮改进与验收](implementation/autonomous-design-20261024.md)、[后续架构候选](architecture/autonomous-runtime-evolution-20261024.md)；前一批见[运行恢复与页面精简](implementation/project-optimization-20261024.md) |
 | BR 回复输入冲突、达人详情 503 与候选统计口径 | [运行修复、上线核验及备份压缩映射](handoff/runtime-health-20261025.md) |
 | 分市场经营日报、累计指标和 Codex 定时通报 | [每日经营日报](implementation/business-daily-mail.md) |

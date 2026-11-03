@@ -9,6 +9,7 @@
 ## 当前入口
 
 - [另一台电脑 / Claude 开发接手](docs/handoff/development-20261102.md)：克隆、环境安装、阅读顺序和生产状态边界。
+- [Kalodata 配置教程](docs/setup/kalodata.md)：私有激活配置、登录器/扩展安装与正式读取验收。
 - [项目文档](docs/PROJECT.md)：唯一产品真相源，定义目标、范围、业务流程、规则和完成标准。
 - [技术文档](docs/TECHNICAL.md)：唯一技术真相源，定义架构、模块、数据、接口、运行和验证。
 - [当前交接](docs/handoff/current.md)与[最新运行修复核验](docs/handoff/runtime-health-20261025.md)：带时间的 Git 基线、运行状态、已完成能力、阻塞和下一步。
@@ -55,12 +56,11 @@ PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m unittest discover -s tests
 
 ## 本地配置与状态
 
-`var/`、`outputs/`、Kalodata 激活码、Campaign 联系邮箱和凭据均不进入 Git。本机敏感配置从样例复制：
+`var/`、`outputs/`、Kalodata 激活码、Campaign 联系邮箱和凭据不进入本公开代码仓库。用户授权的 Kalodata 激活配置由独立私有交接仓库提供，安装步骤见[配置教程](docs/setup/kalodata.md)。其他本机敏感配置从样例复制：
 
 ```bash
-cp config/kalodata-identity.example.json config/kalodata-identity.json
 cp config/campaign-join.example.json config/campaign-join.json
-chmod 600 config/kalodata-identity.json config/campaign-join.json
+chmod 600 config/campaign-join.json
 ```
 
 缺少 `var/` 中的真实 SQLite 与证据文件时，只能进行离线开发；不得用演示数据冒充当前业务状态。

@@ -2,6 +2,8 @@
 
 整理时间：2026-11-02（Asia/Shanghai）。本次同步代码、提交历史、测试和项目文档，供另一台电脑继续开发。生产服务仍在原电脑；本说明没有重新检查业务运行结果。
 
+2026-11-03 补充：用户已授权将 Kalodata 激活配置移交到独立[私有仓库](https://github.com/1435762425/BDHub-Agent-private-handoff)，并提供干净登录器、现用扩展及安装脚本；按 [Kalodata 配置教程](../setup/kalodata.md)在新电脑安装。下文“不随代码上传”指本公开代码仓库；真实 SQLite 只读数据包仍单独传输，其他账号、凭据和登录身份不在本次 Kalodata 移交范围内。
+
 ## 代码基线与阅读顺序
 
 - 仓库：[1435762425/BDHub-Agent](https://github.com/1435762425/BDHub-Agent)，默认分支 `main`。
