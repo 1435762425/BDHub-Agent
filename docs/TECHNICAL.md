@@ -346,7 +346,7 @@ inbox 趋势和日明细使用同一账本，totals 等于每日求和，文字�
 
 ## 5. 账号、配置与 vendor
 
-新电脑的 Kalodata 激活配置、干净登录器/扩展和路径安装见 [Kalodata 配置教程](setup/kalodata.md)。用户授权的激活信息由独立私有交接仓库提供，不进入本公开代码仓库；安装不改变生产持久授权或启动新执行器。
+新电脑的 Kalodata 激活配置、干净登录器/扩展和路径安装见 [Kalodata 配置教程](setup/kalodata.md)。用户明确授权公开的移交资料位于 `setup/kalodata/`，实际运行配置仍由安装器写入被 Git 忽略的本机配置路径；安装不改变生产持久授权或启动新执行器。
 
 每日经营日报由 `scripts/business-daily.py preview` → `lib/business_daily.py` 只读既有台账生成市场表格及汇总。当前投递由 Codex 对话内每日 09:00 心跳执行，读取生成的 JSON／文字稿并在当前对话完整展示表格；库存标实际读取时间。`conversation_workbench.unread_items` 与原 `unread_backlog` 共用未回口径；业务库始终 `mode=ro`，不初始化 Store、不做平台／模型调用。历史邮件模块 `lib/business_daily_mail.py` 保留，但私有配置 `enabled=false`，邮件 LaunchAgent 已卸载，不调用 `tick` 或操作 Gmail。详见[每日经营日报](implementation/business-daily-mail.md)。
 

@@ -9,7 +9,7 @@
 ## 当前入口
 
 - [另一台电脑 / Claude 开发接手](docs/handoff/development-20261102.md)：克隆、环境安装、阅读顺序和生产状态边界。
-- [Kalodata 配置教程](docs/setup/kalodata.md)：私有激活配置、登录器/扩展安装与正式读取验收。
+- [Kalodata 配置教程](docs/setup/kalodata.md)：公开激活配置、登录器/扩展安装与正式读取验收；文件位于 [setup/kalodata](setup/kalodata/README.md)。
 - [项目文档](docs/PROJECT.md)：唯一产品真相源，定义目标、范围、业务流程、规则和完成标准。
 - [技术文档](docs/TECHNICAL.md)：唯一技术真相源，定义架构、模块、数据、接口、运行和验证。
 - [当前交接](docs/handoff/current.md)与[最新运行修复核验](docs/handoff/runtime-health-20261025.md)：带时间的 Git 基线、运行状态、已完成能力、阻塞和下一步。
@@ -56,7 +56,7 @@ PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m unittest discover -s tests
 
 ## 本地配置与状态
 
-`var/`、`outputs/`、Kalodata 激活码、Campaign 联系邮箱和凭据不进入本公开代码仓库。用户授权的 Kalodata 激活配置由独立私有交接仓库提供，安装步骤见[配置教程](docs/setup/kalodata.md)。其他本机敏感配置从样例复制：
+`setup/kalodata/` 保存用户明确授权公开的 Kalodata 激活配置快照、登录器、扩展和安装脚本，步骤见[配置教程](docs/setup/kalodata.md)。实际运行配置仍写入被 Git 忽略的 `config/kalodata-identity.json`。`var/`、`outputs/`、其他凭据、联系方式和登录身份继续保存在本机；其余本机配置从样例复制：
 
 ```bash
 cp config/campaign-join.example.json config/campaign-join.json

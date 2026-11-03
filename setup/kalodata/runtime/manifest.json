@@ -1,0 +1,65 @@
+{
+  "scope": "kalodata clean source assets",
+  "copiedAt": "2026-11-03 Asia/Shanghai",
+  "files": [
+    {
+      "path": "runtime/collector/Kalodata登录器独立版/cookie_launcher.py",
+      "sha256": "2bfaefc3d356a904609de4fd7de449580047f1ce1fe0566a2c26edbb46c8a31a",
+      "bytes": 14754
+    },
+    {
+      "path": "runtime/collector/product_top50/collect.py",
+      "sha256": "8b7150b451b528a056e57c47977485a28470ad71114ef61138094b89aa85edb0",
+      "bytes": 23044
+    },
+    {
+      "path": "runtime/collector/product_top50/creator_leads.py",
+      "sha256": "1d0b7a619aae7f4de4370aff73f2d4a790c38c039f3983133f98e052e25c5e36",
+      "bytes": 8401
+    },
+    {
+      "path": "runtime/extension/icon.png",
+      "sha256": "73b0aa50171987ad8da9e011a01b342e2362c658e40e9221f54728d91af10971",
+      "bytes": 5750
+    },
+    {
+      "path": "runtime/extension/popup.js",
+      "sha256": "8b77c21351ca6d944800587b8408c2c80f975f198a55ed15f183f48a6265cee3",
+      "bytes": 5235
+    },
+    {
+      "path": "runtime/extension/warning.html",
+      "sha256": "60787f97e8271d6373ad0fbf8c0449b20ff0b0061af5bbf5706c428c0cc5877d",
+      "bytes": 1192
+    },
+    {
+      "path": "runtime/extension/background.js",
+      "sha256": "ea21bdb124babff19fac81e9e8325c2dc3ed564f09d4ca4f1cf06a0b46faec0f",
+      "bytes": 75564
+    },
+    {
+      "path": "runtime/extension/popup.html",
+      "sha256": "5d2a4c6266c0c8ad9b4d1a56d3562a81cd43765fe6677176e49ef7dc50953a3d",
+      "bytes": 9817
+    },
+    {
+      "path": "runtime/extension/style.css",
+      "sha256": "3134b5b468412fd5fcbd63df8863176ae6c64ddd599651c31ee921e67fcb8b2e",
+      "bytes": 1173
+    },
+    {
+      "path": "runtime/extension/manifest.json",
+      "sha256": "3ddd2676a271c2a2a981147d543e7f638ef9a9be3dae7b0ddb4d3fd831b7e873",
+      "bytes": 635
+    }
+  ],
+  "excluded": [
+    "latest_cookie.txt",
+    "extension_runtime.json",
+    ".chrome-profile/",
+    ".venv-mac/",
+    "account_status.json",
+    "_account_backups/",
+    "other account credentials"
+  ]
+}

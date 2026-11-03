@@ -1,0 +1,10 @@
+.DS_Store
+__pycache__/
+*.pyc
+.venv*/
+.chrome-profile/
+latest_cookie.txt
+extension_runtime.json
+account_status.json
+_account_backups/
+*.log

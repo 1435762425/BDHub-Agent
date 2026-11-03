@@ -4,16 +4,14 @@
 
 ## 获取激活配置和运行文件
 
-主项目代码仍在 [BDHub-Agent](https://github.com/1435762425/BDHub-Agent)。按用户本次授权，真实激活码、现用登录器与扩展文件放在同账号下的 [私有交接仓库](https://github.com/1435762425/BDHub-Agent-private-handoff)。另一台电脑使用有该仓库权限的 GitHub 账号克隆：
+用户已明确授权将真实激活码、现用登录器、扩展和安装脚本公开到 [BDHub-Agent](https://github.com/1435762425/BDHub-Agent) 的 [setup/kalodata](../../setup/kalodata/README.md)。另一台电脑直接克隆主项目，无需另一个仓库的访问权限：
 
 ```bash
-gh auth login
-gh repo clone 1435762425/BDHub-Agent-private-handoff
-chmod 700 BDHub-Agent-private-handoff
-chmod 600 BDHub-Agent-private-handoff/config/kalodata-identity.json
+git clone https://github.com/1435762425/BDHub-Agent.git
+cd BDHub-Agent
 ```
 
-已登录时可跳过 `gh auth login`。私有仓库中包括：
+已有克隆时更新到最新 `main` 即可。`setup/kalodata/` 中包括：
 
 - `config/kalodata-identity.json`：本机保存的激活码和初始测试 PID。
 - `runtime/collector/Kalodata登录器独立版/cookie_launcher.py`：现用专属登录器。
@@ -25,14 +23,14 @@ chmod 600 BDHub-Agent-private-handoff/config/kalodata-identity.json
 
 ## 安装到开发仓库
 
-下面假定两个仓库位于同一父目录。在新电脑的 `BDHub-Agent` 根目录执行：
+在新电脑的 `BDHub-Agent` 根目录执行：
 
 若该仓库的 `var` 已链接到只读交接数据，先另建开发 worktree 安装；只读数据包继续留在原独立目录。
 
 ```bash
 python3.13 -m venv .venv
 .venv/bin/python -m pip install -r requirements.lock
-.venv/bin/python ../BDHub-Agent-private-handoff/install_kalodata.py --project "$PWD"
+.venv/bin/python setup/kalodata/install_kalodata.py --project "$PWD"
 source .env.kalodata.local
 ```
 
@@ -56,7 +54,7 @@ source .env.kalodata.local
 ```bash
 python3.13 -m venv "$KALODATA_PROJECT_DIR/Kalodata登录器独立版/.venv-mac"
 KALODATA_LOGIN_PY="$KALODATA_PROJECT_DIR/Kalodata登录器独立版/.venv-mac/bin/python"
-"$KALODATA_LOGIN_PY" -m pip install -r ../BDHub-Agent-private-handoff/runtime/requirements-login.txt
+"$KALODATA_LOGIN_PY" -m pip install -r setup/kalodata/runtime/requirements-login.txt
 "$KALODATA_LOGIN_PY" -m playwright install chromium
 ```
 
@@ -73,7 +71,7 @@ umask 077
 .venv/bin/python scripts/kalodata-identity.py activate > var/kalodata-activate-result.json
 ```
 
-它打开加载指定扩展的专属 Chromium，按保存的激活码正常激活与验证登录。需要页面验证时在该窗口完成；只有正式 provider 验证成功后才自动结束。结果 JSON 包含配置，保存在本地忽略目录，不粘贴到公开日志。
+它打开加载指定扩展的专属 Chromium，按保存的激活码正常激活与验证登录。需要页面验证时在该窗口完成；只有正式 provider 验证成功后才自动结束。结果 JSON 保存在本地忽略目录，供本机排查。
 
 已有该新电脑的身份、需要刷新时：
 
@@ -88,7 +86,7 @@ umask 077
 .venv/bin/python scripts/kalodata-identity.py probe --result-only
 ```
 
-私有配置带一个从原电脑已完成货盘选出的初始测试 PID；可用 `install_kalodata.py --project "$PWD" --canary-pid <19位真实商品ID>` 或 probe 的 `--pid` 指定当前有效商品。测试走正式 A 类达人读取接口和原 14 天窗口，会产生一次真实读取，并保存本地检查结果。`--result-only` 不输出激活配置。
+交接配置带一个从原电脑已完成货盘选出的初始测试 PID；可用 `setup/kalodata/install_kalodata.py --project "$PWD" --canary-pid <19位真实商品ID>` 或 probe 的 `--pid` 指定当前有效商品。测试走正式 A 类达人读取接口和原 14 天窗口，会产生一次真实读取，并保存本地检查结果。`--result-only` 不输出激活配置。
 
 | 返回 | 含义 |
 | --- | --- |
@@ -103,7 +101,7 @@ umask 077
 
 | 现象 | 检查 |
 | --- | --- |
-| 私有仓库 404 | 当前 `gh` 账号是否拥有仓库权限 |
+| 找不到 `setup/kalodata` | 当前克隆是否已更新到最新 `main` |
 | `kalodata_runtime_missing` | 专属 `.venv-mac/bin/python` 是否已在正确目录创建 |
 | `kalodata_extension_missing` | 已 source 环境文件，`KALODATA_EXTENSION_DIR/manifest.json` 存在，专属 Chromium 安装完整 |
 | `kalodata_probe_pid_missing` | 配置或 `--pid` 是否提供 19 位真实商品 ID |

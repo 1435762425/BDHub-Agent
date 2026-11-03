@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>插件登录系统</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    /* ============ 激活页面 - 红色渐变卡片风格 ============ */
+    #activate-view {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      background: linear-gradient(135deg, #f12711 0%, #f5af19 100%);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+    #activate-view .activate-container { width: 100%; max-width: 420px; }
+    #activate-view .activate-card {
+      background-color: white;
+      border-radius: 16px;
+      padding: 45px 40px 40px;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.25);
+      animation: activateFadeIn 0.6s ease-out;
+    }
+    @keyframes activateFadeIn {
+      from { opacity: 0; transform: translateY(-30px) scale(0.95); }
+      to { opacity: 1; transform: translateY(0) scale(1); }
+    }
+    #activate-view .activate-icon {
+      width: 72px; height: 72px;
+      background: linear-gradient(135deg, #f12711, #f5af19);
+      border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      margin: 0 auto 28px;
+      box-shadow: 0 8px 24px rgba(241, 39, 17, 0.3);
+    }
+    #activate-view .activate-icon svg {
+      width: 36px; height: 36px; fill: white;
+    }
+    #activate-view .activate-title {
+      text-align: center;
+      font-size: 24px;
+      color: #333;
+      font-weight: 700;
+      margin-bottom: 8px;
+    }
+    #activate-view .activate-subtitle {
+      text-align: center;
+      font-size: 14px;
+      color: #999;
+      margin-bottom: 32px;
+    }
+    #activate-view .activate-input-group {
+      margin-bottom: 28px;
+    }
+    #activate-view .activate-input-group label {
+      display: block;
+      font-size: 14px;
+      color: #555;
+      margin-bottom: 8px;
+      font-weight: 500;
+    }
+    #activate-view .activate-input-group input {
+      width: 100%;
+      padding: 14px 16px;
+      border: 2px solid #e0e0e0;
+      border-radius: 10px;
+      font-size: 15px;
+      outline: none;
+      background: #fafafa;
+      color: #333;
+      transition: all 0.3s ease;
+    }
+    #activate-view .activate-input-group input:focus {
+      border-color: #f12711;
+      box-shadow: 0 0 0 3px rgba(241, 39, 17, 0.1);
+      background: #fff;
+    }
+    #activate-view .activate-input-group input::placeholder {
+      color: #bbb;
+    }
+    #activate-view .activate-btn {
+      width: 100%;
+      padding: 14px;
+      background: linear-gradient(135deg, #f12711 0%, #f5af19 100%);
+      color: white;
+      border: none;
+      border-radius: 10px;
+      font-size: 16px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.3s ease;
+      box-shadow: 0 4px 15px rgba(241, 39, 17, 0.35);
+    }
+    #activate-view .activate-btn:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 6px 20px rgba(241, 39, 17, 0.5);
+    }
+    #activate-view .activate-btn:active {
+      transform: translateY(0);
+    }
+    #activate-view .activate-btn:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+      transform: none;
+      box-shadow: none;
+    }
+    #activate-view .activate-error {
+      color: #ff4757;
+      font-size: 14px;
+      margin-top: 18px;
+      min-height: 20px;
+      text-align: center;
+    }
+
+    /* ============ 登录页面 - 蓝紫渐变卡片风格 ============ */
+    #login-view {
+      display: none;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      min-height: 100vh;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+    #login-view .container { width: 100%; max-width: 420px; }
+    #login-view .card {
+      background-color: white;
+      border-radius: 12px;
+      padding: 40px;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+      animation: fadeIn 0.5s ease-in;
+    }
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(-20px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    #login-view .title { text-align: center; margin-bottom: 35px; }
+    #login-view .title h1 { font-size: 28px; color: #333; font-weight: 700; margin-bottom: 8px; }
+    #login-view .title p { font-size: 14px; color: #666; }
+    #login-view .input-group { margin-bottom: 25px; }
+    #login-view .input-group label { display: block; font-size: 14px; color: #555; margin-bottom: 8px; font-weight: 500; }
+    #login-view .input-group input {
+      width: 100%; padding: 14px 16px;
+      border: 2px solid #e0e0e0; border-radius: 8px;
+      font-size: 15px; transition: all 0.3s ease;
+      background: #f9f9f9;
+      color: #333;
+    }
+    #login-view .input-group input:focus { outline: none; border-color: #667eea; box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1); }
+    #login-view .btn {
+      width: 100%; padding: 14px;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white; border: none; border-radius: 8px;
+      font-size: 16px; font-weight: 600; cursor: pointer;
+      transition: all 0.3s ease; box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
+    }
+    #login-view .btn:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(102, 126, 234, 0.6); }
+    #login-view .btn:disabled { opacity: 0.6; cursor: not-allowed; transform: none; box-shadow: none; }
+    #login-view .error { color: #ff4757; font-size: 14px; margin-top: 16px; text-align: center; min-height: 20px; }
+    #login-view .change-card {
+      display: block;
+      text-align: center;
+      margin-top: 20px;
+      color: #999;
+      font-size: 13px;
+      text-decoration: none;
+      cursor: pointer;
+      transition: color 0.2s;
+    }
+    #login-view .change-card:hover {
+      color: #667eea;
+    }
+
+    /* ============ 更新弹窗 ============ */
+    .modal-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.6); justify-content: center; align-items: center; z-index: 9999; }
+    .modal-overlay.show { display: flex; }
+    .modal { background: white; border-radius: 16px; padding: 30px; max-width: 360px; width: 90%; text-align: center; box-shadow: 0 20px 60px rgba(0,0,0,0.3); animation: modalIn 0.3s ease; }
+    @keyframes modalIn { from { opacity: 0; transform: scale(0.8); } to { opacity: 1; transform: scale(1); } }
+    .modal-icon { width: 60px; height: 60px; background: linear-gradient(135deg, #ffa502, #ff6348); border-radius: 50%; display: flex; align-items: center; justify-content: center; margin: 0 auto 20px; font-size: 28px; }
+    .modal-title { font-size: 20px; font-weight: 700; color: #333; margin-bottom: 12px; }
+    .modal-message { font-size: 14px; color: #666; line-height: 1.6; margin-bottom: 25px; }
+    .modal-btn { padding: 12px 30px; border: none; border-radius: 8px; font-size: 15px; font-weight: 600; cursor: pointer; transition: all 0.3s ease; margin: 0 5px; }
+    .modal-btn-download { background: linear-gradient(135deg, #ffa502, #ff6348); color: white; }
+    .modal-btn-download:hover { box-shadow: 0 4px 15px rgba(255,165,2,0.5); }
+    .modal-btn-close { background: #f0f0f0; color: #666; }
+    .modal-btn-close:hover { background: #e0e0e0; }
+  </style>
+</head>
+<body>
+
+  <!-- ======== 激活页面（首次） ======== -->
+  <div id="activate-view">
+    <div class="activate-container">
+      <div class="activate-card">
+        <div class="activate-icon">
+          <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+            <path d="M12 1C8.676 1 6 3.676 6 7v2H4a1 1 0 00-1 1v11a2 2 0 002 2h14a2 2 0 002-2V10a1 1 0 00-1-1h-2V7c0-3.324-2.676-6-6-6zm0 2c2.276 0 4 1.724 4 4v2H8V7c0-2.276 1.724-4 4-4zm0 10a2 2 0 011 3.732V18a1 1 0 11-2 0v-1.268A2 2 0 0112 13z"/>
+          </svg>
+        </div>
+        <div class="activate-title">首次使用请先激活卡密</div>
+        <div class="activate-subtitle">激活后即可使用验证登录功能</div>
+        <div class="activate-input-group">
+          <label for="activate-code">激活码</label>
+          <input type="text" id="activate-code" placeholder="请输入激活码" autocomplete="off">
+        </div>
+        <button id="activate-btn" class="activate-btn">开始激活使用</button>
+        <div id="activate-error" class="activate-error"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ======== 登录页面（激活后） ======== -->
+  <div id="login-view">
+    <div class="container">
+      <div class="card">
+        <div class="title"><h1>输入卡密验证登录</h1></div>
+        <div class="input-group">
+          <label for="card-number">ka卡密</label>
+          <input type="text" id="card-number" placeholder="请输入您的卡密" autocomplete="off">
+        </div>
+        <button id="fetch-cookie" class="btn">验证登录</button>
+        <div id="error-message" class="error"></div>
+        <a id="change-card" class="change-card">更换卡密</a>
+      </div>
+    </div>
+
+    <!-- 更新弹窗 -->
+    <div id="update-modal" class="modal-overlay">
+      <div class="modal">
+        <div class="modal-icon">⬆️</div>
+        <div class="modal-title" id="modal-title">发现新版本</div>
+        <div class="modal-message" id="modal-message">发现新版本，请下载更新！</div>
+        <div>
+          <button id="modal-download" class="modal-btn modal-btn-download">下载新版本</button>
+          <button id="modal-close" class="modal-btn modal-btn-close">稍后再说</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
